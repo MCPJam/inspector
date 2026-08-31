@@ -1,328 +1,83 @@
-diff --git a/.changeset/eval-baseline-commit-sha.md b/.changeset/eval-baseline-commit-sha.md
+diff --git a/.changeset/evals-d5b-d5c-inspector.md b/.changeset/evals-d5b-d5c-inspector.md
 deleted file mode 100644
-index b8cc50cbc..000000000
---- a/.changeset/eval-baseline-commit-sha.md
+index 19cd1c22d..000000000
+--- a/.changeset/evals-d5b-d5c-inspector.md
 +++ /dev/null
-@@ -1,30 +0,0 @@
+@@ -1,6 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
+----
+-
+-Add the eval-suite stage-analytics route and the /evaluate stage-analytics
+-panel, rendering backend-materialized per-run stage analytics.
+diff --git a/.changeset/evals-d5b-sdk.md b/.changeset/evals-d5b-sdk.md
+deleted file mode 100644
+index c4d2c6868..000000000
+--- a/.changeset/evals-d5b-sdk.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
 -"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
 ----
 -
--evals: pin an eval baseline by source commit SHA
--
--`GET /eval-runs/:runId/compare` accepts `baseCommitSha`, resolved server-side
--to the completed run in that suite recorded against the commit. The compare
--DTO's `baseline` gains `commit_sha` as a policy, echoes the SHA back, and
--reports `matchCount`/`matchCountTruncated` when uniqueness could not be
--established — an absent count means the match was unambiguous, and a truncated
--count is a floor rather than a total.
--
--`mcpjam cloud eval gate` gains `--baseline-sha` and `eval compare` gains
--`--base-sha`, each mutually exclusive with its run-id counterpart. The kind is
--named by the flag rather than inferred: a Convex run id is an opaque string
--with no documented format, and an abbreviated commit SHA is indistinguishable
--from one, so a single guessing flag could silently compare against the wrong
--run. A SHA passed to `--baseline` is rejected with a pointer to the right flag.
--
--Gate provenance now records the requested selector and the run it resolved to,
--so an archived report can answer which run a commit compared against. A SHA
--that matches no completed run remains `incomplete` (exit 3), never a
--regression.
--
--Malformed baseline selections from the platform (`EVAL_COMPARE_BASELINE_CONFLICT`,
--`EVAL_COMPARE_BASELINE_INVALID`) now answer 400 with the platform's own message
--instead of a generic 500.
-diff --git a/.changeset/eval-gate-waivers.md b/.changeset/eval-gate-waivers.md
+-Add listEvalSuiteStageAnalytics to the Platform client. Requires the deployed
+-backend stage-analytics query (backend D5a); a missing backend surfaces as a
+-service error, never an empty result.
+diff --git a/.changeset/skills-catalog-in-the-prompt.md b/.changeset/skills-catalog-in-the-prompt.md
 deleted file mode 100644
-index eab125b7c..000000000
---- a/.changeset/eval-gate-waivers.md
+index 8c5c3e468..000000000
+--- a/.changeset/skills-catalog-in-the-prompt.md
 +++ /dev/null
-@@ -1,80 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
--"@mcpjam/inspector": minor
-----
--
--Gate waivers end to end (Evals v2, Lane E, step E5b).
--
--An eval run's release gate can now be overridden by an authorized user, on the
--record, until an expiry they name — and the override is visible everywhere the
--gate is. The Lane E charter's words are "authorized actor, reason, expiry,
--affected policy/run, visible CI/report status; no silent or permanent waiver."
--The platform (mcpjam-backend #1141) owns the authorization, the required expiry
--and the 30-day cap. This is the half that owns **visible**.
--
--**Nothing here makes a failing run pass.** The run keeps its own `result`, and
--the waiver is a separate record that every reader consults and reports
--separately. Two independent computations decide this verdict — the platform
--derives a GitHub Check Run conclusion from the persisted run, and the CLI
--recomputes its own gate client-side from public v1 GETs — so flipping the
--persisted result would green both with nothing saying why.
--
--`@mcpjam/sdk` widens the gate contract. `GateStatus` gains `waived` and
--`GateReport` gains a `waived` outcome plus a `waiver` field; `StructuredRunVerdict`
--gains `waived`; `StructuredCaseResult` gains `waiver`. New exports:
--`applyGateWaiver`, `isGateWaiverInForce`, `formatGateWaiverLine`,
--`GATE_WAIVER_REASON_NOTICE`, and the `GateWaiver` type. `waived` is deliberately
--NOT folded into `passed`: both exit 0, but collapsing them makes the difference
--unrecoverable one line later, which is the definition of a silent waiver.
--
--`applyGateWaiver` upgrades **only** a real `failed` outcome. `incomplete` and
--`usage_error` are never waived — a waiver granted because the evals regressed is
--not consent to ship on a cancelled run, a wait timeout, or a flaked fetch, and
--turning exit 3 into exit 0 there is fail-open. The waiver is still attached in
--every case, so an artifact names it even when it decided nothing.
--
--`@mcpjam/cli`'s `eval gate` reads the waiver off the run projection (no second
--round trip) and names **who** waived, **why**, and **until when** in all four
--outputs: the human report, `--reporter json-summary`, `--reporter junit-xml`
--(as `<skipped>`, JUnit's own third state — it does not fail the build, and it
--does not render as a clean green row), and `--reporter html` (its own violet
--badge and section, neither the green of a pass nor the red of a failure). The
--four exit codes are unchanged; `waived` joins `passed` at 0.
--
--The CLI re-derives the waiver's validity from `expiresAt` rather than trusting
--the platform's `active`. A Convex query is cached against the documents it read
--and time is not a document, so a lapsed waiver can be served as active until
--something writes to its row — the one failure that would silently turn a
--time-boxed waiver into a permanent one, on exactly the path this step builds.
--
--New subcommands `mcpjam cloud eval gate waive --run <id> --reason <text>
----expires-in <30m|12h|7d>` and `mcpjam cloud eval gate unwaive --run <id>
--[--waiver <id>]`. Both are manage-tier and server-enforced — the CLI does not
--pre-judge authorization — and `waive` prints the unredacted-storage notice
--before it accepts a reason. A bare `--expires-in 7` is rejected as ambiguous.
--`eval gate`'s `--run` moved from a commander-required option to one this command
--enforces itself, so the subcommands can dispatch; the exit code for a missing
--`--run` is unchanged at `2`.
--
--New v1 endpoints (`POST`/`GET` `…/eval-runs/{runId}/gate-waivers`, `DELETE
--…/gate-waivers/{waiverId}`) with strict bodies, and `EvalRun` gains `gateWaiver`
--— `null` rather than omitted, so a caller can tell "no waiver" from "an older
--deployment". Reading a waiver is available to anyone who can view the run, not
--only to those who can grant one. Three agent/MCP operations: `waive_eval_gate`,
--`get_eval_gate_waiver`, `revoke_eval_gate_waiver`.
--
--Two error-translation fixes in the v1 layer, both of which affect more than
--waivers. `ConvexError({ kind: 'forbidden' })` — how the platform raises every
--eval tier denial — carried no `code` field, so it matched no branch in
--`translateConvexWriteError` and reached the terminal 500: a deliberate refusal
--reported as our own bug, paged for, and handed to the caller as a generic
--internal error. It now answers 403 with the platform's own message, still
--honoring `adminFailureIsForbidden` for the resources that deliberately hide
--their gate. And the five `gate_waiver_*` refusal codes are recognized as 400s
--that forward the platform's copy verbatim, rather than falling through to a 500
--that strips the one sentence telling the caller what to do.
--
--`renderStructuredRunJUnitXml` gains a `skipped` attribute, emitted only when
--something was actually waived — never `skipped="0"`, which would be a wire
--change on every report ever rendered in exchange for saying nothing.
-diff --git a/.changeset/eval-run-decision-summary-contract.md b/.changeset/eval-run-decision-summary-contract.md
-deleted file mode 100644
-index 514c1ead3..000000000
---- a/.changeset/eval-run-decision-summary-contract.md
-+++ /dev/null
-@@ -1,74 +0,0 @@
-----
--"@mcpjam/inspector": major
--"@mcpjam/sdk": major
--"@mcpjam/cli": major
-----
--
--One canonical eval run decision summary, shared by the API, Platform MCP and the CLI
--
--The six-stage user-value chain was eval metadata that each client interpreted for
--itself: the API returned stage rows, the CLI counted iterations and produced its
--own verdict, the Platform MCP server returned neither, and a model had to
--reconstruct the chain from raw tool calls. Three readings of one run is three
--chances to disagree about it.
--
--There is now one versioned contract — `evalRunDecisionSummarySchema` /
--`EvalRunDecisionSummary` in `@mcpjam/sdk/contract`, schema version 1 — assembled
--by a single function that the new API endpoint and every client call:
--
--- `GET /v1/projects/{projectId}/eval-runs/{runId}/decision-summary` returns it,
--  with bounded diagnostic pagination. Additive: every existing run and iteration
--  response field is unchanged.
--- `get_eval_run` returns it on `decisionSummary` for terminal runs and tells the
--  model to read it before step results or a trace.
--- `eval run --wait`, `eval status`, `eval gate` and `eval compare` render it, and
--  human, JSON, JUnit and HTML now agree on the verdict, the counts and their
--  unit, the first failed stage, the failure category, the evidence and the next
--  action. JUnit carries it as `<system-out>` rather than dropping the chain.
--
--What the contract fixes, beyond having one of them:
--
--- **Counts say what they count.** `measurementUnit` is `caseVariant` under
--  verdict policy v2 and `trial` on a legacy run. A 3-case suite with 5
--  repetitions is legitimately 3 or 15, and the previous summary called both
--  "cases".
--- **The verdict is copied, never recomputed.** Under policy v2 the run's own
--  `EvalVerdictDecision` is the authority; the per-trial diagnostics are evidence
--  beneath it. The old summary derived a verdict by counting iterations, which
--  reported a case that passed 4 of 5 trials as one pass and one failure.
--- **`notEstablished` is a fourth verdict**, for a run that is unfinished, stopped
--  early, or whose decision could not be read — distinct from `inconclusive`,
--  which is a decision the validity phase reached.
--- **Evidence belongs to the claim it supports.** Span ids, prompt indexes and
--  reasons come from the first failed stage's row alone; the old summary unioned
--  them across the whole chain, handing back the evidence of every stage that
--  worked as the explanation of the one that did not.
--- **A partial page says so.** `diagnostics.complete` and `scannedIterations`
--  separate "nothing failed" from "we did not look".
--- Stage, state, category and reason labels are centralized beside the contract,
--  so human output reads `User value`, not `userValue`.
--
--`PlatformEvalIteration` gains an optional `caseId` — the case's SDK-declared id
--from the iteration's frozen snapshot, beside (never merged into) the stored
--`testCaseId`. Omitted, not nulled, when a run recorded none.
--
--Compatibility notes:
--
--- The reporter artifact's `decisionSummary` field now carries the canonical
--  object. It previously held an unversioned per-case summary; a consumer reading
--  `decisionSummary.passRate.percent` and `decisionSummary.cases[]` should read
--  `counts` (with its `measurementUnit`) and `diagnostics.items[]` instead. The
--  object now carries its own `schemaVersion`.
--- `eval status` prints the block for any terminal run that did not pass, rather
--  than only a failed one — `inconclusive` and undecided runs are the ones a
--  reader can least explain unaided — and prints it above the `View:` line.
--- `buildEvalDecisionSummary`, `buildEvalDecisionSummaryFromIterations` and
--  `formatEvalDecisionSummary` are unchanged and still exported, now deprecated.
--  Nothing in this repo calls them.
--- Exit codes are untouched, including `eval gate`'s four-code contract.
--
--Deployment order matters: the endpoint must be live before the new SDK and CLI
--are published. The published clients fall back to the same shared assembler over
--`getEvalRun` + `listEvalRunIterations` when the endpoint is absent, so an older
--or custom API deployment still gets the same object rather than a second
--opinion about the run.
-diff --git a/.changeset/evaluate-tab-behind-a-flag.md b/.changeset/evaluate-tab-behind-a-flag.md
-deleted file mode 100644
-index 9bdb29dbb..000000000
---- a/.changeset/evaluate-tab-behind-a-flag.md
-+++ /dev/null
-@@ -1,26 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Evaluate redesign returns as its own tab at `/evaluate`, behind `evaluate-enabled`
--
--The Evaluate landing page, full-page create-suite flow, and run-history suite
--overview have now been merged into the live `/evals` tab and reverted twice. The
--work is worth keeping; rewriting the shipped tab in place to get it is not.
--
--So it ships as a second tab instead. `/evaluate` is a separate route, a separate
--surface, and a separate sidebar item shown alongside Evaluate — nothing a user
--without the flag can reach behaves differently. The screens the redesign
--rewrote are duplicated under `components/evaluate/` rather than refactored into
--shared ones; the queries, mutations, run detail, and case editors are still the
--same `components/evals/` modules, so eval behaviour cannot drift between them.
--
--Three shared components take small additive changes instead of a fork:
--`SuiteIterationsView` gains an opt-in `suiteDetailOverview` prop (off for every
--existing caller), `EnvironmentComposer`'s `slots` prop now actually narrows the
--strip and its servers-pill wording is overridable, and `ServerGroupPicker`
--accepts a test id and an accessible name for its trigger. Every current caller
--renders exactly what it rendered before.
--
--The commit-keyed CI review stays on `/evals/runs`. When the redesign replaces
--the original, the old tab and the duplicated directory are deleted together.
-diff --git a/.changeset/protocol-pin-mismatch-error.md b/.changeset/protocol-pin-mismatch-error.md
-deleted file mode 100644
-index ee174c91e..000000000
---- a/.changeset/protocol-pin-mismatch-error.md
-+++ /dev/null
-@@ -1,20 +0,0 @@
+@@ -1,17 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
--"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
 ----
 -
--Report a legacy protocol-version pin mismatch as a version problem instead of "the server appears to be down"
+-Server-served skills are named in the prompt, so the model can actually choose one
 -
--Pinning a stateful MCP protocol version (e.g. 2025-11-25) against a server that
--answers with a different one — Slack and HubSpot both answer 2025-06-18 — failed
--the connect with a generic 502 and "Couldn't reach the MCP server". Tools came
--back silently empty and reconnects looked like someone else's outage rather than
--the version setting they actually were.
+-Progressive disclosure has three levels: every skill's **name and description** are always in context, the `SKILL.md` body loads when the model judges it relevant, and supporting files load after that. Level 1 is never lazy — a model cannot choose a skill whose description it has never read.
 -
--The `ProtocolVersionPinUnsupported` path that already produces a 424, names both
--versions, and offers "Change protocol version" only ever fired for modern
--(2026-07-28) pins: the detector bailed out for stateful pins, and the failure
--parser did not recognize the wording the upstream client uses when it refuses a
--server's `initialize` reply. Both now handle it, and the message names the
--version the server actually offered.
-diff --git a/cli/package.json b/cli/package.json
-index 644e544db..27ee68c2e 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "4.2.0",
-+  "version": "5.0.0",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
-@@ -17,7 +17,7 @@
-     "prepublishOnly": "npm run build"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^7.1.0",
-+    "@mcpjam/sdk": "^8.0.0",
-     "@modelcontextprotocol/server": "2.0.0",
-     "commander": "^14.0.3",
-     "posthog-node": "^5.24.10",
+-The server-skills stanza skipped it. It said *"call `listSkills` to see those"* and named nothing, so picking a skill meant guessing that a relevant one might exist and spending a tool call to find out. Most turns never did. Asked how to import a corpus of promptfoo tests — with `mcpjam-eval-import` connected and its description matching almost word for word — the model never called `listSkills` and improvised a conversion process instead.
+-
+-That is the irony of the old shape: `skills/list` **is** the progressive-disclosure mechanism. SEP-2640 returns frontmatter separately from content precisely so a host can put the catalog in front of the model without fetching a single body. We implemented that wire correctly and then called it lazily, discarding the thing it was designed for.
+-
+-The catalog is now rendered into the system prompt, budgeted and formatted with the same helpers the Cloud Skills catalog uses — so the two halves of one feature cannot drift on wording, sort order, or what happens when metadata outgrows its share of the context. Each line keeps its origin (`MCP server "…"`), because these descriptions are third-party text and one that reads like an instruction should still show who wrote it. Unloadable skills stay listed and marked rather than hidden, so the model stops retrying them and a server author can see MCPJam declined.
+-
+-The stanza also leads with what to do and follows with how to distrust it. The trust wording is unchanged and still unconditional — a digest match shows the bytes are consistent with what the server advertised, which is not the same as the content being trustworthy — but it no longer buries the only actionable sentence under three warnings.
+-
+-Cost is one `skills/list` per turn per declaring server, shared with any `loadSkill` in the same turn, and the same per-turn catalog fetch Cloud Skills already pay. Caching it against the `ttlMs` servers already send — the worker serves an hour, and we currently surface that TTL and ignore it — would remove even that, and is worth doing for both paths at once.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 1895f74d2..f599a3abb 100644
+index 3b506c2e9..09b331f69 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.48.1",
-+  "version": "3.0.0",
+-  "version": "3.3.0",
++  "version": "3.3.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -132,7 +132,7 @@
+@@ -133,7 +133,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^7.1.1",
-+    "@mcpjam/sdk": "^8.0.0",
+-    "@mcpjam/sdk": "^8.3.0",
++    "@mcpjam/sdk": "^8.3.1",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index b9ccd2381..8df55d8eb 100644
+index 2a69474f3..e093dab5b 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -61,9 +61,9 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "4.2.0",
-+      "version": "5.0.0",
-       "dependencies": {
--        "@mcpjam/sdk": "^7.1.0",
-+        "@mcpjam/sdk": "^8.0.0",
-         "@modelcontextprotocol/server": "2.0.0",
-         "commander": "^14.0.3",
-         "posthog-node": "^5.24.10",
 @@ -399,7 +399,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.48.1",
-+      "version": "3.0.0",
+-      "version": "3.3.0",
++      "version": "3.3.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -330,98 +85,29 @@ index b9ccd2381..8df55d8eb 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^7.1.1",
-+        "@mcpjam/sdk": "^8.0.0",
+-        "@mcpjam/sdk": "^8.3.0",
++        "@mcpjam/sdk": "^8.3.1",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37852,7 +37852,7 @@
+@@ -37869,7 +37869,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "7.1.1",
-+      "version": "8.0.0",
+-      "version": "8.3.0",
++      "version": "8.3.1",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
-@@ -38283,10 +38283,10 @@
-     },
-     "vitest": {
-       "name": "@mcpjam/vitest",
--      "version": "0.1.3",
-+      "version": "0.1.4",
-       "license": "MIT",
-       "dependencies": {
--        "@mcpjam/sdk": "^7.0.0"
-+        "@mcpjam/sdk": "^8.0.0"
-       },
-       "devDependencies": {
-         "tsup": "^8.3.5",
-@@ -38299,11 +38299,11 @@
-     },
-     "widget-react": {
-       "name": "@mcpjam/widget-react",
--      "version": "0.1.8",
-+      "version": "0.1.9",
-       "license": "MIT",
-       "dependencies": {
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^7.0.0",
-+        "@mcpjam/sdk": "^8.0.0",
-         "@modelcontextprotocol/client": "2.0.0",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 0224fdce4..5c845a6ab 100644
+index 23cb75f32..70d451835 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "7.1.1",
-+  "version": "8.0.0",
+-  "version": "8.3.0",
++  "version": "8.3.1",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
-diff --git a/vitest/package.json b/vitest/package.json
-index 153abce1f..381ad3fdb 100644
---- a/vitest/package.json
-+++ b/vitest/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/vitest",
--  "version": "0.1.3",
-+  "version": "0.1.4",
-   "description": "Run MCPJam eval suites inside vitest: one test per eval case, plus a gate test that fails the build on a policy breach.",
-   "license": "MIT",
-   "type": "module",
-@@ -29,7 +29,7 @@
-     "vitest": ">=3.2.0 <4"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^7.0.0"
-+    "@mcpjam/sdk": "^8.0.0"
-   },
-   "devDependencies": {
-     "tsup": "^8.3.5",
-diff --git a/widget-react/package.json b/widget-react/package.json
-index 816ec2fb8..beb447455 100644
---- a/widget-react/package.json
-+++ b/widget-react/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/widget-react",
--  "version": "0.1.8",
-+  "version": "0.1.9",
-   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
-   "license": "MIT",
-   "type": "module",
-@@ -34,7 +34,7 @@
-   },
-   "dependencies": {
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^7.0.0",
-+    "@mcpjam/sdk": "^8.0.0",
-     "@modelcontextprotocol/client": "2.0.0",
-     "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "lucide-react": "^0.525.0",

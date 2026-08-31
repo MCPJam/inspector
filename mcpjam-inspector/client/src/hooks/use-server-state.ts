@@ -1457,6 +1457,14 @@ export function useServerState({
       if (mcpProfile?.mrtrSupport === "none") {
         defaults.supportsMrtr = false;
       }
+      // Nested record rather than an enum, but the same rule: only an
+      // explicit `false` leaf travels.
+      if (mcpProfile?.toolListChanged?.listens === false) {
+        defaults.suppressListenChannel = true;
+      }
+      if (mcpProfile?.toolListChanged?.refetches === false) {
+        defaults.dropToolListChanged = true;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of

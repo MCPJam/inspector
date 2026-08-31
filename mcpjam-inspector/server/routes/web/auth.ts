@@ -4,6 +4,7 @@ import {
   MCPClientManager,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  withSkillsExtensionCapability,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import type {
@@ -1035,6 +1036,25 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
+    /**
+     * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
+     *
+     * Opt-in, and deliberately not the norm. Most hosted connections EMULATE a
+     * third-party host, and the debugger's promise is that the wire shows what
+     * that host would send — advertising skills on an emulated Cursor persona
+     * would be a lie about Cursor. Surfaces that emulate no persona (MCPJam's
+     * own agent turn) pass this, because they ship the fulfiller: the verified
+     * read path in `server-skills.ts`, merged into the toolset by
+     * `withServerSkills`.
+     *
+     * Set on DEFAULTS rather than per-server `clientCapabilities` on purpose.
+     * The latter is advertised VERBATIM (see `MCPClientManager`'s exact-set
+     * branch), so putting the extension there would replace a connection's
+     * whole declaration — silently dropping elicitation — and would also
+     * override a host config that pinned its own set. Defaults merge, and a
+     * pinned exact set still wins.
+     */
+    advertiseSkillsExtension?: boolean;
     scenarioId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
@@ -1815,6 +1835,9 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    ...(options?.advertiseSkillsExtension
+      ? { defaultCapabilities: withSkillsExtensionCapability({}) }
+      : {}),
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
@@ -2109,6 +2132,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     mrtrInputCollectorForServer?: (
       serverId: string
     ) => MrtrInputCollector | undefined;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    advertiseSkillsExtension?: boolean;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -2199,6 +2224,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       accessScope,
       scenarioId,
       accessVersion,
+      ...(options?.advertiseSkillsExtension
+        ? { advertiseSkillsExtension: true }
+        : {}),
       rpcLogger: options?.rpcLogger,
       httpLogger: options?.httpLogger,
       serverNames,

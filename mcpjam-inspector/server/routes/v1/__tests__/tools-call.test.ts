@@ -64,7 +64,9 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
     stubConnection(executeTool);
     // The route measures with `Date.now()`, whose whole-millisecond truncation
     // does not line up with the timer clock: a real `setTimeout(5)` here
-    // measured 4ms on CI and failed a `>= 5` assertion. Stubbing the two reads
+    // measured 4ms on CI and failed a `>= 5` assertion. Do not go back to
+    // sleeping for longer than the threshold — that only makes the race rarer,
+    // and pays real wall-clock time for it. Stubbing the route's two reads
     // — the same technique as the clock-backward test below — pins the exact
     // number instead of asserting a lower bound against a coarse clock.
     const now = vi.spyOn(Date, "now");

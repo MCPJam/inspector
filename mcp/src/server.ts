@@ -20,6 +20,10 @@ import {
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/server/validators/cf-worker";
 import { createSessionToolRegistrar } from "./tools/sessionToolRegistrar.js";
 import { registerPlatformCatalogTools } from "./tools/platformTools.js";
+import {
+  SKILLS_EXTENSION_CAPABILITY,
+  registerSkillsSurface,
+} from "./tools/skillsSurface.js";
 import { registerShowServersTool } from "./tools/showServers.js";
 import { DEFAULT_MCPJAM_APP_ORIGIN } from "@mcpjam/sdk/platform";
 
@@ -157,6 +161,11 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
     // system prompt of its own, so `instructions` is the only place it can
     // tell a model what to do with the URLs it hands back.
     instructions: SERVER_INSTRUCTIONS,
+    // Declared here rather than via `registerCapabilities` after construction:
+    // the SDK merges these with the ones `registerTool`/`registerResource`
+    // add, so nothing is lost, and a post-construction call is an extra
+    // failure mode (it throws once a transport is attached) for no gain.
+    capabilities: { extensions: SKILLS_EXTENSION_CAPABILITY },
     // The workerd default already resolves to this eval-free validator; passing
     // it explicitly pins that choice regardless of how the bundle is built.
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
@@ -173,6 +182,12 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
   const registrar = createSessionToolRegistrar(server);
   registerShowServersTool(registrar, toolContext);
   registerPlatformCatalogTools(registrar, toolContext);
+
+  // Skills are served to EVERY caller, anonymous included. They are public
+  // documentation about this server's own tools, they touch no platform data,
+  // and nothing in this path reaches `getBearerToken` — so gating them behind
+  // auth would withhold the instructions for tools the caller can already see.
+  registerSkillsSurface(server);
 
   return server;
 }

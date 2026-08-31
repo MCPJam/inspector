@@ -12,7 +12,6 @@
  * transient failures do not strand old guests on a new identity.
  */
 
-import { NON_PROD_LOCKDOWN } from "@/lib/config";
 
 declare global {
   interface Window {
@@ -195,13 +194,6 @@ async function requestGuestSession(
   mode: GuestSessionMode,
   legacyToken: string | null,
 ): Promise<GuestSession | null> {
-  // Non-prod lockdown disables guest sessions server-side (returns 403). Skip
-  // the network call entirely so the console isn't flooded with errors and
-  // callers settle quickly into the unauthenticated state.
-  if (NON_PROD_LOCKDOWN) {
-    return null;
-  }
-
   const body: Record<string, unknown> = { mode };
   if (legacyToken) body.legacyToken = legacyToken;
 
