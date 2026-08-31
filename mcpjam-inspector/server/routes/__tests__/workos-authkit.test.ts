@@ -248,4 +248,75 @@ describe("workos authkit local session bridge", () => {
     });
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  // The hosted path. Everything above runs on localhost, where the refresh
+  // token goes in a plain local jar; a deployed origin takes the other branch
+  // entirely — sealed `__Host-` cookie, Secure flags — and that branch is what
+  // staging and previews now depend on.
+  describe("on a deployed https origin", () => {
+    it("seals the refresh token into a Secure __Host- cookie", async () => {
+      const app = createTestApp();
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "access-token-1",
+          refresh_token: "refresh-token-1",
+          user: { id: "user_1" },
+        })
+      );
+
+      const res = await app.request(
+        "https://staging.mcpjam.com/user_management/authenticate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: "client_123",
+            grant_type: "authorization_code",
+            code: "code_123",
+            code_verifier: "verifier_123",
+          }),
+        }
+      );
+
+      expect(res.status).toBe(200);
+      const setCookie = res.headers.get("set-cookie") ?? "";
+      expect(setCookie).toContain("__Host-mcpjam_workos_session=");
+      expect(setCookie).toContain("HttpOnly");
+      // The refresh token must never reach the deployed browser in the clear.
+      expect(setCookie).not.toContain("refresh-token-1");
+    });
+
+    // THE regression. Without this cookie on the app's own origin, AuthKit's
+    // initialize() short-circuits before making any request and the user is
+    // silently demoted to a guest on the next page load — which is exactly how
+    // staging behaved while it pointed at api.workos.com.
+    it("sets workos-has-session on this origin so AuthKit will attempt a refresh", async () => {
+      const app = createTestApp();
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "access-token-1",
+          refresh_token: "refresh-token-1",
+          user: { id: "user_1" },
+        })
+      );
+
+      const res = await app.request(
+        "https://staging.mcpjam.com/user_management/authenticate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: "client_123",
+            grant_type: "authorization_code",
+            code: "code_123",
+            code_verifier: "verifier_123",
+          }),
+        }
+      );
+
+      const setCookie = res.headers.get("set-cookie") ?? "";
+      expect(setCookie).toContain("workos-has-session=true");
+      expect(setCookie).toContain("Secure");
+    });
+  });
 });

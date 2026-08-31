@@ -6,6 +6,7 @@ import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -366,9 +367,9 @@ export async function createHonoApp() {
   );
   app.route("/api/v1", v1Routes);
 
-  if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
-    app.route("/user_management", workosAuthkitRoutes);
-  }
+  // Mounted in every runtime, hosted included — see the mirror of this mount
+  // in server/index.ts for why the gate had to go.
+  app.route("/user_management", workosAuthkitRoutes);
 
   // CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
   // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
@@ -498,7 +499,16 @@ export async function createHonoApp() {
 
     // Serve all static files from client root (images, svgs, etc.)
     // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-    app.use("/*", serveStatic({ root }));
+    //
+    // Document requests fall THROUGH to the injecting handler below — mirror
+    // of the guard in server/index.ts. See isSpaDocumentRequest.
+    const clientStaticFiles = serveStatic({ root });
+    app.use("/*", async (c, next) => {
+      if (isSpaDocumentRequest(c.req.path)) {
+        return next();
+      }
+      return clientStaticFiles(c, next);
+    });
 
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", async (c) => {
