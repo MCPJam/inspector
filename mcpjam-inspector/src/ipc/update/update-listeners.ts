@@ -173,9 +173,25 @@ export function setupAutoUpdaterEvents(): void {
       setStatus({ kind: "idle" });
       return;
     }
+    // "No updates available" is the routine answer to a background poll, and
+    // stays quiet. With an install requested it means something else: the user
+    // clicked Update, is watching the spinner, and the build we promised is
+    // never arriving. This branch used to clear the request and say nothing —
+    // the pill spun, reverted to a live "Update", and invited the next click,
+    // which re-checked and landed here again. That loop is what the reported
+    // session looks like: 17 clicks, no restart, no toast, nothing above
+    // `info` in the log. Report it like every other dead end in this file.
     if (currentStatus.kind === "pending" && currentStatus.installRequested) {
       clearStalledInstallWatchdog();
+      log.error(
+        "Auto-updater reported no update available while an install was requested — the staged build never arrived",
+      );
+      // Status stays "pending" so the button remains visible: Squirrel may
+      // still deliver later, and `isCheckingOrDownloading` was cleared above,
+      // so the next click gets a fresh check rather than a dead one.
       setStatus({ ...currentStatus, installRequested: false });
+      broadcastUpdateError();
+      return;
     }
     log.info(
       `Keeping visible update status after update-not-available: ${currentStatus.kind}`,

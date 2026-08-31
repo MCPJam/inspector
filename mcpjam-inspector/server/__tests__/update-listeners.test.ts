@@ -525,4 +525,68 @@ describe("update-listeners", () => {
       vi.useRealTimers();
     }
   });
+
+  // The reported session, reproduced: the recording shows the pill going into
+  // "Updating…" on EVERY click, which pins the state to `pending` — the state
+  // the quit watchdog above never sees, because no install is ever staged.
+  it("reports the failure when no update is available mid-install", async () => {
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    emitAutoUpdaterEvent("update-not-available");
+
+    // The spinner unsticks, the button stays visible, and — the fix — the user
+    // is told, instead of being handed a live button that does this forever.
+    expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+      kind: "pending",
+      installRequested: false,
+    });
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+    expect(logErrorMock).toHaveBeenCalled();
+  });
+
+  it("stays quiet when a background check finds nothing", async () => {
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+
+    // Nobody clicked. Squirrel polls every 10 minutes, so this answer is
+    // routine here and must not toast — that's the difference the fix draws.
+    emitAutoUpdaterEvent("update-not-available");
+
+    expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+    expect(window.webContents.send).toHaveBeenLastCalledWith("update-status", {
+      kind: "pending",
+      installRequested: false,
+    });
+  });
+
+  it("still lets the user retry after a no-update-available report", async () => {
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    emitAutoUpdaterEvent("update-not-available");
+
+    // Second click: `isCheckingOrDownloading` was cleared, so this one must
+    // reach Squirrel rather than queueing behind a check that already ended.
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    expect(checkForUpdatesMock).toHaveBeenCalledTimes(1);
+    expect(window.webContents.send).toHaveBeenLastCalledWith("update-status", {
+      kind: "pending",
+      installRequested: true,
+    });
+  });
 });
