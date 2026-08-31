@@ -438,6 +438,19 @@ describe("labels are total over the vocabularies they render", () => {
   it("spells the chain's last stage as words", () => {
     expect(USER_VALUE_STAGE_LABELS.userValue).toBe("User value");
   });
+
+  it("describes the partial band inclusively at the floor", () => {
+    // The band is `>= partialFloor` and `< threshold`, so a score exactly ON
+    // the floor is partial. The label said "above the floor", which puts the
+    // boundary score outside a band it is inside — and these strings are the
+    // one place all four renderers read from, so the error would have been
+    // shown everywhere and stated nowhere else.
+    expect(STAGE_REASON_LABELS.judgePartial).toContain("at or above the floor");
+    expect(STAGE_REASON_LABELS.judgePartial).toContain("below the threshold");
+    // The sibling it has to stay consistent with: the threshold is inclusive
+    // on the pass side for the same reason.
+    expect(STAGE_REASON_LABELS.judgeObserved).toContain("at or above");
+  });
 });
 
 describe("the human renderer", () => {
