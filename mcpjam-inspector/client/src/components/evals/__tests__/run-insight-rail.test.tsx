@@ -5,6 +5,7 @@ import {
   RunAccuracyHeroBand,
   RunDetailMetricsCharts,
   RunInsightRail,
+  runHasInsightContent,
 } from "../run-insight-rail";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 
@@ -256,5 +257,51 @@ describe("RunDetailMetricsCharts", () => {
     expect(
       screen.getByRole("heading", { name: "Tokens by test (p50 / p95)" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("runHasInsightContent", () => {
+  // The OUTER half of the same decision `RunInsightRail` makes, and the one
+  // that runs first: it decides whether the band that wraps the rail exists at
+  // all. A rail that correctly opens is still never seen if this says no, so
+  // the rail's own tests cannot catch a regression here — they run inside a
+  // band that already rendered.
+  const none = {
+    serverQualityTriage: null,
+    goalCompletionPanel: null,
+    groundednessPanel: null,
+    actionableFindingsPanel: null,
+    hasStageFunnel: false,
+  };
+
+  it("is false when a run has nothing to show", () => {
+    expect(runHasInsightContent(none)).toBe(false);
+  });
+
+  it("is true for a run whose ONLY insight is its user-value chain", () => {
+    // The bug UVH-IN5 exists to fix. Every other member here is absent, so
+    // this is the case that was invisible: the chain is the report card of
+    // what the eval measured, and it was hidden on exactly the runs where it
+    // was the whole story.
+    expect(runHasInsightContent({ ...none, hasStageFunnel: true })).toBe(true);
+  });
+
+  it.each([
+    ["serverQualityTriage"],
+    ["goalCompletionPanel"],
+    ["groundednessPanel"],
+    ["actionableFindingsPanel"],
+  ])("is true for a run whose only insight is %s", (key) => {
+    expect(runHasInsightContent({ ...none, [key]: <div /> })).toBe(true);
+  });
+
+  it("reads the DATA, never the node", () => {
+    // The chain card is a fragment whose two halves each self-suppress while
+    // the fragment itself stays truthy. Passing the node would keep an
+    // otherwise-empty band alive as a full-height column of dead space, which
+    // is why the signature takes a boolean about the data instead.
+    expect(runHasInsightContent({ ...none, hasStageFunnel: false })).toBe(
+      false,
+    );
   });
 });
