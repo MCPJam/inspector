@@ -1,6 +1,11 @@
+import { describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
 
-const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
+// Bounded for the same reason as the SDK describer's copy of this phrase:
+// `[\w\s-]` matches "mcpjam" too, so unbounded it backtracks quadratically on a
+// wire message of repeated "mcpjam" that never reaches "model limit".
+const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]{0,40}model limit/i;
 const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
 const MCPJAM_USER_RATE_LIMIT_CODE = "user_rate_limit";
 const MCPJAM_LIMIT_CODES = new Set([
@@ -12,6 +17,11 @@ const MCPJAM_RATE_LIMIT_CODE_PATTERN =
 
 export type MCPJamLimitKind = "total" | "concurrency";
 
+/** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a
+ * monthly per-seat one, and the two want different advice — waiting is a night
+ * in one case and up to a billing period in the other. */
+export type MCPJamLimitPeriod = "daily" | "monthly";
+
 type MCPJamLimitErrorInput = {
   code?: string;
   message?: string | null;
@@ -20,6 +30,9 @@ type MCPJamLimitErrorInput = {
   /** Sub-classification of a rate-limit error. `"concurrency"` is a transient
    * throttle whose UI lives inline (retry banner) — never opens the modal. */
   limitKind?: MCPJamLimitKind;
+  /** Which screen hit the wall; see `MCPJamLimitSurface`. Only affects which
+   * actions the dialog offers, never whether it opens. */
+  surface?: MCPJamLimitSurface;
 };
 
 const getStringProperty = (value: unknown, key: string): string | undefined => {
@@ -176,6 +189,22 @@ const findMCPJamLimitOrganizationId = (
   return undefined;
 };
 
+/**
+ * Read the period off the SDK catalog rather than a second regex here. The
+ * error card already classifies this exact message through `describeError`, so
+ * routing the dialog through it too is what keeps them from ever disagreeing
+ * about which allowance ran out.
+ */
+const findMCPJamLimitPeriod = (
+  message: string | null | undefined,
+): MCPJamLimitPeriod | undefined => {
+  if (!message) return undefined;
+  const { slug } = describeError(message);
+  if (slug === "provider/mcpjam_limit_daily") return "daily";
+  if (slug === "provider/mcpjam_limit_monthly") return "monthly";
+  return undefined;
+};
+
 const isMCPJamLimitString = (value: string): boolean =>
   MCPJAM_MODEL_LIMIT_PATTERN.test(value) ||
   MCPJAM_RATE_LIMIT_CODE_PATTERN.test(value);
@@ -230,9 +259,12 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
 
 export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   if (!isMCPJamModelLimitError(args)) return false;
+  const period = findMCPJamLimitPeriod(args.message);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
     limitKind: args.limitKind,
     organizationId: findMCPJamLimitOrganizationId(args),
+    ...(args.surface ? { surface: args.surface } : {}),
+    ...(period ? { period } : {}),
   });
   return true;
 }

@@ -528,6 +528,26 @@ Your LLM provider rejected the request because you hit a rate limit or quota.
 - Upgrade your provider plan.
 - Switch to a different provider in Settings.
 
+### MCPJam model limit reached
+
+`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit`
+
+MCPJam refused the call before it reached a provider, because the account's own
+allowance is spent. Which allowance depends on the plan: free accounts share a
+daily bucket per organization, Team plans spend a monthly per-seat allowance
+that renews with the billing period. The error card names the one you hit.
+
+**Next steps**
+- Top up credits or upgrade the plan — the limit dialog offers both.
+- Wait for the daily reset, or for the billing period to renew.
+- Add your own API key under **Settings → LLM Providers** for chat.
+
+<Warning>
+  Bring-your-own-key covers chat. Swarm persona generation and persona-driver
+  turns are always billed to MCPJam and have no BYOK path, so adding a key does
+  not lift this limit for a swarm.
+</Warning>
+
 ---
 
 ## Environment errors

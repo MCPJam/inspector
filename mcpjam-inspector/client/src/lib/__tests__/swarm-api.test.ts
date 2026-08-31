@@ -11,12 +11,15 @@ import {
   journeySessionRowToThread,
   launchJourneyRun,
   LaunchJourneyRunError,
+  generateSwarmPersonaBatch,
+  SwarmGenerateError,
 } from "@/lib/swarm-api";
 import type {
   PersonaTrackRecord,
   JourneyRollup,
   JourneySessionRow,
 } from "@/lib/swarm-api";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -275,5 +278,110 @@ describe("swarm rollup DTO contracts", () => {
     expect(groups.map((g) => g.runId)).toEqual(["goal-new", "goal-old", null]);
     expect(groups[0].rows.map((r) => r.id)).toEqual(["b", "c"]);
     expect(groups[2].rows.map((r) => r.id)).toEqual(["d"]);
+  });
+});
+
+/**
+ * The MCPJam cap during persona GENERATION — the surface BB-151 was reported
+ * from, which is the Describe step and not a running swarm.
+ *
+ * `SwarmGenerateError` keeps only status + message, so a limit recognized any
+ * later than this reads as an unclassified failure and renders as the error
+ * catalog's "Unknown error". Raising it here also covers every other
+ * generation call, which share this one helper.
+ */
+describe("generateSwarmPersonaBatch — MCPJam limit", () => {
+  beforeEach(() => {
+    useMCPJamLimitDialogStore.setState({
+      isOpen: false,
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+      surface: null,
+      // Not incidental: `notifyLimitHit` only reaches `isOpen` once an auth
+      // status is known. Left at the store's default `"loading"` these tests
+      // would pass on the pending branch without the dialog ever opening.
+      authStatus: "signedIn",
+    });
+  });
+
+  const generate = () =>
+    generateSwarmPersonaBatch({
+      projectId: "proj-1",
+      environmentId: "env-1",
+      personaCount: 3,
+      journeyCount: 5,
+    });
+
+  it("raises the top-up dialog on the daily cap, and still throws", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message: "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      })
+    );
+
+    let err: unknown;
+    try {
+      await generate();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SwarmGenerateError);
+    // The create flow reads this to stay out of the dialog's way: the modal
+    // carries the same sentence plus the actions, so a card under the form
+    // would repeat it with nothing to act on.
+    expect((err as SwarmGenerateError).limitDialogRaised).toBe(true);
+    // The dialog is OPEN, not merely flagged — the whole point is that the
+    // user gets a way out without leaving the create flow.
+    const state = useMCPJamLimitDialogStore.getState();
+    expect(state.isOpen).toBe(true);
+    expect(state.intent).toBe("topup");
+    // Drives which actions the dialog offers: no swarm screen mounts the
+    // model picker the BYOK link drives, so it must not be shown one.
+    expect(state.surface).toBe("swarm");
+    // Read off the message through the SDK catalog, the same classifier the
+    // error card uses — so the modal can't tell a Free org its allowance
+    // renews with the billing period.
+    expect(state.period).toBe("daily");
+  });
+
+  it("carries the monthly period through for a Team org", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        ok: false,
+        code: "user_rate_limit",
+        limitKind: "total",
+        message:
+          "Monthly MCPJam model limit reached. Buy credits or wait for the next billing period.",
+      })
+    );
+
+    await expect(generate()).rejects.toBeInstanceOf(SwarmGenerateError);
+    // Telling this org to wait for tomorrow would be plain wrong — a monthly
+    // allowance can be weeks from renewing.
+    expect(useMCPJamLimitDialogStore.getState().period).toBe("monthly");
+  });
+
+  it("leaves an ordinary generation failure alone", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse(500, { message: "Generation backend is unavailable." })
+    );
+
+    let err: unknown;
+    try {
+      await generate();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SwarmGenerateError);
+    // Nothing took this one over, so the create flow still cards it.
+    expect((err as SwarmGenerateError).limitDialogRaised).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 });

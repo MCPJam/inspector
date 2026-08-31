@@ -205,6 +205,56 @@ const CASES: Case[] = [
     build: () => new Error("Missing or invalid bearer token"),
     expectSlug: "auth/missing_bearer",
   },
+  {
+    name: "MCPJam daily model limit",
+    build: () =>
+      new Error("Daily MCPJam model limit reached. Use BYOK or try again tomorrow."),
+    expectSlug: "provider/mcpjam_limit_daily",
+  },
+  {
+    name: "MCPJam monthly model limit",
+    build: () =>
+      new Error(
+        "Monthly MCPJam model limit reached. Top up or use BYOK to keep chatting.",
+      ),
+    expectSlug: "provider/mcpjam_limit_monthly",
+  },
+  {
+    // Composed copy: the backend's `details` sentence names the renewal
+    // period, and reading /monthly/ from anywhere in the string would file a
+    // daily refusal under the monthly slug.
+    name: "a daily refusal whose detail sentence mentions the month",
+    build: () =>
+      new Error(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Your monthly credits are unaffected.",
+      ),
+    expectSlug: "provider/mcpjam_limit_daily",
+  },
+  {
+    // The net for copy that names no period — without it a reworded backend
+    // message drops back to "Unknown error", which is the BB-151 report.
+    name: "an MCPJam limit that names no billing period",
+    build: () =>
+      new Error("This organization has reached its MCPJam model limit."),
+    expectSlug: "provider/mcpjam_limit",
+  },
+  {
+    // The new pattern is anchored on "MCPJam … model limit", so a third
+    // party's own quota wording must not be swallowed by it.
+    name: "a provider's own quota is not the MCPJam allowance",
+    build: () => new Error("OpenAI: You exceeded your current quota"),
+    expectSlug: "internal/unknown",
+  },
+  {
+    // Pins the bound on the gap between "MCPJam" and "model limit". It is
+    // bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a wire
+    // message of repeated "mcpjam" that never reaches the phrase backtracks
+    // quadratically. Real copy puts one space here, so 40 is already generous
+    // — and unbounded, this case would match and return the limit slug.
+    name: "a gap wider than the bound is not the MCPJam allowance",
+    build: () => new Error(`MCPJam ${"detail ".repeat(10)}model limit reached`),
+    expectSlug: "internal/unknown",
+  },
   // OAuth body
   {
     name: "oauth invalid_grant body",

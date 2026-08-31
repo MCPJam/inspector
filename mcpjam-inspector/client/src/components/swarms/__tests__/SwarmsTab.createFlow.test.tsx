@@ -20,6 +20,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Predicate } from "@/shared/eval-matching";
+import { SwarmGenerateError } from "@/lib/swarm-api";
 
 const CRITERION: Predicate = {
   type: "toolCalledAtLeastOnce",
@@ -1246,6 +1247,39 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.queryByTestId("new-swarm-proposed-personas")
     ).not.toBeInTheDocument();
+  });
+
+  it("leaves a model limit to its dialog instead of also carding it", async () => {
+    let rejectGenerate: (err: unknown) => void = () => {};
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectGenerate = reject;
+        })
+    );
+    openDescribe();
+    fillDescribe();
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        /generating/i
+      )
+    );
+
+    rejectGenerate(
+      // `limitDialogRaised` is what `postGenerate` sets once the dialog has
+      // taken the error over.
+      new SwarmGenerateError(429, "Daily MCPJam model limit reached.", true)
+    );
+
+    // Back to idle, so the catch has run and had its chance to set a message.
+    await waitFor(() =>
+      expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
+        "Continue"
+      )
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("launches a reused persona's journeys, re-stamped onto the selected environment", async () => {

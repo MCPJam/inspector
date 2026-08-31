@@ -127,6 +127,8 @@ beforeEach(() => {
     isOpen: false,
     intent: null,
     organizationId: null,
+    surface: null,
+    period: null,
     pendingInput: null,
   });
   useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
@@ -400,6 +402,117 @@ describe("MCPJamLimitDialog", () => {
       nonceBefore + 1
     );
     expect(window.location.pathname).not.toContain("/models");
+  });
+
+  const openSwarmWall = (
+    org: { _id: string; myRole?: string },
+    period?: "daily" | "monthly"
+  ) => {
+    authState.user = { id: "user-1" };
+    localStorage.setItem("active-organization-id:user-1", org._id);
+    sortedOrganizationsState.push(org);
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "topup",
+      surface: "swarm",
+      period: period ?? null,
+    });
+  };
+
+  it("names the daily allowance, and answers the BYOK question that filed the bug", () => {
+    openSwarmWall({ _id: "org-active", myRole: "owner" }, "daily");
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /daily MCPJam limit reached/i })
+    ).toBeInTheDocument();
+    // "I have my own key, why am I blocked" is the question that filed this
+    // bug, and this modal is the only thing on screen to answer it.
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /your own API key doesn't cover it/i
+    );
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /resets tomorrow/i
+    );
+  });
+
+  it("tells a Team org its credits renew with the billing period, not tomorrow", () => {
+    openSwarmWall({ _id: "org-active", myRole: "owner" }, "monthly");
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /monthly MCPJam credits spent/i })
+    ).toBeInTheDocument();
+    // Telling a monthly org to wait for "tomorrow" would be plain wrong: the
+    // allowance renews with the billing period, which can be weeks out.
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /renew with the billing period/i
+    );
+    expect(
+      screen.getByTestId("limit-dialog-description")
+    ).not.toHaveTextContent(/resets tomorrow/i);
+  });
+
+  it("falls back to period-neutral copy when the message didn't say which", () => {
+    openSwarmWall({ _id: "org-active", myRole: "owner" });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /MCPJam model limit reached/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("limit-dialog-description")
+    ).not.toHaveTextContent(/tomorrow|billing period/i);
+  });
+
+  it("offers only the actions that resolve a swarm limit", () => {
+    openSwarmWall({ _id: "org-active", myRole: "owner" }, "daily");
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("button", { name: /buy MCPJam credits/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /explore MCPJam plans/i })
+    ).toBeInTheDocument();
+    // Both dead ends on a swarm: no screen there mounts the model picker the
+    // BYOK link drives, and the upgrade picker belongs to the credits wall.
+    expect(
+      screen.queryByRole("button", { name: /use your own API key/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/\$30/)).not.toBeInTheDocument();
+  });
+
+  it("routes a member who can't buy credits to an owner instead", () => {
+    openSwarmWall({ _id: "org-active", myRole: "member" }, "daily");
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.queryByRole("button", { name: /buy MCPJam credits/i })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("request-upgrade-mail")).toBeInTheDocument();
+    // The owner guidance is ADDED to the explanation, not swapped for it. A
+    // member asks "my own key is configured, why am I blocked" too.
+    const description = screen.getByTestId("limit-dialog-description");
+    expect(description).toHaveTextContent(/your own API key doesn't cover it/i);
+    expect(description).toHaveTextContent(/resets tomorrow/i);
+    expect(description).toHaveTextContent(/ask an organization owner/i);
+  });
+
+  it("sends Explore MCPJam plans to billing without the topup flag", async () => {
+    const user = userEvent.setup();
+    openSwarmWall({ _id: "org-active", myRole: "owner" });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(
+      screen.getByRole("button", { name: /explore MCPJam plans/i })
+    );
+
+    expect(window.location.pathname).toBe("/organizations/org-active/billing");
+    // Plans sit below credits and payment history; the flag is what scrolls
+    // the page to them. Not `topup`, which opens the purchase dialog instead.
+    expect(window.location.search).toContain("plans=open");
+    expect(window.location.search).not.toContain("topup");
   });
 
   it("redirects to the active org's billing page with the topup flag on CTA click", async () => {

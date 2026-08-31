@@ -485,6 +485,34 @@ function resolveSlug(error: unknown): {
     return { slug: "auth/missing_bearer" };
   }
 
+  // Same shape of problem as the bearer gate above, and the same surface: the
+  // swarm create flow renders `err.message`, so the 429 and its `code` are
+  // gone by the time this runs. Without the pre-check a spent MCPJam
+  // allowance fell through to `internal/unknown` and the card read "Unknown
+  // error", telling the user to file an issue about their own quota.
+  //
+  // The period is read off the limit phrase itself, not from anywhere in the
+  // message: composed copy carries a second sentence about when the allowance
+  // renews, and a loose /monthly/ would classify a daily refusal by it.
+  //
+  // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
+  // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
+  // and this message comes off the wire. Real copy puts one space here.
+  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
+    message,
+  );
+  if (limitPeriod) {
+    return {
+      slug:
+        limitPeriod[1]!.toLowerCase() === "monthly"
+          ? "provider/mcpjam_limit_monthly"
+          : "provider/mcpjam_limit_daily",
+    };
+  }
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
+    return { slug: "provider/mcpjam_limit" };
+  }
+
   // (e) HTTP status field (`statusCode` / `status`).
   const httpStatus = getHttpStatus(error);
   if (httpStatus !== undefined) {

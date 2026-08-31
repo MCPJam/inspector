@@ -38,6 +38,13 @@ export type ErrorCatalogEntry = {
   slug: string; // e.g. "jsonrpc/connection_closed"
   title: string;
   oneLine: string;
+  /**
+   * The count carries meaning: several entries say the evidence does not
+   * settle which one it was, one entry says we know. The error card labels
+   * the section "Likely causes" or "Why this happened" off that, so never pad
+   * a known cause out to a list — it makes the product read as unsure of its
+   * own state.
+   */
   likelyCauses: string[];
   nextSteps: string[];
   /**
@@ -103,6 +110,11 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // is MCPJam's account problem, a BYO key is the user's.
   "provider/auth_error": "user_config",
   "provider/quota": "user_config",
+  // Deliberately NOT credential-owned: MCPJam holds the key, but a spent
+  // allowance is an account state the user resolves, never an outage of ours.
+  "provider/mcpjam_limit": "user_config",
+  "provider/mcpjam_limit_daily": "user_config",
+  "provider/mcpjam_limit_monthly": "user_config",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -651,6 +663,58 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Verify the key in the provider's dashboard.",
     ],
     "provider-auth-error",
+  ),
+  // The backend refuses on one of two allowances and says which in its own
+  // copy, so these are two slugs rather than one that lists both and makes the
+  // reader pick. The unlabelled slug below stays as the net for copy that
+  // names no period.
+  "provider/mcpjam_limit_daily": entry(
+    "provider/mcpjam_limit_daily",
+    "Daily MCPJam limit reached",
+    "This account's free daily MCPJam allowance is spent. It resets tomorrow.",
+    [
+      "Chat, evals and swarm generation all draw on one daily bucket, shared across the organization.",
+    ],
+    [
+      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "Wait for the daily allowance to reset.",
+      // Named precisely because the generic advice costs people an afternoon:
+      // a swarm's generation and persona-driver calls are platform-billed and
+      // have no BYOK path, so adding a key does nothing for them.
+      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+    ],
+    "mcpjam-model-limit-reached",
+    "warning",
+  ),
+  "provider/mcpjam_limit_monthly": entry(
+    "provider/mcpjam_limit_monthly",
+    "Monthly MCPJam credits spent",
+    "This team's monthly MCPJam credits are spent for the current billing period.",
+    [
+      "Team plans draw on one monthly per-seat allowance instead of the daily bucket, and it renews when the billing period does.",
+    ],
+    [
+      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "Wait for the billing period to renew.",
+      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+    ],
+    "mcpjam-model-limit-reached",
+    "warning",
+  ),
+  "provider/mcpjam_limit": entry(
+    "provider/mcpjam_limit",
+    "MCPJam model limit reached",
+    "This account's MCPJam model allowance is spent, so the call was refused before it reached a provider.",
+    [
+      "Chat, evals and swarm generation all draw on the same MCPJam allowance.",
+    ],
+    [
+      "Top up credits or upgrade the plan — the limit dialog offers both.",
+      "Wait for the allowance to reset.",
+      "Add your own key under Settings → LLM Providers for CHAT. Swarm generation and persona turns are always MCPJam-billed.",
+    ],
+    "mcpjam-model-limit-reached",
+    "warning",
   ),
   "provider/quota": entry(
     "provider/quota",

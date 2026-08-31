@@ -2236,4 +2236,101 @@ describe("OrganizationsTab billing", () => {
     expect(window.location.pathname).toBe("/organizations/org-1");
     expect(window.location.hash).toBe("");
   });
+  /**
+   * `?plans=open` is how the swarm limit dialog's "Explore MCPJam plans" link
+   * gets the reader to the plans, which render below credits and payment
+   * history — landing at the top of the page hides the thing they clicked for.
+   */
+  describe("plans deep link", () => {
+    const withScrollSpy = () => {
+      const scrollIntoView = vi.fn();
+      const had = "scrollIntoView" in Element.prototype;
+      const original = Element.prototype.scrollIntoView;
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: scrollIntoView,
+      });
+      const restore = () => {
+        if (had) {
+          Object.defineProperty(Element.prototype, "scrollIntoView", {
+            configurable: true,
+            value: original,
+          });
+        } else {
+          delete (Element.prototype as Partial<Element>).scrollIntoView;
+        }
+      };
+      return { scrollIntoView, restore };
+    };
+
+    it("scrolls to Plans & Billing and consumes the flag", async () => {
+      const { scrollIntoView, restore } = withScrollSpy();
+      try {
+        window.history.replaceState(
+          null,
+          "",
+          "/organizations/org-1/billing?plans=open",
+        );
+
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+        await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+        // One-shot: a reload must not yank the page down again.
+        expect(window.location.search).toBe("");
+      } finally {
+        restore();
+      }
+    });
+
+    it("leaves the page where it is without the flag", async () => {
+      const { scrollIntoView, restore } = withScrollSpy();
+      try {
+        window.history.replaceState(null, "", "/organizations/org-1/billing");
+
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+        await screen.findByText("Plans & Billing");
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        restore();
+      }
+    });
+
+    it("waits for the billing flag to resolve before scrolling", async () => {
+      const { scrollIntoView, restore } = withScrollSpy();
+      try {
+        // PostHog answers `undefined` until the flag loads, so the section the
+        // link points at is not mounted on the first render. Scrolling then
+        // would target nothing and the deep link would silently do nothing.
+        mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+          flag === "billing-entitlements-ui" ? undefined : true,
+        );
+        window.history.replaceState(
+          null,
+          "",
+          "/organizations/org-1/billing?plans=open",
+        );
+
+        const view = render(
+          <OrganizationsTab organizationId="org-1" section="billing" />,
+        );
+
+        expect(screen.queryByText("Plans & Billing")).not.toBeInTheDocument();
+        expect(scrollIntoView).not.toHaveBeenCalled();
+        // Consumed on mount, not when the scroll finally fires: the section is
+        // still absent here. Reading it later would mean a reload between the
+        // two renders replays the jump.
+        expect(window.location.search).toBe("");
+
+        mockUseFeatureFlagEnabled.mockImplementation(() => true);
+        view.rerender(
+          <OrganizationsTab organizationId="org-1" section="billing" />,
+        );
+
+        await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      } finally {
+        restore();
+      }
+    });
+  });
 });

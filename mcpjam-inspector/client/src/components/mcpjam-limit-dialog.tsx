@@ -21,8 +21,37 @@ import { useAppNavigate } from "@/lib/app-navigation";
 import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
+import { AllowanceLimitDialogView } from "@/components/billing/AllowanceLimitDialogView";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
+
+/**
+ * The swarm wall's words, by which allowance ran out. The period itself is
+ * resolved through the SDK error catalog, so this and the error card can never
+ * disagree about what the backend refused — but the wording lives here, where
+ * it can be edited without an SDK change.
+ *
+ * Every variant leads with the BYOK sentence: "I have my own key, why am I
+ * blocked" is the question that filed this bug, and the modal is now the only
+ * thing on screen to answer it.
+ */
+const ALLOWANCE_COPY = {
+  daily: {
+    title: "Daily MCPJam limit reached",
+    description:
+      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's daily allowance resets tomorrow.",
+  },
+  monthly: {
+    title: "Monthly MCPJam credits spent",
+    description:
+      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's monthly credits renew with the billing period.",
+  },
+  unknown: {
+    title: "MCPJam model limit reached",
+    description:
+      "Swarm generation is always billed to MCPJam, so your own API key doesn't cover it. This organization's MCPJam allowance is spent.",
+  },
+} as const;
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
@@ -30,6 +59,8 @@ export function MCPJamLimitDialog() {
   const limitOrganizationId = useMCPJamLimitDialogStore(
     (s) => s.organizationId
   );
+  const limitSurface = useMCPJamLimitDialogStore((s) => s.surface);
+  const limitPeriod = useMCPJamLimitDialogStore((s) => s.period);
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
   const { user, isLoading, signIn } = useAuth();
@@ -48,6 +79,10 @@ export function MCPJamLimitDialog() {
   // and owner-member Convex subscriptions alive for the whole session.
   const showGuestDialog = !user && intent === "guest" && isOpen;
   const showTopupDialog = !!user && intent === "topup" && isOpen;
+  // A swarm gets its own variant of the wall, not just different words: both
+  // the upgrade picker and the BYOK link dead-end there, so neither renders.
+  const isSwarmWall = limitSurface === "swarm";
+  const allowanceCopy = ALLOWANCE_COPY[limitPeriod ?? "unknown"];
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
@@ -170,11 +205,14 @@ export function MCPJamLimitDialog() {
       limit_kind: "credits",
       origin: "credits",
       audience: creditsAudience,
+      surface: limitSurface,
+      // The swarm variant renders no upgrade picker, so reporting "upgrade"
+      // there would name an action that isn't on screen.
       primary_action: isKnownNonManager
         ? requestRecipients.length > 0
           ? "request_owner"
           : "none"
-        : showCreditsUpgrade
+        : showCreditsUpgrade && !isSwarmWall
         ? "upgrade"
         : "buy_credits",
       current_plan: creditsUpgrade.currentPlan,
@@ -201,6 +239,8 @@ export function MCPJamLimitDialog() {
     isKnownNonManager,
     isLoadingOrganizations,
     isLoadingRequestRecipients,
+    isSwarmWall,
+    limitSurface,
     requestRecipients.length,
     showCreditsUpgrade,
     showCreditsUpgradeRequest,
@@ -255,6 +295,33 @@ export function MCPJamLimitDialog() {
       origin: "credits",
       current_plan: creditsUpgrade.currentPlan,
       effective_plan: creditsUpgrade.effectivePlan,
+    });
+  };
+
+  const handleExplorePlans = () => {
+    const orgId = resolveBillingOrgId();
+    // Same guard as `handleTopUp`: without an org there is no billing page to
+    // land on, so keep the dialog up rather than dropping them on nothing.
+    if (!orgId) {
+      track("plan_limit_explore_plans_clicked", {
+        location: "plan_limit_dialog",
+        wall_kind: "organization_credits",
+        organization_id: null,
+        origin: "credits",
+        outcome: "blocked_missing_organization",
+      });
+      return;
+    }
+    close();
+    // Plans render below credits and payment history, so the flag tells the
+    // billing page to scroll to them instead of landing at the top.
+    appNavigate(`/organizations/${orgId}/billing?plans=open`);
+    track("plan_limit_explore_plans_clicked", {
+      location: "plan_limit_dialog",
+      wall_kind: "organization_credits",
+      organization_id: orgId,
+      origin: "credits",
+      outcome: "billing_opened",
     });
   };
 
@@ -326,7 +393,29 @@ export function MCPJamLimitDialog() {
           </DialogContent>
         </Dialog>
       )}
-      {showTopupDialog && (
+      {showTopupDialog && isSwarmWall && (
+        <AllowanceLimitDialogView
+          title={allowanceCopy.title}
+          // A member gets the owner guidance ON TOP of the explanation, not
+          // instead of it: "my own key is configured, why am I blocked" is the
+          // question that filed this bug, and it is not a question only
+          // billing managers ask.
+          description={
+            isKnownNonManager
+              ? `${allowanceCopy.description} ${memberDescription}`
+              : allowanceCopy.description
+          }
+          isKnownNonManager={isKnownNonManager}
+          requestRecipients={isBillingReady ? requestRecipients : []}
+          organizationId={billingOrgId}
+          organizationName={creditsUpgrade.organizationName}
+          teamName={creditsUpgrade.teamName}
+          onBuyCredits={handleTopUp}
+          onExplorePlans={handleExplorePlans}
+          onDismiss={handleCreditsDismiss}
+        />
+      )}
+      {showTopupDialog && !isSwarmWall && (
         <CreditsLimitDialogView
           description={
             isKnownNonManager
