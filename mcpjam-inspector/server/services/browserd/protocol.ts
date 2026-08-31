@@ -34,6 +34,42 @@ export type BrowserCommandSource = "manual" | "chat" | "inspector" | "eval";
  */
 export const DEFAULT_QUEUE_KEY = "@session";
 
+/**
+ * The canonical model-facing coordinate space (L5), and part of the WIRE
+ * CONTRACT rather than a launch detail — which is why it lives here and not
+ * beside the Chromium switches that happen to configure it.
+ *
+ * Three independent places have to agree on it: the context Playwright is
+ * launched with, the daemon's bounds check on an incoming `act`, and the tool
+ * schema the model is handed. A screenshot is captured at this size and every
+ * coordinate a caller sends is read in this space, origin top-left, in CSS
+ * pixels — so a second copy of these numbers is a silently mis-aimed click.
+ */
+export const BROWSERD_OBSERVATION_VIEWPORT = {
+  width: 1024,
+  height: 768,
+} as const;
+
+/**
+ * Is a point inside the model-facing viewport?
+ *
+ * An out-of-range coordinate must be REFUSED, never clamped and never
+ * dispatched: Chromium happily delivers a mouse event outside the viewport,
+ * it lands on nothing, and the caller gets back an ordinary "here is the page
+ * after your action" — a no-op that is indistinguishable from a click that
+ * hit a dead area. Refusing is the only version the model can recover from.
+ */
+export function isPointInViewport(x: number, y: number): boolean {
+  return (
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    x >= 0 &&
+    y >= 0 &&
+    x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 &&
+    y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1
+  );
+}
+
 /** A selector target for a `browser_act` verb. */
 export type BrowserActTarget =
   | { coordinates: [number, number] }
@@ -92,6 +128,18 @@ export type BrowserAction =
         | "console"
         | "url"
         | "webmcp_tools";
+      /**
+       * `a11y` only: scope the tree to the element this CSS selector matches,
+       * instead of the whole page.
+       *
+       * This is the retrieval verb the L9 omission marker names. When the
+       * budget drops a subtree it tells the caller to re-observe with
+       * `{mode:"a11y", rootSelector:"<selector>"}`; without this field that
+       * instruction would point at a parameter that does not exist, and an
+       * omitted subtree would be unrecoverable — which is worse than
+       * truncating, because the marker promises otherwise.
+       */
+      rootSelector?: string;
     }
   | { kind: "webmcp_invoke"; toolKey: string; input: unknown }
   | { kind: "webmcp_cancel"; invocationId: string };

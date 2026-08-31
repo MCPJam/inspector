@@ -42,6 +42,12 @@ export interface BootBrowserdOptions {
   windowSize?: string;
   headless?: boolean;
   readyTimeoutMs?: number;
+  /**
+   * `ephemeral` boots the daemon with NO persistent profile, so an eval or
+   * swarm iteration cannot inherit the previous one's cookies. Defaults to
+   * the persistent profile a playground login depends on.
+   */
+  contextMode?: "persistent" | "ephemeral";
 }
 
 export interface BrowserdHandle {
@@ -88,6 +94,9 @@ function buildEnv(bearer: string, options: BootBrowserdOptions): Record<string, 
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";
+  if (options.contextMode === "ephemeral") {
+    env.MCPJAM_BROWSERD_EPHEMERAL = "true";
+  }
   return env;
 }
 
