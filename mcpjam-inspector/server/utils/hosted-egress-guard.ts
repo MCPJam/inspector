@@ -79,7 +79,7 @@ export function isBlockedEgressHost(
   // strip it before judging, or `http://metadata.google.internal./` walks past
   // the alias check.
   host = host.replace(/\.+$/, "");
-  if (!host) return false;
+  if (!host) return true;
 
   // Cloud metadata DNS aliases (they resolve to link-local, but block the
   // names too in case resolution is bypassed).
