@@ -2269,7 +2269,7 @@ describe("OrganizationsTab billing", () => {
         window.history.replaceState(
           null,
           "",
-          "/organizations/org-1/billing?plans=open"
+          "/organizations/org-1/billing?plans=open",
         );
 
         render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -2303,24 +2303,28 @@ describe("OrganizationsTab billing", () => {
         // link points at is not mounted on the first render. Scrolling then
         // would target nothing and the deep link would silently do nothing.
         mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-          flag === "billing-entitlements-ui" ? undefined : true
+          flag === "billing-entitlements-ui" ? undefined : true,
         );
         window.history.replaceState(
           null,
           "",
-          "/organizations/org-1/billing?plans=open"
+          "/organizations/org-1/billing?plans=open",
         );
 
         const view = render(
-          <OrganizationsTab organizationId="org-1" section="billing" />
+          <OrganizationsTab organizationId="org-1" section="billing" />,
         );
 
         expect(screen.queryByText("Plans & Billing")).not.toBeInTheDocument();
         expect(scrollIntoView).not.toHaveBeenCalled();
+        // Consumed on mount, not when the scroll finally fires: the section is
+        // still absent here. Reading it later would mean a reload between the
+        // two renders replays the jump.
+        expect(window.location.search).toBe("");
 
         mockUseFeatureFlagEnabled.mockImplementation(() => true);
         view.rerender(
-          <OrganizationsTab organizationId="org-1" section="billing" />
+          <OrganizationsTab organizationId="org-1" section="billing" />,
         );
 
         await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
