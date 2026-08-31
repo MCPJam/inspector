@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-08-31
+
+#### Changed
+
+- **Public score runner redesign** — the score runner landing page has been rebuilt with a new design. After you paste a public MCP server URL and click **Score this server**, you are now prompted for an email address before the scan starts. The scorecard is delivered to that address once the run completes. The email is preserved across OAuth redirects, so servers that require authorization before scanning still collect it. Legacy OAuth resume records that predate the email step are kept on the email prompt rather than bypassing it. The featured scores section on the landing page now shows real MCP endpoints (Linear, GitHub Copilot, Notion), and each row populates the URL field when clicked. URL examples default to Streamable HTTP at `/mcp`.
+
 ### 2026-06-26
 
 #### Added
