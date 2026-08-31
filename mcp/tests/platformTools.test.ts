@@ -126,6 +126,7 @@ const PLAIN_TOOLS = [
   // Server live operations are agent-oriented payloads with no widget view.
   "connect_project_server",
   "get_project_server_connection_status",
+  "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
@@ -387,6 +388,7 @@ describe("platform tool registration", () => {
       "delete_project_server",
       "connect_project_server",
       "get_project_server_connection_status",
+      "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -560,6 +562,10 @@ describe("platform tool registration", () => {
       fakeToolContext({ bearerToken: "jwt" })
     );
 
+    // Writes whose handler is a no-op when the work is already done, so a
+    // client may safely repeat one after a dropped response.
+    const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
+
     const NON_DESTRUCTIVE_WRITES = new Set([
       // Starting dials a third party's server and can spend; cancelling stops
       // one. Neither destroys a record, so both annotate as plain writes.
@@ -692,7 +698,17 @@ describe("platform tool registration", () => {
     ]);
 
     for (const registration of registrations) {
-      if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
+      if (IDEMPOTENT_WRITES.has(registration.name)) {
+        // A write that can be repeated. Cancelling an already-cancelled request
+        // is a no-op on the backend, so a client that retries a dropped
+        // response lands on the state the first call produced — and NOT saying
+        // so would leave a lost cancel holding a connection slot.
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        });
+      } else if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: false,

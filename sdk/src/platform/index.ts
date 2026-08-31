@@ -476,6 +476,7 @@ export {
   showServersOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
   updateClientOperation,
