@@ -66,6 +66,7 @@ import { HostChip } from "@/components/hosts/host-chip";
 import {
   RunAccuracyHeroBand,
   RunInsightRail,
+  runHasInsightContent,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
 } from "./run-insight-rail";
@@ -852,13 +853,13 @@ export function RunDetailView({
    * is why it was excluded from these checks in the first place, and why the
    * fix has to be data-driven rather than a matter of adding the node.
    */
-  const hasInsightContent = Boolean(
-    serverQualityTriage ||
-      goalCompletionPanel ||
-      groundednessPanel ||
-      actionableFindingsPanel ||
-      hasStageFunnel,
-  );
+  const hasInsightContent = runHasInsightContent({
+    serverQualityTriage,
+    goalCompletionPanel,
+    groundednessPanel,
+    actionableFindingsPanel,
+    hasStageFunnel,
+  });
 
   const triageFixCount = useMemo(
     () =>
