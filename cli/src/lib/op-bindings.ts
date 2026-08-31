@@ -217,6 +217,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
   },
+  list_project_skills: { command: "cloud skills list" },
+  get_project_skill: { command: "cloud skills get" },
   list_sandbox_images: { command: "cloud images list" },
   get_sandbox_image: { command: "cloud images get" },
   create_sandbox_image: { command: "cloud images create" },
@@ -279,6 +281,18 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   read_server_resource: {
     excluded:
       "`resources read` connects to the server directly, so it works without a project or an API key.",
+  },
+  list_server_skills: {
+    excluded:
+      "`skills list` connects to the server directly, so it works without a project or an API key.",
+  },
+  get_server_skill: {
+    excluded:
+      "`skills get` connects to the server directly, so it works without a project or an API key.",
+  },
+  read_server_skill_file: {
+    excluded:
+      "`skills read` connects to the server directly, so it works without a project or an API key.",
   },
   diagnose_server: {
     excluded:

@@ -31,6 +31,7 @@ import {
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 import { SessionInsightBar } from "@/components/scenarios/session-readiness";
+import { SessionUserValueChain } from "@/components/shared/user-value-chain/SessionUserValueChain";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import {
@@ -484,6 +485,12 @@ export function ShareUsageThreadDetail({
           {thread.readiness ? (
             <SessionInsightBar readiness={thread.readiness} />
           ) : null}
+          {/* Same reasoning as the main body: a transcript-less attempt is
+              exactly where an unmeasured chain is the honest answer. */}
+          <SessionUserValueChain
+            derivation={thread.stageDerivation}
+            className="mx-3 mb-3"
+          />
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
           {/* A transcript-less attempt is exactly where a runner failure
               shows up, so the checks block belongs on this shell too. */}
@@ -642,6 +649,15 @@ export function ShareUsageThreadDetail({
       {thread.readiness ? (
         <SessionInsightBar readiness={thread.readiness} />
       ) : null}
+
+      {/* D8: the chain EXPLAINS the outcome the surfaces above decided; it
+          never replaces one. Rendered unconditionally so a session with no
+          chain says "not measured" rather than vanishing — a panel that hides
+          itself when there is nothing reads as "nothing to report". */}
+      <SessionUserValueChain
+        derivation={thread.stageDerivation}
+        className="mx-3 mb-3"
+      />
 
       {/* Swarm-only: render before the first score exists so deployments with
           automatic judging disabled still expose the on-demand entry point. */}

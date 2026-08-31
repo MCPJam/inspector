@@ -61,6 +61,7 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import { shutdownWebMcpSessions } from "./services/webmcp-inspector/session-registry";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
@@ -92,7 +93,7 @@ process.on("unhandledRejection", (reason, _promise) => {
       // only clue to what fired (emit stringifies it for Axiom).
       error: reason,
       sentry: true,
-    }
+    },
   );
 });
 
@@ -104,7 +105,7 @@ process.on("uncaughtException", (error) => {
   sysLogger.event(
     "process.uncaught_exception",
     { errorCode: error instanceof Error ? error.name : "unknown" },
-    { error }
+    { error },
   );
 });
 
@@ -125,7 +126,7 @@ function logBox(content: string, title?: string) {
         " ".repeat(titlePadding) +
         title +
         " ".repeat(width - title.length - titlePadding) +
-        "│"
+        "│",
     );
     console.log("├" + "─".repeat(width) + "┤");
   }
@@ -152,6 +153,9 @@ import {
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
+import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
@@ -179,6 +183,11 @@ import {
   startProductionChecksWorker,
   type ProductionChecksWorkerHandle,
 } from "./services/production-checks-worker";
+import {
+  isBenchWorkerEnabled,
+  startBenchWorker,
+  type BenchWorkerHandle,
+} from "./services/bench-worker";
 import {
   SERVER_PORT,
   CORS_ORIGINS,
@@ -225,7 +234,7 @@ function getMCPConfigFromEnv() {
               headers: serverConfig.headers, // Custom headers for HTTP
               useOAuth: serverConfig.useOAuth, // Trigger OAuth flow
             };
-          }
+          },
         );
 
         // Check for auto-connect server filter
@@ -367,7 +376,7 @@ const strictModeResponse = (c: any, path: string) =>
       code: "FEATURE_NOT_SUPPORTED",
       message: `${path} is disabled in hosted mode`,
     },
-    410
+    410,
   );
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
@@ -402,7 +411,7 @@ const mcpClientManager = new MCPClientManager(
     cacheEventLogger,
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
-  }
+  },
 );
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
@@ -451,7 +460,7 @@ if (enableHttpLogs) {
     "*",
     logger((message) => {
       appLogger.info(scrubTokenFromUrl(message));
-    })
+    }),
   );
 }
 app.use(
@@ -459,7 +468,7 @@ app.use(
   cors({
     origin: CORS_ORIGINS,
     credentials: true,
-  })
+  }),
 );
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
@@ -495,13 +504,32 @@ app.route("/api/internal/server-connections", internalServerConnections);
 // no-ops at `off`/`shadow`, because the backend rings this on every judge save
 // without consulting the flag. Mirror of the mount in server/app.ts.
 app.route("/api/internal/evals", internalEvalJudgeCompletions);
+// Backend → inspector doorbell for a chat session whose chain inputs moved.
+// Same service-token gate and the same body-carries-no-authority rule as the
+// judge doorbell above — the ring is a wake-up, and the pass claims from the
+// backend's own queue rather than from anything the caller named.
+app.route("/api/internal/chat-stage", internalChatStageDerivations);
+// W1 hosted-browser debug probe — mounted only when explicitly enabled (it
+// provisions a desktop and boots browserd end to end), service-token gated.
+// Mirror of the mount in server/app.ts.
+if (process.env.COMPUTER_BROWSER_DEBUG_ENABLED === "1") {
+  app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
+}
 app.route("/api/web", webRoutes);
+// Browser Panel data plane (W4): watch the browser an agent is driving, and
+// take control when a login or a challenge needs a person. Auth is the
+// Convex-minted browser token, so it is mounted like the other computer
+// routes rather than inside the web router's session auth. Dark until the
+// W7 exposure gate: the panel is only reachable once a desktop computer
+// exists, and nothing links to it yet. Mirror of the mount in server/app.ts.
+app.route("/api/web/computers/browser", computerBrowserPanel);
+
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;
 // auth is the Convex-minted terminal token (see routes/web/computer-terminal).
 app.get(
   "/api/web/computers/terminal",
-  createComputerTerminalWsHandler(upgradeWebSocket)
+  createComputerTerminalWsHandler(upgradeWebSocket),
 );
 // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted —
 // a hosted server must have no path at all to a local PTY. Auth is the
@@ -509,7 +537,7 @@ app.get(
 if (!HOSTED_MODE) {
   app.get(
     "/api/web/computers/local-terminal",
-    createLocalComputerTerminalWsHandler(upgradeWebSocket)
+    createLocalComputerTerminalWsHandler(upgradeWebSocket),
   );
 }
 // Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
@@ -522,10 +550,10 @@ app.post(
     onError: (c) =>
       c.json(
         { ok: false, error: "Upload exceeds the 30MB request limit." },
-        413
+        413,
       ),
   }),
-  createComputerUploadHandler()
+  createComputerUploadHandler(),
 );
 
 // Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same
@@ -541,9 +569,9 @@ app.use(
           code: "VALIDATION_ERROR",
           message: "Request body exceeds 1MB limit",
         },
-        400
+        400,
       ),
-  })
+  }),
 );
 app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
@@ -622,11 +650,11 @@ app.get("/api/session-token", (c) => {
     appLogger.warn(
       `[Security] Token request denied - non-allowed Host: ${
         forwardedHost || host
-      }`
+      }`,
     );
     return c.json(
       { error: "Token only available via localhost or allowed hosts" },
-      403
+      403,
     );
   }
 
@@ -703,11 +731,11 @@ if (process.env.NODE_ENV === "production") {
       if (CANIUSE_LANDING_HOSTS.has(landingHost)) {
         htmlContent = htmlContent.replace(
           DEFAULT_DOCUMENT_TITLE_TAG,
-          getCaniuseTitleTag()
+          getCaniuseTitleTag(),
         );
         htmlContent = htmlContent.replace(
           "</head>",
-          `${getCaniuseMetaTagsHtml()}</head>`
+          `${getCaniuseMetaTagsHtml()}</head>`,
         );
       }
 
@@ -733,7 +761,7 @@ if (process.env.NODE_ENV === "production") {
       } else {
         // Non-allowed host access - no token (security measure)
         appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`
+          `[Security] Token not injected - non-allowed Host: ${host}`,
         );
         const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
@@ -743,7 +771,7 @@ if (process.env.NODE_ENV === "production") {
       if (runtimeConfigScript) {
         htmlContent = htmlContent.replace(
           "</head>",
-          `${runtimeConfigScript}</head>`
+          `${runtimeConfigScript}</head>`,
         );
       }
 
@@ -751,15 +779,15 @@ if (process.env.NODE_ENV === "production") {
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
         const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
-          mcpConfig
+          mcpConfig,
         )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
 
       // Guest bootstrap blob: mint a guest bearer server-side and inject it so
       // a cold guest boots with a token already in hand (no render-blocking
-      // POST /api/web/guest-session). Gated on production + hosted + not
-      // locked-down + a host allowlist that includes the hosted app host(s)
+      // POST /api/web/guest-session). Gated on production + hosted + a host
+      // allowlist that includes the hosted app host(s)
       // (mayServeGuestBootstrap), mirroring the session-token discipline.
       //
       // Wrapped in its OWN try/catch so a mint failure never 500s the
@@ -768,7 +796,6 @@ if (process.env.NODE_ENV === "production") {
       if (
         process.env.NODE_ENV === "production" &&
         HOSTED_MODE &&
-        process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
         mayServeGuestBootstrap({
           host,
           forwardedHost,
@@ -783,7 +810,7 @@ if (process.env.NODE_ENV === "production") {
             const bootstrapScript = buildGuestBootstrapScript(session);
             htmlContent = htmlContent.replace(
               "</head>",
-              `${bootstrapScript}</head>`
+              `${bootstrapScript}</head>`,
             );
             for (const cookie of setCookies) {
               appendGuestSessionSetCookie(c, cookie);
@@ -792,7 +819,7 @@ if (process.env.NODE_ENV === "production") {
         } catch (error) {
           appLogger.warn(
             "[guest-bootstrap] document mint failed; serving without blob",
-            { error: error instanceof Error ? error.message : String(error) }
+            { error: error instanceof Error ? error.message : String(error) },
           );
         }
       }
@@ -871,6 +898,15 @@ if (isGithubChecksWorkerEnabled()) {
   githubChecksWorker = startGithubChecksWorker();
 }
 
+// Hosted Connector Bench runs: claim a benchmark job, run one eval child per
+// matrix cell against the run's pinned server, attach the evidence. Env-gated;
+// the backend has its own BENCHMARK_RUNS_ENABLED gate and 404s the routes when
+// it is off, which parks this loop on a slow poll.
+let benchWorker: BenchWorkerHandle | undefined;
+if (isBenchWorkerEnabled()) {
+  benchWorker = startBenchWorker();
+}
+
 // Production scoring: claim-and-grade polling loop for real User Testing
 // sessions. Started unconditionally and deliberately flagless — it self-gates
 // on the service-token env (a non-peer deployment gets an inert handle), and
@@ -881,7 +917,7 @@ const productionChecksWorker: ProductionChecksWorkerHandle =
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
-  10
+  10,
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
@@ -891,7 +927,7 @@ const logFlushExitMs = 1000;
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs
+    logFlushExitMs,
   );
   exitFallbackTimer.unref();
 
@@ -916,7 +952,7 @@ async function shutdown() {
   const forceExitTimer = setTimeout(() => {
     appLogger.error(
       "Shutdown timed out; forcing process exit.",
-      new Error("Shutdown timed out; forcing process exit.")
+      new Error("Shutdown timed out; forcing process exit."),
     );
     exitAfterLogFlush(1);
   }, shutdownForceExitMs);
@@ -935,6 +971,7 @@ async function shutdown() {
     // shutdown rather than skipping straight to the force-exit deadline.
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
+    await benchWorker?.stop();
     await productionChecksWorker.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
@@ -947,6 +984,10 @@ async function shutdown() {
     // does NOT tear down established sockets, so a live shell would otherwise
     // outlive the inspector.
     shutdownLocalComputerTerminals();
+    // Also before server.close(), and awaited: a WebMCP session owns a real
+    // Chromium — a visible window when it is headed — and a fire-and-forget
+    // teardown loses the race against the process.exit(0) below.
+    await shutdownWebMcpSessions();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

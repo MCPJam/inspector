@@ -15,6 +15,8 @@ import type {
 } from "../contract/types.js";
 import type {
   EvalRunDecisionSummary,
+  EvalStageAnalyticsV1,
+  EvalSuiteFileCaseImport,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
@@ -33,6 +35,23 @@ import type {
  * recreate exactly the drift this lane removed.
  */
 export type PlatformEvalRunDecisionSummary = EvalRunDecisionSummary;
+
+/**
+ * One item of
+ * `GET /projects/{p}/eval-suites/{suiteId}/stage-analytics` — one RUN's
+ * complete materialized stage-analytics document.
+ *
+ * An ALIAS, for the same reason the decision summary is one: the shape is owned
+ * by `@mcpjam/sdk/contract` (`evalStageAnalyticsSchema`), and re-declaring it
+ * here would produce two hand-mirrored descriptions of one contract that drift
+ * the first time a field is added.
+ *
+ * Rates are NOT on this object. It carries counts, and every rate is derived by
+ * the contract's own helpers (`measuredPassRate`, `measurementCoverageRate`,
+ * `reachRate`, `latencyMeanMs`) so a zero denominator stays `notMeasured`
+ * instead of becoming a `0%` nobody can act on.
+ */
+export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -732,6 +751,15 @@ export interface PlatformEvalRun {
    * predate the envelope.
    */
   judges?: PlatformEvalRunJudges;
+  /**
+   * Whether this run's imported cases carry evidence a gate may rely on.
+   *
+   * ABSENT means an API deployment that predates import eligibility — a
+   * different fact from `legacy`, and one a gate must treat as "no opinion,
+   * behave as before" rather than as "no imported cases". Present on the
+   * detail response; lists stay compact.
+   */
+  importEligibility?: PlatformImportEligibility;
 }
 
 /**
@@ -791,6 +819,16 @@ export interface PlatformEvalRunJudgeCase {
    * not join it against the ids the per-case routes take.
    */
   caseKey: string;
+  /**
+   * The iteration this case graded — the join key between a judge case and
+   * the iterations the run returns, since `caseKey` is a storage key and
+   * joins to nothing.
+   *
+   * Optional because judge results written before it was persisted carry
+   * none: a caller must be able to tell "this run predates the join key"
+   * from a value it could act on.
+   */
+  iterationId?: string;
   score: number | null;
   passed: boolean;
   reason: string | null;
@@ -1405,6 +1443,8 @@ export interface PlatformEvalCase {
    */
   declaredId?: string;
   title: string;
+  /** Optional authored analytics grouping label; absent is unlabelled. */
+  intent?: string;
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;
@@ -1434,8 +1474,90 @@ export interface PlatformEvalCase {
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
   checks?: PublicCheckOverride;
+  /**
+   * The converter's CLAIM about this case, when it was imported rather than
+   * authored here. ABSENT means natively authored — a different fact from
+   * "imported, faithfulness unknown", and one nothing downstream can recover
+   * once the two are conflated.
+   */
+  import?: PlatformEvalCaseImportClaim;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * What a converter CLAIMED about one imported case.
+ *
+ * `exact` is CONVERTER-CLAIMED exact: the converter says it applied a
+ * structural mapping rule, cited in `note`. MCPJam has NOT verified semantic
+ * equivalence and this field is not evidence that it did — user-facing copy
+ * must say "claimed exact", never "verified" or "accepted".
+ *
+ * Claim-only in both directions. Who approved an approximation, when, and why
+ * is a PER-RUN decision that lives on the run's frozen snapshot
+ * ({@link PlatformImportApprovalReceipt}), never on the case: an approval
+ * stored on a case would outlive the run it was granted for and the edit that
+ * invalidated it.
+ *
+ * ALIASED to the suite-file contract's own type rather than restated. A claim a
+ * converter writes into a file is exactly a claim the API carries, so a second
+ * spelling here is only an opportunity for the two to disagree about what a
+ * claim is — and the disagreement would surface at somebody's ingest, not ours.
+ */
+export type PlatformEvalCaseImportClaim = EvalSuiteFileCaseImport;
+
+/**
+ * One frozen approval of an approximated import, as the run recorded it.
+ *
+ * Every field here was written by the SERVER at launch. The launcher supplied
+ * a case id and a reason; the actor and the timestamp were derived, and the
+ * whole record was frozen into the run's own case snapshot. Reading it back
+ * therefore tells you what was true at launch, which is the only question a
+ * receipt can honestly answer — never what the case's current claim says.
+ */
+export interface PlatformImportApprovalReceipt {
+  testCaseId: string;
+  caseKey?: string;
+  sourceCaseKey?: string;
+  approvedBy: string;
+  approvedAt: number;
+  reason: string;
+}
+
+/** One reason a run's import evidence is incomplete. */
+export interface PlatformImportEligibilityIssue {
+  /** Stable machine-readable code from the platform. */
+  code: string;
+  testCaseId?: string;
+  caseKey?: string;
+  toolName?: string;
+}
+
+/**
+ * Whether a run's imported cases carry evidence a gate may rely on.
+ *
+ * Computed by the platform from the run's OWN frozen snapshot, never from the
+ * suite's current cases — those can be edited after the run, and recomputing
+ * from them would let an edit retroactively change what a finished run is
+ * allowed to prove.
+ *
+ * The three states are not two:
+ *
+ *   - `legacy` — the run contains no imported cases at all. Every pre-import
+ *     run, and every native run forever. Gateable, behaviour unchanged.
+ *   - `eligible` — imported cases, every one carrying a valid frozen decision.
+ *   - `incomplete` — imported evidence that cannot be trusted. NOT a failure:
+ *     the run is simply not gateable, and reporting it as a failed verdict
+ *     would describe a server defect the run never observed.
+ */
+export interface PlatformImportEligibility {
+  status: "legacy" | "eligible" | "incomplete";
+  gateable: boolean;
+  importedCaseCount: number;
+  claimedExactCaseIds: string[];
+  approvedApproximationCaseIds: string[];
+  approvedApproximationReceipts: PlatformImportApprovalReceipt[];
+  issues: PlatformImportEligibilityIssue[];
 }
 
 /** A note about a batch write that changes nothing about what was written. */
@@ -1659,7 +1781,66 @@ export interface PlatformRunCompare {
     estimatedCostUsd: PlatformNumericDiff;
   };
   scoreContract: PlatformScoreContractDiff;
+  /**
+   * Which skills changed between the two runs — the configuration attribution
+   * that usually explains the case-level differences beside it.
+   *
+   * Three states, and they mean different things:
+   *   - a section — these skills changed (or none did, with a count);
+   *   - `null` — NEITHER run recorded pinned skills, so there is nothing to
+   *     say; an empty section would claim no skills were involved;
+   *   - ABSENT — the deployment answering predates skill attribution entirely.
+   *     Optional for that reason: a client cannot assume every backend it talks
+   *     to has this, and a required field would make old responses unusable.
+   */
+  skills?: PlatformRunCompareSkills | null;
   cases: PlatformRunCompareCase[];
+}
+
+/** Delivery channel a pinned skill reached a run through. */
+export type PlatformRunCompareSkillChannel =
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
+
+/** One skill's identity + content fingerprint on one side of a comparison. */
+export interface PlatformRunCompareSkillSide {
+  contentHash: string;
+  /** Complete-artifact hash; present only when supporting files diverge it. */
+  aggregateHash?: string;
+  /** Authored-skill revision, when the run recorded one. */
+  versionNumber?: number;
+  /** MCP-captured revision, when the run recorded one. */
+  serverSkillVersionNumber?: number;
+}
+
+export interface PlatformRunCompareSkillChange {
+  /** Stable match key; opaque, safe for list keys and dedupe. */
+  key: string;
+  name: string;
+  /** Namespaced runtime address for a plugin-channel skill. */
+  modelRef?: string;
+  channels: PlatformRunCompareSkillChannel[];
+  kind: "added" | "removed" | "changed";
+  /** Renamed between the runs — matched as ONE skill by its logical id. */
+  renamedFrom?: string;
+  base?: PlatformRunCompareSkillSide;
+  compare?: PlatformRunCompareSkillSide;
+  /**
+   * `v3 → v4`, present only when BOTH sides recorded a revision number. A
+   * change with no delta is a real content change whose revisions are unknown
+   * (one side predates versioning) — not a smaller change.
+   */
+  versionDelta?: string;
+}
+
+export interface PlatformRunCompareSkills {
+  base: { excluded: boolean; count: number };
+  compare: { excluded: boolean; count: number };
+  /** Added / removed / changed only, changed first. Unchanged are counted. */
+  changes: PlatformRunCompareSkillChange[];
+  unchangedCount: number;
 }
 
 export interface PlatformEvalSuiteDeleted {
@@ -1793,6 +1974,21 @@ export interface PlatformHostDeleted {
 export interface PlatformEnvironmentSkillSelection {
   mode: "explicit";
   skillIds: string[];
+  /**
+   * EXACT-version overlay. At most one entry per selected skill; a selected
+   * skill with no entry resolves "Latest" — its current revision, read when the
+   * run starts, which is what every environment did before pins existed and
+   * what omitting this field still means.
+   *
+   * Pin a version to hold an environment at a known revision — the way two
+   * environments run two revisions of one skill side by side for a comparison.
+   */
+  versionPins?: PlatformEnvironmentSkillVersionPin[];
+}
+
+export interface PlatformEnvironmentSkillVersionPin {
+  skillId: string;
+  versionId: string;
 }
 
 export interface PlatformEnvironment {
@@ -2024,6 +2220,48 @@ export interface PlatformEnvironmentResolved {
   /** The environment's sandbox-image pin, when set (and the backend is new
    *  enough to carry it through the resolve). */
   sandboxImageId?: string;
+}
+
+// ── Cloud Skills ─────────────────────────────────────────────────────────────
+//
+// An authored SKILL.md stored in Convex. Environments pin them by id
+// (`skillSelection.skillIds`) and eval runs pin them with `--compose-skill`,
+// so the id is the load-bearing value — and this READ-ONLY surface is the only
+// programmatic way to obtain one. Authoring stays on the app's `/api/web`
+// surface behind the `skills-enabled` beta gate.
+
+/** Why a skill cannot be pinned into an environment's `skillSelection`. */
+export type PlatformSkillPinnability =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/** One skill visible to the caller: project-shared, or their own draft. */
+export interface PlatformProjectSkill {
+  id: string;
+  projectId: string;
+  /** Load-bearing identity: the on-box dir name and `loadSkill(name)` arg. */
+  name: string;
+  description: string;
+  /** `project` = shared with the org (the only kind an environment may pin). */
+  sharing: "user" | "project";
+  isOwner: boolean;
+  /** Drift key folding in the body and any supporting files. */
+  aggregateHash: string;
+  provenance?: string;
+  /**
+   * Whether this skill may be pinned. Absent on older backends — treat absent
+   * as UNKNOWN, never as `{ok:true}`: a skill with supporting files or extra
+   * frontmatter is rejected at save time, and guessing would just move the
+   * failure later.
+   */
+  pinnability?: PlatformSkillPinnability;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One skill with its SKILL.md body (frontmatter stripped). */
+export interface PlatformProjectSkillDetail extends PlatformProjectSkill {
+  content: string;
 }
 
 // ── Agent Plugins ────────────────────────────────────────────────────────────

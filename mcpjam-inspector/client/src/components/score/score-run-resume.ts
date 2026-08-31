@@ -19,16 +19,17 @@ const TTL_MS = 15 * 60_000;
 export interface ScoreRunResumeRecord {
   serverUrl: string;
   serverName: string;
+  deliveryEmail?: string;
   startedAt: number;
 }
 
 export function writeScoreRunResume(
-  record: Omit<ScoreRunResumeRecord, "startedAt">
+  record: Omit<ScoreRunResumeRecord, "startedAt">,
 ): void {
   try {
     sessionStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ ...record, startedAt: Date.now() })
+      JSON.stringify({ ...record, startedAt: Date.now() }),
     );
   } catch {
     // Storage unavailable (private mode, quota). The run is simply not
@@ -57,9 +58,13 @@ export function readScoreRunResume(): ScoreRunResumeRecord | null {
     return {
       serverUrl: parsed.serverUrl,
       serverName: parsed.serverName,
+      ...(typeof parsed.deliveryEmail === "string"
+        ? { deliveryEmail: parsed.deliveryEmail }
+        : {}),
       startedAt: parsed.startedAt,
     };
   } catch {
+    clearScoreRunResume();
     return null;
   }
 }

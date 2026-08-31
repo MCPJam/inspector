@@ -346,6 +346,32 @@ export const createSuiteRunRecorder = ({
 // for why both callers must send the identical list, and why a route must not
 // import this one to get it.
 
+/**
+ * Run origin, PAIRED WITH THE PROOF that the caller may write it.
+ *
+ * `'benchmark'` is not a label like the others: a run carrying it is dropped
+ * from every project list and never notifies, so asserting it is a way to bury
+ * a run teammates should see. The backend therefore stopped taking it on trust
+ * (`convex/testSuites.ts`, `requireBenchmarkRunForHiddenSource`) — it now wants
+ * the `benchmarkRunId` of the live parent the caller can already reach, and
+ * refuses a missing or terminal one.
+ *
+ * Expressed as a UNION rather than a pair of independent optionals so the
+ * requirement is a type error here instead of a `FORBIDDEN` from Convex after
+ * the child has already been dispatched. The other sources cannot carry an id
+ * at all (`never`): it is meaningless without the hidden source, and a caller
+ * that sends one is confused about which of the two run ids it holds.
+ *
+ * ONE definition, shared with the request type in `routes/shared/evals.ts`, so
+ * the invariant cannot hold at the route boundary and lapse at the wire.
+ */
+export type EvalRunProvenance =
+  | {
+      source?: "ui" | "api" | "schedule" | "github_check";
+      benchmarkRunId?: never;
+    }
+  | { source: "benchmark"; benchmarkRunId: string };
+
 export const startSuiteRunWithRecorder = async ({
   convexClient,
   suiteId,
@@ -367,11 +393,13 @@ export const startSuiteRunWithRecorder = async ({
   expectedEnvironmentHostConfigId,
   expectedEnvironmentServerIds,
   source,
+  benchmarkRunId,
   idempotencyKey,
   sourceHash,
   skillsOverride,
   ephemeralEnvironment,
-}: {
+  importApprovals,
+}: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
   suiteId: string;
   notes?: string;
@@ -456,13 +484,10 @@ export const startSuiteRunWithRecorder = async ({
    * projection — the backend re-derives the stored set to compare.
    */
   expectedEnvironmentServerIds?: string[];
-  /**
-   * Run origin persisted on `testSuiteRun.source` for audit attribution.
-   * Omitted means 'ui' (backend default); the public /api/v1 surface
-   * passes 'api'; the scheduled-evals worker passes 'schedule'; the
-   * GitHub-checks worker passes 'github_check'.
-   */
-  source?: "ui" | "api" | "schedule" | "github_check";
+  // `source` (and the `benchmarkRunId` that licenses the hidden one) come
+  // from {@link EvalRunProvenance}, intersected above — the two are one fact,
+  // and declaring them here as independent optionals is what let the bench
+  // worker send the source without the id.
   /**
    * Forwarded to `startTestSuiteRun.idempotencyKey` so retried triggers
    * (scheduled-run claim retries) can never double-create a run. Absent on
@@ -487,6 +512,20 @@ export const startSuiteRunWithRecorder = async ({
    * is not a suite member. Forwarded to `startTestSuiteRun`.
    */
   ephemeralEnvironment?: boolean;
+  /**
+   * Per-run approval of `approximated` imported cases, by hosted test-case id.
+   *
+   * Forwarded to `startTestSuiteRun.importApprovals`, which validates them
+   * against the cases this run will actually execute, derives the approver
+   * from the authenticated launcher, stamps the time, and freezes the
+   * resulting decision into the run's own case snapshot. Nothing here is
+   * persisted on the case: a later run needs a new approval.
+   *
+   * Must be declared here or a reconstruction of the mutation args would
+   * silently drop it — and a dropped approval surfaces to the caller as the
+   * backend refusing a run they did approve.
+   */
+  importApprovals?: Array<{ testCaseId: string; reason: string }>;
 }) => {
   let response: any;
   try {
@@ -517,10 +556,18 @@ export const startSuiteRunWithRecorder = async ({
           ? { expectedEnvironmentServerIds }
           : {}),
         ...(source ? { source } : {}),
+        // The capability behind a hidden source. `startTestSuiteRun` refuses
+        // `source: 'benchmark'` without it, so dropping it here would fail
+        // every benchmark child at the mutation — after the claim was already
+        // leased and the MCP session already opened.
+        ...(benchmarkRunId ? { benchmarkRunId } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
         ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
         ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+        ...(importApprovals && importApprovals.length
+          ? { importApprovals }
+          : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
@@ -711,6 +758,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc._id ?? tc.testCaseId,
           },
         ];
@@ -729,6 +777,7 @@ export const startSuiteRunWithRecorder = async ({
           advancedConfig: tc.advancedConfig,
           matchOptions: tc.matchOptions,
           successPredicates,
+          ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
           testCaseId: tc._id,
         }));
       }
@@ -748,6 +797,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];

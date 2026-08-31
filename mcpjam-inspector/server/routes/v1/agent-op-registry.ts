@@ -98,6 +98,9 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -1486,6 +1489,20 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "direct",
     promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
   },
+  { operation: listServerSkillsOperation, tier: "direct" },
+  {
+    // A skill body is instructions written by a third party, aimed at a model.
+    // That is the same untrusted-content problem as a resource or a prompt, and
+    // more pointed: the content's whole purpose is to be acted on.
+    operation: getServerSkillOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: readServerSkillFileOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
   { operation: listEvalSuitesOperation, tier: "direct" },
   { operation: getEvalSuiteOperation, tier: "direct" },
   {
@@ -2353,6 +2370,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Plugin inventory is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
   get_plugin_version:
     "Plugin version detail is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+
+  // Cloud Skills. Same shape and same decision as plugins: read-only
+  // inventory, shipped for the MCP catalog and the CLI, not registered on the
+  // in-turn agent brief until skill questions become a turn concern.
+  list_project_skills:
+    "Skill inventory is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+  get_project_skill:
+    "Skill detail (including the SKILL.md body) is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
 
   // Sandbox images and computers: minutes-long builds and billable compute.
   list_sandbox_images:

@@ -2,6 +2,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import {
+  __resetPageToolDispatchForTests,
+  setAdvertisedPageTools,
+} from "@/lib/webmcp-inspector/chat-dispatch";
+import { pageToolAlias } from "@/lib/webmcp-inspector/page-tool-aliases";
+import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 
 /**
  * Local computer engine transmission: when the CALLER (Playground) passes a
@@ -15,6 +21,9 @@ import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
  */
 const mockState = vi.hoisted(() => ({
   chatOnData: null as ((part: unknown) => void) | null,
+  chatOnToolCall: null as
+    | ((options: { toolCall: unknown }) => void | Promise<void>)
+    | null,
   transportOptions: [] as Array<{
     body?: () => Record<string, unknown>;
     headers?: Record<string, string>;
@@ -26,6 +35,7 @@ const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(async () => {}),
   stop: vi.fn(),
   addToolApprovalResponse: vi.fn(),
+  addToolOutput: vi.fn(),
   // A member (WorkOS) bearer by default → authIsMemberRef true. Individual
   // tests flip it to null to model a signed-out guest.
   getAccessToken: vi.fn(async () => "workos-jwt"),
@@ -61,7 +71,9 @@ function nextSessionId() {
 vi.mock("@/state/oauth-orchestrator", () => ({
   applyToolCallStepUp: vi.fn(),
 }));
-vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+}));
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [byokModel]),
   getDefaultModel: vi.fn(() => byokModel),
@@ -121,8 +133,12 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({ mutation: mockState.convexMutation }),
 }));
 vi.mock("@ai-sdk/react", () => ({
-  useChat: vi.fn((options: { onData?: (part: unknown) => void }) => {
+  useChat: vi.fn((options: {
+    onData?: (part: unknown) => void;
+    onToolCall?: (options: { toolCall: unknown }) => void | Promise<void>;
+  }) => {
     mockState.chatOnData = options.onData ?? null;
+    mockState.chatOnToolCall = options.onToolCall ?? null;
     return {
       messages: mockState.messages,
       sendMessage: mockState.sendMessage,
@@ -131,6 +147,7 @@ vi.mock("@ai-sdk/react", () => ({
       error: undefined,
       setMessages: mockState.setMessages,
       addToolApprovalResponse: mockState.addToolApprovalResponse,
+      addToolOutput: mockState.addToolOutput,
     };
   }),
 }));
@@ -153,12 +170,14 @@ type EnginePref = { engine: "local" | "cloud"; consentToken: string | null };
 async function renderWithEngine(
   personalComputerEngine?: EnginePref,
   hostedContext?: Record<string, unknown>,
+  extra?: { usePageTools?: boolean },
 ) {
   const rendered = renderHook(() =>
     useChatSession({
       selectedServers: ["server-1"],
       ...(personalComputerEngine ? { personalComputerEngine } : {}),
       ...(hostedContext ? { hostedContext } : {}),
+      ...(extra ?? {}),
     } as never),
   );
   await waitFor(() => expect(mockState.chatOnData).not.toBeNull());
@@ -181,13 +200,21 @@ function lastTransport() {
 
 describe("useChatSession — local computer engine transmission", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
     localStorage.clear();
     mockState.chatOnData = null;
+    mockState.chatOnToolCall = null;
     mockState.transportOptions = [];
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+    __resetPageToolDispatchForTests();
+    useWebmcpInspectorStore.setState({
+      session: undefined,
+      tools: [],
+      chatEnabled: false,
+    });
   });
 
   it("forwards computerEngine:local in the body and the consent header when local + consented", async () => {
@@ -256,5 +283,98 @@ describe("useChatSession — local computer engine transmission", () => {
     const { body, headers } = lastTransport();
     expect("computerEngine" in body).toBe(false);
     expect(headers[LOCAL_CONSENT_HEADER]).toBeUndefined();
+  });
+
+  it("omits page tools when the caller does not opt in", async () => {
+    await renderWithEngine(undefined, undefined, { usePageTools: false });
+    expect(lastTransport().body.pageTools).toBeUndefined();
+  });
+
+  it("sends an empty page-tool snapshot when opted in without a live page", async () => {
+    await renderWithEngine(undefined, undefined, { usePageTools: true });
+    expect(lastTransport().body.pageTools).toEqual([]);
+  });
+
+  it("defers page calls until approval, then returns the browser result", async () => {
+    const pageTool = {
+      alias: pageToolAlias("session-1", "https://shop.test::add_to_cart"),
+      sessionId: "session-1",
+      toolKey: "https://shop.test::add_to_cart",
+      rawName: "add_to_cart",
+      origin: "https://shop.test",
+    };
+    mockState.messages = [
+      {
+        id: "page-message",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: pageTool.alias,
+            toolCallId: "page-call-1",
+            state: "approval-requested",
+            input: { sku: "ABC-123" },
+            approval: { id: "page-approval-1" },
+          },
+        ],
+      },
+    ];
+    useWebmcpInspectorStore.setState({
+      session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+      tools: [
+        {
+          toolKey: pageTool.toolKey,
+          name: pageTool.rawName,
+          origin: pageTool.origin,
+          fromSubframe: false,
+          registrationKind: "imperative",
+        } as never,
+      ],
+      chatEnabled: true,
+    });
+    const invoke = vi.fn(async () => ({ state: "succeeded", output: "added" }));
+    const initialStore = useWebmcpInspectorStore.getState();
+    vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
+      ...initialStore,
+      session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+      invokeToolForResult: invoke as never,
+    });
+
+    const rendered = await renderWithEngine(undefined, undefined, {
+      usePageTools: true,
+    });
+    const advertised = lastTransport().body.pageTools as Array<{
+      alias: string;
+    }>;
+    expect(advertised).toHaveLength(1);
+    setAdvertisedPageTools(advertised as never);
+    expect(mockState.chatOnToolCall).not.toBeNull();
+
+    await mockState.chatOnToolCall!({
+      toolCall: {
+        toolName: advertised[0]!.alias,
+        toolCallId: "page-call-1",
+        input: { sku: "ABC-123" },
+      },
+    });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(mockState.addToolOutput).not.toHaveBeenCalled();
+
+    rendered.result.current.addToolApprovalResponse({
+      id: "page-approval-1",
+      approved: true,
+    });
+    await waitFor(() => expect(mockState.addToolOutput).toHaveBeenCalled());
+
+    expect(invoke).toHaveBeenCalledWith(pageTool.toolKey, { sku: "ABC-123" });
+    expect(mockState.addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool: advertised[0]!.alias,
+        toolCallId: "page-call-1",
+        output: expect.objectContaining({
+          content: [{ type: "text", text: "added" }],
+        }),
+      }),
+    );
   });
 });
