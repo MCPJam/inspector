@@ -70,8 +70,14 @@ import {
  * move — the routing re-uses `missingToolCall` and `unexpectedToolCall` — so
  * the backend mirror needs no re-pin for this bump. Rows derived under 5 are
  * identifiable as stale and can be recomputed selectively.
+ *
+ * 7 (UVH-IN7): an OBSERVED errored tool call makes `response` measurable even
+ * on a case that authored nothing about tools. Before this, such a run had
+ * every applicable stage green while its legacy verdict failed on exactly
+ * that tool error — a disagreement the chain had no row to express. Re-uses
+ * `toolError`, so again no mirror re-pin.
  */
-export const STAGE_ANALYZER_VERSION = 6;
+export const STAGE_ANALYZER_VERSION = 7;
 
 /**
  * Why a stage landed where it did.
@@ -532,11 +538,36 @@ const LIFECYCLE_STOPPED: ReadonlySet<IterationStatus> =
 /**
  * Which stages this case can say anything about at all.
  *
- * Computed BEFORE any evidence is read, so an inapplicable stage can never be
- * reported as an evidence gap.
+ * Computed before any evidence is INTERPRETED, so an inapplicable stage can
+ * never be reported as an evidence gap. One entry (`response`) additionally
+ * reads a single positive observation — see `hasObservedToolFailure`.
  */
+/**
+ * Did a tool call come back an ERROR the server is answerable for?
+ *
+ * Deliberately the exact condition `deriveResponse` decides `toolError` on —
+ * a content error, or an errored span carrying no MCP error code (a domain
+ * error reported the protocol-correct way). Written as one predicate used by
+ * both so applicability and the deriver cannot drift into a state where a
+ * stage is switched on by one rule and then found empty by the other.
+ *
+ * Transport-local failures are excluded by that same shared condition: a span
+ * with an `mcpErrorCode` never reached the server's handler, so it is a setup
+ * fact, not the server's answer.
+ */
+function hasObservedToolFailure(e: StageEvidence): boolean {
+  const contentErrors = (e.toolErrors ?? []).some(
+    (t) => t.kind === "content-error"
+  );
+  const domainFailed = (e.spans ?? []).some(
+    (s) => isToolSpan(s) && spanFailed(s) && typeof s.mcpErrorCode !== "number"
+  );
+  return contentErrors || domainFailed;
+}
+
 function applicability(
-  authored: StageAuthoredCase
+  authored: StageAuthoredCase,
+  evidence: StageEvidence
 ): Record<UserValueStage, boolean> {
   // A case that expects no tool call but IS a negative case still exercises
   // `call`: proving no call happened is the assertion.
@@ -562,7 +593,25 @@ function applicability(
     // even when it authors no expected tool call — `deriveResponse` reads the
     // render observations directly. Gating this on `callApplies` alone would
     // make `renderFailed` unreachable for a pure render probe.
-    response: callApplies || authored.expectsWidgetRender === true,
+    //
+    // UVH-IN7: an OBSERVED errored tool call does the same. A case can author
+    // nothing about tools — only predicates over the transcript — and still
+    // have a tool fail on the server during the run. `notApplicable` there
+    // says "this case has nothing for `response` to decide", which is false
+    // the moment a call came back an error, and it is how the chain ended up
+    // unable to represent a class of run whose legacy verdict failed on
+    // exactly that tool error: every applicable stage green, the verdict red,
+    // and no stage able to say why.
+    //
+    // This is the ONE evidence-driven entry in this table, and it is a
+    // POSITIVE observation rather than a gap — which is what keeps the rule
+    // above intact. A stage turned on by observed evidence cannot then be
+    // reported as an evidence gap: `deriveResponse` has the very span that
+    // turned it on.
+    response:
+      callApplies ||
+      authored.expectsWidgetRender === true ||
+      hasObservedToolFailure(evidence),
     // D8: a real ask makes `userValue` applicable even with nothing authored
     // to grade it. `notApplicable` would say "there was nothing to satisfy",
     // which is false the moment someone asked for something.
@@ -719,7 +768,8 @@ function selectionPredicateReason(
   failed: readonly StagePredicateResultLike[]
 ): StageReason {
   return failed.some(
-    (r) => SELECTION_PREDICATE_REASONS[r.predicate?.type ?? ""] === "missingToolCall"
+    (r) =>
+      SELECTION_PREDICATE_REASONS[r.predicate?.type ?? ""] === "missingToolCall"
   )
     ? "missingToolCall"
     : "unexpectedToolCall";
@@ -734,7 +784,10 @@ function deriveSelection(
   // Authored tool-call predicates ARE explicit evidence about selection, so a
   // case carrying them is never sent down the "nothing adjudicates this" path
   // below even when it authored no `expectedToolCalls`.
-  if (predicates.length === 0 && selectionNeedsExplicitEvidence(authored, prompts)) {
+  if (
+    predicates.length === 0 &&
+    selectionNeedsExplicitEvidence(authored, prompts)
+  ) {
     // No trace at all outranks both branches below, the same way it does in
     // `deriveCall` and `deriveResponse`. "The run recorded no trace" and "a
     // sink existed and captured nothing" are different facts, and reporting
@@ -880,15 +933,15 @@ function deriveResponse(
   e: StageEvidence,
   authored: StageAuthoredCase
 ): StageResultRow {
-  const contentErrors = (e.toolErrors ?? []).filter(
-    (t) => t.kind === "content-error"
-  );
   // An errored tool span with NO code is a domain error reported the
   // protocol-correct way: the server answered, with unusable data.
   const domainFailed = (e.spans ?? []).filter(
     (s) => isToolSpan(s) && spanFailed(s) && typeof s.mcpErrorCode !== "number"
   );
-  if (contentErrors.length > 0 || domainFailed.length > 0) {
+  // `hasObservedToolFailure` is the same condition, and it is what makes this
+  // stage applicable on a case that authored nothing about tools — the two
+  // must stay one rule, or a stage could be switched on and then found empty.
+  if (hasObservedToolFailure(e)) {
     return row("response", "failed", "toolError", {
       spanIds: spanIds(domainFailed).slice(0, 5),
     });
@@ -1095,7 +1148,7 @@ export function deriveStageResults(
   input: StageDerivationInput
 ): StageDerivation {
   const { authored, evidence, iteration, policy } = input;
-  const applies = applicability(authored);
+  const applies = applicability(authored, evidence);
 
   const inapplicable = (stage: UserValueStage) =>
     row(stage, "notApplicable", "notAuthored");
