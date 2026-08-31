@@ -832,3 +832,271 @@ describe("web chat-v2 — plugin capability attribution", () => {
     ]);
   });
 });
+
+describe("web chat-v2 — turn provenance (P1)", () => {
+  const originalFetch = global.fetch;
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+  const originalConvexUrl = process.env.CONVEX_URL;
+
+  const PROVENANCE = {
+    skillId: "sk_env",
+    projectSkillVersionId: "psv_1",
+    projectSkillVersionNumber: 3,
+    versionPinned: true,
+    name: "release-notes",
+    description: "Write release notes",
+    contentHash: "h_env",
+    sharing: "project",
+    channels: ["environment"],
+  };
+  const SPEC_WITH_PROVENANCE = {
+    ...ENV_SPEC,
+    skills: [{ ...ENV_SPEC.skills[0], provenance: PROVENANCE }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    process.env.CONVEX_URL = "https://example.convex.cloud";
+    prepareChatV2Mock.mockResolvedValue({
+      allTools: {},
+      enhancedSystemPrompt: "system",
+      resolvedTemperature: 0.7,
+    });
+    fetchHostRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      await options.onConversationComplete?.(
+        [{ role: "user", content: "hi" }],
+        {
+          turnId: "t",
+          promptIndex: 0,
+          startedAt: 1,
+          endedAt: 2,
+          spans: [],
+          modelId: "test-model",
+        }
+      );
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-batch")) {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        const serverIds: string[] = Array.isArray(payload?.serverIds)
+          ? payload.serverIds
+          : [];
+        return new Response(
+          JSON.stringify({
+            results: Object.fromEntries(
+              serverIds.map((serverId) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "shared_chat",
+                  permissions: { chatOnly: false },
+                  internalLogContext: {
+                    authType: "signedIn",
+                    userId: "u-alice",
+                    projectId: payload.projectId ?? null,
+                  },
+                  serverConfig: {
+                    transportType: "http",
+                    url: `https://${serverId}.example.com/mcp`,
+                    headers: {},
+                    useOAuth: false,
+                  },
+                },
+              ])
+            ),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    // Delete rather than assign when the var was absent: assigning `undefined`
+    // stores the literal string "undefined", which leaks into later suites as
+    // a truthy Convex URL. The two describe blocks above already do this.
+    if (originalConvexHttpUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+    else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    if (originalConvexUrl === undefined) delete process.env.CONVEX_URL;
+    else process.env.CONVEX_URL = originalConvexUrl;
+  });
+
+  async function runEnvironmentTurn() {
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+      },
+      token
+    );
+    expect(response.status).toBe(200);
+    return persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+  }
+
+  it("records the environment and its skill rows on the turn trace", async () => {
+    convexQueryMock.mockResolvedValue(SPEC_WITH_PROVENANCE);
+    const persistArgs = await runEnvironmentTurn();
+    expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
+      environmentId: "env_1",
+      name: "Staging",
+      revision: 7,
+    });
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([PROVENANCE]);
+    // The rest of the trace is untouched — provenance is merged onto it, not
+    // substituted for it.
+    expect(persistArgs.turnTrace.turnId).toBe("t");
+    expect(persistArgs.turnTrace.spans).toEqual([]);
+  });
+
+  it("records a delivered CAPTURED server skill alongside the authored ones", async () => {
+    // End-to-end wiring for the helper's serverSkills branch: a captured
+    // MCP-server skill reaches the model through the same capability set as an
+    // authored one, so it must appear in the record of what ran.
+    const CAPTURE_PROVENANCE = {
+      serverSkillId: "ss_1",
+      serverSkillVersionId: "ssv_1",
+      serverSkillVersionNumber: 2,
+      name: "refunds",
+      modelRef: "acme/refunds",
+      contentHash: "h_capture",
+      sharing: "project",
+      channels: ["mcp-server"],
+    };
+    convexQueryMock.mockResolvedValue({
+      ...SPEC_WITH_PROVENANCE,
+      serverSkills: [
+        {
+          serverSkillId: "ss_1",
+          versionId: "ssv_1",
+          serverId: "env-server-1",
+          serverSlug: "acme",
+          serverLabel: "Acme",
+          ref: "acme/refunds",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          name: "refunds",
+          description: "Handle refunds",
+          content: "captured body",
+          contentSha256: "raw-digest",
+          contentHash: "h_capture",
+          versionHash: "vh_1",
+          versionNumber: 2,
+          capturedAt: 1,
+          provenance: CAPTURE_PROVENANCE,
+          files: [],
+        },
+      ],
+    });
+
+    const persistArgs = await runEnvironmentTurn();
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([
+      PROVENANCE,
+      CAPTURE_PROVENANCE,
+    ]);
+  });
+
+  it("does NOT record a capture on a HARNESS turn, which cannot deliver it", async () => {
+    // The reviewer's finding, at the route level: a harness adapter receives
+    // only the flat `runtimeSkillsOverride` (authored + plugin). A capture's
+    // address is `<serverSlug>/<name>` and `isValidSkillName` rejects `/`, so
+    // the adapter skips it. Recording it would make the trace claim a skill the
+    // model never received.
+    convexQueryMock.mockResolvedValue({
+      ...SPEC_WITH_PROVENANCE,
+      host: {
+        ...SPEC_WITH_PROVENANCE.host,
+        runtimeConfig: {
+          ...SPEC_WITH_PROVENANCE.host.runtimeConfig,
+          harness: "claude-code",
+        },
+      },
+      serverSkills: [
+        {
+          serverSkillId: "ss_1",
+          versionId: "ssv_1",
+          serverId: "env-server-1",
+          serverSlug: "acme",
+          serverLabel: "Acme",
+          ref: "acme/refunds",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          name: "refunds",
+          description: "Handle refunds",
+          content: "captured body",
+          contentSha256: "raw-digest",
+          contentHash: "h_capture",
+          versionHash: "vh_1",
+          versionNumber: 2,
+          capturedAt: 1,
+          provenance: { name: "refunds", contentHash: "h_capture" },
+          files: [],
+        },
+      ],
+    });
+
+    const persistArgs = await runEnvironmentTurn();
+
+    // Assert DELIVERY as well as the record — the invariant is that the two
+    // agree, and checking only the record would pass even if the capture had
+    // reached `runtimeSkillsOverride` (which would make the record wrong in
+    // the other direction).
+    const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+    expect(handlerArgs.runtimeSkillsOverride).toEqual([
+      expect.objectContaining({ skillId: "sk_env", name: "release-notes" }),
+    ]);
+    // The authored skill IS delivered by the harness, so it is recorded.
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([PROVENANCE]);
+    // The environment binding is still true and still recorded.
+    expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
+      environmentId: "env_1",
+      name: "Staging",
+      revision: 7,
+    });
+  });
+
+  it("never carries skill CONTENT into the record", async () => {
+    convexQueryMock.mockResolvedValue(SPEC_WITH_PROVENANCE);
+    const persistArgs = await runEnvironmentTurn();
+    expect(JSON.stringify(persistArgs.turnTrace)).not.toContain(
+      "env skill body"
+    );
+  });
+
+  it("records an empty skill list rather than going silent, on an older backend", async () => {
+    // Deploy skew: the backend resolves skills but attaches no provenance
+    // rows. The turn still records WHICH environment ran — the part this side
+    // can prove — and claims nothing about skills it cannot describe.
+    convexQueryMock.mockResolvedValue(ENV_SPEC);
+    const persistArgs = await runEnvironmentTurn();
+    expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
+      environmentId: "env_1",
+      name: "Staging",
+      revision: 7,
+    });
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([]);
+  });
+
+  it("a direct turn with no environment records nothing", async () => {
+    convexQueryMock.mockResolvedValue(ENV_SPEC);
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      { ...BASE_BODY, hostId: "host_legacy" },
+      token
+    );
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    expect(persistArgs.turnTrace.environmentAtTurn).toBeUndefined();
+    expect(persistArgs.turnTrace.skillsAtTurn).toBeUndefined();
+  });
+});

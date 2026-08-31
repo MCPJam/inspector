@@ -502,6 +502,7 @@ environments.get(
       modelOverrides?: boolean;
       modelMatrix?: boolean;
       ephemeralEnvironmentLaunch?: boolean;
+      skillVersionPins?: boolean;
     } = {};
     try {
       capabilities =
@@ -532,6 +533,7 @@ environments.get(
       modelMatrix: capabilities.modelMatrix === true,
       ephemeralEnvironmentLaunch:
         capabilities.ephemeralEnvironmentLaunch === true,
+      skillVersionPins: capabilities.skillVersionPins === true,
     });
   },
 );

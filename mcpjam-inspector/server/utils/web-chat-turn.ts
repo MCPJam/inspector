@@ -77,6 +77,7 @@ import {
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
@@ -255,6 +256,16 @@ export interface WebChatTurnPersistContext {
    * resumed sandbox with stale plugin material ineligible.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * What this turn should RECORD about the configuration it ran with —
+   * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
+   * from the POST-narrowing spec so it reflects what actually ran.
+   *
+   * Separate from `runtimeSkillsOverride` and `effectiveCapabilities` on
+   * purpose: those decide what reaches the model, this only decides what gets
+   * written down. Delivery is byte-identical whether this is present or not.
+   */
+  turnProvenance?: TurnSkillProvenance;
 }
 
 /**
@@ -921,7 +932,14 @@ export async function streamWebChatTurn(
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
           : {}),
-        turnTrace,
+        // Merged OUTSIDE the `isDirectChat` gate above: a scenario turn runs
+        // through an environment too, and skipping it there would leave User
+        // Testing's most environment-driven surface with no record of what it
+        // ran. Distinct from `resumeConfig`, which is gated because it is the
+        // restorable-resume surface; this is provenance and restores nothing.
+        turnTrace: persist.turnProvenance
+          ? { ...turnTrace, ...persist.turnProvenance }
+          : turnTrace,
         ...(persist.expectedVersion !== undefined
           ? { expectedVersion: persist.expectedVersion }
           : {}),

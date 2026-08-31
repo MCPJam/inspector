@@ -18893,6 +18893,10 @@
           "ephemeralEnvironmentLaunch": {
             "type": "boolean",
             "description": "`startTestSuiteRun` / the v1 group route accept `ephemeralEnvironment` — a project-scoped env may launch without suite membership. Absent or false on older backends."
+          },
+          "skillVersionPins": {
+            "type": "boolean",
+            "description": "`skillSelection.versionPins` and `serverSkillSelection.versionPins` are accepted, and a pinned revision survives into run snapshots. Absent or false on older backends, which reject the unknown field outright — probe this before offering a version picker."
           }
         }
       },

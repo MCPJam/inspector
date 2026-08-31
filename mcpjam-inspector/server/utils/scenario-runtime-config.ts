@@ -63,6 +63,18 @@ export type ScenarioEnvironmentRuntime = {
     aggregateHash: string;
     extraFrontmatter?: unknown;
     channels?: RuntimeSkillChannel[];
+    /**
+     * The backend's ready-made provenance row for this entry — opaque here for
+     * the reason spelled out on `ResolvedEnvironmentSkill.provenance`: this
+     * side only echoes it onto the turn trace, and a typed mirror would be the
+     * fourth copy of a shape whose three existing copies all drifted.
+     *
+     * Passed through TOLERANTLY: any object survives, and a non-object drops.
+     * Deliberately NOT routed through the `SKILL_CHANNELS` filter the sibling
+     * fields use — that filter exists to keep unknown channels out of delivery
+     * decisions, and this field reaches no delivery decision.
+     */
+    provenance?: Record<string, unknown>;
     files?: Array<{ path: string; size: number; url: string | null }>;
   }>;
   /**
@@ -462,6 +474,9 @@ export function readScenarioEnvironment(
               ? { extraFrontmatter: entry.extraFrontmatter }
               : {}),
             ...(channels ? { channels } : {}),
+            ...(isRecord(entry.provenance)
+              ? { provenance: entry.provenance }
+              : {}),
             ...(files ? { files } : {}),
           },
         ];

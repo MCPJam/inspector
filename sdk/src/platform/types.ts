@@ -2167,6 +2167,14 @@ export interface PlatformEnvironmentCapabilities {
    * env may launch without suite membership. Absent/false on older backends.
    */
   ephemeralEnvironmentLaunch?: boolean;
+  /**
+   * `skillSelection.versionPins` / `serverSkillSelection.versionPins` are
+   * accepted, and a pinned revision survives into run snapshots. Absent/false
+   * on older backends, which reject the unknown field outright — so probe this
+   * before offering a version picker. Optional, so an older backend's response
+   * still parses.
+   */
+  skillVersionPins?: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */

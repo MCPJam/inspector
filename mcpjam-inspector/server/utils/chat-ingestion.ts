@@ -240,6 +240,26 @@ export interface PersistedTurnTrace {
   usage?: LiveChatTraceUsage;
   finishReason?: string;
   modelId: string;
+  /**
+   * Which skills and which environment this turn ran with, echoed from the
+   * backend's per-entry `provenance` rows (see
+   * `services/environments/runtime.ts` `turnSkillProvenance`).
+   *
+   * Carried INSIDE the turn trace, not beside it, for two reasons. The binding
+   * is per-TURN — a session live-follows Latest, so an edit changes what the
+   * NEXT turn runs. And `buildIngestBody` serializes `turnTrace` whole, so
+   * these fields reach the wire with NO change to the body builder: do not
+   * "fix" that by adding them to its spread.
+   *
+   * Ids are opaque strings here. The backend normalizes and tenancy-checks
+   * every one and strips what fails, so this side never needs to.
+   */
+  skillsAtTurn?: Array<Record<string, unknown>>;
+  environmentAtTurn?: {
+    environmentId: string;
+    name: string;
+    revision: number;
+  };
 }
 
 // Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
