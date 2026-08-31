@@ -1728,16 +1728,24 @@ export function useChatSession(
    * Read ONCE, during the first render, before anything can overwrite the row:
    * this is what a refresh has to work from, and both the initial
    * `chatSessionId` below and the hydration effect further down consume it.
+   *
+   * A LAZY `useState` initializer, not `useRef(read(...))`: `useRef` evaluates
+   * its argument on every render and throws the result away after the first,
+   * so the ref form re-ran a `getItem` + `JSON.parse` on every render while
+   * only ever using the first value. This hook re-renders on every streaming
+   * chunk, and a transcript here is allowed to approach `MAX_SERIALIZED_LENGTH`
+   * (~2MB — one image attachment rides along as a `data:` URL, which is why
+   * the oldest-turn trimming exists), so that slip put a multi-megabyte
+   * synchronous parse on the streaming path. The value never changes after the
+   * first render, so state is the honest shape for it.
    */
-  const restoredScenarioTranscriptRef = useRef(
-    resumableScenarioId
-      ? readScenarioChatTranscript(resumableScenarioId)
-      : null
+  const [restoredScenarioTranscript] = useState(() =>
+    resumableScenarioId ? readScenarioChatTranscript(resumableScenarioId) : null
   );
   // Restoring the stored id — rather than minting a fresh one and seeding it —
   // is what keeps the resumed turns appending to the SAME server-side thread.
   const [chatSessionId, setChatSessionId] = useState(
-    () => restoredScenarioTranscriptRef.current?.chatSessionId ?? generateId()
+    () => restoredScenarioTranscript?.chatSessionId ?? generateId()
   );
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
@@ -3917,7 +3925,7 @@ export function useChatSession(
   useEffect(() => {
     if (hasAppliedRestoredTranscriptRef.current) return;
     hasAppliedRestoredTranscriptRef.current = true;
-    const restored = restoredScenarioTranscriptRef.current;
+    const restored = restoredScenarioTranscript;
     if (!restored) return;
     void queueSessionHydration({
       sessionId: restored.chatSessionId,
@@ -3928,7 +3936,7 @@ export function useChatSession(
       resumedVersion: null,
       persistedSnapshotToolCallIds: [],
     });
-  }, [queueSessionHydration]);
+  }, [queueSessionHydration, restoredScenarioTranscript]);
 
   // The scenario the transcript on screen belongs to. A tester can open a
   // SECOND tester link in the same tab: `session` is replaced in place, so
