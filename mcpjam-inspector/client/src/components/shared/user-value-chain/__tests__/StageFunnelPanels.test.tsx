@@ -23,7 +23,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const convex = vi.hoisted(() => ({ useQuery: vi.fn() }));
 vi.mock("convex/react", () => convex);
 
+// The probe's boundary must not FILE the dark-ship window. Mocked rather than
+// spied so the assertion is about what the boundary decided, not about whether
+// Sentry happened to be configured in this test process.
+const { reportBoundaryError } = vi.hoisted(() => ({
+  reportBoundaryError: vi.fn(),
+}));
+vi.mock("@/lib/error-reporting", () => ({
+  reportBoundaryError,
+  reportCaught: vi.fn(),
+}));
+
 const {
+  isConvexQueryUnavailable,
   ScenarioStageFunnelPanel,
   SuiteRunStageFunnelAvailability,
   SwarmRunStageFunnelPanels,
@@ -233,6 +245,37 @@ describe("SuiteRunStageFunnelAvailability — the probe that opens the rail", ()
     expect(container.textContent).toBe("the rest of the page");
   });
 
+  it("files NOTHING with Sentry/PostHog for the dark-ship window", () => {
+    // The probe is mounted on every run-detail visit and the query is
+    // deliberately undeployed, so an unconditional boundary report turns the
+    // intended state into one issue and one event per run VIEWED — noise
+    // indistinguishable from a real regression, at the moment one would
+    // matter most.
+    queryThrows();
+    render(
+      <SuiteRunStageFunnelAvailability suiteRunId="run-1" onChange={vi.fn()} />,
+    );
+    expect(reportBoundaryError).not.toHaveBeenCalled();
+  });
+
+  it("DOES file a failure that is not one of the two expected shapes", () => {
+    // The suppression is a predicate, not a mute button: a probe that stopped
+    // reporting everything would swallow the real bug it exists to surface.
+    convex.useQuery.mockImplementation(() => {
+      throw new Error("TypeError: cannot read properties of undefined");
+    });
+    const onChange = vi.fn();
+    render(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-1"
+        onChange={onChange}
+      />,
+    );
+    expect(reportBoundaryError).toHaveBeenCalledTimes(1);
+    // And the rail still closes either way.
+    expect(onChange).toHaveBeenCalledWith("run-1", false);
+  });
+
   it("clears a previous answer when the SAME run's probe then fails", () => {
     // The boundary key re-arms the probe across runs, but a query that throws
     // after answering for the run still on screen renders the fallback
@@ -305,5 +348,30 @@ describe("SuiteRunStageFunnelAvailability — the probe that opens the rail", ()
       />,
     );
     expect(onChange).toHaveBeenCalledWith("run-2", true);
+  });
+});
+
+describe("isConvexQueryUnavailable", () => {
+  it.each([
+    ["an undeployed function", "Could not find public function for 'x:y'"],
+    ["no ConvexProvider", "Could not find Convex client!"],
+  ])("recognises %s", (_label, message) => {
+    expect(isConvexQueryUnavailable(new Error(message))).toBe(true);
+  });
+
+  it.each([
+    ["a real bug", "Cannot read properties of undefined (reading 'stages')"],
+    ["an auth refusal", "Authenticated user required"],
+    ["an empty message", ""],
+  ])("does NOT recognise %s", (_label, message) => {
+    expect(isConvexQueryUnavailable(new Error(message))).toBe(false);
+  });
+
+  it("survives an error with no message at all", () => {
+    // The predicate runs inside a boundary that is already handling a failure;
+    // throwing from here would be the second failure, at the worst moment.
+    expect(
+      isConvexQueryUnavailable({ message: undefined } as unknown as Error),
+    ).toBe(false);
   });
 });
