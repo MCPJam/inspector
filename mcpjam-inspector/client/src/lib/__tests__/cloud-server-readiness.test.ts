@@ -49,7 +49,12 @@ describe("assessCloudServerReadiness", () => {
         targets: [client("Claude", 0), client("Cursor", 1)],
         servers: [REMOTE],
       }),
-    ).toEqual({ status: "no_servers", labels: ["Claude"] });
+    ).toEqual({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: ["Notion"],
+      poolSize: 1,
+    });
   });
 
   it("reports a target whose servers are all local-only, naming them", () => {
@@ -105,8 +110,13 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [client("Claude", 0), client("Cursor", 1)],
         servers: [STDIO],
-      }),
-    ).toEqual({ status: "no_servers", labels: ["Claude"] });
+      })
+    ).toEqual({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: [],
+      poolSize: 1,
+    });
   });
 
   it("judges a named group by its own members, not the whole catalog", () => {
@@ -193,11 +203,14 @@ describe("describeCloudServerBlock", () => {
     const copy = describeCloudServerBlock({
       status: "no_servers",
       labels: ["Claude", "Cursor"],
+      attachable: [],
+      poolSize: 0,
     });
     expect(copy?.message).toBe(
       "Claude and Cursor have no servers to run against.",
     );
-    expect(copy?.detail).toMatch(/connect a server/i);
+    // The imperative moved to the action button (BB-63).
+    expect(copy?.action?.label).toMatch(/connect a server/i);
   });
 
   // The distinction SUTB-5 asks for: the server EXISTS, and the next step is
@@ -212,5 +225,252 @@ describe("describeCloudServerBlock", () => {
     expect(copy?.message).toContain("Fetch");
     expect(copy?.detail).toMatch(/MCPJam's cloud/);
     expect(copy?.detail).toMatch(/tunnel/i);
+  });
+});
+
+/**
+ * BB-63. "No servers to run against" is THREE situations wearing one sentence,
+ * and the most common one is the one the copy gets wrong: the project already
+ * has a usable server, it just isn't in this setup. Telling that user to
+ * "connect a server" sends them to redo something they already did — which is
+ * precisely the "what did I do wrong?" the ticket reports.
+ *
+ * So the assessment has to say not just THAT the target is empty, but what the
+ * project could put in it. `attachable` is the reachable subset of the catalog
+ * (a cloud run cannot use a stdio or loopback server, so offering one would
+ * walk the user into the `unrunnable_servers` failure on the next click), and
+ * `poolSize` separates "nothing to offer because the project is empty" from
+ * "nothing to offer because none of it is reachable" — different fixes.
+ */
+describe("no_servers tells the three situations apart (BB-63)", () => {
+  it("reports what the project could attach when the pool has a reachable server", () => {
+    expect(
+      assessCloudServerReadiness({
+        targets: [client("MCPJam", 0)],
+        servers: [REMOTE],
+      })
+    ).toEqual({
+      status: "no_servers",
+      labels: ["MCPJam"],
+      attachable: ["Notion"],
+      poolSize: 1,
+    });
+  });
+
+  it("reports an empty project as nothing to attach", () => {
+    expect(
+      assessCloudServerReadiness({
+        targets: [client("MCPJam", 0)],
+        servers: [],
+      })
+    ).toEqual({
+      status: "no_servers",
+      labels: ["MCPJam"],
+      attachable: [],
+      poolSize: 0,
+    });
+  });
+
+  // The trap this closes: "Use Fetch" would resolve, then fail at connect time
+  // inside the cloud run. A server we cannot offer is not attachable.
+  it("does not offer a local-only server — a cloud run cannot reach it", () => {
+    expect(
+      assessCloudServerReadiness({
+        targets: [client("MCPJam", 0)],
+        servers: [STDIO, LOOPBACK],
+      })
+    ).toEqual({
+      status: "no_servers",
+      labels: ["MCPJam"],
+      attachable: [],
+      poolSize: 2,
+    });
+  });
+
+  it("offers only the reachable half of a mixed pool", () => {
+    expect(
+      assessCloudServerReadiness({
+        targets: [client("MCPJam", 0)],
+        servers: [STDIO, REMOTE],
+      })
+    ).toEqual({
+      status: "no_servers",
+      labels: ["MCPJam"],
+      attachable: ["Notion"],
+      poolSize: 2,
+    });
+  });
+});
+
+describe("describeCloudServerBlock points at the fix the user can take (BB-63)", () => {
+  const target = { status: "no_servers" as const, labels: ["MCPJam"] };
+
+  it("names the server the project already has instead of asking for a new one", () => {
+    const copy = describeCloudServerBlock({
+      ...target,
+      attachable: ["Notion"],
+      poolSize: 1,
+    });
+    const text = `${copy?.message} ${copy?.detail}`;
+    expect(text).toContain("Notion");
+    // The defect verbatim: this user HAS a server. "Connect a server" is an
+    // instruction to redo work already done.
+    expect(text).not.toMatch(/connect a server/i);
+  });
+
+  it("names a couple of servers and counts the rest rather than listing everything", () => {
+    const copy = describeCloudServerBlock({
+      ...target,
+      attachable: ["Notion", "Linear", "Sentry", "Stripe"],
+      poolSize: 4,
+    });
+    const text = `${copy?.message} ${copy?.detail}`;
+    expect(text).toContain("Notion");
+    expect(text).toContain("Linear");
+    expect(text).toMatch(/2 more/);
+    expect(text).not.toContain("Stripe");
+  });
+
+  it("points an unreachable-only project at reachability, not at connecting more", () => {
+    const copy = describeCloudServerBlock({
+      ...target,
+      attachable: [],
+      poolSize: 2,
+    });
+    const text = `${copy?.message} ${copy?.detail}`;
+    expect(text).toMatch(/tunnel/i);
+    expect(text).not.toMatch(/connect a server/i);
+  });
+
+  /**
+   * The jargon guardrail, and the reason it is a test rather than a review
+   * note: "A cloud run takes its servers from the client" is the resolver's
+   * own model. It is accurate and it is unreadable to someone who has never
+   * been told what a client is in MCPJam.
+   *
+   * Scoped to `no_servers` on purpose — `unrunnable_servers` still says "point the
+   * client at that URL", which has the same problem and is outside BB-63.
+   */
+  it("never explains an empty setup in terms of clients", () => {
+    for (const readiness of [
+      { ...target, attachable: ["Notion"], poolSize: 1 },
+      { ...target, attachable: [], poolSize: 0 },
+      { ...target, attachable: [], poolSize: 2 },
+    ]) {
+      const copy = describeCloudServerBlock(readiness);
+      expect(`${copy?.message} ${copy?.detail}`).not.toMatch(/\bclients?\b/i);
+    }
+  });
+});
+
+/**
+ * BB-63 asks for "guidance messaging that is calm and less warning coded".
+ * Rewriting the sentence was only half of that — the amber band and the alert
+ * triangle are the other half, and a calm sentence inside an alarm box is
+ * still an alarm.
+ *
+ * The tone is decided HERE rather than in the component that paints it,
+ * because it follows from which situation this is, and that is what this
+ * module already knows. The line it draws: nothing attached yet is a step in
+ * setup; attached-but-unusable is a problem the user has to act on.
+ */
+describe("describeCloudServerBlock grades how loud the block should be (BB-63)", () => {
+  it("treats a setup with nothing attached yet as guidance", () => {
+    const unattached = [
+      {
+        status: "no_servers" as const,
+        labels: ["MCPJam"],
+        attachable: ["Notion"],
+        poolSize: 1,
+      },
+      {
+        status: "no_servers" as const,
+        labels: ["MCPJam"],
+        attachable: [],
+        poolSize: 0,
+      },
+      {
+        status: "no_servers" as const,
+        labels: ["MCPJam"],
+        attachable: [],
+        poolSize: 2,
+      },
+    ];
+    for (const readiness of unattached) {
+      expect(describeCloudServerBlock(readiness)?.tone).toBe("guidance");
+    }
+  });
+
+  it("keeps a warning for servers that ARE attached and still cannot run", () => {
+    expect(
+      describeCloudServerBlock({
+        status: "unrunnable_servers",
+        labels: ["Staging"],
+        serverNames: ["Fetch"],
+      })?.tone
+    ).toBe("warning");
+  });
+});
+
+/**
+ * BB-63. "Connect a server and it shows up here" names an action the user
+ * cannot take from where they are standing. For an empty project that
+ * navigation is unavoidable — there is nothing on this screen to pick — so the
+ * least the block can do is make it one click.
+ *
+ * Only the empty case gets it. A project that HAS servers is fixed by picking
+ * one right here, and sending that user to Connect would be the original
+ * misdiagnosis wearing a button.
+ */
+describe("describeCloudServerBlock offers a way out of an empty project (BB-63)", () => {
+  it("points an empty project at Connect", () => {
+    const copy = describeCloudServerBlock({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: [],
+      poolSize: 0,
+    });
+    expect(copy?.action).toEqual({
+      label: "Connect a server",
+      route: "servers",
+    });
+  });
+
+  it("offers no such shortcut when the project already has servers", () => {
+    const withServers = describeCloudServerBlock({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: ["Notion"],
+      poolSize: 1,
+    });
+    expect(withServers?.action).toBeUndefined();
+
+    const unreachable = describeCloudServerBlock({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: [],
+      poolSize: 2,
+    });
+    expect(unreachable?.action).toBeUndefined();
+
+    const localOnly = describeCloudServerBlock({
+      status: "unrunnable_servers",
+      labels: ["Staging"],
+      serverNames: ["Fetch"],
+    });
+    expect(localOnly?.action).toBeUndefined();
+  });
+
+  // The prose explains; the button acts. Repeating the imperative in both
+  // reads as a stutter.
+  it("leaves the imperative to the button", () => {
+    const copy = describeCloudServerBlock({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: [],
+      poolSize: 0,
+    });
+    expect(copy?.detail).not.toMatch(/connect a server/i);
+    expect(copy?.detail).toMatch(/shows up here/i);
   });
 });

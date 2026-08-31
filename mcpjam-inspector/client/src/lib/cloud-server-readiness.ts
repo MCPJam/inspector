@@ -60,7 +60,14 @@ export type CloudLaunchTarget = {
 export type CloudServerReadiness =
   | { status: "ok" }
   /** At least one target resolves to zero servers — the `ENV_NO_SERVERS` shape. */
-  | { status: "no_servers"; labels: string[] }
+  | {
+      status: "no_servers";
+      labels: string[];
+      /** Reachable only: offering one the run refuses leads straight to `unrunnable_servers`. */
+      attachable: string[];
+      /** Whole catalog. Separates an empty project from an unreachable one. */
+      poolSize: number;
+    }
   /** A target carries a server the run refuses: one stdio member, or a set
    * that is unreachable end to end. `serverNames` lists only the offenders. */
   | { status: "unrunnable_servers"; labels: string[]; serverNames: string[] };
@@ -152,7 +159,15 @@ export function assessCloudServerReadiness(args: {
   }
 
   if (emptyLabels.length > 0) {
-    return { status: "no_servers", labels: emptyLabels };
+    return {
+      status: "no_servers",
+      labels: emptyLabels,
+      // Catalog order: the copy has to match the order shown in the picker.
+      attachable: args.servers
+        .filter((server) => !isLocalOnlyMcpServerConfig(server))
+        .map((server) => server.name),
+      poolSize: args.servers.length,
+    };
   }
   if (unrunnableLabels.length > 0) {
     return {
@@ -170,6 +185,12 @@ export function joinLabels(labels: readonly string[]): string {
   return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
 
+/** Name up to `cap` servers and count the rest, so a large catalog stays one sentence. */
+function joinNamesCapped(names: readonly string[], cap = 2): string {
+  if (names.length <= cap) return joinLabels(names);
+  return `${names.slice(0, cap).join(", ")} and ${names.length - cap} more`;
+}
+
 /**
  * User-facing copy for a block. `null` for `ok`, so a caller can render the
  * notice and gate its button off the same value.
@@ -178,21 +199,62 @@ export function joinLabels(labels: readonly string[]): string {
  * shape `CloudUnreachableNotice` already renders for the sandbox block, and the
  * same split `environment-error.ts` uses for the resolver's own failure.
  */
-export function describeCloudServerBlock(readiness: CloudServerReadiness): {
+export type CloudBlockTone =
+  /** Nothing is attached yet — a step in setup, rendered calmly. */
+  | "guidance"
+  /** Something IS attached and still cannot run — worth an alarm. */
+  | "warning";
+
+export type CloudServerBlockCopy = {
   message: string;
   detail: string;
-} | null {
+  tone: CloudBlockTone;
+  /**
+   * A way out, only for cases this screen cannot fix on its own. A route key
+   * rather than a path — the surface that renders it owns the router.
+   */
+  action?: { label: string; route: "servers" };
+};
+
+export function describeCloudServerBlock(
+  readiness: CloudServerReadiness
+): CloudServerBlockCopy | null {
   if (readiness.status === "ok") return null;
   const subject = joinLabels(readiness.labels);
   const verb = readiness.labels.length > 1 ? "have" : "has";
   if (readiness.status === "no_servers") {
+    // Naming the server turns the remedy into "pick that one".
+    if (readiness.attachable.length > 0) {
+      return {
+        message: `${subject} ${verb} no servers attached yet.`,
+        detail: `Your project has ${joinNamesCapped(
+          readiness.attachable
+        )}. Pick what this run should use.`,
+        tone: "guidance",
+      };
+    }
+    // The only case where connecting something is the right instruction.
+    if (readiness.poolSize === 0) {
+      return {
+        message: `${subject} ${verb} no servers to run against.`,
+        // The prose explains; the button carries the imperative.
+        detail:
+          "These sessions run against an MCP server, so there has to be one. Once you connect it, it shows up here.",
+        tone: "guidance",
+        action: { label: "Connect a server", route: "servers" },
+      };
+    }
+    // Servers exist but none is reachable: the fix is reachability, not another server.
     return {
-      message: `${subject} ${verb} no servers to run against.`,
+      message: `${subject} ${verb} no servers this run can reach.`,
       detail:
-        "A cloud run takes its servers from the client, so this setup would be rejected at launch. Connect a server and turn on Auto-connect on the Servers tab, or attach a server group to the setup.",
+        "The servers in your project are local — stdio, or a localhost/private-address URL — and these sessions run in MCPJam's cloud. Expose one over HTTPS (Create tunnel on its card does this), or run this from a local surface instead.",
+      tone: "guidance",
     };
   }
   return {
+    // Attached and unusable — a problem to act on, so it stays loud.
+    tone: "warning",
     message: `${subject} ${verb} servers this run can't reach: ${joinLabels(readiness.serverNames)}.`,
     detail:
       "Sessions run in MCPJam's cloud, which can't reach a stdio server or a localhost/private-address URL. Expose the server over HTTPS (Create tunnel on its card does this) and point the client at that URL, or run it from a local surface instead.",

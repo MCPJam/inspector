@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
+import {
+  deriveServerGroupName,
+  newGroupDraft,
+} from "@/components/hosts/server-group-name";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -103,6 +107,11 @@ export function ServerGroupPicker({
     new Set()
   );
   const [isCreating, setIsCreating] = useState(false);
+  // Once the user types their own name, stop rewriting it under them.
+  const [nameEdited, setNameEdited] = useState(false);
+  // A preselected form is reachable without the user having touched it, so
+  // click-away must not commit one they only looked at.
+  const [createTouched, setCreateTouched] = useState(false);
   // Optimistic record for the row we just created — the live
   // `serverAttachments` query takes a beat to refetch, so without
   // this fallback the trigger would briefly show the "pick one"
@@ -184,21 +193,33 @@ export function ServerGroupPicker({
     [deleteServerAttachment, value, onClearSelection],
   );
 
-  // Auto-name new groups "group 1", "group 2", … using the lowest number
-  // not already taken — the name no longer depends on the picked servers.
-  const nextGroupName = useCallback(() => {
-    const used = new Set<number>();
-    for (const a of serverAttachments) {
-      const m = /^group (\d+)$/i.exec((a.name ?? "").trim());
-      if (m) used.add(Number(m[1]));
-    }
-    let n = 1;
-    while (used.has(n)) n++;
-    return `group ${n}`;
-  }, [serverAttachments]);
+  const existingGroupNames = useMemo(
+    () => serverAttachments.map((a) => a.name ?? ""),
+    [serverAttachments]
+  );
+
+  // The name follows the picked servers until the user writes their own.
+  useEffect(() => {
+    if (!showCreate || nameEdited) return;
+    setCreateName(
+      deriveServerGroupName(
+        projectServers
+          .filter((server) => createServerIds.has(server._id))
+          .map((server) => server.name),
+        existingGroupNames
+      )
+    );
+  }, [
+    showCreate,
+    nameEdited,
+    createServerIds,
+    projectServers,
+    existingGroupNames,
+  ]);
 
   const handleToggleServer = useCallback(
     (serverId: string, checked: boolean) => {
+      setCreateTouched(true);
       setCreateServerIds((prev) => {
         const next = new Set(prev);
         if (checked) next.add(serverId);
@@ -233,6 +254,8 @@ export function ServerGroupPicker({
       setOpen(false);
       setShowCreate(false);
       setCreateName("");
+      setNameEdited(false);
+      setCreateTouched(false);
       setCreateServerIds(new Set());
     } catch (err) {
       const raw = err instanceof Error ? err.message : "";
@@ -271,6 +294,8 @@ export function ServerGroupPicker({
           // a half-filled create form from the last session.
           setShowCreate(false);
           setCreateName("");
+          setNameEdited(false);
+          setCreateTouched(false);
           setCreateServerIds(new Set());
         }
       }}
@@ -327,7 +352,12 @@ export function ServerGroupPicker({
           // click-away IS the save. Keep the popover open until
           // handleCreate resolves (it closes itself on success) so the
           // trigger doesn't flash empty during the mutation.
-          if (showCreate && createName.trim() && createServerIds.size > 0) {
+          if (
+            showCreate &&
+            createTouched &&
+            createName.trim() &&
+            createServerIds.size > 0
+          ) {
             e.preventDefault();
             void handleCreate();
           }
@@ -477,8 +507,15 @@ export function ServerGroupPicker({
               <button
                 type="button"
                 onClick={() => {
+                  const draft = newGroupDraft(
+                    projectServers,
+                    existingGroupNames
+                  );
                   setShowCreate(true);
-                  setCreateName(nextGroupName());
+                  setNameEdited(false);
+                  setCreateTouched(false);
+                  setCreateServerIds(new Set(draft.serverIds));
+                  setCreateName(draft.name);
                 }}
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
               >
@@ -496,14 +533,20 @@ export function ServerGroupPicker({
               <Input
                 id="server-attachment-name"
                 value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                placeholder="e.g. group 3"
+                onChange={(e) => {
+                  setNameEdited(true);
+                  setCreateTouched(true);
+                  setCreateName(e.target.value);
+                }}
+                placeholder="Name this group"
                 className="h-7 text-xs"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void handleCreate();
                   if (e.key === "Escape") {
                     setShowCreate(false);
                     setCreateName("");
+                    setNameEdited(false);
+                    setCreateTouched(false);
                     setCreateServerIds(new Set());
                   }
                 }}
@@ -557,6 +600,8 @@ export function ServerGroupPicker({
                 onClick={() => {
                   setShowCreate(false);
                   setCreateName("");
+                  setNameEdited(false);
+                  setCreateTouched(false);
                   setCreateServerIds(new Set());
                 }}
               >
