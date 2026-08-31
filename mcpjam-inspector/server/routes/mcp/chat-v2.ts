@@ -125,7 +125,11 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
-import { classifyPageToolApprovals } from "@/shared/client-fulfilled-tools";
+import {
+  classifyPageToolApprovals,
+  mergeUiToolApprovalClassifications,
+  type UiToolApprovalClassification,
+} from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -1170,6 +1174,9 @@ chatV2.post("/", async (c) => {
       localConsentValid,
     });
 
+    // Filled by the resolver when browser tools are advertised; merged into
+    // the engines' single `uiToolApprovals` slot below.
+    let browserToolApprovals: UiToolApprovalClassification | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1200,6 +1207,13 @@ chatV2.post("/", async (c) => {
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             localComputerRequested: localPrefEligible,
+            // This route THREADS the classification below, so it may advertise
+            // interactive browser tools; surfaces that thread nothing get none
+            // (see built-in-tools/browser.ts).
+            browserApprovalDelivery: { kind: "attested" },
+            onBrowserApprovals: (approvals) => {
+              browserToolApprovals = approvals;
+            },
           }
         : null,
     );
@@ -1402,6 +1416,13 @@ chatV2.post("/", async (c) => {
     const pageToolApprovals = classifyPageToolApprovals(
       validatedPageTools.map((entry) => entry.alias),
     );
+    // Browser tools are name-classified for the same reason page tools are,
+    // and the engines have ONE `uiToolApprovals` slot — so the two are merged
+    // rather than one overwriting the other.
+    const uiToolApprovals = mergeUiToolApprovalClassifications(
+      pageToolApprovals,
+      browserToolApprovals,
+    );
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
@@ -1549,7 +1570,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals: pageToolApprovals,
+        uiToolApprovals,
         modelVisibleMcpToolResults,
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
@@ -1817,7 +1838,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals: pageToolApprovals,
+        uiToolApprovals,
         modelVisibleMcpToolResults,
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,

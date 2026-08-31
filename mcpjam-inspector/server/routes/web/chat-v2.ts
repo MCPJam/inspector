@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
+import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import {
   listCloudRuntimeSkills,
@@ -1321,6 +1322,9 @@ chatV2.post("/", async (c) => {
       }
     }
 
+    // Filled by the resolver when browser tools are advertised; forwarded to
+    // the turn runner, which merges it into the engines' one approval slot.
+    let browserToolApprovals: UiToolApprovalClassification | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1349,6 +1353,12 @@ chatV2.post("/", async (c) => {
         // would be either rejected or — worse — wire-forgeable.
         ...(sandboxBinding ? { sandboxBinding } : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
+        // This surface threads the classification (below), so it may advertise
+        // interactive browser tools.
+        browserApprovalDelivery: { kind: "attested" },
+        onBrowserApprovals: (approvals) => {
+          browserToolApprovals = approvals;
+        },
       },
     );
 
@@ -1505,6 +1515,7 @@ chatV2.post("/", async (c) => {
           appTools: validatedAppTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
+          ...(browserToolApprovals ? { browserToolApprovals } : {}),
           // COMP-16: root the harness Shell at the host-configured working
           // directory — the same `computer.workdir` the bash tool runs in.
           ...(harnessComputerWorkdir
