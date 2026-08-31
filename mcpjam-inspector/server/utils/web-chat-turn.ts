@@ -83,6 +83,7 @@ import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import {
   classifyUiToolApprovals,
+  mergeUiToolApprovalClassifications,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
@@ -291,6 +292,15 @@ export interface WebChatTurnPrepareInputs {
   uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
+  /**
+   * Approval classification for the `browser_*` tools this turn advertises,
+   * produced by `resolveHostTools`. Merged with the `ui_*` classification
+   * below: the engines have ONE `uiToolApprovals` slot, and whichever
+   * namespace filled it alone left the other falling through to the
+   * `requireToolApproval` default (off by default) — which strands a turn
+   * whose gated call never gets its approval request.
+   */
+  browserToolApprovals?: UiToolApprovalClassification;
   /** Host-configured computer working directory (COMP-16); roots the harness
    *  Shell under the same dir the bash tool runs in. */
   computerWorkdir?: string;
@@ -523,8 +533,12 @@ export function stripUiContextModelParts(
 function uiToolApprovalsFrom(
   uiTools: UiToolEntry[] | undefined,
   requireToolApproval: boolean | undefined,
+  browserToolApprovals?: UiToolApprovalClassification,
 ): UiToolApprovalClassification {
-  return classifyUiToolApprovals(uiTools, requireToolApproval === true);
+  return mergeUiToolApprovalClassifications(
+    classifyUiToolApprovals(uiTools, requireToolApproval === true),
+    browserToolApprovals,
+  );
 }
 
 /**
@@ -1024,6 +1038,7 @@ export async function streamWebChatTurn(
       uiToolApprovals: uiToolApprovalsFrom(
         effectiveUiTools,
         persist.requireToolApproval,
+        prepare.browserToolApprovals,
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
@@ -1102,6 +1117,7 @@ export async function streamWebChatTurn(
     uiToolApprovals: uiToolApprovalsFrom(
       effectiveUiTools,
       persist.requireToolApproval,
+      prepare.browserToolApprovals,
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // Harness engine only: it builds its own MCP tool set (host-executed

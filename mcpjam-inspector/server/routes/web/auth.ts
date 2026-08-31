@@ -2336,7 +2336,16 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
+    // helper dials the caller's OWN MCP server, and a connection-class failure
+    // left as `502 SERVER_UNREACHABLE` / `504 TIMEOUT` is exactly what the
+    // hosted edge replaces with its own error page — discarding the JSON
+    // envelope that carries the reason, so the browser was left with a bare
+    // "Request failed (502)" and no way to learn why (BB-48). The downgrade to
+    // 424 still requires the message to positively name an MCP server, so this
+    // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
+    // Convex deployment — keeps its 5xx and keeps paging us.
+    const routeError = mapTargetServerError(error);
     return webErrorFromRoute(
       c,
       routeError,

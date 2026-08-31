@@ -549,7 +549,9 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
           "The WebMCP Inspector opens a real browser window, and this machine has no display " +
             "to open one on. Set MCPJAM_WEBMCP_HEADLESS=true to run the browser headless — " +
             "tool discovery, invocation and screenshots all still work; only interacting with " +
-            "the page by hand does not.",
+            "the page by hand does not. If you need to interact with the page, use a hosted " +
+            "browser on an MCPJam computer instead: it runs on a machine with a display, and " +
+            "you drive it from the Browser panel.",
         );
       }
       if (/Executable doesn't exist|please run|install/i.test(message)) {

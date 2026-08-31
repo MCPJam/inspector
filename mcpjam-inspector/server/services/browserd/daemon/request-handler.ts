@@ -23,6 +23,7 @@ import type {
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
 import { constantTimeEquals, presentedBearer } from "./auth";
+import { HandoffLease, type LeaseState } from "./lease";
 
 /** A parsed inbound request; the adapter fills this from a Node req. */
 export interface DaemonRequest {
@@ -61,6 +62,14 @@ export interface BrowserdHandlerDeps {
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
   token: string;
+  /**
+   * The human-handoff lease. While a person holds (or has parked) it, every
+   * model-driven command is refused HERE — before the queue, before the
+   * driver, before anything captures a frame. Enforcing it at the daemon is
+   * the whole privacy guarantee: a filter further downstream would already
+   * hold the screenshot of someone's password field.
+   */
+  lease?: HandoffLease;
 }
 
 export class BrowserdRequestHandler {
@@ -68,12 +77,14 @@ export class BrowserdRequestHandler {
   private readonly driver: Pick<BrowserDriver, "health">;
   private readonly bootId: string;
   private readonly token: string;
+  private readonly lease: HandoffLease;
 
   constructor(deps: BrowserdHandlerDeps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
+    this.lease = deps.lease ?? new HandoffLease();
   }
 
   async handle(req: DaemonRequest): Promise<DaemonResponse> {
@@ -109,6 +120,36 @@ export class BrowserdRequestHandler {
       return this.handleCommand(req);
     }
 
+    // Authenticated status: liveness PLUS boot identity, in one probe. This is
+    // what the durable-session reuse path polls — presenting the stored bearer
+    // verifies the credential at the same time (a 401 means the row describes
+    // a previous boot's secret), and `bootId` lets the caller distinguish "the
+    // same daemon I recorded" from "something else is listening on that port".
+    // `/healthz` above deliberately stays secret-free; this endpoint is the
+    // authenticated counterpart.
+    if (req.path === "/v1/status") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      const health = await this.driver.health();
+      return health.ok
+        ? { status: 200, body: { ok: true, bootId: this.bootId } }
+        : {
+            status: 503,
+            body: { ok: false, detail: health.detail, bootId: this.bootId },
+          };
+    }
+
+    // The human-handoff lease: acquire / heartbeat / resume, plus a plain read.
+    // Never gated by the lease itself — the whole point is that a person can
+    // take and hand back control while model commands are blocked.
+    if (req.path === "/v1/lease") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleLease(req);
+    }
+
     return { status: 404 };
   }
 
@@ -126,6 +167,25 @@ export class BrowserdRequestHandler {
       };
     }
 
+    // HANDOFF GATE. A person holds (or has parked) the browser, so nothing
+    // model-driven runs and — just as importantly — nothing OBSERVES: this
+    // refusal happens before the queue, before the driver, before any frame is
+    // captured, so a password being typed right now cannot reach a trace.
+    // `manual` is the person's own command, which is the one thing that must
+    // still work while they hold it.
+    const leaseState = this.lease.state();
+    if (leaseState.state !== "free" && parsed.command.source !== "manual") {
+      return {
+        status: 423,
+        body: {
+          error:
+            leaseState.state === "held" ? "lease_held" : "lease_parked",
+          holder: leaseState.holder,
+          bootId: this.bootId,
+        },
+      };
+    }
+
     // bootId staleness: a command the caller expected a DIFFERENT boot to run is
     // rejected before it reaches the queue. Never re-execute across a restart.
     if (
@@ -140,6 +200,66 @@ export class BrowserdRequestHandler {
 
     const outcome = await this.queue.submit(parsed.command);
     return this.mapOutcome(outcome);
+  }
+
+  /**
+   * Lease control. Every action names its `holder` so one person's lease
+   * cannot be released by another tab that happens to know the endpoint.
+   */
+  private handleLease(req: DaemonRequest): DaemonResponse {
+    if (req.method === "GET") {
+      return { status: 200, body: this.leaseBody(this.lease.state()) };
+    }
+    let parsed: { action?: unknown; holder?: unknown; ttlMs?: unknown };
+    try {
+      parsed = JSON.parse(req.body) as typeof parsed;
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
+    if (!holder) {
+      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+    }
+    const ttlMs =
+      typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs)
+        ? parsed.ttlMs
+        : undefined;
+
+    let state: LeaseState;
+    switch (parsed?.action) {
+      case "acquire":
+        state = this.lease.acquire(holder, ttlMs);
+        break;
+      case "heartbeat":
+        state = this.lease.heartbeat(holder, ttlMs);
+        break;
+      case "resume":
+      case "release":
+        state = this.lease.resume(holder);
+        break;
+      default:
+        return {
+          status: 400,
+          body: { error: "invalid_lease_action", bootId: this.bootId },
+        };
+    }
+    // An acquire that did not take (someone else holds it) is a 409, not a
+    // silent no-op: a UI that thinks it has the browser would show a person a
+    // live view while the model kept driving.
+    const took =
+      parsed.action !== "acquire" ||
+      (state.state === "held" && state.holder === holder);
+    return {
+      status: took ? 200 : 409,
+      body: this.leaseBody(state),
+    };
+  }
+
+  private leaseBody(state: LeaseState): Record<string, unknown> {
+    return {
+      lease: state,
+      bootId: this.bootId,
+    };
   }
 
   /** Map a queue outcome to an HTTP response. */
