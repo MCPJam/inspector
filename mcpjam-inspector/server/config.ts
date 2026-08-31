@@ -44,6 +44,28 @@ export const WEBMCP_INSPECTOR_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
 
 /**
+ * Is the hosted browser (E2B Desktop + browserd) reachable at all?
+ *
+ * The dark switch the hosted runtime ships behind until the durable backend
+ * exposure gate opens (W7). READ AT CALL TIME, not captured at import: this is
+ * flipped per-process in staging and per-test, and a module constant would
+ * freeze whatever the environment happened to say when the module first
+ * loaded.
+ *
+ * Two callers must agree on it — the built-in tool registry, which decides
+ * whether the MODEL gets browser tools, and the WebMCP Inspector route, which
+ * decides whether a person may run their inspector session on a hosted
+ * browser. Both reserve a desktop computer and both bill for it, so a second
+ * copy of this literal is how one of them stays reachable after the other is
+ * turned off.
+ */
+export function hostedBrowserEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.HOSTED_BROWSER_TOOLS_ENABLED === "1";
+}
+
+/**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
  * eval model as a per-turn system-prompt addendum, so the model reasons over a
  * widget interaction on its next turn (the headless analogue of Playground's

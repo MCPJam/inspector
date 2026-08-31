@@ -5,12 +5,28 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const configState = vi.hoisted(() => ({ enabled: true }));
+const configState = vi.hoisted(() => ({ enabled: true, hostedBrowser: false }));
 vi.mock("../../../config", () => ({
   get WEBMCP_INSPECTOR_ENABLED() {
     return configState.enabled;
   },
+  hostedBrowserEnabled: () => configState.hostedBrowser,
   HOSTED_MODE: false,
+}));
+
+// The hosted transport's two live seams. Mocked so the switch can be tested
+// without an E2B sandbox: what matters here is WHICH provider the route
+// picks, and with what identity — the provider's own behaviour is covered in
+// `services/webmcp-inspector/__tests__/browserd-provider.test.ts`.
+const hostedState = vi.hoisted(() => ({
+  ensureArgs: [] as Array<Record<string, unknown>>,
+  createdProviders: 0,
+}));
+vi.mock("../../../services/browserd/live-session-deps.js", () => ({
+  ensureLiveBrowserSession: (args: Record<string, unknown>) => {
+    hostedState.ensureArgs.push(args);
+    return Promise.reject(new Error("ensureLiveBrowserSession not reached in this test"));
+  },
 }));
 
 import {
@@ -274,5 +290,94 @@ describe("webmcp-inspector routes", () => {
     );
     const text = await new Response(res.body).text();
     expect(text).toContain("session_gone");
+  });
+});
+
+/**
+ * The W5 transport switch. `browserd-provider.ts` shipped tested but
+ * unreferenced — nothing selected it, so every session ran locally no matter
+ * what. These cover the selection itself, and the three refusals that guard
+ * it: a hosted session spends someone's credits, so it must never be the
+ * thing that happens by accident.
+ */
+describe("POST /sessions — transport selection", () => {
+  beforeEach(() => {
+    configState.hostedBrowser = false;
+    hostedState.ensureArgs.length = 0;
+  });
+
+  it("refuses hosted while the hosted runtime is off", async () => {
+    const { status, body } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test", transport: "hosted", projectId: "p1" }),
+    );
+    expect(status).toBe(503);
+    expect(body.code).toBe("hosted-browser-disabled");
+    // Nothing was reserved: the refusal happens before any seam is touched.
+    expect(hostedState.ensureArgs).toHaveLength(0);
+  });
+
+  it("refuses hosted with no project — there is no computer to run on", async () => {
+    configState.hostedBrowser = true;
+    const { status, body } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test", transport: "hosted" }),
+    );
+    expect(status).toBe(400);
+    expect(body.code).toBe("hosted-project-required");
+    expect(hostedState.ensureArgs).toHaveLength(0);
+  });
+
+  it("refuses hosted with no Authorization — the computer is billed to someone", async () => {
+    configState.hostedBrowser = true;
+    const { status, body } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test", transport: "hosted", projectId: "p1" }),
+    );
+    expect(status).toBe(401);
+    expect(body.code).toBe("hosted-auth-required");
+    expect(hostedState.ensureArgs).toHaveLength(0);
+  });
+
+  it("selects the hosted provider and passes the caller's identity through", async () => {
+    configState.hostedBrowser = true;
+    const { status } = await call("/api/mcp/webmcp/sessions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        url: "https://a.test",
+        transport: "hosted",
+        projectId: "p1",
+      }),
+    });
+
+    // The mocked seam rejects, so the request fails — but reaching it at all
+    // is the proof the hosted provider was selected rather than the local one
+    // (which would have tried to launch Chromium).
+    expect(status).toBe(500);
+    expect(hostedState.ensureArgs).toHaveLength(1);
+    expect(hostedState.ensureArgs[0]).toMatchObject({
+      bearer: "Bearer user-token",
+      projectId: "p1",
+      // A person driving their own page gets the persistent profile; an eval
+      // would get `ephemeral`. Handing the wrong one over is a silent
+      // correctness failure in either direction.
+      contextMode: "persistent",
+    });
+  });
+
+  it("leaves the LOCAL path untouched — an omitted transport reserves nothing", async () => {
+    configState.hostedBrowser = true;
+    // Invalid URL so the request stops at validation without launching a real
+    // browser; the point is that the hosted seam is never consulted.
+    const { status } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "file:///etc/passwd" }),
+    );
+    expect(status).toBe(400);
+    expect(hostedState.ensureArgs).toHaveLength(0);
   });
 });
