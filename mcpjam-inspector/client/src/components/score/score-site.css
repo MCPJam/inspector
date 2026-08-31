@@ -1,0 +1,49 @@
+.score-site {
+  --score-bg: #000000;
+  --score-fg: #f4f1ea;
+  --score-muted: #9a9690;
+  --score-primary: oklch(68.3% 0.138 38.7);
+  --score-primary-fg: #1a0c04;
+  --score-surface: #0c0c0c;
+  --score-border: #2a2826;
+  --score-card: #090504d1;
+  --font-score-display: "Montserrat", sans-serif;
+  --font-score-sans: "Instrument Sans", sans-serif;
+  --font-score-mono: "JetBrains Mono", monospace;
+  color: var(--score-fg);
+  background: var(--score-bg);
+  font-family: var(--font-score-sans);
+  font-synthesis: none;
+}
+
+.score-site-glow {
+  left: max(0px, calc((100% - 1440px) / 2));
+}
+
+@media (min-width: 1360px) and (min-height: 700px) {
+  .score-site-layout {
+    position: static;
+    display: block;
+    padding: 0;
+  }
+
+  .score-site-content {
+    position: absolute;
+    left: max(54px, calc((100% - 1440px) / 2 + 54px));
+    top: calc(50% - 9px);
+    width: 720px;
+    transform: translateY(-50%);
+  }
+
+  .score-preview-card {
+    position: absolute;
+    left: max(874px, calc((100% - 1440px) / 2 + 874px));
+    top: calc(50% - 8.5px);
+    transform: translateY(-50%);
+  }
+}
+
+.score-site :focus-visible {
+  outline: 2px solid var(--score-primary);
+  outline-offset: 2px;
+}

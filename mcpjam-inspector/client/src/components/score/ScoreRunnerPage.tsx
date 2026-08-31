@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@mcpjam/design-system/button";
-import { Loader2, ArrowRight, ShieldCheck, Link2, Check } from "lucide-react";
 import { useMutation } from "convex/react";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { useConformanceRun } from "@/hooks/use-conformance-run";
@@ -10,7 +8,6 @@ import { validateHostedServer } from "@/lib/apis/web/servers-api";
 import { WebApiError } from "@/lib/apis/web/base";
 import { SCORE_OAUTH_PENDING_KEY } from "@/lib/hosted-oauth-callback";
 import { routePaths } from "@/lib/app-navigation";
-import { ScoreHeadline } from "@/components/conformance/ScoreHeadline";
 import type { ServerWithName } from "@/state/app-types";
 import {
   submitScoreRun,
@@ -18,43 +15,17 @@ import {
   type ScoreSuiteId,
   type ScoreSuiteSummary,
 } from "@/lib/apis/score-api";
+import { ScoreRunnerView } from "./ScoreRunnerView";
+import { isScoreRunnerBusy, type ScoreRunnerPhase } from "./score-runner-view-model";
+import { normalizeScoreUrl } from "./score-url";
 import { deriveScoreServerName } from "./score-server-name";
 import {
   clearScoreRunResume,
   readScoreRunResume,
   writeScoreRunResume,
 } from "./score-run-resume";
-import { ScoreSuiteBreakdown } from "./ScoreSuiteBreakdown";
 
-/**
- * Where "Debug these failures in MCPJam" sends a visitor.
- *
- * A plain link, deliberately. Carrying the guest project across would need the
- * guest promotion proof, and that proof is a bearer credential that can claim a
- * guest's projects — putting it in a URL leaks it to history, referrers and
- * logs. The guest cookie is host-only, so it cannot travel from this origin to
- * the app either. Handing the scanned server over needs a real one-shot
- * exchange endpoint; until that exists, the honest CTA is a link, not a
- * parameter that promotes nothing.
- */
-const APP_ORIGIN = "https://app.mcpjam.com";
-const CTA_HREF = `${APP_ORIGIN}/servers`;
-
-type Phase =
-  | "form"
-  | "preparing"
-  | "authorizing"
-  | "running"
-  /**
-   * The suites have settled but their results may not have COMMITTED yet.
-   * `runAll` schedules React state updates and then resolves, so its promise
-   * continuation is a microtask that can run before the commit — persisting
-   * from there could still read a pre-run snapshot. This phase exists so the
-   * save is triggered by an effect, which React only runs after the commit.
-   */
-  | "run-complete"
-  | "saving"
-  | "done";
+type Phase = ScoreRunnerPhase;
 
 /** `oauthRequired` is carried on a thrown, tagged 401 — never on a return value. */
 function isOAuthRequiredError(error: unknown): boolean {
@@ -63,25 +34,6 @@ function isOAuthRequiredError(error: unknown): boolean {
     (error.details as { oauthRequired?: unknown } | undefined)
       ?.oauthRequired === true
   );
-}
-
-function normalizeUrlInput(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  // A pasted host with no scheme is the single most common way this form gets
-  // filled. Assume https rather than rejecting it — http would be a downgrade
-  // nobody asked for.
-  const withScheme = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
-  try {
-    const parsed = new URL(withScheme);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      return null;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
 }
 
 export function ScoreRunnerPage({
@@ -443,16 +395,11 @@ export function ScoreRunnerPage({
     [resultToken]
   );
 
-  const busy =
-    phase === "preparing" ||
-    phase === "running" ||
-    phase === "run-complete" ||
-    phase === "saving" ||
-    run.isRunning;
+  const busy = isScoreRunnerBusy(phase) || run.isRunning;
 
   const onSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    const normalized = normalizeUrlInput(urlInput);
+    const normalized = normalizeScoreUrl(urlInput);
     if (!normalized) {
       setError("Enter a valid http(s) MCP server URL.");
       return;
@@ -475,175 +422,53 @@ export function ScoreRunnerPage({
     void startRun(normalized);
   };
 
+  const copyResultUrl = () => {
+    if (!resultUrl) return;
+    // `writeText` rejects without focus or permission. Show "Copied" only
+    // once the write actually resolved — a tick over an empty clipboard
+    // is worse than no tick.
+    const write = navigator.clipboard?.writeText?.(resultUrl);
+    if (!write) {
+      setError("Could not copy the link. Copy it manually.");
+      return;
+    }
+    void write
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => setError("Could not copy the link. Copy it manually."));
+  };
+
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-6 overflow-y-auto px-6 py-10">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Score your MCP server</h1>
-        <p className="text-sm text-muted-foreground">
-          Paste a server URL. We run the protocol, apps, tasks and OAuth
-          conformance suites against it and give you one number out of 100, with
-          every check we judged it on.
-        </p>
-      </header>
-
-      <form onSubmit={onSubmit} className="flex flex-col gap-2 sm:flex-row">
-        <input
-          type="text"
-          inputMode="url"
-          autoComplete="off"
-          spellCheck={false}
-          value={urlInput}
-          onChange={(event) => setUrlInput(event.target.value)}
-          placeholder="https://mcp.example.com/mcp"
-          aria-label="MCP server URL"
-          disabled={busy}
-          className="h-10 min-w-0 flex-1 rounded-md border border-border/60 bg-background px-3 text-sm outline-none focus:border-foreground/30"
-        />
-        <Button type="submit" disabled={busy || appReady.status !== "ready"}>
-          {busy ? (
-            <>
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              {phase === "preparing"
-                ? "Preparing…"
-                : phase === "saving"
-                ? "Saving…"
-                : "Scanning…"}
-            </>
-          ) : (
-            <>
-              Score it
-              <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-            </>
-          )}
-        </Button>
-      </form>
-
-      {appReady.status !== "ready" && appReadyMessage && (
-        <p className="text-xs text-muted-foreground">{appReadyMessage}</p>
-      )}
-
-      <p className="text-xs text-muted-foreground">
-        Hosted scans reach your server over the public internet, so a stdio
-        server or one on localhost can&apos;t be scored here — run those locally
-        with{" "}
-        <code className="rounded bg-muted px-1 py-0.5">
-          npx @mcpjam/inspector
-        </code>
-        .
-      </p>
-
-      {error && (
-        <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-          {error}
-        </div>
-      )}
-
-      {phase === "authorizing" && server && serverId && (
-        <div className="space-y-3 rounded-md border border-border/50 bg-muted/30 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <ShieldCheck className="h-4 w-4" />
-            This server requires authorization
-          </div>
-          <p className="text-xs text-muted-foreground">
-            We can&apos;t check what a server does for an authorized client
-            without being one. Authorizing sends you to the server&apos;s own
-            login and brings you straight back here to finish the scan.
-          </p>
-          <Button
-            size="sm"
-            onClick={() =>
-              void oauthGate.authorizeServer({
-                serverId,
-                serverName: server.name,
-                useOAuth: true,
-                serverUrl:
-                  (server.config as { url?: string } | undefined)?.url ?? null,
-                clientId: null,
-                oauthScopes: null,
-              })
-            }
-            disabled={oauthGate.hasBusyOAuth}
-          >
-            Authorize and continue
-          </Button>
-        </div>
-      )}
-
-      {(run.pooledScore || busy) && (
-        <div className="space-y-4">
-          <ScoreHeadline
-            score={run.pooledScore}
-            oauthNotScored={run.oauthNotScored}
-            size="hero"
-          />
-          <ScoreSuiteBreakdown
-            protocol={run.protocol}
-            apps={run.apps}
-            tasks={run.tasks}
-            oauth={run.oauth}
-            protocolScore={run.protocolScore}
-            appsScore={run.appsScore}
-            tasksScore={run.tasksScore}
-            oauthScore={run.oauthScore}
-            onAuthorizeOAuth={run.authorizeOAuth}
-          />
-        </div>
-      )}
-
-      {phase === "done" && (
-        <div className="space-y-3 rounded-md border border-border/50 px-4 py-3">
-          {resultUrl && (
-            <div className="space-y-1">
-              <div className="text-xs font-medium">Private result link</div>
-              <div className="flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-[11px]">
-                  {resultUrl}
-                </code>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label={
-                    copied ? "Copied result link" : "Copy result link"
-                  }
-                  onClick={() => {
-                    // `writeText` rejects without focus or permission. Show the
-                    // check mark only once the write actually resolved — a tick
-                    // over an empty clipboard is worse than no tick.
-                    const write = navigator.clipboard?.writeText?.(resultUrl);
-                    if (!write) {
-                      // No Clipboard API at all (insecure context, older
-                      // browser) — same outcome as a rejected write.
-                      setError("Could not copy the link. Copy it manually.");
-                      return;
-                    }
-                    void write
-                      .then(() => {
-                        setCopied(true);
-                        window.setTimeout(() => setCopied(false), 2000);
-                      })
-                      .catch(() =>
-                        setError("Could not copy the link. Copy it manually.")
-                      );
-                  }}
-                >
-                  {copied ? (
-                    <Check className="h-3.5 w-3.5" />
-                  ) : (
-                    <Link2 className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Anyone with this link can read the report. It is not listed
-                anywhere.
-              </p>
-            </div>
-          )}
-          <Button asChild size="sm">
-            <a href={CTA_HREF}>Debug these failures in MCPJam</a>
-          </Button>
-        </div>
-      )}
-    </div>
+    <ScoreRunnerView
+      urlInput={urlInput}
+      onUrlChange={setUrlInput}
+      onSubmit={onSubmit}
+      phase={phase}
+      error={error}
+      busy={busy}
+      formDisabled={busy || appReady.status !== "ready"}
+      appReadyMessage={
+        appReady.status !== "ready" ? appReadyMessage : null
+      }
+      resultUrl={resultUrl}
+      copied={copied}
+      onCopy={copyResultUrl}
+      showAuthorize={phase === "authorizing" && Boolean(server && serverId)}
+      onAuthorize={() => {
+        if (!server || !serverId) return;
+        void oauthGate.authorizeServer({
+          serverId,
+          serverName: server.name,
+          useOAuth: true,
+          serverUrl:
+            (server.config as { url?: string } | undefined)?.url ?? null,
+          clientId: null,
+          oauthScopes: null,
+        });
+      }}
+      authorizeBusy={oauthGate.hasBusyOAuth}
+    />
   );
 }
