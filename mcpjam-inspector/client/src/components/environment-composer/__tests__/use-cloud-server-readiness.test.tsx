@@ -118,7 +118,7 @@ describe("useCloudServerReadiness", () => {
     ];
 
     expect(assess(composeState({ serverAttachmentId: "grp-1" }))).toEqual({
-      status: "local_only",
+      status: "unrunnable_servers",
       labels: ["Local group"],
       serverNames: ["Fetch"],
     });

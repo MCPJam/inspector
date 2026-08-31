@@ -63,7 +63,7 @@ export type CloudServerReadiness =
   | { status: "no_servers"; labels: string[] }
   /** A target carries a server the run refuses: one stdio member, or a set
    * that is unreachable end to end. `serverNames` lists only the offenders. */
-  | { status: "local_only"; labels: string[]; serverNames: string[] };
+  | { status: "unrunnable_servers"; labels: string[]; serverNames: string[] };
 
 /**
  * The servers in this set that would sink the run, or none.
@@ -104,7 +104,7 @@ export function serversAreRunnable(
  * because a false block would wall a user off from a setup that runs fine. The
  * resolver's own `ENV_NO_SERVERS` remains the backstop for anything we skip.
  *
- * `no_servers` outranks `local_only`: it needs a different fix (connect or
+ * `no_servers` outranks `unrunnable_servers`: it needs a different fix (connect or
  * enroll a server, versus make an existing one reachable), and reporting the
  * emptier problem first keeps the copy to one instruction.
  */
@@ -115,8 +115,8 @@ export function assessCloudServerReadiness(args: {
 }): CloudServerReadiness {
   const byId = new Map(args.servers.map((server) => [server._id, server]));
   const emptyLabels: string[] = [];
-  const localOnlyLabels: string[] = [];
-  const localOnlyServerNames = new Set<string>();
+  const unrunnableLabels: string[] = [];
+  const unrunnableServerNames = new Set<string>();
 
   for (const target of args.targets) {
     if (target.opaque) continue;
@@ -147,18 +147,18 @@ export function assessCloudServerReadiness(args: {
     if (candidates.length === 0) continue;
     const unrunnable = unrunnableServers(candidates);
     if (unrunnable.length === 0) continue;
-    localOnlyLabels.push(target.label);
-    for (const server of unrunnable) localOnlyServerNames.add(server.name);
+    unrunnableLabels.push(target.label);
+    for (const server of unrunnable) unrunnableServerNames.add(server.name);
   }
 
   if (emptyLabels.length > 0) {
     return { status: "no_servers", labels: emptyLabels };
   }
-  if (localOnlyLabels.length > 0) {
+  if (unrunnableLabels.length > 0) {
     return {
-      status: "local_only",
-      labels: localOnlyLabels,
-      serverNames: [...localOnlyServerNames],
+      status: "unrunnable_servers",
+      labels: unrunnableLabels,
+      serverNames: [...unrunnableServerNames],
     };
   }
   return { status: "ok" };

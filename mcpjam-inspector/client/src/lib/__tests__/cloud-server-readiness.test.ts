@@ -59,7 +59,7 @@ describe("assessCloudServerReadiness", () => {
         servers: [STDIO, LOOPBACK],
       })
     ).toEqual({
-      status: "local_only",
+      status: "unrunnable_servers",
       labels: ["Claude"],
       serverNames: ["Fetch", "Local HTTP"],
     });
@@ -74,7 +74,7 @@ describe("assessCloudServerReadiness", () => {
         servers: [STDIO, REMOTE],
       })
     ).toEqual({
-      status: "local_only",
+      status: "unrunnable_servers",
       labels: ["Claude"],
       serverNames: ["Fetch"],
     });
@@ -127,7 +127,7 @@ describe("assessCloudServerReadiness", () => {
         servers: [REMOTE, STDIO],
       })
     ).toEqual({
-      status: "local_only",
+      status: "unrunnable_servers",
       labels: ["Prod group"],
       serverNames: ["Fetch"],
     });
@@ -204,7 +204,7 @@ describe("describeCloudServerBlock", () => {
   // reachability rather than connecting anything.
   it("tells the local-only case why the cloud can't reach it", () => {
     const copy = describeCloudServerBlock({
-      status: "local_only",
+      status: "unrunnable_servers",
       labels: ["Staging"],
       serverNames: ["Fetch"],
     });
