@@ -260,6 +260,21 @@ export function buildHostedStepHandlers(
             ...(outcome.iterationErrorDetails
               ? { iterationErrorDetails: outcome.iterationErrorDetails }
               : {}),
+            // WHICH LAYER failed, carried across the bridge.
+            //
+            // Dropping these was enough to make provider attribution dead on
+            // the hosted path entirely: `drive-hosted-eval-turn` classifies the
+            // failure, `step-executor` propagates whatever it is handed, and
+            // `evals-runner` builds `stepError` from it — but this conversion
+            // sat in the middle copying only the message, so `errorSource` was
+            // always undefined and no hosted run was ever attributed.
+            ...(outcome.errorSource
+              ? { errorSource: outcome.errorSource }
+              : {}),
+            ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+            ...(typeof outcome.errorHttpStatus === "number"
+              ? { errorHttpStatus: outcome.errorHttpStatus }
+              : {}),
           }
         : {}),
     };
@@ -309,6 +324,21 @@ export function buildHostedStepHandlers(
             iterationError: outcome.iterationError,
             ...(outcome.iterationErrorDetails
               ? { iterationErrorDetails: outcome.iterationErrorDetails }
+              : {}),
+            // WHICH LAYER failed, carried across the bridge.
+            //
+            // Dropping these was enough to make provider attribution dead on
+            // the hosted path entirely: `drive-hosted-eval-turn` classifies the
+            // failure, `step-executor` propagates whatever it is handed, and
+            // `evals-runner` builds `stepError` from it — but this conversion
+            // sat in the middle copying only the message, so `errorSource` was
+            // always undefined and no hosted run was ever attributed.
+            ...(outcome.errorSource
+              ? { errorSource: outcome.errorSource }
+              : {}),
+            ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+            ...(typeof outcome.errorHttpStatus === "number"
+              ? { errorHttpStatus: outcome.errorHttpStatus }
               : {}),
           }
         : {}),
