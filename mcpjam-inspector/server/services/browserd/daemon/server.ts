@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { CommandQueue } from "./command-queue";
 import { BrowserdRequestHandler, type DaemonResponse } from "./request-handler";
 import { guardStaleness, type BrowserDriver } from "./browser-driver";
+import { HandoffLease } from "./lease";
 
 /** Requests bigger than this are refused with 413 before they reach the queue. */
 const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
@@ -122,6 +123,8 @@ export interface BrowserdStack {
   handler: BrowserdRequestHandler;
   queue: CommandQueue;
   bootId: string;
+  /** The human-handoff lease this stack's handler and driver share. */
+  lease: HandoffLease;
 }
 
 /**
@@ -132,18 +135,27 @@ export interface BrowserdStack {
  */
 export function buildBrowserdStack(
   driver: BrowserDriver,
-  config: { token: string; bootId?: string } & DaemonServerOptions,
+  config: {
+    token: string;
+    bootId?: string;
+    lease?: HandoffLease;
+  } & DaemonServerOptions,
 ): BrowserdStack {
   const bootId = config.bootId ?? randomUUID();
   const queue = new CommandQueue(guardStaleness(driver), bootId);
+  // ONE lease instance, shared: the handler refuses commands while it is held,
+  // and the driver reads its resumed flag to make the first post-handoff
+  // observation loud (L6). Two instances would let those disagree.
+  const lease = config.lease ?? new HandoffLease();
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
     bootId,
     token: config.token,
+    lease,
   });
   const server = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
   });
-  return { server, handler, queue, bootId };
+  return { server, handler, queue, bootId, lease };
 }

@@ -15,18 +15,25 @@ import {
 import type {
   WebMcpActivityEntry,
   WebMcpSessionStatus,
+  WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
 
 /**
  * The WebMCP workspace: a URL bar, the live tool registry, one tool's schema
  * and invoke form, and the activity timeline.
  *
- * There is no embedded viewport, and that is the design rather than a gap. The
- * browser opens as a real window on this machine, so the developer drives their
- * own page with their own devtools open; this screen is the instrument panel
- * beside it. A streamed viewport is what the hosted stage needs, and the
- * session already reports which transport it is on so this screen can render
- * one when a provider offers it.
+ * There is no embedded viewport, and for the LOCAL provider that is the design
+ * rather than a gap: the browser opens as a real window on this machine, so the
+ * developer drives their own page with their own devtools open, and this screen
+ * is the instrument panel beside it.
+ *
+ * The hosted provider changes where the browser is, not what this screen does.
+ * Its session reports `remote-interactive-url`, and the viewport lives in the
+ * Browser panel, which can both show the stream and hand control to a person.
+ * So the notice at the top of this screen has to say which of those situations
+ * the viewer is actually in — see `viewportNotice`. Telling someone driving a
+ * datacenter browser to look at a window on their own desk sends them hunting
+ * for something that is not there.
  */
 export function WebmcpInspectorTab() {
   const {
@@ -204,11 +211,12 @@ export function WebmcpInspectorTab() {
 
       {live ? (
         <p className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-          {/* Never promise a window that does not exist: a headless session
-              has no viewport to point anyone at. */}
-          {session?.viewportTransport.kind === "headless"
-            ? "Running headless — no window to interact with. Tools, invocation and screenshots all work; use the Screenshot button to see the page."
-            : "A browser window is open on this machine — interact with the page there. Tools it registers appear here as they register."}
+          {/* Never promise a window that does not exist. A headless session has
+              no viewport at all, and a HOSTED one has a browser running on a
+              machine in a datacenter — telling someone to look at a window on
+              their own desk would send them hunting for something that is not
+              there. */}
+          {viewportNotice(session?.viewportTransport.kind)}
           {session?.url ? (
             <span className="ml-1 font-mono">{session.url}</span>
           ) : null}
@@ -336,4 +344,22 @@ function ErrorBanner({
       </Button>
     </div>
   );
+}
+
+/**
+ * What to tell someone about where the browser they are driving actually is.
+ * Each branch is a different physical situation, and getting it wrong sends
+ * people looking for a window that does not exist.
+ */
+function viewportNotice(kind: WebMcpViewportTransport["kind"] | undefined): string {
+  switch (kind) {
+    case "headless":
+      return "Running headless — no window to interact with. Tools, invocation and screenshots all work; use the Screenshot button to see the page.";
+    case "remote-interactive-url":
+      return "This browser is running on your MCPJam computer, not on this machine. Open the Browser panel to watch it, or to take control when a sign-in needs you.";
+    case "frame-stream":
+      return "This browser is streaming its viewport here. Tools it registers appear as they register.";
+    default:
+      return "A browser window is open on this machine — interact with the page there. Tools it registers appear here as they register.";
+  }
 }
