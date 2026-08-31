@@ -540,17 +540,27 @@ export function ServerConnectionHandoff() {
     );
   }
 
+  // WHAT THIS SCREEN MAY AND MAY NOT CLAIM. Reaching it means the resume above
+  // could not show this browser was the one that claimed the link — which says
+  // nothing about WHO did. "You already used this" was therefore false in the
+  // most common way to arrive here: opening the link in incognito, on a second
+  // machine, or after a chat client's preview crawler spent it, where the user
+  // is certain they never used it and the page appears to be lying.
+  //
+  // So the heading states only what is always true — the link was opened
+  // elsewhere — and the body carries the rule that explains every one of those
+  // cases without having to tell them apart.
   if (error && !state) {
     return (
       <Shell>
         <h1 className="text-lg font-semibold">
           {usedLink
-            ? "This link has already been used"
+            ? "This link was opened somewhere else"
             : "This link cannot be used"}
         </h1>
         <p className="text-sm text-muted-foreground">
           {usedLink
-            ? "Connection links work only once. Create a new link from the CLI to connect again."
+            ? "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again."
             : error}
         </p>
       </Shell>

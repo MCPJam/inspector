@@ -157,7 +157,10 @@ describe("the claim", () => {
     expect(calls.some((call) => call.path === "/claim")).toBe(false);
   });
 
-  it("explains that a spent one-time link must be recreated", async () => {
+  it("says the link was opened elsewhere, never that the visitor used it", async () => {
+    // Most arrivals here are incognito, a second machine, or a chat client's
+    // preview crawler spending the link first — people who did not use it and
+    // would read the old "you already used this" as the page being wrong.
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -176,11 +179,11 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("This link has already been used"),
+      await screen.findByText("This link was opened somewhere else"),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Connection links work only once. Create a new link from the CLI to connect again.",
+        "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again.",
       ),
     ).toBeInTheDocument();
   });
@@ -206,7 +209,7 @@ describe("the claim", () => {
     await screen.findByText("Personal");
 
     expect(
-      screen.queryByText("This link has already been used"),
+      screen.queryByText("This link was opened somewhere else"),
     ).not.toBeInTheDocument();
     expect(calls.some((call) => call.path === "/state")).toBe(true);
     // The spent token leaves the address bar exactly as a fresh claim's does.
@@ -236,7 +239,7 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("This link has already been used"),
+      await screen.findByText("This link was opened somewhere else"),
     ).toBeInTheDocument();
     // Not swapped onto the other request behind the same URL.
     expect(window.location.pathname).not.toContain("scr_2");
@@ -263,7 +266,7 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("This link has already been used"),
+      await screen.findByText("This link was opened somewhere else"),
     ).toBeInTheDocument();
     expect(calls.some((call) => call.path === "/state")).toBe(false);
   });
@@ -291,7 +294,7 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("This link has already been used"),
+      await screen.findByText("This link was opened somewhere else"),
     ).toBeInTheDocument();
   });
 
