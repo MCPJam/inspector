@@ -15,7 +15,10 @@ vi.mock("@mcpjam/sdk/browser", async (importOriginal) => {
   return { ...actual, createOAuthStateMachine };
 });
 
-import { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "@mcpjam/sdk/browser";
+import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
+  executeDynamicClientRegistration,
+} from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
 
@@ -37,6 +40,41 @@ function wrappedUpdateState(updateState = vi.fn(), currentStep = "metadata") {
     updateState: (u: Record<string, unknown>) => void;
   };
   return { wrapped: passed.updateState, updateState };
+}
+
+/**
+ * Replay the pair of messages one failed registration writes: the bare failure,
+ * then the same failure with the fallback hint appended once no pre-registered
+ * client turns up. Taken from the SDK outcome so a rewording there cannot leave
+ * this asserting stale text.
+ */
+async function replayRegistrationFailure(status: number) {
+  const dcr = await executeDynamicClientRegistration({
+    request: {
+      method: "POST",
+      url: "https://auth.example.test/register",
+      headers: {},
+      body: { client_name: "Test Client" },
+    },
+    requestExecutor: async () => ({
+      ok: false,
+      status,
+      statusText: "Registration failed",
+      headers: {},
+      body: { error: "registration_failed" },
+    }),
+  });
+  if (dcr.status === "registered") {
+    throw new Error(`expected a ${status} outcome`);
+  }
+
+  const { wrapped, updateState } = wrappedUpdateState(
+    vi.fn(),
+    "request_client_registration",
+  );
+  wrapped({ error: dcr.error });
+  wrapped({ error: dcr.errorWithFallbackHint });
+  return { updateState };
 }
 
 describe("OAuth debugger step-failure reporting", () => {
@@ -159,6 +197,37 @@ describe("OAuth debugger step-failure reporting", () => {
     wrapped({ error: "token exchange failed: 401" });
     wrapped({ error: "Warning: Authorization server may not support S256" });
     wrapped({ error: "token exchange failed: 401" });
+
+    expect(reportCaught).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a registration the authorization server refused", async () => {
+    // A 4xx from the registration endpoint is that server declining to mint a
+    // client, which is what the debugger exists to show — not a defect here.
+    const { updateState } = await replayRegistrationFailure(400);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    // Silenced for Sentry only — both messages still reach the screen.
+    expect(updateState).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a registration the server failed to answer exactly once", async () => {
+    // A 5xx can be ours (a broken debug proxy), so it still reports. One
+    // failure writes two strings though — the bare message, then the same
+    // message with the fallback hint appended — and both used to file an issue.
+    await replayRegistrationFailure(503);
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reports a failure that merely extends the last one", () => {
+    // Only the fallback-hint pair collapses. A retry that comes back with the
+    // reason the first attempt lacked is a more informative failure, not a
+    // duplicate.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "Token request failed: 400 Bad Request" });
+    wrapped({ error: "Token request failed: 400 Bad Request: invalid_grant" });
 
     expect(reportCaught).toHaveBeenCalledTimes(2);
   });

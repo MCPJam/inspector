@@ -581,6 +581,8 @@ export {
 export {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  isClientRegistrationRefusal,
+  restatesWithFallbackHint,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export type {
   DynamicClientRegistrationCredentials,

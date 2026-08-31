@@ -212,6 +212,47 @@ function backfillHistory<THistory extends BackfillableHistoryEntry>(
 const FALLBACK_HINT =
   "Configure a pre-registered client or enable DCR on the authorization server.";
 
+export const REGISTRATION_FAILURE_PREFIX = "Dynamic Client Registration failed";
+
+/**
+ * Did the authorization server REFUSE to register, rather than fail to answer?
+ * 5xx and transport failures can be ours, so they are deliberately not refusals.
+ *
+ * 4xx is read as the server's policy knowingly, not because it always is: RFC
+ * 7591 also spends `invalid_client_metadata` on a body the client built wrong.
+ * In practice that code comes back for a valid body the server declines — a
+ * loopback redirect, an auth method it will not issue — and the request builder
+ * is covered by its own unit tests rather than by this signal.
+ *
+ * Parses the messages built below — the machines expose only the string.
+ */
+export function isClientRegistrationRefusal(error: string): boolean {
+  const prefix = `${REGISTRATION_FAILURE_PREFIX} (`;
+  if (!error.startsWith(prefix)) return false;
+  const status = Number.parseInt(error.slice(prefix.length), 10);
+  return status >= 400 && status < 500;
+}
+
+/**
+ * Is `error` the same failure as `previous`, restated with the fallback hint?
+ *
+ * One rejected registration writes both: the bare message, then the message
+ * plus this hint once no pre-registered client turns up. Matching the hint
+ * exactly keeps the pair together without swallowing an unrelated failure that
+ * merely extends the last one (`"…: 400 Bad Request"` → `"…: 400 Bad Request:
+ * invalid_grant"` is two reports, not one).
+ */
+export function restatesWithFallbackHint(
+  error: string,
+  previous: string
+): boolean {
+  return (
+    error !== previous &&
+    error.startsWith(previous) &&
+    error.endsWith(FALLBACK_HINT)
+  );
+}
+
 /**
  * Executes an RFC 7591 registration POST via the caller's executor, back-fills
  * a cloned last history entry with the redacted response, and classifies the
@@ -255,13 +296,13 @@ export async function executeDynamicClientRegistration<
   const httpHistory = backfillHistory(input.httpHistory, redacted);
 
   if (!response.ok) {
-    const registrationError = `Dynamic Client Registration failed (${response.status}).`;
+    const registrationError = `${REGISTRATION_FAILURE_PREFIX} (${response.status}).`;
     return {
       status: "http_error",
       response: redacted,
       httpHistory,
       error: registrationError,
-      fallbackNote: `Dynamic Client Registration failed (${response.status}); using pre-registered client credentials.`,
+      fallbackNote: `${REGISTRATION_FAILURE_PREFIX} (${response.status}); using pre-registered client credentials.`,
       errorWithFallbackHint: `${registrationError} ${FALLBACK_HINT}`,
     };
   }
