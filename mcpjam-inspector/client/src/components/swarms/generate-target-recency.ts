@@ -25,7 +25,7 @@ function connectedAt(server: RecencyServer | undefined): number {
 /** A group is as recent as its most recently connected member. */
 export function attachmentConnectedAt(
   attachment: RecencyAttachment,
-  servers: Record<string, RecencyServer> | undefined
+  servers: Record<string, RecencyServer> | undefined,
 ): number {
   if (!servers) return 0;
   let newest = 0;
@@ -42,7 +42,7 @@ export function attachmentConnectedAt(
  */
 export function mostRecentlyConnectedAttachmentId(
   attachments: readonly RecencyAttachment[],
-  servers: Record<string, RecencyServer> | undefined
+  servers: Record<string, RecencyServer> | undefined,
 ): string | null {
   let best: { id: string; at: number } | null = null;
   for (const attachment of attachments) {
@@ -64,7 +64,7 @@ export type RecencyEnvironment = {
 /** The group behind the most recently used setup. */
 export function mostRecentlyUsedAttachmentId(
   attachments: readonly RecencyAttachment[],
-  environments: readonly RecencyEnvironment[]
+  environments: readonly RecencyEnvironment[],
 ): string | null {
   const known = new Set(attachments.map((a) => a._id));
   let best: { id: string; at: number } | null = null;

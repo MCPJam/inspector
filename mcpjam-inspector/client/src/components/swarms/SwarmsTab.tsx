@@ -36,14 +36,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
-import {
-  Loader2,
-  Plus,
-  Sparkles,
-  Trash2,
-  Users,
-  X,
-} from "lucide-react";
+import { Loader2, Plus, Sparkles, Trash2, Users, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -205,19 +198,19 @@ interface SwarmsTabProps {
 function usePersonas(projectId: string | null) {
   return useQuery(
     SWARM_QUERIES.listPersonas as any,
-    projectId ? ({ projectId } as any) : "skip"
+    projectId ? ({ projectId } as any) : "skip",
   ) as Persona[] | undefined;
 }
 function useJourneys(personaRefId: string | null) {
   return useQuery(
     SWARM_QUERIES.listJourneysByPersona as any,
-    personaRefId ? ({ personaRefId } as any) : "skip"
+    personaRefId ? ({ personaRefId } as any) : "skip",
   ) as Journey[] | undefined;
 }
 function useProjectHosts(projectId: string | null) {
   return useQuery(
     SWARM_QUERIES.listHosts as any,
-    projectId ? ({ projectId } as any) : "skip"
+    projectId ? ({ projectId } as any) : "skip",
   ) as HostItem[] | undefined;
 }
 /**
@@ -239,17 +232,17 @@ function useProjectEnvironmentsList(projectId: string | null) {
     // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
     // or UUID project id during a project transition would 500 the Convex arg
     // validator, so skip until the id is a real queryable project.
-    shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
+    shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip",
   ) as ProjectEnvironmentView[] | undefined;
   return useMemo(
     () => (rows === undefined ? undefined : rows.filter(isNamedEnvironment)),
-    [rows]
+    [rows],
   );
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
   return useQuery(
     SWARM_QUERIES.personaTrackRecord as any,
-    personaRefId ? ({ personaRefId } as any) : "skip"
+    personaRefId ? ({ personaRefId } as any) : "skip",
   ) as PersonaTrackRecord | undefined;
 }
 
@@ -267,7 +260,7 @@ function RunningPersonasSubscriber({
 }) {
   const ids = useQuery(
     SWARM_QUERIES.listRunningPersonaRefIds as any,
-    projectId ? ({ projectId } as any) : "skip"
+    projectId ? ({ projectId } as any) : "skip",
   ) as string[] | undefined;
 
   useEffect(() => {
@@ -296,7 +289,7 @@ export function SwarmsTab({
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
   const runningSet = useMemo(
     () => new Set(runningPersonaIds),
-    [runningPersonaIds]
+    [runningPersonaIds],
   );
   const onRunningPersonasChange = useCallback((ids: string[]) => {
     setRunningPersonaIds(ids);
@@ -305,7 +298,7 @@ export function SwarmsTab({
   // Parse ONCE on mount so later user navigation isn't clobbered by the URL.
   const deepLink = useMemo(
     () => parseSwarmSessionParams(window.location.search),
-    []
+    [],
   );
   // Session deep-links open the flat Sessions browser; a run-only link needs
   // the Journeys matrix / live stream, so it lands there. Everything else
@@ -320,7 +313,7 @@ export function SwarmsTab({
     return "overview";
   });
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
-    () => deepLink.personaRefId ?? null
+    () => deepLink.personaRefId ?? null,
   );
   // Sessions-tab persona filter — independent of the Personas-tab selection:
   // that tab auto-selects a persona to land on, which must not narrow the flat
@@ -328,12 +321,12 @@ export function SwarmsTab({
   // still restore their persona filter.
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
     string | null
-  >(() => (deepLink.threadId ? deepLink.personaRefId ?? null : null));
+  >(() => (deepLink.threadId ? (deepLink.personaRefId ?? null) : null));
   const handleOpenSwarm = useCallback(
     (id: string) => {
       navigate(buildSwarmPath(id));
     },
-    [navigate]
+    [navigate],
   );
   const journeys = useJourneys(selectedPersonaId);
   // Lifted for the agent snapshot (one subscription).
@@ -347,13 +340,13 @@ export function SwarmsTab({
   const updateJourney = useMutation("journeys:updateJourney" as any);
   /** Project-wide clustering settings, saved before anything has clustered. */
   const setInsightsTuning = useMutation(
-    "chatSessions:setSwarmInsightsTuning" as any
+    "chatSessions:setSwarmInsightsTuning" as any,
   );
   const createEnvironment = useCreateProjectEnvironment();
   const hostNameById = useCallback(
     (hostId: string) =>
       hosts?.find((host) => host.hostId === hostId)?.name ?? hostId.slice(0, 8),
-    [hosts]
+    [hosts],
   );
 
   // The create flow is route-driven (`createFlow`), not state.
@@ -361,7 +354,7 @@ export function SwarmsTab({
   // view groups them under "Persona · Journey" instead of a run id suffix.
   // Empty for every run this session didn't launch — those keep the id label.
   const [swarmRunLabels, setSwarmRunLabels] = useState<Map<string, string>>(
-    () => new Map()
+    () => new Map(),
   );
 
   // AI generation ("Generate persona" / "Generate journeys"). Both write real
@@ -381,25 +374,25 @@ export function SwarmsTab({
         notes?: string;
         avatarShape?: number;
         avatarPalette?: number;
-      }
+      },
     ) => {
       try {
         await updatePersona({ personaRefId, ...patch } as any);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to update persona"
+          error instanceof Error ? error.message : "Failed to update persona",
         );
         throw error;
       }
     },
-    [updatePersona]
+    [updatePersona],
   );
 
   const handleDeletePersona = useCallback(
     async (persona: Persona) => {
       if (
         !window.confirm(
-          `Delete persona "${persona.name}"? Its goals are hidden but historical runs are kept.`
+          `Delete persona "${persona.name}"? Its goals are hidden but historical runs are kept.`,
         )
       ) {
         return;
@@ -409,16 +402,16 @@ export function SwarmsTab({
         setSelectedPersonaId(null);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to delete persona"
+          error instanceof Error ? error.message : "Failed to delete persona",
         );
       }
     },
-    [deletePersona]
+    [deletePersona],
   );
 
   const selectedPersona = useMemo(
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
-    [personas, selectedPersonaId]
+    [personas, selectedPersonaId],
   );
 
   /**
@@ -434,7 +427,7 @@ export function SwarmsTab({
     return personaList.filter(
       (persona) =>
         persona.name.toLowerCase().includes(query) ||
-        persona.role.toLowerCase().includes(query)
+        persona.role.toLowerCase().includes(query),
     );
   }, [personaList, personaSearch]);
 
@@ -463,7 +456,7 @@ export function SwarmsTab({
   // must not subscribe getPersonaTrackRecord before the allowed persona list
   // has loaded and matched — that surfaces backend authorization errors.
   const trackRecord = usePersonaTrackRecord(
-    selectedPersona ? selectedPersonaId : null
+    selectedPersona ? selectedPersonaId : null,
   );
 
   // New-journey form, lifted so `ui_open_journey_form` can open it (the
@@ -473,7 +466,7 @@ export function SwarmsTab({
   const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
   const [creatingPersona, setCreatingPersona] = useState(false);
   const [personaAutoEditId, setPersonaAutoEditId] = useState<string | null>(
-    null
+    null,
   );
 
   const handleCreatePersona = useCallback(async () => {
@@ -489,7 +482,7 @@ export function SwarmsTab({
       setSelectedPersonaId(row._id);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create persona"
+        error instanceof Error ? error.message : "Failed to create persona",
       );
     } finally {
       setCreatingPersona(false);
@@ -506,7 +499,7 @@ export function SwarmsTab({
     (
       journey: JourneyListJourney,
       run: JourneyRun,
-      targetKey: string | null
+      targetKey: string | null,
     ) => {
       setRunDetail({
         journeyId: journey._id,
@@ -515,7 +508,7 @@ export function SwarmsTab({
         runSnapshot: run,
       });
     },
-    []
+    [],
   );
   const closeRunDetail = useCallback(() => setRunDetail(null), []);
   // Close the panel when the persona changes or its journey disappears.
@@ -532,7 +525,7 @@ export function SwarmsTab({
     }
   }, [journeys, runDetail]);
   const detailJourney = runDetail
-    ? journeys?.find((j) => j._id === runDetail.journeyId) ?? null
+    ? (journeys?.find((j) => j._id === runDetail.journeyId) ?? null)
     : null;
 
   // ── Agent bridge ──────────────────────────────────────────────────────────
@@ -547,7 +540,7 @@ export function SwarmsTab({
     if (!agentOperable) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "Swarms is locked here — sign in and select a project before using the swarm tools."
+        "Swarms is locked here — sign in and select a project before using the swarm tools.",
       );
     }
   };
@@ -583,7 +576,7 @@ export function SwarmsTab({
        * id — each of those launches exactly one journey, so a wave of one is
        * the correct grouping, and it retires the time heuristic for them too.
        */
-      opts?: { swarmRunGroupId?: string; environmentIds?: string[] }
+      opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
     ): Promise<
       { status: "launched"; runId?: string } | { status: "already_launching" }
     > => {
@@ -625,7 +618,7 @@ export function SwarmsTab({
         launchingRef.current.delete(journeyId);
       }
     },
-    [projectId]
+    [projectId],
   );
 
   const handleRunAgainFromDetail = useCallback(
@@ -641,8 +634,8 @@ export function SwarmsTab({
             err instanceof LaunchJourneyRunError
               ? err.message
               : err instanceof Error
-              ? err.message
-              : "Launch failed"
+                ? err.message
+                : "Launch failed",
           );
         }
       }
@@ -650,18 +643,18 @@ export function SwarmsTab({
         throw new Error(errors[0]!);
       }
     },
-    [launchJourney]
+    [launchJourney],
   );
   const handleOpenPersonaFromDetail = useCallback(
     (personaName: string) => {
       const match = (personas ?? []).find(
-        (p) => p.name.toLowerCase() === personaName.toLowerCase()
+        (p) => p.name.toLowerCase() === personaName.toLowerCase(),
       );
       if (match) setSelectedPersonaId(match._id);
       setViewMode("journeys");
       navigate(routePaths.swarms);
     },
-    [navigate, personas]
+    [navigate, personas],
   );
 
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
@@ -670,24 +663,24 @@ export function SwarmsTab({
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'persona' string (a persona name or id)."
+        "Missing required 'persona' string (a persona name or id).",
       );
     }
     const wanted = raw.trim();
     const wantedLower = wanted.toLowerCase();
     const matches = (personas ?? []).filter(
-      (p) => p._id === wanted || p.name.toLowerCase() === wantedLower
+      (p) => p._id === wanted || p.name.toLowerCase() === wantedLower,
     );
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No persona matches "${wanted}". Use a persona name or id from this screen (list them with ui_snapshot_app).`
+        `No persona matches "${wanted}". Use a persona name or id from this screen (list them with ui_snapshot_app).`,
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} personas match "${wanted}" — pass the persona id instead (ids are in ui_snapshot_app).`
+      `${matches.length} personas match "${wanted}" — pass the persona id instead (ids are in ui_snapshot_app).`,
     );
   };
 
@@ -695,13 +688,13 @@ export function SwarmsTab({
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'journey' string (goal text or goal id)."
+        "Missing required 'journey' string (goal text or goal id).",
       );
     }
     if (!selectedPersona) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Select a persona first — goals are listed per persona (see ui_snapshot_app)."
+        "Select a persona first — goals are listed per persona (see ui_snapshot_app).",
       );
     }
     const wanted = raw.trim();
@@ -710,18 +703,18 @@ export function SwarmsTab({
       (j) =>
         j._id === wanted ||
         j.goal.toLowerCase() === wantedLower ||
-        (j.name ?? "").toLowerCase() === wantedLower
+        (j.name ?? "").toLowerCase() === wantedLower,
     );
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No goal matches "${wanted}" for persona "${selectedPersona.name}". Use a goal text or id from this screen; if the goal belongs to another persona, select that persona first.`
+        `No goal matches "${wanted}" for persona "${selectedPersona.name}". Use a goal text or id from this screen; if the goal belongs to another persona, select that persona first.`,
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} goals match "${wanted}" — pass the goal id instead (ids are in ui_snapshot_app).`
+      `${matches.length} goals match "${wanted}" — pass the goal id instead (ids are in ui_snapshot_app).`,
     );
   };
 
@@ -737,7 +730,7 @@ export function SwarmsTab({
         if (!pid) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            "No project is selected."
+            "No project is selected.",
           );
         }
         const { payload } = command as CreatePersonaInspectorCommand;
@@ -748,19 +741,19 @@ export function SwarmsTab({
         if (!name) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Missing required 'name' string."
+            "Missing required 'name' string.",
           );
         }
         if (!role) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Missing required 'role' string."
+            "Missing required 'role' string.",
           );
         }
         if (payload?.notes !== undefined && typeof payload.notes !== "string") {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "'notes' must be a string when provided."
+            "'notes' must be a string when provided.",
           );
         }
         const notes =
@@ -792,13 +785,13 @@ export function SwarmsTab({
         if (!persona) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Select or name a persona first — a goal belongs to a persona."
+            "Select or name a persona first — a goal belongs to a persona.",
           );
         }
         if (payload?.goal !== undefined && typeof payload.goal !== "string") {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "'goal' must be a string when provided."
+            "'goal' must be a string when provided.",
           );
         }
         const goal =
@@ -818,7 +811,7 @@ export function SwarmsTab({
         if (!pid) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            "No project is selected."
+            "No project is selected.",
           );
         }
         const { payload } = command as LaunchSwarmRunInspectorCommand;
@@ -831,7 +824,7 @@ export function SwarmsTab({
           if (result.status === "already_launching") {
             throw createInspectorCommandClientError(
               "execution_failed",
-              "This goal is already launching — wait for it to start."
+              "This goal is already launching — wait for it to start.",
             );
           }
           return {
@@ -845,12 +838,12 @@ export function SwarmsTab({
             if (e.status === 402) {
               throw createInspectorCommandClientError(
                 "execution_failed",
-                `Cannot launch this goal run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`
+                `Cannot launch this goal run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`,
               );
             }
             throw createInspectorCommandClientError(
               "execution_failed",
-              `Could not launch the goal run: ${e.message}`
+              `Could not launch the goal run: ${e.message}`,
             );
           }
           throw e; // already an InspectorCommandClientError (e.g. already_launching)
@@ -979,7 +972,7 @@ export function SwarmsTab({
                 buildSwarmPath(swarmRunGroupId, {
                   tab: "sessions",
                   session: sessionId,
-                })
+                }),
               );
               return;
             }
@@ -1155,7 +1148,7 @@ export function SwarmsTab({
                         key={p._id}
                         className={cn(
                           "group flex w-full items-center border-b",
-                          selected && "bg-muted"
+                          selected && "bg-muted",
                         )}
                       >
                         <button
@@ -1198,7 +1191,7 @@ export function SwarmsTab({
                             "mr-2 size-8 shrink-0 p-0 text-muted-foreground hover:text-destructive",
                             selected
                               ? "opacity-100"
-                              : "opacity-0 group-hover:opacity-100"
+                              : "opacity-0 group-hover:opacity-100",
                           )}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1245,7 +1238,7 @@ export function SwarmsTab({
                           "mb-3",
                           journeyFormOpen
                             ? "space-y-2"
-                            : "flex items-center justify-between"
+                            : "flex items-center justify-between",
                         )}
                       >
                         <SectionLabel>Goals</SectionLabel>
@@ -1447,7 +1440,7 @@ function RunDetailPanel({
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                runStatusChipClass(journeyRunDisplayStatus(run))
+                runStatusChipClass(journeyRunDisplayStatus(run)),
               )}
             >
               {journeyRunDisplayStatus(run).replace(/_/g, " ")}
@@ -1500,7 +1493,7 @@ function RunSessionsView({
 }) {
   const runSessions = useRunSessionsContext();
   const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
-    null
+    null,
   );
 
   if (!runSessions) {
@@ -1670,7 +1663,7 @@ function PersonaDetailHeader({
     field: "name" | "role" | "notes",
     next: string,
     stored: string,
-    reset: (value: string) => void
+    reset: (value: string) => void,
   ) => {
     const trimmed = next.trim();
     if (trimmed === stored.trim()) return;
@@ -1855,6 +1848,8 @@ function NewJourneyForm({
 }) {
   const [goal, setGoal] = useState(goalSeed);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const goalsLoading = siblingGoals === undefined;
   const inherited = inheritedGoalTarget(siblingGoals);
   const target = useSwarmDefaultTarget({
     projectId,
@@ -1872,7 +1867,7 @@ function NewJourneyForm({
     <div
       className={cn(
         "w-full rounded-xl border border-border/50 bg-card/50 p-3 shadow-sm",
-        "ring-1 ring-black/[0.03] dark:ring-white/[0.06]"
+        "ring-1 ring-black/[0.03] dark:ring-white/[0.06]",
       )}
     >
       <div className="mb-2.5 flex flex-col gap-1">
@@ -1889,7 +1884,16 @@ function NewJourneyForm({
         />
       </div>
 
-      {!inherited && target.noServers ? (
+      {error ? (
+        <p
+          role="alert"
+          className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
+        >
+          {error}
+        </p>
+      ) : null}
+
+      {!error && !inherited && target.noServers ? (
         <p
           role="alert"
           className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
@@ -1911,9 +1915,15 @@ function NewJourneyForm({
         <Button
           type="button"
           size="sm"
-          disabled={!goal.trim() || (!inherited && !target.ready) || saving}
+          disabled={
+            !goal.trim() ||
+            goalsLoading ||
+            (!inherited && !target.ready) ||
+            saving
+          }
           onClick={async () => {
             setSaving(true);
+            setError(null);
             try {
               await onCreate({
                 goal,
@@ -1924,6 +1934,13 @@ function NewJourneyForm({
               });
               setOpen(false);
               setGoal("");
+            } catch (err) {
+              // Keep the form and its text: the goal is retried, not retyped.
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : "Could not create the goal",
+              );
             } finally {
               setSaving(false);
             }

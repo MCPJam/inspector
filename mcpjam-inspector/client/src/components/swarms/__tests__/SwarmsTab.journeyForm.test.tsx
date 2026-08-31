@@ -51,11 +51,17 @@ const ADHOC = {
   updatedAt: 1,
 };
 
-const { createJourneyMutation, ensureAdhocMock, environmentsEnabled } =
+const {
+  createJourneyMutation,
+  ensureAdhocMock,
+  environmentsEnabled,
+  siblingGoals,
+} =
   vi.hoisted(() => ({
     createJourneyMutation: vi.fn(),
     ensureAdhocMock: vi.fn(),
     environmentsEnabled: { value: false },
+    siblingGoals: { value: [] as unknown },
   }));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -70,7 +76,7 @@ vi.mock("convex/react", () => ({
       case "personas:listPersonas":
         return [persona];
       case "journeys:listJourneysByPersona":
-        return [];
+        return siblingGoals.value;
       case "hosts:listHosts":
         return [host];
       case "projectEnvironments:listEnvironments":
@@ -127,6 +133,7 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 beforeEach(() => {
   vi.clearAllMocks();
   environmentsEnabled.value = false;
+  siblingGoals.value = [];
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
   ensureAdhocMock.mockResolvedValue([{ environment: ADHOC, created: true }]);
 });
@@ -223,6 +230,67 @@ describe("SwarmsTab — new goal form", () => {
       (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>)
         .environmentIds
     ).toEqual(["env-1"]);
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+  });
+
+  it("says so when the goal cannot be saved, instead of failing silently", async () => {
+    createJourneyMutation.mockRejectedValue(new Error("backend said no"));
+    await openGoalForm();
+    await createGoal("buy a plan");
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/backend said no/i);
+    });
+    // The text survives so the user can retry without retyping it.
+    expect((screen.getByLabelText("Goal") as HTMLTextAreaElement).value).toBe(
+      "buy a plan"
+    );
+  });
+
+  it("surfaces a target that cannot be resolved", async () => {
+    ensureAdhocMock.mockRejectedValue(new Error("no setup for that"));
+    await openGoalForm();
+    await createGoal("buy a plan");
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/no setup for that/i);
+    });
+    expect(createJourneyMutation).not.toHaveBeenCalled();
+  });
+
+  it("waits for the persona's goals before deciding where to run", async () => {
+    // `undefined` is the goals query still loading, which is not the same as a
+    // persona with none — guessing here sends the goal to the wrong target.
+    siblingGoals.value = undefined;
+    await openGoalForm();
+
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "buy a plan" },
+    });
+    expect(
+      screen.getByRole("button", { name: /create goal/i })
+    ).toBeDisabled();
+  });
+
+  it("runs a new goal where the persona's existing goals run", async () => {
+    const sibling = (id: string) => ({
+      _id: id,
+      goal: "an existing goal",
+      hostIds: [],
+      environmentIds: ["env-sibling"],
+      config: { sessionsPerTarget: 1, maxTurns: 6 },
+    });
+    siblingGoals.value = [sibling("j-1"), sibling("j-2")];
+    await openGoalForm();
+    await createGoal("buy a plan");
+
+    await waitFor(() => {
+      expect(createJourneyMutation).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>)
+        .environmentIds
+    ).toEqual(["env-sibling"]);
     expect(ensureAdhocMock).not.toHaveBeenCalled();
   });
 });

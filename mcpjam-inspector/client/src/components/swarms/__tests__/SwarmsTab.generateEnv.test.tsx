@@ -78,6 +78,8 @@ const {
   attachments,
   hostRows,
   navigateAppMock,
+  envRows,
+  authed,
   toastMock,
 } = vi.hoisted(() => ({
   createPersonaMutation: vi.fn(),
@@ -90,6 +92,8 @@ const {
   },
   hostRows: { value: [] as unknown[] },
   navigateAppMock: vi.fn(),
+  envRows: { value: undefined as unknown },
+  authed: { value: true },
   toastMock: { success: vi.fn(), error: vi.fn() },
 }));
 
@@ -106,7 +110,7 @@ vi.mock("convex/react", () => ({
       case "hosts:listHosts":
         return hostRows.value;
       case "projectEnvironments:listEnvironments":
-        return environments;
+        return envRows.value;
       default:
         return undefined;
     }
@@ -124,7 +128,7 @@ vi.mock("convex/react", () => ({
     loadMore: vi.fn(),
     isLoading: false,
   }),
-  useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvexAuth: () => ({ isAuthenticated: authed.value }),
 }));
 
 vi.mock("@/lib/app-navigation", async (importOriginal) => ({
@@ -199,6 +203,8 @@ describe("GenerateSwarmDialog — composed target", () => {
     environmentsEnabled.value = false;
     attachments.value = { serverAttachments: [], isLoading: false };
     hostRows.value = [host, hostTwo];
+    envRows.value = environments;
+    authed.value = true;
     ensureAdhocMock.mockResolvedValue([{ environment: ADHOC, created: true }]);
   });
 
@@ -400,6 +406,87 @@ describe("GenerateSwarmDialog — composed target", () => {
     // Asserted on the link: the sidebar button also matches /generate persona/i.
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Servers tab" })).toBeNull();
+    });
+  });
+
+  const USED_GROUP = {
+    _id: "att-used",
+    name: "Used group",
+    serverIds: ["srv-used"],
+    resolvedServerNames: ["used-server"],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const OTHER_GROUP = {
+    _id: "att-other",
+    name: "Other group",
+    serverIds: ["srv-other"],
+    resolvedServerNames: ["other-server"],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  it("waits for the usage history before latching a default group", async () => {
+    // The environments query is undefined while it loads, and `lastUsedAt`
+    // rides on those rows. Seeding first freezes the wrong group.
+    envRows.value = undefined;
+    attachments.value = {
+      serverAttachments: [OTHER_GROUP, USED_GROUP],
+      isLoading: false,
+    };
+    generatePersonaMock.mockResolvedValue({
+      persona: { name: "P", role: "r" },
+      journeys: [{ goal: "g" }],
+    });
+    const props = {
+      mode: "persona" as const,
+      open: true,
+      onOpenChange: vi.fn(),
+      projectId: "proj-1",
+      environments: [],
+      hosts: [{ hostId: "host-1" }],
+      personaCount: 0,
+      onCreatePersona: vi.fn().mockResolvedValue("persona-new"),
+      onCreateJourney: vi.fn().mockResolvedValue(undefined),
+    };
+    const { rerender } = render(<GenerateSwarmDialog {...props} />);
+
+    // Usage history lands: the second group is the one this project runs.
+    envRows.value = [
+      {
+        environmentId: "env-adhoc-used",
+        projectId: "proj-1",
+        hostId: "host-1",
+        serverAttachmentId: "att-used",
+        lastUsedAt: 1788100000000,
+        origin: "adhoc",
+        revision: 1,
+      },
+    ];
+    rerender(<GenerateSwarmDialog {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+    await waitFor(() => {
+      expect(ensureAdhocMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stacks: [{ hostId: "host-1", serverAttachmentId: "att-used" }],
+        })
+      );
+    });
+  });
+
+  it("still seeds when the environments query never runs", async () => {
+    // A skipped query reports `undefined` forever, not "still loading". Waiting
+    // on it would leave the dialog permanently unsubmittable.
+    authed.value = false;
+    envRows.value = undefined;
+    attachments.value = { serverAttachments: [], isLoading: false };
+    openGeneratePersona();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /generate persona/i })
+      ).not.toBeDisabled();
     });
   });
 });

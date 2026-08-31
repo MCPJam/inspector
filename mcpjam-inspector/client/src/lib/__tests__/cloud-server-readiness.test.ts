@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   assessCloudServerReadiness,
   describeCloudServerBlock,
+  serversAreRunnable,
   type CloudLaunchTarget,
 } from "../cloud-server-readiness";
 
@@ -81,6 +82,13 @@ describe("assessCloudServerReadiness", () => {
 
   // Only stdio is confirmed to fail on its own. A loopback URL alongside a
   // reachable server stays unblocked rather than blocked on a guess.
+  // A group with no members resolves to zero servers, so it cannot back a run
+  // even though there is nothing unreachable to name.
+  it("calls an empty server set unrunnable", () => {
+    expect(serversAreRunnable([])).toBe(false);
+    expect(serversAreRunnable([REMOTE])).toBe(true);
+  });
+
   it("passes a mixed target whose unreachable server is a loopback url", () => {
     expect(
       assessCloudServerReadiness({

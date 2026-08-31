@@ -99,7 +99,7 @@ export interface GenerateSwarmDialogProps {
       hostIds: string[];
       environmentIds: string[];
       config: { sessionsPerTarget: number; maxTurns: number };
-    }
+    },
   ) => Promise<void>;
   /** Selects the freshly created persona in the sidebar. */
   onPersonaCreated?: (personaRefId: string) => void;
@@ -125,11 +125,7 @@ export function GenerateSwarmDialog({
     environments,
     hosts,
   });
-  const {
-    state: targetState,
-    setState: setTargetState,
-    noServers,
-  } = target;
+  const { state: targetState, setState: setTargetState, noServers } = target;
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // Latched once the persona row is written. Re-running generation after that
@@ -152,10 +148,6 @@ export function GenerateSwarmDialog({
     }
   }, [open]);
 
-  const countValid =
-    Number.isInteger(journeyCount) &&
-    journeyCount >= MIN_GENERATED_JOURNEYS &&
-    journeyCount <= MAX_GENERATED_JOURNEYS;
   // The cap precheck below is only meaningful once the persona count has
   // loaded. Treating `undefined` as "under the cap" would let a full project
   // spend generation quota before `createPersona` rejects the row, so persona
@@ -164,11 +156,7 @@ export function GenerateSwarmDialog({
     mode !== "persona" || typeof personaCount === "number";
   const targetsValid = target.ready;
   const canSubmit =
-    !pending &&
-    !personaCommitted &&
-    personaCountKnown &&
-    targetsValid &&
-    countValid;
+    !pending && !personaCommitted && personaCountKnown && targetsValid;
 
   const createJourneyRows = async (
     personaRefId: string,
@@ -177,7 +165,7 @@ export function GenerateSwarmDialog({
     target: {
       hostIds: string[];
       environmentIds: string[];
-    }
+    },
   ): Promise<{ created: number; firstError: Error | null }> => {
     let created = 0;
     let firstError: Error | null = null;
@@ -205,7 +193,7 @@ export function GenerateSwarmDialog({
   };
 
   const handleGenerate = async () => {
-    if (!targetsValid || !countValid) return;
+    if (!targetsValid) return;
     // Grounding id, resolved BEFORE the latch: `targetsValid` already proves
     // latch-free side (see the comment below). Grounds on the FIRST selected
     // environment — the backend resolves its server group, or the host's own
@@ -220,7 +208,7 @@ export function GenerateSwarmDialog({
       personaCount >= MAX_PERSONAS_PER_PROJECT
     ) {
       setErrorMessage(
-        `This project already has ${MAX_PERSONAS_PER_PROJECT} personas. Delete one before generating another.`
+        `This project already has ${MAX_PERSONAS_PER_PROJECT} personas. Delete one before generating another.`,
       );
       return;
     }
@@ -274,7 +262,7 @@ export function GenerateSwarmDialog({
         const { created, firstError } = await createJourneyRows(
           personaRefId,
           result.journeys,
-          journeyTarget
+          journeyTarget,
         );
         // The persona landed either way — select it so the new row is visible
         // even when every journey write failed.
@@ -290,16 +278,14 @@ export function GenerateSwarmDialog({
           setErrorMessage(
             `Created the persona, but no goals could be saved. ${
               firstError?.message ?? "The goal writes were rejected."
-            } Close this dialog and use Generate goals on the new persona to retry.`
+            } Close this dialog and use Generate goals on the new persona to retry.`,
           );
           return;
         }
         toast.success(
           created === result.journeys.length
-            ? `Created persona + ${created} ${
-                created === 1 ? "goal" : "goals"
-              }`
-            : `Created persona + ${created} of ${result.journeys.length} goals`
+            ? `Created persona + ${created} ${created === 1 ? "goal" : "goals"}`
+            : `Created persona + ${created} of ${result.journeys.length} goals`,
         );
         onOpenChange(false);
         return;
@@ -329,15 +315,14 @@ export function GenerateSwarmDialog({
       const { created, firstError } = await createJourneyRows(
         persona._id,
         result.journeys,
-        journeyTarget
+        journeyTarget,
       );
       // Every write failed (archived environment, rejected goals, …): surface
       // the mutation error instead of closing on a "0 of N" success toast —
       // the generation quota was already spent, so the user needs the reason.
       if (created === 0 && result.journeys.length > 0) {
         throw (
-          firstError ??
-          new Error("No goals could be saved for this persona.")
+          firstError ?? new Error("No goals could be saved for this persona.")
         );
       }
       track("swarm_generate_journeys_completed", {
@@ -348,7 +333,7 @@ export function GenerateSwarmDialog({
       toast.success(
         created === result.journeys.length
           ? `Created ${created} ${created === 1 ? "goal" : "goals"}`
-          : `Created ${created} of ${result.journeys.length} goals`
+          : `Created ${created} of ${result.journeys.length} goals`,
       );
       onOpenChange(false);
     } catch (error) {
@@ -357,7 +342,7 @@ export function GenerateSwarmDialog({
       setErrorMessage(
         error instanceof SwarmGenerateError || error instanceof Error
           ? error.message
-          : "Generation failed"
+          : "Generation failed",
       );
     } finally {
       generateInFlightRef.current = false;

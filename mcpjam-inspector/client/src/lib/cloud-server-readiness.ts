@@ -61,7 +61,8 @@ export type CloudServerReadiness =
   | { status: "ok" }
   /** At least one target resolves to zero servers — the `ENV_NO_SERVERS` shape. */
   | { status: "no_servers"; labels: string[] }
-  /** Every server a target resolves to is unreachable from the cloud. */
+  /** A target carries a server the run refuses: one stdio member, or a set
+   * that is unreachable end to end. `serverNames` lists only the offenders. */
   | { status: "local_only"; labels: string[]; serverNames: string[] };
 
 /**
@@ -73,10 +74,10 @@ export type CloudServerReadiness =
  * blocking on it would be a guess.
  */
 export function unrunnableServers(
-  servers: readonly CloudServerCatalogEntry[]
+  servers: readonly CloudServerCatalogEntry[],
 ): CloudServerCatalogEntry[] {
   const unreachable = servers.filter((server) =>
-    isLocalOnlyMcpServerConfig(server)
+    isLocalOnlyMcpServerConfig(server),
   );
   if (unreachable.length === 0) return [];
   // Nothing here can run: name them all, or the user fixes one and fails again.
@@ -85,11 +86,15 @@ export function unrunnableServers(
   return unreachable.filter((server) => typeof server.command === "string");
 }
 
-/** Whether a cloud run against exactly these servers can start. */
+/**
+ * Whether a cloud run against exactly these servers can start. An empty set
+ * cannot: it resolves to zero servers, even though there is nothing
+ * unreachable to name.
+ */
 export function serversAreRunnable(
-  servers: readonly CloudServerCatalogEntry[]
+  servers: readonly CloudServerCatalogEntry[],
 ): boolean {
-  return unrunnableServers(servers).length === 0;
+  return servers.length > 0 && unrunnableServers(servers).length === 0;
 }
 
 /**

@@ -49,7 +49,7 @@ export function useSwarmDefaultTarget({
   hosts,
 }: {
   projectId: string;
-  /** The surface is open. Going false resets the target. */
+  /** The surface is open. Callers mount this only while it is. */
   active: boolean;
   /** `undefined` while loading. */
   environments: ProjectEnvironmentView[] | undefined;
@@ -57,7 +57,7 @@ export function useSwarmDefaultTarget({
 }): SwarmDefaultTarget {
   const [state, setState] =
     useState<EnvironmentComposerState>(emptyComposerState);
-  const envList = environments ?? [];
+  const envList = useMemo(() => environments ?? [], [environments]);
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const { serverAttachments, isLoading: attachmentsLoading } =
@@ -68,7 +68,12 @@ export function useSwarmDefaultTarget({
   const resolveTargets = useComposerResolver(projectId);
   // Ad-hoc rows carry `lastUsedAt`, and the caller's list is named-only.
   const usageRows = useProjectEnvironments(projectId, { includeAdhoc: true });
-  const { servers: catalog } = useProjectServers({ isAuthenticated, projectId });
+  const usageQueryEnabled =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
+  const { servers: catalog } = useProjectServers({
+    isAuthenticated,
+    projectId,
+  });
   // Never default to a group the run would refuse. A group we cannot measure
   // stays in the running — the readiness check is the backstop, not this.
   const offerable = useMemo(() => {
@@ -77,7 +82,7 @@ export function useSwarmDefaultTarget({
       const members = group.serverIds
         .map((id) => byId.get(id))
         .filter((server): server is NonNullable<typeof server> =>
-          Boolean(server)
+          Boolean(server),
         );
       if (members.length !== group.serverIds.length) return true;
       return serversAreRunnable(members);
@@ -87,18 +92,16 @@ export function useSwarmDefaultTarget({
   const seededRef = useRef(false);
 
   useEffect(() => {
-    if (!active) {
-      seededRef.current = false;
-      setState(emptyComposerState());
-    }
-  }, [active]);
-
-  useEffect(() => {
     if (!active || seededRef.current) return;
     if (environmentsEnabled && environments === undefined) return;
     // The attachments query reports an empty list while it loads; seeding off
     // that would latch the default to "no server group".
     if (attachmentsLoading) return;
+    // `lastUsedAt` rides on these rows, and the seed latches — choosing before
+    // they land freezes the fallback the usage signal exists to replace. Only
+    // when the query actually runs: a skipped one reports `undefined` forever,
+    // and waiting on that would never seed at all.
+    if (usageQueryEnabled && usageRows === undefined) return;
     if (isAuthenticated && shouldQueryProjectId(projectId) && !isUserReady) {
       return;
     }
@@ -134,6 +137,7 @@ export function useSwarmDefaultTarget({
     isUserReady,
     offerable,
     projectId,
+    usageQueryEnabled,
     usageRows,
   ]);
 
@@ -156,7 +160,6 @@ export function useSwarmDefaultTarget({
       throw new Error("Could not resolve where this should run.");
     }
     return resolved.environmentIds;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [envList, resolveTargets, state]);
 
   return {
