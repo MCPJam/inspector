@@ -751,7 +751,7 @@ Promote an ad-hoc environment to a named one **in place** — the same id every 
 
 Both pin fields are narrower than they look:
 
-- **`skillSelection`** accepts project-shared skills only. Personal skills, skills with supporting files or extra frontmatter, and plugin-component skills are all rejected.
+- **`skillSelection`** accepts project-shared skills only. Personal skills, skills with supporting files or extra frontmatter, and plugin-component skills are all rejected. The optional `versionPins` array lets you hold one or more selected skills at a specific version instead of Latest — at most one pin per skill, and every pinned skill must appear in `skillIds`. Probe `GET /environments/capabilities` (`skillVersionPins`) before sending version pins; older deployments reject the field.
 - **`pluginVersionIds`** accepts a plugin version only when its plugin is installed and enabled, the version is `ready`, at most one version per plugin is pinned, and none of the version's skills carry supporting files.
 
 ---
