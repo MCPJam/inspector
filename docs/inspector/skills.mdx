@@ -63,6 +63,24 @@ mcpjam cloud skills get --skill <id> --project my-project
 
 Only `sharing: "project"` skills can be pinned. Personal drafts (`sharing: "user"`) are visible in the list but are not accepted by `--compose-skill` or `skillSelection`.
 
+## Pinning a specific skill version
+
+By default, a pinned skill runs its current revision — "Latest" — resolved when the run starts. To hold an environment or composed stack at a known revision, add `versionPins` to the `skillSelection`:
+
+```json
+{
+  "mode": "explicit",
+  "skillIds": ["sk_abc", "sk_def"],
+  "versionPins": [
+    { "skillId": "sk_abc", "versionId": "psv_xyz" }
+  ]
+}
+```
+
+`sk_def` above runs Latest; `sk_abc` runs the pinned version. This is the shape accepted by environment create/update, `ensure_adhoc_environment`, and the `compose.skills` field on `run_eval_suite` / `run_eval_case`.
+
+Before offering a version picker in your own tooling, probe the `skillVersionPins` flag from `GET /projects/{projectId}/environments/capabilities`. Older deployments return `false` and reject the field outright.
+
 ## Uploading Skills
 
 You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
