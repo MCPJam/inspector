@@ -3,238 +3,22 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Fix Cursor's MCP Apps matrix disagreeing with the host catalog.\n\n`MCP_APPS_CURSOR` is a hand-maintained mirror of the catalog's Cursor row, and\ntwo keys had fallen out of sync: it pinned `downloadFile: false` where the\ncatalog says `true`, and inherited `requestTeardown: true` from `MCP_APPS_FULL`\nwhere the catalog says `false`. The catalog corrections landed without the\nmirror being updated.\n\nThe two are read by different consumers — the Playground emulation resolves\nfrom this matrix, `mcpjam compat` grades from the catalog — and `downloadFile`\nis one of the keys the compat evaluator grades. So the Playground showed a\nCursor widget's file download failing while the compat report said Cursor\nsupports it.\n\nNothing enforces agreement between the two sources today; this is the value fix\nonly.",
-      "id": "cursor-capabilities-catalog-parity"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Directory readiness: the observation algebra, a real dial, and the hosted worker\n\nSurfaces the Claude and OpenAI directory-readiness runners through the product,\nagainst the backend's durable run lifecycle and its managed observation broker.\n\n**A model may observe; it may not decide.** Observation ids come from a frozen\nper-publisher catalogue, and the lane, class, title and citation of the\nresulting finding are the SDK's, fixed at build time. Both invariants are\nre-checked when the finding is built rather than trusted from the catalogue's\ntype, so the one-character edit that moves an observation into a dispositive\nlane cannot land silently. `llm` joins the provenance union. Every failure —\nprovider outage, malformed output, a reservation the org could not afford — is\na first-class state with a machine-readable reason, because \"we could not\nafford to look\" must never render as \"we looked and it was fine\".\n\n**A tool listing readiness never dialled.** `gatherOpenAIReadinessEvidence`\ntook a tool listing as an argument and never fetched one, so every wire run\ngraded the whole annotation inventory `not-evaluated` — checks that existed,\nwere wired up, and could not fire. `directory-readiness/mcp-dial.ts` performs\nthe handshake and the paginated listings, including the\n`notifications/initialized` the lifecycle requires and server frameworks\nenforce. Every listing reports whether it FINISHED, and a truncated one\nproduces a coverage gap rather than a universal claim over a subset.\n\n**Reuse is guarded.** `gatherClaudeReadinessEvidence` is the OpenAI gatherer's\nsymmetrical twin, and the evidence adapters refuse a conformance result from a\ndifferent target, a different config, or a run that did not exercise everything\nit selected — completeness read from the checks, since a run is `\"failed\"` from\nits first violation whatever else never ran. Refusal degrades to MISSING, never\nto a pass.\n\nNode plugin file sources move into the SDK's Node entry so the CLI can grade a\nlocal package without depending on a web server or copying the archive rules.\n`plugin-bundle/index.ts` and the browser entry stay free of `node:fs` and of an\narchive library.\n\nAdds `POST /api/mcp/conformance/readiness/:publisher`, synchronous and\ndeterministic, with no observation broker and no flag to ask for one: a local\nrun has no lease and no payer.",
-      "id": "directory-readiness-surfaces"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Durable conformance runs: history, CLI upload, and GitHub dual checks\n\nReplace browser-only conformance state with project-owned immutable runs.\n`runConformance` / `reportConformanceRun` upload a composite report; `mcpjam\nconformance run` defaults to Protocol + Apps + Tasks and prints the UI deep\nlink. Hosted Inspector keeps a history-first view and shareable read-only\nlinks. GitHub App execution can emit an opt-in `MCPJam Conformance` check\nalongside `MCPJam Evals` from the same parent build.",
-      "id": "durable-conformance-runs"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Harness evals: stop requiring a pinned computer image\n\nA harness eval run needs a machine per iteration, and until now the only\nmachine it was allowed to use was a **custom pinned image**. On a deployment\nwhose image builder is the inert `stub` — the default, because\n`COMPUTERS_ENV_BUILDER` is deliberately separate from `COMPUTERS_PROVIDER` and\nthe E2B build API is still unverified — every image such a deployment can build\nboots a template the model broker then refuses to lease against. So harness\nevals had no working road at all, while chat harness turns worked fine on the\nsame deployment by booting the personal computer's default template.\n\nAn unpinned harness run now boots the **deployment-default template**: the same\nreal image chat gets, still one fresh disposable box per iteration, still\nreleased after. What the old rule actually protected — never borrowing the\nacting member's personal computer, which is shared and stateful — is preserved\nby always provisioning a box, not by demanding an image. (Requires the backend\ncounterpart; deploy that first.)\n\n**Closes a gap where that protection did not hold.** The two single-case\nsurfaces never ran the harness gate at all, so a harness host there passed\nadmission, booted no box (both provisioning sites require a run), and fell\nthrough to `resolveHarnessSandbox` — the personal computer, the one fallback\neval execution must never take. Single-case runs now refuse a harness host and\nsay to run the case as part of a suite.\n\nThe `bash`-without-a-computer refusal stays exactly as it is for **emulated**\nruns, which still boot nothing. A harness run is exempt because its premise —\n\"there will be no computer\" — is simply false for it.\n\nWhich iterations get a box is now `needsEphemeralEvalSandbox`, its own module\nwith its own tests. As an inline condition it could only be exercised by\ndriving a whole iteration, which is how the harness half of the rule went\nmissing: a harness run that boots no box does not fail loudly, it quietly runs\non someone's personal computer.",
-      "id": "harness-evals-unpinned-computer"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Replace the hosted-mode tab allow-list with a block list derived from the surface manifests.\n\n`hosted-tab-policy.ts` was written when hosted mode was a small subset of the\ndesktop app, and it never stopped being default-deny: every new tab had to be\nadded to `HOSTED_SIDEBAR_ALLOWED_TABS` by hand, and one that nobody remembered\nwas simply absent on app.mcpjam.com — no error, no flag that could bring it\nback, because the sidebar filter runs before `filterByFeatureFlags`. That is how\nSessions shipped invisible (#4210), and the file had taken 37 commits of\ncatch-up edits before it.\n\nThe premise had inverted: of ~30 nav segments exactly one, Tracing, genuinely\ncannot run hosted (it needs the local OTLP collector). So the allow-lists and\ntheir two predicates are gone. `hostedBlocked` in `shared/app-surfaces.ts` — a\nfield that already existed and already drove the agent atlas — is now the single\nsource of truth, exposed as `listHostedBlockedNavSegments()`, and\n`isHostedTabBlocked()` is the one availability check the sidebar, hash/route\nresolution, and `ui_navigate` all share. `ui-actions.ts` already worked this way.\n\nBehavior change: a new tab is reachable on hosted the day it lands, with its\nfeature flag deciding visibility. The sidebar/hash split disappears with the\nallow-lists; it only ever differed on `computer` and `skills`, neither of which\nis a sidebar item.",
-      "id": "hosted-tab-policy-blocklist-only"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "An auth-walled readiness run names its one next step\n\nA run against an OAuth server with no token completes honestly — dozens of\nchecks gray, the verdict amber, nothing red — but the section left the reader\nto infer what to do about it, and the agent surfaces had the same facts with\nno instruction attached.\n\nThe section now shows a banner when two facts agree: this run carried no\ntoken (`authMode: \"headless\"`), and the server challenged correctly (a\nsatisfied `unauthenticated-challenge` finding, or an `authorizationRequests`\ngap). Either alone stays silent — headless-alone is every run against every\nopen server, and the banner would nag universally. Together they mean one\naction closes the gaps: connect the server with OAuth and run again. Nothing\nreadiness-specific to configure — a hosted run reads the saved token\nautomatically, which is why the banner can promise it.\n\nThe agent learns the same rule through a prompt note keyed to the same two\nmachine-readable fields, ending in the same instruction: connecting earns the\nserver its remaining grades; the challenge it already gave earned it green\nmarks, not red ones.",
-      "id": "readiness-auth-wall-invite"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "`mcpjam readiness check` — grade a connector or plugin locally\n\nTwo of OpenAI's four submission shapes carry a PACKAGE, and a package is bytes\non the developer's disk: there is no upload for it, deliberately, so those\nshapes can only ever be graded here. Anthropic's intrusive probes are the same\nstory from the other side — they register an OAuth client on the target, which\nis a thing to do to a server you own from a machine you control, not something\na hosted worker should do on somebody's behalf.\n\nSo this is not the offline fallback for the hosted endpoints. It grades what\nonly the developer's machine can reach; the hosted commands grade the server as\nthe PLATFORM reaches it, and the two answers are worth having separately.\n\n**The mode is declared, never inferred.** `--submission-mode` is required for\nOpenAI, and the per-mode input rules are usage errors rather than silent\nadjustments: a wire mode refuses `--package`, a package mode refuses a URL,\nand either refuses to run without the input its shape requires. Inferring\nwould read a forgotten `--package` as `mcp-only`, report the package lane\n`not-applicable`, and hand a submitter a clean bill of health for an artifact\nnobody looked at. The rules are read off `OPENAI_SUBMISSION_MODE_SHAPES`, so a\nfifth mode cannot arrive with this command quietly accepting the wrong inputs.\n\n`--package` takes a directory or a `.zip`, decided by what is on disk rather\nthan by suffix — someone pointing at the folder they are about to zip should\nget the same grade as someone pointing at the archive. A directory reports the\narchive-shaped checks as gaps rather than inventing answers, because it is not\nan archive yet; a zip closes them by reading the RAW central directory before\nthe zip library normalizes it, since `..`, backslashes and duplicate names are\nexactly what the portal rejects and a repairing loader would hide.\n\nExit codes match every other gate here — `0` ready, `1` not-ready, `3`\nincomplete, `2` usage — with a `directoryReadinessExitCode` of its own rather\nthan a reuse of `conformanceExitCode`, whose `{passed, outcome}` shape would\nread an incomplete readiness run as a violation. No infrastructure condition\nmaps to `1`.\n\nOutput follows the same channel discipline as `protocol conformance`: stdout\ncarries only the result (`--reporter json-summary|junit-xml` work today, since\nthe report providers already know both readiness kinds), while the verdict and\nthe gap list go to stderr, are suppressed by `--quiet`, and never affect the\nexit code. The gap list names the input that would close each lane, because an\n`incomplete` verdict without the next action is an adjective rather than an\nanswer.",
-      "id": "readiness-cli-local-check"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Directory readiness on the /conformance page\n\nTwo new sections — Claude and OpenAI — beside the Protocol, Apps, Tasks and\nOAuth suites, behind the `mcpjam-directory-readiness` flag. The engine, the\nAPI and the local route already existed; this is the first surface that calls\nany of them.\n\n**Each section owns its run.** They are deliberately outside the page's shared\n\"Run available checks\" button: a hosted readiness run takes minutes, and\njoining the shared busy state would hold that button and the protocol-version\nselector hostage for its duration. They are also outside the pooled score,\nbecause readiness produces lanes and coverage rather than passed and failed\nchecks — there is no number to pool, by design.\n\n**Two execution modes behind one control.** Locally the run is synchronous and\nfree, and cannot spend: the route has no observations flag at all. Hosted, it\nis a durable run — `202`, poll, cancel, and a report fetched lazily when\nsomebody opens the findings, because it can be megabytes. A reload mid-run\nfinds its way back to the run still going, which no other suite on the page\ncan do.\n\n**The three axes stay apart.** Whether the run finished, what it graded, and\nwhether the optional paid pass ran are three different answers. A run that\nFAILED shows \"Run failed\" rather than \"not ready\" — our runner falling over is\nnot a finding about somebody's server. A refused AI observation renders as a\ngap with the reason, never as a failure, because `billing_limit_reached` means\n\"we could not afford to look\" and the deterministic grade is complete without\nit.\n\n**Coverage travels with every verdict.** A lane prints what it evaluated out of\nwhat it selected, states `not applicable` separately from `not evaluated`, and\nnames the input that would close its gap. Findings group by class in the order\nsomebody fixes them — blockers, requirements, recommendations, human review,\nobservations — because the class is what decides whether a finding moved the\nverdict, and a model-authored line is labelled as one.\n\n**The two package submission modes are offered but disabled**, with the CLI\ncommand that can run them. They need bytes on the developer's machine, and a\nshorter menu would teach a submitter that readiness cannot grade their plugin\nat all.\n\nThe hosted routes needed the user's bearer, and their scope sits in the middle\nof the path so no prefix could name them. Rather than allowlisting all of\n`/api/v1/projects/` — which would hand the bearer to every project-scoped\npublic route that ever ships — `HOSTED_AUTH_PATH_PREFIXES` gained a sibling\npattern list, anchored at both ends, with tests covering the six paths that\nmust carry it and six neighbours that must not.",
-      "id": "readiness-conformance-ui"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Readiness sections need no flag of their own\n\n`/conformance` is already gated by `mcpjam-conformance` — the sidebar filters\nthe nav item and, more to the point, `App.tsx` redirects the route away unless\nthe flag reads `true`. Nobody without it can reach the page at all, so a\nsecond flag on two sections inside that page gated an audience against itself.\n\nThe cost was not theoretical: the sections shipped invisible, waiting on a\nflag that had to be created before anyone could see the feature that had\nalready merged.\n\nRemoved rather than switched to `mcpjam-conformance`, because the check adds\nnothing over the gate that already ran. A flag can be reintroduced in one line\nif readiness ever needs to lag the page — deleting one later is the harder\ndirection, and this one had no consumers.",
-      "id": "readiness-drop-section-flag"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Readiness findings arrive with the verdict, in the suites' own grammar\n\nThe readiness sections rendered lane counts over nothing. Two causes, one\nsymptom.\n\n**The findings never loaded.** The report fetch was wired to the section's\nexpand click — and the sections open by default, so the click never came, the\nfetch never fired, and the report component returned `null` on the resulting\nstate instead of saying anything. A run that produced 49 findings rendered\nexactly like a run that produced none. The report now loads the moment a run\nis terminal, with a regression test proving no click is involved.\n\n**The copy was the engine's wire vocabulary.** \"Supply authorizationRequests,\nintrusive to close this gap\" is a `missingInputs` token list, named for runner\noptions a reader has never heard of. Each token now maps to a sentence that\nsays what happened and what to do — complete an OAuth flow, run the CLI with\nthe intrusive flags on a server you own, add a submission profile — with\nunknown tokens falling back to their raw names rather than being hidden.\n\nThe report itself is regrouped to feel like the suites beside it: findings\nsit under the lane that graded them, the group header carrying the same\n\"10/14 evaluated\" a reader saw in the summary, red-and-gap lanes open by\ndefault while clean lanes stay folded. Every row expands to the sentence it\nexists to deliver — the remediation for a violation, the engine's own reason\nfor a check that never ran — plus its evidence and a link to the exact page\nand section of the publisher's rules. That is the bar for an agent fixing an\nerror from this screen: id, status, why, what to change, and where it is\nwritten.",
-      "id": "readiness-findings-visible"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Directory readiness reaches the MCP tools, the agent, in-app chat and the CLI\n\nSix operations in the platform catalog, and the five registries that fan them\nout. One PR because it has to be: the MCP worker's partition guard throws at\nmodule load, so an operation that exists without a catalog entry does not fail\na test — it stops the worker from booting.\n\n**Starts return a receipt, and every surface says so.** A run dials somebody\nelse's server for minutes, so the API answers `202` and the caller polls. A\nmodel handed a receipt will report the receipt as the answer unless told\notherwise, which is what the tool descriptions and the agent's prompt notes\nare for.\n\n**The spend declaration is the worst case; the approval copy is the real one.**\n`includeLlmObservations` defaults off and most runs are free, but `risk` is a\nstatic field read by five surfaces, and one that described the cheap case\nwould describe the case that needs no describing. So the starts declare\n`spend` — and the agent's `confirmSeverity` is a FUNCTION, so a run without\nthe flag still asks for approval saying it costs nothing. Cancel declares\n`none`: it stops traffic to a third party and destroys no record, which is why\nit is direct rather than gated, matching `cancel_wave_insights` beside it.\n\n**The report operation returns a projection, not the document.** A stored\nreport can be megabytes and the chat surface caps model output at 24k\ncharacters — a cut that lands mid-structure produces a JSON object that still\nparses and is simply wrong. So the operation caps the findings itself, orders\nthem most-consequential-first so a truncated list keeps what matters, drops\nthe raw per-finding evidence a model has no use for, and reports\n`totalFindings` / `returnedFindings` / `truncated` so a subset can never read\nas the whole.\n\n**The three axes are taught, not just exposed.** Prompt notes state that\n`status`, `overallStatus` and `llmObservations` answer different questions:\nthat a `completed` run can be `not-ready`, that a `billing-blocked`\nobservation leaves a complete and valid grade, and that a run which FAILED\nproduced no grade at all and must never be reported as a verdict about the\nserver. Without that, every model surface reports the first field it finds.\n\nThe CLI gains the hosted half beside its local one — `readiness start`,\n`status`, `list`, `cancel`, `report` — because a hosted run reaches the server\nthrough the saved row and the authorize exchange, which is how the platform\nitself reaches it. A different question from what the local command answers,\nand the only one that can spend for observations or leave a record.\n\nAlso maps the six `/api/v1` readiness routes to their SDK client methods in\nthe coverage ratchet, which has been failing on `main` since the routes\nshipped.",
-      "id": "readiness-platform-operations"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Directory readiness: redact the stored report, and instrument the run\n\nTwo things a readiness run needed before any surface reads its output.\n\n**The report is redacted on the way into storage.** A readiness report is a\ndebugging artifact — findings carry the raw observation behind each verdict,\nwhich is how a submitter learns why a lane failed. That is the right default\ninside the process that produced it and the wrong one for a blob that outlives\nthe run and gets read back by surfaces that did not exist when it was written;\n`DirectoryReadinessFinding.details` already documents itself as redacted before\nit travels, and the stored path was the one place that promise was not kept.\n\nIt goes through `redactConformanceReportForSharing` — both layers, because the\nkey-name pass alone is a blocklist and a blocklist eventually misses the shape\na future check introduces. Redaction is structure-preserving, so lanes,\ncoverage and remediation survive.\n\nThis is defense in depth, not a breach fix: the report route is\nproject-authorized and was never public, and no check shipping today writes a\ncredential into a finding. That last fact is the argument rather than the\ncounter-argument — the guarantee has to exist before the check that first\nrecords a request, not after.\n\nOne accepted cost, pinned in a test so it stays a decision: the redactor\nscrubs whatever follows a `Bearer ` scheme, which is right for an\n`Authorization` header and also catches the parameter name of a\n`WWW-Authenticate` challenge (`Bearer realm=\"x\"` → `Bearer [REDACTED]\"x\"`).\nThe parameter value survives. Teaching a shared security utility to recognise\none header narrows a rule that currently errs safe, which deserves its own\nreview.\n\n**Runs are instrumented at both ends.** A start event from the v1 route — the\none place a hosted run is created, so it covers every surface that starts one\n— and a terminal event from the detached worker, attributed through a new\n`captureServerEventForActor` to the identity resolved while the request still\nexisted. The terminal event is emitted from a `finally`, so an abandoned lease\ncounts as an outcome rather than as missing data.\n\nThe three axes are reported separately, because collapsing them is the\nmisreading the product exists to prevent: whether the run finished, what it\ngraded, and whether the optional paid pass ran are three different answers. No\nreport contents and no target URL are ever sent.",
-      "id": "readiness-report-redaction-telemetry"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Readiness: use the platform client instead of a second copy of it\n\nThe /conformance page's hosted half hand-rolled five request wrappers, a\nrequest/parse/error helper, and a field-by-field body build for the start\nroutes — all of which `PlatformApiClient` already does, with typed parameters\nand a timeout the copy did not have.\n\nThe body build is the part worth naming. The start routes are `strictObject`,\nso an unknown key is a 400 rather than an ignored extra, and a rejected start\nnever reaches its idempotency key — meaning the retry dedupes against nothing\nand dials somebody's server twice. The SDK client has `pickReadinessStartBody`\nfor exactly that. The copy re-derived the same rule from the same reasoning,\nwith its own comment explaining it, unaware the original existed. Two\nimplementations of one wire contract drift, and the one nobody is looking at\ndrifts first.\n\n`sdk/src/platform` is CI-guarded against `node:` imports and `process.env` on\nboth source and dist, so a browser can use it — which is what that guard is\nfor.\n\nOne wrinkle worth keeping: the client sets its own `authorization` header, and\n`authFetch` reads a caller-provided Authorization as \"this caller owns its\nauth\" and skips both its own header AND its refresh-and-retry on 401. Passing\nthe client straight through would have quietly cost the session self-healing\nevery other hosted call has, on the one surface that polls for minutes. The\ntransport strips the header on the way out so the bearer has exactly one\nowner.\n\nThe local half stays hand-written: it is one synchronous, free, unpersisted\ncall to `/api/mcp`, which no platform client speaks.\n\nNet 54 lines lighter, and the run row and receipt are now the platform's types\nrather than a restatement of them.",
-      "id": "readiness-reuse-platform-client"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add the ChatGPT app directory beside the Claude one in the Registry tab, behind\na source facet.\n\nShips DARK, behind the same two gates as the Claude half: the\n`registry-enabled` PostHog flag and the `REGISTRY_FEATURE_ENABLED` constant. It\nalso needs the matching backend (`chatgpt-directory` rows, the `authPosture`\nsearch filter, `getCatalogSourceStatus`, and `connectCatalogServer`'s new\n`outcome` field); until that deploys the facet has nothing to show.\n\n**One directory at a time, Claude by default.** The backend's browse and search\nare source-scoped index reads, so a merged \"both\" mode would be a second query\nand a merge with no defensible ordering. The facet is also how a person says\nwhich catalog they are looking at, which the cards cannot state as clearly.\n\n**\"Listed in ChatGPT\" is provenance, not endorsement.** OpenAI accepting a\nsubmission is not a verification tier of ours, so ChatGPT rows carry no tier and\nthe tier filter is hidden entirely for that source — an always-empty filter\nreads as \"this directory has no partners\", which would be a claim we invented.\n\n**Rows with no endpoint are shown, disabled, with a reason.** About 37% of the\nChatGPT directory is a hosted server OpenAI proxies and never publishes a URL\nfor. Those are ingested — the census is the point — and rendered as\nnon-connectable cards. The copy keys on the row's `unavailableReason`, not on\n`endpointKind === 'none'`, because that kind used to mean exactly one thing:\n\"a local desktop extension\". Telling someone their SaaS connector is a desktop\nextension sends them looking for an installer that does not exist.\n\n**Connecting the same server from both directories collapses.** The backend\ndedupes by canonical endpoint across sources and hands back the existing\nconnection; the UI says \"Already connected via the Claude directory\" rather\nthan silently doing nothing. Listing overlap still shows both cards — dual\nlisting is a signal — and only connect collapses.\n\nA **Connectable only** toggle hides the rows that cannot be installed. It is\noff by default — hiding a third of a catalog before anyone asked would make the\ndirectory look smaller than it is — and it filters in the QUERY rather than on\nthe page, because filtering a page after it arrives returns short pages and\neventually blank ones.\n\nEach source shows its own \"as of\" date, taken from the upstream scrape time\nrather than our ingest time: uploading a Tuesday sweep on Friday makes the\ncatalog Tuesday-fresh, and saying Friday would overstate it by three days. The\nClaude feed syncs daily; the ChatGPT one is a manual weekly upload, so\nstaleness there is an expected condition and worth surfacing.\n\nAgent surface: `ui_search_registry_directory` gains an optional `source`\n(omitted leaves the user's current view alone, so a model that does not know\nthere are two cannot silently switch it), and `ui_snapshot_app`'s `directory`\nblock reports the source, the as-of date, and `connectable: false` with the\nreason for rows that cannot be installed. Still no endpoint URLs in the\nsnapshot.\n\n`useClaudeDirectory` is now `useServerDirectory`; it was never going to stay\nClaude-only.",
-      "id": "registry-chatgpt-directory-source"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Send the hosted bearer on the registry's Convex routes so the catalog stops 401ing.\n\nOpening Registry on a hosted deployment fired two `Missing or invalid bearer token` toasts and rendered every card with zero stars. The catalog request went out with no `Authorization` header at all — signed in, signed out, or as a guest, the outcome was identical, so it never looked like an expired session.\n\n`authFetch` attaches the hosted bearer only when the request's path matches an entry in `HOSTED_AUTH_PATH_PREFIXES`. Most callers hit same-origin `/api/web/*` and are covered by that prefix; the registry client is one of the few that calls Convex directly at an absolute `https://<deployment>.convex.site/web/registry/...` URL, and `/web/oauth/` was the only `/web/` entry on the list. Every registry route fell through the match and was sent bare. On the other side, `/web/registry/catalog` opens with `ctx.auth.getUserIdentity()` and answers 401 with exactly that message when there is no identity — it needs one to resolve per-viewer `isStarred`, so there is no anonymous read to fall back to.\n\nAdding `/web/registry/` to the list covers all four routes, which share the same helper and had the same defect: `catalog`, `star`, `unstar`, and `merge-guest-stars`. The last one meant a guest's stars were silently dropped instead of merged on sign-in.\n\nThis does not widen where credentials can go. A path-prefix match is necessary but not sufficient — `shouldAttachHostedAuthorization` first requires `isHostedAuthAllowedOrigin`, which admits only the app's own origin, a loopback host, or the configured `*.convex.site` hostname. A foreign origin serving the same path still gets nothing, and the accompanying test pins that.\n\nThe failure mode is worth naming, because the next direct-to-Convex route will hit it too: a path missing from the prefix list produces no warning and no type error. The request simply goes out unauthenticated and surfaces as a generic 401 from the server.",
-      "id": "registry-hosted-bearer-401"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop toasting `Missing or invalid bearer token` on every hosted /servers pageload.\n\n`useRegistryServers` fetches the curated catalog and, after sign-in, merges leftover guest stars. Both hit Convex HTTP actions; when the hosted bearer is not attached yet they 401, and the hook toasted the raw backend message three times (catalog + merge + retry). Auth bootstrap failures are now swallowed and retried; only a real catalog/merge failure still toasts. Signing in re-fetches the catalog so `isStarred` populates once a session exists.",
-      "id": "registry-pageload-auth-toasts"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Badge directory rows whose OAuth probe resolved to pre-registered-only\nregistration — \"Requires pre-registered client\" on the card and the detail\ndialog.\n\nThe verdict is the backend's nightly `oauthProbe` sweep asking each\nconnectable row's authorization server for its registration posture\n(DCR / CIMD / neither). It is a probe **fact**, distinct from the upstream\nlisting's `authPosture` claim, and the badge renders only when the probe can\nback it:\n\n- **`resolved` verdicts only.** `no_metadata` and `unreachable` are\n  indistinguishable from a server that does not do OAuth discovery at all, so\n  they render nothing.\n- **The verdict must be about the row's current endpoint.** The ETL never\n  touches `oauthProbe`, so between an endpoint move and the next sweep a row\n  can hold a verdict about its old URL; `requiresPreregisteredClient` mirrors\n  the backend's `probeTargetFor` (fixed → `remoteUrl`, options → first\n  published endpoint) and refuses a mismatched verdict.",
-      "id": "registry-preregistered-badge"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Release the latest Inspector, CLI, and SDK updates.",
-      "id": "releases-2026-08-21"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Make the Sessions tab reachable on the hosted app.\n\nThe unified Sessions feed shipped with its nav item, route, and\n`unified-sessions-enabled` flag wiring all in place, but `\"sessions\"` was never\nadded to `HOSTED_SIDEBAR_ALLOWED_TABS`. On hosted deployments the sidebar builds\nfrom `getHostedNavigationSections`, which drops any item whose segment is not on\nthat list — and it runs *before* the feature-flag filter. So flagged-in users on\napp.mcpjam.com saw no Sessions item, and a direct `/sessions` URL fell through to\nServers via the same policy in `App.tsx`.\n\nNothing about the feed is hosted-specific: it reads the Convex-backed session\nrows the hosted surfaces already write. Adding the one entry restores parity\nbetween hosted and local, and `HOSTED_HASH_ALLOWED_TABS` picks it up because it\nspreads the sidebar list. Visibility is still governed by the PostHog flag —\nthis only makes the tab reachable.",
-      "id": "sessions-hosted-allowlist"
+      "summary": "Add the eval-suite stage-analytics route and the /evaluate stage-analytics\npanel, rendering backend-materialized per-run stage analytics.",
+      "id": "evals-d5b-d5c-inspector"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/sdk",
           "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
         }
       ],
-      "summary": "Recognize `-32021` as the tasks extension's Missing Required Client Capability\ncode, not the pre-renumber `-32003`.\n\n`mcp-error-codes.ts` has recorded the right values since the 2026-07-28\nrenumber: `MissingRequiredClientCapability` is `-32021`, and `-32003` sits in\n`PRE_RENUMBER_DRAFT_ERROR_CODES` under a comment saying those are \"NOT final\nwire codes\". Two places never got the memo and kept `-32003` as a literal:\n`TASKS_DECLARATION_REQUIRED_ERROR_CODE` in the client manager, and the tasks\nconformance runner's own copy of the constant. Both now read from the central\ntable, so the next renumber is a one-line change in one file.\n\nThe conformance consequence was a false verdict in both directions. A server\nanswering the canonical `-32021` failed `tasks-undeclared-capability-rejected`,\nand one still answering the obsolete `-32003` passed it — on the check whose\nwhole job is to prove the server refuses undeclared task work. The core suite\nalready asserted `-32021` in `modern-undeclared-capability-error`, so the two\nconformance modules were grading the same requirement against different codes.\n\next-tasks made this change in `c523f2c`, for the reasons the commit gives:\nSEP-2663 uses `-32021` throughout, the core 2026-07-28 schema defines\n`MissingRequiredClientCapabilityError` as `-32021`, and `-32003` appears in no\ncore schema version. The extension's root `index.md` still shows `-32003` and is\nstale; `specification/draft/tasks.md` is authoritative.\n\nA server that still emits `-32003` now fails — it does not conform — but it is\ntold which draft it is running rather than being reported as an anonymous wrong\ncode, so the fix is one line for whoever reads the report. The same naming\napplies to the `tasks-undeclared-creation-refused` warning, which stays a pass\nbecause no task reached a non-declaring client.",
-      "id": "tasks-missing-capability-32021"
+      "summary": "Add listEvalSuiteStageAnalytics to the Platform client. Requires the deployed\nbackend stage-analytics query (backend D5a); a missing backend surfaces as a\nservice error, never an empty result.",
+      "id": "evals-d5b-sdk"
     },
     {
       "releases": [
@@ -243,64 +27,29 @@
           "type": "patch"
         }
       ],
-      "summary": "Desktop tunnels forward real traffic again, instead of dying on the first MCP message.\n\n**A tunnel created in the desktop app was unusable.** The URL connected, then returned an empty 200 or `{\"error\":\"gateway_timeout\"}` for every request, and `main.log` recorded an uncaught `TypeError: mask is not a function` timed exactly to each incoming request. The cause is a bundling accident with a very narrow tell. The Electron main process bundles `ws` — `src/main.ts` dynamically imports the whole server, so `server/services/relay-client.ts` is in that graph — and `ws` decides whether a native masker is available by requiring its optional peer dep `bufferutil` inside a `try` and treating a thrown require as \"not installed\". `bufferutil` is not installed here, but Vite does not leave the require unresolvable: it resolves an absent optional peer dep to a frozen empty namespace. The require succeeds, returns `{}`, and `ws` installs a fast path whose `.mask` and `.unmask` do not exist.\n\n**Which is why it looked connected.** `ws` only takes the native path above a size threshold — 48 bytes to mask, 32 to unmask. The tunnel handshake and its 0-byte heartbeat pings stayed on the JS implementation and passed, so the app reported a healthy tunnel. Every real MCP JSON-RPC message clears 48 bytes and threw, uncaught, out of the relay's response pump. The relay's own control frames throw on the same line but are swallowed by an existing `try`, so the edge saw nothing at all and timed out. The `unauthorized` responses some users saw were the same thing from the other side: the local client kept dying and de-registering.\n\n**`src/ws-native-fallback.ts` sets `WS_NO_BUFFER_UTIL` before `ws` loads**, which skips the probe and keeps `ws` on its pure-JS masker — a few XORs per byte, well inside what a tunnel moves. It is the first import in `main.ts` because `ws` reads the variable at module-eval time. `WS_NO_UTF_8_VALIDATE` is set alongside it as insurance: `utf-8-validate` is stubbed identically, and is unreachable today only because `ws` prefers `node:buffer`'s `isUtf8`.\n\n**Only the desktop app was ever affected**, and both packaged builds and `electron:dev` were. The `npx` and Docker server and the `mcpjam` CLI leave `ws` as a bare import resolved from real `node_modules`, where the require genuinely throws and the fallback engages as designed. `npm run dev` bundles nothing, which is why this never reproduced locally despite shipping in every release since tunnels replaced ngrok.\n\n**The packaging step now refuses to ship the broken shape.** This class of defect exists only after bundling, so no source-level test can see it; `forge.config.ts`'s `packageAfterCopy` hook, which already inspects the built bundles before asar packing, now fails the build if the `bufferutil` stub is in the graph with nothing setting `WS_NO_BUFFER_UTIL`. It asserts the fix is present rather than the stub absent — the fix stops `ws` from using the stub, it does not remove it.",
-      "id": "ws-bufferutil-empty-stub"
+      "summary": "Server-served skills are named in the prompt, so the model can actually choose one\n\nProgressive disclosure has three levels: every skill's **name and description** are always in context, the `SKILL.md` body loads when the model judges it relevant, and supporting files load after that. Level 1 is never lazy — a model cannot choose a skill whose description it has never read.\n\nThe server-skills stanza skipped it. It said *\"call `listSkills` to see those\"* and named nothing, so picking a skill meant guessing that a relevant one might exist and spending a tool call to find out. Most turns never did. Asked how to import a corpus of promptfoo tests — with `mcpjam-eval-import` connected and its description matching almost word for word — the model never called `listSkills` and improvised a conversion process instead.\n\nThat is the irony of the old shape: `skills/list` **is** the progressive-disclosure mechanism. SEP-2640 returns frontmatter separately from content precisely so a host can put the catalog in front of the model without fetching a single body. We implemented that wire correctly and then called it lazily, discarding the thing it was designed for.\n\nThe catalog is now rendered into the system prompt, budgeted and formatted with the same helpers the Cloud Skills catalog uses — so the two halves of one feature cannot drift on wording, sort order, or what happens when metadata outgrows its share of the context. Each line keeps its origin (`MCP server \"…\"`), because these descriptions are third-party text and one that reads like an instruction should still show who wrote it. Unloadable skills stay listed and marked rather than hidden, so the model stops retrying them and a server author can see MCPJam declined.\n\nThe stanza also leads with what to do and follows with how to distrust it. The trust wording is unchanged and still unconditional — a digest match shows the bytes are consistent with what the server advertised, which is not the same as the content being trustworthy — but it no longer buries the only actionable sentence under three warnings.\n\nCost is one `skills/list` per turn per declaring server, shared with any `loadSkill` in the same turn, and the same per-turn catalog fetch Cloud Skills already pay. Caching it against the `ttlMs` servers already send — the worker serves an hour, and we currently surface that TTL and ignore it — would remove even that, and is worth doing for both paths at once.",
+      "id": "skills-catalog-in-the-prompt"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "6.3.0",
-      "changesets": [
-        "cursor-capabilities-catalog-parity",
-        "directory-readiness-surfaces",
-        "durable-conformance-runs",
-        "readiness-platform-operations",
-        "releases-2026-08-21",
-        "tasks-missing-capability-32021"
-      ],
-      "newVersion": "6.4.0"
-    },
-    {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.44.0",
+      "type": "patch",
+      "oldVersion": "3.3.0",
       "changesets": [
-        "cursor-capabilities-catalog-parity",
-        "directory-readiness-surfaces",
-        "durable-conformance-runs",
-        "harness-evals-unpinned-computer",
-        "hosted-tab-policy-blocklist-only",
-        "readiness-auth-wall-invite",
-        "readiness-conformance-ui",
-        "readiness-drop-section-flag",
-        "readiness-findings-visible",
-        "readiness-platform-operations",
-        "readiness-report-redaction-telemetry",
-        "readiness-reuse-platform-client",
-        "registry-chatgpt-directory-source",
-        "registry-hosted-bearer-401",
-        "registry-pageload-auth-toasts",
-        "registry-preregistered-badge",
-        "releases-2026-08-21",
-        "sessions-hosted-allowlist",
-        "tasks-missing-capability-32021",
-        "ws-bufferutil-empty-stub"
+        "evals-d5b-d5c-inspector",
+        "skills-catalog-in-the-prompt"
       ],
-      "newVersion": "2.45.0"
+      "newVersion": "3.3.1"
     },
     {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.28.0",
+      "name": "@mcpjam/sdk",
+      "type": "patch",
+      "oldVersion": "8.3.0",
       "changesets": [
-        "durable-conformance-runs",
-        "readiness-cli-local-check",
-        "readiness-platform-operations",
-        "releases-2026-08-21"
+        "evals-d5b-sdk"
       ],
-      "newVersion": "3.29.0"
+      "newVersion": "8.3.1"
     },
     {
       "name": "@mcpjam/mcp",

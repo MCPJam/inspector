@@ -52,11 +52,11 @@ export type PersistChatFailureKind =
  * user, client, or log — being told.
  */
 export type PersistChatOutcome =
-  | { outcome: "saved"; version: number }
+  | { outcome: "saved"; version: number; sessionDocId?: string }
   /** The backend recognized this exact turnId as already applied. As good as saved. */
-  | { outcome: "duplicate"; version: number }
+  | { outcome: "duplicate"; version: number; sessionDocId?: string }
   /** Legacy count-based replay skip (old backend, or a payload with no turnId). */
-  | { outcome: "skipped"; version?: number }
+  | { outcome: "skipped"; version?: number; sessionDocId?: string }
   | { outcome: "conflict"; currentVersion?: number }
   | {
       outcome: "failed";
@@ -95,7 +95,7 @@ export function pickEnrichmentHeaders(
   return result;
 }
 
-interface ResumeConfig {
+export interface ResumeConfig {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
@@ -103,7 +103,37 @@ interface ResumeConfig {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
+  /**
+   * Agent-Playground FIRST-TURN PINS (`origin: "api"` sessions).
+   *
+   * Hand-mirrored from `chatResumeConfigValidator` in the backend. These four
+   * are the fields the ingest boundary protects with `preserveAgentResumePins`
+   * — first-write-wins, so a continuation cannot swap the model, the tool
+   * policy, or the target out from under a session that already pinned them.
+   * The route's own `CONFIG_ON_CONTINUATION` check is the friendly error; this
+   * is the guarantee.
+   *
+   * Adding a field here is NOT enough to make it persist: the backend's HTTP
+   * ingest projects `resumeConfig` through an explicit allowlist, so a new key
+   * that is not in `AGENT_RESUME_PIN_KEYS` (and its projection) validates,
+   * returns 200, and is silently dropped.
+   */
+  modelId?: string;
+  toolMode?: AgentTurnToolMode;
+  environmentId?: string;
+  serverIds?: string[];
 }
+
+/**
+ * Tool-effects policy for an agent Playground turn.
+ *
+ * `read_only` advertises only tools whose `annotations.readOnlyHint === true`;
+ * `auto` advertises everything the target exposes and may therefore cause
+ * external side effects through arbitrary third-party tools. The hint is
+ * SERVER-ASSERTED — a server is free to mislabel a mutating tool — so this is
+ * a policy the host applies, not a guarantee the host can verify.
+ */
+export type AgentTurnToolMode = "read_only" | "auto";
 
 /**
  * Direct-chat host configuration sent alongside the transcript so the backend
@@ -222,7 +252,10 @@ export type ChatOrigin =
   | "mcpjam_agent"
   | "scenario"
   | "eval"
-  | "swarm";
+  | "swarm"
+  // Agent Playground turn route. Validator ships with backend PR 4; this
+  // mirror must exist before anything emits `"api"`.
+  | "api";
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -239,6 +272,19 @@ interface PersistChatSessionOptions {
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
   messages?: unknown[];
+  /**
+   * The system prompt as SENT — turn-injected sections included.
+   *
+   * Evidence, not configuration. It is what the Raw view and
+   * `get_chat_session` show, so it has to be the string the model actually
+   * received: the host prompt plus whatever the turn added (the server-skill
+   * catalog, widget model context, the environment block, sandbox notices).
+   *
+   * NOT the same field as `resumeConfig.systemPrompt`, which is the RAW host
+   * prompt a resumed turn replays. Turn-injected content is true of the turn
+   * that happened and not of the next one, so the two must not be merged —
+   * see the comment at the hosted persist call.
+   */
   systemPrompt?: string;
   responseMessages?: unknown[];
   assistantText?: string;
@@ -533,6 +579,7 @@ function classifySuccessBody(body: unknown): PersistChatOutcome {
         skipped?: boolean;
         duplicateTurn?: boolean;
         version?: number;
+        sessionId?: unknown;
       }
     | null
     | undefined;
@@ -540,16 +587,26 @@ function classifySuccessBody(body: unknown): PersistChatOutcome {
   if (!parsed || typeof parsed.version !== "number") {
     return { outcome: "failed", failureKind: "protocol_error", status: 200 };
   }
+  // The `chatSessions` DOCUMENT id, which every ingest branch returns and the
+  // route surfaces as the ONE public `sessionId`. Optional rather than
+  // required: the field is not part of the contract the older success-body
+  // fixtures assert, and a persist that saved but did not name the row is
+  // still a save — the caller reports the id it could not learn as absent
+  // rather than failing a committed turn.
+  const sessionDocId =
+    typeof parsed.sessionId === "string" && parsed.sessionId.length > 0
+      ? { sessionDocId: parsed.sessionId }
+      : {};
   if (parsed.skipped) {
     // `duplicateTurn` means the backend recognized this exact turn as already
     // applied — a success. A bare `skipped` is the legacy count heuristic
     // deciding the transcript looked like a replay, which may have discarded a
     // real turn; the caller must treat it as a possible loss, not a save.
     return parsed.duplicateTurn
-      ? { outcome: "duplicate", version: parsed.version }
-      : { outcome: "skipped", version: parsed.version };
+      ? { outcome: "duplicate", version: parsed.version, ...sessionDocId }
+      : { outcome: "skipped", version: parsed.version, ...sessionDocId };
   }
-  return { outcome: "saved", version: parsed.version };
+  return { outcome: "saved", version: parsed.version, ...sessionDocId };
 }
 
 async function attemptChatIngest(

@@ -14,6 +14,7 @@ import {
   wrapBackendToolsForTrace,
   wrapToolSetForEvalTrace,
 } from "../eval-trace-capture";
+import { TOOL_POLICY_BLOCK_MARKER } from "../tool-policy-gate";
 
 describe("eval-trace-capture", () => {
   const runAt = 10_000;
@@ -155,7 +156,7 @@ describe("eval-trace-capture", () => {
           execute: async () => "ok",
         },
       },
-      ctx,
+      ctx
     ) as any;
 
     wall = runAt + 50;
@@ -202,6 +203,26 @@ describe("eval-trace-capture", () => {
         status: "error",
       }),
     );
+  });
+
+  it("AI SDK: policy-blocked tool produces no trace span", async () => {
+    const ctx = createAiSdkEvalTraceContext(runAt);
+    registerAiSdkPrepareStep(ctx, 0);
+    const tools = wrapToolSetForEvalTrace(
+      {
+        blocked: {
+          execute: async () => ({
+            content: [{ type: "text", text: "blocked" }],
+            [TOOL_POLICY_BLOCK_MARKER]: true,
+          }),
+        },
+      },
+      ctx,
+    ) as any;
+
+    const result = await tools.blocked.execute({}, { toolCallId: "tcblocked" });
+    expect(result[TOOL_POLICY_BLOCK_MARKER]).toBe(true);
+    expect(ctx.recordedSpans).toEqual([]);
   });
 
   it("AI SDK: failure before any step — generation error only", () => {

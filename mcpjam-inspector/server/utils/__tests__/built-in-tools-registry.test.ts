@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
   resolveHostTools,
@@ -475,6 +475,192 @@ describe("narrowHostComputer", () => {
     ).toBeNull();
     expect(narrowHostComputer({ kind: "personal", workdir: "   " })).toEqual({
       kind: "personal",
+    });
+  });
+});
+
+/**
+ * W3: the `browser` capability. The gates here are what keep a model from
+ * driving a real, signed-in browser on a surface that never thought about
+ * approval — and what keeps a shell off the same box.
+ */
+describe("resolveHostTools — browser", () => {
+  const browserCtx = {
+    ...ctx,
+    browserApprovalDelivery: { kind: "attested" as const },
+  };
+
+  function withFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("is not advertised while the runtime flag is off", () => {
+    withFlag(undefined, () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"], computer }, browserCtx),
+      ).toBeUndefined();
+    });
+  });
+
+  it("is not advertised when the BACKEND says it is not exposable (W7)", async () => {
+    // Honored even with the env flag on. The likeliest reason for a refusal is
+    // an unset desktop credit rate, which would meter every hosted browser
+    // hour at the cheaper terminal rate.
+    const { resetComputersRuntimeConfigBootstrapForTests, initComputersRuntimeConfigBootstrap } =
+      await import("../computers/runtime-config");
+    resetComputersRuntimeConfigBootstrapForTests();
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "tok");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              enabled: false,
+              hostedBrowser: { exposable: false, reason: "desktop_rate_unset" },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    await initComputersRuntimeConfigBootstrap();
+    try {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      withFlag("1", () => {
+        expect(
+          resolveHostTools(
+            { builtInToolIds: ["browser"], computer },
+            { ...browserCtx, onToolSuppressed: (i) => suppressed.push(i) },
+          ),
+        ).toBeUndefined();
+      });
+      expect(suppressed[0]).toMatchObject({ id: "browser" });
+      expect(suppressed[0].reason).toContain("not fully configured");
+    } finally {
+      resetComputersRuntimeConfigBootstrapForTests();
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("is still advertised when the backend has not answered at all", async () => {
+    // An older backend says nothing. That is not a refusal — the env flag is
+    // already dark by default and is what staging drives the runtime with.
+    const { resetComputersRuntimeConfigBootstrapForTests } = await import(
+      "../computers/runtime-config"
+    );
+    resetComputersRuntimeConfigBootstrapForTests();
+    withFlag("1", () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"], computer }, browserCtx),
+      ).toBeDefined();
+    });
+  });
+
+  it("builds the six verbs when enabled, attested and computer-backed", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        browserCtx,
+      );
+      expect(Object.keys(tools ?? {}).sort()).toEqual([
+        "browser_act",
+        "browser_navigate",
+        "browser_observe",
+        "browser_tabs",
+        "browser_webmcp_invoke",
+        "browser_webmcp_tools",
+      ]);
+    });
+  });
+
+  it("hands the caller the approval classification to merge", () => {
+    withFlag("1", () => {
+      let approvals: { requiredNames: ReadonlySet<string> } | undefined;
+      resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...browserCtx,
+          onBrowserApprovals: (value) => {
+            approvals = value;
+          },
+        },
+      );
+      expect(approvals?.requiredNames.has("browser_act")).toBe(true);
+    });
+  });
+
+  it("advertises NOTHING on a surface that did not attest approval delivery", () => {
+    // The five prepareChatV2 call sites that thread no approvals are safe
+    // BECAUSE of this, without any edit to them.
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        { ...ctx, onToolSuppressed: (info) => suppressed.push(info) },
+      );
+      expect(tools).toBeUndefined();
+      expect(suppressed.some((s) => s.id === "browser")).toBe(true);
+    });
+  });
+
+  it("suppresses browser when bash is attached to the same computer", () => {
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...browserCtx, onToolSuppressed: (info) => suppressed.push(info) },
+      );
+      // bash is KEPT (behavior-preserving for hosts that already had it) and
+      // browser is dropped: one uid, one box — a shell can read the browser's
+      // cookies and its daemon token out of the process environment.
+      expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+      expect(
+        suppressed.find((s) => s.id === "browser")?.reason,
+      ).toContain("same computer");
+    });
+  });
+
+  it("allows the pair when the deployment accepted the trust boundary", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...browserCtx, allowComputerToolCoTenancy: true },
+      );
+      expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
+      expect(Object.keys(tools ?? {})).toContain("browser_act");
+    });
+  });
+
+  it("requires a computer, refuses guests, and refuses unbound journey sessions", () => {
+    withFlag("1", () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"] }, browserCtx),
+      ).toBeUndefined();
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          { ...browserCtx, isGuest: true },
+        ),
+      ).toBeUndefined();
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          { ...browserCtx, isJourneySession: true },
+        ),
+      ).toBeUndefined();
     });
   });
 });

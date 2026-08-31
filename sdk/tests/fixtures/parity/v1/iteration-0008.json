@@ -1,0 +1,60 @@
+{
+  "id": "hosted-0008",
+  "note": "no trace at all — an untraced run is not judgeable",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "traceAbsent": true
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": true,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "notMeasured",
+        "reason": "traceAbsent"
+      },
+      {
+        "stage": "call",
+        "state": "notMeasured",
+        "reason": "traceAbsent"
+      },
+      {
+        "stage": "response",
+        "state": "notMeasured",
+        "reason": "traceAbsent"
+      },
+      {
+        "stage": "userValue",
+        "state": "notMeasured",
+        "reason": "traceAbsent"
+      }
+    ],
+    "stageAnalyzerVersion": 5
+  }
+}

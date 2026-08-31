@@ -8,6 +8,8 @@ import {
   iterationsToEvalResultInputs,
   suiteTestResultsToEvalResultInputs,
   promptsToEvalResult,
+  legacyIterationStatusFromExecutionError,
+  resolveIterationLifecycleStatus,
 } from "../src/eval-result-mapping";
 import {
   STAGE_ANALYZER_VERSION,
@@ -548,6 +550,78 @@ describe("iterationToEvalResult", () => {
 // runToEvalResults
 // ---------------------------------------------------------------------------
 
+describe("lifecycle status", () => {
+  it("reports the iteration's own status and never derives it from `passed`", () => {
+    // The whole point of the two axes: a graded failure that executed
+    // normally is `completed`, and a passing iteration that was still
+    // cancelled/timed out keeps its lifecycle status.
+    expect(
+      resolveIterationLifecycleStatus({ status: "completed", error: undefined })
+    ).toBe("completed");
+    expect(
+      resolveIterationLifecycleStatus({
+        status: "setup_failed",
+        error: "server never started",
+      })
+    ).toBe("setup_failed");
+    expect(
+      resolveIterationLifecycleStatus({ status: "skipped", error: undefined })
+    ).toBe("skipped");
+    // A declared status wins over the error the legacy rule would read.
+    expect(
+      resolveIterationLifecycleStatus({
+        status: "completed",
+        error: "assertion failed: goal not reached",
+      })
+    ).toBe("completed");
+  });
+
+  it("infers a status only for a struct that carries none", () => {
+    expect(
+      legacyIterationStatusFromExecutionError(undefined)
+    ).toBe("completed");
+    expect(legacyIterationStatusFromExecutionError("   ")).toBe("completed");
+    expect(legacyIterationStatusFromExecutionError("connection reset")).toBe(
+      "failed"
+    );
+    expect(resolveIterationLifecycleStatus({ error: undefined })).toBe(
+      "completed"
+    );
+    expect(resolveIterationLifecycleStatus({ error: "boom" })).toBe("failed");
+  });
+
+  it("carries an explicit status onto every wire mapping", () => {
+    const prompt = makePrompt({ prompt: "hello" });
+    // A FAILED task verdict on an iteration that ran fine. If any mapper read
+    // `passed` the status below would come out `failed`.
+    const graded = makeIteration({
+      passed: false,
+      prompts: [prompt],
+      status: "completed",
+    });
+    expect(
+      iterationToEvalResult(graded, 0, { caseTitle: "case-1" }).status
+    ).toBe("completed");
+    expect(
+      iterationsToEvalResultInputs("case-1", [graded])[0].status
+    ).toBe("completed");
+
+    const abandoned = makeIteration({
+      passed: false,
+      prompts: [prompt],
+      status: "setup_failed",
+      error: "server never started",
+    });
+    expect(
+      iterationsToEvalResultInputs("case-1", [abandoned])[0].status
+    ).toBe("setup_failed");
+    expect(
+      runToEvalResults(makeRunResult([abandoned]), { caseTitle: "case-1" })[0]
+        .status
+    ).toBe("setup_failed");
+  });
+});
+
 describe("runToEvalResults", () => {
   it("maps N iterations with correct case titles", () => {
     const run = makeRunResult([
@@ -575,11 +649,13 @@ describe("runToEvalResults", () => {
       model: "m1",
       expectedToolCalls: [{ toolName: "t" }],
       promptSelector: "last",
+      intent: "refund",
     });
 
     expect(results[0].provider).toBe("custom");
     expect(results[0].model).toBe("m1");
     expect(results[0].expectedToolCalls).toEqual([{ toolName: "t" }]);
+    expect(results[0].intent).toBe("refund");
   });
 });
 
@@ -629,6 +705,7 @@ describe("suiteRunToEvalResults", () => {
     const results = suiteRunToEvalResults(testResults, {
       casePrefix: "s",
       expectedToolCallsByTest: expectedByTest,
+      intentByTest: { "test-a": "refund", "test-b": null },
     });
 
     const testA = results.find((r) => r.caseTitle.includes("test-a"));
@@ -638,6 +715,8 @@ describe("suiteRunToEvalResults", () => {
     expect(testB?.expectedToolCalls).toEqual([
       { toolName: "tool_y", arguments: { z: 1 } },
     ]);
+    expect(testA?.intent).toBe("refund");
+    expect(testB?.intent).toBeNull();
   });
 });
 
@@ -744,20 +823,25 @@ describe("iterationsToEvalResultInputs", () => {
     // those keys off rather than loosening this to `toMatchObject`: the exact
     // shape of the rest of the metadata is what this test exists to pin.
     const split = (index: number) => {
-      const { stageResults, stageAnalyzerVersion, ...rest } = results[index]
-        .metadata as Record<string, unknown>;
-      return { stageResults, stageAnalyzerVersion, rest };
+      const { stageResults, stageAnalyzerVersion, stageMeasurements, ...rest } =
+        results[index].metadata as Record<string, unknown>;
+      return { stageResults, stageAnalyzerVersion, stageMeasurements, rest };
     };
 
     expect(split(0).rest).toEqual({ retryCount: 0, iterationNumber: 1 });
     expect(split(1).rest).toEqual({ retryCount: 2, iterationNumber: 2 });
 
     for (const index of [0, 1]) {
-      const { stageResults, stageAnalyzerVersion } = split(index);
+      const { stageResults, stageAnalyzerVersion, stageMeasurements } =
+        split(index);
       expect(stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
       expect((stageResults as StageResultRow[]).map((r) => r.stage)).toEqual([
         ...USER_VALUE_STAGES,
       ]);
+      expect(stageMeasurements).toMatchObject({
+        schemaVersion: 1,
+        stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+      });
     }
   });
 

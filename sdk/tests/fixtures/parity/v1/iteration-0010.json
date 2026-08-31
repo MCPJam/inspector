@@ -1,0 +1,82 @@
+{
+  "id": "hosted-0010",
+  "note": "negative case: the forbidden call did not happen",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "isNegativeTest": true,
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "spans": [],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": true
+      }
+    ],
+    "predicateResults": [
+      {
+        "passed": true,
+        "reason": "no forbidden call"
+      }
+    ]
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": true,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "promptIndexes": [
+            0
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "notMeasured",
+        "reason": "noEvidenceCaptured"
+      },
+      {
+        "stage": "userValue",
+        "state": "passed",
+        "reason": "observed"
+      }
+    ],
+    "stageAnalyzerVersion": 5
+  }
+}

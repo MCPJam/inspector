@@ -3,7 +3,10 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
-import { classifyUiToolApprovals } from "@/shared/client-fulfilled-tools";
+import {
+  classifyPageToolApprovals,
+  classifyUiToolApprovals,
+} from "@/shared/client-fulfilled-tools";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
@@ -1948,6 +1951,80 @@ describe("mcpjam-stream-handler", () => {
       for (const call of calls) {
         expect((call[1] as any)?.filterToolName).toBeUndefined();
       }
+    });
+
+    it("emits an approval request for a page_* tool with the flag OFF (via classifyPageToolApprovals)", async () => {
+      // Page tools always gate. With their classification threaded in, the
+      // hosted gate emits a pill even though requireToolApproval is off (the
+      // default on the WebMCP Inspector surface).
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-page-1",
+            toolName: "page_ab12cd34",
+            input: { text: "hi" },
+          },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "use the page tool" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { page_ab12cd34: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        uiToolApprovals: classifyPageToolApprovals(["page_ab12cd34"]),
+      });
+
+      await lastExecution;
+
+      const approvalRequests = writtenChunks.filter(
+        (chunk: any) => chunk.type === "tool-approval-request"
+      );
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-page-1" });
+    });
+
+    it("STRANDS a page_* call when no classification is threaded (the bug this fix closes)", async () => {
+      // Regression guard for the pre-fix chat-v2 behavior: with no
+      // uiToolApprovals and the flag off, the hosted gate emitted no pill while
+      // the client had already deferred the call awaiting one — a turn that
+      // waits forever. This asserts the broken shape so a revert fails here.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-page-strand",
+            toolName: "page_ab12cd34",
+            input: { text: "hi" },
+          },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "use the page tool" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { page_ab12cd34: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        // uiToolApprovals deliberately omitted — the pre-fix chat-v2 shape.
+      });
+
+      await lastExecution;
+
+      const approvalRequests = writtenChunks.filter(
+        (chunk: any) => chunk.type === "tool-approval-request"
+      );
+      expect(approvalRequests).toHaveLength(0);
     });
 
     it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {

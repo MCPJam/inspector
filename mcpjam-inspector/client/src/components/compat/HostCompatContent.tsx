@@ -9,7 +9,6 @@ import {
   MonitorPlay,
   Wrench,
 } from "lucide-react";
-import { useNavigate } from "react-router";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/state/app-types";
@@ -33,7 +32,7 @@ import type {
   HostCompatReport,
 } from "@/lib/host-compat/types";
 import { track } from "@/lib/analytics";
-import { routePaths } from "@/lib/app-navigation";
+import { routePaths, useAppNavigate } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -141,7 +140,7 @@ export function HostCompatContent({
   // Tier-2: render the server's widget live in each host's emulation.
   const live = useLiveRenders(server.name, requirements);
 
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { createHost } = useHostMutations();
   const [, setPreviewedHostId] = usePreviewedHostId(projectId ?? null);
   const themeMode = usePreferencesStore((s) => s.themeMode);

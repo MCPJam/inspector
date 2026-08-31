@@ -1,0 +1,137 @@
+{
+  "corpusVersion": "v1",
+  "description": "Historical stage-derivation parity corpus. One file per iteration, allowlisted evidence only, plus the legacy verdict recorded for it.",
+  "origin": "synthetic",
+  "originNote": "SYNTHETIC. No privacy-reviewed sample of real hosted iterations was available to this change, so every record was authored to cover a shape the runner produces. Replacing it with a reviewed real sample is a drop-in: same schema, same manifest, re-run the digest.",
+  "allowlist": [
+    "authored case shape",
+    "predicate results (passed + structured reason)",
+    "prompt summaries (counts and turn verdict)",
+    "span skeletons (id, category, status, toolName, promptIndex, mcpErrorCode)",
+    "tool errors (kind, toolName)",
+    "render observations (status)",
+    "setup signals",
+    "iteration status and error label",
+    "the recorded legacy verdict"
+  ],
+  "excluded": [
+    "transcripts",
+    "prompt text",
+    "tool arguments and results",
+    "rationale text",
+    "rubric text",
+    "expectedOutput",
+    "server URLs (not even a hostname is carried)"
+  ],
+  "bounds": {
+    "maxIterations": 200,
+    "maxBytes": 2097152
+  },
+  "stageAnalyzerVersion": 5,
+  "iterations": 19,
+  "bytes": 34197,
+  "corpusDigest": "4f17ce85965ce7936bbdec0e312603d2a0eff38e44398d6ac2d54915d5c4ddaa",
+  "files": [
+    {
+      "path": "iteration-0001.json",
+      "sha256": "076689979922f8552605b5100948768be772c8cef908f875159af04fad1858bc",
+      "bytes": 1964
+    },
+    {
+      "path": "iteration-0002.json",
+      "sha256": "2c598b7921499f5ca473822a5beec21c0d36935500847c3ca54aa2f585018aa4",
+      "bytes": 2251
+    },
+    {
+      "path": "iteration-0003.json",
+      "sha256": "e9fed47343bd9d727cec5044f440cd64d53a04433e84fc90356f4f645bd25976",
+      "bytes": 1798
+    },
+    {
+      "path": "iteration-0004.json",
+      "sha256": "3eddea72004de2a2e34927f167475c15a20f48af5c8c08e0053ef60a28adf444",
+      "bytes": 1986
+    },
+    {
+      "path": "iteration-0005.json",
+      "sha256": "f47a95d4d63ca5cf3d222456d3c8823137ab13ab4b511b05ef652cd96d3fdb41",
+      "bytes": 1930
+    },
+    {
+      "path": "iteration-0006.json",
+      "sha256": "3bdd0e74ec55e53e80de91452bfa44cbbe95fb33766bd2926c1d0736105c3c59",
+      "bytes": 1507
+    },
+    {
+      "path": "iteration-0007.json",
+      "sha256": "f93d562f1c41c1859d2c8d7134e9275da5e5e150fac7755828be1e4cbfcd3745",
+      "bytes": 1512
+    },
+    {
+      "path": "iteration-0008.json",
+      "sha256": "9a8eb766fb4bec0696837c67b5e381eb20ce921999e545dad7361cedf5cba568",
+      "bytes": 1199
+    },
+    {
+      "path": "iteration-0009.json",
+      "sha256": "039da928c30b4ffaf46b72eb524a7ea80c76a07132bab69174d4c9f1fd7363ed",
+      "bytes": 1583
+    },
+    {
+      "path": "iteration-0010.json",
+      "sha256": "f5439500104be98a73b3835f13a2b609eb570bb95fa43215476abd53939d9f48",
+      "bytes": 1602
+    },
+    {
+      "path": "iteration-0011.json",
+      "sha256": "57de9895b743bbed2c301e1947c9cf0a2057b2a755b7a042b4c1d34150c28bad",
+      "bytes": 2201
+    },
+    {
+      "path": "iteration-0012.json",
+      "sha256": "9130a28c8c5cf5e01283104361d5dd1b21e59b946a0b70f605d101c3f986d5ef",
+      "bytes": 1616
+    },
+    {
+      "path": "iteration-0013.json",
+      "sha256": "804499955bf8cf73ded64a69ef8a7572facc33f00b55b35f5f6de70e88787ba6",
+      "bytes": 1878
+    },
+    {
+      "path": "iteration-0014.json",
+      "sha256": "a3cd6c6b37beecde6d120388c70e79184aef170dd6de5fb7d869eb8681eee023",
+      "bytes": 1874
+    },
+    {
+      "path": "iteration-0015.json",
+      "sha256": "c9500e82c6dd4ad20313d734f2acc5883fbabad1016b8abb613b939e155b9a01",
+      "bytes": 1846
+    },
+    {
+      "path": "iteration-0016.json",
+      "sha256": "532bbbda0222ab79ef0bca019962baf77856c2d397a3b51f5d3f5ed06d1e63f8",
+      "bytes": 1818
+    },
+    {
+      "path": "iteration-0017.json",
+      "sha256": "dc572c391881c17bc234cd45673e1ad1ac82e572af7b6529e43c9dc11f02c69f",
+      "bytes": 1971
+    },
+    {
+      "path": "iteration-0018.json",
+      "sha256": "a53bbdd11cb05a01094ed76933056f6d5349ce2be32bc8003f213ac779819d1d",
+      "bytes": 1833
+    },
+    {
+      "path": "iteration-0019.json",
+      "sha256": "c43d83a5fd324319162c0fa95d074d4b445afe2404f7e8d483f1706afd4b4a92",
+      "bytes": 1828
+    }
+  ],
+  "review": {
+    "reviewer": "",
+    "reviewedAt": "",
+    "ticket": "",
+    "notes": ""
+  }
+}

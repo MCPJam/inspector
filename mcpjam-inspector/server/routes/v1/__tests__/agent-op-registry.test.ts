@@ -20,7 +20,7 @@ import {
   AGENT_OP_PROMPT_NOTES,
   AGENT_OP_REGISTRY,
   EXCLUDED_FROM_AGENT,
-  conformanceRunResource,
+  executedActionResource,
   proposalInputForIdempotency,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
@@ -1134,44 +1134,82 @@ describe("agent op registry", () => {
   });
 
   it("does not link a conformance resource when the result has no run id", () => {
-    const entry = gatedEntryFor(startConformanceRunOperation.name);
-    expect(entry?.proposal.resource?.({}, { projectId: "p1" })).toBeUndefined();
-    expect(
-      entry?.proposal.resource?.({ run: {} }, { projectId: "p1" })
-    ).toBeUndefined();
-    expect(
-      entry?.proposal.resource?.({ runId: "" }, { projectId: "p1" })
-    ).toBeUndefined();
-    expect(
-      entry?.proposal.resource?.(null, { projectId: "p1" })
-    ).toBeUndefined();
-    expect(conformanceRunResource(undefined, { projectId: "p1" })).toBeUndefined();
+    // Link derivation now runs off the OPERATION's permalink policy rather
+    // than a builder kept in this registry, so these assert the delegation:
+    // a result the policy cannot address yields no resource, and never a
+    // half-built URL.
+    const link = (result: unknown) =>
+      executedActionResource(startConformanceRunOperation, result, {}, {
+        projectId: "p1",
+      });
+    expect(link({})).toBeUndefined();
+    expect(link({ run: {} })).toBeUndefined();
+    expect(link({ run: { runId: "" } })).toBeUndefined();
+    expect(link(null)).toBeUndefined();
+    expect(link(undefined)).toBeUndefined();
 
     expect(
-      entry?.proposal.resource?.({ runId: "run_1" }, { projectId: "p1" })
+      link({ run: { runId: "run_1", projectId: "p1" } })
     ).toMatchObject({ type: "conformance_run", id: "run_1" });
+  });
+
+  it("returns undefined rather than throwing when a policy fails", () => {
+    // Link derivation runs AFTER the work is done. A policy that throws must
+    // cost the link and nothing else — the caller records `succeeded` from
+    // this value, and an exception escaping here would re-record an action
+    // that happened as failed.
+    const original = startConformanceRunOperation.permalink;
+    (startConformanceRunOperation as { permalink: unknown }).permalink = {
+      kind: "derive",
+      resources: () => {
+        throw new Error("bad policy");
+      },
+    };
+    try {
+      expect(
+        executedActionResource(
+          startConformanceRunOperation,
+          { run: { runId: "run_1", projectId: "p1" } },
+          {},
+          { projectId: "p1" }
+        )
+      ).toBeUndefined();
+    } finally {
+      (startConformanceRunOperation as { permalink: unknown }).permalink =
+        original;
+    }
   });
 
   it("links a GROUP launch to the group, not to one of its runs", () => {
     // The contract carries one resource. Linking the first run would hide a
     // sibling's failure — the one thing an approver of N paid runs needs.
-    const entry = gatedEntryFor(runEvalSuiteOperation.name);
-    const groupResource = entry?.proposal.resource?.(
-      { suite: { id: "ts_1" }, runGroupId: "grp_1", runId: "run_1" },
-      { projectId: "p1" }
-    );
+    const link = (result: unknown) =>
+      executedActionResource(runEvalSuiteOperation, result, {}, {
+        projectId: "p1",
+      });
+    const groupResource = link({
+      project: { id: "p1" },
+      suite: { id: "ts_1" },
+      runGroupId: "grp_1",
+      runId: "run_1",
+    });
     expect(groupResource).toMatchObject({
       type: "eval_run_group",
       id: "grp_1",
     });
     expect(groupResource?.url).toContain("view=runs");
 
-    const singleResource = entry?.proposal.resource?.(
-      { suite: { id: "ts_1" }, runId: "run_1" },
-      { projectId: "p1" }
-    );
+    const singleResource = link({
+      project: { id: "p1" },
+      suite: { id: "ts_1" },
+      runId: "run_1",
+    });
     expect(singleResource).toMatchObject({ type: "eval_run", id: "run_1" });
     expect(singleResource?.url).toContain("/runs/run_1");
+    // Both carry the project scope, which is the whole reason these are not
+    // assembled by hand at each call site.
+    expect(groupResource?.url).toContain("project=p1");
+    expect(singleResource?.url).toContain("project=p1");
   });
 
   it("caps the WHOLE description, not only the argument preview", () => {
@@ -1607,6 +1645,70 @@ describe("tier derives from operation.risk", () => {
         "the project may talk to your servers. That is a human decision the " +
         "agent should not even propose.",
     },
+    render_server_widget: {
+      tier: "gated",
+      reason:
+        "Destructive would derive excluded, but this is `call_server_tool` " +
+        "with a browser attached — and that op is gated, not excluded, " +
+        "because the argument preview turns the approval into a real " +
+        "decision. Excluding the render while gating the bare call would " +
+        "mean an agent may propose running a tool but not propose finding " +
+        "out whether its widget works, which is the weaker of the two " +
+        "capabilities.",
+    },
+    revoke_eval_gate_waiver: {
+      tier: "gated",
+      reason:
+        "risk is none (nothing spent, no record destroyed — the waiver row " +
+        "and its audit event survive a revoke) but ending a waiver puts a " +
+        "release gate back and blocks whatever it was unblocking. That is " +
+        "somebody else's release, so a person approves it. It also keeps " +
+        "the surface symmetric with waive_eval_gate: an agent that needed " +
+        "approval to grant an override should not be able to withdraw one " +
+        "unasked.",
+    },
+    create_client: {
+      tier: "gated",
+      reason:
+        "risk is none (additive — nothing that exists changes) so this would " +
+        "derive direct, but a client IS the execution surface later turns " +
+        "run on, and minting one unasked puts a row in the project's client " +
+        "list that somebody has to notice and clean up. Gated keeps it " +
+        "symmetric with update_client: an agent that needs approval to EDIT " +
+        "a client should not be able to create one silently.",
+    },
+    update_client: {
+      tier: "gated",
+      reason:
+        "Destructive would derive excluded (an edit replaces settings that " +
+        "are currently in force), but the exclusion rule is about removals " +
+        "an approval cannot make recoverable, and this is not one: the write " +
+        "is compare-and-set on the client's content-addressed configId, its " +
+        "target is frozen to an exact id at proposal time, and the impact " +
+        "the approval card quotes is preconditioned transactionally — a " +
+        "consumer added between proposing and clicking conflicts instead of " +
+        "widening what was agreed to. Editing a client is the product's own " +
+        "primary noun; excluding it would leave the agent surfaces the only " +
+        "ones that cannot touch it.",
+    },
+    set_client_servers: {
+      tier: "gated",
+      reason:
+        "Same as update_client, and it is the narrower operation of the " +
+        "two: it can only replace the server set, composed server-side from " +
+        "the client's current config, and it takes the same config token. " +
+        "Excluding it while gating the general edit would mean an agent may " +
+        "propose changing anything about a client EXCEPT its servers.",
+    },
+    duplicate_client: {
+      tier: "excluded",
+      reason:
+        "risk is none (additive) so this would derive direct, but " +
+        "duplicating a client is roster housekeeping rather than a turn " +
+        "concern: nothing in a turn needs a second copy of a configuration, " +
+        "and create_client covers the case where the agent genuinely needs " +
+        "a new one. Available on REST, the CLI and MCP.",
+    },
     start_conformance_run: {
       tier: "gated",
       reason:
@@ -1714,7 +1816,6 @@ describe("tier derives from operation.risk", () => {
     "connect_project_server",
     "create_eval_case",
     "create_eval_suite",
-    "create_host",
     "create_project",
     "create_project_environment",
     "create_project_server",
@@ -1722,20 +1823,16 @@ describe("tier derives from operation.risk", () => {
     "create_tunnel",
     "delete_eval_case",
     "delete_eval_suite",
-    "delete_host",
     "delete_project",
     "delete_project_server",
     "delete_sandbox_image",
-    "duplicate_host",
     "promote_sandbox_image",
     "reset_computer",
     "restore_project_environment",
     "set_eval_suite_environments",
     "set_eval_suite_schedule",
-    "set_host_servers",
     "update_eval_case",
     "update_eval_suite",
-    "update_host",
     "update_project",
     "update_project_environment",
     "update_project_server",
@@ -1744,11 +1841,11 @@ describe("tier derives from operation.risk", () => {
   ]);
 
   /**
-   * The 35 writes above predate `risk`. This number may only go DOWN — if
+   * The 30 writes above predate `risk`. This number may only go DOWN — if
    * you are raising it to admit a new unclassified write, classify the write
    * instead; that is one field in the SDK catalog.
    */
-  const UNCLASSIFIED_WRITES_CEILING = 35;
+  const UNCLASSIFIED_WRITES_CEILING = 30;
 
   it("pins the unclassified legacy writes — the list only shrinks", () => {
     const unclassified = ALL_OPERATIONS.filter(
@@ -1809,6 +1906,7 @@ const PROMPT_BEFORE_REGISTRY = [
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
+  "- When a tool result carries a `permalinks` array, hand the user that `url` EXACTLY as written. NEVER invent, shorten, or rewrite an MCPJam app URL, and never build one from an id: a hand-made link opens whichever project the reader last selected, which is usually not the one you are talking about. If a result has no permalink, give the id and say where to find it.",
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",
@@ -1838,12 +1936,18 @@ const EXPECTED_PROMPT_NOTES = [
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
   "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
+  "- Before launching an eval run, `get_eval_run_disclosure` tells you (and lets you tell a human) what actually happens to the run's content — which models it calls, whether analyzers/judges fire and where their evidence goes, retention and region facts. It never gates the run; `run_eval_suite` already fetches and returns its own disclosure on `disclosure`, so call this separately only when you need it BEFORE deciding to launch.",
+      "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
+      "- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately \"3\" or \"15\" and a count without its unit is not a fact. And `verdict: \"notEstablished\"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.",
+      "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
   "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
   "- To find out why an iteration failed, start with `get_eval_run_steps`: it gives the per-step verdicts and reasons in a fraction of the tokens. Reach for `get_eval_iteration_trace` only when the steps do not explain it — a full trace is the whole message history and can be large enough to crowd out the rest of the turn.",
+  "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
   "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
   "- `call_server_tool` runs a real tool on the user's MCP server, as them, with effects MCPJam cannot undo. Calling it PROPOSES the call; a person approves it. Read the tool's schema from `list_server_tools` first and pass exactly the arguments you mean — the arguments you send are shown to the approver and are what will run, so a placeholder is a lie they will act on. Never call a tool to 'test' or 'see what happens'.",
+  "- `render_server_widget` EXECUTES the tool and then mounts its widget in a browser. It is not a read: use it to find out whether an MCP App actually renders, what it logs, and what it was blocked from fetching — never to 'look at' a tool whose side effects you have not read.",
   "- Before planning anything that authors, launches or publishes, call `get_capabilities` for the project. Your tool list is identical for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the action needs an admin. The `can` block answers both. Finding out from a 403 means you have already told someone you were doing it.",
   "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
   "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
@@ -1854,6 +1958,11 @@ const EXPECTED_PROMPT_NOTES = [
   "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
   "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+  "- `create_client` mints a NEW client and changes nothing that exists. To change an existing one, use `update_client` — never create a near-duplicate to work around a failed edit.",
+  "- Editing a client is a three-step loop: call `get_client` first; echo its `configId` back as `expectedConfigId` (and its `name` as `expectedName` when you are renaming); on a conflict, re-read and retry with the fresh values. Never guess a token.",
+  "- Prefer `set` over `config`. `set` changes named fields over the client's CURRENT config inside the write transaction; `config` replaces everything and will revert any edit made since you read it. In `set`, absent means keep and `null` means reset-or-clear.",
+  "- A client edit changes what every later run of every environment, scenario and journey on it executes. Say what you are changing and what it affects before proposing it.",
+  "- `set_client_servers` REPLACES the server set: every server you leave out is detached. Read the current list with `get_client` first, and send `expectedConfigId` from the same read.",
   "- `set_share_mode` changes who can open a shared scenario, conformance run, or eval run. `anyone_with_link` includes guests as browser sessions, not verified individuals.",
 ];
 

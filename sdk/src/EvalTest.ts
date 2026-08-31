@@ -41,6 +41,12 @@ import {
   mintCaseId,
   opaqueIdSchema,
 } from "./contract/identity.js";
+import {
+  caseIntentSchema,
+  normalizeIntent,
+  type CaseIntent,
+} from "./contract/stage-intent.js";
+import type { IterationStatus } from "./contract/chain.js";
 import { runScorers, scoresPassed } from "./scorers/run.js";
 import { Semaphore } from "./scorers/concurrency.js";
 import type { Scorer } from "./scorers/types.js";
@@ -306,6 +312,11 @@ export interface EvalTestConfig {
    */
   externalCaseId?: string;
   /**
+   * Optional analytics grouping label for this case. It is forwarded with
+   * every result but never participates in scoring or the verdict.
+   */
+  intent?: CaseIntent;
+  /**
    * Hosted "negative case" semantics: the test passes iff NO tool was called.
    *
    * Not a per-tool `toolNeverCalled` translation — the matcher already
@@ -358,6 +369,20 @@ export interface EvalTestRunOptions {
  */
 export interface IterationResult {
   passed: boolean;
+  /**
+   * What happened to this iteration's EXECUTION, independent of `passed`.
+   *
+   * Always set on a terminal iteration: `completed` once the iteration ran and
+   * was graded (including when it graded FAILED — that is the server's verdict,
+   * not an execution failure), `timed_out` when the iteration budget expired,
+   * and `failed` when it threw and retries were exhausted.
+   *
+   * Optional only because `IterationResult` is also constructed by callers
+   * outside this file; consumers that need a status use
+   * `resolveIterationLifecycleStatus`, which keeps the legacy inference in one
+   * named place instead of re-deriving a status from a verdict.
+   */
+  status?: IterationStatus;
   latencies: LatencyBreakdown[];
   tokens: { total: number; input: number; output: number };
   error?: string;
@@ -573,6 +598,20 @@ export class EvalTest {
         config = rest;
       }
     }
+    // Intent is authored metadata, normalized once at the authoring boundary
+    // just like the hosted external id above. Absence stays absent locally;
+    // the reporting identity sends an explicit null so the wire can preserve
+    // the unlabelled slice.
+    if (config.intent !== undefined) {
+      const intent = normalizeIntent(config.intent);
+      const rest = { ...config };
+      if (intent === undefined) {
+        delete rest.intent;
+      } else {
+        rest.intent = caseIntentSchema.parse(intent);
+      }
+      config = rest;
+    }
     assertDeclaredCaseId(config);
     // After `assertDeclaredCaseId`, so a config with an `externalCaseId` and
     // no `id` gets the missing-id error that already names `id := externalCaseId`
@@ -633,6 +672,7 @@ export class EvalTest {
       await semaphore.acquire();
       try {
         let lastError: string | undefined;
+        let lastAttemptTimedOut = false;
         let iterationAgent: HostExecutor | undefined;
 
         for (let attempt = 0; attempt <= retries; attempt++) {
@@ -698,6 +738,13 @@ export class EvalTest {
               // `expectedToolCalls` and each predicate each contribute one
               // gating score of exactly that value.
               passed: graded.passed,
+              // The iteration RAN. `graded.passed === false` is the server
+              // under test failing its task, which is not an execution
+              // failure — only the timeout stopped execution short. Bound to
+              // the same condition that stamps the timeout error, so a test
+              // that finished DESPITE a fired abort is not retroactively
+              // reclassified as stopped.
+              status: timeoutTriggered && !passed ? "timed_out" : "completed",
               ...promptMetrics,
               ...(timeoutTriggered && !passed
                 ? { error: timeoutError.message }
@@ -712,6 +759,7 @@ export class EvalTest {
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
+            lastAttemptTimedOut = timeoutTriggered;
 
             if (attempt < retries) {
               await sleep(100 * Math.pow(2, attempt));
@@ -750,6 +798,11 @@ export class EvalTest {
 
         return {
           passed: false,
+          // Retries are exhausted: the EXECUTION failed rather than the task
+          // being graded down. `timed_out` when the last attempt was stopped by
+          // the iteration budget — the same distinction the run-level verdict
+          // policy draws when it decides which trials it could measure.
+          status: lastAttemptTimedOut ? "timed_out" : "failed",
           ...promptMetrics,
           error: lastError,
           retryCount: retries,
@@ -1149,6 +1202,9 @@ export class EvalTest {
         // standalone test still forks its hosted history — the exact bug the
         // declared id exists to retire, surviving on the path nobody looked at.
         caseId: this.config.id,
+        // `null`, not omission, says this case is deliberately unlabelled on
+        // the result wire. Omission is reserved for pre-intent reporters.
+        intent: this.config.intent ?? null,
         ...(this.config.externalCaseId !== undefined
           ? { externalCaseId: this.config.externalCaseId }
           : {}),

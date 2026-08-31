@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -14,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { buildHostsPath } from "@/lib/app-navigation";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -61,7 +60,7 @@ export function HostCanvasSelector({
   projectId,
   activeHostId,
 }: HostCanvasSelectorProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
   const catalogState = useHostCatalog();
   const themeMode = usePreferencesStore((s) => s.themeMode);

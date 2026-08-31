@@ -1,0 +1,96 @@
+{
+  "id": "hosted-0014",
+  "note": "widget render failed",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "expectsWidgetRender": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "ok",
+        "toolName": "list_files",
+        "promptIndex": 0
+      }
+    ],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": true
+      }
+    ],
+    "renderObservations": [
+      {
+        "status": "error"
+      }
+    ],
+    "predicateResults": []
+  },
+  "iteration": {
+    "status": "failed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "failed",
+        "reason": "renderFailed"
+      },
+      {
+        "stage": "userValue",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      }
+    ],
+    "firstFailedStage": "response",
+    "failureCategory": "serverData",
+    "stageAnalyzerVersion": 5
+  }
+}

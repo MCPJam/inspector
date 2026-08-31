@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { StageAuthoredCase, StageResultRow } from "@mcpjam/sdk/contract";
+import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
 import {
   buildIterationFinishParams,
   buildStageMetadata,
@@ -80,7 +81,7 @@ describe("buildIterationFinishParams — stage derivation", () => {
   test("writes a full chain when the authored case is supplied", () => {
     const params = build({ stageCase: authoredCase, spans: [okToolSpan] });
     const metadata = params.metadata as Record<string, unknown>;
-    expect(metadata.stageAnalyzerVersion).toBe(2);
+    expect(metadata.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     expect(rowsOf(params)).toHaveLength(6);
     expect(stage(params, "call").state).toBe("passed");
   });
@@ -154,6 +155,322 @@ describe("buildIterationFinishParams — stage derivation", () => {
     expect(metadata.stepResults).toHaveLength(1);
     expect(metadata.stageResults).toHaveLength(6);
   });
+
+  test("policy blocks are metadata, not failures, and block stage measurement", () => {
+    const params = build({
+      stageCase: authoredCase,
+      policyBlocks: [
+        {
+          toolName: "write_file",
+          reason: "destructiveDefaultDeny",
+          classification: "destructive",
+          at: 123,
+        },
+      ],
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.policyBlockCount).toBe(1);
+    expect(metadata.policyBlocks).toHaveLength(1);
+    expect(metadata.failureCategory).toBeUndefined();
+    expect(metadata.firstFailedStage).toBeUndefined();
+    const applicable = rowsOf(params).filter(
+      (row) => row.state !== "notApplicable"
+    );
+    expect(applicable.every((row) => row.state === "notMeasured")).toBe(true);
+    expect(applicable.every((row) => row.reason === "blockedByPolicy")).toBe(
+      true
+    );
+  });
+
+  test("the effective tool policy is snapshotted so a replay can recover it", () => {
+    // The run row cannot carry the policy yet (backend field is Lane B), and a
+    // replay re-dials the ORIGINAL servers with the ORIGINAL credentials — so
+    // this snapshot is the only thing standing between a replay and executing
+    // for real the calls the source run blocked.
+    const params = build({
+      stageCase: authoredCase,
+      toolPolicy: { mode: "readOnly", deny: ["write_file"] },
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.toolPolicy).toEqual({
+      mode: "readOnly",
+      deny: ["write_file"],
+    });
+  });
+
+  test("no policy means no snapshot key at all", () => {
+    const params = build({ stageCase: authoredCase });
+    expect(
+      Object.hasOwn(params.metadata as Record<string, unknown>, "toolPolicy")
+    ).toBe(false);
+  });
+
+  test("an independent stage tool error retains ordinary failure attribution", () => {
+    const params = build({
+      stageCase: authoredCase,
+      status: "failed",
+      stageToolErrors: [{ kind: "protocol-error", toolName: "write_file" }],
+      policyBlocks: [
+        {
+          toolName: "write_file",
+          reason: "destructiveDefaultDeny",
+          classification: "destructive",
+          at: 123,
+        },
+      ],
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.policyBlockCount).toBe(1);
+    expect(metadata.stageResults).toBeDefined();
+    expect(metadata.failureCategory).toBe("serverData");
+    expect(metadata.firstFailedStage).toBe("call");
+    expect(
+      (metadata.stageResults as StageResultRow[]).some(
+        (row) => row.state === "failed" && row.reason === "protocolError"
+      )
+    ).toBe(true);
+  });
+});
+
+describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
+  const selectionTools = {
+    get_weather: {
+      description: "Look up the current weather for a city.",
+      inputSchema: { jsonSchema: { type: "object", properties: { city: {} } } },
+    },
+    delete_all_files: {
+      description: "Deletes every file on the sandbox filesystem.",
+    },
+  };
+
+  test("is written when selection failed and the live tool set is supplied", () => {
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
+          expectedToolCalls: [{ toolName: "get_weather" }],
+          actualToolCalls: [{ toolName: "delete_all_files" }],
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools,
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+    });
+    // Both the expected tool AND the tool the model called INSTEAD are
+    // captured — under the default `maxExtraToolCalls: null`, a call made
+    // in place of (not in addition to) an expected one never lands in
+    // `unexpected`, so the catalog has to read the full `actualToolCalls`
+    // set to see what the model actually picked.
+    expect(metadata.selectionToolCatalog).toEqual([
+      {
+        name: "get_weather",
+        role: "expected",
+        description: "Look up the current weather for a city.",
+        inputSchemaSummary: JSON.stringify({
+          type: "object",
+          properties: { city: {} },
+        }),
+      },
+      {
+        name: "delete_all_files",
+        role: "actual",
+        description: "Deletes every file on the sandbox filesystem.",
+      },
+    ]);
+  });
+
+  test("is absent when selection did not fail, even with tools supplied", () => {
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      spans: [okToolSpan],
+      selectionTools,
+    });
+    expect(stage(params, "selection").state).not.toBe("failed");
+    expect(
+      Object.hasOwn(
+        params.metadata as Record<string, unknown>,
+        "selectionToolCatalog"
+      )
+    ).toBe(false);
+  });
+
+  test("is absent when no live tool set is supplied, even on a selection failure", () => {
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+    });
+    expect(stage(params, "selection").state).toBe("failed");
+    expect(
+      Object.hasOwn(
+        params.metadata as Record<string, unknown>,
+        "selectionToolCatalog"
+      )
+    ).toBe(false);
+  });
+
+  test("is absent outside dual_write, even on a selection failure with tools supplied", () => {
+    const params = build({
+      stageCase: authoredCase,
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools,
+    });
+    expect(stage(params, "selection").state).toBe("failed");
+    expect(
+      Object.hasOwn(
+        params.metadata as Record<string, unknown>,
+        "selectionToolCatalog"
+      )
+    ).toBe(false);
+  });
+
+  test("captures both roles for an unexpectedToolCall failure, deduped", () => {
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [],
+          actualToolCalls: [
+            { toolName: "delete_all_files" },
+            { toolName: "delete_all_files" },
+          ],
+          unexpected: [
+            { toolName: "delete_all_files" },
+            { toolName: "delete_all_files" },
+          ],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools,
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "unexpectedToolCall",
+    });
+    expect(metadata.selectionToolCatalog).toEqual([
+      {
+        name: "delete_all_files",
+        role: "actual",
+        description: "Deletes every file on the sandbox filesystem.",
+      },
+    ]);
+  });
+
+  test("an earlier successful turn's tool calls never enter the catalog, even under the cap", () => {
+    // Turn 0 succeeds (calls a tool cleanly); turn 1 is the actual selection
+    // failure. Only turn 1's actual/expected names should ever be catalogued
+    // — turn 0's successful call has nothing to do with why selection failed.
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [],
+          unexpected: [],
+          actualToolCalls: [{ toolName: "list_files" }],
+          argumentMismatches: [],
+          passed: true,
+        },
+        {
+          promptIndex: 1,
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          actualToolCalls: [{ toolName: "delete_all_files" }],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools: {
+        ...selectionTools,
+        list_files: { description: "an unrelated, successfully-called tool" },
+      },
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+    });
+    const names = (
+      metadata.selectionToolCatalog as Array<{ name: string }>
+    ).map((e) => e.name);
+    expect(names).not.toContain("list_files");
+    expect(names).toEqual(
+      expect.arrayContaining(["get_weather", "delete_all_files"])
+    );
+  });
+
+  test("an unexpected tool is never crowded out of the cap by correctly-called expected tools", () => {
+    // maxExtraToolCalls: 0 style failure — six tools called correctly
+    // (nothing missing) plus one prohibited extra, with the prohibited call
+    // LAST in call order. The cap (6) must not fill entirely on the
+    // correctly-called tools before the one that actually caused
+    // unexpectedToolCall is ever considered.
+    const correctlyCalledNames = Array.from(
+      { length: 6 },
+      (_, i) => `expected_ok_${i}`
+    );
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [],
+          unexpected: [{ toolName: "prohibited_tool" }],
+          actualToolCalls: [
+            ...correctlyCalledNames.map((toolName) => ({ toolName })),
+            { toolName: "prohibited_tool" },
+          ],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools: {
+        ...Object.fromEntries(correctlyCalledNames.map((n) => [n, {}])),
+        prohibited_tool: { description: "the tool that caused the failure" },
+      },
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "unexpectedToolCall",
+    });
+    const names = (
+      metadata.selectionToolCatalog as Array<{ name: string }>
+    ).map((e) => e.name);
+    expect(names).toContain("prohibited_tool");
+  });
 });
 
 describe("buildStageMetadata — the seam a setup abort finalizes through", () => {
@@ -177,7 +494,7 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
     expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
     expect(metadata.failureCategory).toBe("setup");
-    expect(metadata.stageAnalyzerVersion).toBe(2);
+    expect(metadata.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     // Never a fabricated failure: nothing was measured, so nothing "failed".
     expect(metadata.firstFailedStage).toBeUndefined();
   });

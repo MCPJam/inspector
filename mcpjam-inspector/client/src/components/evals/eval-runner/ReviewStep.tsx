@@ -116,7 +116,9 @@ export function ReviewStep({
         <Separator />
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-muted-foreground">Models</p>
+            <p className="text-sm font-medium text-muted-foreground">
+              Models
+            </p>
             {selectedModels.length > 0 ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 {selectedModels.map((model) => (

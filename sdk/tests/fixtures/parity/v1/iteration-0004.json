@@ -1,0 +1,100 @@
+{
+  "id": "hosted-0004",
+  "note": "tool call errored on the server side",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "toolSignals": {
+      "toolsTotalBefore": 8,
+      "toolsExposed": 8
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "error",
+        "toolName": "list_files",
+        "promptIndex": 0,
+        "mcpErrorCode": -32603
+      }
+    ],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": false
+      }
+    ],
+    "toolErrors": [
+      {
+        "kind": "tool_error",
+        "toolName": "list_files"
+      }
+    ]
+  },
+  "iteration": {
+    "status": "failed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "failed",
+        "reason": "protocolError",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "userValue",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      }
+    ],
+    "firstFailedStage": "call",
+    "failureCategory": "serverData",
+    "stageAnalyzerVersion": 5
+  }
+}

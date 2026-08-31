@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
+const preparedToolsOverride = vi.hoisted(() => ({
+  current: undefined as Record<string, any> | undefined,
+}));
 const createLlmModelMock = vi.hoisted(() =>
   vi.fn(
     (
@@ -89,7 +92,7 @@ vi.mock("@/shared/http-tool-calls", () => ({
 
 vi.mock("../../../utils/chat-v2-orchestration", () => ({
   prepareChatV2: vi.fn(async (options: any) => ({
-    allTools: {},
+    allTools: preparedToolsOverride.current ?? {},
     enhancedSystemPrompt: options?.systemPrompt ?? "",
     resolvedTemperature: options?.temperature,
     scrubMessages: (msgs: unknown[]) => msgs,
@@ -120,6 +123,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     listTools: vi.fn(),
     getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
+    getAllToolAnnotations: vi.fn(),
+    hasCachedToolAnnotations: vi.fn(),
     // PR 3 of the engine consolidation: the engine that
     // `runIterationViaBackend` now drives calls
     // `getAllToolsMetadata(serverId)` during message scrubbing
@@ -144,6 +149,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
     mcpClientManager.listTools.mockResolvedValue({ tools: [] });
+    mcpClientManager.getAllToolAnnotations.mockReturnValue({});
+    mcpClientManager.hasCachedToolAnnotations.mockReturnValue(true);
     mcpClientManager.getConnectionStatus.mockReturnValue("connected");
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     mcpClientManager.executeTool.mockResolvedValue({
@@ -162,6 +169,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       },
     });
     streamTextMock.mockReset();
+    preparedToolsOverride.current = undefined;
     // PR 4b of the engine consolidation: `runIterationWithAiSdk` now
     // drives `runDirectChatTurn` (which calls `streamText`). Provide a
     // default streamText return shape so suite-style tests using
@@ -187,7 +195,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  async function runQuickTestCase(compareRunId?: string) {
+  async function runQuickTestCase(
+    compareRunId?: string,
+    intent?: string,
+  ) {
     // Use a BYOK-only model id so the runner takes the local generateText
     // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
     // counterpart and would otherwise route through the backend.
@@ -203,6 +214,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-4-turbo",
             provider: "openai",
             expectedToolCalls: [],
+            ...(intent !== undefined ? { intent } : {}),
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
             ],
@@ -281,6 +293,237 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     ).rejects.toThrow(
       'Could not start eval because "Asana" is not connected. Reconnect the server and try again.'
     );
+  });
+
+  async function runPolicyTool(
+    policy: { mode: "default" | "readOnly"; allow?: string[]; deny?: string[] },
+    annotations?: Record<string, unknown>,
+    expectedToolCall = false,
+    toolName = "write"
+  ) {
+    const originalExecute = vi.fn(async () =>
+      mcpClientManager.executeTool("srv-1", toolName, {})
+    );
+    preparedToolsOverride.current = {
+      [toolName]: {
+        ...(toolName === "write" ? { _serverId: "srv-1" } : {}),
+        execute: originalExecute,
+      },
+    };
+    mcpClientManager.listTools.mockResolvedValueOnce({
+      tools: [
+        {
+          name: toolName,
+          ...(annotations !== undefined ? { annotations } : {}),
+        },
+      ],
+    });
+    mcpClientManager.getAllToolAnnotations.mockReturnValue({
+      [toolName]: annotations,
+    });
+    streamTextMock.mockImplementationOnce((options: any) => ({
+      consumeStream: async () => {
+        await options.tools[toolName].execute(
+          {},
+          { toolCallId: "policy-call" }
+        );
+      },
+      response: Promise.resolve({
+        modelId: "gpt-4-turbo",
+        messages: [
+          {
+            role: "assistant",
+            content: expectedToolCall
+              ? [
+                  {
+                    type: "tool-call",
+                    toolName,
+                    toolCallId: "policy-call",
+                    input: {},
+                  },
+                ]
+              : "Done",
+          },
+        ],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      }),
+      finishReason: Promise.resolve("stop"),
+    }));
+
+    const runConfig = buildQuickRunConfig();
+    if (expectedToolCall) {
+      const testConfig = runConfig.config.tests[0];
+      testConfig.expectedToolCalls = [{ toolName, arguments: {} }];
+      testConfig.promptTurns[0].expectedToolCalls = [
+        { toolName, arguments: {} },
+      ];
+    }
+    await runEvalSuiteWithAiSdk({
+      ...runConfig,
+      toolPolicy: policy,
+    } as any);
+
+    const updateCall = convexClient.action.mock.calls.find(
+      (call) => call[0] === "testSuites:updateTestIteration"
+    );
+    return {
+      originalExecute,
+      payload: updateCall?.[1] as {
+        result?: string;
+        status?: string;
+        metadata?: Record<string, any>;
+      },
+    };
+  }
+
+  it("blocks destructive MCP execution and records a non-failing policy block", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default" },
+      { destructiveHint: true }
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    expect(payload.result).toBe("passed");
+    expect(payload.status).toBe("completed");
+    expect(payload.metadata?.policyBlockCount).toBe(1);
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      {
+        toolName: "write",
+        reason: "destructiveDefaultDeny",
+        classification: "destructive",
+      },
+    ]);
+    expect(payload.metadata?.failureCategory).toBeUndefined();
+    const applicableStages = (
+      (payload.metadata?.stageResults as Array<{
+        state: string;
+        reason?: string;
+      }>) ?? []
+    ).filter((row) => row.state !== "notApplicable");
+    expect(applicableStages.length).toBeGreaterThan(0);
+    expect(applicableStages).toEqual(
+      expect.arrayContaining(
+        applicableStages.map((row) =>
+          expect.objectContaining({
+            state: "notMeasured",
+            reason: "blockedByPolicy",
+          })
+        )
+      )
+    );
+    expect(applicableStages.some((row) => row.state === "failed")).toBe(false);
+  });
+
+  it("does not let a blocked tool call satisfy expectedToolCalls", async () => {
+    const { payload } = await runPolicyTool(
+      { mode: "default" },
+      { destructiveHint: true },
+      true
+    );
+    expect(payload.result).toBe("failed");
+    expect(payload.metadata?.policyBlockCount).toBe(1);
+    const applicableStages = (
+      (payload.metadata?.stageResults as Array<{
+        state: string;
+        reason?: string;
+      }>) ?? []
+    ).filter((row) => row.state !== "notApplicable");
+    expect(applicableStages.length).toBeGreaterThan(0);
+    expect(
+      applicableStages.every(
+        (row) => row.state === "notMeasured" && row.reason === "blockedByPolicy"
+      )
+    ).toBe(true);
+    expect(
+      applicableStages.some(
+        (row) => row.state === "failed" || row.reason === "missingToolCall"
+      )
+    ).toBe(false);
+  });
+
+  it("allows an explicitly allowed destructive MCP tool through the runner", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", allow: ["write"] },
+      { destructiveHint: true },
+    );
+    expect(originalExecute).toHaveBeenCalledTimes(1);
+    expect(mcpClientManager.executeTool).toHaveBeenCalledTimes(1);
+    expect(payload.metadata?.policyBlockCount).toBeUndefined();
+  });
+
+  it("accepts an explicit deny for the injected bash tool and blocks execution", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", deny: ["bash"] },
+      undefined,
+      false,
+      "bash"
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { toolName: "bash", reason: "denyList" },
+    ]);
+  });
+
+  it("accepts an explicit deny for the injected computer tool and blocks execution", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", deny: ["computer"] },
+      undefined,
+      false,
+      "computer"
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { toolName: "computer", reason: "denyList" },
+    ]);
+  });
+
+  it("blocks an unannotated MCP tool in readOnly mode through the runner", async () => {
+    const { originalExecute, payload } = await runPolicyTool({
+      mode: "readOnly",
+    });
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { reason: "readOnlyModeUnclassified", classification: "unknown" },
+    ]);
+  });
+
+  it("refuses an unmatched deny name once before starting iterations", async () => {
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        toolPolicy: { mode: "default", deny: ["missing"] },
+      } as any)
+    ).rejects.toThrow(
+      "TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool"
+    );
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("persists a warning for an unmatched allow name", async () => {
+    const { payload } = await runPolicyTool({
+      mode: "default",
+      allow: ["missing"],
+    });
+    expect(payload.metadata?.policyWarnings).toEqual([
+      "Tool policy allow name(s) did not match any available tool: missing",
+    ]);
+  });
+
+  it("refuses a policy run when annotation cache data is unavailable", async () => {
+    mcpClientManager.hasCachedToolAnnotations.mockReturnValueOnce(false);
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        toolPolicy: { mode: "default" },
+      } as any)
+    ).rejects.toThrow("TOOL_POLICY_ANNOTATIONS_UNAVAILABLE");
+    expect(streamTextMock).not.toHaveBeenCalled();
   });
 
   it("surfaces a clear error when the selected server fails tools/list", async () => {
@@ -500,6 +743,17 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(callsByRef["testSuites:appendEvalTurnTrace"]).toBeGreaterThan(0);
     expect(callsByRef["testSuites:updateTestIteration"]).toBeGreaterThan(0);
     expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
+  });
+
+  it("freezes the authored intent in a quick-run iteration snapshot", async () => {
+    await runQuickTestCase(undefined, "Task search");
+
+    const createCall = convexClient.mutation.mock.calls.find(
+      (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+    );
+    expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+      intent: "Task search",
+    });
   });
 
   it("derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed", async () => {
@@ -1838,6 +2092,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           model: "claude-haiku-4.5",
           provider: "anthropic",
           expectedToolCalls: [],
+          intent: "Stream task",
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
           ],
@@ -1867,14 +2122,23 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         ])
       );
 
-      // And the failure must still be persisted (status:"failed").
+      // And the failure must still be persisted — as a SETUP failure: the
+      // environment never came up, so `failed` (which claims the run happened
+      // and the server under test lost) would be the wrong word.
       const updateCall = convexClient.action.mock.calls.find(
         (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
-      expect(payload.status).toBe("failed");
+      expect(payload.status).toBe("setup_failed");
       expect(payload.result).toBe("failed");
+
+      const createCall = convexClient.mutation.mock.calls.find(
+        (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+      );
+      expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+        intent: "Stream task",
+      });
 
       // The runner must NOT have hit the backend — failure happens before
       // the per-step fetch loop.

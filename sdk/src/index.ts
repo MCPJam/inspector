@@ -132,6 +132,9 @@ export {
   SkillsExtGetMethod,
   SkillsExtListMethod,
   INODE_DIRECTORY_MIME_TYPE,
+  DYNAMIC_SKILL_RESOURCES,
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
   clientDeclaresSkillsExtension,
   resolveSkillsSupport,
   serverDeclaresSkillsExtension,
@@ -156,7 +159,10 @@ export {
   comparableAdvertisedFrontmatter,
   splitAdvertisedFrontmatter,
   computeSkillVersionHash,
+  checkManifestLimits,
+  enumeratedResources,
   findListedResource,
+  isDynamicResources,
   isListedResource,
   parseDigest,
   sha256HexOfBytes,
@@ -164,6 +170,7 @@ export {
   skillNameFromUri,
   splitSkillMarkdown,
   verifyDigest,
+  verifySize,
   verifySkillMarkdown,
 } from "./mcp-client-manager/index.js";
 export type {
@@ -179,6 +186,33 @@ export type {
   ParsedDigest,
   SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
+
+// Skills over MCP (SEP-2640) — the VERIFIED READ PATH.
+//
+// The orchestration above the integrity primitives: every SKILL.md fetched via
+// `resources/read` and digest-checked before a caller sees a byte, the manifest
+// enforced as the read allowlist, and each server behaviour mapped to a named
+// refusal. Exported here rather than behind a subpath because every consumer
+// already imports from the package root.
+export {
+  EXTENSION_INACTIVE_REFUSAL,
+  MAX_SERVER_SKILL_READ_BYTES,
+  ServerSkillRefusalError,
+  getVerifiedServerSkill,
+  isServerSkillRefusalError,
+  listServerSkillCatalog,
+  normalizeCatalogText,
+  probeServerSkillMissing,
+  readVerifiedServerSkillFile,
+  serverSkillsActive,
+} from "./server-skills.js";
+export type {
+  ServerSkillListing,
+  ServerSkillRefusal,
+  ServerSkillSummary,
+  ServerSkillsLogger,
+  VerifiedServerSkill,
+} from "./server-skills.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
@@ -337,8 +371,10 @@ export type {
 export {
   MAX_SUITE_FILE_BYTES,
   SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_FINDING_CODES,
   SUITE_FILE_VALIDITY_DEFAULTS,
+  declareEvalSuiteFileValidity,
   formatSuiteFileFindings,
   loadEvalSuiteFile,
   resolveEvalSuiteFile,
@@ -415,16 +451,57 @@ export type {
   AuthMethod,
 } from "./registration.js";
 export {
+  buildEvalRunReport,
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
+  renderStructuredRunHtml,
 } from "./structured-reporting.js";
+export {
+  buildEvalDecisionSummary,
+  buildEvalDecisionSummaryFromIterations,
+  buildEvalRunDecisionSummary,
+  DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  formatEvalDecisionSummary,
+  formatEvalRunDecisionSummary,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+  readEvalRunDecisionSummary,
+} from "./eval-decision-summary.js";
+/**
+ * The canonical run decision contract, re-exported from `@mcpjam/sdk/contract`.
+ *
+ * Mirrored onto the main entry because the CLI and the reporters consume it
+ * beside the platform types, and making them import one shape from two subpaths
+ * is how a consumer ends up with two copies of the type at different versions.
+ */
+export {
+  assembleEvalRunDecisionSummary,
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
+  evalRunDecisionSummarySchema,
+} from "./contract/index.js";
 export type {
+  EvalRunDecisionCounts,
+  EvalRunDecisionDiagnostic,
+  EvalRunDecisionSummary,
+  EvalRunDecisionVerdict,
+} from "./contract/index.js";
+export type {
+  EvalDecisionSummary,
+  EvalDecisionSummaryCase,
+  EvalDecisionSummaryInput,
+  EvalDecisionVerdict,
+  NormalizedEvalDecisionCase,
+  StageChainStatus,
+} from "./eval-decision-summary.js";
+export type {
+  StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
+  StructuredCaseWaiver,
   StructuredSummaryBucket,
   StructuredRunSummary,
   StructuredRunReport,
+  StructuredRunVerdict,
 } from "./structured-reporting.js";
 export {
   toConformanceReport,
@@ -900,6 +977,12 @@ export type {
   ProviderLanguageModel,
 } from "./model-factory.js";
 
+// Which sampling parameters a model accepts. Also exported from
+// `@mcpjam/sdk/browser` so client code can gate a temperature control without
+// pulling the Node graph in; exported here so a Node consumer building its own
+// request doesn't re-derive the version thresholds locally.
+export { modelRejectsTemperature } from "./model-sampling-support.js";
+
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
   serializeForInlineScript,
@@ -1184,6 +1267,7 @@ export type {
 // custom scorer without a second import path.
 export {
   aggregateEvaluationConfigHash,
+  allGatingScorersPassed,
   buildEvaluationConfigSnapshot,
   canonicalDigest,
   canonicalJson,
@@ -1214,6 +1298,47 @@ export type {
   ScorerRole,
 } from "./contract/index.js";
 
+// The v2 run verdict policy (browser-safe; exported in full from
+// `@mcpjam/sdk/contract`). Re-exported here for the same reason as the scoring
+// contract above: a code-first author reading a decision should not need a
+// second import path to name its parts.
+//
+// CONTRACT ONLY in this wave — there is no producer behind these types yet, so
+// nothing in the SDK emits an `EvalVerdictDecision`. Anything that reads one
+// must check `verdictPolicyVersion === EVAL_VERDICT_POLICY_VERSION` first: a
+// row without the field is a legacy percent-threshold row, NOT a v2 row.
+export {
+  EVAL_RATE_MEASUREMENT_STATES,
+  EVAL_RUN_VERDICTS,
+  EVAL_TRIAL_EXCLUSION_REASONS,
+  EVAL_VERDICT_DECISION_REASONS,
+  EVAL_VERDICT_POLICY_SCHEMA_ID,
+  EVAL_VERDICT_POLICY_VERSION,
+  evalCaseVerdictAggregationSchema,
+  evalRateMeasurementSchema,
+  evalRunVerdictSchema,
+  evalVerdictDecisionSchema,
+  isEvalRunVerdict,
+  isEvalTrialExclusionReason,
+  isEvalVerdictDecisionReason,
+  isEvalVerdictPolicyV2,
+  resolvedEvalValidityPolicySchema,
+} from "./contract/index.js";
+export type {
+  EvalCaseVerdictAggregation,
+  EvalRateMeasurement,
+  EvalRateMeasurementState,
+  EvalRunVerdict,
+  EvalTrialExclusionReason,
+  EvalTrialExclusions,
+  EvalValidityCoverage,
+  EvalVerdictDecision,
+  EvalVerdictDecisionReason,
+  EvalVerdictPolicyVersion,
+  EvalVerdictValidity,
+  ResolvedEvalValidityPolicy,
+} from "./contract/index.js";
+
 // The scorer runtime. Main-entry only — `judgeScorer` reaches the model
 // factory, which is not browser-safe.
 export {
@@ -1237,13 +1362,20 @@ export type {
 // `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
+  GATE_WAIVER_MAX_DURATION_MS,
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
   GateError,
+  applyGateWaiver,
   assertGate,
   evaluateGates,
   formatGateReport,
+  formatGateWaiverLine,
   gateInputFromPlatformRun,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
+  gateOutcomeVerdict,
+  isGateWaiverInForce,
   passRateFractionFromPercent,
 } from "./gates.js";
 export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
@@ -1254,6 +1386,7 @@ export type {
   GateScore,
   GateStatus,
   GateVerdict,
+  GateWaiver,
   ScoreIntegrity,
 } from "./gates.js";
 

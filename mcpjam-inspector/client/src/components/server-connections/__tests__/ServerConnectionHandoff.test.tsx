@@ -24,6 +24,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 const authkit = vi.hoisted(() => ({
+  isLoading: false,
   getAccessToken: vi.fn(async (): Promise<string | undefined> => undefined),
   signIn: vi.fn(async () => undefined),
   signOut: vi.fn(async () => undefined),
@@ -34,6 +35,7 @@ const authkit = vi.hoisted(() => ({
 // only part of it this component touches.
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
+    isLoading: authkit.isLoading,
     getAccessToken: authkit.getAccessToken,
     signIn: authkit.signIn,
     signOut: authkit.signOut,
@@ -89,7 +91,7 @@ function mockApi(handlers: Record<string, () => unknown>) {
         });
       }
       return new Response(JSON.stringify(handler()), { status: 200 });
-    }
+    },
   );
   vi.stubGlobal("fetch", fetchMock);
   return calls;
@@ -146,22 +148,57 @@ describe("the claim", () => {
     expect(calls.some((call) => call.path === "/claim")).toBe(false);
   });
 
-  it("says the link is unusable rather than showing an empty page", async () => {
+  it("explains that a spent one-time link must be recreated", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ message: "That link has expired." }), {
-            status: 404,
-          })
-      )
+          new Response(
+            JSON.stringify({
+              message: "Connection request not found",
+              details: { reason: "REQUEST_NOT_FOUND" },
+            }),
+            { status: 404 },
+          ),
+      ),
     );
     goTo("/connect/server/dead-token");
 
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("That link has expired.")
+      await screen.findByText("This link has already been used"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Connection links work only once. Create a new link from the CLI to connect again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the accurate message for an expired link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              message: "That authorization link has expired.",
+              details: { reason: "REQUEST_EXPIRED" },
+            }),
+            { status: 404 },
+          ),
+      ),
+    );
+    goTo("/connect/server/expired-token");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link cannot be used"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("That authorization link has expired."),
     ).toBeInTheDocument();
   });
 });
@@ -185,7 +222,7 @@ describe("what the page shows", () => {
     await screen.findByText("Personal");
 
     expect(
-      screen.getByText("https://target.example.com/mcp?key=REDACTED")
+      screen.getByText("https://target.example.com/mcp?key=REDACTED"),
     ).toBeInTheDocument();
     expect(container.textContent).toContain("query parameters");
     expect(container.textContent).not.toContain("sk-live-99");
@@ -239,7 +276,7 @@ describe("what the page shows", () => {
     fireEvent.click(await screen.findByText("Cancel this request"));
 
     await waitFor(() =>
-      expect(screen.queryByText("Cancel this request")).not.toBeInTheDocument()
+      expect(screen.queryByText("Cancel this request")).not.toBeInTheDocument(),
     );
     // `/cancel` clears the continuation cookie — that is the point. A follow-up
     // `/state` would have nothing to authenticate with, come back 401, and show
@@ -299,7 +336,7 @@ describe("polling", () => {
       await tick(6_000);
 
       expect(
-        calls.filter((c) => c.path === "/state").length
+        calls.filter((c) => c.path === "/state").length,
       ).toBeGreaterThanOrEqual(3);
     } finally {
       vi.useRealTimers();
@@ -323,8 +360,8 @@ describe("returning from the authorization server", () => {
 
     await waitFor(() =>
       expect(
-        calls.find((call) => call.path === "/authorize/complete")
-      ).toBeDefined()
+        calls.find((call) => call.path === "/authorize/complete"),
+      ).toBeDefined(),
     );
     expect(calls.find((c) => c.path === "/authorize/complete")?.body).toEqual({
       state: "st",
@@ -337,7 +374,7 @@ describe("returning from the authorization server", () => {
     // in this tab — including one belonging to the Inspector's own OAuth flow.
     expect(readPendingAuthorization()).toBeNull();
     await waitFor(() =>
-      expect(window.location.pathname).toBe("/connect/server/request/scr_1")
+      expect(window.location.pathname).toBe("/connect/server/request/scr_1"),
     );
   });
 
@@ -352,7 +389,7 @@ describe("returning from the authorization server", () => {
     rememberPendingAuthorization("scr_1", AUTH_URL);
     goTo(
       "/oauth/callback",
-      "?error=access_denied&error_description=User+declined&state=st"
+      "?error=access_denied&error_description=User+declined&state=st",
     );
 
     render(<ServerConnectionHandoff />);
@@ -385,14 +422,14 @@ describe("proving who the visitor is", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const headers = new Headers(
-          (init?.headers ?? undefined) as HeadersInit | undefined
+          (init?.headers ?? undefined) as HeadersInit | undefined,
         );
         seen.push({ url, auth: headers.get("authorization") });
         const path = url.replace("/api/web/server-connections", "");
         if (path === "/claim") {
           return new Response(
             JSON.stringify({ requestId: "scr_1", status: "awaiting_project" }),
-            { status: 200 }
+            { status: 200 },
           );
         }
         if (path === "/state") {
@@ -401,7 +438,7 @@ describe("proving who the visitor is", () => {
         return new Response(JSON.stringify({ message: "unhandled" }), {
           status: 500,
         });
-      })
+      }),
     );
     return seen;
   }
@@ -412,6 +449,39 @@ describe("proving who the visitor is", () => {
     goTo("/connect/server/handoff-token-abc");
 
     render(<ServerConnectionHandoff />);
+    await screen.findByText("Personal");
+
+    const claim = seen.find((entry) => entry.url.endsWith("/claim"));
+    expect(claim?.auth).toBe("Bearer access-token-value");
+  });
+
+  it("WAITS for AuthKit before claiming, so a signed-in owner is not told to sign in", async () => {
+    // The bug this pins, and it looped rather than merely failing.
+    //
+    // `AuthKitProvider` swaps `getAccessToken` when its client finishes
+    // initializing; before that it is `() => Promise.reject(LoginRequiredError)`.
+    // Claiming during that window sent no bearer, so the backend saw an
+    // anonymous caller and refused SIGN_IN_REQUIRED — and signing in returns
+    // instantly for someone who already has a session, landing back on the same
+    // URL to lose the same race again. Every cold load of a handoff link is the
+    // case that loses it.
+    authkit.isLoading = true;
+    authkit.getAccessToken.mockRejectedValue(new Error("Login required"));
+    const seen = mockWithHeaders();
+    goTo("/connect/server/handoff-token-abc");
+
+    const view = render(<ServerConnectionHandoff />);
+    // Nothing claimed yet: the page has no identity to claim WITH.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(seen.some((entry) => entry.url.endsWith("/claim"))).toBe(false);
+
+    // AuthKit finishes; now the token is real and the claim carries it.
+    authkit.isLoading = false;
+    authkit.getAccessToken.mockReset();
+    authkit.getAccessToken.mockResolvedValue("access-token-value");
+    view.rerender(<ServerConnectionHandoff />);
     await screen.findByText("Personal");
 
     const claim = seen.find((entry) => entry.url.endsWith("/claim"));
@@ -459,8 +529,8 @@ function refuseClaim(details: unknown, message = "Refused.") {
     "fetch",
     vi.fn(
       async () =>
-        new Response(JSON.stringify({ message, details }), { status: 403 })
-    )
+        new Response(JSON.stringify({ message, details }), { status: 403 }),
+    ),
   );
 }
 
@@ -532,9 +602,9 @@ describe("a refused claim", () => {
     // browser's history. The handoff token must be in none of those.
     expect(JSON.stringify(state)).not.toContain("handoff-token-abc");
     // The path itself stayed in same-origin storage.
-    expect(
-      takeHandoffSignInReturn(nonce, window.location.origin)
-    ).toBe("/connect/server/handoff-token-abc");
+    expect(takeHandoffSignInReturn(nonce, window.location.origin)).toBe(
+      "/connect/server/handoff-token-abc",
+    );
   });
 
   it("falls back to plain prose when the backend sent no reason", async () => {
@@ -547,7 +617,9 @@ describe("a refused claim", () => {
     render(<ServerConnectionHandoff />);
     await screen.findByText("This link cannot be used");
 
-    expect(screen.getByText("This link cannot be used right now.")).toBeTruthy();
+    expect(
+      screen.getByText("This link cannot be used right now."),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
   });
 });

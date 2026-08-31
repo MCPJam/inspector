@@ -59,6 +59,11 @@ function getStatusDot(entry: EvalSuiteOverviewEntry): {
     return { label: "Passed", dotClass: "bg-success/50" };
   if (run.result === "failed")
     return { label: "Failed", dotClass: "bg-destructive/50" };
+  // Amber, and labelled by the VERDICT rather than the lifecycle: an
+  // inconclusive run is `status: "completed"`, so the fallback below would
+  // label a run nobody could grade as "completed".
+  if (run.result === "inconclusive")
+    return { label: "Inconclusive", dotClass: "bg-warning/50" };
   return { label: run.status, dotClass: "bg-muted-foreground/40" };
 }
 

@@ -22,12 +22,14 @@ import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
 import resources from "./resources.js";
+import serverSkills from "./server-skills.js";
 import exporter from "./export.js";
 import evals from "./evals.js";
-import hosts from "./hosts.js";
+import clients from "./clients.js";
 import harness from "./harness.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
+import skills from "./skills.js";
 import journeys from "./journeys.js";
 import personas from "./personas.js";
 import swarms from "./swarms.js";
@@ -43,11 +45,14 @@ import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import chatSessions from "./chat-sessions.js";
+import widgets from "./widgets.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
+import evalDisclosure from "./eval-disclosure.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
@@ -108,11 +113,12 @@ v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
 v1.route("/", resources);
+v1.route("/", serverSkills);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
 v1.route("/", conformanceRuns);
-v1.route("/", hosts);
+v1.route("/", clients);
 v1.route("/", harness);
 // Project Environments (named execution bundles for suites and journeys) stay
 // OFF the guest allowlist — reads need project membership and every write needs
@@ -122,6 +128,12 @@ v1.route("/", environments);
 // (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are member-gated
 // anyway, and there is no share-link flow that needs plugin inventory.
 v1.route("/", plugins);
+// Cloud Skills — READ-ONLY (list + detail). Authoring stays on `/api/web` and
+// stays behind the backend's `skills-enabled` gate; these reads are ungated,
+// matching the backend where reads and deletes are never gated. Guest-DENIED
+// by default (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are
+// member-gated, and a share-link visitor has no business enumerating skills.
+v1.route("/", skills);
 // Journeys + journey runs — the public API for Swarms. Flag-gated beta
 // (`sandboxes-enabled`, enforced server-side on writes), so these are absent
 // from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
@@ -171,6 +183,20 @@ v1.route("/", agent);
 // GUEST_ALLOWED_V1_RULES entry) — every approved action spends.
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
+// Agent Playground — the conversational turn plus the trace/detail reads.
+// MOUNTED BEFORE `catalog`, and the order is load-bearing rather than
+// stylistic: `catalog` owns the `GET /chat-sessions` LISTING, and these are
+// its subpaths. Registering the listing first would not shadow them today
+// (Hono matches the full path), but the proxy is the module that grows
+// catch-alls, and a `/chat-sessions/*` forward added there would silently
+// turn the turn route into a Convex 404. Guest-DENIED by default: the
+// allowlist entry is the exact-match `/^\/chat-sessions$/`, so no subpath
+// here matches it, and a turn spends hosted-model credits.
+v1.route("/", chatSessions);
+// Headless MCP App widget render. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — it launches a browser and executes the
+// caller's tool. Its own per-replica Chromium cap lives in the module.
+v1.route("/", widgets);
 v1.route("/", catalog);
 // Registry — directory search/detail/sources (guest-allowed reads) plus
 // project-scoped card/connection reads and install/uninstall writes. Mounted
@@ -190,6 +216,12 @@ v1.route("/", projects);
 // cannot advertise a per-org beta. Guest-DENIED by default like every other
 // project read.
 v1.route("/", capabilities);
+// The pre-run disclosure for an eval suite launch plan — G4b, the inspector
+// half of Evals v2 Lane G. Guest-allowed (see guest-allowed-paths.ts): a
+// guest can already launch a run at POST /eval-suites/:id/runs, so denying
+// them the disclosure that describes what that run does is the one gap that
+// would actually matter.
+v1.route("/", evalDisclosure);
 v1.route("/", tunnels);
 
 v1.onError((error, c) => v1OnError(error, c));

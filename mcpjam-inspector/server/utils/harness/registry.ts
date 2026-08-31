@@ -18,6 +18,10 @@ import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import { asSchema } from "ai";
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import {
+  HARNESS_MCP_DELIVERY,
+  type HarnessMcpDelivery,
+} from "@/shared/harness-mcp-delivery";
+import {
   parseHarnessToolName,
   serializeHarnessMcpJson,
   type HarnessMcpJson,
@@ -150,7 +154,43 @@ export type HarnessBuiltinToolInfo = {
   inputSchema?: Record<string, unknown>;
 };
 
-export type HarnessRuntimeAdapter = {
+/**
+ * HOW a harness gets the host's selected MCP servers — a MODE, not a boolean,
+ * so the two mechanisms are mutually exclusive by construction rather than by
+ * comment. Every adapter has exactly one, so "this harness can't do MCP at all"
+ * is no longer representable (the state the old `supportsSelectedMcpServers:
+ * false` encoded, which forced a pre-flight refusal).
+ *
+ *  - `native` — the runtime's own MCP client connects to the servers. The
+ *    adapter writes runtime-specific config into the sandbox
+ *    (`deliverMcpServers`), pointed at MCPJam's signed per-server proxy, and
+ *    the model calls the tools through native function calling. Claude Code.
+ *
+ *  - `host-executed` — the runtime cannot make an MCP tool model-callable
+ *    (Codex: `codex exec --experimental-json` completes the MCP handshake and
+ *    answers `tools/list`, but never registers the tools as callable functions
+ *    — openai/codex#19425, and see `@ai-sdk/harness-codex`'s
+ *    `src/bridge/cli-relay.ts`, whose whole existence is the harness authors
+ *    hitting this same wall for their OWN host tools). MCPJam instead projects
+ *    each selected server's tools into host-executed AI SDK tools passed as the
+ *    agent's `tools`, which the bridge relays back out of the sandbox and
+ *    MCPJam executes IN-PROCESS against the already-authorized
+ *    `MCPClientManager`. See `host-executed-mcp-tools.ts`.
+ *
+ * The two must never both run for one turn or the model would see every MCP
+ * tool twice (once natively, once as a host tool); the adapter union below
+ * makes that unrepresentable.
+ *
+ * WHICH mode each harness uses is declared in `@/shared/harness-mcp-delivery`,
+ * not here: the CLIENT has to derive its Behavior-tab promises from the same
+ * answer (a knob that acts at tool-construction time bites on `host-executed`
+ * and cannot on `native`), and it cannot import this server-only module. The
+ * adapters below read that map, and `__tests__/registry.test.ts` asserts the two
+ * can never disagree.
+ */
+export type { HarnessMcpDelivery };
+
+type HarnessRuntimeAdapterBase = {
   id: HarnessId;
   /** Human-facing runtime name for preflight/availability messages + UI. */
   displayName: string;
@@ -175,10 +215,10 @@ export type HarnessRuntimeAdapter = {
   /** Can host-executed AI SDK tools (run on MCPJam's server) be approval-gated?
    *  Modeled separately; false for v1 (not wired/tested in MCPJam yet). */
   supportsHostExecutedToolApproval: boolean;
-  /** Does the adapter deliver the host's selected MCP servers into the sandbox?
-   *  Claude Code: yes (`.mcp.json`). Codex v1: no (bridge MCP limits) — a Codex
-   *  host with selected servers fails the preflight. */
-  supportsSelectedMcpServers: boolean;
+  /** HOW this adapter gets the host's selected MCP servers to the model — see
+   *  `HarnessMcpDelivery`. Every adapter delivers them one way or the other, so
+   *  there is no "MCP unsupported" arm and no MCP pre-flight refusal. */
+  mcpDelivery: HarnessMcpDelivery;
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -238,13 +278,35 @@ export type HarnessRuntimeAdapter = {
     rawToolName: string,
     keyToServerId: Record<string, string>
   ): HarnessToolAttribution;
-  /** Write the host's MCP servers into a fresh sandbox session. Present only when
-   *  `supportsSelectedMcpServers`. */
-  deliverMcpServers?(args: HarnessMcpDeliveryArgs): Promise<void>;
   /** Install verified plugin bundles into a fresh sandbox session, before the
    *  runtime process starts. REQUIRED when `supportsPluginBundles`. */
   deliverPluginBundles?(args: HarnessPluginDeliveryArgs): Promise<void>;
 };
+
+/**
+ * The two MCP-delivery arms, as a discriminated union rather than a boolean +
+ * an optional hook. This is what makes "the model never sees a tool twice" a
+ * TYPE invariant:
+ *   - `native` REQUIRES `deliverMcpServers` (advertise = implement, checked by
+ *     the compiler instead of by a runtime throw in `runHarnessTurn`);
+ *   - `host-executed` FORBIDS it (`?: never`), so an adapter cannot half-adopt
+ *     the relay while still writing runtime MCP config.
+ */
+export type HarnessRuntimeAdapter = HarnessRuntimeAdapterBase &
+  (
+    | {
+        mcpDelivery: "native";
+        /** Write the host's MCP servers into a fresh sandbox session, before the
+         *  runtime process starts. */
+        deliverMcpServers(args: HarnessMcpDeliveryArgs): Promise<void>;
+      }
+    | {
+        mcpDelivery: "host-executed";
+        /** Never present: this arm's servers reach the model as host-executed
+         *  tools, not as runtime config in the sandbox. */
+        deliverMcpServers?: never;
+      }
+  );
 
 const CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE = 'type: "user",\n    message: {';
 const CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH =
@@ -403,6 +465,51 @@ function patchClaudeCodeBridgeContent(content: string): string {
   return patched;
 }
 
+/**
+ * Config written beside the adapter's bundled manifest so its `pnpm install`
+ * can install a working Claude Code CLI.
+ *
+ * WHY THIS EXISTS. `@anthropic-ai/claude-code` ships a `postinstall`
+ * (`node install.cjs`) that fetches its platform-native binary; without it the
+ * CLI starts and immediately reports `claude native binary not installed`.
+ * pnpm 10 stopped running dependency build scripts by default, and the
+ * computer template installs pnpm UNPINNED (`npm install -g pnpm`), so a
+ * rebuilt image changes behaviour with whatever pnpm is current.
+ *
+ * TWO INDEPENDENT LAYERS, because the first one is a moving target:
+ *
+ *   1. ALLOW the build to run, so the postinstall happens normally.
+ *   2. Failing that, do not let a SKIPPED build be FATAL. The adapter's own
+ *      recipe re-runs `install.cjs` by hand after the install — but that
+ *      rescue only fires when the install step exits zero. Turning
+ *      `ERR_PNPM_IGNORED_BUILDS` back into a warning is what lets the
+ *      adapter repair itself.
+ *
+ * Layer 2 is the durable one. It survives a rename of the allow-list setting,
+ * which has already happened once: the first version of this patch shipped
+ * only `.npmrc`, verified against pnpm 10 — and pnpm 11 reads none of its
+ * settings from `.npmrc`, so it broke every harness bootstrap the moment the
+ * recipe hash changed and snapshots stopped hiding it. Both spellings are
+ * written for that reason, and BOTH FILES ARE REQUIRED: `.npmrc` is the only
+ * one pnpm 10 reads, `pnpm-workspace.yaml` the only one pnpm 11 reads.
+ * Verified against pnpm 10.34.5 and 11.24.0.
+ *
+ * WHY NOT THE MANIFEST. `onlyBuiltDependencies` would be narrower, but the
+ * manifest is a bundled asset of `@ai-sdk/harness-claude-code`, not ours to
+ * amend, and editing it would invalidate the `--frozen-lockfile` the adapter
+ * installs with. It also does not work here: pnpm 11 ignored it under `--dir`
+ * in testing, while the settings below took effect.
+ *
+ * The permissiveness is bounded by where it lands: one directory inside a
+ * disposable sandbox that already runs an agent with full shell access.
+ */
+const CLAUDE_CODE_BOOTSTRAP_NPMRC =
+  "dangerously-allow-all-builds=true\nstrict-dep-builds=false\n";
+
+/** pnpm 11's home for the same two settings; see {@link CLAUDE_CODE_BOOTSTRAP_NPMRC}. */
+const CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE =
+  "dangerouslyAllowAllBuilds: true\nstrictDepBuilds: false\n";
+
 export function patchClaudeCodeHarnessBootstrap(
   harness: HarnessAgentAdapter
 ): HarnessAgentAdapter {
@@ -420,11 +527,24 @@ export function patchClaudeCodeHarnessBootstrap(
       const bootstrap = await originalGetBootstrap(...args);
       cachedPatchedBootstrap = {
         ...bootstrap,
-        files: bootstrap.files.map((file) =>
-          file.path.endsWith("/bridge.mjs")
-            ? { ...file, content: patchClaudeCodeBridgeContent(file.content) }
-            : file
-        ),
+        // Appended rather than merged over an existing entry: the adapter
+        // ships neither file today, and if a future version starts shipping
+        // one we want the duplicate to surface instead of silently winning.
+        files: [
+          ...bootstrap.files.map((file) =>
+            file.path.endsWith("/bridge.mjs")
+              ? { ...file, content: patchClaudeCodeBridgeContent(file.content) }
+              : file
+          ),
+          {
+            path: `${bootstrap.bootstrapDir}/.npmrc`,
+            content: CLAUDE_CODE_BOOTSTRAP_NPMRC,
+          },
+          {
+            path: `${bootstrap.bootstrapDir}/pnpm-workspace.yaml`,
+            content: CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE,
+          },
+        ],
       };
       return cachedPatchedBootstrap;
     },
@@ -570,7 +690,11 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // WS3 wires host-executed tools through `toolApproval` (the agent pauses on
   // tool-approval-request and resumes with the decision), same path as native.
   supportsHostExecutedToolApproval: true,
-  supportsSelectedMcpServers: true,
+  // The CLI's own MCP client connects to the servers from inside the sandbox,
+  // via the `.mcp.json` written below — real native function calling. Read from
+  // the shared declaration so the host editor's promises about which knobs bite
+  // move with this, instead of being re-asserted by hand on the client.
+  mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   prepareSkills: prepareClaudeCodeSkills,
@@ -626,14 +750,19 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // Codex docs say host-executed AI SDK approvals can work, but it's not wired/
   // tested in MCPJam yet — keep false for v1; flip without code churn later.
   supportsHostExecutedToolApproval: false,
-  // Still no MCP servers on Codex, and INS-8 did NOT change that. `.mcp.json` is
-  // Claude-specific, and the codex bridge documents that codex never registers
-  // an MCP tool as model-callable in `codex exec --experimental-json` (the mode
-  // the SDK drives): the handshake completes and `tools/list` answers, but the
-  // model can't call anything (openai/codex#19425). Delivering config the model
-  // can't use would advertise MCP support that does not exist, so this stays
-  // false and the preflight keeps blocking a Codex host with selected servers.
-  supportsSelectedMcpServers: false,
+  // COMP-39: Codex reaches the host's MCP servers, but NOT through
+  // `mcp_servers`. Writing `~/.codex/config.toml` merges cleanly and is a
+  // silent no-op — the codex bridge documents that codex never registers an MCP
+  // tool as model-callable in `codex exec --experimental-json` (the mode the
+  // SDK drives): the handshake completes and `tools/list` answers, but the
+  // model can't call anything (openai/codex#19425). So MCPJam projects each
+  // selected server's tools into HOST-EXECUTED AI SDK tools instead; the bridge
+  // relays the invocations back out (`cli-relay.ts`) and MCPJam runs them
+  // in-process. See `HarnessMcpDelivery` and `host-executed-mcp-tools.ts`.
+  // Read from the shared declaration — the client's Behavior tab derives from
+  // the same value, so "MCPJam builds these tools, so the host's construction
+  // knobs apply" is stated once for both sides.
+  mcpDelivery: HARNESS_MCP_DELIVERY.codex,
   // INS-8: skills ARE delivered. `codex-harness.ts` writes every `skills` entry
   // to `$HOME/.agents/skills/<name>/SKILL.md` during `doStart`, before it spawns
   // the CLI, and points the process at that HOME — the same delivery contract
@@ -643,9 +772,9 @@ const codexAdapter: HarnessRuntimeAdapter = {
   supportsSkills: true,
   skillsBaseDir: CODEX_SKILLS_BASE,
   prepareSkills: prepareCodexSkills,
-  // Codex has no plugin-install interface in the installed harness, and its MCP
-  // half is unusable (see supportsSelectedMcpServers) — a "plugin install" that
-  // silently drops the plugin's MCP components is not an install.
+  // Codex has no plugin-install interface in the installed harness — MCPJam
+  // still projects a plugin's components (skills param, host-executed MCP
+  // tools), which is not the same contract as a native bundle install.
   supportsPluginBundles: false,
   // Codex surfaces file mutations as `file-change` stream parts (some don't
   // originate from a model-callable tool); we render them as this native tool.
@@ -655,8 +784,13 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // Codex only runs the gpt-5 family it maps; anything else would silently fall
   // back to Codex's default model, so the preflight rejects it.
   supportsModel: (modelId) => toCodexModel(modelId) !== undefined,
-  // No MCP namespacing in v1 — pass the name through as a native tool.
-  parseToolName: (rawToolName) => ({ toolName: rawToolName }),
+  // SAME scheme as Claude Code, deliberately: the projected host tools are named
+  // `mcp__<sanitizedServer>__<tool>` (see `host-executed-mcp-tools.ts`), so a
+  // relayed call attributes back to its serverId exactly as a native Claude Code
+  // call does — eval assertions and trace spans written against a Claude Code
+  // run match a Codex run tool-for-tool. Codex's own natives arrive as common
+  // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
+  parseToolName: parseHarnessToolName,
   createHarness({ modelId, auth }) {
     const nativeModel = toCodexModel(modelId);
     // Same dual-`ai` boundary cast as Claude Code. `auth.openaiCompatible` is

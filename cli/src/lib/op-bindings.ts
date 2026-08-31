@@ -150,6 +150,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_suites: { command: "cloud eval list" },
   create_eval_suite: { command: "cloud eval create" },
   get_eval_suite: { command: "cloud eval get" },
+  get_eval_run_disclosure: {
+    excluded:
+      "Not a standalone command: `cloud eval run` already fetches this for its frozen launch plan and prints it (writeRunDisclosure) before the run link in human mode — on stderr instead of stdout when a --reporter is configured, so the structured report stays the sole document on stdout without losing the disclosure entirely — and carries it on the JSON receipt's `disclosure` field. A separate command would only invite checking by hand what the launch already discloses.",
+  },
   update_eval_suite: { command: "cloud eval update" },
   delete_eval_suite: { command: "cloud eval delete" },
   set_eval_suite_schedule: { command: "cloud eval schedule" },
@@ -162,6 +166,12 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },
   compare_eval_run: { command: "cloud eval compare" },
+  waive_eval_gate: { command: "cloud eval gate waive" },
+  revoke_eval_gate_waiver: { command: "cloud eval gate unwaive" },
+  get_eval_gate_waiver: {
+    excluded:
+      "Not a standalone command: `cloud eval gate` already reads the waiver off the run projection and names it in every artifact it writes, and `gate unwaive` resolves the waiver in force when `--waiver` is omitted. A separate read command would only invite checking by hand what the gate already reports.",
+  },
   list_eval_run_iterations: { command: "cloud eval iterations" },
   get_eval_iteration_trace: { command: "cloud eval trace" },
   get_eval_run_steps: { command: "cloud eval steps" },
@@ -175,13 +185,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_case: { command: "cloud eval cases run" },
 
   // ── Hosts, environments, images ─────────────────────────────────────────
-  list_hosts: { command: "cloud hosts list" },
-  get_host: { command: "cloud hosts get" },
-  create_host: { command: "cloud hosts create" },
-  update_host: { command: "cloud hosts update" },
-  delete_host: { command: "cloud hosts delete" },
-  set_host_servers: { command: "cloud hosts servers" },
-  duplicate_host: { command: "cloud hosts duplicate" },
+  // `cloud clients …`, with `cloud hosts …` kept as a command alias so existing
+  // scripts keep working. The binding names the CANONICAL path — the alias is
+  // resolvable by the same Commander tree, and pointing the binding at it would
+  // document the spelling we are moving away from.
+  list_clients: { command: "cloud clients list" },
+  get_client: { command: "cloud clients get" },
+  create_client: { command: "cloud clients create" },
+  update_client: { command: "cloud clients update" },
+  delete_client: { command: "cloud clients delete" },
+  set_client_servers: { command: "cloud clients servers" },
+  duplicate_client: { command: "cloud clients duplicate" },
   list_project_environments: { command: "cloud environments list" },
   get_project_environment_capabilities: {
     excluded:
@@ -203,6 +217,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
   },
+  list_project_skills: { command: "cloud skills list" },
+  get_project_skill: { command: "cloud skills get" },
   list_sandbox_images: { command: "cloud images list" },
   get_sandbox_image: { command: "cloud images get" },
   create_sandbox_image: { command: "cloud images create" },
@@ -220,6 +236,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_scenario: { command: "cloud scenarios get" },
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
+  send_chat_message: { command: "cloud sessions send" },
+  get_chat_session: { command: "cloud sessions show" },
+  get_chat_session_trace: { command: "cloud sessions trace" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "cloud tunnel" },
@@ -243,6 +262,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "`tools call` connects to the server directly, so it works without a project or an API key.",
   },
+  render_server_widget: {
+    excluded:
+      "`apps render` connects to the server directly and mounts the widget in the developer's OWN Chromium, so it works without a project or an API key — and spends no hosted browser to answer a question the local command already answers.",
+  },
   list_server_prompts: {
     excluded:
       "`prompts list` connects to the server directly, so it works without a project or an API key.",
@@ -258,6 +281,18 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   read_server_resource: {
     excluded:
       "`resources read` connects to the server directly, so it works without a project or an API key.",
+  },
+  list_server_skills: {
+    excluded:
+      "`skills list` connects to the server directly, so it works without a project or an API key.",
+  },
+  get_server_skill: {
+    excluded:
+      "`skills get` connects to the server directly, so it works without a project or an API key.",
+  },
+  read_server_skill_file: {
+    excluded:
+      "`skills read` connects to the server directly, so it works without a project or an API key.",
   },
   diagnose_server: {
     excluded:

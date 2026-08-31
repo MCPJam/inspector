@@ -24,7 +24,11 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
-import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  Harness,
+  ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import {
   describeAsSlug,
   describeError,
@@ -45,6 +49,8 @@ import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
+import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
@@ -646,6 +652,21 @@ export interface MCPJamHandlerOptions {
    *  global env. Absent ⇒ harness runs without proxied MCP. See
    *  `harness-proxy-strategy.ts`. */
   harnessMcpProxy?: HarnessMcpProxyStrategy;
+  /**
+   * Resolved `toolPolicy` decisions per selected server id, computed at launch
+   * from the annotation cache. Present ⇒ each policied server's `.mcp.json`
+   * entry carries a SEALED proxy token, and the hosted harness-MCP route
+   * enforces the snapshot on `tools/call` (the in-sandbox calls never pass
+   * through an in-process tool map, so the proxy is the only chokepoint).
+   * Absent ⇒ today's unpoliced bare-token path, byte-identical.
+   */
+  harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * Sink for the calls the proxy refused, reported on THIS replica off the
+   * results the harness streams back. The eval driver hands them to
+   * `finalize-iteration` as the same policy blocks the in-process gate yields.
+   */
+  onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
   requireToolApproval?: boolean;
   /**
    * Per-tool approval policy for the `ui_*` tools this turn advertised,
@@ -661,6 +682,28 @@ export interface MCPJamHandlerOptions {
    * UI/debug history.
    */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering — the same
+   * field `prepareChatV2` takes. `undefined`/`true` filter (spec default); only
+   * an explicit `false` opts out.
+   *
+   * Read ONLY by the HARNESS engine, which builds its own MCP tool set
+   * (`projectSelectedMcpServersAsHostTools`) instead of consuming the one
+   * `prepareChatV2` prepared. The emulated engine is handed `tools` already
+   * built, so it neither needs nor reads this.
+   */
+  respectToolVisibility?: boolean;
+  /**
+   * Resolved task-seam options, or absent for "tasks off". Same field and same
+   * rule as `PrepareChatV2Options.tasks`: the MODE is resolved by the CALLER
+   * (each surface is its own row in the policy matrix), never here.
+   *
+   * Read ONLY by the HARNESS engine, and for the same reason as
+   * `respectToolVisibility` — the emulated engine's seam already rode in
+   * through `prepareChatV2`. Absent keeps a harness turn on the pre-existing
+   * no-`_meta` path, byte-for-byte.
+   */
+  tasks?: ToolTaskSeamOptions;
   /**
    * Approval-pause policy. `"prompt"` (default) is the real-chat path:
    * approval-required tool calls pause the loop until the user answers
@@ -2940,7 +2983,8 @@ async function processOneStep(
         );
       }
 
-      // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` tools)
+      // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` and
+      // `page_*` tools)
       // have no `execute` function because they run in the browser via
       // `useChat.onToolCall`. With `skipNonExecutableTools`, the helper
       // executes server tools in-place and leaves only registered
@@ -3038,7 +3082,7 @@ async function processOneStep(
         commitNewlyLoaded(discoveryState);
       }
 
-      // Client-fulfilled tools (app aliases + `ui_*`): pause only for
+      // Client-fulfilled tools (app aliases + `ui_*`/`page_*`): pause only for
       // unresolved registered client-fulfilled calls. Other unresolved calls
       // should keep the legacy loop behavior; in normal execution they have
       // already been converted to error tool-results above.

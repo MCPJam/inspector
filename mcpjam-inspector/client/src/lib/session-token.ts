@@ -387,6 +387,12 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // directory-readiness run.
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
+  // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
+  // change: without this entry the UI's hint would silently 401, since
+  // `/api/v1/projects/` is not a prefix this list grants wholesale — see the
+  // module header on why a pattern, not a prefix, is what keeps the grant as
+  // narrow as the id segments in the middle.
+  /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {

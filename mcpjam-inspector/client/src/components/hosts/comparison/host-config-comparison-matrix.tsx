@@ -71,6 +71,8 @@ interface HostConfigComparisonMatrixProps {
    * surface (`presetOnly`), where every column is a synthetic preset host.
    */
   verifyBaseUrl?: string;
+  /** Template ids that are visible for reference but cannot be verified yet. */
+  disabledVerifyTemplateIds?: ReadonlySet<string>;
 }
 
 /**
@@ -92,6 +94,7 @@ export function HostConfigComparisonMatrix({
   themeMode = "light",
   mobileOptimized = false,
   verifyBaseUrl,
+  disabledVerifyTemplateIds,
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(fields), [fields]);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
@@ -248,6 +251,7 @@ export function HostConfigComparisonMatrix({
                   onRemove={onRemoveHost}
                   themeMode={themeMode}
                   verifyBaseUrl={verifyBaseUrl}
+                  disabledVerifyTemplateIds={disabledVerifyTemplateIds}
                 />
               ))}
             </tr>
@@ -903,11 +907,13 @@ function HostColumnHeader({
   onRemove,
   themeMode,
   verifyBaseUrl,
+  disabledVerifyTemplateIds,
 }: {
   subject: HostComparisonSubject;
   onRemove?: (hostId: string) => void;
   themeMode: HostThemeMode;
   verifyBaseUrl?: string;
+  disabledVerifyTemplateIds?: ReadonlySet<string>;
 }) {
   const logoSrc = getScenarioHostLogo(
     subject.hostStyle,
@@ -915,7 +921,11 @@ function HostColumnHeader({
     themeMode
   );
   const reduceMotion = useReducedMotion();
-  const verifyHref = buildVerifyHref(verifyBaseUrl, subject.hostId);
+  const verifyHref = buildVerifyHref(
+    verifyBaseUrl,
+    subject.hostId,
+    disabledVerifyTemplateIds
+  );
 
   return (
     <th className="sticky top-0 z-20 border-b border-l border-border bg-card px-3 py-3 text-center align-top sm:px-4 sm:py-4">
@@ -984,11 +994,13 @@ function HostColumnHeader({
  */
 function buildVerifyHref(
   baseUrl: string | undefined,
-  hostId: string
+  hostId: string,
+  disabledVerifyTemplateIds?: ReadonlySet<string>
 ): string | null {
   if (!baseUrl) return null;
   if (!hostId.startsWith(PRESET_HOST_ID_PREFIX)) return baseUrl;
   const templateId = hostId.slice(PRESET_HOST_ID_PREFIX.length);
+  if (disabledVerifyTemplateIds?.has(templateId)) return null;
   return `${baseUrl}/hosts?${buildHostVerifySearch(templateId, "behavior")}`;
 }
 

@@ -37,6 +37,7 @@ import { suiteFilePointer } from "@mcpjam/sdk";
 import type {
   PlatformEvalCase,
   PlatformEvalSuiteDetail,
+  PlatformEnvironmentResolved,
   PublicMatchOptions,
 } from "@mcpjam/sdk/platform";
 
@@ -64,6 +65,8 @@ export type SuiteExportResult =
 export type BuildSuiteFileInput = {
   detail: PlatformEvalSuiteDetail;
   cases: PlatformEvalCase[];
+  /** Resolved only when the suite has exactly one attached environment. */
+  environment?: PlatformEnvironmentResolved;
 };
 
 function unsupported(
@@ -268,7 +271,8 @@ function exportedCaseId(
 
 function suiteLevelFindings(
   detail: PlatformEvalSuiteDetail,
-  cases: PlatformEvalCase[]
+  cases: PlatformEvalCase[],
+  environment?: PlatformEnvironmentResolved
 ): SuiteExportFinding[] {
   const findings: SuiteExportFinding[] = [];
   const settings = detail.settings;
@@ -308,21 +312,27 @@ function suiteLevelFindings(
           `one here would change what runs.`
       )
     );
-  } else if (environmentIds.length > 0) {
+  } else if (environmentIds.length > 1) {
     findings.push(
       unsupported(
         ["environmentIds"],
         `suite runs against ${environmentIds.length} attached project ` +
-          `environment(s). A suite file names an environment, and this command ` +
-          `resolves an id to a name only from what it already fetched — it makes ` +
-          `no second call — so the name is not available here.`
+          "environments. A suite file can name one environment, and choosing " +
+          "one here would change which targets run."
       )
     );
-  } else if (legacyServers.length === 0) {
+  } else if (environmentIds.length === 1 && !environment) {
     findings.push(
       unsupported(
-        ["environment", "servers"],
-        "suite selects no servers; a suite file requires at least one"
+        ["environmentIds"],
+        "suite has one attached project environment, but its name was not resolved"
+      )
+    );
+  } else if (legacyServers.length === 0 && environmentIds.length === 0) {
+    findings.push(
+      unsupported(
+        ["environment"],
+        "suite has neither legacy servers nor an attached project environment"
       )
     );
   }
@@ -351,48 +361,6 @@ function suiteLevelFindings(
         "suite pins no execution model, and `defaults.model` is required in a " +
           "suite file. There is no way to say 'no default model', and inventing " +
           "one changes what runs. Set the suite's model and export again."
-      )
-    );
-  } else {
-    // `systemPrompt` and `temperature` are typed as required beside `model` but
-    // are absent on a suite where nobody set them. An empty system prompt is
-    // nothing; a real one changes every case's behaviour and the file cannot
-    // carry it.
-    const systemPrompt = execution.systemPrompt;
-    if (typeof systemPrompt === "string" && systemPrompt.trim() !== "") {
-      findings.push(
-        unsupported(
-          ["executionConfig", "systemPrompt"],
-          "suite pins an execution system prompt, which a suite file has no " +
-            "field for. Dropping it would run every case without the " +
-            "instructions the dashboard gives them."
-        )
-      );
-    }
-    const temperature = execution.temperature;
-    if (typeof temperature === "number") {
-      findings.push(
-        unsupported(
-          ["executionConfig", "temperature"],
-          `suite pins execution temperature ${temperature}, which a suite file ` +
-            `has no field for. There is no provider-independent "neutral" ` +
-            `temperature to compare it against, so it cannot be dropped as a no-op.`
-        )
-      );
-    }
-  }
-
-  // ── hosts ────────────────────────────────────────────────────────────────
-  const hosts = detail.hosts ?? [];
-  if (hosts.length > 0) {
-    findings.push(
-      unsupported(
-        ["hosts"],
-        `suite has ${hosts.length} host attachment(s) ` +
-          `(${hosts
-            .map((host) => host.name || host.id)
-            .join(", ")}), which a ` +
-          `suite file has no field for. Dropping them changes what runs.`
       )
     );
   }
@@ -455,12 +423,12 @@ function suiteLevelFindings(
     );
   }
 
-  if (settings.judge?.enabled === true || settings.judge?.autoRun === true) {
+  if (settings.judge?.autoRun === true) {
     findings.push(
       unsupported(
         ["settings", "judge"],
-        "suite has LLM-as-judge grading available or automatic, and a suite " +
-          "file has no judge vocabulary. Exporting it would produce a file that " +
+        "suite automatically runs LLM-as-judge grading, and a suite file has " +
+          "no judge vocabulary. Exporting it would produce a file that " +
           "grades with deterministic assertions alone."
       )
     );
@@ -732,7 +700,7 @@ export function buildSuiteFileFromPlatform(
   const { detail, cases } = input;
   const suiteChecks = detail.settings.checks ?? [];
 
-  const findings = suiteLevelFindings(detail, cases);
+  const findings = suiteLevelFindings(detail, cases, input.environment);
   cases.forEach((evalCase, index) => {
     findings.push(...caseLevelFindings(evalCase, index, suiteChecks));
   });
@@ -763,7 +731,10 @@ export function buildSuiteFileFromPlatform(
   if (findings.length > 0) return { ok: false, findings };
 
   const repetitions = modalRepetitions(cases.map((entry) => entry.iterations));
-  const suiteModel = detail.executionConfig?.model as string;
+  const executionConfig = detail.executionConfig as NonNullable<
+    PlatformEvalSuiteDetail["executionConfig"]
+  >;
+  const suiteModel = executionConfig.model;
   const assertions = suiteChecks as EvalSuiteFileCase["assertions"];
 
   const candidate = {
@@ -781,11 +752,35 @@ export function buildSuiteFileFromPlatform(
         : { description: detail.description }),
     },
     target: {
-      servers: (detail.environment?.servers ?? []).map((name) => ({ name })),
+      ...(detail.environment?.servers?.length
+        ? {
+            servers: detail.environment.servers.map((name) => ({ name })),
+          }
+        : {}),
+      ...(input.environment
+        ? { environment: input.environment.environment.name }
+        : {}),
+      ...(detail.hosts?.length
+        ? {
+            hosts: detail.hosts.map((host) => ({
+              name: host.name,
+              id: host.id,
+              ...(host.servers
+                ? { servers: host.servers.map((name) => ({ name })) }
+                : {}),
+            })),
+          }
+        : {}),
     },
     defaults: {
       model: suiteModel,
       ...(hoistedProvider === undefined ? {} : { provider: hoistedProvider }),
+      ...(executionConfig.systemPrompt === undefined
+        ? {}
+        : { systemPrompt: executionConfig.systemPrompt }),
+      ...(executionConfig.temperature === undefined
+        ? {}
+        : { temperature: executionConfig.temperature }),
       repetitions,
       passThreshold: percentToFraction(
         detail.settings.minimumAccuracy as number
@@ -802,6 +797,7 @@ export function buildSuiteFileFromPlatform(
     cases: cases.map((evalCase, index) => ({
       id: caseIds[index],
       title: evalCase.title,
+      ...(evalCase.intent === undefined ? {} : { intent: evalCase.intent }),
       ...(evalCase.iterations === repetitions
         ? {}
         : { repetitions: evalCase.iterations }),

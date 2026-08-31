@@ -91,6 +91,17 @@ export type ToolsListWalk = {
  * previous one: a server that alternates `A → B → A` never repeats
  * back-to-back, so a one-step comparison would re-read the same pages until the
  * cap and report the same offending tool dozens of times.
+ *
+ * THIS IS THE ONE PLACE THAT COMPARES CURSOR VALUES, and it is deliberate.
+ * Everywhere else in the codebase a repeated cursor is followed like any other,
+ * because MCP 2026-07-28 `server/utilities/pagination` forbids a client from
+ * making determinations on a cursor's value and a server may legally reissue a
+ * constant token (`""` included) for every page. Here the point is not to
+ * consume the listing but to CHARACTERIZE the server: the repeat is recorded as
+ * its own terminal state and surfaced to the operator. It is never treated as
+ * the end of a complete listing — `repeated-cursor` is not `complete`, and
+ * callers turn it into a "could not run" skip, never a failure — so no check
+ * passes or fails on the strength of this comparison.
  */
 export async function walkToolsList(options: {
   /** First JSON-RPC id; incremented per page. */
@@ -127,10 +138,19 @@ export async function walkToolsList(options: {
     }
 
     const next = payload?.nextCursor;
-    // Only ABSENT (or empty) means "that was the last page". A non-string
-    // `nextCursor` is a malformed response, not an ending — folding the two
-    // together would let a check certify a listing it stopped reading early.
-    if (next === undefined || next === null || next === "") {
+    // Only ABSENT means "that was the last page". Two things are deliberately
+    // NOT endings:
+    //   - An EMPTY STRING. MCP 2026-07-28 `server/utilities/pagination` makes
+    //     it explicit: clients "MUST NOT" make any determination from a
+    //     cursor's value beyond whether a non-null one was provided, and "an
+    //     empty string is a valid cursor and thus MUST NOT be treated as the
+    //     end of results". `""` is fed back verbatim like any other token; a
+    //     server that keeps answering `""` trips the repeated-cursor guard
+    //     below on the second occurrence instead of spinning.
+    //   - A NON-STRING `nextCursor`, which is a malformed response. Folding
+    //     that into "complete" would let a check certify a listing it stopped
+    //     reading early.
+    if (next === undefined || next === null) {
       termination = "complete";
       break;
     }
@@ -180,6 +200,26 @@ export interface RawHttpRequestOptions {
    *     the payload would parse. Use when the check asserts the exact body.
    */
   decode?: "auto" | "text";
+  /**
+   * Whether this exchange enters the run-wide wire record. Default `true`.
+   *
+   * Set `false` for a request that is NOT JSON-RPC. Discovery fetches the
+   * OAuth metadata documents over plain HTTP through this same helper, and
+   * recording them fed two ordinary JSON bodies to `wire-schema-valid`, which
+   * graded them against `JSONRPCMessage` and reported every server as missing
+   * `id` and `jsonrpc` — a false violation on 100% of targets, including
+   * servers with no other finding.
+   *
+   * DELIBERATELY AN OPT-OUT AT THE CALL SITE, not a shape test on the body.
+   * "Recorded unless it says otherwise" is what makes the seam below cover
+   * every raw check by construction, including ones written later. And a
+   * filter on "did the request parse as JSON-RPC" would be actively wrong:
+   * several checks send malformed frames ON PURPOSE, and the recorder tracks
+   * `requestIdDeterminable` precisely so those responses can be graded — such
+   * a filter would silently drop the traffic that machinery exists for. Only
+   * the caller that knows it is not speaking JSON-RPC can say so.
+   */
+  record?: boolean;
 }
 
 export interface RawHttpResult {
@@ -368,7 +408,11 @@ export async function rawRequest(
   // THE one seam where raw traffic enters the run-wide record. Every raw check
   // in every family builds its requests here, so recording once here covers
   // all of them — and a check added later is covered without touching it.
-  ctx.recorder?.recordExchange(exchange);
+  // `record: false` is the narrow opt-out for traffic that is not JSON-RPC at
+  // all; see the option's docblock for why it is not a body-shape test.
+  if (options.record !== false) {
+    ctx.recorder?.recordExchange(exchange);
+  }
 
   const { response } = exchange;
   return {

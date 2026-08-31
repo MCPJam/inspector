@@ -463,7 +463,13 @@ export function computeEffectiveRunResult(
   | "running"
   | "cancelled"
   | "timed_out"
+  | "inconclusive"
   | "pending" {
+  // A stored result WINS, and under verdict policy 2 that includes
+  // `inconclusive`. Never re-derive it from the counts: the percent fallback
+  // below is the legacy resolver, and running it over a policy-2 run would
+  // turn "we could not measure this" into a pass or a failure the backend
+  // explicitly declined to declare.
   if (run.result) return run.result;
   if (run.status === "completed" && passRate !== null) {
     return passRate >= (run.passCriteria?.minimumPassRate ?? 100)
@@ -483,6 +489,13 @@ function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
       return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "inconclusive":
+      // Amber, not red: the run did not measure enough to decide, which is not
+      // the same claim as a failure.
+      return {
+        label: "Inconclusive",
+        className: "bg-warning/50 text-foreground",
+      };
     case "cancelled":
       return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":

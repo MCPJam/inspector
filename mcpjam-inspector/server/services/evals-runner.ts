@@ -6,6 +6,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
@@ -31,6 +32,7 @@ import {
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import { resolveToolTaskSeam } from "../utils/task-seam.js";
+import { mcpToolOptionsFor } from "../utils/mcp-tool-options.js";
 import {
   createLlmModel,
   type BaseUrls,
@@ -71,9 +73,17 @@ import {
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
+  SKILL_TOOL_NAMES,
+  resolveMatchOptions,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
+import {
+  META_TOOL_NAMES,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -117,18 +127,29 @@ import type {
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
-import {
-  emitPinnedTurnSse,
-  type PinnedTurnSsePayload,
-} from "./evals/pinned-turn-sse.js";
+import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import {
   buildIterationFinishParams,
   buildStageMetadata,
 } from "./evals/finalize-iteration.js";
+import type { GradingEngineMode } from "./evals/grading-mode.js";
 import type {
   StageAuthoredCase,
   StageSetupSignals,
+  EvalSuiteFileToolPolicy,
 } from "@mcpjam/sdk/contract";
+import {
+  buildHarnessToolPolicySnapshots,
+  benchmarkEnforcementPolicy,
+  createToolPolicyGate,
+  toolAnnotationsKey,
+  UnmatchedToolPolicyNameError,
+  validateToolPolicyNames,
+  type ToolAnnotationsLookup,
+  type ToolPolicyGate,
+  type SideEffectGate,
+} from "./evals/tool-policy-gate.js";
+import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import {
   createRunSetupObserver,
@@ -160,6 +181,83 @@ const MAX_CONCURRENT_RENDER_CHECKS = (() => {
   const raw = Number(process.env.MCPJAM_MAX_CONCURRENT_RENDER_CHECKS);
   return Number.isInteger(raw) && raw >= 1 ? raw : 4;
 })();
+
+/**
+ * Narrow the run-level benchmark write guard to ONE case's iteration.
+ *
+ * The prefix an artifact must carry is per-ITERATION, so a list-style case
+ * cannot observe its own sibling iterations' artifacts and grade a leak that is
+ * ours. The ledger is deliberately NOT narrowed: it belongs to the run, because
+ * the cleanup that reads it does.
+ *
+ * A case with no id cannot be matched to a manifest at all, which under
+ * `requireManifest` is refused rather than run — an unidentifiable write case
+ * is exactly the one whose blast radius nobody can state.
+ */
+function resolveSideEffectGate(
+  guard: BenchmarkWriteGuard,
+  caseId: string | undefined,
+  iteration: number,
+): SideEffectGate {
+  return {
+    sideEffects: caseId ? guard.sideEffectsByCaseId[caseId] : undefined,
+    benchmarkRunId: guard.benchmarkRunId,
+    ...(caseId ? { caseId } : {}),
+    iteration,
+    ledger: guard.ledger,
+    requireManifest: guard.requireManifest === true,
+  };
+}
+
+/**
+ * The execution-layer gate for one iteration, or `null` when nothing restrains
+ * it.
+ *
+ * ── A WRITE GUARD FORCES A GATE ON ITS OWN ────────────────────────────────
+ *
+ * `toolPolicy` is SUITE-authored; `benchmarkWriteGuard` comes from the
+ * benchmark claim. They are unrelated fields, and a benchmark write cell
+ * normally arrives with the second and not the first — nothing in the claim
+ * supplies a `toolPolicy`. Building the gate as `toolPolicy ? … : null`
+ * therefore left benchmark write cells with NO gate: no allowed-tool check, no
+ * argument or prefix validation, no mutation-target check, and no id
+ * harvesting, which also meant nothing to clean up afterwards. The entire
+ * write-safety story was switched off by the absence of an unrelated optional
+ * field.
+ *
+ * Extracted and exported so that stays true: this is the one decision that
+ * says whether anything at all bounds what a benchmark case writes to somebody
+ * else's server, and it is worth being able to assert on directly.
+ */
+export function resolveEnforcementGate(args: {
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
+  testCaseId?: string;
+  runIndex: number;
+  annotations: ToolAnnotationsLookup;
+  warnings?: ReadonlyArray<string>;
+}): ToolPolicyGate | null {
+  const sideEffectGate = args.benchmarkWriteGuard
+    ? resolveSideEffectGate(
+        args.benchmarkWriteGuard,
+        args.testCaseId,
+        args.runIndex,
+      )
+    : undefined;
+  // The suite's own policy wins when it has one — an author who wrote
+  // `readOnly` meant it, and the manifest is an additional bound rather than a
+  // replacement. With no suite policy, the guard supplies the baseline.
+  const policy =
+    args.toolPolicy ??
+    (sideEffectGate ? benchmarkEnforcementPolicy(sideEffectGate) : undefined);
+  if (!policy) return null;
+  return createToolPolicyGate({
+    policy,
+    annotations: args.annotations,
+    ...(args.warnings ? { warnings: args.warnings } : {}),
+    ...(sideEffectGate ? { sideEffectGate } : {}),
+  });
+}
 
 /**
  * Minimal async concurrency limiter: returns a function that runs at most
@@ -198,6 +296,10 @@ export type EvalTestCase = {
   title: string;
   query: string;
   runs: number;
+  /** V2 case override; absent means the suite default. */
+  repetitions?: number;
+  /** V2 case threshold fraction; absent means the suite default. */
+  passThreshold?: number;
   model: string;
   provider: string;
   expectedToolCalls: Array<{
@@ -206,6 +308,8 @@ export type EvalTestCase = {
   }>;
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   expectedOutput?: string;
+  /** Authored analytics grouping label, frozen into each iteration snapshot. */
+  intent?: string;
   promptTurns?: PromptTurn[];
   /**
    * Unified `TestStep[]` model (Phase 3). When present this is the source of
@@ -339,9 +443,83 @@ export function runFrozenSkillOptions(run: {
   };
 }
 
+/**
+ * Which skills source an ITERATION hands `prepareChatV2` — the second half of
+ * the two-channel decision `runFrozenSkillOptions` bundles.
+ *
+ * Eval runs never use local-FS skills (decision 10), so the answer is always
+ * explicit. The part that is not obvious: a HARNESS iteration takes
+ * `{ kind: "none" }` EVEN WHEN THE RUN HAS PINS. Its pins are already travelling
+ * on the other channel (`pinnedHarnessSkills` → SKILL.md on the box), and
+ * `prepareChatV2` THROWS on harness+pinned because delivering both would hand
+ * the model the same skill twice by two mechanisms — an in-memory `loadSkill`
+ * tool AND an on-box copy.
+ *
+ * This is a seam guard, in the same spirit as `runFrozenSkillOptions` and for a
+ * bug of the same family. #4146 wired a run's pins into `pinnedSkillSource`
+ * without teaching the two iteration paths that a harness must not receive
+ * them, so every harness run whose environment carried a skill died at
+ * `prepareChatV2` with `tokensUsed: 0` — while runs with no skills stayed green,
+ * which is why it shipped. Both call sites now ask this one function, so the
+ * two paths cannot drift apart again.
+ */
+export function resolveIterationSkillsSource(args: {
+  harness?: string | undefined;
+  pinnedSkillSource?: EvalPinnedSkillSource;
+}): EvalPinnedSkillSource | { kind: "none" } {
+  if (args.harness) return { kind: "none" };
+  return args.pinnedSkillSource ?? { kind: "none" };
+}
+
+/**
+ * The match options the `toolCalls:match` score definition hashes over.
+ *
+ * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
+ * whatever the case declared, so hashing the sparse authored object would give
+ * two cases that grade identically two different `implementationHash`es — and
+ * would leave a case that declares nothing hashing `{}` while actually being
+ * graded order-agnostic with partial argument matching. The digest is supposed
+ * to answer "would this scorer decide differently?", and only the resolved
+ * options can answer that.
+ */
+/**
+ * The resolved match options to hash into the `toolCalls:match` definition.
+ *
+ * MUST STAY IN LOCKSTEP with what the matcher is actually handed. Today both
+ * this and `evaluateMultiTurnResults` resolve as
+ * `resolveMatchOptions(undefined, test.matchOptions)` at the same call sites,
+ * so the digest honestly describes the options the verdict was produced under.
+ *
+ * If a future path starts threading suite-level `defaultMatchOptions` into the
+ * matcher without threading them here, the two silently diverge: the scorer's
+ * `implementationHash` would describe options the matcher never applied, and
+ * the second pass would rebuild the definition under a hash the first pass
+ * never wrote. Change both, or neither.
+ */
+function scoreMatchOptionsFor(
+  test: Pick<EvalTestCase, "matchOptions">
+): Record<string, unknown> {
+  return resolveMatchOptions(undefined, test.matchOptions) as unknown as Record<
+    string,
+    unknown
+  >;
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
+  /**
+   * The run's FROZEN grading-engine position, read from
+   * `configSnapshot.gradingEngine` at run start and threaded to every
+   * iteration's finalization.
+   *
+   * ABSENT ⇒ each finalization falls back to the env kill switch alone, which
+   * is `off` unless an operator set it — the pre-B3b behaviour. Threading it
+   * is what makes a per-suite `off` real on the FIRST pass (it was previously
+   * honoured only by the judge second pass, which reads the run row) and what
+   * lets a run reach `enforce` at all.
+   */
+  gradingMode?: GradingEngineMode;
   config: {
     tests: EvalTestCase[];
     environment: {
@@ -418,13 +596,77 @@ export type RunEvalSuiteOptions = {
    * this for every runId-bearing run, empty included.
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  /**
+   * Extra headers stamped on every per-step Convex request of this run.
+   *
+   * The bench worker's carrier for `x-mcpjam-benchmark-grant`. Forwarded to
+   * BOTH backend iteration paths even though a benchmark cell only ever runs an
+   * MCPJam-paid model (`/stream`): one option on one type is what keeps the two
+   * paths from drifting into "the header is attached on one of them".
+   *
+   * Never copied on the way down — the caller may rotate a credential inside
+   * the object between steps.
+   */
+  extraHeaders?: Record<string, string>;
+  /**
+   * The benchmark's write-manifest enforcement, when this run is a hosted
+   * benchmark cell.
+   *
+   * Threaded rather than resolved here for the same reason the grant is: the
+   * manifests are pinned in the definition and verified against the claim
+   * before a cell launches, so the runner receives a decision it must not
+   * re-make. The ledger inside travels by REFERENCE — every iteration writes
+   * into the one the run's cleanup will read.
+   */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
+  policyBlockCount?: number;
 };
+
+/**
+ * D7: narrow a turn's full tool registry down to the subset the model was
+ * actually shown, when progressive discovery gated what it could see.
+ *
+ * `prepared.allTools` (and `selectionToolsForFinish`, captured from it) is
+ * always the COMPLETE registry — prepareChatV2 builds it before any step
+ * runs. When progressive discovery is enabled, `prepareStep` narrows each
+ * step's advertised set to `resolveActiveToolNames(plan, discoveryState)`
+ * and only ever adds to `discoveryState.loadedToolIds` (never removes), so
+ * by the time a turn finishes, `resolveActiveToolNames` recomputed against
+ * that SAME (mutated-in-place) state object gives the full set of names the
+ * model was shown across every step of the turn. Passing the unnarrowed
+ * registry to D7's selection-tool-catalog would let it see — and blame —
+ * metadata for a tool the model never had a chance to read.
+ *
+ * A no-op (returns `allTools` unchanged) when progressive discovery wasn't
+ * enabled for this turn, matching `resolveActiveToolNames`'s own non-plan
+ * behavior of exposing everything.
+ */
+export function narrowToolsToAdvertised(
+  allTools: PrepareChatV2Result["allTools"],
+  progressivePlan: ProgressiveToolPlan,
+  discoveryState: ToolDiscoveryState
+): PrepareChatV2Result["allTools"] {
+  if (!progressivePlan.enabled) {
+    return allTools;
+  }
+  const advertisedNames = new Set(
+    resolveActiveToolNames(progressivePlan, discoveryState)
+  );
+  const narrowed: PrepareChatV2Result["allTools"] = {};
+  for (const [name, tool] of Object.entries(allTools)) {
+    if (advertisedNames.has(name)) {
+      narrowed[name] = tool;
+    }
+  }
+  return narrowed;
+}
 
 /**
  * True when the provider/backend actually reported token usage. `accumulatedUsage`
@@ -507,7 +749,23 @@ function delay(ms: number): Promise<void> {
 }
 
 type ToolSet = Record<string, any>;
-type ToolCall = { toolName: string; arguments: Record<string, any> };
+type ToolCall = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /**
+   * The provider's id for this call, when the source part carried one.
+   *
+   * Declared here rather than smuggled in behind a cast: this value is BOTH
+   * read locally (`extractToolCallsExcludingPolicyBlocks` matches blocked
+   * calls by it) and persisted (`updateTestIteration.actualToolCalls`), and
+   * the casts that used to hide it are how it reached a Convex validator that
+   * had never been told about it — an unknown field there is a hard
+   * ArgumentValidationError, so every tool-calling iteration failed to
+   * finalize. Keeping it on the type is what makes the persistence boundary
+   * type-checked again.
+   */
+  toolCallId?: string;
+};
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
 function getServerLabelForEvalError(
@@ -560,7 +818,10 @@ function throwSetupPhaseError(args: {
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): never {
-  const serverLabel = getServerLabelForEvalError(args.serverId, args.environment);
+  const serverLabel = getServerLabelForEvalError(
+    args.serverId,
+    args.environment
+  );
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
     throw new EvalSetupPhaseError({
       status: 409,
@@ -597,17 +858,14 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   setupObserver?: RunSetupObserver;
 }): Promise<ToolSet> {
-  const hasModelVisiblePolicy = args.modelVisibleMcpToolResults !== undefined;
-  const toolOptions =
-    args.includeAppOnly || hasModelVisiblePolicy || args.tasks !== undefined
-      ? {
-          ...(args.includeAppOnly ? { includeAppOnly: true } : {}),
-          ...(args.modelVisibleMcpToolResults !== undefined
-            ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
-            : {}),
-          ...(args.tasks !== undefined ? { tasks: args.tasks } : {}),
-        }
-      : undefined;
+  // `undefined` ⇒ the no-options overload, keeping a default run byte-identical.
+  // `needsApproval` is deliberately not an input here: an eval run is auto-deny
+  // by construction, so the AI SDK approval flag has nothing to gate.
+  const toolOptions = mcpToolOptionsFor({
+    includeAppOnly: args.includeAppOnly,
+    modelVisibleMcpToolResults: args.modelVisibleMcpToolResults,
+    tasks: args.tasks,
+  });
 
   const now = () => Date.now();
   const observer = args.setupObserver;
@@ -955,6 +1213,9 @@ function extractToolCallsFromConversation(params: {
           toolsCalled.push({
             toolName: call.toolName ?? call.name,
             arguments: call.args ?? call.input ?? {},
+            ...(typeof call.toolCallId === "string"
+              ? { toolCallId: call.toolCallId }
+              : {}),
           });
         }
       }
@@ -979,6 +1240,9 @@ function extractToolCallsFromConversation(params: {
               toolsCalled.push({
                 toolName: name,
                 arguments: argumentsValue,
+                ...(typeof item.toolCallId === "string"
+                  ? { toolCallId: item.toolCallId }
+                  : {}),
               });
             }
           }
@@ -1001,6 +1265,9 @@ function extractToolCallsFromConversation(params: {
             toolsCalled.push({
               toolName,
               arguments: argumentsValue,
+              ...(typeof call.toolCallId === "string"
+                ? { toolCallId: call.toolCallId }
+                : {}),
             });
           }
         }
@@ -1009,6 +1276,20 @@ function extractToolCallsFromConversation(params: {
   }
 
   return toolsCalled;
+}
+
+function extractToolCallsExcludingPolicyBlocks(
+  params: {
+    steps?: ReadonlyArray<any>;
+    messages: ModelMessage[];
+  },
+  blockedToolCallIds: ReadonlySet<string>
+): ToolCall[] {
+  return extractToolCallsFromConversation(params).filter(
+    (toolCall) =>
+      toolCall.toolCallId === undefined ||
+      !blockedToolCallIds.has(toolCall.toolCallId)
+  );
 }
 
 function toolCallIdentity(toolCall: ToolCall): string {
@@ -1147,9 +1428,12 @@ async function createIterationDirectly(
       provider: string;
       model: string;
       runs?: number;
+      repetitions?: number;
+      passThreshold?: number;
       expectedToolCalls: any[];
       isNegativeTest?: boolean;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
@@ -1213,7 +1497,11 @@ async function persistSetupFailedIteration(args: {
     toolsCalled: [],
     usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     messages: [] as ModelMessage[],
-    status: "failed" as const,
+    // The environment never came up, so nothing was asked of the server under
+    // test. `failed` would report this as the server's problem; `setup_failed`
+    // says the harness never got to the question, which is what validity
+    // aggregation needs in order to withhold a verdict instead of inventing one.
+    status: "setup_failed" as const,
     startedAt: args.runStartedAt,
     error: args.errorMessage,
     resultSource: "reported" as const,
@@ -1225,7 +1513,7 @@ async function persistSetupFailedIteration(args: {
         // `traceAbsent`. When setupSignals are present it measures the top
         // two stages instead of blanking the whole chain.
         ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
-        status: "failed",
+        status: "setup_failed",
         error: args.errorMessage,
       }),
       ...(args.setupAudit ?? {}),
@@ -1262,7 +1550,9 @@ async function persistRunSetupFailure(args: {
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
 
-  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
+  const listPending = async (): Promise<Array<
+    Record<string, unknown>
+  > | null> => {
     try {
       const details = (await args.convexClient.query(
         "testSuites:getTestSuiteRunDetails" as any,
@@ -1281,17 +1571,15 @@ async function persistRunSetupFailure(args: {
     }
   };
 
-  const persistPending = async (
-    pending: Array<Record<string, unknown>>
-  ) => {
+  const persistPending = async (pending: Array<Record<string, unknown>>) => {
     await Promise.allSettled(
       pending.map(async (row) => {
         const iterationId =
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-              ? row.iterationId
-              : undefined;
+            ? row.iterationId
+            : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId
@@ -1313,16 +1601,16 @@ async function persistRunSetupFailure(args: {
                 }),
               }
             : snapshot
-              ? {
-                  stageCase: buildStageAuthoredCase({
-                    test: {
-                      query: snapshot.query,
-                      expectedToolCalls: snapshot.expectedToolCalls,
-                    } as EvalTestCase,
-                    caseNeedsModel: true,
-                  }),
-                }
-              : {}),
+            ? {
+                stageCase: buildStageAuthoredCase({
+                  test: {
+                    query: snapshot.query,
+                    expectedToolCalls: snapshot.expectedToolCalls,
+                  } as EvalTestCase,
+                  caseNeedsModel: true,
+                }),
+              }
+            : {}),
           ...(setupSignals ? { setupSignals } : {}),
           ...(setupSpans.length ? { setupSpans } : {}),
           ...(setupAudit ? { setupAudit } : {}),
@@ -1426,8 +1714,15 @@ type RunIterationBaseParams = {
   injectOpenAiCompat?: boolean;
   /** Resolved host execution policy from the run's hostConfig snapshot. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
+  /** See {@link RunEvalSuiteOptions.benchmarkWriteGuard}. */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /** Folded run-level connect / tools-list evidence (D6). */
   setupSignals?: StageSetupSignals;
   /** Synthetic connection/discovery spans (timeline only). */
@@ -1470,6 +1765,18 @@ type RunIterationBaseParams = {
   /** The run's frozen skills in harness shape (see
    *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /**
+   * The run's resolved MCP Tasks seam (`resolveToolTaskSeam`, surface
+   * `"eval"`), or absent for tasks-off.
+   *
+   * Resolved ONCE per run, at the run boundary, because the `await` driver it
+   * carries is bound to the run's own abort signal — a per-iteration
+   * re-derivation would either lose that binding or build a second driver. The
+   * emulated path consumes it indirectly (the tool set is already built under
+   * it); the HARNESS path needs the seam itself, because `runHarnessTurn`
+   * rebuilds its MCP tools and reads `tasks` off the handler options.
+   */
+  tasks?: ToolTaskSeamOptions;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1484,6 +1791,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
+  /** See {@link RunEvalSuiteOptions.extraHeaders}. */
+  extraHeaders?: Record<string, string>;
 };
 
 function parseCustomProviderName(modelId: string): string | undefined {
@@ -1816,6 +2125,8 @@ const executeTestCase = async (params: {
   injectOpenAiCompat?: boolean;
   /** Host execution policy for metadata stamping. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
@@ -1835,6 +2146,15 @@ const executeTestCase = async (params: {
   /** The run's frozen skills in harness shape (see
    *  RunEvalSuiteOptions.pinnedHarnessSkills). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /** The run's resolved Tasks seam — see RunIterationBaseParams.tasks. */
+  tasks?: ToolTaskSeamOptions;
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
+  /** See {@link RunEvalSuiteOptions.benchmarkWriteGuard}. */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
+  /** See {@link RunEvalSuiteOptions.extraHeaders}. */
+  extraHeaders?: Record<string, string>;
 }) => {
   const {
     test,
@@ -1857,6 +2177,7 @@ const executeTestCase = async (params: {
     emit,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -1865,6 +2186,12 @@ const executeTestCase = async (params: {
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    tasks,
+    toolPolicy,
+    toolAnnotations,
+    toolPolicyWarnings,
+    benchmarkWriteGuard,
+    extraHeaders,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1943,6 +2270,7 @@ const executeTestCase = async (params: {
         ...(compareRunId ? { compareRunId } : {}),
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -1951,6 +2279,10 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       outcomes.push(
         await runSingleIteration(
@@ -2018,6 +2350,7 @@ const executeTestCase = async (params: {
             expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
             isNegativeTest: test.isNegativeTest,
             expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            ...(test.intent !== undefined ? { intent: test.intent } : {}),
             steps: resolvedStepsForPrecreate,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
             matchOptions: test.matchOptions,
@@ -2060,6 +2393,7 @@ const executeTestCase = async (params: {
         modelId: resolvedModelId,
         modelDefinition,
         extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
+        ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2070,6 +2404,7 @@ const executeTestCase = async (params: {
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2078,6 +2413,14 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
+        // rebuild its MCP tools under the same seam the emulated tool set was
+        // already built with (`getEvalToolsForAiSdkOrThrow`).
+        ...(tasks ? { tasks } : {}),
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2112,6 +2455,7 @@ const executeTestCase = async (params: {
           providerKey: orgByokRuntime.providerKey,
           ...orgByokRuntime.target,
         },
+        ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2122,6 +2466,7 @@ const executeTestCase = async (params: {
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2130,6 +2475,14 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
+        // rebuild its MCP tools under the same seam the emulated tool set was
+        // already built with (`getEvalToolsForAiSdkOrThrow`).
+        ...(tasks ? { tasks } : {}),
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2168,6 +2521,7 @@ const executeTestCase = async (params: {
       precreatedIterationId,
       injectOpenAiCompat,
       hostPolicy,
+      gradingMode,
       toolSignals,
       setupSignals,
       setupSpans,
@@ -2179,6 +2533,10 @@ const executeTestCase = async (params: {
       convexAuthToken,
       pinnedSkillSource,
       pinnedHarnessSkills,
+      ...(toolPolicy
+        ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+        : {}),
+      ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -2203,6 +2561,7 @@ const runTestCase = (
 ) => executeTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
+  gradingMode,
   suiteId,
   runId,
   config,
@@ -2221,6 +2580,9 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteHostConfig,
   pinnedSkillSource,
   pinnedHarnessSkills,
+  toolPolicy,
+  benchmarkWriteGuard,
+  extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2231,6 +2593,18 @@ export const runEvalSuiteWithAiSdk = async ({
 
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
+  }
+
+  if (
+    toolPolicy?.mode === "readOnly" &&
+    typeof (
+      config.environment as { computerEnvironmentId?: unknown } | undefined
+    )?.computerEnvironmentId === "string"
+  ) {
+    logger.warn(
+      "[evals] readOnly tool policy does not restrict the sandbox bash tool",
+      { suiteId }
+    );
   }
 
   // For quick runs (runId === null), we don't need a recorder
@@ -2248,6 +2622,7 @@ export const runEvalSuiteWithAiSdk = async ({
     total: 0,
     passed: 0,
     failed: 0,
+    policyBlockedIterations: 0,
   };
 
   // Create AbortController to cancel in-flight requests. Created BEFORE the
@@ -2279,6 +2654,7 @@ export const runEvalSuiteWithAiSdk = async ({
     expectedServerIds: serverIds,
     convexHttpUrl,
   });
+  let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
     // When a host policy is present we need the full tool set (including
@@ -2300,6 +2676,58 @@ export const runEvalSuiteWithAiSdk = async ({
       environment: config.environment,
       setupObserver,
     });
+    const toolAnnotations: ToolAnnotationsLookup = new Map();
+    if (toolPolicy) {
+      const uncachedServerIds = serverIds.filter(
+        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId)
+      );
+      if (uncachedServerIds.length > 0) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
+            ", "
+          )}.`,
+          {
+            reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
+            serverIds: uncachedServerIds,
+          }
+        );
+      }
+      try {
+        const availableToolNames = new Set([
+          ...Object.keys(tools),
+          "computer",
+          "finish_widget",
+          EVAL_BASH_TOOL_NAME,
+        ]);
+        resolvedToolPolicyWarnings = validateToolPolicyNames({
+          policy: toolPolicy,
+          availableToolNames,
+          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES],
+        });
+      } catch (error) {
+        if (error instanceof UnmatchedToolPolicyNameError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            error.message,
+            { reason: "TOOL_POLICY_INVALID" }
+          );
+        }
+        throw error;
+      }
+      for (const serverId of serverIds) {
+        for (const [toolName, annotations] of Object.entries(
+          mcpClientManager.getAllToolAnnotations(serverId)
+        )) {
+          toolAnnotations.set(
+            toolAnnotationsKey(serverId, toolName),
+            annotations
+          );
+        }
+      }
+    }
 
     // Apply visibility filtering when a host policy is present. The filter
     // mutates `tools` in place (same as prepareChatV2) so downstream iteration
@@ -2371,6 +2799,7 @@ export const runEvalSuiteWithAiSdk = async ({
         abortRun,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
+        ...(gradingMode ? { gradingMode } : {}),
         toolSignals: resolvedToolSignals,
         ...(resolvedSetupSignals ? { setupSignals: resolvedSetupSignals } : {}),
         ...(resolvedSetupSpans.length
@@ -2379,10 +2808,25 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
+        ...(toolPolicy
+          ? {
+              toolPolicy,
+              toolAnnotations,
+              toolPolicyWarnings: resolvedToolPolicyWarnings,
+            }
+          : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
         // BOTH frozen-skill channels, from one place — see
         // `runFrozenSkillOptions`. Forwarding only the emulated one used to
         // leave the harness path falling through to a live project-wide fetch.
         ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
+        // The run's ONE Tasks seam — the same object `getEvalToolsForAiSdkOrThrow`
+        // built the emulated tool set with, so the harness (which rebuilds its
+        // own MCP tools) cannot end up on a different row of the policy matrix.
+        // Never re-resolved downstream: its `await` driver is bound to THIS
+        // run's abort signal.
+        ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
+        ...(extraHeaders ? { extraHeaders } : {}),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -2545,6 +2989,9 @@ export const runEvalSuiteWithAiSdk = async ({
             summary.failed += 1;
           }
         }
+        summary.policyBlockedIterations += outcomes.filter(
+          (outcome) => (outcome.policyBlockCount ?? 0) > 0
+        ).length;
         if (runId === null) {
           quickRunOutcomes.push(...outcomes);
         }
@@ -2568,6 +3015,9 @@ export const runEvalSuiteWithAiSdk = async ({
           passed: summary.passed,
           failed: summary.failed,
           passRate,
+          ...(summary.policyBlockedIterations > 0
+            ? { policyBlockedIterations: summary.policyBlockedIterations }
+            : {}),
         },
       });
     }
@@ -2688,6 +3138,7 @@ const runLocalIteration = async ({
   precreatedIterationId,
   injectOpenAiCompat,
   hostPolicy,
+  gradingMode,
   toolSignals,
   setupSignals,
   setupSpans,
@@ -2696,12 +3147,24 @@ const runLocalIteration = async ({
   environment,
   convexAuthToken,
   pinnedSkillSource,
+  toolPolicy,
+  toolAnnotations,
+  toolPolicyWarnings,
+  benchmarkWriteGuard,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = resolveEnforcementGate({
+    ...(toolPolicy ? { toolPolicy } : {}),
+    ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+    ...(testCaseId ?? test.testCaseId
+      ? { testCaseId: testCaseId ?? test.testCaseId }
+      : {}),
+    runIndex,
+    annotations: toolAnnotations ?? new Map(),
+    ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
+  });
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -2791,6 +3254,10 @@ const runLocalIteration = async ({
     },
     precedence: "override-wins",
   });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
+  });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
@@ -2837,9 +3304,12 @@ const runLocalIteration = async ({
     provider: test.provider,
     model: test.model,
     runs: test.runs,
+    repetitions: test.repetitions,
+    passThreshold: test.passThreshold,
     expectedToolCalls,
     isNegativeTest: test.isNegativeTest,
     expectedOutput,
+    ...(test.intent !== undefined ? { intent: test.intent } : {}),
     steps: resolvedSteps,
     advancedConfig,
     matchOptions: test.matchOptions,
@@ -2945,6 +3415,23 @@ const runLocalIteration = async ({
   // here so the finally always sees it.
   let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
     null;
+  // D7: `prepared` (and its `allTools`) is declared inside the try below, so
+  // it is out of scope in the catch's own `buildIterationFinishParams` call.
+  // Captured here, set once `prepared` is assigned, so BOTH the success and
+  // the failure path can attach the tool set the model actually chose
+  // between when selection failed mid-run.
+  let selectionToolsForFinish: PrepareChatV2Result["allTools"] | undefined;
+  // Captured alongside `selectionToolsForFinish` at the same assignment
+  // point, but read lazily at each usage site below (both are live
+  // references into `prepared` — `discoveryState` mutates in place as the
+  // turn's steps run) so the narrowing reflects state AFTER the turn
+  // finishes, not the empty state at prepareChatV2 return time.
+  let selectionDiscoveryForFinish:
+    | {
+        progressivePlan: PrepareChatV2Result["progressivePlan"];
+        discoveryState: PrepareChatV2Result["discoveryState"];
+      }
+    | undefined;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -2998,6 +3485,11 @@ const runLocalIteration = async ({
       // system-free, and persistence prepends the resolved value at write
       // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
       streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+      selectionToolsForFinish = prepared.allTools;
+      selectionDiscoveryForFinish = {
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+      };
 
       llmModel = createLlmModel(
         modelDefinition,
@@ -3215,7 +3707,12 @@ const runLocalIteration = async ({
       testCaseId,
       abortSignal,
       toolChoice,
-      extractToolCalls: extractToolCallsFromConversation,
+      toolPolicyGate,
+      extractToolCalls: (params) =>
+        extractToolCallsExcludingPolicyBlocks(
+          params,
+          toolPolicyGate?.blockedToolCallIds() ?? new Set()
+        ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
     });
@@ -3351,6 +3848,14 @@ const runLocalIteration = async ({
     // consumer than the stored transcript).
     const finishParams = buildIterationFinishParams({
       iterationId,
+      // Keys shadow-mismatch telemetry only; never read for the verdict.
+      ...(runId !== null ? { runId: String(runId) } : {}),
+      // The run's FROZEN position. Threaded so a per-suite `off` is honoured on
+      // THIS pass (it used to be visible only to the judge second pass, which
+      // reads the run row) and so a run can reach `enforce` at all.
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed,
       evaluation,
       usage: usageFinal,
@@ -3370,9 +3875,10 @@ const runLocalIteration = async ({
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
       // A model-free pinned setup failure (server not connected) records as
-      // "failed"; everything else completes (a failed verdict is still a
-      // completed run). Mirrors the former runIterationWithAiSdk.
-      status: acc.pinnedSetupFailure ? "failed" : "completed",
+      // `setup_failed` — it never reached the question; everything else
+      // completes (a failed verdict is still a completed run). Mirrors the
+      // former runIterationWithAiSdk.
+      status: acc.pinnedSetupFailure ? "setup_failed" : "completed",
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
       // via the failure-detection branch, surface it on the persisted
@@ -3383,6 +3889,13 @@ const runLocalIteration = async ({
         ? { errorDetails: acc.iterationErrorDetails }
         : {}),
       predicateResults,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
+      ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3404,7 +3917,41 @@ const runLocalIteration = async ({
       ...(setupSpans?.length ? { setupSpans } : {}),
       ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
+      // D7: the per-iteration tool set the model actually chose between —
+      // `prepared.allTools` (real MCP tools + meta-tools), not the
+      // suite-level `_suiteTools` this runner otherwise ignores. Absent on
+      // a model-free iteration (`prepared` stays null), where there is no
+      // selection stage to explain anyway.
+      // Narrowed to what progressive discovery actually advertised across
+      // the turn, when it was enabled — see `narrowToolsToAdvertised`.
+      ...(selectionToolsForFinish
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  selectionToolsForFinish,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState
+                )
+              : selectionToolsForFinish,
+          }
+        : {}),
     });
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+    //
+    // At `enforce` the iteration's result is the conjunction of the boolean
+    // pipeline and the gating score rows, computed inside
+    // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+    // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+    // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+    // against — so a strictness catch would persist `failed` on the iteration
+    // while the run counted it a pass, and the pass rate would be inflated by
+    // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+    // during the soak, so this drift is reachable, not theoretical.
+    //
+    // Assigned AFTER the call, never before: the score rows derive the
+    // `toolCalls:match` row from `evaluation.passed`, which must remain the
+    // MATCHER's answer at derivation time.
+    evaluation.passed = finishParams.passed;
 
     await finalizeIterationWithBrowserArtifacts({
       browser,
@@ -3416,6 +3963,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -3534,6 +4084,10 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      ...(runId !== null ? { runId: String(runId) } : {}),
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
       usage: {
@@ -3558,6 +4112,13 @@ const runLocalIteration = async ({
       browserInteractionSteps: browser.browserInteractionSteps,
       status: "failed",
       startedAt: runStartedAt,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
+      ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3579,6 +4140,24 @@ const runLocalIteration = async ({
       ...(setupSpans?.length ? { setupSpans } : {}),
       ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
+      // D7: the per-iteration tool set the model actually chose between —
+      // `prepared.allTools` (real MCP tools + meta-tools), not the
+      // suite-level `_suiteTools` this runner otherwise ignores. Absent on
+      // a model-free iteration (`prepared` stays null), where there is no
+      // selection stage to explain anyway.
+      // Narrowed to what progressive discovery actually advertised across
+      // the turn, when it was enabled — see `narrowToolsToAdvertised`.
+      ...(selectionToolsForFinish
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  selectionToolsForFinish,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState
+                )
+              : selectionToolsForFinish,
+          }
+        : {}),
     });
 
     await finalizeIterationWithBrowserArtifacts({
@@ -3590,6 +4169,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -3631,6 +4213,7 @@ const runHostedIterationWithBrowser = async (
     orgModelConfig,
     endpointPath = "/stream",
     extraBodyFields,
+    extraHeaders,
     convexClient,
     runId,
     abortSignal,
@@ -3639,6 +4222,7 @@ const runHostedIterationWithBrowser = async (
     precreatedIterationId,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -3651,14 +4235,27 @@ const runHostedIterationWithBrowser = async (
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    tasks,
+    toolPolicy,
+    toolAnnotations,
+    toolPolicyWarnings,
+    benchmarkWriteGuard,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
   browser: BrowserSessionContext
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = resolveEnforcementGate({
+    ...(toolPolicy ? { toolPolicy } : {}),
+    ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+    ...(testCaseId ?? test.testCaseId
+      ? { testCaseId: testCaseId ?? test.testCaseId }
+      : {}),
+    runIndex,
+    annotations: toolAnnotations ?? new Map(),
+    ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
+  });
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -3735,6 +4332,10 @@ const runHostedIterationWithBrowser = async (
     },
     precedence: "override-wins",
   });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
+  });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
@@ -3765,6 +4366,7 @@ const runHostedIterationWithBrowser = async (
       expectedToolCalls,
       isNegativeTest: test.isNegativeTest,
       expectedOutput,
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
       steps: resolvedSteps,
       advancedConfig,
       matchOptions: test.matchOptions,
@@ -3824,10 +4426,21 @@ const runHostedIterationWithBrowser = async (
   // `builtInToolIds` resolve via the shared registry, billed against the
   // project target the org-BYOK/jam billing paths derive.
   const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
+  // Unattended: nothing here can pause to ask, so the run's DECLARED policy is
+  // the only thing that can authorize browser tools. Absent or malformed ⇒
+  // undefined ⇒ they are not advertised at all (fail-closed).
+  const browserApprovalDelivery = browserApprovalDeliveryFor(
+    resolvedExecution.browserToolPolicy,
+    { source: "evals-runner" }
+  );
   const builtInTools = resolveHostTools(
     { builtInToolIds: resolvedExecution.builtInToolIds },
     builtInTarget && "projectId" in builtInTarget
-      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
+      ? {
+          authHeader: convexAuthToken,
+          projectId: builtInTarget.projectId,
+          ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+        }
       : null
   );
   // ── Harness execution inputs, resolved once per iteration.
@@ -3844,6 +4457,19 @@ const runHostedIterationWithBrowser = async (
   const harnessMcpProxy = resolvedExecution.harness
     ? resolveWebAuthorizedHarnessStrategy()
     : undefined;
+  // D4b: a harness runs its MCP calls itself, in a sandbox, against the
+  // generated `.mcp.json` — no in-process tool map exists to wrap, so the
+  // decision travels to the MCP proxy sealed inside the proxy token and is
+  // applied there. Harness-gated: the emulated path stays on the in-process
+  // gate alone.
+  const harnessToolPolicy =
+    resolvedExecution.harness && toolPolicy
+      ? buildHarnessToolPolicySnapshots({
+          policy: toolPolicy,
+          serverIds: selectedServers,
+          annotations: toolAnnotations ?? new Map(),
+        })
+      : undefined;
   // The run's PINNED skills, in the shape the harness materializes on box.
   //
   // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
@@ -4005,6 +4631,9 @@ const runHostedIterationWithBrowser = async (
     return {
       evaluation: failedEvaluation,
       iterationId,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   }
 
@@ -4062,7 +4691,10 @@ const runHostedIterationWithBrowser = async (
         accumulatedUsage,
         withSystemPrefix,
         extractToolCalls: (messages) =>
-          extractToolCallsFromConversation({ messages }),
+          extractToolCallsExcludingPolicyBlocks(
+            { messages },
+            toolPolicyGate?.blockedToolCallIds() ?? new Set()
+          ),
         buildTraceSnapshotEvent,
       })
     : undefined;
@@ -4088,7 +4720,9 @@ const runHostedIterationWithBrowser = async (
     evalAuthContext,
     endpointPath,
     extraBodyFields,
+    ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
+    toolPolicyGate,
     abortSignal,
     maxSteps: MAX_STEPS,
     runStartedAt,
@@ -4116,6 +4750,24 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // The sealed policy + the sink that accounts its refusals. Blocks land on
+    // the SAME gate the in-process path records into, so `policyBlocks` and the
+    // matcher exclusion below cover both origins with no second code path.
+    ...(harnessToolPolicy
+      ? {
+          harnessToolPolicy,
+          onHarnessPolicyBlocks: (blocks) => {
+            for (const block of blocks) {
+              toolPolicyGate?.recordBlock({
+                toolName: block.toolName,
+                reason: block.reason,
+                classification: block.classification,
+                ...(block.toolCallId ? { toolCallId: block.toolCallId } : {}),
+              });
+            }
+          },
+        }
+      : {}),
     // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
     // not when truthy: `[]` says "this run delivers no skills" (the
     // `skillsOverride: "exclude"` arm), while absent falls through to the
@@ -4126,12 +4778,42 @@ const runHostedIterationWithBrowser = async (
     // nowhere else, so supplying only `tools` would hand the runtime a turn
     // with no built-ins and no way to notice.
     ...(builtInTools ? { builtInTools } : {}),
+    // The host's MCP tool-CONSTRUCTION policies, for the same reason and with
+    // the same hazard as `builtInTools` above.
+    //
+    // The `prepareChatV2` call a few dozen lines up builds THIS iteration's
+    // emulated tool set from `hostPolicy`. A harness turn never consumes that
+    // set — `runHarnessTurn` rebuilds the model-facing MCP tools itself — and
+    // reads each policy off these fields and nowhere else, so a policy that
+    // stops here does not exist at all on host-executed delivery.
+    // `driveHostedEvalTurn` gates all three behind `harness`, so an emulated
+    // iteration is unaffected by any of this.
+    //
+    // `tasks` is the run-level seam (`resolveToolTaskSeam`, resolved once in
+    // `runEvalSuiteWithAiSdk` and threaded down) rather than anything derived
+    // here — same object `getEvalToolsForAiSdkOrThrow` built the run's tool set
+    // with. Note the per-iteration `prepareChatV2` above does NOT take it; that
+    // is a pre-existing emulated-path gap, deliberately left alone here because
+    // closing it would change emulated eval behaviour.
+    //
+    // Definedness, not truthiness: `respectToolVisibility: false` IS the
+    // SEP-1865 opt-out.
+    ...(hostPolicy?.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: hostPolicy.modelVisibleMcpToolResults }
+      : {}),
+    ...(hostPolicy?.respectToolVisibility !== undefined
+      ? { respectToolVisibility: hostPolicy.respectToolVisibility }
+      : {}),
+    ...(tasks !== undefined ? { tasks } : {}),
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>
-      extractToolCallsFromConversation({ messages }),
+      extractToolCallsExcludingPolicyBlocks(
+        { messages },
+        toolPolicyGate?.blockedToolCallIds() ?? new Set()
+      ),
     acc: {
       messageHistory,
       capturedSpans,
@@ -4191,8 +4873,8 @@ const runHostedIterationWithBrowser = async (
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;
   }
-  // Pinned setup failure (server not connected) — drives status:"failed" below,
-  // mirroring the local runner.
+  // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
+  // below, mirroring the local runner.
   const pinnedSetupFailure = result.setupFailure;
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
@@ -4277,6 +4959,10 @@ const runHostedIterationWithBrowser = async (
   // transcript).
   const finishParams = buildIterationFinishParams({
     iterationId,
+    ...(runId !== null ? { runId: String(runId) } : {}),
+    ...(gradingMode ? { gradingMode } : {}),
+    scoreMatchOptions: scoreMatchOptionsFor(test),
+    ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
     passed,
     evaluation,
     usage: accumulatedUsage,
@@ -4297,13 +4983,20 @@ const runHostedIterationWithBrowser = async (
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
     // A model-free pinned setup failure (server not connected) records as
-    // "failed"; everything else completes (a failed verdict is still a
-    // completed run). Mirrors the local runner.
-    status: pinnedSetupFailure ? "failed" : "completed",
+    // `setup_failed` — it never reached the question; everything else completes
+    // (a failed verdict is still a completed run). Mirrors the local runner.
+    status: pinnedSetupFailure ? "setup_failed" : "completed",
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
     predicateResults,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlocks: toolPolicyGate.blocks }
+      : {}),
+    ...(toolPolicyGate?.warnings.length
+      ? { policyWarnings: toolPolicyGate.warnings }
+      : {}),
+    ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
     ...(hostedStepSkippedSteps.length
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),
@@ -4324,7 +5017,33 @@ const runHostedIterationWithBrowser = async (
     ...(setupSpans?.length ? { setupSpans } : {}),
     ...(setupAudit ? { setupAudit } : {}),
     injectOpenAiCompat,
+    // D7: same `prepared.allTools` source the local runner threads through —
+    // this runner always has a model turn (see the `stageCase` comment
+    // above), so `prepared` is always assigned by this point. Narrowed to
+    // what progressive discovery actually advertised, when enabled — see
+    // `narrowToolsToAdvertised`.
+    selectionTools: narrowToolsToAdvertised(
+      prepared.allTools,
+      prepared.progressivePlan,
+      prepared.discoveryState
+    ),
   });
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+  //
+  // At `enforce` the iteration's result is the conjunction of the boolean
+  // pipeline and the gating score rows, computed inside
+  // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+  // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+  // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+  // against — so a strictness catch would persist `failed` on the iteration
+  // while the run counted it a pass, and the pass rate would be inflated by
+  // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+  // during the soak, so this drift is reachable, not theoretical.
+  //
+  // Assigned AFTER the call, never before: the score rows derive the
+  // `toolCalls:match` row from `evaluation.passed`, which must remain the
+  // MATCHER's answer at derivation time.
+  evaluation.passed = finishParams.passed;
 
   await finalizeIterationWithBrowserArtifacts({
     browser,
@@ -4336,6 +5055,9 @@ const runHostedIterationWithBrowser = async (
   return {
     evaluation,
     iterationId: iterationId ?? undefined,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlockCount: toolPolicyGate.blocks.length }
+      : {}),
   };
 };
 

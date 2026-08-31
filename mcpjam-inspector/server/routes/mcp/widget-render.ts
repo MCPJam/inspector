@@ -44,8 +44,14 @@ widgetRender.post("/", async (c) => {
   if (!parsed.ok) {
     return c.json({ error: parsed.error }, 400);
   }
-  const { serverId, toolName, parameters, injectOpenAiCompat, viewport } =
-    parsed.value;
+  const {
+    serverId,
+    toolName,
+    parameters,
+    injectOpenAiCompat,
+    viewport,
+    includeSnapshot,
+  } = parsed.value;
 
   let result;
   try {
@@ -57,6 +63,7 @@ widgetRender.post("/", async (c) => {
       injectOpenAiCompat,
       viewport,
       keepMounted: false,
+      ...(includeSnapshot ? { captureSnapshot: true } : {}),
     });
   } catch (error) {
     return c.json(
@@ -68,7 +75,13 @@ widgetRender.post("/", async (c) => {
   }
 
   try {
-    return c.json(buildWidgetRenderResponseBody(result.observation), 200);
+    return c.json(
+      {
+        ...buildWidgetRenderResponseBody(result.observation),
+        ...(result.snapshot ? { snapshot: result.snapshot } : {}),
+      },
+      200,
+    );
   } finally {
     // One-shot: always tear the browser down (best-effort; the response is
     // already committed). Log a disposal failure so a leaked context is

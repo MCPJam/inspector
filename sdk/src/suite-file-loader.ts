@@ -49,7 +49,9 @@ import {
   type EvalSuiteFileProvenance,
   type EvalSuiteFileTarget,
   type EvalSuiteFileToolPolicy,
+  type EvalSuiteFileValidity,
 } from "./contract/suite-file.js";
+import type { EvalValidityCoverage } from "./contract/verdict-policy.js";
 
 // ── the input cap ────────────────────────────────────────────────────────────
 
@@ -70,13 +72,29 @@ export const MAX_SUITE_FILE_BYTES = 1_048_576;
  * The validity defaults the contract documents and deliberately does not
  * materialize. Applied HERE, onto the resolved value, never onto the file.
  *
- * `minEligibleTrials` is absent on purpose: it has no default, and absent means
- * "no minimum" rather than "some number we picked".
+ * `minEligibleTrials` has no NUMBER here on purpose, because its default is not
+ * a number: omitting it selects the coverage RULE in
+ * {@link SUITE_FILE_DEFAULT_COVERAGE} — every configured trial attempted, and
+ * at least one gradeable trial. Picking a numeric stand-in (`1`, say) is the
+ * bug this shape exists to prevent: it would let a suite that graded a single
+ * trial out of thirty report a confident pass.
  */
 export const SUITE_FILE_VALIDITY_DEFAULTS = {
   minCompletionRate: 0.8,
   maxEvaluatorErrorRate: 0.1,
 } as const;
+
+/**
+ * The coverage rule an omitted `minEligibleTrials` resolves to.
+ *
+ * `minGradeableTrials: 1` carries the "at least one gradeable trial" half of
+ * the rule in the value rather than in prose, so a consumer reading the
+ * resolved suite does not have to know this comment exists.
+ */
+export const SUITE_FILE_DEFAULT_COVERAGE = {
+  kind: "allConfiguredTrialsAttempted",
+  minGradeableTrials: 1,
+} as const satisfies EvalValidityCoverage;
 
 /** The only implemented capture level, and therefore the resolved default. */
 export const SUITE_FILE_DEFAULT_CAPTURE_LEVEL = "full" as const;
@@ -140,6 +158,8 @@ export type SuiteFileFailureStage = "input" | "parse" | "contract";
 export type ResolvedEvalSuiteFileCase = {
   id: string;
   title: string;
+  /** Authored analytics grouping label; absent remains unlabelled. */
+  intent?: string;
   steps: EvalSuiteFileCase["steps"];
   assertions: NonNullable<EvalSuiteFileCase["assertions"]>;
   expectedOutput?: string;
@@ -157,11 +177,60 @@ export type ResolvedEvalSuiteFileCase = {
 
 /** Suite-level validity with the documented defaults applied. */
 export type ResolvedEvalSuiteFileValidity = {
-  /** Absent when the file declared none: no default, so no minimum. */
-  minEligibleTrials?: number;
+  /**
+   * The resolved coverage rule — ALWAYS present, and a union rather than an
+   * optional number.
+   *
+   * An optional `minEligibleTrials` here would leave every reader to invent the
+   * meaning of absence, and the meaning it invents is `?? 0` or `?? 1`: "no
+   * minimum". The contract says omission is a STRICTER rule, not a weaker one
+   * (all configured trials attempted, at least one gradeable), so the resolved
+   * value names which of the two rules is in force and no defaulting
+   * expression downstream gets to decide.
+   */
+  coverage: EvalValidityCoverage;
   minCompletionRate: number;
   maxEvaluatorErrorRate: number;
 };
+
+/**
+ * The resolved validity block turned back into the AUTHORED shape — the shape
+ * every wire format speaks.
+ *
+ * WHY THIS EXISTS. {@link resolveEvalSuiteFile} replaces the authored
+ * `minEligibleTrials` with a `coverage` union, deliberately, so that no reader
+ * downstream can invent a `?? 1` default for an omitted one (see
+ * {@link SUITE_FILE_DEFAULT_COVERAGE}). That union is an INTERNAL
+ * representation: the suite-file schema does not have it, and neither does the
+ * hosted API, whose body validator is strict and rejects the key outright.
+ *
+ * Handing a resolved block to anything that serializes is therefore always a
+ * bug, and it was one — the hosted `eval run --file` path sent
+ * `resolved.defaults.validity` and every upload was refused with
+ * `Unrecognized key: "coverage"`, whatever the file said, because the resolver
+ * emits `coverage` unconditionally. Callers that need to transmit validity get
+ * this function instead of reaching into the resolved shape themselves.
+ *
+ * LOSSLESS BY CONSTRUCTION, in both directions:
+ *   - `minEligibleTrials` coverage carries its number back out.
+ *   - `allConfiguredTrialsAttempted` OMITS the key, which is precisely what
+ *     selected that rule on the way in. The receiver re-resolves omission to
+ *     the same stricter rule rather than to a number, so the round trip
+ *     preserves the policy rather than approximating it.
+ * The two rate fields carry their resolved values explicitly, so a defaults
+ * change here can never silently re-decide a policy already sent.
+ */
+export function declareEvalSuiteFileValidity(
+  resolved: ResolvedEvalSuiteFileValidity
+): EvalSuiteFileValidity {
+  return {
+    ...(resolved.coverage.kind === "minEligibleTrials"
+      ? { minEligibleTrials: resolved.coverage.minEligibleTrials }
+      : {}),
+    minCompletionRate: resolved.minCompletionRate,
+    maxEvaluatorErrorRate: resolved.maxEvaluatorErrorRate,
+  };
+}
 
 /**
  * The in-memory view a runner reads: every documented default applied, and
@@ -180,6 +249,8 @@ export type ResolvedEvalSuiteFile = {
   defaults: {
     model: string;
     provider?: string;
+    systemPrompt?: string;
+    temperature?: number;
     repetitions: number;
     passThreshold: number;
     captureLevel: typeof SUITE_FILE_DEFAULT_CAPTURE_LEVEL;
@@ -436,6 +507,12 @@ export function resolveEvalSuiteFile(
       ...(defaults.provider === undefined
         ? {}
         : { provider: defaults.provider }),
+      ...(defaults.systemPrompt === undefined
+        ? {}
+        : { systemPrompt: defaults.systemPrompt }),
+      ...(defaults.temperature === undefined
+        ? {}
+        : { temperature: defaults.temperature }),
       repetitions: defaults.repetitions,
       passThreshold: defaults.passThreshold,
       captureLevel: defaults.captureLevel ?? SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
@@ -443,9 +520,13 @@ export function resolveEvalSuiteFile(
         ? {}
         : { toolPolicy: defaults.toolPolicy }),
       validity: {
-        ...(defaults.validity.minEligibleTrials === undefined
-          ? {}
-          : { minEligibleTrials: defaults.validity.minEligibleTrials }),
+        coverage:
+          defaults.validity.minEligibleTrials === undefined
+            ? { ...SUITE_FILE_DEFAULT_COVERAGE }
+            : {
+                kind: "minEligibleTrials",
+                minEligibleTrials: defaults.validity.minEligibleTrials,
+              },
         minCompletionRate:
           defaults.validity.minCompletionRate ??
           SUITE_FILE_VALIDITY_DEFAULTS.minCompletionRate,
@@ -469,6 +550,9 @@ function resolveCase(
   return {
     id: authoredCase.id,
     title: authoredCase.title,
+    ...(typeof authoredCase.intent === "string"
+      ? { intent: authoredCase.intent }
+      : {}),
     steps: authoredCase.steps,
     assertions: authoredCase.assertions ?? [],
     ...(authoredCase.expectedOutput === undefined
@@ -539,6 +623,7 @@ const PROVENANCE_KEY_ORDER = [
 const CASE_KEY_ORDER = [
   "id",
   "title",
+  "intent",
   "disabled",
   "model",
   "repetitions",

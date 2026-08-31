@@ -618,7 +618,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
       };
       return Response.json({
         items: [{ name: "echo", cursorSeen: requestBody.cursor ?? null }],
-        nextCursor: "tools-page-2",
+        // The `""` sentinel lets one test exercise an empty-string nextCursor
+        // coming back off the MCP passthrough; every other cursor is unchanged.
+        nextCursor: requestBody.cursor === "penultimate" ? "" : "tools-page-2",
       });
     }
     if (
@@ -1088,6 +1090,7 @@ describe("createEvalSuiteOperation", () => {
         cases: [
           {
             title: "echo works",
+            intent: "greeting",
             steps: [
               { id: "s1", kind: "prompt", prompt: "say hi" },
               {
@@ -1127,6 +1130,7 @@ describe("createEvalSuiteOperation", () => {
     expect(body.tests).toHaveLength(1);
     expect(body.tests[0]).toMatchObject({
       title: "echo works",
+      intent: "greeting",
       steps: [
         { id: "s1", kind: "prompt", prompt: "say hi" },
         expect.objectContaining({ kind: "assert" }),
@@ -1854,6 +1858,9 @@ describe("operation catalog consistency", () => {
     call_server_tool: { server: "s", toolName: "t" },
     get_server_prompt: { server: "s", promptName: "p" },
     read_server_resource: { server: "s", uri: "u" },
+    list_server_skills: { server: "s" },
+    get_server_skill: { server: "s", uri: "u" },
+    read_server_skill_file: { server: "s", skillUri: "u", resourceUri: "r" },
     check_host_compatibility: { server: "s" },
     start_claude_readiness_run: { server: "s" },
     start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
@@ -1878,6 +1885,7 @@ describe("operation catalog consistency", () => {
       ],
     },
     get_eval_suite: { suite: "s" },
+    get_eval_run_disclosure: { suite: "s" },
     update_eval_suite: { suite: "s", name: "renamed" },
     delete_eval_suite: { suite: "s" },
     set_eval_suite_schedule: { suite: "s", enabled: false },
@@ -1905,6 +1913,14 @@ describe("operation catalog consistency", () => {
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
+    waive_eval_gate: {
+      project: "p",
+      runId: "r",
+      reason: "shipping the hotfix; tracked in ENG-1",
+      expiresAt: 1_700_000_000_000,
+    },
+    get_eval_gate_waiver: { project: "p", runId: "r" },
+    revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
     request_eval_run_judge: { project: "p", runId: "r" },
     list_eval_check_repos: {},
     connect_eval_check_repo: {
@@ -2001,17 +2017,23 @@ describe("operation catalog consistency", () => {
       mode: "project_members",
     },
     rotate_share_link: { resourceType: "scenario", resourceId: "s1" },
-    list_hosts: {},
-    get_host: { host: "h" },
-    set_host_servers: { host: "h", serverIds: [] },
-    duplicate_host: { host: "h" },
-    create_host: { name: "h", template: "claude" },
-    update_host: { host: "h", name: "renamed" },
-    delete_host: { host: "h" },
+    list_clients: {},
+    get_client: { client: "c" },
+    set_client_servers: {
+      client: "c",
+      serverIds: [],
+      expectedConfigId: "hc_1",
+    },
+    duplicate_client: { client: "c" },
+    create_client: { name: "c", template: "claude" },
+    update_client: { client: "c", name: "renamed", expectedName: "c" },
+    delete_client: { client: "c" },
     list_project_environments: {},
     get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
+    list_project_skills: {},
+    get_project_skill: { skillId: "sk" },
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },
@@ -2035,6 +2057,16 @@ describe("operation catalog consistency", () => {
     use_sandbox_image: { image: "i" },
     reset_computer: {},
     search_sessions: { query: "q" },
+    send_chat_message: {
+      idempotencyKey: "k",
+      message: "hi",
+      project: "p",
+      modelId: "anthropic/claude-sonnet-5",
+      serverIds: ["srv"],
+    },
+    get_chat_session: { sessionId: "cs_1" },
+    get_chat_session_trace: { sessionId: "cs_1" },
+    render_server_widget: { server: "srv", toolName: "show_map" },
     delete_sandbox_image: { image: "i" },
     search_registry_directory: {},
     get_registry_directory_server: { catalogServerId: "cs" },
@@ -2135,11 +2167,11 @@ describe("operation catalog consistency", () => {
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
-      "create_host",
-      "update_host",
-      "delete_host",
-      "set_host_servers",
-      "duplicate_host",
+      "create_client",
+      "update_client",
+      "delete_client",
+      "set_client_servers",
+      "duplicate_client",
       "create_project_environment",
       "ensure_adhoc_environment",
       "name_environment",
@@ -2205,6 +2237,20 @@ describe("operation catalog consistency", () => {
       "install_registry_directory_server",
       "install_registry_server",
       "uninstall_registry_server",
+      // Executes the tool, then renders its widget. A write for the same
+      // reason `call_server_tool` is: the tool runs.
+      "render_server_widget",
+      // One agent Playground turn. A write because it appends to a durable
+      // transcript, and `risk: "spend"` because it runs a model — the two
+      // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
+      "send_chat_message",
+      // Gate waivers. Both are writes because both persist an audited record
+      // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
+      // deliberately NOT here — reading whether a gate is waived is available
+      // to anyone who can view the run, and a waiver its readers cannot see
+      // is not a visible waiver.
+      "waive_eval_gate",
+      "revoke_eval_gate_waiver",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -2220,6 +2266,14 @@ describe("operation catalog consistency", () => {
     const destructive = new Set([
       "call_server_tool",
       "archive_project_environment",
+      // It IS a tool call — the render is what happens afterwards — so it
+      // inherits `call_server_tool`'s unknowability exactly.
+      "render_server_widget",
+      // Under `toolMode: "auto"` this executes arbitrary third-party tools,
+      // which is `call_server_tool`'s unknowability with a model choosing the
+      // arguments. Softening the destructive default would claim a safety the
+      // host cannot verify, since `readOnlyHint` is server-asserted.
+      "send_chat_message",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(
@@ -2267,6 +2321,42 @@ describe("server live operations", () => {
 
     expect(result.items).toEqual([{ name: "echo", cursorSeen: "page-2" }]);
     expect(result.nextCursor).toBe("tools-page-2");
+  });
+
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results". These listings
+  // are a PASSTHROUGH of the MCP server's cursor, so the rule reaches them.
+  it("accepts an empty-string cursor and puts it on the wire", () => {
+    const parsed = listServerToolsOperation.inputSchema.safeParse({
+      project: "new",
+      server: "Echo",
+      cursor: "",
+    });
+    // A `.min(1)` here would refuse to page a conforming server.
+    expect(parsed.success).toBe(true);
+  });
+
+  it("list_server_tools forwards an empty-string cursor verbatim", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "" },
+      { client }
+    );
+
+    expect(result.items).toEqual([{ name: "echo", cursorSeen: "" }]);
+  });
+
+  it("list_server_tools surfaces an empty-string nextCursor instead of dropping it", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "penultimate" },
+      { client }
+    );
+
+    expect(result.nextCursor).toBe("");
+    expect("nextCursor" in result).toBe(true);
   });
 
   it("call_server_tool defaults parameters and posts the call body", async () => {

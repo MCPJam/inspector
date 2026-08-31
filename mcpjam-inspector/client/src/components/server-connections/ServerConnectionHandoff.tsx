@@ -85,7 +85,7 @@ interface HandoffState {
  * guest-owned request exactly as before.
  */
 async function bestEffortAccessToken(
-  getAccessToken: () => Promise<string | undefined>
+  getAccessToken: () => Promise<string | undefined>,
 ): Promise<string | null> {
   try {
     const token = await getAccessToken();
@@ -106,17 +106,27 @@ async function bestEffortAccessToken(
 class HandoffCallError extends Error {
   constructor(
     message: string,
-    readonly details?: unknown
+    readonly status: number,
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = "HandoffCallError";
   }
 }
 
+function isUsedLinkError(error: unknown): boolean {
+  return (
+    error instanceof HandoffCallError &&
+    typeof error.details === "object" &&
+    error.details !== null &&
+    (error.details as { reason?: unknown }).reason === "REQUEST_NOT_FOUND"
+  );
+}
+
 async function call<T>(
   path: string,
   body?: unknown,
-  accessToken?: string | null
+  accessToken?: string | null,
 ): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -139,7 +149,8 @@ async function call<T>(
   if (!response.ok) {
     throw new HandoffCallError(
       payload?.message ?? "Something went wrong. Please try again.",
-      payload?.details
+      response.status,
+      payload?.details,
     );
   }
   if (!payload) throw new Error("The server sent an unreadable response.");
@@ -192,7 +203,9 @@ function ClaimRefusal({
     return (
       <Shell>
         <div className="space-y-2">
-          <h1 className="text-lg font-semibold">Sign in to finish connecting</h1>
+          <h1 className="text-lg font-semibold">
+            Sign in to finish connecting
+          </h1>
           <p className="text-sm text-muted-foreground">
             {owner
               ? `This connection request was created by ${owner}. Sign in to that account to continue.`
@@ -258,9 +271,16 @@ function ClaimRefusal({
 }
 
 export function ServerConnectionHandoff() {
-  const { getAccessToken, signIn, signOut, user } = useAuth();
+  const {
+    getAccessToken,
+    isLoading: isAuthLoading,
+    signIn,
+    signOut,
+    user,
+  } = useAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [usedLink, setUsedLink] = useState(false);
   const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const claimed = useRef(false);
@@ -274,7 +294,25 @@ export function ServerConnectionHandoff() {
   }, []);
 
   // First load: trade the token for the cookie, then take it out of the URL.
+  //
+  // WAITS FOR AUTHKIT, and that wait is the difference between this page
+  // working and looping forever for a correctly signed-in user.
+  //
+  // `AuthKitProvider` swaps its `getAccessToken` when the client finishes
+  // initializing: before that it is literally
+  // `() => Promise.reject(new LoginRequiredError())`. `bestEffortAccessToken`
+  // cannot tell that rejection from a genuinely signed-out visitor — the two
+  // are the same error — so a claim issued during hydration went out with no
+  // bearer, the backend saw an anonymous caller, and refused with
+  // SIGN_IN_REQUIRED.
+  //
+  // Which then LOOPED, because signing in "succeeds" instantly for someone who
+  // already has a session: AuthKit returns to this same URL (the token is only
+  // stripped after a claim succeeds), the page cold-mounts, hydration races the
+  // claim again, and the same screen comes back. Every cold load of a handoff
+  // link is exactly the case that loses this race.
   useEffect(() => {
+    if (isAuthLoading) return;
     if (claimed.current) return;
     claimed.current = true;
 
@@ -290,14 +328,14 @@ export function ServerConnectionHandoff() {
             { handoffToken: route.handoffToken },
             // Only the claim carries identity. Every later step authenticates
             // with the continuation cookie, which is scoped to this request.
-            await bestEffortAccessToken(getAccessToken)
+            await bestEffortAccessToken(getAccessToken),
           );
           // `replaceState`, not push: the token URL must not be somewhere the
           // back button can return to, and it is single-use anyway.
           window.history.replaceState(
             {},
             "",
-            handoffRequestPath(result.requestId)
+            handoffRequestPath(result.requestId),
           );
         } else if (callbackMatchesPending(pending, callback)) {
           // Returned from the authorization server. The cookie travelled with
@@ -311,7 +349,7 @@ export function ServerConnectionHandoff() {
           window.history.replaceState(
             {},
             "",
-            handoffRequestPath(pending!.requestId)
+            handoffRequestPath(pending!.requestId),
           );
         }
       } catch (cause) {
@@ -323,12 +361,15 @@ export function ServerConnectionHandoff() {
             ? readClaimRefusal(cause.details)
             : null;
         if (claimRefusal) setRefusal(claimRefusal);
-        else setError(cause instanceof Error ? cause.message : String(cause));
+        else {
+          setUsedLink(route?.kind === "claim" && isUsedLinkError(cause));
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
         return;
       }
       await refresh();
     })();
-  }, [refresh]);
+  }, [isAuthLoading, refresh]);
 
   // Poll only while the outstanding step is someone else's.
   useEffect(() => {
@@ -350,7 +391,7 @@ export function ServerConnectionHandoff() {
         setBusy(false);
       }
     },
-    [refresh]
+    [refresh],
   );
 
   /**
@@ -368,7 +409,7 @@ export function ServerConnectionHandoff() {
     try {
       const result = await call<{ status: string }>("/cancel", {});
       setState((current) =>
-        current ? { ...current, status: result.status, live: false } : current
+        current ? { ...current, status: result.status, live: false } : current,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -383,7 +424,7 @@ export function ServerConnectionHandoff() {
     try {
       const { authorizationUrl } = await call<{ authorizationUrl: string }>(
         "/authorize",
-        {}
+        {},
       );
       // Written before navigating, because after `assign` nothing here runs
       // again. The request id is all it holds; the authority to finish is the
@@ -413,10 +454,10 @@ export function ServerConnectionHandoff() {
     setBusy(true);
     const nonce = rememberHandoffSignInReturn(
       `${window.location.pathname}${window.location.search}`,
-      window.location.origin
+      window.location.origin,
     );
     void Promise.resolve(
-      signIn(nonce ? { state: { [HANDOFF_SIGN_IN_STATE_KEY]: nonce } } : {})
+      signIn(nonce ? { state: { [HANDOFF_SIGN_IN_STATE_KEY]: nonce } } : {}),
     ).catch((cause) => {
       setBusy(false);
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -462,8 +503,16 @@ export function ServerConnectionHandoff() {
   if (error && !state) {
     return (
       <Shell>
-        <h1 className="text-lg font-semibold">This link cannot be used</h1>
-        <p className="text-sm text-muted-foreground">{error}</p>
+        <h1 className="text-lg font-semibold">
+          {usedLink
+            ? "This link has already been used"
+            : "This link cannot be used"}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {usedLink
+            ? "Connection links work only once. Create a new link from the CLI to connect again."
+            : error}
+        </p>
       </Shell>
     );
   }
@@ -529,7 +578,7 @@ export function ServerConnectionHandoff() {
                   className="w-full rounded-md border px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-50"
                   onClick={() =>
                     void act(() =>
-                      call("/select-project", { projectId: project.id })
+                      call("/select-project", { projectId: project.id }),
                     )
                   }
                 >

@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
+import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
@@ -660,6 +661,19 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 {...(iterationOverride !== undefined
                   ? { iterationOverride }
                   : {})}
+              />
+              <SuiteRunDisclosureHint
+                suiteId={suite._id}
+                environmentIds={suite.environmentIds}
+                // The host axis applies only when no environments are
+                // attached (the environment axis always wins when both are —
+                // same rule `computeRunTargets` uses). The hint decides from
+                // the COUNT: exactly one attached host is disclosed for real
+                // since G4c, several is the multi-target refusal.
+                hostIds={(suite.hostAttachments ?? []).map(
+                  (attachment) => attachment.namedHostId
+                )}
+                suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
               />
             </span>
           );

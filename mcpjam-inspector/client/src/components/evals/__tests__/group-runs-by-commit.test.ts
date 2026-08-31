@@ -135,6 +135,79 @@ describe("groupRunsByCommit", () => {
     expect(result[0].summary.failed).toBe(1);
   });
 
+  it("does not call a commit of INCONCLUSIVE runs passed", () => {
+    // Verdict policy 2: nothing failed and nothing passed. Counting only
+    // pass/fail leaves both at zero, and the fall-through paints the commit
+    // green — a verdict nobody reached.
+    const runs = [
+      makeRun({
+        _id: "r1",
+        ciMetadata: { commitSha: "inc1234567890" },
+        result: "inconclusive",
+        status: "completed",
+        createdAt: 1000,
+      }),
+    ];
+
+    const result = groupRunsByCommit([makeEntry("s1", "Suite 1", runs)]);
+
+    expect(result[0].status).toBe("inconclusive");
+    expect(result[0].summary).toMatchObject({
+      passed: 0,
+      failed: 0,
+      inconclusive: 1,
+    });
+  });
+
+  it("keeps a measured failure ahead of an inconclusive sibling", () => {
+    const runs = [
+      makeRun({
+        _id: "r1",
+        suiteId: "s1",
+        ciMetadata: { commitSha: "inc1234567890" },
+        result: "inconclusive",
+        status: "completed",
+        createdAt: 1000,
+      }),
+      makeRun({
+        _id: "r2",
+        suiteId: "s1",
+        ciMetadata: { commitSha: "inc1234567890" },
+        result: "failed",
+        status: "completed",
+        createdAt: 2000,
+      }),
+    ];
+
+    const result = groupRunsByCommit([makeEntry("s1", "Suite 1", runs)]);
+    expect(result[0].status).toBe("failed");
+  });
+
+  it("keeps a commit with a real pass out of the inconclusive bucket", () => {
+    const runs = [
+      makeRun({
+        _id: "r1",
+        suiteId: "s1",
+        ciMetadata: { commitSha: "inc1234567890" },
+        result: "inconclusive",
+        status: "completed",
+        createdAt: 1000,
+      }),
+      makeRun({
+        _id: "r2",
+        suiteId: "s1",
+        ciMetadata: { commitSha: "inc1234567890" },
+        result: "passed",
+        status: "completed",
+        createdAt: 2000,
+      }),
+    ];
+
+    const result = groupRunsByCommit([makeEntry("s1", "Suite 1", runs)]);
+    expect(result[0].status).toBe("passed");
+    expect(result[0].summary.inconclusive).toBe(1);
+  });
+
   it("picks up branch from ciMetadata", () => {
     const runs = [
       makeRun({
@@ -197,5 +270,21 @@ describe("orderCommitGroupRunsByOutcome", () => {
       failed,
     ]);
     expect(ordered.map((x) => x._id)).toEqual(["f", "r", "p", "c"]);
+  });
+
+  it("sorts an inconclusive run ahead of a passing one", () => {
+    const passed = makeRun({ _id: "p", result: "passed", status: "completed" });
+    const undecided = makeRun({
+      _id: "i",
+      result: "inconclusive",
+      status: "completed",
+    });
+    const failed = makeRun({ _id: "f", result: "failed", status: "completed" });
+
+    expect(
+      orderCommitGroupRunsByOutcome([passed, undecided, failed]).map(
+        (x) => x._id
+      )
+    ).toEqual(["f", "i", "p"]);
   });
 });

@@ -3,6 +3,7 @@ import {
   ALL_OPERATIONS,
   getPluginVersionOperation,
   listProjectPluginsOperation,
+  listProjectServersOperation,
   listProjectsOperation,
 } from "@mcpjam/sdk/platform";
 import {
@@ -65,8 +66,28 @@ function fakeRegistrar(): {
   return { registrar, registrations };
 }
 
+/**
+ * The JSON half of a tool's text content.
+ *
+ * The text block leads with one `Label: https://…` line per permalink and then
+ * the payload, separated by a blank line — deliberately not parseable as a
+ * whole. The text channel is what a MODEL reads (and hosts vary in whether
+ * they render `structuredContent` at all, which is why the links are there
+ * too); `structuredContent` is the machine channel, and every consumer that
+ * wants an object should read that.
+ */
+function jsonBodyOf(result: ToolResult): Record<string, unknown> {
+  const text = (result.content?.[0] as { text: string }).text;
+  const separator = text.indexOf("\n\n{");
+  return JSON.parse(separator === -1 ? text : text.slice(separator + 2));
+}
+
 function fakeToolContext(
-  overrides: { bearerToken?: string; platformApiUrl?: string } = {}
+  overrides: {
+    bearerToken?: string;
+    platformApiUrl?: string;
+    appOrigin?: string;
+  } = {}
 ): PlatformToolContext {
   return {
     // runPlatformOperation resolves the bearer via getBearerToken() (async, so
@@ -75,6 +96,7 @@ function fakeToolContext(
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
+      MCPJAM_APP_ORIGIN: overrides.appOrigin ?? "https://staging.example.com",
     },
   };
 }
@@ -107,10 +129,20 @@ const PLAIN_TOOLS = [
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
+  // The render verdict is structured evidence (tree, console errors, blocked
+  // requests). A widget PANEL here would be a second, drifting copy of the
+  // Apps tab.
+  "render_server_widget",
   "list_server_prompts",
   "get_server_prompt",
   "list_server_resources",
   "read_server_resource",
+  // Skills over MCP: a catalog, a verified skill body, and a verified file.
+  // All three can answer with a refusal naming the integrity check that
+  // failed, which is structured evidence to read rather than a card to render.
+  "list_server_skills",
+  "get_server_skill",
+  "read_server_skill_file",
   // Host-compat check: agent-oriented per-host verdict payload, no widget view.
   "check_host_compatibility",
   // Directory readiness: receipts and run rows are agent-oriented payloads,
@@ -130,6 +162,7 @@ const PLAIN_TOOLS = [
   "create_eval_suite",
   // Eval suite/case editing: agent-oriented payloads, no widget view.
   "get_eval_suite",
+  "get_eval_run_disclosure",
   "update_eval_suite",
   "delete_eval_suite",
   "set_eval_suite_schedule",
@@ -152,8 +185,12 @@ const PLAIN_TOOLS = [
   // Agent Plugins reads: agent-oriented payloads, no widget view.
   "list_project_plugins",
   "get_plugin_version",
+  "list_project_skills",
+  "get_project_skill",
   "get_eval_iteration_trace",
   "compare_eval_run",
+  // The gate-waiver read: an agent-oriented payload, no widget view.
+  "get_eval_gate_waiver",
   "get_eval_run_steps",
   "cancel_eval_run",
   "request_eval_run_judge",
@@ -162,6 +199,11 @@ const PLAIN_TOOLS = [
   "connect_eval_check_repo",
   "list_chat_sessions",
   "search_sessions",
+  // Agent Playground: the turn plus its two reads. Agent-oriented payloads —
+  // a trace panel would be a second, drifting copy of the eval trace viewer.
+  "send_chat_message",
+  "get_chat_session",
+  "get_chat_session_trace",
   // Swarms + user testing. No widget views yet: these are agent-oriented
   // payloads, and a half-designed panel is worse than the structured JSON.
   "get_capabilities",
@@ -215,6 +257,12 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "list_clients",
+  "get_client",
+  "create_client",
+  "update_client",
+  "set_client_servers",
+  "duplicate_client",
   "search_registry_directory",
   "get_registry_directory_server",
   "list_registry_directory_sources",
@@ -342,10 +390,14 @@ describe("platform tool registration", () => {
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
+      "render_server_widget",
       "list_server_prompts",
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "list_server_skills",
+      "get_server_skill",
+      "read_server_skill_file",
       "check_host_compatibility",
       "start_claude_readiness_run",
       "start_openai_readiness_run",
@@ -363,6 +415,7 @@ describe("platform tool registration", () => {
       "run_eval_suite",
       "create_eval_suite",
       "get_eval_suite",
+      "get_eval_run_disclosure",
       "update_eval_suite",
       "delete_eval_suite",
       "set_eval_suite_schedule",
@@ -376,6 +429,7 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "get_eval_run",
       "compare_eval_run",
+      "get_eval_gate_waiver",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",
@@ -391,10 +445,15 @@ describe("platform tool registration", () => {
       "get_sandbox_image",
       "list_project_plugins",
       "get_plugin_version",
+      "list_project_skills",
+      "get_project_skill",
       "list_scenarios",
       "get_scenario",
       "list_chat_sessions",
       "search_sessions",
+      "send_chat_message",
+      "get_chat_session",
+      "get_chat_session_trace",
       "get_capabilities",
       "list_personas",
       "get_persona",
@@ -446,6 +505,12 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "list_clients",
+      "get_client",
+      "create_client",
+      "update_client",
+      "set_client_servers",
+      "duplicate_client",
       "search_registry_directory",
       "get_registry_directory_server",
       "list_registry_directory_sources",
@@ -571,10 +636,18 @@ describe("platform tool registration", () => {
       "set_user_testing_guest_execution",
       "upsert_user_testing_member",
       "rebind_user_testing_scenario",
+      // Client authoring, the ADDITIVE half. Both mint a new client and change
+      // nothing that exists — which is exactly what separates them from
+      // `update_client` / `set_client_servers` below.
+      "create_client",
+      "duplicate_client",
     ]);
     // Destructive AND not safe to repeat — for opposite reasons: the soft
     // deletes 404 on a retry, the rotation mints another link.
     const NON_IDEMPOTENT_DESTRUCTIVE = new Set([
+      // Executes the caller's tool before rendering, and nobody can promise
+      // that running a third party's tool twice is safe.
+      "render_server_widget",
       "delete_persona",
       "archive_journey",
       "archive_swarm",
@@ -582,6 +655,11 @@ describe("platform tool registration", () => {
       "rotate_user_testing_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
+      // `risk: "destructive"` is the CONSERVATIVE reading of an unknowable
+      // effect, not a claim that this removes a specific record. Overclaiming
+      // destructiveness is the safe direction, and it matches what the spec
+      // tells a client to assume when the hints are absent anyway.
+      "render_server_widget",
       "delete_eval_suite",
       "delete_eval_case",
       // Cancelling a run terminates in-flight work, so it announces destructive.
@@ -600,6 +678,17 @@ describe("platform tool registration", () => {
       "rotate_user_testing_link",
       "remove_user_testing_member",
       "uninstall_registry_server",
+      // Client edits: DETERMINISTIC OVERWRITES. `destructiveHint: true` here is
+      // not "this is a deletion" — the taxonomy is "removes or invalidates
+      // something that existed", and replacing a live setting (or a server set,
+      // where every omitted server is detached) does exactly that. They stay in
+      // the catalog anyway, behind compare-and-set; `delete_client` does not,
+      // because it removes the client identity itself. They ARE idempotent:
+      // applying the same `set` twice against the same `expectedConfigId`
+      // conflicts on the second call rather than compounding, and applying it
+      // to the already-edited config is a no-op.
+      "update_client",
+      "set_client_servers",
     ]);
 
     for (const registration of registrations) {
@@ -619,7 +708,13 @@ describe("platform tool registration", () => {
           destructiveHint: true,
           idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
         });
-      } else if (registration.name === "call_server_tool") {
+      } else if (
+        registration.name === "call_server_tool" ||
+        // A turn under `toolMode: "auto"` executes arbitrary third-party
+        // tools with the MODEL choosing the arguments, so its effects are no
+        // more knowable than a direct call's. Same absent hints, same reason.
+        registration.name === "send_chat_message"
+      ) {
         // Arbitrary third-party tool execution: destructive/idempotent hints
         // are deliberately absent so clients assume destructive (spec
         // default).
@@ -662,12 +757,12 @@ describe("widget payload tagging", () => {
     const tagged = (await registration.ui!.callback!({})) as ToolResult;
     expect(tagged.isError).toBeUndefined();
     expect(tagged.structuredContent?.widget).toBe("scenarios");
-    expect(JSON.parse(tagged.content[0]!.text).widget).toBe("scenarios");
+    expect(jsonBodyOf(tagged).widget).toBe("scenarios");
 
     const plain = (await registration.callback({})) as ToolResult;
     expect(plain.isError).toBeUndefined();
     expect(plain.structuredContent).not.toHaveProperty("widget");
-    expect(JSON.parse(plain.content[0]!.text)).not.toHaveProperty("widget");
+    expect(jsonBodyOf(plain)).not.toHaveProperty("widget");
   });
 
   it("tags show_servers widget payloads with the servers view", async () => {
@@ -746,7 +841,12 @@ describe("plugin read tools", () => {
     )) as ToolResult;
 
     expect(result.isError).toBeUndefined();
-    expect(result.structuredContent).toEqual(version);
+    // The envelope: the operation's own payload, plus the permalinks it
+    // derived. `get_plugin_version` resolves no project (it takes a global
+    // pluginVersionId), so it declares no permalink and the array is empty —
+    // present regardless, so a consumer never has to branch on the field
+    // existing.
+    expect(result.structuredContent).toEqual({ ...version, permalinks: [] });
   });
 });
 
@@ -868,5 +968,96 @@ describe("runPlatformOperation", () => {
       code: "NOT_FOUND",
       message: "No accessible MCPJam projects were found.",
     });
+  });
+});
+
+describe("the permalink envelope", () => {
+  it("returns one permalink per row, scoped to the project the op resolved", async () => {
+    // The reproduction, inverted: the caller names the project by NAME, so the
+    // id exists only after the operation resolves it. Before the resolved-scope
+    // receipt an adapter had nothing to scope a link with, and the model
+    // invented `https://app.mcpjam.com/servers` — which opens whichever
+    // project the RECIPIENT last selected.
+    stubPlatformFetch({
+      "/projects": {
+        items: [
+          { id: "proj_demo", name: "Demo", updatedAt: 2 },
+          { id: "proj_default", name: "Default", updatedAt: 1 },
+        ],
+      },
+      "/projects/proj_demo/servers": {
+        items: [
+          { id: "srv_1", name: "Asana", projectId: "proj_demo" },
+          { id: "srv_2", name: "Linear", projectId: "proj_demo" },
+        ],
+      },
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "jwt" }),
+      listProjectServersOperation,
+      { project: "Demo" }
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    const permalinks = (
+      result.structuredContent as { permalinks: Array<Record<string, unknown>> }
+    ).permalinks;
+    expect(permalinks.map((permalink) => permalink.url)).toEqual([
+      "https://staging.example.com/servers/srv_1?project=proj_demo",
+      "https://staging.example.com/servers/srv_2?project=proj_demo",
+    ]);
+    // Correlated by resource, not by array position.
+    expect(permalinks[0]!.resource).toEqual({
+      type: "project_server",
+      id: "srv_1",
+    });
+  });
+
+  it("leads the text fallback with the links, because hosts vary", async () => {
+    stubPlatformFetch({
+      "/projects": { items: [{ id: "proj_demo", name: "Demo", updatedAt: 2 }] },
+      "/projects/proj_demo/servers": {
+        items: [{ id: "srv_1", name: "Asana", projectId: "proj_demo" }],
+      },
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "jwt" }),
+      listProjectServersOperation,
+      {}
+    )) as ToolResult;
+
+    const text = (result.content?.[0] as { text: string }).text;
+    // First, so truncation of a large list cannot cut it.
+    expect(text.startsWith("Open Asana: ")).toBe(true);
+    expect(text).toContain(
+      "https://staging.example.com/servers/srv_1?project=proj_demo"
+    );
+  });
+
+  it("honors a staging app origin rather than the hosted default", async () => {
+    stubPlatformFetch({
+      "/projects": { items: [{ id: "proj_demo", name: "Demo", updatedAt: 2 }] },
+      "/projects/proj_demo/servers": {
+        items: [{ id: "srv_1", name: "Asana", projectId: "proj_demo" }],
+      },
+    });
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({
+        bearerToken: "jwt",
+        appOrigin: "http://localhost:6274",
+      }),
+      listProjectServersOperation,
+      {}
+    )) as ToolResult;
+
+    const permalinks = (
+      result.structuredContent as { permalinks: Array<{ url: string }> }
+    ).permalinks;
+    expect(permalinks[0]!.url).toBe(
+      "http://localhost:6274/servers/srv_1?project=proj_demo"
+    );
   });
 });
