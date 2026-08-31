@@ -1,6 +1,6 @@
 {
   "id": "hosted-0016",
-  "note": "no authored assertions — nothing about user value was measured",
+  "note": "no authored assertions \u2014 nothing about user value was measured",
   "origin": "synthetic",
   "authored": {
     "mode": "model_driven",
@@ -88,6 +88,6 @@
         "reason": "notAuthored"
       }
     ],
-    "stageAnalyzerVersion": 5
+    "stageAnalyzerVersion": 6
   }
 }

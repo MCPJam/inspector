@@ -64,8 +64,14 @@ import {
  * is not persisted cannot be recomputed selectively, which is the entire
  * reason `sessionReadiness` stamps `READINESS_ANALYZER_VERSION` on every
  * record it writes.
+ *
+ * 6 (UVH-IN1): tool-call predicate results are routed to `selection` instead
+ * of falling to `userValue` as `predicateFailed`. `STAGE_REASONS` does not
+ * move — the routing re-uses `missingToolCall` and `unexpectedToolCall` — so
+ * the backend mirror needs no re-pin for this bump. Rows derived under 5 are
+ * identifiable as stale and can be recomputed selectively.
  */
-export const STAGE_ANALYZER_VERSION = 5;
+export const STAGE_ANALYZER_VERSION = 6;
 
 /**
  * Why a stage landed where it did.
@@ -228,7 +234,64 @@ export type StagePromptSummaryLike = {
 export type StagePredicateResultLike = {
   passed?: boolean;
   reason?: string;
+  /**
+   * The predicate that produced this row, when the producer kept it.
+   *
+   * Optional because it is genuinely absent on older rows and on producers
+   * that never carried it. A row without it is graded exactly as before —
+   * user-value evidence — so widening this type changes nothing on its own.
+   */
+  predicate?: { type?: string; toolName?: string };
 };
+
+/**
+ * Predicate kinds that are evidence about TOOL SELECTION, not user value.
+ *
+ * `stepsToPromptTurns` promotes only `toolCalledWith` into `expectedToolCalls`,
+ * where the selection matcher grades it. The three kinds below fall through to
+ * per-turn checks and arrive here as predicate results, so before UVH-IN1 a
+ * case asserting "tool X was never called" filed its failure at `userValue`
+ * with `predicateFailed` — the chain reporting that the user did not get what
+ * they wanted, when what actually happened is that the model picked the wrong
+ * tool. In one prod audit that alone accounted for the gap between 2 selection
+ * failures and 12 user-value ones.
+ *
+ * `toolCalledWith` is deliberately absent: it is already matcher-graded, and
+ * re-reading its point-in-time predicate row here would let a raw residual
+ * contradict the adjudicated verdict the matcher path produces.
+ */
+const SELECTION_PREDICATE_REASONS: Record<string, StageReason> = {
+  /** A required call never happened — the same fact `missing` reports. */
+  toolCalledAtLeastOnce: "missingToolCall",
+  /** Something else went first: a call we did not expect, in that position. */
+  firstToolWas: "unexpectedToolCall",
+  /** A forbidden tool was called. */
+  toolNeverCalled: "unexpectedToolCall",
+};
+
+/**
+ * Kinds that assert a call WILL happen, so they make `call` applicable.
+ *
+ * `toolNeverCalled` is deliberately excluded: a case whose only tool assertion
+ * is "never call X" expects no call at all, and turning `call` on for it would
+ * demand evidence of something the case exists to forbid.
+ */
+const POSITIVE_TOOL_CALL_PREDICATE_KINDS = new Set([
+  "toolCalledAtLeastOnce",
+  "firstToolWas",
+]);
+
+/** True when this predicate row is selection evidence rather than user value. */
+export function isSelectionPredicateKind(kind: string | undefined): boolean {
+  return kind !== undefined && kind in SELECTION_PREDICATE_REASONS;
+}
+
+/** True when this predicate kind asserts that a tool call will occur. */
+export function isPositiveToolCallPredicateKind(
+  kind: string | undefined
+): boolean {
+  return kind !== undefined && POSITIVE_TOOL_CALL_PREDICATE_KINDS.has(kind);
+}
 
 export type StageToolErrorLike = {
   kind?: string;
@@ -638,12 +701,40 @@ function selectionNeedsExplicitEvidence(
   return !prompts.some((p) => nonEmpty(p.expectedToolCalls));
 }
 
+/** Tool-selection predicate rows, in author order. */
+function selectionPredicates(e: StageEvidence): StagePredicateResultLike[] {
+  return (e.predicateResults ?? []).filter((r) =>
+    isSelectionPredicateKind(r.predicate?.type)
+  );
+}
+
+/**
+ * The reason a set of failed selection predicates is filed under.
+ *
+ * A missing REQUIRED call outranks an unexpected one: "the tool you needed was
+ * never called" is the more specific and more actionable of the two, and a case
+ * can fail both at once (a required call absent while a forbidden one fired).
+ */
+function selectionPredicateReason(
+  failed: readonly StagePredicateResultLike[]
+): StageReason {
+  return failed.some(
+    (r) => SELECTION_PREDICATE_REASONS[r.predicate?.type ?? ""] === "missingToolCall"
+  )
+    ? "missingToolCall"
+    : "unexpectedToolCall";
+}
+
 function deriveSelection(
   e: StageEvidence,
   authored: StageAuthoredCase
 ): StageResultRow {
   const prompts = e.prompts ?? [];
-  if (selectionNeedsExplicitEvidence(authored, prompts)) {
+  const predicates = selectionPredicates(e);
+  // Authored tool-call predicates ARE explicit evidence about selection, so a
+  // case carrying them is never sent down the "nothing adjudicates this" path
+  // below even when it authored no `expectedToolCalls`.
+  if (predicates.length === 0 && selectionNeedsExplicitEvidence(authored, prompts)) {
     // No trace at all outranks both branches below, the same way it does in
     // `deriveCall` and `deriveResponse`. "The run recorded no trace" and "a
     // sink existed and captured nothing" are different facts, and reporting
@@ -670,6 +761,23 @@ function deriveSelection(
         promptIndexes: promptIndexes(missing),
       });
     }
+  }
+
+  // Authored tool-call predicates, after the matcher's most specific verdict
+  // and before its tolerated-extras logic. A failed predicate is a definite,
+  // author-stated fact about which tool the model picked; the `unexpected`
+  // branch below is the one that has to decide whether extras were tolerated.
+  const failedPredicates = predicates.filter((r) => r.passed === false);
+  if (failedPredicates.length > 0) {
+    return row(
+      "selection",
+      "failed",
+      selectionPredicateReason(failedPredicates),
+      boundedPredicateReasons(failedPredicates)
+    );
+  }
+
+  if (prompts.length > 0) {
     const unexpected = prompts.filter((p) => nonEmpty(p.unexpected));
     if (unexpected.length > 0) {
       // Extras are a failure ONLY when the turn's own verdict says so.
@@ -702,6 +810,13 @@ function deriveSelection(
         promptIndexes: promptIndexes(prompts),
       });
     }
+    return row("selection", "passed", "observed");
+  }
+  // Predicates that all PASSED are evidence too, not just blame: a case whose
+  // only selection assertion is "never call the admin tool" and which did not
+  // call it has measured selection and found it sound. Reporting that as
+  // `notMeasured` would understate what the run actually established.
+  if (predicates.length > 0) {
     return row("selection", "passed", "observed");
   }
   if (e.traceAbsent) return row("selection", "notMeasured", "traceAbsent");
@@ -812,21 +927,22 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
   if (e.evaluatorErrored) {
     return row("userValue", "notMeasured", "evaluatorError");
   }
-  const results = e.predicateResults ?? [];
+  // Tool-call predicates are ROUTED to `selection`, not copied into it: a
+  // failure filed in both places would double-count one defect and, worse,
+  // make `firstFailedStage` depend on which stage the reader looked at first.
+  // What is left here is what actually speaks to the user's ask.
+  const results = (e.predicateResults ?? []).filter(
+    (r) => !isSelectionPredicateKind(r.predicate?.type)
+  );
   if (results.length > 0) {
     const failed = results.filter((r) => r.passed === false);
     if (failed.length > 0) {
-      return row("userValue", "failed", "predicateFailed", {
-        predicateReasons: failed
-          .map((r) => r.reason)
-          .filter((r): r is string => typeof r === "string")
-          .slice(0, MAX_EVIDENCE_REASONS)
-          .map((r) =>
-            r.length > MAX_EVIDENCE_REASON_CHARS
-              ? `${r.slice(0, MAX_EVIDENCE_REASON_CHARS - 1)}\u2026`
-              : r
-          ),
-      });
+      return row(
+        "userValue",
+        "failed",
+        "predicateFailed",
+        boundedPredicateReasons(failed)
+      );
     }
     return row("userValue", "passed", "observed");
   }
@@ -866,6 +982,28 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
     // `skipped` / `not_applicable` fall through to the floor.
   }
   return row("userValue", "notMeasured", "noEvidenceCaptured");
+}
+
+/**
+ * Predicate reasons under the row's evidence caps.
+ *
+ * Extracted so `selection` and `userValue` bound their reasons identically —
+ * two copies of the same slice-and-ellipsis would be free to drift, and the
+ * cap is what keeps a row from carrying an unbounded model-authored string.
+ */
+function boundedPredicateReasons(
+  rows: readonly StagePredicateResultLike[]
+): StageEvidenceRefs | undefined {
+  const bounded = rows
+    .map((r) => r.reason)
+    .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
+    .slice(0, MAX_EVIDENCE_REASONS)
+    .map((r) =>
+      r.length > MAX_EVIDENCE_REASON_CHARS
+        ? `${r.slice(0, MAX_EVIDENCE_REASON_CHARS - 1)}…`
+        : r
+    );
+  return bounded.length > 0 ? { predicateReasons: bounded } : undefined;
 }
 
 /**
