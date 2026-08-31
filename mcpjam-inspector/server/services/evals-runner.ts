@@ -6,6 +6,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
@@ -4439,10 +4440,21 @@ const runHostedIterationWithBrowser = async (
   // `builtInToolIds` resolve via the shared registry, billed against the
   // project target the org-BYOK/jam billing paths derive.
   const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
+  // Unattended: nothing here can pause to ask, so the run's DECLARED policy is
+  // the only thing that can authorize browser tools. Absent or malformed ⇒
+  // undefined ⇒ they are not advertised at all (fail-closed).
+  const browserApprovalDelivery = browserApprovalDeliveryFor(
+    resolvedExecution.browserToolPolicy,
+    { source: "evals-runner" }
+  );
   const builtInTools = resolveHostTools(
     { builtInToolIds: resolvedExecution.builtInToolIds },
     builtInTarget && "projectId" in builtInTarget
-      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
+      ? {
+          authHeader: convexAuthToken,
+          projectId: builtInTarget.projectId,
+          ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+        }
       : null
   );
   // ── Harness execution inputs, resolved once per iteration.

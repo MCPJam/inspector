@@ -486,24 +486,20 @@ export function deriveIterationPayload(args: {
 
   const stage = traceUsable
     ? buildStageMetadata({
-        ...(stageCase ? { stageCase } : {}),
-        ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
-        ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
-        ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
-        ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
-        // UVH-IN2: recovered from the stored chain, because `stepError` is
-        // transient runner state this pass never receives.
-        ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
-        ...(iteration.toolSignals
-          ? { toolSignals: iteration.toolSignals }
-          : {}),
-        ...(iteration.setupSignals
-          ? { setupSignals: iteration.setupSignals }
-          : {}),
-        ...(judgeEvidence ? { judgeEvidence } : {}),
-        ...(metadataAttribution ? { metadataAttribution } : {}),
-        status: iteration.status === "failed" ? "failed" : "completed",
-        ...(iteration.error ? { error: iteration.error } : {}),
+    ...(stageCase ? { stageCase } : {}),
+    ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
+    ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
+    ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
+    ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
+    ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
+    ...(iteration.toolSignals ? { toolSignals: iteration.toolSignals } : {}),
+    ...(iteration.setupSignals
+      ? { setupSignals: iteration.setupSignals }
+      : {}),
+    ...(judgeEvidence ? { judgeEvidence } : {}),
+    ...(metadataAttribution ? { metadataAttribution } : {}),
+    status: iteration.status === "failed" ? "failed" : "completed",
+    ...(iteration.error ? { error: iteration.error } : {}),
       })
     : // `stageAnalyzerVersion` is suppressed WITH the rest: stamping it beside
       // no `stageResults` would claim a derivation that did not happen, and
