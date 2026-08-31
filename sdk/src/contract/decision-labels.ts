@@ -134,8 +134,12 @@ export const STAGE_REASON_LABELS = Object.freeze({
   // of claim. The provenance belongs in the label because these strings are
   // the ONE place all four renderers read from.
   judgeObserved: "the LLM judge scored at or above the threshold",
+  // "AT or above the floor": the band is `>= partialFloor` and `< threshold`
+  // (`stage-derivation.ts`), so a score exactly ON the floor is partial. These
+  // strings are the one place every renderer reads from, and "above the floor"
+  // described the boundary score as outside a band it is inside.
   judgePartial:
-    "the LLM judge scored inside the partial band — above the floor, below the threshold",
+    "the LLM judge scored inside the partial band — at or above the floor, below the threshold",
   judgeFailed: "the LLM judge scored below the partial floor",
   judgePending: "an LLM judge verdict is owed and has not arrived",
   judgeNotRequested: "no LLM judge verdict was ever owed",
