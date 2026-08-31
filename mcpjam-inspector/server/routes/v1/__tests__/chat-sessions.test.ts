@@ -6,6 +6,7 @@ import {
   getDefaultClientCapabilities,
 } from "@mcpjam/sdk";
 import { Hono } from "hono";
+import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 
 /**
  * The agent Playground surface (`chat-sessions.ts` + `chat-session-turn.ts`).
@@ -771,6 +772,18 @@ describe("skills capability on the agent turn", () => {
     // was never configured for.
     expect(clientDeclaresSkillsExtension({})).toBe(false);
     expect(clientDeclaresSkillsExtension(undefined)).toBe(false);
+  });
+
+  it("keeps the turn path guest-closed", () => {
+    // The turn builds a LIVE capability set from the project skill pool, which
+    // resolves `projectSkills:listSkills` — a signed-in-only Convex query that
+    // refuses a guest bearer (CONVEX-19R). Default-deny already covers this
+    // path; asserted so an allowlist edit has to break this test to reach it.
+    // `/chat-sessions` itself IS guest-allowed, so the two live one exact-match
+    // pattern apart.
+    const TURN = "/api/v1/chat-sessions/messages";
+    expect(isGuestAllowedV1Request("POST", TURN)).toBe(false);
+    expect(isGuestAllowedV1Request("POST", "/api/v1/chat-sessions")).toBe(true);
   });
 });
 
