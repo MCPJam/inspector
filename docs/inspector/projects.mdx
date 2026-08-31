@@ -18,17 +18,98 @@ Each project saves its own set of MCP servers. Switch between projects with one 
 
 The combined org and project switcher sits at the top of the sidebar. It shows your active project name and, below it, the organization it belongs to.
 
-1. **Click the switcher** at the top of the sidebar to open the context menu
-2. **Create a project** - Click the **+** icon next to the **Projects** heading and give it a name
-3. **Add your servers** - Configure your MCP servers in the Connect tab
-4. **Enable auto-connect** - Use the **Auto-connect** toggle in the Connect tab header to automatically connect all project servers whenever a host opens
-5. **Share with your team** - Click the share button and invite collaborators
+<Steps>
+<Step title="Click the switcher">
+Click the switcher at the top of the sidebar to open the context menu.
+</Step>
+
+<Step title="Create a project">
+Click the **+** icon next to the **Projects** heading and give it a name.
+</Step>
+
+<Step title="Add your servers">
+Configure your MCP servers in the Connect tab.
+</Step>
+
+<Step title="Enable auto-connect">
+Use the **Auto-connect** toggle in the Connect tab header to automatically connect all project servers whenever a host opens.
+
+<Check>
+Your servers connect on their own the next time a host opens, so you can go straight to the Playground.
+</Check>
+</Step>
+
+<Step title="Share with your team">
+Click the share button and invite collaborators. The full flow is under [Sharing Projects](#sharing-projects).
+</Step>
+</Steps>
 
 <Info>
 When you switch projects, all servers disconnect automatically to give you a clean slate.
 </Info>
 
-## Switching Organizations
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/p27gp_OuyMA"
+  title="Projects demo"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
+## Sharing Projects
+
+Project sharing lets your entire team work with the same servers. Set up your project once, invite your team by email, and everyone gets access to the same servers with the same configurations instantly.
+
+### What Gets Shared
+
+Members get access to every server in the project with the same configuration. Project admins can also configure which servers auto-connect and set per-server overrides (headers, timeout) from the Servers tab — these settings apply across every host in the project.
+
+<Note>
+For security, authorization headers and OAuth tokens are never shared. Each team member authenticates with their own credentials when connecting to servers that require authentication.
+</Note>
+
+### How to Share a Project
+
+1. **Sign in** - Sharing requires authentication
+2. **Click the member avatars** in the header (or the share button)
+3. **Enter an email address** of the person you want to invite
+4. **Click "Invite"** to send the invitation
+
+Once they sign in with that email address, the shared project will appear in their project list.
+
+### Managing Members
+
+If you created the project, you can remove any member by clicking the X next to their name.
+
+If you're not the creator, you can leave the project at any time. The creator can also remove you from the project.
+
+### Real-Time Sync
+
+Changes sync instantly between all project members. New servers and configuration changes update automatically for everyone.
+
+## Project Settings
+
+Open **Project Settings** (gear icon in the header) to manage project-level configuration.
+
+### Default host config
+
+The **Default Host Config** section sets the seed configuration applied to new scenarios, eval suites, and direct chat tabs when they are created. It controls the default model, system prompt, temperature, tool approval, connection settings, capabilities, and host context for anything new in the project.
+
+Editing the default host config does **not** change existing scenarios or eval suites — each owns its own config once created.
+
+The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
+
+#### Personal computer
+
+When your deployment exposes computer-backed tools (such as **Bash**), a **Personal computer** toggle appears in the built-in tools section of the host config editor. Turning it on attaches a per-member cloud workstation — a persistent Linux sandbox — to the host.
+
+- **Computer-backed tools are disabled until a computer is attached.** The checkbox for tools like Bash is greyed out with a hint ("Requires a personal computer") until you turn the toggle on.
+- **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
+- The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
+
+## Organizations
+
+### Switching Organizations
 
 The context menu leads with the **Projects** list. At the bottom of the menu, a footer row shows your active organization name and its shared credit usage.
 
@@ -42,15 +123,7 @@ If you were invited to a paid-seat organization but the seat hasn't been paid fo
 After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
 </Info>
 
-<iframe
-  className="w-full aspect-video rounded-xl"
-  src="https://www.youtube.com/embed/p27gp_OuyMA"
-  title="Projects demo"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-  allowFullScreen
-></iframe>
-
-## Leaving an organization
+### Leaving an organization
 
 If you are a member (not an owner or admin) of an organization, you will see an **Access restricted** screen when you open the organization settings. From that screen you can leave the organization:
 
@@ -61,17 +134,6 @@ You will lose access to the organization immediately and be redirected to the Se
 
 <Note>
 Owners cannot leave an organization — transfer ownership or delete the organization instead.
-</Note>
-## Sharing Projects
-
-Project sharing lets your entire team work with the same servers. Set up your project once, invite your team by email, and everyone gets access to the same servers with the same configurations instantly.
-
-### What Gets Shared
-
-Members get access to every server in the project with the same configuration. Project admins can also configure which servers auto-connect and set per-server overrides (headers, timeout) from the Servers tab — these settings apply across every host in the project.
-
-<Note>
-For security, authorization headers and OAuth tokens are never shared. Each team member authenticates with their own credentials when connecting to servers that require authentication.
 </Note>
 
 ## Secret storage for env vars and headers
@@ -93,45 +155,6 @@ If you want to change the **authentication type** (for example, switching from B
 - **Env vars**: Any edit to the env vars section (add, remove, or change a value) replaces the stored secret with the new set of values on save.
 - **Custom headers**: Any edit to headers or the authentication type replaces the stored headers secret on save.
 - If you save without revealing or editing a secret section, the existing stored secret is left unchanged.
-
-### Real-Time Sync
-
-Changes sync instantly between all project members. New servers and configuration changes update automatically for everyone.
-
-### How to Share a Project
-
-1. **Sign in** - Sharing requires authentication
-2. **Click the member avatars** in the header (or the share button)
-3. **Enter an email address** of the person you want to invite
-4. **Click "Invite"** to send the invitation
-
-Once they sign in with that email address, the shared project will appear in their project list.
-
-### Managing Members
-
-If you created the project, you can remove any member by clicking the X next to their name.
-
-If you're not the creator, you can leave the project at any time. The creator can also remove you from the project.
-
-## Project Settings
-
-Open **Project Settings** (gear icon in the header) to manage project-level configuration.
-
-### Default host config
-
-The **Default Host Config** section sets the seed configuration applied to new scenarios, eval suites, and direct chat tabs when they are created. It controls the default model, system prompt, temperature, tool approval, connection settings, capabilities, and host context for anything new in the project.
-
-Editing the default host config does **not** change existing scenarios or eval suites — each owns its own config once created.
-
-The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
-
-#### Personal computer
-
-When your deployment exposes computer-backed tools (such as **Bash**), a **Personal computer** toggle appears in the built-in tools section of the host config editor. Turning it on attaches a per-member cloud workstation — a persistent Linux sandbox — to the host.
-
-- **Computer-backed tools are disabled until a computer is attached.** The checkbox for tools like Bash is greyed out with a hint ("Requires a personal computer") until you turn the toggle on.
-- **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
-- The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
 
 ## What's Next
 

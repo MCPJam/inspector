@@ -400,7 +400,7 @@ getWidgetSnapshots(): EvalWidgetSnapshotInput[]
 
 MCP App UIs reference HTML via **`ui.resourceUri`**. That HTML is fetched with MCP **`resources/read`**, which only the connected [`MCPClientManager`](/sdk/reference/mcp-client-manager) can perform. The model’s tool **result** is not a substitute for that document, so **`getWidgetSnapshots()` stays empty unless you pass the same `manager` into `new HostRunner({ …, mcpClientManager: manager })`**.
 
-When you report results to MCPJam (for example via [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) or [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result)), snapshots are uploaded and linked from the trace so the dashboard can **replay widgets offline**.
+When you report results to MCPJam (for example via [`createEvalRunReporter`](/sdk/reference/eval-reporting/incremental#createevalrunreporter) or [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result)), snapshots are uploaded and linked from the trace so the dashboard can **replay widgets offline**.
 
 #### Example
 
@@ -416,7 +416,7 @@ console.log("Snapshots:", snapshots.length);
 
 ## toEvalResult()
 
-Builds an [`EvalResultInput`](/sdk/reference/eval-reporting#evalresultinput) for MCPJam reporting (messages, spans, tool calls, tokens, optional widget snapshots).
+Builds an [`EvalResultInput`](/sdk/reference/eval-reporting/configuration#evalresultinput) for MCPJam reporting (messages, spans, tool calls, tokens, optional widget snapshots).
 
 ```typescript
 toEvalResult(
@@ -426,9 +426,9 @@ toEvalResult(
 ): EvalResultInput
 ```
 
-The **`passed`** field combines your explicit or inferred structural outcome with **tool execution** checks (see [Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed)): by default, failures in the trace (MCP `isError`, errored tool spans, error-shaped tool-results) force `passed: false` even if you pass `passed: true` in `options`. Set **`failOnToolError: false`** in `options` to keep structural / explicit `passed` only.
+The **`passed`** field combines your explicit or inferred structural outcome with **tool execution** checks (see [Tool execution and `passed`](/sdk/reference/eval-reporting/report-results#tool-execution-and-passed)): by default, failures in the trace (MCP `isError`, errored tool spans, error-shaped tool-results) force `passed: false` even if you pass `passed: true` in `options`. Set **`failOnToolError: false`** in `options` to keep structural / explicit `passed` only.
 
-See [Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) in the eval reporting reference.
+See [Tool execution and `passed`](/sdk/reference/eval-reporting/report-results#tool-execution-and-passed) in the eval reporting reference.
 
 ---
 

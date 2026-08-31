@@ -6,6 +6,8 @@ icon: "shield-check"
 
 The OAuth Conformance SDK classes let you run the same flows the [CLI `oauth conformance`](/cli/oauth-conformance) command runs, but programmatically — for custom reporters, test frameworks, recording/replay via custom `fetchFn`, or Playwright-driven consent via `openUrl`.
 
+Reach for it when the flow has to run from inside your test suite: gating a release on a real end-to-end OAuth flow, driving consent from Playwright, or capturing the HTTP traces a failure produced.
+
 <Note>
   For CLI usage (one-liners, CI recipes, troubleshooting), see [CLI: OAuth Conformance](/cli/oauth-conformance).
   This page covers the TypeScript SDK only.
@@ -37,25 +39,32 @@ console.log(result.summary);  // "OAuth conformance passed for ..."
 console.log(result.steps);    // Step-by-step results with HTTP traces
 ```
 
-### OAuthConformanceConfig
+### Required configuration
 
-| Property | Type | Required | Default | Description |
-|----------|------|----------|---------|-------------|
-| `serverUrl` | `string` | Yes | | MCP server URL |
-| `protocolVersion` | `string` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
-| `registrationStrategy` | `string` | Yes | | `cimd`, `dcr`, or `preregistered` |
-| `auth` | `OAuthConformanceAuthConfig` | No | `{ mode: "interactive" }` | Auth mode config |
-| `client` | `OAuthConformanceClientConfig` | No | `{}` | Client credentials config |
-| `verification` | `OAuthVerificationConfig` | No | `{}` | Post-auth verification config |
-| `scopes` | `string` | No | | Space-separated scope string |
-| `customHeaders` | `Record<string, string>` | No | | Extra HTTP headers |
-| `redirectUrl` | `string` | No | Auto-generated | OAuth redirect URL |
-| `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch for recording/replay |
-| `stepTimeout` | `number` | No | `30000` | Per-step timeout in ms |
-| `oauthConformanceChecks` | `boolean` | No | `false` | Run 6 additional negative checks post-flow |
+Three fields decide what the run does; everything else has a default.
 
-### OAuthConformanceAuthConfig
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `serverUrl` | `string` | | MCP server URL |
+| `protocolVersion` | `string` | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `registrationStrategy` | `string` | | `cimd`, `dcr`, or `preregistered` |
 
+### Optional configuration
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `auth` | `OAuthConformanceAuthConfig` | `{ mode: "interactive" }` | Auth mode config |
+| `client` | `OAuthConformanceClientConfig` | `{}` | Client credentials config |
+| `verification` | `OAuthVerificationConfig` | `{}` | Post-auth verification config |
+| `scopes` | `string` | | Space-separated scope string |
+| `customHeaders` | `Record<string, string>` | | Extra HTTP headers |
+| `redirectUrl` | `string` | Auto-generated | OAuth redirect URL |
+| `fetchFn` | `typeof fetch` | `fetch` | Custom fetch for recording/replay |
+| `stepTimeout` | `number` | `30000` | Per-step timeout in ms |
+| `oauthConformanceChecks` | `boolean` | `false` | Run 6 additional negative checks post-flow |
+
+<AccordionGroup>
+<Accordion title="OAuthConformanceAuthConfig">
 ```typescript
 type OAuthConformanceAuthConfig =
   | { mode: "interactive"; openUrl?: (url: string) => Promise<void> }
@@ -68,23 +77,66 @@ type OAuthConformanceAuthConfig =
 ```
 
 - `interactive.openUrl` — override how the consent URL is opened. Default launches the system browser. Use for Playwright, custom launchers, or logging the URL.
+</Accordion>
 
-### OAuthConformanceClientConfig
-
+<Accordion title="OAuthConformanceClientConfig">
 | Property | Type | Description |
 |----------|------|-------------|
 | `preregistered.clientId` | `string` | Required when `registrationStrategy === "preregistered"` |
 | `preregistered.clientSecret` | `string` | Required for `preregistered` + `client_credentials` |
 | `dynamicRegistration` | `Partial<OAuthDynamicRegistrationMetadata>` | Override the default DCR body (e.g. `client_name`, `logo_uri`, `scope`) |
 | `clientIdMetadataUrl` | `string` | CIMD metadata URL. Defaults to `https://www.mcpjam.com/.well-known/oauth/client-metadata.json` |
+</Accordion>
 
-### OAuthVerificationConfig
-
+<Accordion title="OAuthVerificationConfig">
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `listTools` | `boolean` | `false` | Connect and call `tools/list` after auth |
 | `callTool` | `{ name, params? }` | | Also call the named tool (enables `listTools`) |
 | `timeout` | `number` | `30000` | Verification timeout in ms |
+</Accordion>
+</AccordionGroup>
+
+---
+
+## Read the result
+
+`result.passed` is the verdict for the whole flow. When it is `false`, walk `result.steps` — each `StepResult` has a `status` of `"passed"`, `"failed"`, or `"skipped"`:
+
+- A **failed** step carries `error.message` (and optional `details`), plus `http` for the primary exchange and `httpAttempts` for every trace including retries. That is where the request and response that caused the failure live.
+- A **skipped** step means that step could not demonstrate what it tests — some negative checks skip when the server rejects the request for a different reason first, or defers validation behind user interaction.
+- `teachableMoments` on a step explains what the step was looking for.
+
+When `verification` is enabled, `result.verification` reports separately on `tools/list` and any tool call, so you can tell an OAuth failure from a server that authenticated fine but could not serve tools.
+
+For a suite, `result.passed` is `true` when every flow either passed or came back `"not-applicable"` — a requirement that cannot apply to this server is not a failure. `result.results` carries the per-flow results with their labels.
+
+---
+
+## Suite
+
+```typescript
+const suite = new OAuthConformanceSuite({
+  name: "My Server",
+  serverUrl: "https://your-server.com/mcp",
+  defaults: {
+    auth: { mode: "headless" },
+    verification: { listTools: true },
+  },
+  flows: [
+    { protocolVersion: "2025-11-25", registrationStrategy: "cimd" },
+    { protocolVersion: "2025-11-25", registrationStrategy: "dcr" },
+  ],
+});
+
+const result = await suite.run();
+
+console.log(result.passed);   // true
+console.log(result.summary);  // "All 2 flows passed for ..."
+for (const flow of result.results) {
+  console.log(`${flow.passed ? "PASS" : "FAIL"} ${flow.label}`);
+}
+```
 
 ---
 
@@ -162,33 +214,6 @@ const result = await test.run();
 <Note>
   `oauthConformanceChecks` is also available via the CLI's `--conformance-checks` flag.
 </Note>
-
----
-
-## Suite
-
-```typescript
-const suite = new OAuthConformanceSuite({
-  name: "My Server",
-  serverUrl: "https://your-server.com/mcp",
-  defaults: {
-    auth: { mode: "headless" },
-    verification: { listTools: true },
-  },
-  flows: [
-    { protocolVersion: "2025-11-25", registrationStrategy: "cimd" },
-    { protocolVersion: "2025-11-25", registrationStrategy: "dcr" },
-  ],
-});
-
-const result = await suite.run();
-
-console.log(result.passed);   // true
-console.log(result.summary);  // "All 2 flows passed for ..."
-for (const flow of result.results) {
-  console.log(`${flow.passed ? "PASS" : "FAIL"} ${flow.label}`);
-}
-```
 
 ---
 

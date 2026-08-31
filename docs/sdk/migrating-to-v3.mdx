@@ -89,7 +89,7 @@ const test = new EvalTest({
   predicates: [
     { type: "noToolErrors" },
     { type: "responseContains", needle: "confirmed" },
-    { type: "turnCountUnder", max: 4 },
+    { type: "turnCountUnder", turns: 4 },
   ],
   test: async (executor) => {
     const r = await executor.run("Book Friday and confirm.");
@@ -98,7 +98,7 @@ const test = new EvalTest({
 });
 ```
 
-An iteration passes only if every predicate passes — independently of `failOnToolError`. See the [predicate gate](/sdk/reference/eval-reporting#predicate-gate) for the full list of types.
+An iteration passes only if every predicate passes — independently of `failOnToolError`. See the [predicate gate](/sdk/reference/eval-reporting/predicates#predicate-gate) for the full list of types.
 
 <Warning>
   The three widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) read render observations that only a hosted run captures, and they fail closed. `EvalTest` rejects them **at construction** rather than failing every iteration with a confusing reason — move those cases to a hosted suite.

@@ -15,7 +15,15 @@ mcpjam server doctor --url https://your-server.com/mcp
 
 If the server requires OAuth, doctor reports `oauth_required` with the discovery metadata. See [OAuth login](/cli/oauth-login) to obtain a token, then re-run with `--oauth-access-token`.
 
-## Commands
+## Check whether a server is reachable
+
+### `server ping`
+
+Simple connectivity check.
+
+```bash
+mcpjam server ping --url https://your-server.com/mcp
+```
 
 ### `server probe`
 
@@ -33,6 +41,8 @@ Use this when you want to check reachability and OAuth metadata without triggeri
 - `WWW-Authenticate` header parsing
 
 Sensitive fields such as `Authorization` headers are automatically redacted to `[REDACTED]` in the printed result.
+
+## Diagnose a server end to end
 
 ### `server doctor`
 
@@ -61,6 +71,59 @@ via `-e/--env`; inherited shell variables are not enumerated.
 
 Sensitive fields such as `Authorization` headers are automatically redacted to `[REDACTED]` in all printed output and written artifacts, including RPC logs attached via `--rpc`.
 
+### Triage an unknown server
+
+<Steps>
+<Step title="Start with doctor">
+```bash
+mcpjam server doctor --url https://unknown-server.com/mcp
+```
+
+<Check>
+`status` is `ready`, `oauth_required`, or `error`. `ready` means you can move straight on to the tools and resources.
+</Check>
+</Step>
+
+<Step title="If it returns oauth_required, login first">
+```bash
+mcpjam oauth login --url https://unknown-server.com/mcp \
+  --protocol-version 2025-11-25 --registration dcr
+```
+</Step>
+
+<Step title="Re-run with the token">
+```bash
+mcpjam server doctor --url https://unknown-server.com/mcp --oauth-access-token $TOKEN
+```
+
+<Check>
+`status` is now `ready` and the counts show the tools, resources, templates, and prompts the server exposes.
+</Check>
+</Step>
+</Steps>
+
+For multi-command sessions, save credentials to a file to avoid re-extracting the token:
+
+```bash
+mcpjam oauth login --url https://unknown-server.com/mcp --credentials-out creds.json
+mcpjam server doctor --url https://unknown-server.com/mcp --credentials-file creds.json
+mcpjam tools list --url https://unknown-server.com/mcp --credentials-file creds.json
+```
+
+### CI health check
+
+```bash
+set -o pipefail
+mcpjam server doctor --url $MCP_SERVER_URL --access-token $TOKEN --format json | jq -r '.status'
+# exits 0 if ready, 1 if not
+```
+
+Without `pipefail` the pipeline reports `jq`'s exit status, which is `0` even
+when `doctor` failed. Set it before the pipe, or capture the JSON first and
+read `.status` from the file.
+
+## Inspect what the server negotiated
+
 ### `server info`
 
 Get initialization info for a connected server.
@@ -87,13 +150,7 @@ Connect to a server and verify the debugger surface works.
 mcpjam server validate --url https://your-server.com/mcp --access-token $TOKEN
 ```
 
-### `server ping`
-
-Simple connectivity check.
-
-```bash
-mcpjam server ping --url https://your-server.com/mcp
-```
+## Snapshot and compare
 
 ### `server export`
 
@@ -101,6 +158,21 @@ Export a full snapshot of the server's tools, resources, prompts, and capabiliti
 
 ```bash
 mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > snapshot.json
+```
+
+### Compare before/after a deploy
+
+```bash
+# Capture a snapshot before
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > before.json
+
+# Deploy...
+
+# Capture after
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > after.json
+
+# Diff
+diff <(jq -S . before.json) <(jq -S . after.json)
 ```
 
 ## Shared server flags
@@ -130,49 +202,3 @@ Stdio child processes inherit the parent shell environment by default. Use
 command must run from a project directory.
 If you pass `--transport`, the CLI validates that it matches the target flags
 you provided instead of silently inferring the transport.
-
-## Common patterns
-
-### Triage an unknown server
-
-```bash
-# Start with doctor
-mcpjam server doctor --url https://unknown-server.com/mcp
-
-# If it returns oauth_required, login first
-mcpjam oauth login --url https://unknown-server.com/mcp \
-  --protocol-version 2025-11-25 --registration dcr
-
-# Then re-run with the token
-mcpjam server doctor --url https://unknown-server.com/mcp --oauth-access-token $TOKEN
-```
-
-For multi-command sessions, save credentials to a file to avoid re-extracting the token:
-
-```bash
-mcpjam oauth login --url https://unknown-server.com/mcp --credentials-out creds.json
-mcpjam server doctor --url https://unknown-server.com/mcp --credentials-file creds.json
-mcpjam tools list --url https://unknown-server.com/mcp --credentials-file creds.json
-```
-
-### Compare before/after a deploy
-
-```bash
-# Capture a snapshot before
-mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > before.json
-
-# Deploy...
-
-# Capture after
-mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > after.json
-
-# Diff
-diff <(jq -S . before.json) <(jq -S . after.json)
-```
-
-### CI health check
-
-```bash
-mcpjam server doctor --url $MCP_SERVER_URL --access-token $TOKEN --format json | jq '.status'
-# exits 0 if ready, 1 if not
-```

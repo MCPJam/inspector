@@ -1,11 +1,11 @@
 ---
 title: "Playground"
-description: "Chat with your MCP servers, invoke tools by hand, render widgets, and inspect every step — all in one IDE-style workspace"
+description: "Chat with your MCP servers, invoke tools by hand, render widgets, and inspect every step in one IDE-style workspace"
 icon: "joystick"
 tag: "NEW"
 ---
 
-The Playground is the main workspace for developing against your MCP servers. It combines chat, manual tool invocation, widget rendering, traces, and a live JSON-RPC logger into a single IDE-style surface so you can build, test, and debug an MCP server (or compare several side by side) without switching tabs.
+The Playground is the main workspace for developing against your MCP servers. It combines chat, manual tool invocation, widget rendering, traces, and a live JSON-RPC logger into a single IDE-style surface, so you can build, test, and debug an MCP server (or compare several side by side) without switching tabs.
 
 <Frame>
   <img
@@ -22,399 +22,195 @@ The Playground is the main workspace for developing against your MCP servers. It
   Sessions rail.
 </Note>
 
-## Key Features
+## When to use the Playground
 
-- **Chat with frontier models** — Talk to your server using Claude, GPT, Gemini, DeepSeek, and more at no cost, no API key required. Organizations can configure additional model providers in their organization settings.
-- **Manual tool invocation** — Run any tool from the Tools rail with your own inputs to iterate on a widget or response without prompting a model.
-- **Widget emulator** — Render widgets exposed via `openai/outputTemplate` (ChatGPT Apps) or `ui.resourceUri` (MCP Apps) the same way a real host would, with Inline, Picture-in-Picture, and Fullscreen display modes.
-- **Chat / Trace / Raw views** — Switch between the conversation, a timestamped timeline of every step (with per-step latency and tokens), and the exact JSON payload sent to the model.
-- **Multi-model compare** — Send a single prompt to up to 3 models at once and watch the responses side by side.
-- **Multi-host compare** — Render the same tool call under multiple host configurations (ChatGPT vs Claude, different device sizes, different capability sets) at the same time. New sessions start with ChatGPT, Claude, and Cursor pre-selected so the comparison is immediate.
-- **Display context controls** — Device viewport, light/dark theme, host style, locale, timezone, CSP mode, device capabilities, and safe area insets — all live in the toolbar.
-- **Per-widget debugging** — Inspect raw tool input/output, `widgetState`, model context, and CSP violations from icons above each widget.
-- **JSON-RPC logger** — Real-time, filterable feed of every message between the inspector and your servers.
-- **Sessions rail** — Resume, archive, and search past conversations from the left rail.
-- **Skills and prompts** — Type `/` to inject skills or MCP prompts directly into the chat.
-- **Edit tool input/output live** — Click **Edit** on any tool-result card to tweak the input or output JSON and watch the widget re-render instantly; **Run** re-executes the tool with your edited input.
-- **Voice input** — Click the mic button in the chat input to record your voice; the audio is transcribed and the text is inserted into the composer.
+Reach for the Playground when you want to see how a real host would drive your MCP server: the model's tool calls, the raw JSON-RPC traffic, and any widget your tools return, all in one place.
 
-## Getting Started
+It is the right surface for three jobs in particular:
 
-1. **Connect a server** — Add and connect an MCP server from the [Clients](/inspector/clients) tab (or the **+** button in the chat input).
-2. **Open the Playground** — Switch to the Playground tab.
-3. **Send a message or run a tool** — Either chat with your server from the input bar and let the model call tools, or pick a tool from the left rail and execute it with your own input.
+- A first smoke test of a server you just connected.
+- Iterating on a tool or a widget without prompting a model every time.
+- Checking that the same tool call behaves the same way under ChatGPT, Claude, and Cursor.
 
-When a tool returns a widget, it renders immediately in the chat thread with a row of debug icons above it. When the model calls a tool, you see the call, the result, and any widget output inline.
+## What you'll learn on this page
 
-## Layout
+- How a Playground run actually works, end to end.
+- How to complete your first run against a live server.
+- How to read the Chat, Trace, Raw, and Logs views.
+- Where to find the detailed guide for any Playground control.
 
-The Playground is a three-column IDE shell. Each side rail is collapsible — drag the divider or click the peek strip to hide or restore it.
+Every advanced setting has its own guide. This page is the map, not the manual.
 
-**Left rail — Tools / Sessions**
-- **Tools** (default) — Every tool exposed by your connected server(s). Pick one to fill in inputs and run it manually. When more than one server is selected, tools are aggregated across all of them and routed automatically on execution.
-- **Sessions** — Browse, resume, rename, archive, and search past chat threads in the current project.
+## How a Playground run works
 
-**Center — Chat surface**
-- Chat composer, conversation thread with inline tool calls and widgets, and the host context toolbar.
-- Top of the pane has a segmented control to switch between **Chat**, **Trace**, and **Raw** views.
+```mermaid
+flowchart LR
+    You["You<br/>prompt or manual tool run"] --> Model["Model<br/>Claude, GPT, Gemini, ..."]
+    Model -->|tools/call| Server["Your MCP server"]
+    Server -->|result + optional ui:// widget| Render["Playground"]
+    Render --> Chat["Chat<br/>the thread"]
+    Render --> Trace["Trace<br/>latency and tokens"]
+    Render --> Raw["Raw<br/>JSON sent to the model"]
+    Render --> Logs["Logs<br/>every MCP message"]
+```
 
-**Right rail — Logs / Shell**
-- **Logs** (always available) — Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
-- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
+Two things are worth noticing in that flow. First, the model is optional: you can run a tool directly from the **Tools** rail and skip it entirely. Second, one run produces four simultaneous views of itself, which is why debugging usually means switching views rather than re-running the prompt.
 
-## Chat, Trace, and Raw Views
+## Your first run
 
-Switch between three perspectives on the same conversation from the segmented control at the top of the center pane:
+<Steps>
+<Step title="Select or connect a server">
+Add and connect an MCP server from the [Clients](/inspector/clients) tab, or click the **+** button in the chat input and use **+ Add server** without leaving the Playground.
 
-- **Chat** — The normal thread with inline messages, tool calls, and rendered widgets.
-- **Trace** — A timestamped timeline of every step (user turns, agent turns, tool calls) with per-step and total latency and token counts. Expand any step to inspect its raw input and output.
-- **Raw** — The full JSON payload sent to the model (system prompt, tool definitions, conversation history). Available for both live sessions and previously-saved sessions you reopen.
+On first launch, MCPJam already connects the Excalidraw sample server, so you can start here with no setup of your own.
 
-<Frame>
-  <img
-    className="block"
-    src="/images/app-builder-trace.png"
-    alt="Trace view showing a timestamped timeline with latency and token counts"
-    width="1000"
-  />
-</Frame>
+<Check>
+The server shows **Connected** on the **Clients** page — the **Connect** tab in the sidebar — and its tools appear in the Playground's left rail.
+</Check>
+</Step>
 
-## Tools Rail (Manual Invocation)
+<Step title="Choose a model or host">
+Open the model picker in the chat input and pick a model. Free frontier models (Claude, GPT, Gemini, DeepSeek, and more) need no API key.
 
-Open the **Tools** tab in the left rail to invoke any tool by hand:
+The host picker at the top-left of the center header controls which host environment your widgets render under. New sessions start with **ChatGPT, Claude, and Cursor** pre-selected.
 
-- Select a tool to load its input form generated from the tool's JSON Schema.
-- Fill in fields, toggle optional fields on or off, and click **Run** to execute.
-- The result appears in the center pane just like a model-issued tool call, with the same row of debugging icons and widget rendering.
-- Click **Refresh** to re-fetch the tool list from the server (useful after a server reload).
-- Click **Save** to persist the current inputs as a saved request you can rerun, rename, duplicate, or delete from the same panel.
+<Check>
+The model name shows in the chat input, and the host picker shows at least one selected host.
+</Check>
+</Step>
 
-When multiple servers are selected at the same time, the Tools rail aggregates every server's tools into one list and routes each execution to the right server automatically.
+<Step title="Send a simple prompt">
+With the Excalidraw sample server connected, send:
 
-## Model Picker
+```
+Draw me an MCP architecture diagram
+```
 
-The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
+Press **Send**. Any prompt against your own server works the same way: ask for something one of its tools can do.
 
-- **Free models** — Frontier models (Claude, GPT, Gemini, DeepSeek, and more) available at no cost with no API key required.
-- **Your providers** — Models from providers configured in your organization's settings on mcpjam.com.
+You don't have to go through a model. You can also pick a tool from the **Tools** rail on the left and execute it with your own input.
+</Step>
 
-The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together.
+<Step title="Review the response and tool call">
+The model's tool call, its result, and any widget output appear inline in the chat thread. Every tool result has a row of debug icons in its header. Click one to open raw input and output, widget state, model context, or CSP activity for that call.
 
-### Out-of-credits state
+<Check>
+You should see a tool call, its result, and, for a widget-returning tool, a rendered widget inline in the thread. If nothing happens, confirm the server is still **Connected** and that its tools are listed in the left rail.
+</Check>
+</Step>
 
-When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
+<Step title="Continue to debugging or comparison">
+Switch the segmented control at the top of the center pane to **Trace** to see what the turn cost, or open the **Logs** tab in the right rail to watch the protocol traffic. To check the same prompt across models or hosts, open the model or host picker and add a second one.
 
-If the out-of-credits dialog appears, clicking **Bring your own key** closes the dialog and opens the model picker directly on the **Your providers** tab so you can switch to an own-key model without leaving the chat.
+<Check>
+Your run is complete. The conversation is already saved in the **Sessions** tab of the left rail, so you can come back to it.
+</Check>
+</Step>
+</Steps>
 
-## Multi-Model Compare
+## Chat, Trace, Raw, and Logs
 
-Send one prompt to up to 3 models simultaneously. Open the model picker, toggle **Multiple models** on, and select the models you want to compare. Each model's response — including tool calls and rendered widgets — appears in its own column.
+One run, four views. Three of them sit behind the segmented control at the top of the center pane; Logs lives in the right rail.
 
-<Note>
-  The **Multiple models** toggle is hidden when the active session is shared
-  with the project (project-visible). Enabling it on a shared session would
-  mutate experiment state for every collaborator. Switch the session back to
-  private to use multi-model compare.
-</Note>
-
-<Frame>
-  <img
-    className="block"
-    src="/images/multi_model_chat.png"
-    alt="Playground running the same prompt across multiple models in split-screen"
-    width="1000"
-  />
-</Frame>
-
-## Multi-Host Compare
-
-Open the host picker (top-left of the center header) to render the same tool calls under different host configurations side by side — for example, ChatGPT vs Claude host style, or desktop vs mobile viewports.
-
-New sessions start with **ChatGPT, Claude, and Cursor** pre-selected so you land directly in a 3-way compare. To change the lineup, open the host picker and check or uncheck rows — checking a second row immediately adds it to the compare grid; unchecking a row removes it. Your selection is saved per project, so returning users keep whatever lineup they last configured.
-
-One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
-
-This is the fastest way to verify that a widget renders correctly across the host environments you intend to ship to.
-
-<Note>
-  The host picker is hidden when the active session is shared with the project
-  (project-visible), for the same reason as multi-model compare. Switch the
-  session back to private to use multi-host compare.
-</Note>
-
-## Sessions
-
-The **Sessions** tab in the left rail lists every saved conversation in the current project, grouped by recency. From here you can:
-
-- Open a session to resume it in the center pane.
-- Rename, archive, or delete individual sessions.
-- Archive all sessions at once.
-- Search across session titles.
-
-Sessions are project-scoped, so teammates in the same project see (and can resume) shared sessions.
-
-## Host Context Toolbar
-
-The toolbar above the chat thread controls how the active host renders your widgets. Every change applies to the next tool call and to already-rendered widgets where applicable.
-
-### Device Viewports
-
-- **Desktop** (1280×800)
-- **Tablet** (820×1180)
-- **Mobile** (430×932)
-- **Custom** — Any width and height from 100 to 2560 pixels
-
-### Theme
-
-Toggle light and dark mode to test both appearances.
-
-### Host Style
-
-Switch between Claude and ChatGPT host styles. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
-
-Each host style ships with a distinct `hostCapabilities` preset. Switching from one preset to another changes the capabilities advertised in the `ui/initialize` handshake, so widgets that gate on optional fields (such as `serverResources` or `logging`) will behave differently under each style.
-
-| Preset | `HostContext.toolInfo` | `availableDisplayModes` |
+| View | Where it is | What it answers |
 |---|---|---|
-| Claude | Included | `["inline", "fullscreen", "pip"]` |
-| Copilot | Omitted (`undefined`) | `["inline", "fullscreen"]` |
-| ChatGPT | Included | `["inline", "fullscreen", "pip"]` |
-
-**Copilot** follows Microsoft 365 Copilot's published bridge: `toolInfo` is not delivered and `pip` is not advertised, so a widget that calls `app.getHostContext()?.toolInfo` on the Copilot preset correctly sees `undefined`.
-
-### Host Capabilities
-
-The **Host Capabilities** button in the toolbar (next to Host Context) lets you override the `hostCapabilities` blob advertised to MCP App widgets in the `ui/initialize` response.
-
-By default, the active host style's preset is used. Click **Host Capabilities** to open the editor and customize which capabilities the mock host claims to support. This is useful for testing how your widget behaves when specific capabilities are absent or present — for example, verifying that your widget degrades gracefully when `serverResources` is not advertised.
-
-- **No override** — the active host style's preset is used (shown as the placeholder in the editor)
-- **Custom override** — your JSON object is advertised verbatim; an "Override" badge appears on the button
-- **Clear override** — resets back to the host style preset
-
-<Note>
-  Host Capabilities configures what the mock host *advertises*. Enforcement — rejecting widget requests for capabilities not in the blob — is a planned follow-up. Until then, the inspector will still service all widget requests regardless of what the handshake advertises.
-</Note>
-
-### Locale
-
-Pick a BCP 47 locale (e.g. `en-US`, `es-ES`, `ja-JP`, `fr-FR`) to verify internationalization.
-
-### Timezone
-
-Choose from 19 IANA timezones plus `UTC` to test time-aware widgets.
-
-<Note>
-  The timezone control is only available for MCP Apps (SEP-1865).
-</Note>
-
-### CSP Mode
-
-- **Permissive** (default) — Allows all HTTP and HTTPS resources. Recommended for development.
-- **Strict** — Only allows domains declared in your widget's CSP metadata (`openai/widgetCSP` or `_meta.ui.csp` for ChatGPT Apps, `ui.csp` for MCP Apps).
-
-### Device Capabilities
-
-- **Hover** — Enable or disable hover support to test mouse vs touch-only behavior.
-- **Touch** — Toggle touch input to simulate mobile and tablet devices.
-
-### Safe Area Insets
-
-Simulate notches, rounded corners, and gesture areas. Pick a preset (None, iPhone with Notch, iPhone with Dynamic Island, Android gesture navigation) or set custom top/bottom/left/right values.
-
-## Widget Controls
-
-### Download confirmation
-
-When an MCP App widget triggers a `ui/download-file` request, the inspector shows a confirmation dialog before the download runs. The dialog displays the filename, MIME type, and URI so you can make an informed decision. Click **Download** to allow it or **Cancel** to deny it — a denial is surfaced to the widget as a `{ isError: true }` result so the widget can handle it gracefully.
-
-Only one confirmation prompt is shown at a time. If a second download request arrives while a prompt is open, it is automatically denied.
-
-### Display Modes
-
-All three display modes are supported for both ChatGPT Apps and MCP Apps:
-
-- **Inline** (default) — Widget renders within the chat message flow.
-- **Picture-in-Picture** — Widget floats at the top of the screen, staying visible while scrolling.
-- **Fullscreen** — Widget expands to fill the entire viewport.
-
-Widgets can request mode changes from their own code; users can exit PiP or Fullscreen via the close button.
-
-### Widget rendering
-
-All widgets — whether they declare `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — render through a single unified renderer. The `window.openai` compatibility shim is always injected, so both `window.openai.*` calls and `ui/*` JSON-RPC messages work regardless of which metadata the tool declares.
-
-Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored.
-
-## Per-Widget Debugging
-
-Every tool result in the chat thread has a row of icons in its header. Click an icon to open the matching debug panel below the widget.
-
-### Sign-in links
-
-When a computer-backed tool (such as Bash) runs a command that triggers a device-flow authentication prompt — for example, `gh auth login` — any sign-in URLs surfaced by the tool appear as clickable links directly in the chat thread under a **Sign-in link** heading. This saves you from hunting through scrollback for the URL. Only `https:` URLs are rendered as links; plain `http:` and non-web schemes are never shown.
-
-### Data
-
-Raw tool input, output, and error details for the call.
-
-### Widget State (ChatGPT Apps)
-
-The current `widgetState` object and when it was last updated. This is what your widget sets via `window.openai.setWidgetState` and what gets passed back to the model on the next turn.
-
-### Model Context (MCP Apps)
-
-The context your widget has sent back to the model via `ui/update-model-context`. Only appears when the widget has set model context.
-
-### CSP
-
-In Strict mode, a badge shows the number of blocked requests. The panel includes:
-
-- **Suggested fix** — Copyable JSON snippet to add to your `openai/widgetCSP` or `ui.csp` field.
-- **Blocked requests** — Each violation with the directive and source that was blocked.
-- **Declared domains** — The connect, resource, frame, and base URI domains your widget currently declares.
-
-#### Mounts
-
-The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
-
-### Edit input & output
-
-Click **Edit** on a tool-result card to make the **Input** and **Result** JSON editable in place. Edits re-render the widget live with no reload; **Run** re-executes the tool with the edited input, and **Revert** restores the original. Edits are local to the session — nothing is persisted.
-
-## Right Rail
-
-The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached.
-
-### Logs tab
-
-Streams every message between the inspector and your connected server(s) in real time. Each entry shows the direction (client→server or server→client), the method name, and a timestamp. Click an entry to expand its full JSON payload.
-
-Logged messages include:
-
-- Tool invocation requests and responses
-- `window.openai` API calls from your widget
-- Widget state updates
-- MCP App JSON-RPC messages (`tools/call`, `ui/initialize`, `ui/message`, etc.)
-
-Controls in the logger header:
-
-- **Search** the buffer
-- **Filter** by source server
-- **Log level** filter
-- **Copy** the visible entries to your clipboard
-- **Download** the buffer as a file
-- **Clear** the buffer
-- **Collapse** the rail
-
-When a search is active and the source filter is hiding matching entries, a banner appears below the toolbar showing how many matches are hidden. Click **Clear filter** in the banner to reset the source filter to **All** and reveal those entries. The empty state reads **No matches in this view** (rather than **No logs yet**) whenever logs exist but are all filtered out.
-
-### Shell tab
-
-When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
-
-Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
-
-## Input Bar
-
-Click the **+** button on the left of the chat input to manage servers, attach files, and tune model behavior.
-
-**Servers**
-A list of every server in your project, sorted by status. Each row shows the server name and transport type (`HTTP` or `stdio`, npx/desktop only). Connect, disconnect, or toggle a server on or off for the current conversation. **+ Add server** opens the add-server modal without leaving the Playground.
-
-**Attach files**
-Add files to the conversation in any of these ways:
-
-- **File picker** — Click the **+** button and choose **Attach files** to browse and select files.
-- **Paste** — Copy an image to your clipboard and paste it directly into the chat input (`Ctrl+V` / `Cmd+V`). Pasted images without a filename are saved automatically as `pasted-image-1.png`, `pasted-image-2.png`, and so on.
-- **Drag and drop** — Drag one or more files from your desktop and drop them onto the chat input. A "Drop image or file to attach" overlay appears while you're dragging to confirm the drop target.
-
-Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other common formats. Invalid file types show an error message below the input.
-
-**System Prompt & Temperature**
-Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
-
-**Tool Approval**
-When on, pauses the model before each tool call so you can approve or deny it manually.
-
-**Voice input**
-Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
-
-**Context meter** (right side of the input)
-Open it to inspect the token breakdown for the current conversation — input, output, system prompt, and MCP tools usage. Before you send the first message, the popover shows an **MCP Tools (estimated)** row with a pre-request estimate of how many tokens your connected servers' tool descriptions will consume. This estimate is UI-only and is not used in billing or actual session usage math. Once the model responds and the provider reports real input/output token counts, the estimate is replaced by the actual usage. If token counting is not supported for a particular server or model, the popover shows a **Token count unavailable** notice for that server instead.
-
-## Skills
-
-The Playground respects every skill you've configured in the [Skills](/inspector/skills) tab. A skill ends up in a conversation in one of two ways:
-
-- **Inferred** — The model picks a skill based on your prompt, loads its instructions, and runs it against your MCP tools. Useful for observing skill behavior end-to-end.
-- **Explicit** — Type `/` in the input and pick a skill from the **SKILLS** section of the picker. The skill content is front-loaded before your message.
-
-## Prompts
-
-Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Type `/` in the input and pick one from the **PROMPTS** section. Selected prompts appear as expandable cards above the input — source server ID, description, arguments (required ones marked with `*`), and a preview of the first message — so you can review or remove them before sending.
-
-## Workspace tools
-
-When you are signed in as a project member, the Playground gives the model a set of built-in tools for interacting with the MCP servers saved in your project. These tools are not available to guests or in shared scenario sessions.
-
-| Tool | What it does |
+| **Chat** | Center pane, segmented control | What did the model say, which tools did it call, and what did the widget look like? |
+| **Trace** | Center pane, segmented control | Which step was slow, and how many tokens did each turn cost? |
+| **Raw** | Center pane, segmented control | What exactly did the model receive: system prompt, tool definitions, history? |
+| **Logs** | Right rail | What actually went over the wire between the inspector and my server? |
+
+A useful habit: when a result looks wrong, start in **Chat**, confirm the arguments in the result's **Data** panel, and only drop to **Logs** when you suspect the request never reached your server the way you think it did.
+
+All four views, plus the per-result debug panels behind them, are covered in [Debug & compare](/inspector/playground/debug-compare).
+
+## What do you want to do next?
+
+<CardGroup cols={2}>
+  <Card title="Chat & tools" icon="message-circle" href="/inspector/playground/chat-tools">
+    Layout and rails, the model picker and credits, the input bar, attachments, system prompt and temperature, tool approval, voice, context meter, skills, prompts, sessions, and manual tool invocation.
+  </Card>
+  <Card title="Debug & compare" icon="bug" href="/inspector/playground/debug-compare">
+    Chat / Trace / Raw, tool-call data, widget state, model context, CSP and mounts, editing input and output, Logs and Shell, sign-in links, and multi-model and multi-host compare.
+  </Card>
+  <Card title="Test widgets" icon="app-window" href="/inspector/playground/test-widgets">
+    Host context toolbar, host styles and capabilities, viewports, theme, locale, timezone, CSP mode, device capabilities, safe areas, display modes, and widget rendering rules.
+  </Card>
+  <Card title="Advanced" icon="wrench" href="/inspector/playground/advanced">
+    Built-in workspace tools, their approval behavior, and form, URL, and URL-required elicitation.
+  </Card>
+</CardGroup>
+
+## What the Playground can do
+
+Every capability on this list is documented in full on one of the guides linked below.
+
+- **Chat with frontier models**: talk to your server using Claude, GPT, Gemini, DeepSeek, and more at no cost, no API key required. Organizations can configure additional model providers in their organization settings.
+- **Manual tool invocation**: run any tool from the Tools rail with your own inputs to iterate on a widget or response without prompting a model.
+- **Widget emulator**: render widgets exposed via `openai/outputTemplate` (ChatGPT Apps) or `ui.resourceUri` (MCP Apps) the same way a real host would, with Inline, Picture-in-Picture, and Fullscreen display modes.
+- **Chat / Trace / Raw views**: switch between the conversation, a timestamped timeline of every step (with per-step latency and tokens), and the exact JSON payload sent to the model.
+- **Multi-model compare**: send a single prompt to up to 3 models at once and watch the responses side by side.
+- **Multi-host compare**: render the same tool call under multiple host configurations (ChatGPT vs Claude, different device sizes, different capability sets) at the same time. New sessions start with ChatGPT, Claude, and Cursor pre-selected so the comparison is immediate.
+- **Display context controls**: device viewport, light/dark theme, host style, locale, timezone, CSP mode, device capabilities, and safe area insets, all live in the toolbar.
+- **Per-widget debugging**: inspect raw tool input/output, `widgetState`, model context, and CSP violations from icons above each widget.
+- **JSON-RPC logger**: real-time, filterable feed of every message between the inspector and your servers.
+- **Sessions rail**: resume, archive, and search past conversations from the left rail.
+- **Skills and prompts**: type `/` to inject skills or MCP prompts directly into the chat.
+- **Edit tool input/output live**: click **Edit** on any tool-result card to tweak the input or output JSON and watch the widget re-render instantly. **Run** re-executes the tool with your edited input.
+- **Voice input**: click the mic button in the chat input to record your voice. The audio is transcribed and the text is inserted into the composer.
+
+## Feature index
+
+### By goal
+
+| If you want to... | Go to |
 |---|---|
-| `list_project_servers` | List all servers saved in the project with their names, transport types, and enabled status. |
-| `diagnose_server` | Probe a server's URL, connect, initialize, and report its capabilities and any connection errors. Use this when a server won't connect or you want to check its health. |
-| `list_server_tools` | List the tools a server exposes — names, descriptions, and input schemas. Paginated; pass `nextCursor` back as `cursor` for the next page. |
-| `call_server_tool` | Execute a tool on a server and return its result. Runs with your own authorization and may have side effects. Get the tool name and parameter schema from `list_server_tools` first. |
-| `list_server_prompts` | List the prompts a server exposes — names, descriptions, and arguments. Paginated. |
-| `get_server_prompt` | Render a prompt from a server with the given arguments and return its messages. |
-| `list_server_resources` | List the resources a server exposes — URIs, names, and MIME types. Paginated. |
-| `read_server_resource` | Read one resource from a server by URI and return its contents. |
-| `start_claude_readiness_run` | Grade a saved server against Anthropic's connector-directory rules. Returns a receipt with a run id — poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits. Requires approval. |
-| `start_openai_readiness_run` | Grade a saved server against OpenAI's app-directory rules. `submissionMode` is required and never inferred. Returns a receipt; poll `get_readiness_run` for the verdict. Requires approval. |
-| `get_readiness_run` | Read one readiness run: `status` (whether the run finished), `overallStatus` (the grade), and `llmObservations` (whether the optional model pass ran). A `completed` run can be `not-ready`. |
-| `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. |
-| `cancel_readiness_run` | Stop a readiness run that is still going. The run's real terminal state arrives on a later `get_readiness_run`. |
-| `get_readiness_report` | Read a finished run's findings, ordered most-consequential-first and capped. `truncated` and `totalFindings` indicate when you are seeing a subset. |
+| Chat with a server or change models | [Chat & tools](/inspector/playground/chat-tools) |
+| Invoke a tool manually or save a request | [Chat & tools](/inspector/playground/chat-tools) |
+| Inspect a tool call's data, state, or logs | [Debug & compare](/inspector/playground/debug-compare) |
+| Compare model or host behavior | [Debug & compare](/inspector/playground/debug-compare) |
+| Test viewports, themes, CSP, or display modes | [Test widgets](/inspector/playground/test-widgets) |
+| Use workspace tools or elicitation | [Advanced](/inspector/playground/advanced) |
 
-Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
+### By control
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one. Read-only listing and polling tools never require approval. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
+Every Playground control, and the page that documents it.
 
-<Note>
-  These tools are only available when you are signed in as a project member. They are not shown to guests or in scenario sessions.
-</Note>
+| Control or behavior | Documented in |
+|---|---|
+| Three-column layout, collapsible rails | [Chat & tools](/inspector/playground/chat-tools#layout) |
+| Chat, Trace, and Raw views | [Debug & compare](/inspector/playground/debug-compare#chat-trace-and-raw-views) |
+| Model picker, free models, your providers | [Chat & tools](/inspector/playground/chat-tools#model-picker) |
+| Out-of-credits state, bring your own key | [Chat & tools](/inspector/playground/chat-tools#out-of-credits-state) |
+| Server selection, add server, attach files | [Chat & tools](/inspector/playground/chat-tools#input-bar) |
+| System prompt, temperature, tool approval | [Chat & tools](/inspector/playground/chat-tools#input-bar) |
+| Voice input, context meter, token estimates | [Chat & tools](/inspector/playground/chat-tools#input-bar) |
+| Skills and MCP prompts (the `/` picker) | [Chat & tools](/inspector/playground/chat-tools#skills) |
+| Sessions rail: resume, rename, archive, search | [Chat & tools](/inspector/playground/chat-tools#sessions) |
+| Tools rail, manual invocation, saved requests | [Chat & tools](/inspector/playground/chat-tools#tools-rail-manual-invocation) |
+| Debug panels: Data, Widget State, Model Context | [Debug & compare](/inspector/playground/debug-compare#per-widget-debugging) |
+| CSP violations, suggested fix, Mounts | [Debug & compare](/inspector/playground/debug-compare#csp) |
+| Sign-in links from computer-backed tools | [Debug & compare](/inspector/playground/debug-compare#sign-in-links) |
+| Edit tool input and output live, re-run, revert | [Debug & compare](/inspector/playground/debug-compare#edit-input--output) |
+| JSON-RPC logger: search, filter, copy, download | [Debug & compare](/inspector/playground/debug-compare#logs-tab) |
+| Shell tab and Project Computer terminal | [Debug & compare](/inspector/playground/debug-compare#shell-tab) |
+| Multi-model compare (up to 3 models) | [Debug & compare](/inspector/playground/debug-compare#multi-model-compare) |
+| Multi-host compare and the lead host | [Debug & compare](/inspector/playground/debug-compare#multi-host-compare) |
+| Shared-session limits on compare features | [Debug & compare](/inspector/playground/debug-compare) |
+| Device viewports, theme, safe area insets | [Test widgets](/inspector/playground/test-widgets#host-context-toolbar) |
+| Host styles and host capability presets | [Test widgets](/inspector/playground/test-widgets#host-style) |
+| Locale and timezone | [Test widgets](/inspector/playground/test-widgets#locale) |
+| CSP mode, permissive and strict | [Test widgets](/inspector/playground/test-widgets#csp-mode) |
+| Device capabilities: hover and touch | [Test widgets](/inspector/playground/test-widgets#device-capabilities) |
+| Display modes: inline, PiP, fullscreen | [Test widgets](/inspector/playground/test-widgets#display-modes) |
+| Widget rendering and capability gating | [Test widgets](/inspector/playground/test-widgets#widget-rendering) |
+| Download confirmation dialog | [Test widgets](/inspector/playground/test-widgets#download-confirmation) |
+| Workspace tools and which ones need approval | [Advanced](/inspector/playground/advanced#workspace-tools) |
+| Form elicitation | [Advanced](/inspector/playground/advanced#form-elicitation) |
+| URL elicitation and its safety warnings | [Advanced](/inspector/playground/advanced#url-elicitation) |
+| URL-required notices (MCP error `-32042`) | [Advanced](/inspector/playground/advanced#url-required-notices) |
 
-## Elicitation
+## Related pages
 
-When an MCP server needs additional input from you mid-tool-call, it can pause execution and ask a question. The Playground renders these requests as modal dialogs and resumes the tool call once you respond.
-
-This applies to both model-initiated tool calls and tool calls triggered by an MCP App widget. When an App widget's tool call returns `input_required`, the same elicitation dialog appears overlaid above the widget — the App keeps rendering underneath — and only the final result is returned to the widget once all rounds are complete.
-
-### Form elicitation
-
-The server presents a form with fields defined by its schema. Fill in the fields and click **Accept** to submit your answer, or **Decline** to refuse. The tool call continues (or fails gracefully) based on your response.
-
-### URL elicitation
-
-The server asks you to visit a URL to complete an out-of-band step — for example, an OAuth authorization or a payment flow. The dialog shows:
-
-- The **full destination URL** as plain text (never as a clickable link, so you must read it before opening it).
-- The **host emphasized** so subdomain spoofing is visible at a glance.
-- Warnings for unsafe conditions: unencrypted `http://` links, punycode hostnames that can mimic well-known domains, embedded credentials in the URL, and bare IP addresses.
-
-Non-`http(s)` schemes (such as `javascript:` or `data:`) are blocked outright and cannot be opened.
-
-Click **Open in new tab** to open the URL. If your browser blocks the pop-up, a notice appears with a **Copy link** button so you can open it manually. The dialog only records your consent once the tab actually opens — a blocked pop-up does not count as acceptance.
-
-Click **Decline** to refuse, or close the dialog to cancel without an explicit choice.
-
-### URL-required notices
-
-If a tool call fails because the server requires you to complete an out-of-band interaction first (MCP error `-32042`), the Playground shows a URL-required notice. This is advisory — the tool call has already failed — so there is nothing to decline. Open the required URL(s), then retry the tool call or ask the model to try again.
-
-When a server requires multiple interactions before a tool can run, the notice walks you through them one at a time and only dismisses once you have handled all of them.
-
-## Related Features
-
-- [Clients](/inspector/clients) — Manage MCP server connections, transports, and OAuth.
-- [Skills](/inspector/skills) — Configure skills that the Playground can use.
-- [Projects](/inspector/projects) — Organize servers, sessions, and views into shared workspaces.
+- [Clients](/inspector/clients): manage MCP server connections, transports, and OAuth.
+- [Skills](/inspector/skills): configure skills that the Playground can use.
+- [Projects](/inspector/projects): organize servers, sessions, and views into shared workspaces.

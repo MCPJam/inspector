@@ -29,6 +29,8 @@ import {
 
 ## Single run
 
+`serverUrl` is the only required config; everything else narrows or tunes the run.
+
 ```typescript
 const test = new MCPConformanceTest({
   serverUrl: "https://your-server.com/mcp",
@@ -49,7 +51,63 @@ console.log(result.summary);
 console.log(result.checks);
 ```
 
+## Read the result
+
+A run reports one of three outcomes, and `passed` is `true` only for the first:
+
+| `outcome` | CLI exit code | Meaning |
+|---|---|---|
+| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
+| `failed` | `1` | At least one check found a violation. |
+| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
+
+An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet CLI runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
+
+`summary` gives you the counts in one line, and every skipped check says which kind of skip it is in `skipReason`:
+
+- `"not-applicable"` — the check cannot apply to this server (era-gated check on the wrong protocol version, unadvertised capability, localhost-only requirement against a remote server). These never hold a run back.
+- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe`, subscription stream unavailable). These make the run `incomplete`.
+
+## Narrow the run
+
+Pass `categories` to restrict the run to whole categories, or `checkIds` to select individual checks.
+
+Categories:
+
+- `core`
+- `protocol`
+- `tools`
+- `prompts`
+- `resources`
+- `security`
+- `transport`
+
+Check ids:
+
+- `server-initialize`
+- `ping`
+- `logging-set-level`
+- `completion-complete`
+- `capabilities-consistent`
+- `tools-list`
+- `tools-input-schemas-valid`
+- `tools-x-mcp-header-declarations-valid` (2026-07-28 only)
+- `prompts-list`
+- `resources-list`
+- `protocol-invalid-method-error`
+- `localhost-host-rebinding-rejected` — requires HTTP 403 when the run explicitly pins `protocolVersion` to `2025-11-25` or later; accepts any 4xx on earlier pins or when no version is pinned
+- `localhost-host-valid-accepted`
+- `server-sse-polling-session`
+- `server-accepts-multiple-post-streams`
+- `server-sse-streams-functional`
+- `notification-post-accepted` (2025 revisions only)
+- `get-stream-or-405` (2025 revisions only)
+- `session-id-visible-ascii` (2025 revisions only)
+- `post-response-content-type`
+
 ## Suite
+
+Use a suite when one server needs several labelled runs — a core-surface pass and a security pass, for example — reported together.
 
 ```typescript
 import { writeFileSync } from "node:fs";
@@ -103,6 +161,16 @@ writeFileSync(
 | `defaults` | `Partial<Omit<MCPConformanceConfig, "serverUrl">>` | No | Shared defaults applied to every run |
 | `runs` | `Array<Partial<Omit<MCPConformanceConfig, "serverUrl">> & { label?: string }>` | Yes | Individual run labels and check selections |
 
+## CI reporting
+
+All three conformance domains share the same report helpers:
+
+- `toConformanceReport(result)`
+- `renderConformanceReportJUnitXml(report)`
+- `renderConformanceReportJson(report)`
+
+The CLI uses the same helpers internally, so `protocol conformance --format junit-xml` and `protocol conformance-suite --format junit-xml` emit the same XML that the SDK helpers produce for the same result.
+
 ## MCPConformanceConfig
 
 | Property | Type | Required | Default | Description |
@@ -115,41 +183,6 @@ writeFileSync(
 | `checkIds` | `MCPCheckId[]` | No | all checks | Restrict checks to specific ids |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch implementation |
 | `clientName` | `string` | No | SDK default | Custom MCP client name |
-
-## Available categories and check ids
-
-Categories:
-
-- `core`
-- `protocol`
-- `tools`
-- `prompts`
-- `resources`
-- `security`
-- `transport`
-
-Check ids:
-
-- `server-initialize`
-- `ping`
-- `logging-set-level`
-- `completion-complete`
-- `capabilities-consistent`
-- `tools-list`
-- `tools-input-schemas-valid`
-- `tools-x-mcp-header-declarations-valid` (2026-07-28 only)
-- `prompts-list`
-- `resources-list`
-- `protocol-invalid-method-error`
-- `localhost-host-rebinding-rejected` — requires HTTP 403 when the run explicitly pins `protocolVersion` to `2025-11-25` or later; accepts any 4xx on earlier pins or when no version is pinned
-- `localhost-host-valid-accepted`
-- `server-sse-polling-session`
-- `server-accepts-multiple-post-streams`
-- `server-sse-streams-functional`
-- `notification-post-accepted` (2025 revisions only)
-- `get-stream-or-405` (2025 revisions only)
-- `session-id-visible-ascii` (2025 revisions only)
-- `post-response-content-type`
 
 ## Result types
 
@@ -167,10 +200,7 @@ Check ids:
 | `categorySummary` | `Record<MCPCheckCategory, ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts |
 | `readiness` | `MCPReadinessWarning[]` | Advisory observations that do not affect the verdict (see [Readiness advice](#readiness-advice)). |
 
-Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"`:
-
-- `"not-applicable"` — the check cannot apply to this server (era-gated check on the wrong protocol version, unadvertised capability, localhost-only requirement against a remote server). These never hold a run back.
-- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe`, subscription stream unavailable). These make the run `incomplete`.
+Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"` — the two values are described under [Read the result](#read-the-result).
 
 `MCPConformanceSuite.run()` returns an `MCPConformanceSuiteResult`:
 
@@ -182,18 +212,6 @@ Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipp
 | `results` | `Array<MCPConformanceResult & { label: string }>` | Per-run results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |
-
-## Outcomes: passed, failed, incomplete
-
-A run reports one of three outcomes, and `passed` is `true` only for the first:
-
-| `outcome` | CLI exit code | Meaning |
-|---|---|---|
-| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
-| `failed` | `1` | At least one check found a violation. |
-| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
-
-An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet CLI runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
 
 ## Readiness advice
 
@@ -211,20 +229,10 @@ Each `MCPReadinessWarning` has:
 
 The CLI prints readiness items as an `Advice` section on stderr after each `protocol conformance` or `conformance-suite` run. The section is suppressed by `--quiet` and does not appear in JSON or JUnit XML output.
 
-Current readiness checks:
-
+<Accordion title="Current readiness checks">
 - `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
 - `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns a 5xx. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
-
-## CI reporting
-
-All three conformance domains share the same report helpers:
-
-- `toConformanceReport(result)`
-- `renderConformanceReportJUnitXml(report)`
-- `renderConformanceReportJson(report)`
-
-The CLI uses the same helpers internally, so `protocol conformance --format junit-xml` and `protocol conformance-suite --format junit-xml` emit the same XML that the SDK helpers produce for the same result.
+</Accordion>
 
 ## Related
 

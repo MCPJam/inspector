@@ -4,6 +4,13 @@ description: "Configure and debug Cross-App Access flows with MCPJam as the test
 icon: "shield-check"
 ---
 
+The XAA (Cross-App Access) Debugger tests an MCP server and its authorization setup. It runs the whole cross-app access exchange for you and shows where it breaks, so you can tell an untrusted issuer apart from a rejected grant apart from a server that refuses a perfectly valid token.
+
+MCPJam acts as both:
+
+- The **identity provider**, which signs the ID token and ID-JAG.
+- The **client/agent**, which presents the ID-JAG and uses the access token.
+
 <iframe
   className="w-full aspect-video rounded-xl"
   src="https://www.youtube.com/embed/CP75up3NJb8"
@@ -12,17 +19,30 @@ icon: "shield-check"
   allowFullScreen
 ></iframe>
 
-The XAA (Cross-App Access) Debugger tests an MCP server and its authorization setup.
+## The XAA flow
 
-MCPJam acts as both:
+The debugger shows the flow in the sequence diagram and logs each request and response:
 
-- The **identity provider**, which signs the ID token and ID-JAG.
-- The **client/agent**, which presents the ID-JAG and uses the access token.
+```mermaid
+flowchart TD
+    S1["1. Discover the MCP server<br/>and authorization server"] --> S2["2. Resolve the client identity<br/>pre-registered, DCR, or CIMD"]
+    S2 --> S3["3. Simulate sign-in at MCPJam's<br/>identity provider"]
+    S3 --> S4["4. Request an ID-JAG"]
+    S4 --> S5["5. Request an access token<br/>JWT-bearer grant"]
+    S5 --> S6["6. Call the MCP server"]
+```
 
-## Before You Run the Test
+1. **Discover the MCP server and authorization server.** MCPJam asks the MCP server which authorization server protects it, then reads the authorization server metadata.
+2. **Resolve the client identity.** MCPJam uses the pre-registered client, performs DCR, or uses its CIMD URL.
+3. **Simulate sign-in at MCPJam's identity provider.** MCPJam issues a test ID token.
+4. **Request an ID-JAG.** MCPJam's identity provider exchanges the ID token for an ID-JAG.
+5. **Request an access token using the ID-JAG.** MCPJam sends the ID-JAG to the authorization server's token endpoint using the JWT-bearer grant.
+6. **Call the MCP server.** MCPJam sends the resulting access token to the MCP server.
 
-### Trust MCPJam's Identity Provider
+## Run your first flow
 
+<Steps>
+<Step title="Trust MCPJam's identity provider">
 The XAA Flow header shows three URLs:
 
 <Frame>
@@ -42,11 +62,9 @@ The XAA Flow header shows three URLs:
 
 Configure your authorization server with the values it requests. The **Issuer URL** identifies MCPJam's test identity provider, the **OpenID Config** URL provides discovery metadata, and the **JWKS URL** provides the public signing keys.
 
-### Local and hosted issuers
-
-If MCPJam is running locally and your authorization server is hosted in the
-cloud, turn on **Use hosted issuer** in the XAA Flow header. A cloud server
-cannot reach a local Issuer URL.
+<Warning>
+If MCPJam is running locally and your authorization server is hosted in the cloud, turn on **Use hosted issuer** in the XAA Flow header. A cloud server cannot reach a local Issuer URL.
+</Warning>
 
 <Frame>
   <img
@@ -57,15 +75,13 @@ cannot reach a local Issuer URL.
   />
 </Frame>
 
-### Other header controls
+<Check>
+Your authorization server accepts MCPJam's issuer and can fetch its JWKS.
+</Check>
+</Step>
 
-The header also has an **Identity assertion** (OIDC / SAML) toggle that sets the format MCPJam mints, covered under [Identity assertion format](#identity-assertion-format). It also has a **[Run as](#simulated-identity)** control for choosing the simulated identity.
-
-## Add Your MCP Server
-
+<Step title="Add your MCP server">
 Select **Configure Server to Test** (or **Add Server**), enter the MCP server name and URL, then choose how MCPJam identifies itself to the authorization server.
-
-### Server Configuration
 
 <Frame>
   <img
@@ -76,7 +92,50 @@ Select **Configure Server to Test** (or **Add Server**), enter the MCP server na
   />
 </Frame>
 
-#### Registration Method
+Pick a **Registration method** — pre-registered client, CIMD, or open dynamic registration — and, optionally, scopes. Each option is described under [Registration methods](#registration-methods).
+
+<Check>
+The server is configured and discovery finds its authorization server. Compatibility results appear after discovery.
+</Check>
+</Step>
+
+<Step title="Inspect the ID-JAG before it is sent">
+Before MCPJam sends the ID-JAG to the authorization server, the right panel opens the **ID-JAG Inspector**. Use it to inspect exactly what MCPJam created and identify problems before the token exchange. MCPJam checks each piece of information inside the ID-JAG and shows whether it looks correct or broken. It also shows the relevant RFC or ID-JAG requirement for each check.
+
+<Frame>
+  <img
+    className="block"
+    src="/images/xaa-id-jag.png"
+    alt="ID-JAG Inspector showing the assertion claims, header, payload, and signature"
+    width="1058"
+  />
+</Frame>
+
+<Check>
+The inspector's checks pass, and `aud`, `resource`, and `client_id` name the parties you expect. Claim-by-claim detail is in the [ID-JAG reference](#id-jag-reference).
+</Check>
+</Step>
+
+<Step title="Locate a failure">
+The right panel shows each flow step, its request and response details, and any available token information. If a step fails, it also provides guidance for diagnosing the problem. This may include:
+
+- The authorization server does not advertise or accept the JWT-bearer grant.
+- MCPJam's issuer or signing keys are not trusted.
+- The client identity is missing, unregistered, or not allowed to use the grant.
+- The aud, resource, or client_id claim does not match the authorization server's configuration.
+- The authorization server issues a token, but the MCP server rejects it.
+
+Use the compatibility results after discovery and expand each flow step to inspect the exact request, response, and token claims.
+
+<Check>
+You can name the failing step and see its exact request and response. A green flow through step 6 means your MCP server accepted a token minted from an ID-JAG — the next thing to check is what your server does with a *broken* one, under [Negative tests](#negative-tests).
+</Check>
+</Step>
+</Steps>
+
+## Configuration reference
+
+### Registration methods
 
 - **Pre-registered client:** Register MCPJam in your authorization server first,
   then enter the client ID and optional client secret it gives you.
@@ -96,9 +155,9 @@ Select **Configure Server to Test** (or **Add Server**), enter the MCP server na
 - **Open dynamic registration (DCR):** MCPJam registers a client during the
   test. Your authorization server must provide an open registration endpoint.
 
-#### Identity assertion format
+### Identity assertion format
 
-Choose the protocol MCPJam's identity provider uses to authenticate users.
+The XAA Flow header has an **Identity assertion** (OIDC / SAML) toggle that sets the format MCPJam mints. Choose the protocol MCPJam's identity provider uses to authenticate users.
 
 - **OIDC ID token:** MCPJam mints an OIDC ID token as the identity assertion.
   This is the default.
@@ -106,12 +165,12 @@ Choose the protocol MCPJam's identity provider uses to authenticate users.
   carries a `saml-nameid` subject identifier so a SAML-federated server can
   resolve the user.
 
-#### Scopes
+### Scopes
 
 Enter optional permissions separated by spaces. MCPJam includes them when
 requesting the ID-JAG and access token.
 
-### Advanced Settings
+### Advanced settings
 
 <Frame>
   <img
@@ -124,46 +183,28 @@ requesting the ID-JAG and access token.
 
 #### Authorization Server Issuer
 
-Leave it blank to use the authorization server MCPJam discovers from the MCP
-server. Enter a URL to use a different authorization server.
+Leave it blank to use the authorization server MCPJam discovers from the MCP server. Enter a URL to use a different authorization server.
 
 #### Path-scoped authorization server
 
-Keep this off for normal RFC 8414 behavior. Turn it on only when the discovered
-URL and metadata issuer differ on the same origin.
+Keep this off for normal RFC 8414 behavior. Turn it on only when the discovered URL and metadata issuer differ on the same origin.
 
 #### Simulated identity
 
-Choose the user MCPJam puts in the ID token. Leave the fields blank to use a
-built-in demo user (`user-12345` / `demo.user@example.com`).
+Choose the user MCPJam puts in the ID token. Leave the fields blank to use a built-in demo user (`user-12345` / `demo.user@example.com`). The header's **Run as** control chooses the simulated identity.
 
-## Inspect the ID-JAG
+## ID-JAG reference
 
-<Frame>
-  <img
-    className="block"
-    src="/images/xaa-id-jag.png"
-    alt="ID-JAG Inspector showing the assertion claims, header, payload, and signature"
-    width="1058"
-  />
-</Frame>
-
-Before MCPJam sends the ID-JAG to the authorization server, the right panel
-opens the **ID-JAG Inspector**. Use it to inspect exactly what MCPJam created
-and identify problems before the token exchange. MCPJam checks each piece of
-information inside the ID-JAG and shows whether it looks correct or broken. It
-also shows the relevant RFC or ID-JAG requirement for each check.
-
-### Header
-
+<AccordionGroup>
+<Accordion title="Header">
 The JWT header shows:
 
 - `alg`: the signing algorithm.
 - `typ`: the token type.
 - `kid`: the signing key identifier.
+</Accordion>
 
-### Payload
-
+<Accordion title="Payload">
 The payload shows the values MCPJam puts into the ID-JAG:
 
 | Claim                   | What it identifies                                      |
@@ -175,14 +216,21 @@ The payload shows the values MCPJam puts into the ID-JAG:
 | `client_id`             | The client identity used in the test                    |
 | `jti`, `iat`, and `exp` | Replay protection and token lifetime                    |
 | `scope`                 | The permissions requested for the MCP server            |
+</Accordion>
 
-### Signature
-
+<Accordion title="Signature">
 The inspector shows the signed JWT and provides **Copy JWT** for further
 inspection. The authorization server verifies the signature using MCPJam's
 public signing keys.
+</Accordion>
+</AccordionGroup>
 
-## Negative Tests
+## Negative tests
+
+Checks that your authorization server rejects broken ID-JAGs. Run a successful
+flow first, then click **Run negative tests**. A strict check passes when the
+authorization server rejects the broken assertion. The MCP server is not called
+during these checks.
 
 <Frame>
   <img
@@ -192,11 +240,6 @@ public signing keys.
     width="764"
   />
 </Frame>
-
-Checks that your authorization server rejects broken ID-JAGs. Run a successful
-flow first, then click **Run negative tests**. A strict check passes when the
-authorization server rejects the broken assertion. The MCP server is not called
-during these checks.
 
 The scorecard runs these strict rejection checks:
 
@@ -220,32 +263,7 @@ trim the scopes it grants. Just confirm the result is what you expect.
 
 These are targeted security and policy checks, not a full conformance test.
 
-## The XAA Flow
-
-The debugger shows the flow in the sequence diagram and logs each request and response:
-
-1. **Discover the MCP server and authorization server.** MCPJam asks the MCP server which authorization server protects it, then reads the authorization server metadata.
-2. **Resolve the client identity.** MCPJam uses the pre-registered client, performs DCR, or uses its CIMD URL.
-3. **Simulate sign-in at MCPJam's identity provider.** MCPJam issues a test ID token.
-4. **Request an ID-JAG.** MCPJam's identity provider exchanges the ID token for an ID-JAG.
-5. **Request an access token using the ID-JAG.** MCPJam sends the ID-JAG to the authorization server's token endpoint using the JWT-bearer grant.
-6. **Call the MCP server.** MCPJam sends the resulting access token to the MCP server.
-
-## Debugging Failures
-
-The right panel shows each flow step, its request and response details, and any
-available token information. If a step fails, it also provides guidance for
-diagnosing the problem. This may include:
-
-- The authorization server does not advertise or accept the JWT-bearer grant.
-- MCPJam's issuer or signing keys are not trusted.
-- The client identity is missing, unregistered, or not allowed to use the grant.
-- The aud, resource, or client_id claim does not match the authorization server's configuration.
-- The authorization server issues a token, but the MCP server rejects it.
-
-Use the compatibility results after discovery and expand each flow step to inspect the exact request, response, and token claims.
-
-## Related Standards
+## Related standards
 
 - [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization)
 - [OAuth 2.0 Authorization Server Metadata (RFC 8414)](https://www.rfc-editor.org/rfc/rfc8414)

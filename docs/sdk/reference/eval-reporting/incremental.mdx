@@ -1,0 +1,147 @@
+---
+title: "Incremental reporting"
+description: "createEvalRunReporter: buffer eval results from a long-running process, then finalize the run"
+icon: "repeat"
+---
+
+Use an incremental reporter when results arrive over time — a long test run, a watch process, or an `EvalTest` / `EvalSuite` run you want to stream into MCPJam as it goes.
+
+## createEvalRunReporter()
+
+Creates an incremental reporter for long-running processes. Results are buffered and flushed in batches (up to 200 results or 1MB per batch).
+
+```typescript
+import { createEvalRunReporter } from "@mcpjam/sdk";
+```
+
+### Signature
+
+```typescript
+createEvalRunReporter(input: CreateEvalRunReporterInput): EvalRunReporter
+```
+
+`CreateEvalRunReporterInput` accepts the same replay source fields as `reportEvalResults()`: `serverReplayConfigs`, `agent`, and `mcpClientManager`.
+
+### EvalRunReporter Methods
+
+| Method | Description |
+|--------|-------------|
+| `add(result)` | Buffer a result (no network call) |
+| `record(result)` | Buffer a result and auto-flush when buffer is large |
+| `flush()` | Upload all buffered results |
+| `finalize()` | Flush remaining results and finalize the run |
+| `getBufferedCount()` | Number of results in the buffer |
+| `getAddedCount()` | Total results added (including flushed) |
+| `setExpectedIterations(count)` | Set expected iteration count for progress tracking |
+
+#### PromptResult Helpers
+
+| Method | Description |
+|--------|-------------|
+| `addFromPrompt(promptResult, overrides?)` | Convert a `PromptResult` and buffer it |
+| `recordFromPrompt(promptResult, overrides?)` | Convert a `PromptResult`, buffer it, and auto-flush |
+
+#### EvalTest/EvalSuite Run Helpers
+
+| Method | Description |
+|--------|-------------|
+| `addFromRun(run, options)` | Convert all iterations from an `EvalTest` run |
+| `recordFromRun(run, options)` | Convert and auto-flush from an `EvalTest` run |
+| `addFromSuiteRun(suiteRun, options)` | Convert all iterations from an `EvalSuite` run |
+| `recordFromSuiteRun(suiteRun, options)` | Convert and auto-flush from an `EvalSuite` run |
+
+### Example
+
+```typescript
+// Assumes `agent` was created with `mcpClientManager: manager`
+const reporter = createEvalRunReporter({
+  suiteName: "Integration Tests",
+  passCriteria: { minimumPassRate: 85 },
+  agent,
+  ci: {
+    branch: process.env.GITHUB_REF_NAME,
+    commitSha: process.env.GITHUB_SHA,
+  },
+});
+```
+
+### Example with manual replay source resolution
+
+```typescript
+const reporter = createEvalRunReporter({
+  suiteName: "Integration Tests",
+  passCriteria: { minimumPassRate: 85 },
+  mcpClientManager: manager,
+});
+
+// Add results as tests complete
+await reporter.record({ caseTitle: "test-1", passed: true, durationMs: 500 });
+await reporter.record({ caseTitle: "test-2", passed: false, error: "timeout" });
+await reporter.record({ caseTitle: "test-3", passed: true });
+
+// Finalize the run
+const output = await reporter.finalize();
+console.log(`${output.summary.passed}/${output.summary.total} passed`);
+```
+
+### Replay credential sources
+
+Authenticated HTTP evals can securely persist replay credentials for reruns and debugging. Manual reporting APIs resolve replay configs in this order:
+
+1. `serverReplayConfigs`
+2. `agent.getServerReplayConfigs()`
+3. `mcpClientManager.getServerReplayConfigs()`
+
+Prefer passing `agent` or `mcpClientManager` directly. Use `serverReplayConfigs` only when you need a low-level override.
+
+If you also provide `serverNames`, inferred replay configs are filtered to those server IDs before upload. Explicit `serverReplayConfigs` are left unchanged.
+
+### Replay metadata for the MCPJam UI
+
+Uploaded runs can show **Replay this run** / server-side MCP replay when the ingest payload includes derived **`serverReplayConfigs`** (stored as **`hasServerReplayConfig`** on the run). In practice:
+
+- **HTTP MCP (`url`)** — Replay configs are built for typical streamable HTTP connections. **Stdio** transports **do not** produce entries from [`MCPClientManager.getServerReplayConfigs()`](/sdk/reference/mcp-client-manager); use HTTP when you need dashboard replay.
+- **`HostRunner` vs reporter** — Putting `mcpClientManager` on [`HostRunner`](/sdk/reference/host-runner) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; wiring only `HostRunner` — leaving the reporter with neither field — still uploads traces and widgets but **omits** `hasServerReplayConfig`.
+- **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
+
+**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite’s models.
+
+### Using with PromptResult
+
+```typescript
+// Pass `agent` or `mcpClientManager` when you need server replay metadata in MCPJam
+const reporter = createEvalRunReporter({ suiteName: "Prompt Tests", agent });
+
+const result = await agent.run("Add 2 and 3");
+reporter.addFromPrompt(result, {
+  caseTitle: "addition",
+  passed: result.hasToolCall("add"),
+});
+
+const output = await reporter.finalize();
+```
+
+### Using with EvalTest Runs
+
+```typescript
+const reporter = createEvalRunReporter({ suiteName: "Full Suite" });
+
+const test = new EvalTest({
+  id: "c_addition",
+  name: "addition",
+  test: async (agent) => (await agent.run("Add 2+3")).hasToolCall("add"),
+});
+
+const run = await test.run(agent, { iterations: 10 });
+await reporter.recordFromRun(run, { casePrefix: "addition" });
+
+const output = await reporter.finalize();
+```
+
+---
+
+## Related
+
+- [Saving Eval Results](/sdk/reference/eval-reporting) - overview and environment variables
+- [Report results](/sdk/reference/eval-reporting/report-results) - one-shot reporting and reading the output
+- [Configuration reference](/sdk/reference/eval-reporting/configuration) - every input field and nested type

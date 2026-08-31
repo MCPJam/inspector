@@ -119,7 +119,7 @@ Layered suite → case, and validated when the test is constructed rather than m
 
 #### predicates
 
-Deterministic, state-based checks evaluated against the iteration transcript — same transcript, same verdict, which is what makes them usable as a CI gate. An iteration passes only if **every** predicate passes, independently of `failOnToolError`. Verdicts are reported under `metadata.predicates`, so the dashboard's check chips work for code-first runs too. See [eval reporting](/sdk/reference/eval-reporting#predicate-gate) for the full list of predicate types.
+Deterministic, state-based checks evaluated against the iteration transcript — same transcript, same verdict, which is what makes them usable as a CI gate. An iteration passes only if **every** predicate passes, independently of `failOnToolError`. Verdicts are reported under `metadata.predicates`, so the dashboard's check chips work for code-first runs too. See [eval reporting](/sdk/reference/eval-reporting/predicates#predicate-gate) for the full list of predicate types.
 
 ```typescript
 const test = new EvalTest({

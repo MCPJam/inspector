@@ -59,7 +59,9 @@ The current runner validates:
 6. Resource contents provide exactly one HTML payload via `text` or `blob`.
 7. `_meta.ui.csp`, `permissions`, `domain`, and `prefersBorder` use valid shapes.
 
-## Example output
+Checks 1–3 belong to the `tools` category; 4–7 to the `resources` category.
+
+## Read the result
 
 ```bash
 mcpjam apps conformance \
@@ -83,6 +85,107 @@ Typical success summary:
   }
 }
 ```
+
+`discovery` tells you what the run actually saw — if `uiToolCount` is `0`, the checks that need an MCP Apps tool were skipped as not-applicable rather than passed.
+
+A run reports one of three outcomes, and `passed` is `true` only for the first:
+
+| `outcome` | Exit code | Meaning |
+|---|---|---|
+| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
+| `failed` | `1` | At least one check found a violation. |
+| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
+
+Every skipped check carries a `skipReason`:
+
+- `not-applicable` — the check cannot apply here (no MCP Apps tools discovered, no UI resources listed). These never hold a run back.
+- `could-not-run` — the check applies but was never exercised (tools/list did not complete, connection failed). These make the run `incomplete`.
+
+An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
+
+## Investigate a failure
+
+### Re-run just the checks you care about
+
+Two categories are available:
+
+- `tools`
+- `resources`
+
+Specific check ids:
+
+- `ui-tools-present`
+- `ui-tool-metadata-valid`
+- `ui-tool-input-schema-valid`
+- `ui-listed-resources-valid`
+- `ui-resources-readable`
+- `ui-resource-contents-valid`
+- `ui-resource-meta-valid`
+
+Use `--category` to run a subset by category, or `--check-id` to run specific checks.
+
+```bash
+# Tool-only checks
+mcpjam apps conformance \
+  --url https://your-server.com/mcp \
+  --category tools
+
+# Specific checks
+mcpjam apps conformance \
+  --url https://your-server.com/mcp \
+  --check-id ui-resources-readable \
+  --check-id ui-resource-contents-valid
+```
+
+<Note>
+  If you pass both `--category` and `--check-id`, the explicit `--check-id`
+  selection wins.
+</Note>
+
+### Read the raw resource HTML
+
+```bash
+mcpjam resources read \
+  --url https://your-server.com/mcp \
+  --resource-uri ui://widget/app.html \
+  --quiet \
+  --format json
+```
+
+### Render one app result
+
+Use `tools list` to find UI-capable tools. A tool has interactive UI when its metadata includes `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`.
+
+Then use `tools call --ui` when you need to inspect the output of one UI-capable tool call. The CLI starts or attaches to the local Inspector backend, opens Inspector by default in a TTY, connects the target server, focuses App Builder in the active Inspector browser client, injects the already-completed tool result, and requests a UI snapshot.
+
+```bash
+mcpjam tools call \
+  --command node --args server.js --cwd /path/to/project \
+  --tool-name create_view \
+  --tool-args @params.json \
+  --ui \
+  --protocol mcp-apps \
+  --device desktop \
+  --theme light \
+  --format json
+```
+
+<Note>
+  `tools call --ui` executes the server tool once. Inspector receives the
+  completed result through `renderToolResult`, so the UI render path does not
+  call the tool a second time. The rendered state lives in the active Inspector
+  client; opening the URL in a fresh tab later does not hydrate the old render.
+</Note>
+
+<AccordionGroup>
+<Accordion title="Inspector URL and open behavior flags">
+`--inspector-url` is the Inspector backend/API URL; `--frontend-url` is the browser/client URL and skips frontend discovery. Use `--no-open` when browser automation already opened `http://127.0.0.1:6274/#app-builder`; use `--attach-only` to disallow startup, browser opening, and discovery. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the App Builder URL and initial wait progress unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY.
+</Accordion>
+
+<Accordion title="When inspectorRender.status is skipped">
+If `inspectorRender.status` is `skipped`, the tool call succeeded but Inspector had no active browser client, a render precondition was missing, or the render wait timed out; the envelope includes a stable root `warning` and `inspectorRender.warning` with one of the stable codes `no_active_client`, `timeout`, `disconnected_server`, or `unsupported_in_mode`, plus an `inspectorRender.remediation` hint. Non-quiet runs print a stderr tip, and the command keeps the tool-call exit code unless `--require-render` is set. If the command returns `success: false` with an `error`, check whether the failure came from `result` or from an Inspector render command.
+</Accordion>
+</AccordionGroup>
 
 ## Suite runner
 
@@ -129,80 +232,6 @@ mcpjam apps conformance-suite \
 - an HTTP target with `url`
 - a stdio target with `command`, optional `args`, optional `env`, and optional `cwd`
 
-## Categories and check ids
-
-Two categories are available:
-
-- `tools`
-- `resources`
-
-Specific check ids:
-
-- `ui-tools-present`
-- `ui-tool-metadata-valid`
-- `ui-tool-input-schema-valid`
-- `ui-listed-resources-valid`
-- `ui-resources-readable`
-- `ui-resource-contents-valid`
-- `ui-resource-meta-valid`
-
-Use `--category` to run a subset by category, or `--check-id` to run specific checks.
-
-```bash
-# Tool-only checks
-mcpjam apps conformance \
-  --url https://your-server.com/mcp \
-  --category tools
-
-# Specific checks
-mcpjam apps conformance \
-  --url https://your-server.com/mcp \
-  --check-id ui-resources-readable \
-  --check-id ui-resource-contents-valid
-```
-
-<Note>
-  If you pass both `--category` and `--check-id`, the explicit `--check-id`
-  selection wins.
-</Note>
-
-## Render one app result
-
-Use `tools list` to find UI-capable tools. A tool has interactive UI when its metadata includes `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`.
-
-Then use `tools call --ui` when you need to inspect the output of one UI-capable tool call. The CLI starts or attaches to the local Inspector backend, opens Inspector by default in a TTY, connects the target server, focuses App Builder in the active Inspector browser client, injects the already-completed tool result, and requests a UI snapshot. `--inspector-url` is the Inspector backend/API URL; `--frontend-url` is the browser/client URL and skips frontend discovery. Use `--no-open` when browser automation already opened `http://127.0.0.1:6274/#app-builder`; use `--attach-only` to disallow startup, browser opening, and discovery. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the App Builder URL and initial wait progress unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY.
-
-```bash
-mcpjam tools call \
-  --command node --args server.js --cwd /path/to/project \
-  --tool-name create_view \
-  --tool-args @params.json \
-  --ui \
-  --protocol mcp-apps \
-  --device desktop \
-  --theme light \
-  --format json
-```
-
-<Note>
-  `tools call --ui` executes the server tool once. Inspector receives the
-  completed result through `renderToolResult`, so the UI render path does not
-  call the tool a second time. The rendered state lives in the active Inspector
-  client; opening the URL in a fresh tab later does not hydrate the old render.
-</Note>
-
-If `inspectorRender.status` is `skipped`, the tool call succeeded but Inspector had no active browser client, a render precondition was missing, or the render wait timed out; the envelope includes a stable root `warning` and `inspectorRender.warning` with one of the stable codes `no_active_client`, `timeout`, `disconnected_server`, or `unsupported_in_mode`, plus an `inspectorRender.remediation` hint. Non-quiet runs print a stderr tip, and the command keeps the tool-call exit code unless `--require-render` is set. If the command returns `success: false` with an `error`, check whether the failure came from `result` or from an Inspector render command.
-
-Raw `ui://` resource HTML can be inspected directly:
-
-```bash
-mcpjam resources read \
-  --url https://your-server.com/mcp \
-  --resource-uri ui://widget/app.html \
-  --quiet \
-  --format json
-```
-
 ## Shared connection flags
 
 `apps conformance` uses the same shared target flags as the rest of the CLI:
@@ -229,23 +258,6 @@ Stdio child processes inherit the parent shell environment by default. Use
 project-specific configuration.
 `--transport` is optional; without it, `--url` implies HTTP and `--command`
 implies stdio.
-
-## Outcomes: passed, failed, incomplete
-
-A run reports one of three outcomes, and `passed` is `true` only for the first:
-
-| `outcome` | Exit code | Meaning |
-|---|---|---|
-| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
-| `failed` | `1` | At least one check found a violation. |
-| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
-
-Every skipped check carries a `skipReason`:
-
-- `not-applicable` — the check cannot apply here (no MCP Apps tools discovered, no UI resources listed). These never hold a run back.
-- `could-not-run` — the check applies but was never exercised (tools/list did not complete, connection failed). These make the run `incomplete`.
-
-An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
 
 ## Notes
 

@@ -1,0 +1,137 @@
+---
+title: "Debug & compare"
+description: "Read what a run actually did: Chat, Trace, and Raw views, per-result debug panels, Logs and Shell, and side-by-side model and host comparison"
+icon: "bug"
+---
+
+**What this covers.** The three views of a conversation (Chat, Trace, Raw), the debug panels attached to every tool result (data, widget state, model context, CSP, mounts, sign-in links, live input and output editing), the right rail's Logs and Shell tabs, and multi-model and multi-host comparison with the shared-session limits that apply to both.
+
+**When to use it.** Reach for this page when a run did not do what you expected and you need to see the exact input, the exact output, the raw protocol traffic, or how the same prompt behaves on a different model or host.
+
+**The most common workflow.** Start in **Chat**, open the **Data** panel on the tool result to compare input against output, check **Trace** if the turn was slow, and drop to **Logs** when you suspect the request never reached your server the way you think it did. When one model or host misbehaves, put it beside a working one and compare directly.
+
+<Info>
+  New to the Playground? Start with the [Playground overview](/inspector/playground) for a guided first run, then come back here for the full reference.
+</Info>
+
+## Chat, Trace, and Raw Views
+
+Switch between three perspectives on the same conversation from the segmented control at the top of the center pane:
+
+- **Chat**: The normal thread with inline messages, tool calls, and rendered widgets.
+- **Trace**: A timestamped timeline of every step (user turns, agent turns, tool calls) with per-step and total latency and token counts. Expand any step to inspect its raw input and output.
+- **Raw**: The full JSON payload sent to the model (system prompt, tool definitions, conversation history). Available for both live sessions and previously-saved sessions you reopen.
+
+<Frame>
+  <img
+    className="block"
+    src="/images/app-builder-trace.png"
+    alt="Trace view showing a timestamped timeline with latency and token counts"
+    width="1000"
+  />
+</Frame>
+
+## Per-Widget Debugging
+
+Every tool result in the chat thread has a row of icons in its header. Click an icon to open the matching debug panel below the widget.
+
+### Data
+
+Raw tool input, output, and error details for the call.
+
+### Widget State (ChatGPT Apps)
+
+The current `widgetState` object and when it was last updated. This is what your widget sets via `window.openai.setWidgetState` and what gets passed back to the model on the next turn.
+
+### Model Context (MCP Apps)
+
+The context your widget has sent back to the model via `ui/update-model-context`. Only appears when the widget has set model context.
+
+### CSP
+
+In Strict mode, a badge shows the number of blocked requests. The panel includes:
+
+- **Suggested fix**: Copyable JSON snippet to add to your `openai/widgetCSP` or `ui.csp` field.
+- **Blocked requests**: Each violation with the directive and source that was blocked.
+- **Declared domains**: The connect, resource, frame, and base URI domains your widget currently declares.
+
+#### Mounts
+
+The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
+
+### Sign-in links
+
+When a computer-backed tool (such as Bash) runs a command that triggers a device-flow authentication prompt (for example, `gh auth login`), any sign-in URLs surfaced by the tool appear as clickable links directly in the chat thread under a **Sign-in link** heading. This saves you from hunting through scrollback for the URL. Only `https:` URLs are rendered as links; plain `http:` and non-web schemes are never shown.
+
+### Edit input & output
+
+Click **Edit** on a tool-result card to make the **Input** and **Result** JSON editable in place. Edits re-render the widget live with no reload; **Run** re-executes the tool with the edited input, and **Revert** restores the original. Edits are local to the session, and nothing is persisted.
+
+## Right Rail
+
+The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached.
+
+### Logs tab
+
+Streams every message between the inspector and your connected server(s) in real time. Each entry shows the direction (client→server or server→client), the method name, and a timestamp. Click an entry to expand its full JSON payload.
+
+Logged messages include:
+
+- Tool invocation requests and responses
+- `window.openai` API calls from your widget
+- Widget state updates
+- MCP App JSON-RPC messages (`tools/call`, `ui/initialize`, `ui/message`, etc.)
+
+Controls in the logger header:
+
+- **Search** the buffer
+- **Filter** by source server
+- **Log level** filter
+- **Copy** the visible entries to your clipboard
+- **Download** the buffer as a file
+- **Clear** the buffer
+- **Collapse** the rail
+
+When a search is active and the source filter is hiding matching entries, a banner appears below the toolbar showing how many matches are hidden. Click **Clear filter** in the banner to reset the source filter to **All** and reveal those entries. The empty state reads **No matches in this view** (rather than **No logs yet**) whenever logs exist but are all filtered out.
+
+### Shell tab
+
+When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+
+Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
+
+## Multi-Model Compare
+
+Send one prompt to up to 3 models simultaneously. Open the model picker, toggle **Multiple models** on, and select the models you want to compare. Each model's response, including tool calls and rendered widgets, appears in its own column.
+
+<Note>
+  The **Multiple models** toggle is hidden when the active session is shared
+  with the project (project-visible). Enabling it on a shared session would
+  mutate experiment state for every collaborator. Switch the session back to
+  private to use multi-model compare.
+</Note>
+
+<Frame>
+  <img
+    className="block"
+    src="/images/multi_model_chat.png"
+    alt="Playground running the same prompt across multiple models in split-screen"
+    width="1000"
+  />
+</Frame>
+
+## Multi-Host Compare
+
+Open the host picker (top-left of the center header) to render the same tool calls under different host configurations side by side: for example, ChatGPT vs Claude host style, or desktop vs mobile viewports.
+
+New sessions start with **ChatGPT, Claude, and Cursor** pre-selected so you land directly in a 3-way compare. To change the lineup, open the host picker and check or uncheck rows. Checking a second row immediately adds it to the compare grid; unchecking a row removes it. Your selection is saved per project, so returning users keep whatever lineup they last configured.
+
+One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
+
+This is the fastest way to verify that a widget renders correctly across the host environments you intend to ship to.
+
+<Note>
+  The host picker is hidden when the active session is shared with the project
+  (project-visible), for the same reason as multi-model compare. Switch the
+  session back to private to use multi-host compare.
+</Note>
