@@ -10,7 +10,10 @@ import type {
 import { logger } from "../../utils/logger.js";
 import { uploadVideoBlob } from "../../utils/mcp-app-widget-capture.js";
 import type { UsageTotals } from "./types.js";
-import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import {
+  sanitizeForConvexTransport,
+  toPersistedToolCalls,
+} from "./convex-sanitize.js";
 import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
 import {
   serializeBrowserStepsForBackend,
@@ -1091,7 +1094,9 @@ export async function finalizeEvalIteration(
       iterationId,
       status: iterationStatus === "completed" ? "completed" : iterationStatus,
       result,
-      actualToolCalls: sanitizeForConvexTransport(toolsCalled),
+      actualToolCalls: sanitizeForConvexTransport(
+        toPersistedToolCalls(toolsCalled),
+      ),
       tokensUsed: usage.totalTokens ?? 0,
       ...(useW1Fallback
         ? {
