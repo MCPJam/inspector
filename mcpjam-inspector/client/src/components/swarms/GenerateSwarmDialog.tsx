@@ -190,11 +190,6 @@ export function GenerateSwarmDialog({
 
   const handleGenerate = async () => {
     if (!targetsValid) return;
-    // Grounding id, resolved BEFORE the latch: `targetsValid` already proves
-    // latch-free side (see the comment below). Grounds on the FIRST selected
-    // environment — the backend resolves its server group, or the host's own
-    // picks when it has none.
-
     // Every rejection that returns WITHOUT entering the try/finally below must
     // come before the latch is taken — otherwise the latch is never released
     // and the button is silently dead until the dialog is reopened.

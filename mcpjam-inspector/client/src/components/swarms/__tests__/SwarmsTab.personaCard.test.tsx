@@ -5,7 +5,13 @@
  * asserts the layout classes sit on the right elements;
  * `e2e/personas-column-layout.spec.ts` measures what they render to.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/use-available-models", () => ({
@@ -181,5 +187,50 @@ describe("persona sidebar card", () => {
     );
     expect(heights.size).toBe(1);
     expect([...heights][0]).toBeDefined();
+  });
+
+  /** The row wrapping a card, which carries the selected background. */
+  const rowOf = (nameEl: HTMLElement) =>
+    nameEl.closest("button")?.parentElement;
+
+  it("marks the selected card and only that one", async () => {
+    const aside = await renderSidebar();
+    // SwarmsTab lands on the first persona, so the second is the one to click.
+    expect(rowOf(within(aside).getByText(LONG_NAME))?.className).toContain(
+      "bg-muted",
+    );
+
+    fireEvent.click(within(aside).getByText("Ana"));
+
+    await waitFor(() => {
+      expect(rowOf(within(aside).getByText("Ana"))?.className).toContain(
+        "bg-muted",
+      );
+    });
+    expect(rowOf(within(aside).getByText(LONG_NAME))?.className).not.toContain(
+      "bg-muted",
+    );
+  });
+
+  it("offers a way out of an empty library", async () => {
+    personaRows.current = [];
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
+    const aside = await screen.findByTestId("swarm-persona-sidebar");
+
+    expect(within(aside).getByText(/no saved personas yet/i)).toBeTruthy();
+    expect(
+      within(aside).getByRole("button", { name: /create a persona/i }),
+    ).toBeTruthy();
+  });
+
+  it("says it is loading rather than showing an empty library", async () => {
+    personaRows.current = undefined as never;
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
+    const aside = await screen.findByTestId("swarm-persona-sidebar");
+
+    expect(within(aside).getByText(/loading/i)).toBeTruthy();
+    expect(within(aside).queryByText(/no saved personas yet/i)).toBeNull();
   });
 });
