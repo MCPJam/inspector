@@ -58,7 +58,7 @@ export const APPS_CHECK_METADATA: Record<
     category: "resources",
     title: "Listed UI Resources Valid",
     description:
-      "UI resources returned by resources/list use ui:// URIs and the MCP Apps HTML MIME type.",
+      "UI resources returned by resources/list use ui:// URIs; declaring the MCP Apps HTML MIME type there is a SHOULD, so a different value warns rather than fails.",
   },
   "ui-resources-readable": {
     id: "ui-resources-readable",
@@ -72,7 +72,7 @@ export const APPS_CHECK_METADATA: Record<
     category: "resources",
     title: "UI Resource Contents Valid",
     description:
-      "UI resource contents use the MCP Apps HTML MIME type and provide exactly one HTML payload via text or blob.",
+      "resources/read returns at least one content entry, and every entry uses the MCP Apps HTML MIME type and carries an HTML document via text or blob.",
   },
   "ui-resource-meta-valid": {
     id: "ui-resource-meta-valid",
@@ -769,7 +769,15 @@ export class MCPAppsConformanceTest {
                 ),
               );
             } else {
+              // The two rules on a LISTING entry carry different force. The
+              // `ui://` scheme is a MUST ("MUST use the `ui://` URI scheme",
+              // apps.mdx UIResource.uri), so it fails. The mimeType VALUE is
+              // only a SHOULD there ("SHOULD be `text/html;profile=mcp-app`
+              // ... in the initial MVP", apps.mdx UIResource.mimeType), so it
+              // warns. The same value IS a MUST on the read result, and
+              // `ui-resource-contents-valid` enforces it there.
               const violations: string[] = [];
+              const warnings: string[] = [];
 
               for (const resource of listedUiResources) {
                 if (!resource.uri.startsWith("ui://")) {
@@ -778,11 +786,18 @@ export class MCPAppsConformanceTest {
                   );
                 }
                 if (resource.mimeType !== MCP_UI_RESOURCE_MIME_TYPE) {
-                  violations.push(
-                    `Listed UI resource ${resource.uri} uses mimeType "${resource.mimeType ?? "<missing>"}" instead of "${MCP_UI_RESOURCE_MIME_TYPE}"`,
+                  warnings.push(
+                    `Listed UI resource ${resource.uri} declares mimeType "${resource.mimeType ?? "<missing>"}" rather than "${MCP_UI_RESOURCE_MIME_TYPE}"; the listing value is a SHOULD, so this does not fail — but resources/read MUST return the MCP Apps type`,
                   );
                 }
               }
+
+              const listingDetails = {
+                listedUiResourceCount: listedUiResources.length,
+                listedUiResourceUris: listedUiResources.map(
+                  (resource) => resource.uri,
+                ),
+              };
 
               if (violations.length > 0) {
                 checks.push(
@@ -790,12 +805,9 @@ export class MCPAppsConformanceTest {
                     "ui-listed-resources-valid",
                     Date.now() - stepStartedAt,
                     `${violations.length} listed UI resource violation(s) found`,
-                    {
-                      violations,
-                      listedUiResourceUris: listedUiResources.map(
-                        (resource) => resource.uri,
-                      ),
-                    },
+                    { violations, ...listingDetails },
+                    undefined,
+                    warnings,
                   ),
                 );
               } else {
@@ -803,12 +815,8 @@ export class MCPAppsConformanceTest {
                   passedResult(
                     "ui-listed-resources-valid",
                     Date.now() - stepStartedAt,
-                    {
-                      listedUiResourceCount: listedUiResources.length,
-                      listedUiResourceUris: listedUiResources.map(
-                        (resource) => resource.uri,
-                      ),
-                    },
+                    listingDetails,
+                    warnings,
                   ),
                 );
               }
@@ -878,9 +886,14 @@ export class MCPAppsConformanceTest {
                   ? outcome.result.contents
                   : [];
 
-                if (contents.length !== 1) {
+                // The spec's Content Requirements are stated per content item
+                // and never cap the array: the single-element `contents: [{…}]`
+                // in apps.mdx is an example, not a bound. So an empty array is
+                // the violation — there is no content to render — and every
+                // entry that IS returned has to satisfy the four MUSTs below.
+                if (contents.length === 0) {
                   violations.push(
-                    `${outcome.uri} must return exactly one content entry from resources/read (got ${contents.length})`,
+                    `${outcome.uri} returned no content entries from resources/read`,
                   );
                   continue;
                 }
