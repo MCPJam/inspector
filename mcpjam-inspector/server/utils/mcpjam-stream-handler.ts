@@ -678,6 +678,12 @@ export interface MCPJamHandlerOptions {
    */
   runtimeSecrets?: { name: string; value: string }[];
   /**
+   * The secrets fetch FAILED — distinct from "this turn has none", and handled
+   * differently: it forks the harness session rather than resuming one that may
+   * still hold values this turn cannot enumerate or scrub.
+   */
+  secretsUnavailable?: boolean;
+  /**
    * Phase 3 execution scope from the server-resolved runtime config (scenario OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
    * broker start, session-state, ingest commit) so the backend re-resolves live

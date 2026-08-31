@@ -285,6 +285,15 @@ export interface WebChatTurnPersistContext {
    */
   runtimeSecrets?: { name: string; value: string }[];
   /**
+   * The secrets fetch FAILED — distinct from "this turn has none".
+   *
+   * Forces the harness runtime fingerprint to change, so the session forks onto
+   * a fresh bridge instead of resuming one that may still hold previously
+   * delivered values this process can no longer enumerate (and therefore could
+   * not scrub out of the transcript). See `runtime-secrets.ts`.
+   */
+  secretsUnavailable?: boolean;
+  /**
    * What this turn should RECORD about the configuration it ran with —
    * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
    * from the POST-narrowing spec so it reflects what actually ran.
@@ -866,6 +875,10 @@ export async function streamWebChatTurn(
             : {}),
         });
   const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+  // A failed fetch here forks the session for the same reason it does in
+  // `chat-v2`: we cannot enumerate what the box may already hold.
+  const secretsUnavailable =
+    persist.secretsUnavailable === true || !secretsFetch.ok;
   const secretScrubber = runtimeSecrets
     ? createSecretScrubber(runtimeSecrets)
     : null;
@@ -1234,6 +1247,7 @@ export async function streamWebChatTurn(
     // That is fail-closed, and it is exactly why the eval and swarm drivers
     // need wiring rather than inheriting this for free.
     ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
+    ...(secretsUnavailable ? { secretsUnavailable: true } : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
     // request the engine drives one retry leg (reconstructing tool

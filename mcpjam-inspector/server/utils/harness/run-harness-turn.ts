@@ -537,6 +537,7 @@ export async function runHarnessTurn(
     effectiveCapabilities,
     environmentId,
     runtimeSecrets: runtimeSecretsOverride,
+    secretsUnavailable,
     createHarnessScopeStepUpContinuation,
   } = options;
   // One typed route.operation.failed per turn; the system fallback covers
@@ -1203,7 +1204,18 @@ export async function runHarnessTurn(
         // sending `""`: omitting leaves the fingerprint exactly where it was
         // and the session resumes, while an empty value would read as "the
         // secrets were removed" and cold-start the conversation.
-        ...(runtimeSecrets !== null
+        //
+        // A caller that could not FIND OUT is the third case, and it must not
+        // be treated as either. Resuming would reattach to a bridge that may
+        // still hold previously delivered values — which this turn cannot
+        // enumerate, and therefore cannot scrub out of the transcript. A
+        // sentinel forks instead: the fresh bridge holds nothing, so there is
+        // nothing left to leak. It is a CONSTANT on purpose — two consecutive
+        // failed turns share it and resume onto each other, which is right,
+        // because neither delivered anything either.
+        ...(secretsUnavailable
+          ? { secretsHash: "unavailable" }
+          : runtimeSecrets !== null
           ? { secretsHash: deliveredSecretsFingerprint(runtimeSecrets) }
           : {}),
       });

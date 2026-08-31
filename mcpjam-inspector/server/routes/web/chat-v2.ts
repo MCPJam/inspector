@@ -1274,35 +1274,30 @@ chatV2.post("/", async (c) => {
         : {}),
       ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
     });
-    // A FAILED FETCH IS NOT "NO SECRETS", AND MUST NOT RUN THE TURN.
+    // A FAILED FETCH IS NOT "NO SECRETS" — IT FORKS THE SESSION.
     //
     // The tri-state exists precisely so a transient Convex failure cannot read
-    // as an empty grant, but passing `null` downstream re-collapsed it: a null
+    // as an empty grant, and passing `null` downstream re-collapsed it: a null
     // list omits the secrets dimension from the harness runtime fingerprint,
     // which RESUMES the session — and a resumed harness session reattaches to a
-    // bridge process that still holds the previously delivered values. So the
-    // box would go on holding live credentials this process can no longer
-    // enumerate, which means no scrubber, which means anything the box echoes
-    // is persisted into the transcript verbatim. That is the exact leak
-    // materialized delivery is scrubbed to prevent, reached by way of a blip.
+    // bridge process that still holds the previously delivered values. The box
+    // would go on holding live credentials this process can no longer
+    // enumerate, so nothing could be scrubbed out of the transcript.
     //
-    // `null` downstream therefore has to keep meaning "the caller established
-    // there are none", never "the caller could not find out". Refusing the turn
-    // is the only answer that preserves that: the failure is transient and the
-    // message says to retry, where an unscrubbed transcript is permanent.
+    // Forking is the fix rather than refusing the turn. A fork starts a fresh
+    // bridge, which holds no previously delivered values — so there is nothing
+    // in the box left to leak, and nothing this turn needs to redact. The user
+    // loses shell state, which is a real cost, but a bounded and visible one.
     //
-    // Only reachable when a grant boundary exists — `fetchRuntimeSecrets`
-    // returns an empty SUCCESS for a turn with no environment or no bearer, so
-    // a project with no secrets never lands here.
-    if (!secretsFetch.ok) {
-      throw new WebRouteError(
-        503,
-        ErrorCode.INTERNAL_ERROR,
-        "Couldn't resolve this environment's project secrets, so this turn was not started. This is usually transient — try again.",
-      );
-    }
-    const runtimeSecrets = secretsFetch.secrets;
-    const secretEnv = toSecretEnv(runtimeSecrets);
+    // Refusing the turn outright was the first attempt here and it was wrong:
+    // `{ok:false}` covers every failure of the secrets service, so it made
+    // every environment-backed chat unavailable whenever that service blipped,
+    // including for projects that have never created a secret and had nothing
+    // at risk. The hazard is specific to sessions that may already be holding
+    // values; the remedy has to be too.
+    const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+    const secretsUnavailable = !secretsFetch.ok;
+    const secretEnv = runtimeSecrets ? toSecretEnv(runtimeSecrets) : undefined;
 
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
@@ -1751,6 +1746,9 @@ chatV2.post("/", async (c) => {
           // presence is semantic, and one fetch is what keeps the scrubber's
           // registry and the box's environment describing the same set.
           ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
+          // Distinguishes "there are none" from "we could not find out". Only
+          // the second forks the session — see the fetch site above.
+          ...(secretsUnavailable ? { secretsUnavailable: true } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Hosted sessions finally honor the CAS the client already sends.
