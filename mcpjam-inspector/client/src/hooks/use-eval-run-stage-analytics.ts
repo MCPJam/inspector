@@ -179,5 +179,22 @@ export function useEvalRunStageAnalytics({
     setAttempt((n) => n + 1);
   }, [active]);
 
-  return { status, document, error, refetch };
+  // `idle` means "never asked", and while ACTIVE that is only ever true for a
+  // single render: `active` is computed here, but the effect that sets
+  // `loading` runs after this render commits.
+  //
+  // Reporting the raw `idle` on that first frame let the run detail draw the
+  // LEGACY funnel and then replace it with canonical numbers — the exact
+  // incompatible-number flash the `loading` branch exists to prevent, and one
+  // introduced by the fix that made an inactive `idle` render legacy at all.
+  // Both are `idle` to this hook's state machine; only `active` tells them
+  // apart, and only this hook knows it.
+  //
+  // Derived rather than seeded in `useState`, because `active` can flip after
+  // mount (a project id arrives, the flag resolves) and an initial value would
+  // answer for the first render only.
+  const observed: EvalRunStageAnalyticsStatus =
+    active && status === "idle" ? "loading" : status;
+
+  return { status: observed, document, error, refetch };
 }

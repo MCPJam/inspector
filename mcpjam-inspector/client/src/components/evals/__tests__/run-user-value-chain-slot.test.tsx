@@ -138,6 +138,37 @@ describe("a run with no project id still gets a funnel", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("does NOT flash the legacy rollup on the first ACTIVE render", async () => {
+    // The regression the fix above introduced, and the reason `idle` is not
+    // one state. With the flag on and both ids present the hook is about to
+    // ask, but `status` only becomes `loading` in an effect that runs after
+    // the first render commits — so for one frame `idle` meant "never asked"
+    // and "asking right now" at the same time, and the slot drew the LEGACY
+    // funnel before replacing it with canonical numbers: precisely the
+    // incompatible-number flash the in-flight branch exists to prevent.
+    //
+    // EVERY render's decision is recorded, not just the final DOM. `render()`
+    // flushes effects before it returns, so asserting on the DOM afterwards
+    // cannot see the offending frame at all — the first version of this test
+    // passed with the fix reverted, which is the whole failure mode being
+    // guarded against here.
+    const choices: string[] = [];
+    function Recorder() {
+      const chain = useRunUserValueChainChoice({
+        projectId: "p1",
+        runId: RUN_ID,
+      });
+      choices.push(chain.choice);
+      return null;
+    }
+
+    fetchMock.mockReturnValue(new Promise(() => {}));
+    render(<Recorder />);
+
+    expect(choices.length).toBeGreaterThan(0);
+    expect(choices).not.toContain("legacy");
+  });
+
   it("does not LABEL that legacy rollup — nothing was attempted", async () => {
     // "Never asked" is the flag-off state, and it must answer the same way. A
     // label would tell a reader the canonical document was tried and missing,

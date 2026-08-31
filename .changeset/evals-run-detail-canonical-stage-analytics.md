@@ -41,4 +41,6 @@ The route binds **both** halves of the document's identity, not one. `runId` and
 
 The two 404s are now byte-identical, not just status-identical. The route promises that "no document" and "not visible to you" are indistinguishable — but `v1ErrorBody` returns its `message` to the caller, and the two paths sent different ones, so anyone holding a run id could read off the bit the matching status codes were hiding. The test that was supposed to catch this compared `body.error?.code`, and the envelope is `{ code, message }` with no `error` wrapper: it compared `undefined` with `undefined` and passed. It now compares the whole body, and asserts the body is non-empty so it cannot pass vacuously again.
 
+`idle` is two states, and only the hook can tell them apart. Making an inactive `idle` render legacy introduced a flash: `active` is computed during render, but the effect that sets `loading` runs after that render commits — so for one frame "never asked" and "asking right now" were the same value, and the run detail drew the legacy funnel before replacing it with canonical numbers. The hook now reports `loading` for an active `idle`, so the slot's branches keep meaning what they say.
+
 Dark until the backend reader is deployed and the flag is enabled.
