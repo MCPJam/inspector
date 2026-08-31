@@ -340,7 +340,7 @@ describe("agent op registry", () => {
     ).toContain("attached to the suite");
   });
 
-  it("marks both eval-run proposals as SPEND", () => {
+  it("marks every credit-consuming eval proposal as SPEND", () => {
     // Every eval run consumes credits, and a fan-out consumes them N times —
     // the host's default confirmation copy does not say so.
     expect(
@@ -349,6 +349,15 @@ describe("agent op registry", () => {
     expect(proposalMetaFor(runEvalCaseOperation.name).severityFor({})).toBe(
       "spend"
     );
+    // Generation calls the authoring model, so it spends exactly like the two
+    // above — and it is the one whose cost is least obvious from its name,
+    // which is how it went unlabelled while they did not. Asserting the
+    // SEVERITY and not just the description is the point: the description
+    // test next door passed throughout the period the spend warning was
+    // missing from Slack and Discord.
+    expect(
+      proposalMetaFor(generateEvalCasesOperation.name).severityFor({})
+    ).toBe("spend");
   });
 
   it("freezes allAttached into an explicit target list at MINT time", async () => {
