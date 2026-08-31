@@ -1038,12 +1038,17 @@ export function NewSwarmCreateFlow({
       setStep("confirm");
     } catch (err) {
       setMaterializing(false);
+      // A model limit is owned by its dialog, which carries the same sentence
+      // plus the actions that clear it. Repeating it as a card under the form
+      // would say the same thing twice with nothing to act on.
       setErrorMessage(
-        err instanceof SwarmTargetMaterializeError ||
-          err instanceof ComposerResolveError ||
-          err instanceof SwarmGenerateError
-          ? err.message
-          : errorMessageOf(err, "Failed to generate personas."),
+        err instanceof SwarmGenerateError && err.limitDialogRaised
+          ? null
+          : err instanceof SwarmTargetMaterializeError ||
+              err instanceof ComposerResolveError ||
+              err instanceof SwarmGenerateError
+            ? err.message
+            : errorMessageOf(err, "Failed to generate personas."),
       );
     } finally {
       inFlightRef.current = false;

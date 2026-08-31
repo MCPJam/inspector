@@ -285,8 +285,16 @@ export function ErrorCard({
             <div className="mt-2 space-y-2 rounded border border-foreground/10 bg-background/40 p-2 text-foreground/80">
               {normalized.likelyCauses.length > 0 ? (
                 <div>
+                  {/* A list means the wire genuinely doesn't settle which one
+                      it was; a single entry means we know. Saying "likely"
+                      over a cause we're certain of reads as the product not
+                      knowing its own state. Not "Cause": that heading is
+                      taken below by the nested exception, and one panel
+                      cannot use it for two different things. */}
                   <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                    Likely causes
+                    {normalized.likelyCauses.length === 1
+                      ? "Why this happened"
+                      : "Likely causes"}
                   </div>
                   <ul className="mt-1 list-disc pl-4 space-y-0.5">
                     {normalized.likelyCauses.map((cause, idx) => (

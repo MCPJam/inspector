@@ -37,6 +37,7 @@ import {
   getAnnualDiscountPercent,
   getDisplayPriceCentsForPlan,
 } from "@/lib/billing-entitlements";
+import { consumeUrlFlag } from "@/lib/url-flag";
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
@@ -671,6 +672,10 @@ export function OrganizationBillingSection({
 }: OrganizationBillingSectionProps) {
   useCreditTopupReturnFlowBilling({ enabled: showCredits });
 
+  // Plans sit below credits and payment history, so a deep link that lands at
+  // the top of the page hides the one thing the user clicked for.
+  const [arrivedForPlans, setArrivedForPlans] = useState(false);
+  const plansHeadingRef = useRef<HTMLDivElement | null>(null);
   const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("annual");
@@ -679,6 +684,22 @@ export function OrganizationBillingSection({
     currentDisplayName: string;
     requestedDisplayName: string;
   } | null>(null);
+
+  // One-shot: consume the flag so a reload doesn't scroll the page again.
+  useEffect(() => {
+    if (consumeUrlFlag("plans", "open")) setArrivedForPlans(true);
+  }, []);
+
+  // Deferred until the section is actually rendering: `showPlanBilling` can
+  // arrive a render late while the org's billing permissions resolve.
+  useEffect(() => {
+    if (!arrivedForPlans || !showPlanBilling) return;
+    setArrivedForPlans(false);
+    plansHeadingRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [arrivedForPlans, showPlanBilling]);
 
   useEffect(() => {
     if (checkoutIntent?.interval) {
@@ -954,7 +975,7 @@ export function OrganizationBillingSection({
               Redirecting to checkout…
             </div>
           ) : null}
-          <div className="space-y-1.5">
+          <div className="space-y-1.5" ref={plansHeadingRef}>
             <div className="flex items-center gap-2 text-xl font-semibold tracking-tight">
               <CreditCard
                 className="size-5 shrink-0 text-muted-foreground"

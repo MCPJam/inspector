@@ -309,6 +309,9 @@ export const ANALYTICS_EVENTS = {
   plan_limit_sign_in_clicked: { source: "client" },
   plan_limit_buy_credits_clicked: { source: "client" },
   plan_limit_byok_clicked: { source: "client" },
+  // The swarm variant's tertiary link. `surface` on the impression says which
+  // variant was on screen, so it needs no wall_kind of its own.
+  plan_limit_explore_plans_clicked: { source: "client" },
   plan_limit_interval_selected: { source: "client" },
   plan_limit_upgrade_clicked: { source: "client" },
   plan_limit_upgrade_failed: { source: "client" },

@@ -24,27 +24,7 @@ import {
   formatMonthlyResetText,
 } from "@/lib/credit-usage";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
-
-/** Pulls the limit-modal redirect flag out of the current URL and clears it
- * so the topup dialog opens exactly once on landing. */
-function consumeTopupFlag(): boolean {
-  if (typeof window === "undefined") return false;
-
-  const searchParams = new URLSearchParams(window.location.search);
-  if (searchParams.get("topup") === "open") {
-    searchParams.delete("topup");
-    const remaining = searchParams.toString();
-    const nextSearch = remaining ? `?${remaining}` : "";
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${nextSearch}`
-    );
-    return true;
-  }
-
-  return false;
-}
+import { consumeUrlFlag } from "@/lib/url-flag";
 
 interface CreditBalanceCardProps {
   organizationId?: string | null;
@@ -78,7 +58,7 @@ export function CreditBalanceCard({
   // reopen the dialog. Source is recorded as `limit_modal` so the funnel can
   // attribute the top-up back to the limit-hit that triggered the redirect.
   useEffect(() => {
-    if (consumeTopupFlag()) {
+    if (consumeUrlFlag("topup", "open")) {
       setArrivedFromLimitModal(true);
     }
   }, []);

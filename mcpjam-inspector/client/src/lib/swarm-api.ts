@@ -12,6 +12,7 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
@@ -966,10 +967,14 @@ export interface SwarmGeneratedPersona {
  */
 export class SwarmGenerateError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** A model limit the dialog took over. The caller must not also render this
+   * message inline — the modal already carries it, with the actions. */
+  readonly limitDialogRaised: boolean;
+  constructor(status: number, message: string, limitDialogRaised = false) {
     super(message);
     this.name = "SwarmGenerateError";
     this.status = status;
+    this.limitDialogRaised = limitDialogRaised;
   }
 }
 
@@ -998,7 +1003,21 @@ async function postGenerate<T>(
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
         : `${fallbackMessage} (${response.status})`;
-    throw new SwarmGenerateError(response.status, message);
+    // Raise the top-up dialog HERE, where the body still carries the route's
+    // `code`. `SwarmGenerateError` keeps only status + message, so by the time
+    // the create flow catches this the limit is no longer identifiable — and
+    // it renders as the catalog's "Unknown error" instead.
+    const code =
+      parsed && typeof parsed === "object"
+        ? (parsed as { code?: unknown }).code
+        : undefined;
+    const limitDialogRaised = notifyMCPJamLimitError({
+      ...(typeof code === "string" ? { code } : {}),
+      details: parsed,
+      message,
+      surface: "swarm",
+    });
+    throw new SwarmGenerateError(response.status, message, limitDialogRaised);
   }
   return parsed as T;
 }
