@@ -24,7 +24,10 @@
  */
 
 import type { ModelMessage } from "ai";
-import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
+import type {
+  PredicateResult,
+  ToolErrorRecord,
+} from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -237,7 +240,8 @@ export interface StepExecutorResult {
 export function hasWidgetDrivingStep(steps: TestStep[]): boolean {
   return steps.some(
     (s) =>
-      isInteractStep(s) || (isAssertStep(s) && isWidgetAssertion(s.assertion)),
+      isInteractStep(s) ||
+      (isAssertStep(s) && isWidgetAssertion(s.assertion)),
   );
 }
 
@@ -262,8 +266,7 @@ function applyOutcome(
   turn: number,
 ): void {
   if (outcome.messages?.length) state.messages.push(...outcome.messages);
-  if (outcome.toolCalls?.length)
-    recordToolCalls(state, turn, outcome.toolCalls);
+  if (outcome.toolCalls?.length) recordToolCalls(state, turn, outcome.toolCalls);
   if (outcome.toolErrors?.length) state.toolErrors.push(...outcome.toolErrors);
   if (outcome.usage) {
     state.usage.inputTokens += outcome.usage.inputTokens ?? 0;
@@ -277,7 +280,9 @@ function snapshotTranscript(state: StepExecutionState) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
-    ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
+    ...(finalAssistantMessage !== undefined
+      ? { finalAssistantMessage }
+      : {}),
     usage:
       state.usage.inputTokens ||
       state.usage.outputTokens ||
@@ -376,11 +381,7 @@ async function drainAndDriveFollowUps(
         return undefined;
       }
       remaining -= 1;
-      const outcome = await handlers.onFollowUp!({
-        text,
-        stepIndex,
-        turnOrdinal: turn,
-      });
+      const outcome = await handlers.onFollowUp!({ text, stepIndex, turnOrdinal: turn });
       applyOutcome(state, outcome, turn);
       if (outcome.iterationError) return outcome;
     }
@@ -407,7 +408,8 @@ async function runAssertStep(
       passed: outcome.ok,
       reason: outcome.ok
         ? `widget assertion "${step.assertion.kind}" passed`
-        : outcome.reason ?? `widget assertion "${step.assertion.kind}" failed`,
+        : outcome.reason ??
+          `widget assertion "${step.assertion.kind}" failed`,
     });
     return;
   }

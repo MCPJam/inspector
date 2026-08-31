@@ -92,7 +92,7 @@ type PolicyBlockRecord = { reason?: unknown };
  * summary reason when multiple policy blocks occur.
  */
 function getIterationPolicyReason(
-  policyBlocks: ReadonlyArray<PolicyBlockRecord>,
+  policyBlocks: ReadonlyArray<PolicyBlockRecord>
 ): string | undefined {
   const reason = policyBlocks[0]?.reason;
   return typeof reason === "string" ? reason : undefined;
@@ -260,7 +260,7 @@ export function buildStageMetadata(args: {
 
 /** A predicate row the score projection can key a criterion off. */
 function isHostedPredicateResult(
-  value: unknown,
+  value: unknown
 ): value is HostedPredicateResultLike {
   if (typeof value !== "object" || value === null) return false;
   const row = value as { predicate?: unknown; passed?: unknown };
@@ -273,7 +273,7 @@ function isHostedPredicateResult(
 
 /** Read only the matcher fields the projection needs, typed rather than cast. */
 function narrowEvaluation(
-  evaluation: Record<string, unknown>,
+  evaluation: Record<string, unknown>
 ): HostedEvaluationLike {
   const list = (key: string): readonly unknown[] | undefined => {
     const value = evaluation[key];
@@ -363,7 +363,7 @@ function buildScoreMetadata(args: {
 } {
   if (args.mode === "off") return { keys: {} };
   const predicateResults = (args.predicateResults ?? []).filter(
-    isHostedPredicateResult,
+    isHostedPredicateResult
   );
   const { scores, evaluationConfig } = buildHostedScoreContract({
     ...(predicateResults.length ? { predicateResults } : {}),
@@ -429,7 +429,7 @@ function buildScoreMetadata(args: {
         ...(typeof args.stageMetadata.stageAnalyzerVersion === "number"
           ? { stageAnalyzerVersion: args.stageMetadata.stageAnalyzerVersion }
           : {}),
-      },
+      }
     );
     // The emitter is only REACHED on disagreement, so a spy on it counts
     // mismatches rather than comparisons — that is what makes
@@ -460,11 +460,7 @@ function readUserValueRow(
   for (const row of rows) {
     if (typeof row !== "object" || row === null) continue;
     const candidate = row as Partial<StageResultRow>;
-    if (
-      candidate.stage === "userValue" &&
-      candidate.state &&
-      candidate.reason
-    ) {
+    if (candidate.stage === "userValue" && candidate.state && candidate.reason) {
       return { state: candidate.state, reason: candidate.reason };
     }
   }
@@ -501,14 +497,12 @@ function buildSelectionToolCatalogMetadata(args: {
   // and folding them in could fill the catalog's cap before the turn that
   // actually caused the failure is ever considered.
   const failingPrompts = prompts.filter(
-    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0,
+    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0
   );
   const expectedToolNames = failingPrompts
     .flatMap((p) => p.missing ?? [])
     .map((t) => t.toolName)
-    .filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    );
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
   // `unexpected` names FIRST, then the rest of the turn's actual calls:
   // `buildSelectionToolCatalog`'s cap is shared across both roles, and for
   // an `unexpectedToolCall` failure (e.g. `maxExtraToolCalls: 0`, six
@@ -523,15 +517,11 @@ function buildSelectionToolCatalogMetadata(args: {
   const unexpectedToolNames = failingPrompts
     .flatMap((p) => p.unexpected ?? [])
     .map((t) => t.toolName)
-    .filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    );
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
   const otherActualToolNames = failingPrompts
     .flatMap((p) => p.actualToolCalls ?? [])
     .map((t) => t.toolName)
-    .filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    );
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
   const actualToolNames = [...unexpectedToolNames, ...otherActualToolNames];
   if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
     return {};
@@ -722,7 +712,10 @@ export function buildIterationFinishParams(args: {
     selectionTools,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
-  const persistedSpans = [...(setupSpans ?? []), ...(spans ?? [])];
+  const persistedSpans = [
+    ...(setupSpans ?? []),
+    ...(spans ?? []),
+  ];
   const stageMetadata = buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),
     spans,
@@ -768,13 +761,14 @@ export function buildIterationFinishParams(args: {
   // would silently switch D7's catalog capture back OFF for the cohort that
   // has progressed furthest. The predicate is what keeps "dual_write and
   // above" in one place.
-  const selectionToolCatalogMetadata = isDualWrite(gradingMode)
-    ? buildSelectionToolCatalogMetadata({
-        stageMetadata,
-        prompts,
-        selectionTools,
-      })
-    : {};
+  const selectionToolCatalogMetadata =
+    isDualWrite(gradingMode)
+      ? buildSelectionToolCatalogMetadata({
+          stageMetadata,
+          prompts,
+          selectionTools,
+        })
+      : {};
 
   // THE FLIP, and the ONE DIRECTION IT MAY MOVE.
   //
@@ -1039,8 +1033,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-      ? "eval_failed"
-      : "eval_completed";
+        ? "eval_failed"
+        : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke
@@ -1095,7 +1089,8 @@ export async function finalizeEvalIteration(
   // before any turn landed. With turns already written, re-sending
   // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
   // orphan turns 1..N. See persist-eval-trace.ts for the contract.
-  const useW1Fallback = fanout.persisted === false && fanout.turnsWritten === 0;
+  const useW1Fallback =
+    fanout.persisted === false && fanout.turnsWritten === 0;
   if (fanout.persisted === false) {
     logger.warn(
       useW1Fallback
@@ -1141,7 +1136,8 @@ export async function finalizeEvalIteration(
               : {}),
             ...(widgetSnapshots?.length
               ? {
-                  widgetSnapshots: sanitizeForConvexTransport(widgetSnapshots),
+                  widgetSnapshots:
+                    sanitizeForConvexTransport(widgetSnapshots),
                 }
               : {}),
             // PR 6b: browser artifacts already uploaded + sanitized above;
