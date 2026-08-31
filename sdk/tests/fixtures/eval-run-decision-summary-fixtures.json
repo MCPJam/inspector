@@ -2469,7 +2469,7 @@
                 "analyzerVersion": 99,
                 "analyzerVersionAhead": {
                   "reported": 99,
-                  "known": 7
+                  "known": 8
                 }
               },
               "expected": {

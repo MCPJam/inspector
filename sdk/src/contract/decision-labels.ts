@@ -102,6 +102,13 @@ export const STAGE_REASON_LABELS = Object.freeze({
   blockedByPolicy: "a policy blocked the run before it could be measured",
   evaluatorError:
     "the evaluator itself failed, so the run says nothing about the server",
+  // Scoped to THIS STAGE, not to the run. `providerError` is applied per row,
+  // and a multi-turn iteration whose provider died at turn 4 keeps its earlier
+  // measured rows — so a run-level "never reached the server" would sit
+  // directly beside a `call: passed` that disproves it, and send a reader
+  // after the wrong timeline.
+  providerError:
+    "the model provider failed the call, so this stage was never measured",
   setupAborted: "the environment was never prepared, so the test never began",
   connectFailed:
     "the configured server was reached and initialize failed there",

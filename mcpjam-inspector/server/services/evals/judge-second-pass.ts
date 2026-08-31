@@ -269,8 +269,44 @@ function isPredicateRow(value: unknown): value is StoredPredicateRow {
   );
 }
 
-/** Everything the derivation needs from one stored iteration. */
-function deriveIterationPayload(args: {
+/**
+ * Recover the FIRST derivation's verdict about the model layer from the chain
+ * it wrote.
+ *
+ * `stepError` is transient runner state — an INPUT to that derivation, never
+ * persisted — so the judge second pass re-derived without it and silently
+ * dropped `providerError` and the `setup` category the moment a verdict
+ * arrived. A run our own provider killed went back to being filed against the
+ * server, which is exactly what that reason exists to prevent.
+ *
+ * Read from the stored chain rather than from a new persisted field, because
+ * the chain already says it: `providerError` is written if and only if the
+ * model layer was classified as the failure, so its presence is a faithful
+ * witness of that input. Nothing is invented here.
+ *
+ * `code` and `httpStatus` are not recoverable and are not recovered. They are
+ * diagnostics for a reader and were explicitly never part of the
+ * classification, so their absence changes no verdict.
+ */
+export function stepErrorFromStoredChain(
+  stageResults: unknown,
+): { source: "model" } | undefined {
+  const rows = asArray(stageResults);
+  if (!rows) return undefined;
+  return rows.some((row) => asRecord(row)?.reason === "providerError")
+    ? { source: "model" }
+    : undefined;
+}
+
+/**
+ * Everything the derivation needs from one stored iteration.
+ *
+ * Exported for tests: the recovery above is only useful if it is actually
+ * WIRED into this payload, and a test of the recovery alone cannot fail when
+ * the wire is cut — which is the precise gap that let four separate breaks in
+ * this attribution ship green.
+ */
+export function deriveIterationPayload(args: {
   iteration: JudgeSecondPassIterationRow;
   mode: GradingEngineMode;
   judgeVerdict: JudgeVerdictMetadata | undefined;
@@ -331,6 +367,8 @@ function deriveIterationPayload(args: {
   // failed.
   const traceUsable = iteration.traceComplete !== false;
 
+  const recoveredStepError = stepErrorFromStoredChain(metadata.stageResults);
+
   const stage = traceUsable
     ? buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),
@@ -338,6 +376,7 @@ function deriveIterationPayload(args: {
     ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
     ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
     ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
+    ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
     ...(iteration.toolSignals ? { toolSignals: iteration.toolSignals } : {}),
     ...(iteration.setupSignals
       ? { setupSignals: iteration.setupSignals }

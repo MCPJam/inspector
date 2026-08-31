@@ -125,6 +125,8 @@ function buildStageEvidence(args: {
    * failure would leave `call`/`response` looking unmeasured.
    */
   toolErrors?: unknown[];
+  /** Which layer raised a fatal step error, when the runner classified it. */
+  stepError?: StageEvidence["stepError"];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
   /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
@@ -159,6 +161,7 @@ function buildStageEvidence(args: {
           }>,
         }
       : {}),
+    ...(args.stepError ? { stepError: args.stepError } : {}),
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
     ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
     ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
@@ -198,6 +201,12 @@ export function buildStageMetadata(args: {
   predicateResults?: unknown[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
   stageToolErrors?: unknown[];
+  /**
+   * Which layer raised a fatal step error, when the runner classified it.
+   * Reported by the catch site, never parsed out of `error` — see
+   * `StageStepErrorLike`.
+   */
+  stepError?: StageEvidence["stepError"];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
   /**
@@ -234,6 +243,7 @@ export function buildStageMetadata(args: {
         predicateResults: args.predicateResults,
         widgetRenderObservations: args.widgetRenderObservations,
         toolErrors: args.stageToolErrors,
+        ...(args.stepError ? { stepError: args.stepError } : {}),
         toolSignals: args.toolSignals,
         setupSignals: args.setupSignals,
         ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
@@ -441,8 +451,10 @@ function buildScoreMetadata(args: {
  * first-pass mismatch means the score projection disagrees with `passed`.
  */
 function readUserValueRow(
-  stageMetadata: Record<string, unknown>
-): { state: StageResultRow["state"]; reason: StageResultRow["reason"] } | undefined {
+  stageMetadata: Record<string, unknown>,
+):
+  | { state: StageResultRow["state"]; reason: StageResultRow["reason"] }
+  | undefined {
   const rows = stageMetadata.stageResults;
   if (!Array.isArray(rows)) return undefined;
   for (const row of rows) {
@@ -473,7 +485,9 @@ function buildSelectionToolCatalogMetadata(args: {
   if (!Array.isArray(rows)) return {};
   const selectionRow = rows.find(
     (row): row is Partial<StageResultRow> =>
-      typeof row === "object" && row !== null && (row as { stage?: unknown }).stage === "selection"
+      typeof row === "object" &&
+      row !== null &&
+      (row as { stage?: unknown }).stage === "selection",
   );
   if (selectionRow?.state !== "failed") return {};
 
@@ -594,6 +608,11 @@ export function buildIterationFinishParams(args: {
    * them unless they are threaded here.
    */
   stageToolErrors?: unknown[];
+  /**
+   * Which layer raised the fatal step error, forwarded from the executor.
+   * Absent when nothing fatal happened, or when the caller could not say.
+   */
+  stepError?: StageEvidence["stepError"];
   /** Execution-layer policy blocks; persisted as metadata, never a failure. */
   policyBlocks?: PolicyBlockRecord[];
   /** Non-fatal policy configuration warnings, persisted for run consumers. */
@@ -705,6 +724,7 @@ export function buildIterationFinishParams(args: {
     predicateResults,
     widgetRenderObservations,
     stageToolErrors,
+    ...(args.stepError ? { stepError: args.stepError } : {}),
     toolSignals,
     setupSignals,
     policy:

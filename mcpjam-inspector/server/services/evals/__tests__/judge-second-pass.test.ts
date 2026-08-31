@@ -12,7 +12,9 @@ import {
   type MetadataAttributionStageDerivationBody,
 } from "../judge-stage-backend.js";
 import {
+  deriveIterationPayload,
   judgeEvidenceFromVerdict,
+  stepErrorFromStoredChain,
   metadataAttributionEvidenceFromVerdict,
   runJudgeSecondPass,
   type JudgeSecondPassPorts,
@@ -939,5 +941,91 @@ describe("the second pass keeps its contract with the run and the first pass", (
     expect(
       selection === undefined || selection.state === "notApplicable"
     ).toBe(true);
+  });
+});
+
+describe("stepErrorFromStoredChain", () => {
+  // `stepError` is an INPUT to the first derivation and is never persisted, so
+  // the judge pass re-derived without it and dropped `providerError` and the
+  // `setup` category the moment a verdict landed — a run our own provider
+  // killed went back to being filed against the server.
+
+  it("recovers the model layer from a chain that recorded providerError", () => {
+    expect(
+      stepErrorFromStoredChain([
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "selection", state: "notMeasured", reason: "providerError" },
+      ]),
+    ).toEqual({ source: "model" });
+  });
+
+  it("recovers nothing from a chain that recorded no provider failure", () => {
+    // The witness has to be the reason itself. Inferring a provider error from
+    // any other blank row would re-introduce the guess this reason removed.
+    expect(
+      stepErrorFromStoredChain([
+        { stage: "selection", state: "notMeasured", reason: "noEvidenceCaptured" },
+        { stage: "userValue", state: "failed", reason: "predicateFailed" },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("recovers nothing when there is no chain at all", () => {
+    expect(stepErrorFromStoredChain(undefined)).toBeUndefined();
+    expect(stepErrorFromStoredChain([])).toBeUndefined();
+    expect(stepErrorFromStoredChain("not an array")).toBeUndefined();
+  });
+});
+
+describe("the recovery is WIRED into the re-derivation", () => {
+  // Testing `stepErrorFromStoredChain` alone cannot fail when the wire is cut,
+  // and a cut wire is exactly how this attribution kept getting lost. So this
+  // drives the real payload builder and asserts the re-derived chain still
+  // says the model layer failed.
+  //
+  // The fixture is the SHAPE a provider failure actually leaves: the server was
+  // reached (spans exist, so connection and discovery are implied) and then our
+  // model call died, leaving the stages after it blank. An iteration with no
+  // evidence at all derives to `setupAborted`, which is a more specific reason
+  // and correctly outranks `providerError` — so it would prove nothing here.
+  const reachedThenDied = {
+    status: "failed",
+    traceComplete: true,
+    stageCase: {
+      mode: "model_driven",
+      expectsToolCall: false,
+      expectsWidgetRender: false,
+      assertionCount: 0,
+    },
+    spans: [{ id: "s1", name: "tools/call", category: "tool", status: "ok" }],
+  };
+
+  const derive = (stageResults: unknown) =>
+    deriveIterationPayload({
+      iteration: { ...reachedThenDied, metadata: { stageResults } },
+      mode: "advisory",
+      judgeVerdict: { status: "scored", verdict: "fail", score: 0.1 },
+      attributionVerdict: undefined,
+    } as never).stage;
+
+  const reasons = (stage: Record<string, unknown>) =>
+    (stage.stageResults as { reason: string }[]).map((r) => r.reason);
+
+  it("keeps providerError and the setup category through a judge pass", () => {
+    const stage = derive([
+      { stage: "selection", state: "notMeasured", reason: "providerError" },
+    ]);
+    expect(reasons(stage)).toContain("providerError");
+    expect(stage.failureCategory).toBe("setup");
+  });
+
+  it("does not invent a provider failure on a run that had none", () => {
+    // The same evidence, a stored chain that never blamed the provider. The
+    // blank stage stays blank rather than acquiring an attribution the first
+    // derivation did not make.
+    const stage = derive([
+      { stage: "selection", state: "notMeasured", reason: "noEvidenceCaptured" },
+    ]);
+    expect(reasons(stage)).not.toContain("providerError");
   });
 });

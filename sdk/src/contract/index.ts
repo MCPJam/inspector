@@ -156,6 +156,7 @@ export type {
   StageSetupPhaseSignal,
   StageSetupSignals,
   StageSpanLike,
+  StageStepErrorLike,
   StageToolErrorLike,
 } from "./stage-derivation.js";
 export {

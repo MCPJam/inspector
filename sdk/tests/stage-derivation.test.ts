@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, test } from "vitest";
+import { STAGE_REASON_LABELS } from "../src/contract/decision-labels.js";
 import { finalizePassedForEval } from "../src/eval-tool-execution";
 import {
   MAX_EVIDENCE_REASONS,
@@ -779,6 +780,220 @@ describe("userValue", () => {
       },
     });
     expect(stateOf(stageResults, "userValue").state).toBe("notApplicable");
+  });
+});
+
+// ── UVH-IN2: a model-call failure is OURS, not the server's ──────────────────
+//
+// 20 prod trials failed on "credit balance too low… Anthropic API": the step
+// errored, asserts were skipped, and the chain ended `noEvidenceCaptured` with
+// NO failure category — an outage filed as an unattributed server failure.
+
+describe("a model-call failure is attributed, not left blank", () => {
+  const providerDied = { stepError: { source: "model" as const } };
+
+  test("blank stages read as providerError, and the run is categorised setup", () => {
+    const { stageResults, failureCategory, firstFailedStage } = derive({
+      evidence: { traceAbsent: true, ...providerDied },
+    });
+
+    // Every applicable stage says the same true thing: we never got to ask.
+    for (const r of stageResults.filter((x) => x.state === "notMeasured")) {
+      expect(r.reason).toBe("providerError");
+    }
+    // `setup` is the existing bucket for our own side breaking, so no new
+    // category was needed — but a category there MUST be.
+    expect(failureCategory).toBe("setup");
+    // Never `failed`: our provider's bad day is not the server's defect.
+    expect(firstFailedStage).toBeUndefined();
+    expect(stageResults.some((r) => r.state === "failed")).toBe(false);
+  });
+
+  test("stages that DID measure something keep their own rows", () => {
+    // A provider dying at turn 4 does not un-observe turns 1-3. Only the
+    // blank rows are re-labelled.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        ...providerDied,
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(stateOf(stageResults, "selection").state).toBe("passed");
+  });
+
+  test("a missing call the provider never let us make is not a selection defect", () => {
+    // THE CASE THIS REASON EXISTS FOR, and the one the first version missed.
+    //
+    // A case expecting a tool call whose provider died has
+    // `selection: failed / missingToolCall` written by the matcher before the
+    // chain is derived. Re-labelling only BLANK rows left that standing, so
+    // `firstFailedStage` stayed `selection` and the outage was filed as a
+    // model-selection defect — the exact misattribution this whole reason was
+    // built to remove, on the commonest shape in the corpus.
+    const { stageResults, failureCategory, firstFailedStage } = derive({
+      evidence: {
+        prompts: [{ promptIndex: 0, missing: [{ toolName: "search" }] }],
+        ...providerDied,
+      },
+    });
+
+    const selection = stateOf(stageResults, "selection");
+    expect(selection.state).toBe("notMeasured");
+    expect(selection.reason).toBe("providerError");
+    // The evidence went with the verdict it supported: a notMeasured row must
+    // not still be arguing for a failure it no longer claims.
+    expect(selection.evidence).toBeUndefined();
+    expect(firstFailedStage).toBeUndefined();
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("the reason speaks for its own stage, not for the run", () => {
+    // Review finding on the label. `providerError` is applied PER ROW, so a
+    // multi-turn iteration whose provider died late keeps its earlier measured
+    // rows — and a run-level "the run never reached the server" would sit
+    // directly beside a `call: passed` that disproves it.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        ...providerDied,
+      },
+    });
+    // The precondition that makes the label's scope matter: the server WAS
+    // reached on this run.
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(STAGE_REASON_LABELS.providerError).not.toContain(
+      "never reached the server"
+    );
+    expect(STAGE_REASON_LABELS.providerError).toContain("this stage");
+  });
+
+  test("the chain does not argue with itself after a withdrawal", () => {
+    // Review finding on the withdrawal itself. The positional cascade reads
+    // `failed` rows to decide which later stages "never ran", so withdrawing
+    // the failure AFTER it ran left `call`, `response` and `userValue` saying
+    // `earlierStageFailed` while no stage failed and no firstFailedStage
+    // existed — three rows citing a failure the chain no longer records.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        prompts: [{ promptIndex: 0, missing: [{ toolName: "search" }] }],
+        ...providerDied,
+      },
+    });
+
+    expect(firstFailedStage).toBeUndefined();
+    expect(stageResults.some((r) => r.state === "failed")).toBe(false);
+    // Nothing may still be blaming a stage that is no longer failed.
+    expect(stageResults.some((r) => r.reason === "earlierStageFailed")).toBe(
+      false
+    );
+    // And the later stages say the true thing about why they are blank.
+    for (const stage of ["call", "response", "userValue"] as const) {
+      const r = stateOf(stageResults, stage);
+      if (r.state === "notMeasured") expect(r.reason).toBe("providerError");
+    }
+  });
+
+  test("a failure the provider did NOT explain still cascades", () => {
+    // The other side. An unexpected call survives the withdrawal, so it stays
+    // the first failed row and the stages after it still read `notReached` —
+    // the cascade is repaired, not disabled.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            unexpected: [{ toolName: "delete_all" }],
+            passed: false,
+          },
+        ],
+        ...providerDied,
+      },
+    });
+    expect(firstFailedStage).toBe("selection");
+    const after = stageResults.slice(
+      stageResults.findIndex((r) => r.stage === "selection") + 1
+    );
+    expect(after.some((r) => r.state === "notReached")).toBe(true);
+  });
+
+  test("a call that really was made wrongly still counts against the server", () => {
+    // The other side of that line, and the one that keeps this honest. An
+    // UNEXPECTED call was actually observed — a presence, not an absence — so
+    // a provider dying afterwards does not un-observe it. Withdrawing this too
+    // would let any provider blip launder a genuine server defect.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            unexpected: [{ toolName: "delete_all" }],
+            passed: false,
+          },
+        ],
+        ...providerDied,
+      },
+    });
+    const selection = stateOf(stageResults, "selection");
+    expect(selection.state).toBe("failed");
+    expect(selection.reason).toBe("unexpectedToolCall");
+  });
+
+  test("a server that would not connect is never excused by a later outage", () => {
+    // `connection` fails BEFORE any model call, so a provider error that came
+    // afterwards cannot explain it. This is the failure mode that would be
+    // most damaging to launder away.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        setupSignals: {
+          connection: {
+            outcome: "failed",
+            attribution: "theirs",
+            egressVerified: true,
+            spanIds: ["run-connect-s1"],
+          },
+        },
+        ...providerDied,
+      },
+    });
+    expect(stateOf(stageResults, "connection").state).toBe("failed");
+    expect(firstFailedStage).toBe("connection");
+  });
+
+  test("a SETUP-layer error is not a provider error", () => {
+    // Pre-turn setup never reached the model, and `setupAborted` already says
+    // so precisely. Widening `providerError` over it would lose that.
+    const { stageResults } = derive({
+      evidence: { traceAbsent: true, stepError: { source: "setup" } },
+    });
+    expect(stageResults.every((r) => r.reason !== "providerError")).toBe(true);
+  });
+
+  test("an unclassified error changes nothing", () => {
+    // Callers that cannot say which layer broke leave `stepError` absent, and
+    // the chain reports exactly what it did before.
+    const before = derive({ evidence: { traceAbsent: true } });
+    expect(before.stageResults.every((r) => r.reason !== "providerError")).toBe(
+      true
+    );
+    expect(before.failureCategory).toBeUndefined();
+  });
+
+  test("a broken grader still outranks it", () => {
+    // `evaluator` is never folded into another category — a grader bug is not
+    // an infrastructure outage, and counting it as one poisons both rates.
+    const { failureCategory } = derive({
+      evidence: {
+        traceAbsent: true,
+        evaluatorErrored: true,
+        ...providerDied,
+      },
+    });
+    expect(failureCategory).toBe("evaluator");
   });
 });
 

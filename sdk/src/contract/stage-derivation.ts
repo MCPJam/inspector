@@ -76,8 +76,13 @@ import {
  * every applicable stage green while its legacy verdict failed on exactly
  * that tool error — a disagreement the chain had no row to express. Re-uses
  * `toolError`, so again no mirror re-pin.
+ *
+ * 8 (UVH-IN2): a model-call-layer failure is attributed to `providerError`
+ * instead of leaving the trial uncategorised. This one DOES move
+ * `STAGE_REASONS`; the backend mirror already carries the member (UVH-BE1
+ * shipped it deliberately ahead of this bump), so nothing quarantines.
  */
-export const STAGE_ANALYZER_VERSION = 7;
+export const STAGE_ANALYZER_VERSION = 8;
 
 /**
  * Why a stage landed where it did.
@@ -108,6 +113,16 @@ export const STAGE_REASONS = [
   "blockedByPolicy",
   /** The grader itself failed, so the run says nothing about the server. */
   "evaluatorError",
+  /**
+   * The MODEL-CALL layer failed: a provider outage, an exhausted credit
+   * balance, a rate limit, or one of our own spend guardrails.
+   *
+   * Broader than the name suggests, and deliberately so — what every case has
+   * in common is that OUR side of the call broke, so the run says nothing
+   * about the MCP server under test. Never `failed`: blaming the server for
+   * our provider's bad day is the mis-attribution this reason exists to stop.
+   */
+  "providerError",
   /** The harness never got to the test (setup abort). */
   "setupAborted",
   /**
@@ -304,6 +319,20 @@ export type StageToolErrorLike = {
   toolName?: string;
 };
 
+/**
+ * The layer a fatal step error came from, reported by the catch site.
+ *
+ * `deriveStageResults` reads only `source`; `code` and `httpStatus` ride along
+ * as diagnostics for a reader, and are deliberately NOT part of the
+ * classification — a rule keyed on a provider's status codes would be one
+ * provider away from mis-attributing a whole class of run.
+ */
+export type StageStepErrorLike = {
+  source?: "model" | "setup";
+  code?: string;
+  httpStatus?: number;
+};
+
 export type StageRenderObservationLike = {
   status?: string;
 };
@@ -414,6 +443,14 @@ export type StageEvidence = {
   prompts?: readonly StagePromptSummaryLike[];
   predicateResults?: readonly StagePredicateResultLike[];
   toolErrors?: readonly StageToolErrorLike[];
+  /**
+   * The fatal step error's LAYER, when one was raised and the runner knew it.
+   *
+   * Distinct from `toolErrors`, which are the server's answers. This is our
+   * own side breaking, and it is the difference between "the server gave us
+   * bad data" and "we never got to ask".
+   */
+  stepError?: StageStepErrorLike;
   renderObservations?: readonly StageRenderObservationLike[];
   /** `tools_total_before` / `tools_exposed` — the one direct discovery signal. */
   toolSignals?: { toolsTotalBefore?: number; toolsExposed?: number };
@@ -1100,7 +1137,14 @@ function categoryFor(
   evidence: StageEvidence
 ): FailureCategory | undefined {
   if (!firstFailed) {
-    return evidence.evaluatorErrored ? "evaluator" : undefined;
+    if (evidence.evaluatorErrored) return "evaluator";
+    // A model-call failure leaves nothing failed — there was nothing to fail
+    // against. Before UVH-IN2 that produced a run with no category at all,
+    // which reads as "we cannot say what went wrong" when in fact we can say
+    // precisely: our provider did. `setup` is the existing bucket for our own
+    // side breaking, which is why this needs no new category.
+    if (evidence.stepError?.source === "model") return "setup";
+    return undefined;
   }
   const failedRow = rows.find((r) => r.stage === firstFailed);
   switch (firstFailed) {
@@ -1278,11 +1322,27 @@ export function deriveStageResults(
   // those measured rows with "never ran" destroys the evidence an operator
   // needs and states something the run disproves. `firstFailedStage` already
   // carries "where the chain broke" — the rows do not have to lie to say it.
-  const firstFailedIndex = derived.findIndex((r) => r.state === "failed");
+  // WITHDRAWN FIRST, then cascaded — the order matters and getting it wrong
+  // produces a chain that argues with itself.
+  //
+  // The cascade reads `failed` rows to decide which later stages "never ran".
+  // Withdrawing a provider-blocked failure AFTER it has run leaves the
+  // downstream rows still saying `earlierStageFailed` while no stage failed
+  // and no `firstFailedStage` exists — three rows citing a failure the chain
+  // no longer records. Running the withdrawal first means the cascade sees the
+  // rows as they will actually be reported, so a provider outage marks the
+  // later stages `providerError` (which is why they were not measured) rather
+  // than blaming a stage that is no longer failed.
+  //
+  // A failure the provider did NOT explain still cascades exactly as before:
+  // `unexpectedToolCall` at `selection` survives the withdrawal, stays the
+  // first failed row, and the stages after it still read `notReached`.
+  const withdrawn = applyProviderError(derived, evidence);
+  const firstFailedIndex = withdrawn.findIndex((r) => r.state === "failed");
   const rows =
     firstFailedIndex < 0
-      ? derived
-      : derived.map((r, i) =>
+      ? withdrawn
+      : withdrawn.map((r, i) =>
           i > firstFailedIndex && r.state === "notMeasured"
             ? row(r.stage, "notReached", "earlierStageFailed")
             : r
@@ -1323,11 +1383,114 @@ function mergeMetadataAttributionEvidence(
   );
 }
 
+/**
+ * Reasons a stage reported NOTHING, which a model-call failure explains.
+ *
+ * Each reads as "we looked and the server told us nothing" — an accusation,
+ * when the truth is that our own provider never let us ask.
+ */
+const PROVIDER_BLANKED_REASONS: ReadonlyArray<StageReason | undefined> = [
+  "noEvidenceCaptured",
+  "traceAbsent",
+  "executorEmitsNoSpans",
+];
+
+/**
+ * Failure reasons that conclude from something NOT HAPPENING.
+ *
+ * This is the distinction that decides whether a `failed` row survives a
+ * provider outage, and it is the whole of the second half of this function.
+ *
+ * An ABSENCE verdict — no tool call arrived, an assertion over the output did
+ * not hold, the judge scored a transcript low — is only sound if the run was
+ * allowed to finish. When our own model call died first, "it did not happen"
+ * has a second explanation that outranks the accusation, and we cannot tell
+ * which is true. The honest answer is that we did not measure it.
+ *
+ * PRESENCE verdicts are deliberately absent from this list and keep their
+ * rows: an unexpected call was really made, arguments really mismatched, a
+ * tool really errored, a render really failed. Those observations stand
+ * whatever killed the turn afterwards. `connectFailed` and `toolsListFailed`
+ * matter most here — they happen BEFORE any model call, so a server that would
+ * not connect must never be excused by a provider error that came later.
+ */
+const PROVIDER_UNKNOWABLE_FAILURES: ReadonlyArray<StageReason | undefined> = [
+  "missingToolCall",
+  "predicateFailed",
+  "judgePartial",
+  "judgeFailed",
+];
+
+/**
+ * Re-label what a MODEL-CALL failure made unknowable.
+ *
+ * Applied BEFORE the positional cascade, and again in `finalize` for the
+ * early-return paths that never reach it — idempotent, so the second pass over
+ * already-converted rows finds nothing to do. An earlier revision of this
+ * docblock said "applied last"; that was true until the withdrawal had to move
+ * ahead of the cascade, which reads `failed` rows to decide which later stages
+ * never ran. Withdrawing after it ran left three rows citing a failure the
+ * chain no longer recorded. See the comment at the call site.
+ *
+ * Two parts.
+ *
+ * BLANK ROWS. A stage that measured nothing is re-labelled, while a stage with
+ * its own evidence keeps its own row: the provider dying at turn 4 does not
+ * un-observe what turns 1-3 established.
+ *
+ * FAILED ROWS THAT REST ON AN ABSENCE. The first version of this stopped at
+ * blank rows, and that left the fix inert on the shape it matters most for. A
+ * case expecting a tool call whose provider died first still had
+ * `selection: failed / missingToolCall` written by the matcher before this
+ * ever ran — so `firstFailedStage` stayed `selection`, `categoryFor` returned
+ * `selection`, and the outage was filed as a model-selection defect. The one
+ * thing this reason exists to prevent, on the most common case in the corpus.
+ *
+ * `notMeasured` throughout, never `failed`. A run that could not be attempted
+ * has measured nothing about the server, and inflating a server failure rate
+ * with our own outage is exactly what this reason exists to prevent.
+ */
+function applyProviderError(
+  rows: StageResultRow[],
+  evidence: StageEvidence
+): StageResultRow[] {
+  if (evidence.stepError?.source !== "model") return rows;
+  return rows.map((r) => {
+    if (
+      r.state === "notMeasured" &&
+      PROVIDER_BLANKED_REASONS.includes(r.reason)
+    ) {
+      return { ...r, reason: "providerError" as const };
+    }
+    if (
+      r.state === "failed" &&
+      PROVIDER_UNKNOWABLE_FAILURES.includes(r.reason)
+    ) {
+      // The EVIDENCE goes with the verdict it supported. Those lines say why
+      // the absence was judged a failure, and that judgement is exactly what
+      // is being withdrawn — keeping them would leave a `notMeasured` row
+      // arguing for a failure it no longer claims.
+      const { evidence: _dropped, ...rest } = r;
+      return {
+        ...rest,
+        state: "notMeasured" as const,
+        reason: "providerError" as const,
+      };
+    }
+    return r;
+  });
+}
+
 function finalize(
   rows: StageResultRow[],
   evidence: StageEvidence,
   forcedCategory?: FailureCategory
 ): StageDerivation {
+  // IDEMPOTENT, and applied here as well as before the positional cascade: the
+  // early-return paths above never reach that cascade, so this is the only
+  // place they get it. A second pass over rows the first already converted
+  // finds nothing left to change — `providerError` is in neither list.
+  rows = applyProviderError(rows, evidence);
   const firstFailedStage = rows.find((r) => r.state === "failed")?.stage;
   const failureCategory =
     forcedCategory ?? categoryFor(firstFailedStage, rows, evidence);
