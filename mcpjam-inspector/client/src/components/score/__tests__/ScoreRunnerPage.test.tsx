@@ -12,6 +12,7 @@ const {
   mockAuthorizeServer,
   mockRunAll,
   mockSubmitScoreRun,
+  mockScoreState,
 } = vi.hoisted(() => ({
   mockCreateServerIfMissing: vi.fn(),
   mockUpdateServer: vi.fn(),
@@ -19,6 +20,11 @@ const {
   mockAuthorizeServer: vi.fn(),
   mockRunAll: vi.fn(),
   mockSubmitScoreRun: vi.fn(),
+  mockScoreState: {
+    pooledScore: undefined as unknown,
+    protocolScore: undefined as unknown,
+    protocolResult: undefined as unknown,
+  },
 }));
 
 vi.mock("convex/react", () => ({
@@ -37,13 +43,13 @@ vi.mock("@/hooks/use-conformance-run", () => ({
   useConformanceRun: () => ({
     runAll: mockRunAll,
     isRunning: false,
-    pooledScore: undefined,
-    protocolScore: undefined,
+    pooledScore: mockScoreState.pooledScore,
+    protocolScore: mockScoreState.protocolScore,
     appsScore: undefined,
     tasksScore: undefined,
     oauthScore: undefined,
     oauthNotScored: true,
-    protocol: { status: "idle" },
+    protocol: { status: "idle", result: mockScoreState.protocolResult },
     apps: { status: "idle" },
     tasks: { status: "idle" },
     oauth: { status: "idle" },
@@ -104,6 +110,9 @@ beforeEach(() => {
   mockAuthorizeServer.mockReset();
   mockRunAll.mockReset().mockResolvedValue(undefined);
   mockSubmitScoreRun.mockReset();
+  mockScoreState.pooledScore = undefined;
+  mockScoreState.protocolScore = undefined;
+  mockScoreState.protocolResult = undefined;
   sessionStorage.clear();
 });
 
@@ -218,6 +227,60 @@ describe("ScoreRunnerPage", () => {
     expect(screen.getByLabelText("MCP server URL")).toHaveValue(SERVER_URL);
     expect(screen.queryByLabelText("Scorecard email")).not.toBeInTheDocument();
     expect(mockRunAll).not.toHaveBeenCalled();
+  });
+
+  it("persists a completed score exactly once and exposes its private link", async () => {
+    const score = {
+      score: 84,
+      outcome: "passed",
+      applicable: 10,
+      passed: 8,
+      failed: 1,
+      couldNotRun: 1,
+      notApplicable: 0,
+      advisories: [],
+    };
+    mockScoreState.pooledScore = score;
+    mockScoreState.protocolScore = score;
+    mockScoreState.protocolResult = { profile: { pendingCheckIds: [] } };
+    mockSubmitScoreRun.mockResolvedValue({ token: "tok_1" });
+    const user = userEvent.setup();
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+
+    await submitServerUrl(user);
+    await submitDeliveryEmail(user);
+
+    expect(
+      await screen.findByRole("heading", { name: "Your scorecard is ready." }),
+    ).toBeInTheDocument();
+    expect(mockSubmitScoreRun).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("Private result link")).toHaveValue(
+      `${window.location.origin}/results/tok_1`,
+    );
+  });
+
+  it("reports a save failure without retrying indefinitely", async () => {
+    mockScoreState.pooledScore = {
+      score: 0,
+      outcome: "failed",
+      applicable: 1,
+      passed: 0,
+      failed: 1,
+      couldNotRun: 0,
+      notApplicable: 0,
+      advisories: [],
+    };
+    mockSubmitScoreRun.mockRejectedValue(new Error("Storage unavailable"));
+    const user = userEvent.setup();
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+
+    await submitServerUrl(user);
+    await submitDeliveryEmail(user);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Scan finished, but the shareable link could not be saved: Storage unavailable",
+    );
+    await waitFor(() => expect(mockSubmitScoreRun).toHaveBeenCalledOnce());
   });
 
   it("resumes an OAuth run with its saved email and clears the record", async () => {

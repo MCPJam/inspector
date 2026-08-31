@@ -1,511 +1,91 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "convex/react";
-import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
-import { useConformanceRun } from "@/hooks/use-conformance-run";
-import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
-import { tryResolveProjectServer } from "@/lib/apis/web/context";
-import { validateHostedServer } from "@/lib/apis/web/servers-api";
-import { WebApiError } from "@/lib/apis/web/base";
-import { SCORE_OAUTH_PENDING_KEY } from "@/lib/hosted-oauth-callback";
-import { routePaths } from "@/lib/app-navigation";
-import type { ServerWithName } from "@/state/app-types";
-import {
-  submitScoreRun,
-  toScoreSummary,
-  type ScoreSuiteId,
-  type ScoreSuiteSummary,
-} from "@/lib/apis/score-api";
+import { useEffect, useReducer, type FormEvent } from "react";
 import { ScoreRunnerView } from "./ScoreRunnerView";
 import {
-  isScoreRunnerBusy,
-  type ScoreRunnerPhase,
-} from "./score-runner-view-model";
-import { deriveScoreServerName } from "./score-server-name";
-import {
-  clearScoreRunResume,
-  readScoreRunResume,
-  writeScoreRunResume,
-} from "./score-run-resume";
-import { useScoreRunDraft, type ScoreRunIntent } from "./use-score-run-draft";
+  INITIAL_SCORE_RUN_DRAFT,
+  acceptScoreDeliveryEmail,
+  acceptScoreServerUrl,
+  restoreScoreRunDraft,
+  scoreRunDraftReducer,
+} from "./score-run-draft";
+import { useScoreRunnerController } from "./use-score-runner-controller";
 
-const EMPTY_SERVER: ServerWithName = {
-  name: "",
-  config: {} as ServerWithName["config"],
-  lastConnectionTime: new Date(0),
-  connectionStatus: "disconnected",
-  retryCount: 0,
-};
-
-function getServerUrl(server: ServerWithName | null): string | null {
-  return (server?.config as { url?: string } | undefined)?.url ?? null;
-}
-
-/** `oauthRequired` is carried on a thrown, tagged 401 — never on a return value. */
-function isOAuthRequiredError(error: unknown): boolean {
-  return (
-    error instanceof WebApiError &&
-    (error.details as { oauthRequired?: unknown } | undefined)
-      ?.oauthRequired === true
-  );
-}
+const INVALID_URL_MESSAGE = "Enter a valid http(s) MCP server URL.";
+const INVALID_EMAIL_MESSAGE = "Enter a valid email address.";
 
 export function ScoreRunnerPage({
   convexProjectId,
 }: {
-  /** The guest's (or member's) project, from the app route context. */
   convexProjectId: string | null;
 }) {
-  const appReady = useAppReady();
-  const appReadyMessage = useAppReadyMessage();
-  const createServerIfMissing = useMutation(
-    "servers:createServerIfMissing" as any,
+  const [draft, dispatch] = useReducer(
+    scoreRunDraftReducer,
+    INITIAL_SCORE_RUN_DRAFT,
   );
-  const updateServer = useMutation("servers:updateServer" as any);
+  const controller = useScoreRunnerController({ convexProjectId });
+
   const {
-    urlInput,
-    emailInput,
-    setUrlInput,
-    setEmailInput,
-    acceptServerUrl,
-    createRunIntent,
-    restoreRun,
-  } = useScoreRunDraft();
+    resumeRecord,
+    consumeResumeRecord,
+    beginRun,
+    requestDeliveryEmail,
+    reportInputError,
+  } = controller;
 
-  const [phase, setPhase] = useState<ScoreRunnerPhase>("form");
-  const [error, setError] = useState<string | null>(null);
-  const [server, setServer] = useState<ServerWithName | null>(null);
-  const [resultToken, setResultToken] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const run = useConformanceRun({
-    // A placeholder keeps the hook's contract simple: it always has a server.
-    // Nothing runs until `runAll` is called, and that only happens once a real
-    // row exists.
-    server: server ?? EMPTY_SERVER,
-    // OAuth is opt-in here. A public landing page must not throw an
-    // unrequested popup at a visitor, and a skipped OAuth suite shows as
-    // *not scored* — never a deduction.
-    deferOAuthAuthorization: true,
-  });
-
-  // Resolved through the public accessor rather than the module-level context
-  // object: it returns null (instead of throwing BootstrapNotReadyError) while
-  // bootstrap is still catching up, which is the normal state on this page for
-  // the second or two after the row is created.
-  const resolved = server ? tryResolveProjectServer(server.name) : null;
-  const projectId = resolved?.projectId ?? convexProjectId;
-  const serverId = resolved?.serverId;
-
-  // Connect-OAuth (authorize the connection so protocol/apps/tasks can run at
-  // all) is a DIFFERENT flow from the OAuth conformance suite above: it is a
-  // full-page redirect, and it comes back through the "score" surface.
-  // Memoized: the gate synchronizes state from `servers` in an effect, so a
-  // fresh array every render would set state on every render and spin.
-  const oauthDescriptors = useMemo(
-    () =>
-      server && serverId
-        ? [
-            {
-              serverId,
-              serverName: server.name,
-              useOAuth: true,
-              serverUrl: getServerUrl(server),
-              clientId: null,
-              oauthScopes: null,
-            },
-          ]
-        : [],
-    [server, serverId],
-  );
-
-  const oauthGate = useHostedOAuthGate({
-    surface: "score",
-    // Its OWN sentinel. Naming the hosted marker's key here would overwrite the
-    // marker with `"true"` and dead-end the callback — see
-    // SCORE_OAUTH_PENDING_KEY.
-    pendingKey: SCORE_OAUTH_PENDING_KEY,
-    projectId,
-    servers: oauthDescriptors,
-  });
-
-  /** Poll `serverIdsByName` until bootstrap has the new row. */
-  const waitForServerId = useCallback(async (name: string): Promise<string> => {
-    for (let attempt = 0; attempt < 60; attempt++) {
-      const id = tryResolveProjectServer(name)?.serverId;
-      if (id) return id;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    // `buildServerRequest` would otherwise throw BootstrapNotReadyError deep
-    // inside the first suite call, which reads as a mysterious failure of
-    // the scan rather than of setup.
-    throw new Error(
-      "Timed out preparing the workspace for this server. Reload and try again.",
-    );
-  }, []);
-
-  /**
-   * The hook's latest output, readable from an async continuation.
-   *
-   * `persistRun` runs after `await runAll()`, and `runAll` reports results by
-   * setting state. A callback that closed over `run` would therefore be
-   * holding the snapshot from BEFORE the suites reported — `pooledScore`
-   * undefined, every result empty — and would silently save nothing. Reading
-   * through a ref is what makes the saved report the one the visitor is
-   * actually looking at.
-   */
-  const runRef = useRef(run);
-  runRef.current = run;
-
-  /**
-   * Which settled OAuth status the last stored report already contained.
-   *
-   * Written by `persistRun` itself rather than by either caller, because the
-   * question it answers is "what did the payload we just sent include?" — and
-   * only the function that built the payload knows. Seeding it from the save
-   * is what stops the resave effect from storing a second, identical run when
-   * the OAuth suite happened to settle DURING `runAll` (the common case for a
-   * server that fails at discovery or registration, where the suite grades a
-   * failure without ever prompting anyone).
-   */
-  const persistedOAuthStatusRef = useRef<string | null>(null);
-
-  const persistRun = useCallback(
-    async (serverUrl: string): Promise<boolean> => {
-      const current = runRef.current;
-      if (!current.pooledScore) {
-        // Nothing applicable anywhere — there is no number to save, and no link
-        // worth handing out for it. (`pooledScore` is a ConformanceScore OBJECT,
-        // so a legitimate score of 0 is `{score: 0, …}` and stays truthy.)
-        setPhase("done");
-        return false;
-      }
-      setPhase("saving");
-      try {
-        const suiteSummaries: ScoreSuiteSummary[] = (
-          [
-            ["protocol", current.protocolScore],
-            ["apps", current.appsScore],
-            ["tasks", current.tasksScore],
-            ["oauth", current.oauthScore],
-          ] as const
-        )
-          .filter(([, score]) => score !== undefined)
-          .map(([suiteId, score]) => ({
-            suiteId: suiteId as ScoreSuiteId,
-            ...toScoreSummary(score!),
-          }));
-
-        const { token } = await submitScoreRun({
-          serverUrl,
-          summary: toScoreSummary(current.pooledScore),
-          suiteSummaries,
-          report: {
-            protocol: current.protocol.result,
-            apps: current.apps.result,
-            tasks: current.tasks.result,
-            oauth: current.oauth.result,
-          },
-        });
-        setResultToken(token);
-        // Record what this payload actually contained, so a resave only ever
-        // fires for an OAuth status the stored report does NOT already have.
-        if (
-          current.oauth.status === "done" &&
-          current.oauthScore !== undefined
-        ) {
-          persistedOAuthStatusRef.current = current.oauth.status;
-        }
-        return true;
-      } catch (err) {
-        // A save failure must not hide the score the visitor already has on
-        // screen — they just don't get a link for it.
-        setError(
-          err instanceof Error
-            ? `Scan finished, but the shareable link could not be saved: ${err.message}`
-            : "Scan finished, but the shareable link could not be saved.",
-        );
-        return false;
-      } finally {
-        setPhase("done");
-      }
-    },
-    [],
-  );
-
-  const startRun = useCallback(
-    async (normalizedUrl: string, deliveryEmail: string) => {
-      setError(null);
-      setResultToken(null);
-      setPhase("preparing");
-
-      // Declared outside the try: the catch needs it to write the resume
-      // record when the server turns out to require authorization.
-      let name = "";
-      try {
-        name = await deriveScoreServerName(normalizedUrl);
-        if (!projectId) {
-          throw new Error(
-            "Still setting up your workspace. Give it a moment and try again.",
-          );
-        }
-        await createServerIfMissing({
-          projectId,
-          name,
-          enabled: true,
-          transportType: "http",
-          url: normalizedUrl,
-          // "Figure out what this server needs" — the only honest setting for a
-          // URL somebody pasted, and load-bearing rather than cosmetic. A row
-          // with no authMethod resolves through the legacy branch of
-          // `resolveEffectiveAuthMethod` to "none", and ONLY the "discover"
-          // mode converts a live 401 into the tagged `oauthRequired` error the
-          // OAuth branch below detects. Without it a server that requires
-          // authorization reports its raw transport failure and the visitor is
-          // never offered the flow that would have let them in.
-          authMethod: "auto",
-        } as any);
-
-        const createdServerId = await waitForServerId(name);
-        // `createServerIfMissing` is idempotent: a row from an earlier scan is
-        // returned untouched, authMethod and all. Rows minted before that field
-        // was set here would stay permanently un-escalatable — and the name is
-        // derived from the URL, so a retry finds the same stale row rather than
-        // a fresh one. Reconcile it instead of leaving the visitor stuck.
-        try {
-          await updateServer({
-            serverId: createdServerId,
-            authMethod: "auto",
-          } as any);
-        } catch {
-          // Best effort. A new row already has the right value, so this only
-          // matters for pre-existing ones, and failing here must not abort a
-          // scan that is otherwise fine.
-        }
-
-        const nextServer: ServerWithName = {
-          name,
-          config: { url: normalizedUrl } as ServerWithName["config"],
-          lastConnectionTime: new Date(),
-          connectionStatus: "disconnected",
-          retryCount: 0,
-        };
-        setServer(nextServer);
-
-        // Does this server need authorization before anything can run? The
-        // suites would otherwise all come back with the same 401 and grade a
-        // server we never actually reached.
-        //
-        // The route SIGNALS this by throwing a tagged 401, not by returning a
-        // flag — `oauthRequired` rides `WebApiError.details` (see
-        // `local-server-resolver`). Reading it off the resolved value would
-        // never be true, and the throw would land in the generic catch below
-        // as "your scan failed", with no way to authorize.
-        await validateHostedServer(name);
-        setPhase("running");
-      } catch (err) {
-        if (isOAuthRequiredError(err)) {
-          writeScoreRunResume({
-            serverUrl: normalizedUrl,
-            serverName: name,
-            deliveryEmail,
-          });
-          setPhase("authorizing");
-          return;
-        }
-        setError(err instanceof Error ? err.message : String(err));
-        setPhase("form");
-      }
-    },
-    [createServerIfMissing, updateServer, projectId, waitForServerId],
-  );
-
-  // `runAll` needs the hook to have re-keyed onto the new server first — it
-  // reads `server` from its own closure — so the run is kicked off by an
-  // effect once both the phase and the identity line up.
-  const startedForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (phase !== "running" || !server) return;
-    if (startedForRef.current === server.name) return;
-    startedForRef.current = server.name;
-    // Through the ref, not the closure: `run` is a fresh object every render,
-    // and the one captured here is the pre-run snapshot. The continuation only
-    // advances the phase — the save itself happens in the effect below, after
-    // the results have actually committed.
-    void runRef.current.runAll().then(() => setPhase("run-complete"));
-  }, [phase, server]);
+    if (!resumeRecord) return;
 
-  const persistedRunRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (phase !== "run-complete" || !server) return;
-    const serverUrl = getServerUrl(server);
-    if (!serverUrl) {
-      setPhase("done");
-      return;
-    }
-    // Exactly once per run: an effect can re-fire, and a second save would
-    // hand out a second link for the same scan.
-    if (persistedRunRef.current === server.name) return;
-    persistedRunRef.current = server.name;
-    void persistRun(serverUrl);
-  }, [phase, server, persistRun]);
+    consumeResumeRecord();
+    const restored = restoreScoreRunDraft(resumeRecord);
+    if (restored.kind === "discard") return;
 
-  /**
-   * OAuth is opt-in and finishes AFTER the run settles, so the first save
-   * necessarily records a run without it. If the visitor then authorizes, the
-   * screen would show one score and the link a different, lower-information
-   * one. Save again and hand out the newer link: both saves are truthful about
-   * what ran, and the one the visitor is holding always matches what they see.
-   */
-  /**
-   * The OAuth resave gets ONE attempt, ever.
-   *
-   * Without a cap, a failing save loops: `persistRun` ends in `setPhase("done")`
-   * whether it succeeded or not, which re-satisfies this effect's own
-   * condition, which saves again — the page oscillates between Saving and Done
-   * and hammers the endpoint until the per-IP limit cuts it off. "Retry on
-   * failure" and "no bound" are only safe apart.
-   */
-  const oauthResaveAttemptsRef = useRef(0);
-  const oauthResaveInFlightRef = useRef(false);
-  useEffect(() => {
-    // Deliberately NOT gated on an existing `resultToken`: if the first save
-    // failed, a settled OAuth run is the visitor's second chance at getting a
-    // link at all.
-    if (phase !== "done") return;
-    const serverUrl = getServerUrl(server);
-    if (!serverUrl) return;
-    // Only a transition INTO a finished OAuth state re-saves; a repeat render
-    // of the same state must not.
-    const settled = run.oauth.status === "done" && run.oauthScore !== undefined;
-    if (!settled) return;
-    if (persistedOAuthStatusRef.current === run.oauth.status) return;
-    if (oauthResaveInFlightRef.current) return;
-    // One attempt. Spending it leaves the visitor at a stable state — a score
-    // on screen, and either a link or a plain message saying the link could
-    // not be saved.
-    if (oauthResaveAttemptsRef.current >= 1) return;
-    oauthResaveAttemptsRef.current += 1;
-    oauthResaveInFlightRef.current = true;
-    void persistRun(serverUrl).then(() => {
-      oauthResaveInFlightRef.current = false;
-      // `persistRun` records the status it actually stored, on success only —
-      // one owner for that fact, so a failed save can still be followed by a
-      // later status change (bounded by the attempt cap above).
-    });
-  }, [phase, run.oauth.status, run.oauthScore, server, persistRun]);
-
-  const beginRun = useCallback(
-    (intent: ScoreRunIntent) => {
-      clearScoreRunResume();
-      startedForRef.current = null;
-      persistedRunRef.current = null;
-      persistedOAuthStatusRef.current = null;
-      oauthResaveAttemptsRef.current = 0;
-      oauthResaveInFlightRef.current = false;
-      // Re-key the conformance hook so a retry cannot display results from the
-      // previous server while the new handshake is preparing.
-      setServer(null);
-      void startRun(intent.serverUrl, intent.deliveryEmail);
-    },
-    [startRun],
-  );
-
-  // Coming back from a connect-OAuth redirect: the hosted marker restored the
-  // server's authorization, but only this record knows a scan was in flight.
-  const resumedRef = useRef(false);
-  useEffect(() => {
-    if (resumedRef.current) return;
-    if (appReady.status !== "ready") return;
-    const resume = readScoreRunResume();
-    if (!resume) return;
-    resumedRef.current = true;
-    clearScoreRunResume();
-    const restored = restoreRun(resume);
-    if (restored.kind === "collect-email") {
-      setPhase("email");
-      return;
-    }
+    dispatch({ type: "replace", draft: restored.draft });
+    if (restored.kind === "collect-email") requestDeliveryEmail();
     if (restored.kind === "run") beginRun(restored.intent);
-  }, [appReady.status, beginRun, restoreRun]);
+  }, [beginRun, consumeResumeRecord, requestDeliveryEmail, resumeRecord]);
 
-  const resultUrl = useMemo(
-    () =>
-      resultToken
-        ? `${window.location.origin}${routePaths.scoreResults}/${resultToken}`
-        : null,
-    [resultToken],
-  );
-
-  const busy = isScoreRunnerBusy(phase) || run.isRunning;
-
-  const onSubmit = (event: React.FormEvent) => {
+  const submitServerUrl = (event: FormEvent) => {
     event.preventDefault();
-    if (!acceptServerUrl()) {
-      setError("Enter a valid http(s) MCP server URL.");
+    const accepted = acceptScoreServerUrl(draft);
+    if (!accepted.ok) {
+      reportInputError(INVALID_URL_MESSAGE);
       return;
     }
-    setError(null);
-    setPhase("email");
+
+    dispatch({ type: "replace", draft: accepted.value });
+    requestDeliveryEmail();
   };
 
-  const onEmailSubmit = (event: React.FormEvent) => {
+  const submitDeliveryEmail = (event: FormEvent) => {
     event.preventDefault();
-    const intent = createRunIntent();
-    if (!intent) {
-      setError("Enter a valid email address.");
+    const accepted = acceptScoreDeliveryEmail(draft);
+    if (!accepted.ok) {
+      reportInputError(INVALID_EMAIL_MESSAGE);
       return;
     }
-    setError(null);
-    beginRun(intent);
-  };
 
-  const copyResultUrl = () => {
-    if (!resultUrl) return;
-    // `writeText` rejects without focus or permission. Show "Copied" only
-    // once the write actually resolved — a tick over an empty clipboard
-    // is worse than no tick.
-    const write = navigator.clipboard?.writeText?.(resultUrl);
-    if (!write) {
-      setError("Could not copy the link. Copy it manually.");
-      return;
-    }
-    void write
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 2000);
-      })
-      .catch(() => setError("Could not copy the link. Copy it manually."));
+    dispatch({ type: "replace", draft: accepted.value.draft });
+    beginRun(accepted.value.intent);
   };
 
   return (
     <ScoreRunnerView
-      urlInput={urlInput}
-      onUrlChange={setUrlInput}
-      onSubmit={onSubmit}
-      emailInput={emailInput}
-      onEmailChange={setEmailInput}
-      onEmailSubmit={onEmailSubmit}
-      phase={phase}
-      error={error}
-      busy={busy}
-      formDisabled={busy || appReady.status !== "ready"}
-      appReadyMessage={appReady.status !== "ready" ? appReadyMessage : null}
-      resultUrl={resultUrl}
-      copied={copied}
-      onCopy={copyResultUrl}
-      showAuthorize={phase === "authorizing" && Boolean(server && serverId)}
-      onAuthorize={() => {
-        if (!server || !serverId) return;
-        void oauthGate.authorizeServer({
-          serverId,
-          serverName: server.name,
-          useOAuth: true,
-          serverUrl: getServerUrl(server),
-          clientId: null,
-          oauthScopes: null,
-        });
-      }}
-      authorizeBusy={oauthGate.hasBusyOAuth}
+      urlInput={draft.urlInput}
+      onUrlChange={(value) => dispatch({ type: "edit-url", value })}
+      onSubmit={submitServerUrl}
+      emailInput={draft.emailInput}
+      onEmailChange={(value) => dispatch({ type: "edit-email", value })}
+      onEmailSubmit={submitDeliveryEmail}
+      phase={controller.phase}
+      error={controller.error}
+      busy={controller.busy}
+      formDisabled={controller.formDisabled}
+      appReadyMessage={controller.appReadyMessage}
+      resultUrl={controller.resultUrl}
+      copied={controller.copied}
+      onCopy={controller.copyResultUrl}
+      showAuthorize={controller.showAuthorize}
+      onAuthorize={controller.authorizeServer}
+      authorizeBusy={controller.authorizeBusy}
     />
   );
 }
