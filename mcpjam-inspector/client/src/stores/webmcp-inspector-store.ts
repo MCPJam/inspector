@@ -44,6 +44,13 @@ export interface PageToolInvocationResult {
 /** How long to wait for a settle event before giving up on the stream. */
 const INVOCATION_WAIT_TIMEOUT_MS = 90_000;
 
+/** Where a session's browser runs. See `startSession`. */
+export interface StartSessionOptions {
+  transport?: "local" | "hosted";
+  /** Required when `transport` is `"hosted"`. */
+  projectId?: string;
+}
+
 interface WebMcpInspectorState {
   session: WebMcpSessionPublic | undefined;
   tools: WebMcpToolDescriptor[];
@@ -66,7 +73,15 @@ interface WebMcpInspectorState {
    */
   pageToolsLive(): boolean;
 
-  startSession(url: string): Promise<void>;
+  /**
+   * Open a browser at `url`.
+   *
+   * `options.transport` picks WHERE it runs: omitted or `"local"` opens a
+   * window on this machine (the default, unchanged); `"hosted"` runs it on the
+   * project's MCPJam computer and needs `projectId`, because that is the
+   * computer being reserved and billed.
+   */
+  startSession(url: string, options?: StartSessionOptions): Promise<void>;
   closeSession(): Promise<void>;
   sendCommand(command: WebMcpCommand): Promise<unknown>;
   invokeTool(toolKey: string, input: Record<string, unknown>): Promise<void>;
@@ -339,7 +354,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         return chatEnabled && Boolean(session) && session?.status !== "closed";
       },
 
-      async startSession(url) {
+      async startSession(url, options) {
         // A new session starts a new timeline, so the dedup set starts over
         // with it — otherwise it grows for the life of the tab.
         seenActivityIds = new Set();
@@ -353,7 +368,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         });
         const result = await request<WebMcpSessionPublic>("/sessions", {
           method: "POST",
-          body: JSON.stringify({ url }),
+          // `transport` is omitted entirely when local, so an older server
+          // that does not know the field behaves exactly as it does today.
+          body: JSON.stringify({
+            url,
+            ...(options?.transport === "hosted"
+              ? { transport: "hosted", projectId: options.projectId }
+              : {}),
+          }),
         });
         if (!result.ok) {
           set({ starting: false, error: result.error });

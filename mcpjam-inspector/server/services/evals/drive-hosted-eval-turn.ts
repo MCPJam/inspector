@@ -64,6 +64,27 @@ export type HostedEvalTurnOutcome =
       kind: "failed";
       iterationError: string;
       iterationErrorDetails?: string;
+      /**
+       * WHICH LAYER failed, decided by the catch site rather than by reading
+       * the message.
+       *
+       * `model` means the model-call layer — the engine's stream, or a throw
+       * escaping the assistant turn. A failure there is ours or our
+       * provider's: an outage, an exhausted credit balance, a spend guardrail.
+       * It says nothing about the MCP server under test, which is exactly why
+       * the chain must not file it as an unattributed server failure.
+       *
+       * `setup` is pre-turn work that never reached the model.
+       *
+       * Deliberately NOT derived from the error text. A message classifier
+       * would be one provider's wording away from silently mis-attributing a
+       * whole class of run, and the catch site already knows the answer.
+       */
+      errorSource?: "model" | "setup";
+      /** The engine's structured code, when the failure carried one. */
+      errorCode?: string;
+      /** HTTP status, when the failure came from a non-OK response. */
+      errorHttpStatus?: number;
     };
 
 /** Stream-runner SSE concerns, layered over the shared skeleton per turn. */
@@ -278,6 +299,29 @@ const truncateError = (message: string): string =>
  *  forever. Consumed by the executor (R3); this module only exports the value. */
 export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
 
+
+/**
+ * Which layer failed, from what the engine REPORTED rather than from where
+ * this was called.
+ *
+ * The first version of this decision lived inline and assumed every engine
+ * error was a stream failure. That holds for the chat engine and not for the
+ * harness: `runHarnessTurn` wraps its whole turn — preparation included — in
+ * one try, so a missing `projectId`, a missing auth bearer, or disabled broker
+ * credential delivery arrives looking exactly like a provider outage. Calling
+ * those `model` files our own setup bug as the provider's, which is the
+ * mis-attribution this work exists to remove, moved one layer over.
+ *
+ * `model` stays the answer for an engine that reports no phase at all: every
+ * emitter that omits it today is a real stream failure, and defaulting the
+ * other way would un-attribute the outages this work was built for.
+ */
+export function failedLayerForEngineError(
+  event: { phase?: "setup" | "stream" } | undefined,
+): "model" | "setup" {
+  return event?.phase === "setup" ? "setup" : "model";
+}
+
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams
 ): Promise<HostedEvalTurnOutcome> {
@@ -395,7 +439,16 @@ export async function driveHostedEvalTurn(
       ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
     };
     sinks.onTurnFailure?.(failure);
-    return { kind: "failed", ...failure };
+    // `failedStage` already names the layer; "pre-turn setup" is the one call
+    // site that never reached the model.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource:
+        failedStage === "pre-turn setup"
+          ? ("setup" as const)
+          : ("model" as const),
+    };
   };
 
   // Pre-turn setup that can genuinely throw: the Chromium widget dismissal
@@ -660,7 +713,33 @@ export async function driveHostedEvalTurn(
       : { iterationError: fallbackError };
     logger.error(logLine);
     sinks.onTurnFailure?.(failure);
-    return { kind: "failed", ...failure };
+    // WHICH LAYER, from the engine's own report rather than from this call
+    // site's position.
+    //
+    // The first version of this said "every path through here is the engine's
+    // stream failing". That is true of the chat engine and false of the
+    // HARNESS: `runHarnessTurn` wraps its entire turn — preparation included —
+    // in one try, so a missing projectId, a missing auth bearer or disabled
+    // broker credential delivery arrives here exactly like a provider outage.
+    // Calling those `model` would file our own setup bug as the provider's,
+    // which is the mis-attribution this whole change exists to remove, just
+    // moved one layer over.
+    //
+    // So the engine's `phase` decides when it is reported, and `model` remains
+    // the default only for emitters that do not report one — every such
+    // emitter today is a real stream failure.
+    const failedLayer = failedLayerForEngineError(lastEngineError);
+    // The structured code and status ride along when the engine captured them
+    // — they are diagnostics, never the basis for the classification.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource: failedLayer,
+      ...(lastEngineError?.code ? { errorCode: lastEngineError.code } : {}),
+      ...(typeof lastEngineError?.httpStatus === "number"
+        ? { errorHttpStatus: lastEngineError.httpStatus }
+        : {}),
+    };
   };
 
   if (!turnResult.turnTrace) {
@@ -669,7 +748,7 @@ export async function driveHostedEvalTurn(
       `[evals] runAssistantTurn${logSuffix} returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${
         newMessages.length > 0
       }, engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
+        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
       })`
     );
   }
@@ -677,7 +756,7 @@ export async function driveHostedEvalTurn(
     return failTurn(
       "Backend step returned no content (stream error or empty response)",
       `[evals] runAssistantTurn${logSuffix} produced no new messages this turn; treating as cycle failure (engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
+        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
       })`
     );
   }
@@ -699,7 +778,7 @@ export async function driveHostedEvalTurn(
       `[evals] runAssistantTurn${logSuffix} turnTrace has non-tool error-status span; treating as cycle failure (span=${
         stepErrorSpan.name
       } category=${stepErrorSpan.category} engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
+        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
       })`
     );
   }

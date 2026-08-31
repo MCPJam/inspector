@@ -45,7 +45,14 @@ import {
   type JudgeCase,
 } from "./goal-completion-presentation";
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
-import { SuiteRunStageFunnelPanel } from "@/components/shared/user-value-chain/StageFunnelPanels";
+import {
+  SuiteRunStageFunnelAvailability,
+  SuiteRunStageFunnelPanel,
+} from "@/components/shared/user-value-chain/StageFunnelPanels";
+import {
+  RunUserValueChainSlot,
+  useRunUserValueChainChoice,
+} from "./run-user-value-chain-slot";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -63,6 +70,7 @@ import { HostChip } from "@/components/hosts/host-chip";
 import {
   RunAccuracyHeroBand,
   RunInsightRail,
+  runHasInsightContent,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
 } from "./run-insight-rail";
@@ -576,6 +584,65 @@ export function RunDetailView({
 
   const embeddedInResultsSplit = hideKpiStrip;
 
+  /**
+   * Whether this run has a stage funnel to draw, reported by the probe below.
+   *
+   * Stored WITH the run it describes, and read only when that run is the one
+   * on screen. This component is reused across runs by the run selector, so a
+   * bare boolean would survive a switch and a stale `true` would open an empty
+   * rail on the run you moved to. Starting empty also means a run without a
+   * funnel never flashes one on the way to finding out.
+   */
+  const [stageFunnelFor, setStageFunnelFor] = useState<{
+    suiteRunId: string | undefined;
+    hasFunnel: boolean;
+  }>({ suiteRunId: undefined, hasFunnel: false });
+
+  const handleStageFunnelAvailability = useCallback(
+    (suiteRunId: string | undefined, hasFunnel: boolean) =>
+      setStageFunnelFor({ suiteRunId, hasFunnel }),
+    [],
+  );
+
+  const legacyStageFunnel =
+    stageFunnelFor.suiteRunId === selectedRunDetails._id &&
+    stageFunnelFor.hasFunnel;
+
+  /**
+   * What the chain slot will actually draw — resolved HERE, once, and handed
+   * both to the rail's emptiness check and to the slot itself.
+   *
+   * One call, not two. The rail has to know whether to open before it mounts
+   * what it would open around, and the slot needs the same answer to render;
+   * but this hook wraps a plain `fetch` rather than a Convex subscription, so
+   * calling it in both places would issue two HTTP requests per run with
+   * nothing de-duplicating them.
+   */
+  const runChain = useRunUserValueChainChoice({
+    projectId: selectedRunDetails.projectId ?? null,
+    runId: selectedRunDetails._id,
+    // A run opened while it is still going has no document yet. Passing the
+    // status lets the read happen again once it finishes, instead of the
+    // too-early "no document" answer standing until this view remounts.
+    runStatus: selectedRunDetails.status,
+  });
+
+  /**
+   * Either reading counts as content — but only the one the slot will draw.
+   *
+   * The probe below answers only for the LEGACY rollup, so on a run with a
+   * canonical document and no rollup it reports "no funnel" and would close a
+   * rail over content that is there.
+   */
+  const hasStageFunnel =
+    runChain.choice === "canonical" ||
+    (runChain.choice === "legacy" && legacyStageFunnel) ||
+    // A canonical read that really FAILED is content too. Without this, a run
+    // with no legacy rollup and no other insight card closes the rail over the
+    // service note written specifically to report that failure — the one case
+    // where the message is the only thing there is to say.
+    runChain.serviceNote !== null;
+
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
       <AiTriageCard
@@ -772,12 +839,33 @@ export function RunDetailView({
    */
   const userValueChainPanel = (
     <>
-      <SuiteRunStageFunnelPanel
-        suiteRunId={selectedRunDetails._id}
+      {/* Canonical document or legacy rollup, never both — the slot decides.
+          Flag-off is today's page exactly: the legacy panel, unlabelled. */}
+      <RunUserValueChainSlot
+        chain={runChain}
         className="m-3"
+        legacy={
+          <SuiteRunStageFunnelPanel
+            suiteRunId={selectedRunDetails._id}
+            className="m-3"
+          />
+        }
       />
       <ExplanatoryFlowOptIn scope={flowScope} className="m-3" />
     </>
+  );
+
+  /**
+   * Mounted unconditionally, and deliberately NOT inside the rail or the band
+   * it informs — it answers whether those should open, so it has to exist
+   * before they do. Renders nothing; costs one query, which Convex shares with
+   * the panel's own subscription.
+   */
+  const stageFunnelProbe = (
+    <SuiteRunStageFunnelAvailability
+      suiteRunId={selectedRunDetails._id}
+      onChange={handleStageFunnelAvailability}
+    />
   );
 
   const insightRail = (
@@ -795,16 +883,30 @@ export function RunDetailView({
       goalCompletionCard={goalCompletionPanel}
       groundednessCard={groundednessPanel}
       userValueChainCard={userValueChainPanel}
+      userValueChainHasContent={hasStageFunnel}
       embedded={embeddedInResultsSplit}
     />
   );
 
-  const hasInsightContent = Boolean(
-    serverQualityTriage ||
-      goalCompletionPanel ||
-      groundednessPanel ||
-      actionableFindingsPanel,
-  );
+  /**
+   * The chain counts toward "is there anything to show" — but only when it
+   * actually has a funnel to draw.
+   *
+   * Both gates below read this ONE boolean, and it comes from a probe rather
+   * than from the panel, because the panel cannot answer: neither gate mounts
+   * it until they have already decided to open. Counting the card itself
+   * instead would keep a rail alive on every run with no insight content at
+   * all, since the node is truthy whether or not it renders anything — which
+   * is why it was excluded from these checks in the first place, and why the
+   * fix has to be data-driven rather than a matter of adding the node.
+   */
+  const hasInsightContent = runHasInsightContent({
+    serverQualityTriage,
+    goalCompletionPanel,
+    groundednessPanel,
+    actionableFindingsPanel,
+    hasStageFunnel,
+  });
 
   const triageFixCount = useMemo(
     () =>
@@ -1041,6 +1143,9 @@ export function RunDetailView({
         omitIterationList && "px-3 py-3",
       )}
     >
+      {/* Renders nothing. Sits above every layout branch below because all of
+          them gate on the answer it reports. */}
+      {stageFunnelProbe}
       {onExportTraces || pluginSubmissionVersions.length > 0 || onShare ? (
         // Always-on run-level actions — placed here (not the accuracy hero) so
         // they survive the folded run-detail layout that hides the hero.
