@@ -2945,6 +2945,7 @@ async function composeRunEnvironment(
     serverGroup?: string;
     server?: string;
     servers?: string[];
+    hostServers?: boolean;
     model?: string;
     models?: string[];
     includeClientDefault?: boolean;
@@ -2964,6 +2965,16 @@ async function composeRunEnvironment(
     stack,
     signal
   );
+  // The server is the thing under test, so a composed RUN has to say which one.
+  // Without a pin the run reads the host's list at execution time, and editing
+  // that shared host silently repoints every eval composed against it — the
+  // failure this guard exists to stop. Following the host stays available, but
+  // only as something the caller asked for out loud.
+  if (pinned.serverGroup === undefined && stack.hostServers !== true) {
+    throw operationInputError(
+      "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
+    );
+  }
   const choices = expandComposeModelChoices(pinned);
   const cells: ComposedCell[] = [];
   for (const choice of choices) {
@@ -3374,7 +3385,13 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). Omit to use the host's own servers."
+        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required unless `hostServers` opts into the host's live list."
+      ),
+    hostServers: z
+      .boolean()
+      .optional()
+      .describe(
+        "Run against the host's CURRENT server list instead of pinning one. The list is read at run time, so editing the host later changes what a rerun tests — opt in only when following the host is the point."
       ),
     server: z
       .string()

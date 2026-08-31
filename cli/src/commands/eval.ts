@@ -230,6 +230,7 @@ function composeField(options: {
   composeModel?: string | string[];
   composeServer?: string[];
   composeServerGroup?: string;
+  composeHostServers?: boolean;
   composeSkill?: string[];
   withClientDefault?: boolean;
   saveTargets?: boolean;
@@ -239,6 +240,7 @@ function composeField(options: {
     serverGroup?: string;
     server?: string;
     servers?: string[];
+    hostServers?: boolean;
     models?: string[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
@@ -256,6 +258,7 @@ function composeField(options: {
     models !== undefined ||
     (options.composeServer?.length ?? 0) > 0 ||
     options.composeServerGroup !== undefined ||
+    options.composeHostServers === true ||
     (options.composeSkill?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
     options.saveTargets === true;
@@ -277,12 +280,29 @@ function composeField(options: {
       "--compose-server and --compose-server-group both pin the run's servers. Use --compose-server with server names, or --compose-server-group with an existing group ID."
     );
   }
+  const pinsServers =
+    options.composeServerGroup !== undefined ||
+    (options.composeServer?.length ?? 0) > 0;
+  if (options.composeHostServers === true && pinsServers) {
+    throw usageError(
+      "--compose-host-servers runs against the host's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
+    );
+  }
+  // The server is what the suite is testing, so a composed run has to name it.
+  // Left implicit, the run reads the host's list at execution time and a later
+  // edit to that shared host silently repoints the eval.
+  if (!pinsServers && options.composeHostServers !== true) {
+    throw usageError(
+      "--compose-host needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the host points at right now — which changes when the host is edited — pass --compose-host-servers."
+    );
+  }
   return {
     compose: {
       host: options.composeHost,
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
+      ...(options.composeHostServers === true ? { hostServers: true } : {}),
       ...selectorField("server", "servers", options.composeServer),
       ...(models !== undefined ? { models } : {}),
       ...(options.withClientDefault === true
@@ -2955,6 +2975,10 @@ export function registerEvalCommands(program: Command): void {
         "Standalone server group to pin on the composed stack"
       )
       .option(
+        "--compose-host-servers",
+        "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
+      )
+      .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
       )
@@ -2977,6 +3001,7 @@ export function registerEvalCommands(program: Command): void {
         saveTargets?: boolean;
         composeServer?: string[];
         composeServerGroup?: string;
+        composeHostServers?: boolean;
         composeSkill?: string[];
         project?: string;
         suite?: string;
@@ -4640,6 +4665,10 @@ export function registerEvalCommands(program: Command): void {
         "Standalone server group to pin on the composed stack"
       )
       .option(
+        "--compose-host-servers",
+        "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
+      )
+      .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
       ).action(
@@ -4650,6 +4679,7 @@ export function registerEvalCommands(program: Command): void {
         composeModel?: string;
         composeServer?: string[];
         composeServerGroup?: string;
+        composeHostServers?: boolean;
         composeSkill?: string[];
         project?: string;
         suite: string;
