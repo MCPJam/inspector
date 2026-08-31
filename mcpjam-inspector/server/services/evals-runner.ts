@@ -429,7 +429,7 @@ export function runFrozenSkillOptions(run: {
         run.pinnedHarnessSkills === null
           ? "null"
           : typeof run.pinnedHarnessSkills
-      })`,
+      })`
     );
   }
   return {
@@ -496,7 +496,7 @@ export function resolveIterationSkillsSource(args: {
  * never wrote. Change both, or neither.
  */
 function scoreMatchOptionsFor(
-  test: Pick<EvalTestCase, "matchOptions">,
+  test: Pick<EvalTestCase, "matchOptions">
 ): Record<string, unknown> {
   return resolveMatchOptions(undefined, test.matchOptions) as unknown as Record<
     string,
@@ -650,13 +650,13 @@ export type EvalIterationOutcome = {
 export function narrowToolsToAdvertised(
   allTools: PrepareChatV2Result["allTools"],
   progressivePlan: ProgressiveToolPlan,
-  discoveryState: ToolDiscoveryState,
+  discoveryState: ToolDiscoveryState
 ): PrepareChatV2Result["allTools"] {
   if (!progressivePlan.enabled) {
     return allTools;
   }
   const advertisedNames = new Set(
-    resolveActiveToolNames(progressivePlan, discoveryState),
+    resolveActiveToolNames(progressivePlan, discoveryState)
   );
   const narrowed: PrepareChatV2Result["allTools"] = {};
   for (const [name, tool] of Object.entries(allTools)) {
@@ -769,12 +769,12 @@ type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
 function getServerLabelForEvalError(
   serverId: string,
-  environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined
 ): string {
   const binding = environment?.serverBindings?.find(
     (entry) =>
       entry.projectServerId === serverId ||
-      entry.projectServerId?.toLowerCase() === serverId.toLowerCase(),
+      entry.projectServerId?.toLowerCase() === serverId.toLowerCase()
   );
   return binding?.serverName || serverId;
 }
@@ -819,7 +819,7 @@ function throwSetupPhaseError(args: {
 }): never {
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
-    args.environment,
+    args.environment
   );
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
     throw new EvalSetupPhaseError({
@@ -893,7 +893,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         const tools = toolOptions
           ? await args.mcpClientManager.getToolsForAiSdk(
               [serverId],
-              toolOptions,
+              toolOptions
             )
           : await args.mcpClientManager.getToolsForAiSdk([serverId]);
         const endedAt = now();
@@ -939,7 +939,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         firstError.push({ error, serverId, phase: "discovery" });
         return null;
       }
-    }),
+    })
   );
 
   if (observer) {
@@ -987,7 +987,7 @@ export function resolveConfiguredServerIds(args: {
 
   const availableServerIdsSet = new Set(availableServerIds);
   const availableServerIdByLowercase = new Map(
-    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
+    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId])
   );
   const projectServerIdByName = new Map<string, string>();
   const serverNameByProjectServerId = new Map<string, string>();
@@ -1025,7 +1025,7 @@ export function resolveConfiguredServerIds(args: {
       : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
-            trimmedServerRef.toLowerCase(),
+            trimmedServerRef.toLowerCase()
           );
           if (projectServerId) {
             return (
@@ -1037,7 +1037,7 @@ export function resolveConfiguredServerIds(args: {
           }
 
           const serverName = serverNameByProjectServerId.get(
-            trimmedServerRef.toLowerCase(),
+            trimmedServerRef.toLowerCase()
           );
           if (serverName) {
             return (
@@ -1132,11 +1132,11 @@ function resolvePinnedServerKey(
   pinned: PinnedToolCall,
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
   selectedServers: string[],
-  mcpClientManager: MCPClientManager,
+  mcpClientManager: MCPClientManager
 ): string | undefined {
   const connected = new Set(selectedServers);
   const candidates = [pinned.serverId, pinned.serverName].filter(
-    (ref): ref is string => !!ref,
+    (ref): ref is string => !!ref
   );
   for (const candidate of candidates) {
     const [resolved] = resolveConfiguredServerIds({
@@ -1155,12 +1155,12 @@ function resolvePinnedServerKey(
 
 function buildPromptTraceSummaries(
   evaluation: MultiTurnEvaluationResult,
-  turnCheckResults: PredicateResult[] = [],
+  turnCheckResults: PredicateResult[] = []
 ): PromptTraceSummary[] {
   return evaluation.promptSummaries.map((summary) => {
     const perTurn = turnCheckResults.filter(
       (r) =>
-        r.scope?.kind === "turn" && r.scope.promptIndex === summary.promptIndex,
+        r.scope?.kind === "turn" && r.scope.promptIndex === summary.promptIndex
     );
     return {
       promptIndex: summary.promptIndex,
@@ -1190,7 +1190,7 @@ function buildPromptTraceSummaries(
           mismatchedArguments: Array.from(mismatchedArguments).filter(
             (key) =>
               JSON.stringify(mismatch.expectedArgs?.[key]) !==
-              JSON.stringify(mismatch.actualArgs?.[key]),
+              JSON.stringify(mismatch.actualArgs?.[key])
           ),
         };
       }),
@@ -1233,7 +1233,7 @@ function extractToolCallsFromConversation(params: {
               (toolCall) =>
                 toolCall.toolName === name &&
                 JSON.stringify(toolCall.arguments) ===
-                  JSON.stringify(argumentsValue),
+                  JSON.stringify(argumentsValue)
             );
             if (!alreadyAdded) {
               toolsCalled.push({
@@ -1258,7 +1258,7 @@ function extractToolCallsFromConversation(params: {
             (toolCall) =>
               toolCall.toolName === toolName &&
               JSON.stringify(toolCall.arguments) ===
-                JSON.stringify(argumentsValue),
+                JSON.stringify(argumentsValue)
           );
           if (!alreadyAdded) {
             toolsCalled.push({
@@ -1282,12 +1282,12 @@ function extractToolCallsExcludingPolicyBlocks(
     steps?: ReadonlyArray<any>;
     messages: ModelMessage[];
   },
-  blockedToolCallIds: ReadonlySet<string>,
+  blockedToolCallIds: ReadonlySet<string>
 ): ToolCall[] {
   return extractToolCallsFromConversation(params).filter(
     (toolCall) =>
       toolCall.toolCallId === undefined ||
-      !blockedToolCallIds.has(toolCall.toolCallId),
+      !blockedToolCallIds.has(toolCall.toolCallId)
   );
 }
 
@@ -1297,7 +1297,7 @@ function toolCallIdentity(toolCall: ToolCall): string {
 
 function mergeToolCalls(
   existingToolCalls: ToolCall[],
-  incomingToolCalls: ToolCall[],
+  incomingToolCalls: ToolCall[]
 ): ToolCall[] {
   const seen = new Set(existingToolCalls.map(toolCallIdentity));
   const merged = [...existingToolCalls];
@@ -1331,14 +1331,14 @@ function appendPartialToolCallsToPrompt(params: {
   }
 
   const existingToolCalls = Array.isArray(
-    params.toolsCalledByPrompt[params.promptIndex],
+    params.toolsCalledByPrompt[params.promptIndex]
   )
     ? params.toolsCalledByPrompt[params.promptIndex]!
     : [];
 
   params.toolsCalledByPrompt[params.promptIndex] = mergeToolCalls(
     existingToolCalls,
-    partialToolCalls,
+    partialToolCalls
   );
 }
 
@@ -1377,7 +1377,7 @@ function buildTraceSnapshotEvent(params: {
     snapshotKind: params.snapshotKind,
     trace: sanitizeForConvexTransport(trace),
     actualToolCalls: sanitizeForConvexTransport(
-      toStreamToolCalls(params.actualToolCalls),
+      toStreamToolCalls(params.actualToolCalls)
     ),
     usage: {
       inputTokens: params.usage.inputTokens ?? 0,
@@ -1397,7 +1397,7 @@ function buildTraceSnapshotEvent(params: {
  * (already steps-shaped) — and prefers an existing `steps` array if present.
  */
 function snapshotWithStepsForConvex(
-  snapshot: Record<string, unknown>,
+  snapshot: Record<string, unknown>
 ): Record<string, unknown> {
   if (
     !snapshot ||
@@ -1441,7 +1441,7 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-  },
+  }
 ): Promise<string | undefined> {
   try {
     const result = await convexClient.mutation(
@@ -1449,11 +1449,11 @@ async function createIterationDirectly(
       {
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
-          snapshotWithStepsForConvex(params.testCaseSnapshot),
+          snapshotWithStepsForConvex(params.testCaseSnapshot)
         ),
         iterationNumber: params.iterationNumber,
         startedAt: params.startedAt,
-      },
+      }
     );
 
     return result?.iterationId as string | undefined;
@@ -1555,10 +1555,10 @@ async function persistRunSetupFailure(args: {
     try {
       const details = (await args.convexClient.query(
         "testSuites:getTestSuiteRunDetails" as any,
-        { runId: args.runId },
+        { runId: args.runId }
       )) as { iterations?: Array<Record<string, unknown>> } | null;
       return (details?.iterations ?? []).filter(
-        (row) => row.status === "pending",
+        (row) => row.status === "pending"
       );
     } catch (readError) {
       logger.warn("[evals] Failed to read pending setup iterations", {
@@ -1581,7 +1581,7 @@ async function persistRunSetupFailure(args: {
             : undefined;
         const test = args.tests.find(
           (candidate) =>
-            candidate.testCaseId && candidate.testCaseId === row.testCaseId,
+            candidate.testCaseId && candidate.testCaseId === row.testCaseId
         );
         const snapshot = row.testCaseSnapshot as
           | { query?: string; expectedToolCalls?: unknown[] }
@@ -1616,7 +1616,7 @@ async function persistRunSetupFailure(args: {
           recorder: args.recorder,
           convexClient: args.convexClient,
         });
-      }),
+      })
     );
   };
 
@@ -1633,7 +1633,7 @@ async function persistRunSetupFailure(args: {
     try {
       await args.convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
-        { runId: args.runId, error: args.errorMessage },
+        { runId: args.runId, error: args.errorMessage }
       );
     } catch (cleanupError) {
       logger.warn("[evals] Failed to mark residual setup iterations failed", {
@@ -1823,7 +1823,7 @@ const buildModelDefinition = (test: EvalTestCase): ModelDefinition => {
 
 function lookupProviderApiKey(
   modelApiKeys: Record<string, string> | undefined,
-  provider: string,
+  provider: string
 ): string | undefined {
   return modelApiKeys?.[provider] ?? modelApiKeys?.[provider.toLowerCase()];
 }
@@ -1853,7 +1853,7 @@ function resolveEvalModelRuntime(args: {
   const provider = args.modelDefinition.provider;
   if (!apiKey && provider !== "ollama" && provider !== "custom") {
     throw new Error(
-      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`,
+      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`
     );
   }
 
@@ -1869,14 +1869,14 @@ function resolveEvalModelRuntime(args: {
 }
 
 function hasExplicitModelApiKeys(
-  modelApiKeys: Record<string, string> | undefined,
+  modelApiKeys: Record<string, string> | undefined
 ): boolean {
   return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
 }
 
 function resolveOrgTargetForEval(
   test: EvalTestCase,
-  explicitTarget?: ResolveOrgModelConfigTarget,
+  explicitTarget?: ResolveOrgModelConfigTarget
 ): ResolveOrgModelConfigTarget | undefined {
   if (explicitTarget) return explicitTarget;
   const maybeProjectId = (test as { projectId?: unknown }).projectId;
@@ -1926,7 +1926,7 @@ async function resolveOrgByokEvalRuntime(args: {
     target,
     providerKey,
     String(args.modelDefinition.id),
-    { bearerToken: args.convexAuthToken },
+    { bearerToken: args.convexAuthToken }
   );
   if (runtime.runtimeLocation === "cloud") {
     return { kind: "cloud", providerKey: runtime.providerKey, target };
@@ -1941,15 +1941,15 @@ async function resolveOrgByokEvalRuntime(args: {
 // PR6: single hosted wrapper for both modes (emit optional). Owns the browser
 // harness lifecycle (try/finally guarantees Chromium teardown on every exit).
 const runHostedIteration = async (
-  params: RunIterationBackendParams & { emit?: StreamEmit },
+  params: RunIterationBackendParams & { emit?: StreamEmit }
 ): Promise<EvalIterationOutcome> => {
   // First pinned turn's per-call render-budget override (mirrors the local
   // runner's harness creation).
   const pinnedRenderTimeoutMs = resolveEvalTestCase(
-    params.test,
+    params.test
   ).promptTurns.find(
     (t) =>
-      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
   )?.pinnedToolCall?.renderTimeoutMs;
   const browser = await createBrowserSessionContext({
     model: params.test.model,
@@ -1997,7 +1997,7 @@ async function findIterationIdForTimeout(args: {
   try {
     const response = await args.convexClient.query(
       "testSuites:getTestSuiteRunDetails" as any,
-      { runId: args.runId },
+      { runId: args.runId }
     );
     const iterations = response?.iterations ?? [];
     const matching = iterations.find((iteration: any) => {
@@ -2207,7 +2207,7 @@ const executeTestCase = async (params: {
     runner: () => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
-    timeoutTest: EvalTestCase = normalizedTest,
+    timeoutTest: EvalTestCase = normalizedTest
   ): Promise<T> => {
     if (abortSignal?.aborted) {
       const reason = abortSignal.reason;
@@ -2292,8 +2292,8 @@ const executeTestCase = async (params: {
             }),
           undefined,
           runIndex,
-          normalizedTest,
-        ),
+          normalizedTest
+        )
       );
     }
     return outcomes;
@@ -2302,11 +2302,11 @@ const executeTestCase = async (params: {
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
-    modelDefinition.provider,
+    modelDefinition.provider
   );
   const isJamModel = isHostedCatalogModel(
     resolvedModelId,
-    modelDefinition.provider,
+    modelDefinition.provider
   );
   const orgByokRuntime = isJamModel
     ? undefined
@@ -2366,7 +2366,7 @@ const executeTestCase = async (params: {
           {
             runIndex,
             error: error instanceof Error ? error.message : String(error),
-          },
+          }
         );
         precreatedIterationIds.push(undefined);
       }
@@ -2429,7 +2429,7 @@ const executeTestCase = async (params: {
           }),
         precreatedIterationId,
         runIndex,
-        test,
+        test
       );
       outcomes.push(iterationOutcome);
       continue;
@@ -2491,7 +2491,7 @@ const executeTestCase = async (params: {
           }),
         precreatedIterationId,
         runIndex,
-        test,
+        test
       );
       outcomes.push(iterationOutcome);
       continue;
@@ -2545,7 +2545,7 @@ const executeTestCase = async (params: {
         }),
       precreatedIterationId,
       runIndex,
-      test,
+      test
     );
     outcomes.push(iterationOutcome);
   }
@@ -2556,7 +2556,7 @@ const executeTestCase = async (params: {
 // Thin batch wrapper (no `emit`) — preserves the call site in
 // `runEvalSuiteWithAiSdk` and tests with zero churn.
 const runTestCase = (
-  params: Omit<Parameters<typeof executeTestCase>[0], "emit">,
+  params: Omit<Parameters<typeof executeTestCase>[0], "emit">
 ) => executeTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
@@ -2602,7 +2602,7 @@ export const runEvalSuiteWithAiSdk = async ({
   ) {
     logger.warn(
       "[evals] readOnly tool policy does not restrict the sandbox bash tool",
-      { suiteId },
+      { suiteId }
     );
   }
 
@@ -2640,7 +2640,7 @@ export const runEvalSuiteWithAiSdk = async ({
 
   const evalTasksSeam = resolveToolTaskSeam({
     tasksPolicy: readTasksPolicy(
-      (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0],
+      (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0]
     ),
     surface: "eval",
     // Driver `timeoutMs` stays at its default — the task drive nests under
@@ -2678,19 +2678,19 @@ export const runEvalSuiteWithAiSdk = async ({
     const toolAnnotations: ToolAnnotationsLookup = new Map();
     if (toolPolicy) {
       const uncachedServerIds = serverIds.filter(
-        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId),
+        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId)
       );
       if (uncachedServerIds.length > 0) {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
           `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
-            ", ",
+            ", "
           )}.`,
           {
             reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
             serverIds: uncachedServerIds,
-          },
+          }
         );
       }
       try {
@@ -2711,18 +2711,18 @@ export const runEvalSuiteWithAiSdk = async ({
             400,
             ErrorCode.VALIDATION_ERROR,
             error.message,
-            { reason: "TOOL_POLICY_INVALID" },
+            { reason: "TOOL_POLICY_INVALID" }
           );
         }
         throw error;
       }
       for (const serverId of serverIds) {
         for (const [toolName, annotations] of Object.entries(
-          mcpClientManager.getAllToolAnnotations(serverId),
+          mcpClientManager.getAllToolAnnotations(serverId)
         )) {
           toolAnnotations.set(
             toolAnnotationsKey(serverId, toolName),
-            annotations,
+            annotations
           );
         }
       }
@@ -2735,7 +2735,7 @@ export const runEvalSuiteWithAiSdk = async ({
       ? applyVisibilityPolicyAndCountSignals(
           tools as Record<string, unknown>,
           mcpClientManager,
-          hostExecutionPolicy,
+          hostExecutionPolicy
         )
       : undefined;
     const resolvedSetupSignals = setupObserver.buildSignals();
@@ -2752,7 +2752,7 @@ export const runEvalSuiteWithAiSdk = async ({
         "testSuites:getTestSuiteRun" as any,
         {
           runId,
-        },
+        }
       );
 
       if (currentRun?.status === "cancelled") {
@@ -2775,7 +2775,7 @@ export const runEvalSuiteWithAiSdk = async ({
     // exhaust the worker. LLM-only cases are network-bound and stay unbounded.
     // The limiter releases a slot when each case settles, so it can't leak.
     const renderCheckLimit = createConcurrencyLimiter(
-      MAX_CONCURRENT_RENDER_CHECKS,
+      MAX_CONCURRENT_RENDER_CHECKS
     );
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
@@ -2837,7 +2837,7 @@ export const runEvalSuiteWithAiSdk = async ({
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
         ? renderCheckLimit(() => runOne(test))
-        : runOne(test),
+        : runOne(test)
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -2851,7 +2851,7 @@ export const runEvalSuiteWithAiSdk = async ({
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
-            { runId },
+            { runId }
           );
           if (currentRun?.status === "cancelled") {
             abortRun(RUN_CANCELLED_ERROR);
@@ -2886,7 +2886,7 @@ export const runEvalSuiteWithAiSdk = async ({
         try {
           await convexClient.mutation(
             "testSuites:heartbeatTestSuiteRun" as any,
-            { runId },
+            { runId }
           );
         } catch (error) {
           logger.warn("[evals] Failed to heartbeat eval run", {
@@ -2920,8 +2920,8 @@ export const runEvalSuiteWithAiSdk = async ({
             throw error;
           }
           return never();
-        }),
-      ),
+        })
+      )
     );
     const allTestsSettled = Promise.allSettled(testPromises);
 
@@ -2989,7 +2989,7 @@ export const runEvalSuiteWithAiSdk = async ({
           }
         }
         summary.policyBlockedIterations += outcomes.filter(
-          (outcome) => (outcome.policyBlockCount ?? 0) > 0,
+          (outcome) => (outcome.policyBlockCount ?? 0) > 0
         ).length;
         if (runId === null) {
           quickRunOutcomes.push(...outcomes);
@@ -3101,7 +3101,7 @@ async function seedAndAnnotateEvalAttachments(args: {
   });
   if (!seeded.note) return;
   const firstModelTurnIndex = args.promptTurns.findIndex(
-    (t) => !isPinnedTurn(t),
+    (t) => !isPinnedTurn(t)
   );
   if (firstModelTurnIndex < 0) return;
   args.promptTurns[firstModelTurnIndex] = {
@@ -3170,7 +3170,7 @@ const runLocalIteration = async ({
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -3182,7 +3182,7 @@ const runLocalIteration = async ({
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions,
+              test.matchOptions
             ),
             passed: false,
           },
@@ -3205,7 +3205,7 @@ const runLocalIteration = async ({
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions,
+              test.matchOptions
             ),
             passed: false,
           },
@@ -3259,7 +3259,7 @@ const runLocalIteration = async ({
   });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
@@ -3276,7 +3276,7 @@ const runLocalIteration = async ({
   // First pinned turn's render-budget override; applied to the shared harness.
   const pinnedRenderTimeoutMs = promptTurns.find(
     (t) =>
-      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
   )?.pinnedToolCall?.renderTimeoutMs;
 
   const modelRuntime = caseNeedsModel
@@ -3446,7 +3446,7 @@ const runLocalIteration = async ({
     if (caseNeedsModel) {
       resolveHostTools(
         { builtInToolIds: resolvedExecution.builtInToolIds },
-        null,
+        null
       );
       prepared = await prepareChatV2({
         mcpClientManager,
@@ -3495,7 +3495,7 @@ const runLocalIteration = async ({
         modelDefinition,
         modelRuntime!.apiKey,
         modelRuntime!.baseUrls,
-        modelRuntime!.customProviders,
+        modelRuntime!.customProviders
       );
 
       // Reproducible evals: boot a fresh ephemeral sandbox from the suite's
@@ -3520,7 +3520,7 @@ const runLocalIteration = async ({
         // paid box only the backend TTL GC could reap. Fail loudly instead.
         if (!isComputersDataPlaneConfigured()) {
           throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
+            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
           );
         }
         evalSandbox = await provisionEvalSandbox({
@@ -3531,7 +3531,7 @@ const runLocalIteration = async ({
         });
         if (!evalSandbox.ok) {
           throw new Error(
-            `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`,
+            `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
           );
         }
         // COMP-17: seed the case's pinned attachments into the fresh box before
@@ -3561,7 +3561,7 @@ const runLocalIteration = async ({
         !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
       ) {
         throw new Error(
-          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
+          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
         );
       }
     }
@@ -3578,7 +3578,7 @@ const runLocalIteration = async ({
           promptTurns,
           acc.toolsCalledByPrompt,
           test.isNegativeTest,
-          test.matchOptions,
+          test.matchOptions
         ),
         passed: false,
       },
@@ -3614,7 +3614,7 @@ const runLocalIteration = async ({
                 spans,
                 actualToolCalls: extractToolCallsFromConversation({ messages }),
                 usage,
-              }),
+              })
             );
           },
           onTurnFailure: ({
@@ -3633,7 +3633,7 @@ const runLocalIteration = async ({
                 spans,
                 actualToolCalls: extractToolCallsFromConversation({ messages }),
                 usage,
-              }),
+              })
             );
             emit({
               type: "step_status",
@@ -3653,7 +3653,7 @@ const runLocalIteration = async ({
                 spans,
                 actualToolCalls: extractToolCallsFromConversation({ messages }),
                 usage,
-              }),
+              })
             );
             emit({ type: "turn_finish", turnIndex });
             emit({
@@ -3666,7 +3666,7 @@ const runLocalIteration = async ({
           onPinnedTurn: (ctx) =>
             emitPinnedTurnSse(
               { emit, withSystemPrefix, buildTraceSnapshotEvent },
-              { turnIndex, ...ctx },
+              { turnIndex, ...ctx }
             ),
         })
       : undefined;
@@ -3694,7 +3694,7 @@ const runLocalIteration = async ({
           pinned,
           environment,
           selectedServers,
-          mcpClientManager,
+          mcpClientManager
         ),
       prepared,
       llmModel,
@@ -3711,7 +3711,7 @@ const runLocalIteration = async ({
       extractToolCalls: (params) =>
         extractToolCallsExcludingPolicyBlocks(
           params,
-          toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+          toolPolicyGate?.blockedToolCallIds() ?? new Set()
         ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
@@ -3755,13 +3755,13 @@ const runLocalIteration = async ({
     // accounting (a click that fires a tool the case forbade SHOULD fail it).
     const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
       acc.toolsCalledByPrompt,
-      widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
+      widgetToolCallsByPromptIndex(browser.browserInteractionSteps)
     );
     // Per-turn predicate results from step assert execution facts (not a
     // re-evaluation of promptTurns.checks — avoids duplicates vs executeSteps).
     const turnCheckResults = resolveTurnCheckResultsFromStepExecution(
       stepState,
-      steps,
+      steps
     );
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -3809,7 +3809,7 @@ const runLocalIteration = async ({
         ? acc.accumulatedUsage
         : undefined,
       renderObservations: summarizeRenderObservations(
-        browser.widgetRenderObservations,
+        browser.widgetRenderObservations
       ),
       toolErrors: acc.pinnedToolErrors,
       iterationError: acc.iterationError,
@@ -3823,7 +3823,7 @@ const runLocalIteration = async ({
     });
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
-      turnCheckResults,
+      turnCheckResults
     );
     // Reflect the gated verdict (match AND tool-error gate AND predicates) in
     // the returned evaluation so totals built from `evaluation.passed` agree
@@ -3937,13 +3937,13 @@ const runLocalIteration = async ({
               ? narrowToolsToAdvertised(
                   selectionToolsForFinish,
                   selectionDiscoveryForFinish.progressivePlan,
-                  selectionDiscoveryForFinish.discoveryState,
+                  selectionDiscoveryForFinish.discoveryState
                 )
               : selectionToolsForFinish,
           }
         : {}),
     });
-    // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
     //
     // At `enforce` the iteration's result is the conjunction of the boolean
     // pipeline and the gating score rows, computed inside
@@ -3985,7 +3985,7 @@ const runLocalIteration = async ({
             promptTurns,
             acc.toolsCalledByPrompt,
             test.isNegativeTest,
-            test.matchOptions,
+            test.matchOptions
           ),
           passed: false,
         },
@@ -4040,7 +4040,7 @@ const runLocalIteration = async ({
       promptTurns,
       acc.toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
     // The persisted iteration is hard-coded `passed: false` below, but the
@@ -4077,7 +4077,7 @@ const runLocalIteration = async ({
             totalTokens: acc.accumulatedUsage.totalTokens,
           },
           prompts: promptTraceSummaries,
-        }),
+        })
       );
       emit({
         type: "error",
@@ -4166,7 +4166,7 @@ const runLocalIteration = async ({
               ? narrowToolsToAdvertised(
                   selectionToolsForFinish,
                   selectionDiscoveryForFinish.progressivePlan,
-                  selectionDiscoveryForFinish.discoveryState,
+                  selectionDiscoveryForFinish.discoveryState
                 )
               : selectionToolsForFinish,
           }
@@ -4256,7 +4256,7 @@ const runHostedIterationWithBrowser = async (
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
-  browser: BrowserSessionContext,
+  browser: BrowserSessionContext
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
   const toolPolicyGate = resolveEnforcementGate({
@@ -4275,7 +4275,7 @@ const runHostedIterationWithBrowser = async (
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -4287,7 +4287,7 @@ const runHostedIterationWithBrowser = async (
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions,
+              test.matchOptions
             ),
             passed: false,
           },
@@ -4310,7 +4310,7 @@ const runHostedIterationWithBrowser = async (
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions,
+              test.matchOptions
             ),
             passed: false,
           },
@@ -4351,7 +4351,7 @@ const runHostedIterationWithBrowser = async (
   });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
@@ -4443,7 +4443,7 @@ const runHostedIterationWithBrowser = async (
     { builtInToolIds: resolvedExecution.builtInToolIds },
     builtInTarget && "projectId" in builtInTarget
       ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
-      : null,
+      : null
   );
   // ── Harness execution inputs, resolved once per iteration.
   //
@@ -4555,7 +4555,7 @@ const runHostedIterationWithBrowser = async (
         throw new Error(
           pinnedEnvironmentId
             ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
+            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
         );
       }
       evalSandbox = await provisionEvalSandbox({
@@ -4566,7 +4566,7 @@ const runHostedIterationWithBrowser = async (
       });
       if (!evalSandbox.ok) {
         throw new Error(
-          `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`,
+          `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
         );
       }
       // COMP-17: seed the case's pinned attachments before exposing `bash`
@@ -4627,7 +4627,7 @@ const runHostedIterationWithBrowser = async (
       promptTurns,
       [],
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     );
     failedEvaluation.passed = false;
     return {
@@ -4668,7 +4668,7 @@ const runHostedIterationWithBrowser = async (
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions,
+      test.matchOptions
     ),
     iterationId: undefined,
   });
@@ -4699,7 +4699,7 @@ const runHostedIterationWithBrowser = async (
         extractToolCalls: (messages) =>
           extractToolCallsExcludingPolicyBlocks(
             { messages },
-            toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+            toolPolicyGate?.blockedToolCallIds() ?? new Set()
           ),
         buildTraceSnapshotEvent,
       })
@@ -4818,7 +4818,7 @@ const runHostedIterationWithBrowser = async (
     extractToolCalls: (messages) =>
       extractToolCallsExcludingPolicyBlocks(
         { messages },
-        toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+        toolPolicyGate?.blockedToolCallIds() ?? new Set()
       ),
     acc: {
       messageHistory,
@@ -4833,7 +4833,7 @@ const runHostedIterationWithBrowser = async (
         pinned,
         environment,
         selectedServers,
-        mcpClientManager,
+        mcpClientManager
       ),
     pinnedToolErrors,
     ...(emit
@@ -4841,7 +4841,7 @@ const runHostedIterationWithBrowser = async (
           emitPinnedTurn: (payload: PinnedTurnSsePayload) =>
             emitPinnedTurnSse(
               { emit, withSystemPrefix, buildTraceSnapshotEvent },
-              payload,
+              payload
             ),
         }
       : {}),
@@ -4900,7 +4900,7 @@ const runHostedIterationWithBrowser = async (
   // calls whether authored as an expected tool call or a predicate.
   const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
     toolsCalledByPrompt,
-    widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
+    widgetToolCallsByPromptIndex(browser.browserInteractionSteps)
   );
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -4918,7 +4918,7 @@ const runHostedIterationWithBrowser = async (
   // Per-turn predicate results from step assert execution (hosted parity).
   const turnCheckResults = resolveTurnCheckResultsFromStepExecution(
     stepState,
-    steps,
+    steps
   );
   const effectivePredicates = test.successPredicates?.length
     ? test.successPredicates
@@ -4941,7 +4941,7 @@ const runHostedIterationWithBrowser = async (
     trace: traceForGate,
     usage: hasReportedUsage(accumulatedUsage) ? accumulatedUsage : undefined,
     renderObservations: summarizeRenderObservations(
-      browser.widgetRenderObservations,
+      browser.widgetRenderObservations
     ),
     toolErrors: pinnedToolErrors,
     iterationError,
@@ -4955,7 +4955,7 @@ const runHostedIterationWithBrowser = async (
   });
   const promptTraceSummaries = buildPromptTraceSummaries(
     evaluation,
-    turnCheckResults,
+    turnCheckResults
   );
   // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
   // returned evaluation so totals built from `evaluation.passed` agree with the
@@ -5043,7 +5043,7 @@ const runHostedIterationWithBrowser = async (
     selectionTools: narrowToolsToAdvertised(
       prepared.allTools,
       prepared.progressivePlan,
-      prepared.discoveryState,
+      prepared.discoveryState
     ),
   });
   // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
@@ -5084,5 +5084,5 @@ const runHostedIterationWithBrowser = async (
 export const streamTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit"> & {
     emit: StreamEmit;
-  },
+  }
 ) => executeTestCase(params);

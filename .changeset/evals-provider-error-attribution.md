@@ -13,7 +13,7 @@ The layer that failed is now tagged at the catch site and carried into the chain
 
 Three boundaries are deliberate:
 
-- **Only blank rows are re-labelled.** A provider dying at turn 4 does not un-observe turns 1–3, so a stage with its own evidence keeps its own row.
+- **A stage with its own observation keeps its own row.** A provider dying at turn 4 does not un-observe turns 1–3. What is re-labelled is a stage that measured nothing, plus — see "withdraws the failures it made unknowable" below — a `failed` row whose verdict rests on an *absence* the outage could equally well explain. A verdict resting on something actually observed always stands.
 - **Never `failed`.** A run that could not be attempted has measured nothing about the server, and inflating a server failure rate with our own outage is the mis-attribution this reason exists to prevent.
 - **A broken grader still outranks it.** `evaluator` is never folded into another category.
 
