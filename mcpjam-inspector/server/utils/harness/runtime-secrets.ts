@@ -68,6 +68,41 @@ export async function fetchRuntimeSecrets(
 }
 
 /**
+ * Resolve this turn's materialized secrets EXACTLY ONCE, honouring a caller
+ * that already resolved them — including a caller that already FAILED.
+ *
+ * The tri-state has three answers and all three have to survive being handed
+ * down a call chain: secrets, none, or "could not find out". Keying only on
+ * "did the caller pass a list?" collapses the third into "the caller did not
+ * resolve", which licenses a second attempt.
+ *
+ * That retry is not merely wasteful, it is unsafe. If the retry SUCCEEDS the
+ * turn delivers real values into the box while the caller's established failure
+ * still forces the `unavailable` fingerprint — so the session persists a
+ * fingerprint that says "nothing was delivered" against a bridge that now holds
+ * credentials. A later turn that genuinely fails computes the same fingerprint,
+ * resumes that bridge, and has no list to build a scrubber from. The fork exists
+ * to prevent exactly that resume; a retry is how you walk back into it.
+ *
+ * So: an established failure short-circuits. `unavailable` is then only ever
+ * persisted by a turn that really did deliver nothing.
+ */
+export async function resolveTurnRuntimeSecrets(args: {
+  /** What the caller resolved, if it resolved anything. */
+  callerSecrets?: RuntimeSecret[];
+  /** Whether the caller's own resolution FAILED. Outranks `callerSecrets`. */
+  callerUnavailable?: boolean;
+  /** Used only when the caller resolved nothing at all. */
+  fetch: () => Promise<FetchRuntimeSecretsResult>;
+}): Promise<FetchRuntimeSecretsResult> {
+  if (args.callerUnavailable === true) return { ok: false };
+  if (args.callerSecrets !== undefined) {
+    return { ok: true, secrets: args.callerSecrets };
+  }
+  return await args.fetch();
+}
+
+/**
  * Deterministic fingerprint over the delivered set, order-independent.
  *
  * ## No credential material participates, at any strength

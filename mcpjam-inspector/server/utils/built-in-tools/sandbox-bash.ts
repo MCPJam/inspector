@@ -102,6 +102,17 @@ export interface SandboxBashToolOptions {
    * Values travel in `envs`, never in the command string.
    */
   secretEnv?: Record<string, string>;
+  /**
+   * Called when `secretEnv` is ACTUALLY handed to a command, once per command
+   * that carries it.
+   *
+   * The delivery stamp lives here rather than at the route because the route
+   * only knows a destination looked available. A conversation that advertises
+   * bash and never calls it, or whose first call fails before exec, delivered
+   * nothing — and `lastDeliveredAt` is read by someone deciding whether a
+   * credential is dormant enough to delete.
+   */
+  onSecretEnvDelivered?: () => void;
 }
 
 const LIFETIME_DESCRIPTION: Record<
@@ -186,6 +197,11 @@ export function buildSandboxBashTool(
             ? { envs: opts.secretEnv }
             : {}),
         });
+        // The values are now in a real process's environment. Fired AFTER the
+        // call returns, so a command that threw before exec records nothing.
+        if (opts.secretEnv && Object.keys(opts.secretEnv).length > 0) {
+          opts.onSecretEnvDelivered?.();
+        }
         const authUrls = detectAuthUrls(`${result.stdout}\n${result.stderr}`);
         return {
           stdout: truncate(result.stdout, MODEL_OUTPUT_CAP),

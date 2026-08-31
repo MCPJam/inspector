@@ -74,7 +74,10 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
-import { fetchRuntimeSecrets } from "./harness/runtime-secrets.js";
+import {
+  fetchRuntimeSecrets,
+  resolveTurnRuntimeSecrets,
+} from "./harness/runtime-secrets.js";
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
@@ -293,6 +296,12 @@ export interface WebChatTurnPersistContext {
    * not scrub out of the transcript). See `runtime-secrets.ts`.
    */
   secretsUnavailable?: boolean;
+  /**
+   * Fired when this turn's materialized secrets actually reach an execution
+   * surface — a bash command that carries them, or a started harness session
+   * holding them. Used to stamp delivery honestly; see `sandbox-bash`.
+   */
+  onSecretEnvDelivered?: () => void;
   /**
    * What this turn should RECORD about the configuration it ran with —
    * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
@@ -859,26 +868,46 @@ export async function streamWebChatTurn(
   // this feature leaks by accident. Values that reach the box but not the
   // registry are values that get written to the transcript verbatim.
   //
-  // Tri-state: on failure the scrubber is `null` and the harness turn keeps
-  // whatever environment its session already holds. A failure must never read
-  // as "no secrets".
-  const secretsFetch =
-    persist.runtimeSecrets !== undefined
-      ? { ok: true as const, secrets: persist.runtimeSecrets }
-      : await fetchRuntimeSecrets(runtime.authHeader, {
-          ...(persist.projectId ? { projectId: persist.projectId } : {}),
-          ...(persist.environmentId
-            ? { environmentId: persist.environmentId }
-            : {}),
-          ...(hostedChatSessionId
-            ? { chatSessionId: hostedChatSessionId }
-            : {}),
-        });
+  // ONE RESOLUTION PER TURN, and a caller's FAILURE is a resolution.
+  //
+  // The tri-state has three answers, and all three have to survive the trip:
+  // secrets, none, or "could not find out". An earlier version keyed only on
+  // `runtimeSecrets !== undefined`, which conflated the third with "the caller
+  // did not resolve" — so a caller that fetched and FAILED fell through to the
+  // fetch below and got a second attempt.
+  //
+  // That second attempt is what made it dangerous rather than merely wasteful.
+  // If it SUCCEEDED, this turn delivered real secrets into the box while the
+  // caller's established failure still forced `secretsUnavailable`, so the
+  // session persisted the `"unavailable"` fingerprint. A later turn whose
+  // fetches both fail computes that same fingerprint, RESUMES that
+  // secret-bearing bridge, and has no list to build a scrubber from — the exact
+  // unscrubbed resume the fork was introduced to prevent, reached by way of a
+  // recovery.
+  //
+  // So an established failure short-circuits: no retry, no delivery, and the
+  // fingerprint that says "unavailable" is only ever persisted by a turn that
+  // genuinely delivered nothing.
+  const secretsFetch = await resolveTurnRuntimeSecrets({
+    ...(persist.runtimeSecrets !== undefined
+      ? { callerSecrets: persist.runtimeSecrets }
+      : {}),
+    ...(persist.secretsUnavailable === true ? { callerUnavailable: true } : {}),
+    fetch: () =>
+      fetchRuntimeSecrets(runtime.authHeader, {
+        ...(persist.projectId ? { projectId: persist.projectId } : {}),
+        ...(persist.environmentId
+          ? { environmentId: persist.environmentId }
+          : {}),
+        ...(hostedChatSessionId ? { chatSessionId: hostedChatSessionId } : {}),
+      }),
+  });
   const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
   // A failed fetch here forks the session for the same reason it does in
-  // `chat-v2`: we cannot enumerate what the box may already hold.
-  const secretsUnavailable =
-    persist.secretsUnavailable === true || !secretsFetch.ok;
+  // `chat-v2`: we cannot enumerate what the box may already hold. Now exactly
+  // equivalent to `!secretsFetch.ok` — the caller's failure is already folded
+  // in above — and kept as one expression so the invariant is stated once.
+  const secretsUnavailable = !secretsFetch.ok;
   const secretScrubber = runtimeSecrets
     ? createSecretScrubber(runtimeSecrets)
     : null;
@@ -1248,6 +1277,9 @@ export async function streamWebChatTurn(
     // need wiring rather than inheriting this for free.
     ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
     ...(secretsUnavailable ? { secretsUnavailable: true } : {}),
+    ...(persist.onSecretEnvDelivered
+      ? { onSecretEnvDelivered: persist.onSecretEnvDelivered }
+      : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
     // request the engine drives one retry leg (reconstructing tool

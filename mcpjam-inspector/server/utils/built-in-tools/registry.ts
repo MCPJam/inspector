@@ -179,6 +179,8 @@ export interface BuiltInToolContext {
    * accidentally-set value on another path is inert rather than dangerous.
    */
   secretEnv?: Record<string, string>;
+  /** Fired when `secretEnv` actually reaches a command. See `sandbox-bash`. */
+  onSecretEnvDelivered?: () => void;
   /** Host's approval policy — a root shell must honor it like MCP tools do. */
   requireToolApproval?: boolean;
   /**
@@ -343,6 +345,9 @@ export function resolveHostTools(
           // Read INSIDE this branch on purpose — see `secretEnv`'s own comment.
           // A project secret reaches a box the project provisioned, and nothing
           // else.
+          ...(ctx.onSecretEnvDelivered
+            ? { onSecretEnvDelivered: ctx.onSecretEnvDelivered }
+            : {}),
           ...(ctx.secretEnv && Object.keys(ctx.secretEnv).length > 0
             ? { secretEnv: ctx.secretEnv }
             : {}),

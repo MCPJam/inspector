@@ -21,8 +21,12 @@ vi.mock("../../computers/convex-secrets-client.js", () => ({
     listSecrets(...args),
 }));
 
-const { fetchRuntimeSecrets, deliveredSecretsFingerprint, toSecretEnv } =
-  await import("../runtime-secrets.js");
+const {
+  fetchRuntimeSecrets,
+  resolveTurnRuntimeSecrets,
+  deliveredSecretsFingerprint,
+  toSecretEnv,
+} = await import("../runtime-secrets.js");
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -181,5 +185,87 @@ describe("toSecretEnv", () => {
 
   it("is empty for an empty list, so no call site has to special-case it", () => {
     expect(toSecretEnv([])).toEqual({});
+  });
+});
+
+/**
+ * The fail -> recover -> fail sequence, which is the whole reason this
+ * resolution happens once per turn.
+ *
+ * Turn 1 fails. If the failure did not short-circuit, a second attempt inside
+ * the same turn could SUCCEED — delivering real values into the box while the
+ * established failure still forced the `unavailable` fingerprint. Turn 2 then
+ * genuinely fails, computes that same fingerprint, resumes the bridge turn 1
+ * left holding credentials, and has no list to scrub with.
+ */
+describe("resolveTurnRuntimeSecrets", () => {
+  const SECRETS = [{ name: "STRIPE_API_KEY", value: "sk_live_xxxxxxxx" }];
+
+  it("does NOT retry after the caller's resolution already failed", async () => {
+    const fetch = vi.fn(async () => ({ ok: true as const, secrets: SECRETS }));
+    const result = await resolveTurnRuntimeSecrets({
+      callerUnavailable: true,
+      fetch,
+    });
+    // The retry would have succeeded — that is exactly the danger.
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: false });
+  });
+
+  it("fail -> recover -> fail never resumes a secret-bearing bridge", async () => {
+    // Turn 1: caller failed. A recovery inside this turn must not happen, so
+    // nothing is delivered and `unavailable` is honest.
+    const recovering = vi.fn(async () => ({
+      ok: true as const,
+      secrets: SECRETS,
+    }));
+    const turn1 = await resolveTurnRuntimeSecrets({
+      callerUnavailable: true,
+      fetch: recovering,
+    });
+    expect(turn1.ok).toBe(false);
+    expect(recovering).not.toHaveBeenCalled();
+
+    // Turn 2: also fails. It computes the same `unavailable` fingerprint and so
+    // may resume turn 1's session — which is safe precisely because turn 1
+    // delivered nothing.
+    const turn2 = await resolveTurnRuntimeSecrets({
+      callerUnavailable: true,
+      fetch: recovering,
+    });
+    expect(turn2.ok).toBe(false);
+  });
+
+  it("an established failure outranks a caller-supplied list", async () => {
+    // Both present is a caller bug, and the safe reading is the failure: a list
+    // that arrived alongside a failure cannot be trusted to be complete, and an
+    // incomplete registry is a scrubber that misses values the box holds.
+    const fetch = vi.fn(async () => ({ ok: true as const, secrets: [] }));
+    const result = await resolveTurnRuntimeSecrets({
+      callerSecrets: SECRETS,
+      callerUnavailable: true,
+      fetch,
+    });
+    expect(result).toEqual({ ok: false });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("uses the caller's list when it resolved successfully, without re-fetching", async () => {
+    // The ordinary path: one resolution per turn, so delivery and scrubbing
+    // come from the same read.
+    const fetch = vi.fn(async () => ({ ok: true as const, secrets: [] }));
+    const result = await resolveTurnRuntimeSecrets({
+      callerSecrets: SECRETS,
+      fetch,
+    });
+    expect(result).toEqual({ ok: true, secrets: SECRETS });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("fetches only when the caller resolved nothing at all", async () => {
+    const fetch = vi.fn(async () => ({ ok: true as const, secrets: SECRETS }));
+    const result = await resolveTurnRuntimeSecrets({ fetch });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true, secrets: SECRETS });
   });
 });

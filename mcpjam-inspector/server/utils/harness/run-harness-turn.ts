@@ -538,6 +538,7 @@ export async function runHarnessTurn(
     environmentId,
     runtimeSecrets: runtimeSecretsOverride,
     secretsUnavailable,
+    onSecretEnvDelivered,
     createHarnessScopeStepUpContinuation,
   } = options;
   // One typed route.operation.failed per turn; the system fallback covers
@@ -1531,6 +1532,14 @@ export async function runHarnessTurn(
           ? { sessionEnv: secretEnv }
           : {}),
       });
+      // The box now has a provider carrying the session env, so the values are
+      // genuinely in the harness's hands rather than merely resolved. Fired
+      // here rather than at the route, which only knew a destination looked
+      // available — a harness start that throws above this line delivered
+      // nothing and must not stamp.
+      if (secretEnv && Object.keys(secretEnv).length > 0) {
+        onSecretEnvDelivered?.();
+      }
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own

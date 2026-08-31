@@ -1298,6 +1298,33 @@ chatV2.post("/", async (c) => {
     const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
     const secretsUnavailable = !secretsFetch.ok;
     const secretEnv = runtimeSecrets ? toSecretEnv(runtimeSecrets) : undefined;
+    // Fired by whichever adapter actually hands the values over — a bash
+    // command that carries them, or a harness session that starts holding them.
+    //
+    // NOT fired from this route. Here we only know a destination looked
+    // available: a conversation can advertise bash and never call it, and a
+    // harness start can fail after the route has decided everything. Stamping
+    // on availability made `lastDeliveredAt` mean "a turn could have used
+    // this", when the question it is read for — before deleting a credential
+    // believed dormant — is "did anything actually receive it".
+    //
+    // Idempotent and throttled downstream, so several commands in one turn cost
+    // at most one row revision a minute.
+    const markSecretsDelivered =
+      secretEnv && Object.keys(secretEnv).length > 0
+        ? () => {
+            void markRuntimeSecretsDelivered(bearerToken, {
+              projectId: hostedBody.projectId,
+              ...(environmentServers
+                ? {
+                    environmentId:
+                      environmentServers.environmentRef.environmentId,
+                  }
+                : {}),
+              secretCount: Object.keys(secretEnv).length,
+            });
+          }
+        : undefined;
 
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
@@ -1465,18 +1492,6 @@ chatV2.post("/", async (c) => {
         },
       );
       sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
-    } else if (secretEnv && Object.keys(secretEnv).length > 0) {
-      // The other side of the same decision: they DID reach a destination, so
-      // record it. Fire-and-forget — the turn must not fail because a
-      // bookkeeping stamp did — and deliberately not done at fetch time, where
-      // the destination is not yet known. See `markRuntimeSecretsDelivered`.
-      void markRuntimeSecretsDelivered(bearerToken, {
-        projectId: hostedBody.projectId,
-        ...(environmentServers
-          ? { environmentId: environmentServers.environmentRef.environmentId }
-          : {}),
-        secretCount: Object.keys(secretEnv).length,
-      });
     }
 
     // Filled by the resolver when browser tools are advertised; forwarded to
@@ -1514,6 +1529,9 @@ chatV2.post("/", async (c) => {
         // user's own machine (local runner) or a remote data plane.
         ...(secretEnv && Object.keys(secretEnv).length > 0
           ? { secretEnv }
+          : {}),
+        ...(markSecretsDelivered
+          ? { onSecretEnvDelivered: markSecretsDelivered }
           : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
         // This surface threads the classification (below), so it may advertise
@@ -1749,6 +1767,9 @@ chatV2.post("/", async (c) => {
           // Distinguishes "there are none" from "we could not find out". Only
           // the second forks the session — see the fetch site above.
           ...(secretsUnavailable ? { secretsUnavailable: true } : {}),
+          ...(markSecretsDelivered
+            ? { onSecretEnvDelivered: markSecretsDelivered }
+            : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Hosted sessions finally honor the CAS the client already sends.
