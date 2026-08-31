@@ -245,6 +245,16 @@ const CASES: Case[] = [
     build: () => new Error("OpenAI: You exceeded your current quota"),
     expectSlug: "internal/unknown",
   },
+  {
+    // Pins the bound on the gap between "MCPJam" and "model limit". It is
+    // bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a wire
+    // message of repeated "mcpjam" that never reaches the phrase backtracks
+    // quadratically. Real copy puts one space here, so 40 is already generous
+    // — and unbounded, this case would match and return the limit slug.
+    name: "a gap wider than the bound is not the MCPJam allowance",
+    build: () => new Error(`MCPJam ${"detail ".repeat(10)}model limit reached`),
+    expectSlug: "internal/unknown",
+  },
   // OAuth body
   {
     name: "oauth invalid_grant body",

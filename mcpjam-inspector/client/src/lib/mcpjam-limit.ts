@@ -2,7 +2,10 @@ import { describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
 
-const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
+// Bounded for the same reason as the SDK describer's copy of this phrase:
+// `[\w\s-]` matches "mcpjam" too, so unbounded it backtracks quadratically on a
+// wire message of repeated "mcpjam" that never reaches "model limit".
+const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]{0,40}model limit/i;
 const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
 const MCPJAM_USER_RATE_LIMIT_CODE = "user_rate_limit";
 const MCPJAM_LIMIT_CODES = new Set([

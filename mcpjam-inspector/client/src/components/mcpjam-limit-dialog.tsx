@@ -396,8 +396,14 @@ export function MCPJamLimitDialog() {
       {showTopupDialog && isSwarmWall && (
         <AllowanceLimitDialogView
           title={allowanceCopy.title}
+          // A member gets the owner guidance ON TOP of the explanation, not
+          // instead of it: "my own key is configured, why am I blocked" is the
+          // question that filed this bug, and it is not a question only
+          // billing managers ask.
           description={
-            isKnownNonManager ? memberDescription : allowanceCopy.description
+            isKnownNonManager
+              ? `${allowanceCopy.description} ${memberDescription}`
+              : allowanceCopy.description
           }
           isKnownNonManager={isKnownNonManager}
           requestRecipients={isBillingReady ? requestRecipients : []}

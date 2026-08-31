@@ -491,6 +491,12 @@ describe("MCPJamLimitDialog", () => {
       screen.queryByRole("button", { name: /buy MCPJam credits/i })
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("request-upgrade-mail")).toBeInTheDocument();
+    // The owner guidance is ADDED to the explanation, not swapped for it. A
+    // member asks "my own key is configured, why am I blocked" too.
+    const description = screen.getByTestId("limit-dialog-description");
+    expect(description).toHaveTextContent(/your own API key doesn't cover it/i);
+    expect(description).toHaveTextContent(/resets tomorrow/i);
+    expect(description).toHaveTextContent(/ask an organization owner/i);
   });
 
   it("sends Explore MCPJam plans to billing without the topup flag", async () => {

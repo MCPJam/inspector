@@ -494,7 +494,11 @@ function resolveSlug(error: unknown): {
   // The period is read off the limit phrase itself, not from anywhere in the
   // message: composed copy carries a second sentence about when the allowance
   // renews, and a loose /monthly/ would classify a daily refusal by it.
-  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]*model limit/i.exec(
+  //
+  // The gap is bounded because `[\w\s-]` matches "mcpjam" too: unbounded, a
+  // message of repeated "mcpjam" with no "model limit" backtracks quadratically,
+  // and this message comes off the wire. Real copy puts one space here.
+  const limitPeriod = /\b(daily|monthly)\s+mcpjam[\w\s-]{0,40}model limit/i.exec(
     message,
   );
   if (limitPeriod) {
@@ -505,7 +509,7 @@ function resolveSlug(error: unknown): {
           : "provider/mcpjam_limit_daily",
     };
   }
-  if (/mcpjam[\w\s-]*model limit/i.test(message)) {
+  if (/mcpjam[\w\s-]{0,40}model limit/i.test(message)) {
     return { slug: "provider/mcpjam_limit" };
   }
 
