@@ -83,6 +83,7 @@ import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import {
   classifyUiToolApprovals,
+  mergeUiToolApprovalClassifications,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
@@ -291,6 +292,15 @@ export interface WebChatTurnPrepareInputs {
   uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
+  /**
+   * Approval classification for the `browser_*` tools this turn advertises,
+   * produced by `resolveHostTools`. Merged with the `ui_*` classification
+   * below: the engines have ONE `uiToolApprovals` slot, and whichever
+   * namespace filled it alone left the other falling through to the
+   * `requireToolApproval` default (off by default) — which strands a turn
+   * whose gated call never gets its approval request.
+   */
+  browserToolApprovals?: UiToolApprovalClassification;
   /** Host-configured computer working directory (COMP-16); roots the harness
    *  Shell under the same dir the bash tool runs in. */
   computerWorkdir?: string;
@@ -523,8 +533,12 @@ export function stripUiContextModelParts(
 function uiToolApprovalsFrom(
   uiTools: UiToolEntry[] | undefined,
   requireToolApproval: boolean | undefined,
+  browserToolApprovals?: UiToolApprovalClassification,
 ): UiToolApprovalClassification {
-  return classifyUiToolApprovals(uiTools, requireToolApproval === true);
+  return mergeUiToolApprovalClassifications(
+    classifyUiToolApprovals(uiTools, requireToolApproval === true),
+    browserToolApprovals,
+  );
 }
 
 /**
@@ -865,6 +879,23 @@ export async function streamWebChatTurn(
           : {}),
         scenarioId: persist.scenarioId,
         authHeader: runtime.authHeader,
+        // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
+        // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
+        // replays.
+        //
+        // Those are different questions and the hosted path only ever answered
+        // the second, so Raw showed the bare host prompt while the model had
+        // been given more: the skills catalog, widget model context, the
+        // environment block. A debugger that cannot show what the model was
+        // told cannot answer "did it even know that skill existed?" — which is
+        // the first question anyone asks when an agent ignores a skill.
+        //
+        // Resume must NOT read this one. Turn-injected content is true of the
+        // turn that happened, not of the next one: replaying "your sandbox was
+        // reset" long after the fact is the confabulation `resumeConfig`'s raw
+        // prompt exists to prevent. Hence two fields, both already on the
+        // ingest contract — the local route has always filled this one.
+        systemPrompt: effectiveEnhancedSystemPrompt,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],
@@ -1007,6 +1038,7 @@ export async function streamWebChatTurn(
       uiToolApprovals: uiToolApprovalsFrom(
         effectiveUiTools,
         persist.requireToolApproval,
+        prepare.browserToolApprovals,
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
@@ -1085,6 +1117,7 @@ export async function streamWebChatTurn(
     uiToolApprovals: uiToolApprovalsFrom(
       effectiveUiTools,
       persist.requireToolApproval,
+      prepare.browserToolApprovals,
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // Harness engine only: it builds its own MCP tool set (host-executed
