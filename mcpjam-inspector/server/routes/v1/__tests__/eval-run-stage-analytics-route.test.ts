@@ -158,9 +158,16 @@ describe("GET …/eval-runs/:runId/stage-analytics", () => {
     expect(res.status).toBe(404);
   });
 
-  it("answers the SAME 404 when the run is not visible", async () => {
+  it("answers the SAME 404, body and all, when the run is not visible", async () => {
     // Indistinguishable on purpose. A distinct status or message would confirm
     // that a run exists in a project the caller cannot see.
+    //
+    // This compares the WHOLE body. The previous version read
+    // `body.error?.code`, and `v1ErrorBody` has no `error` wrapper — the
+    // envelope is `{ code, message }` at the top level — so it compared
+    // `undefined` with `undefined` and passed while the two messages ("This
+    // run has no stage analytics" versus "Eval run not found") handed anyone
+    // holding a run id the exact bit the matching status was hiding.
     stub({ document: null });
     const absent = await request(PATH);
     const absentBody = await absent.json();
@@ -170,9 +177,9 @@ describe("GET …/eval-runs/:runId/stage-analytics", () => {
     const deniedBody = await denied.json();
 
     expect(denied.status).toBe(absent.status);
-    expect((deniedBody as { error?: { code?: string } }).error?.code).toBe(
-      (absentBody as { error?: { code?: string } }).error?.code,
-    );
+    expect(deniedBody).toEqual(absentBody);
+    // And the assertion is not vacuous: the body really does carry a code.
+    expect((absentBody as { code?: string }).code).toBe("NOT_FOUND");
   });
 
   it("reads a run from ANOTHER project as not found", async () => {

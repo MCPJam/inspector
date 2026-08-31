@@ -4876,6 +4876,14 @@ evals.get(
 // NOT backfilled: a run that terminalized before the materializer shipped has
 // no row. That absence is the honest "unmeasured" answer and is never served
 // as a funnel of zeros.
+/**
+ * ONE message for both 404 facts, because the route promises not to tell them
+ * apart. `v1ErrorBody` returns this text to the caller, so distinct strings
+ * would have handed anyone holding a run id the exact bit that answering both
+ * with 404 was meant to hide.
+ */
+const RUN_ANALYTICS_NOT_FOUND = "Eval run stage analytics not found";
+
 evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
@@ -4902,17 +4910,18 @@ evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => 
     );
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_ANALYTICS_NOT_FOUND);
     }
     throw error;
   }
 
   if (document === null || document === undefined) {
-    throw new WebRouteError(
-      404,
-      ErrorCode.NOT_FOUND,
-      "This run has no stage analytics",
-    );
+    // The SAME body as the not-visible 404 above, deliberately. The route's
+    // whole non-enumeration promise is that "no document" and "not visible to
+    // you" are indistinguishable — and `v1ErrorBody` returns the message to
+    // the caller, so two different strings handed anyone holding a run id the
+    // exact bit the matching status codes were hiding.
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_ANALYTICS_NOT_FOUND);
   }
 
   // Validated with the REFINED schema, same as the listing: the structural one
