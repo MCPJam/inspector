@@ -32,4 +32,14 @@ describe("score runner view model", () => {
       "Security",
     ]);
   });
+
+  it("uses the Paper email-step copy", () => {
+    expect(scoreRunnerHeadline("email")).toBe(
+      "Where should we send the scorecard?",
+    );
+    expect(scoreRunnerLead("email")).toBe(
+      "We'll email a hosted page with the overall score, five dimensions, and the check ledger.",
+    );
+    expect(isScoreRunnerBusy("email")).toBe(false);
+  });
 });

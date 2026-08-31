@@ -114,6 +114,18 @@ describe("ScoreRunnerPage", () => {
     );
     await user.click(screen.getByRole("button", { name: "Score this server" }));
 
+    expect(
+      screen.getByRole("heading", {
+        name: "Where should we send the scorecard?",
+      }),
+    ).toBeInTheDocument();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Scorecard email"), "dev@acme.com");
+    await user.click(
+      screen.getByRole("button", { name: "Email the scorecard" }),
+    );
+
     await waitFor(() => {
       expect(mockValidateHostedServer).toHaveBeenCalled();
     });
@@ -124,6 +136,26 @@ describe("ScoreRunnerPage", () => {
     expect(mockValidateHostedServer.mock.invocationCallOrder[0]).toBeLessThan(
       mockRunAll.mock.invocationCallOrder[0] ?? Infinity,
     );
+  });
+
+  it("rejects an invalid email without starting a handshake", async () => {
+    const user = userEvent.setup();
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+    await user.type(
+      screen.getByLabelText("MCP server URL"),
+      "https://mcp.acme.com/mcp",
+    );
+    await user.click(screen.getByRole("button", { name: "Score this server" }));
+    await user.type(screen.getByLabelText("Scorecard email"), "not-an-email");
+    await user.click(
+      screen.getByRole("button", { name: "Email the scorecard" }),
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter a valid email address.",
+    );
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
   });
 
   it("exposes authorize when the handshake requires OAuth", async () => {
@@ -145,6 +177,10 @@ describe("ScoreRunnerPage", () => {
       "https://mcp.acme.com/mcp",
     );
     await user.click(screen.getByRole("button", { name: "Score this server" }));
+    await user.type(screen.getByLabelText("Scorecard email"), "dev@acme.com");
+    await user.click(
+      screen.getByRole("button", { name: "Email the scorecard" }),
+    );
 
     await waitFor(() => {
       expect(

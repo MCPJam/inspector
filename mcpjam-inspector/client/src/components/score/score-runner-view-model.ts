@@ -1,5 +1,6 @@
 export type ScoreRunnerPhase =
   | "form"
+  | "email"
   | "preparing"
   | "authorizing"
   | "running"
@@ -36,12 +37,16 @@ export function scoreRunnerBusyLabel(phase: ScoreRunnerPhase): string | null {
 }
 
 export function scoreRunnerHeadline(phase: ScoreRunnerPhase): string {
+  if (phase === "email") return "Where should we send the scorecard?";
   if (phase === "authorizing") return "This server requires authentication.";
   if (phase === "done") return "Your scorecard is ready.";
   return "Know where your MCP server stands.";
 }
 
 export function scoreRunnerLead(phase: ScoreRunnerPhase): string {
+  if (phase === "email") {
+    return "We'll email a hosted page with the overall score, five dimensions, and the check ledger.";
+  }
   if (phase === "authorizing") {
     return "We can't check what a server does for an authorized client without being one. Authorizing sends you to the server's own login and brings you straight back here to finish the scan.";
   }

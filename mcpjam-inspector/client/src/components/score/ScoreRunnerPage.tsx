@@ -16,7 +16,11 @@ import {
   type ScoreSuiteSummary,
 } from "@/lib/apis/score-api";
 import { ScoreRunnerView } from "./ScoreRunnerView";
-import { isScoreRunnerBusy, type ScoreRunnerPhase } from "./score-runner-view-model";
+import {
+  isScoreRunnerBusy,
+  type ScoreRunnerPhase,
+} from "./score-runner-view-model";
+import { normalizeScoreEmail } from "./score-email";
 import { normalizeScoreUrl } from "./score-url";
 import { deriveScoreServerName } from "./score-server-name";
 import {
@@ -45,11 +49,13 @@ export function ScoreRunnerPage({
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
   const createServerIfMissing = useMutation(
-    "servers:createServerIfMissing" as any
+    "servers:createServerIfMissing" as any,
   );
   const updateServer = useMutation("servers:updateServer" as any);
 
   const [urlInput, setUrlInput] = useState("");
+  const [emailInput, setEmailInput] = useState("");
+  const [pendingServerUrl, setPendingServerUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
   const [server, setServer] = useState<ServerWithName | null>(null);
@@ -101,7 +107,7 @@ export function ScoreRunnerPage({
             },
           ]
         : [],
-    [server, serverId]
+    [server, serverId],
   );
 
   const oauthGate = useHostedOAuthGate({
@@ -125,7 +131,7 @@ export function ScoreRunnerPage({
     // inside the first suite call, which reads as a mysterious failure of
     // the scan rather than of setup.
     throw new Error(
-      "Timed out preparing the workspace for this server. Reload and try again."
+      "Timed out preparing the workspace for this server. Reload and try again.",
     );
   }, []);
 
@@ -195,7 +201,10 @@ export function ScoreRunnerPage({
         setResultToken(token);
         // Record what this payload actually contained, so a resave only ever
         // fires for an OAuth status the stored report does NOT already have.
-        if (current.oauth.status === "done" && current.oauthScore !== undefined) {
+        if (
+          current.oauth.status === "done" &&
+          current.oauthScore !== undefined
+        ) {
           persistedOAuthStatusRef.current = current.oauth.status;
         }
         return true;
@@ -205,18 +214,18 @@ export function ScoreRunnerPage({
         setError(
           err instanceof Error
             ? `Scan finished, but the shareable link could not be saved: ${err.message}`
-            : "Scan finished, but the shareable link could not be saved."
+            : "Scan finished, but the shareable link could not be saved.",
         );
         return false;
       } finally {
         setPhase("done");
       }
     },
-    []
+    [],
   );
 
   const startRun = useCallback(
-    async (normalizedUrl: string) => {
+    async (normalizedUrl: string, deliveryEmail: string) => {
       setError(null);
       setResultToken(null);
       setPhase("preparing");
@@ -228,7 +237,7 @@ export function ScoreRunnerPage({
         name = await deriveScoreServerName(normalizedUrl);
         if (!projectId) {
           throw new Error(
-            "Still setting up your workspace. Give it a moment and try again."
+            "Still setting up your workspace. Give it a moment and try again.",
           );
         }
         await createServerIfMissing({
@@ -287,7 +296,11 @@ export function ScoreRunnerPage({
         setPhase("running");
       } catch (err) {
         if (isOAuthRequiredError(err)) {
-          writeScoreRunResume({ serverUrl: normalizedUrl, serverName: name });
+          writeScoreRunResume({
+            serverUrl: normalizedUrl,
+            serverName: name,
+            deliveryEmail,
+          });
           setPhase("authorizing");
           return;
         }
@@ -295,7 +308,7 @@ export function ScoreRunnerPage({
         setPhase("form");
       }
     },
-    [createServerIfMissing, updateServer, projectId, waitForServerId]
+    [createServerIfMissing, updateServer, projectId, waitForServerId],
   );
 
   // `runAll` needs the hook to have re-keyed onto the new server first — it
@@ -384,7 +397,9 @@ export function ScoreRunnerPage({
     resumedRef.current = true;
     clearScoreRunResume();
     setUrlInput(resume.serverUrl);
-    void startRun(resume.serverUrl);
+    const deliveryEmail = resume.deliveryEmail ?? "";
+    setEmailInput(deliveryEmail);
+    void startRun(resume.serverUrl, deliveryEmail);
   }, [appReady.status, startRun]);
 
   const resultUrl = useMemo(
@@ -392,7 +407,7 @@ export function ScoreRunnerPage({
       resultToken
         ? `${window.location.origin}${routePaths.scoreResults}/${resultToken}`
         : null,
-    [resultToken]
+    [resultToken],
   );
 
   const busy = isScoreRunnerBusy(phase) || run.isRunning;
@@ -404,6 +419,26 @@ export function ScoreRunnerPage({
       setError("Enter a valid http(s) MCP server URL.");
       return;
     }
+    setError(null);
+    setPendingServerUrl(normalized);
+    setPhase("email");
+  };
+
+  const onEmailSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const normalizedEmail = normalizeScoreEmail(emailInput);
+    if (!normalizedEmail) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    if (!pendingServerUrl) {
+      setError("Enter the MCP server URL again.");
+      setPhase("form");
+      return;
+    }
+
+    setEmailInput(normalizedEmail);
+    setError(null);
     startedForRef.current = null;
     // Drop any resume record from an abandoned run. `authorizing` leaves the
     // form enabled, so a visitor can walk away from an OAuth prompt and paste
@@ -419,7 +454,7 @@ export function ScoreRunnerPage({
     // "preparing" — and stays there permanently if setup fails and the phase
     // returns to "form" — labelled with the URL the visitor just typed.
     setServer(null);
-    void startRun(normalized);
+    void startRun(pendingServerUrl, normalizedEmail);
   };
 
   const copyResultUrl = () => {
@@ -445,13 +480,14 @@ export function ScoreRunnerPage({
       urlInput={urlInput}
       onUrlChange={setUrlInput}
       onSubmit={onSubmit}
+      emailInput={emailInput}
+      onEmailChange={setEmailInput}
+      onEmailSubmit={onEmailSubmit}
       phase={phase}
       error={error}
       busy={busy}
       formDisabled={busy || appReady.status !== "ready"}
-      appReadyMessage={
-        appReady.status !== "ready" ? appReadyMessage : null
-      }
+      appReadyMessage={appReady.status !== "ready" ? appReadyMessage : null}
       resultUrl={resultUrl}
       copied={copied}
       onCopy={copyResultUrl}

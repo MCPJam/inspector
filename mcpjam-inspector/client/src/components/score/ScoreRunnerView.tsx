@@ -22,6 +22,9 @@ export type ScoreRunnerViewProps = {
   urlInput: string;
   onUrlChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
+  emailInput: string;
+  onEmailChange: (value: string) => void;
+  onEmailSubmit: (event: FormEvent) => void;
   phase: ScoreRunnerPhase;
   error: string | null;
   busy: boolean;
@@ -53,10 +56,32 @@ const FEATURED_SCORES = [
   ["https://mcp.notion.com/mcp", "77"],
 ] as const;
 
+function FeaturedScoreContents({
+  server,
+  score,
+}: {
+  server: string;
+  score: string;
+}) {
+  return (
+    <>
+      <div className="min-w-0 grow truncate pr-3 font-[family-name:var(--font-score-mono)] text-base leading-[22px] text-[var(--score-fg)] group-hover:text-[var(--score-primary)]">
+        {server}
+      </div>
+      <div className="shrink-0 font-[family-name:var(--font-score-mono)] text-lg font-semibold leading-6 text-[var(--score-primary)]">
+        {score}
+      </div>
+      <div className="w-14 shrink-0 font-[family-name:var(--font-score-mono)] text-base leading-[22px] text-[var(--score-muted)]">
+        / 100
+      </div>
+    </>
+  );
+}
+
 function FeaturedScores({
   onSelect,
 }: {
-  onSelect: (serverUrl: string) => void;
+  onSelect?: (serverUrl: string) => void;
 }) {
   return (
     <section className="score-featured flex w-full flex-col items-center pt-14 md:px-12">
@@ -64,27 +89,26 @@ function FeaturedScores({
         Featured scores
       </h2>
       <div className="flex w-full max-w-[640px] flex-col pt-2 min-[1360px]:w-[640px]">
-        {FEATURED_SCORES.map(([server, score], index) => (
-          <button
-            type="button"
-            key={server}
-            onClick={() => onSelect(server)}
-            aria-label={`Use ${server}`}
-            className={`group flex h-14 shrink-0 items-center border-t border-[var(--score-border)] text-left transition-colors hover:bg-[var(--score-surface)] ${
-              index === FEATURED_SCORES.length - 1 ? "border-b" : ""
-            }`}
-          >
-            <div className="min-w-0 grow truncate pr-3 font-[family-name:var(--font-score-mono)] text-base leading-[22px] text-[var(--score-fg)] group-hover:text-[var(--score-primary)]">
-              {server}
+        {FEATURED_SCORES.map(([server, score], index) => {
+          const rowClassName = `${onSelect ? "group" : ""} flex h-14 shrink-0 items-center border-t border-[var(--score-border)] text-left ${
+            index === FEATURED_SCORES.length - 1 ? "border-b" : ""
+          }`;
+          return onSelect ? (
+            <button
+              type="button"
+              key={server}
+              onClick={() => onSelect(server)}
+              aria-label={`Use ${server}`}
+              className={`${rowClassName} transition-colors hover:bg-[var(--score-surface)]`}
+            >
+              <FeaturedScoreContents server={server} score={score} />
+            </button>
+          ) : (
+            <div key={server} className={rowClassName}>
+              <FeaturedScoreContents server={server} score={score} />
             </div>
-            <div className="shrink-0 font-[family-name:var(--font-score-mono)] text-lg font-semibold leading-6 text-[var(--score-primary)]">
-              {score}
-            </div>
-            <div className="w-14 shrink-0 font-[family-name:var(--font-score-mono)] text-base leading-[22px] text-[var(--score-muted)]">
-              / 100
-            </div>
-          </button>
-        ))}
+          );
+        })}
       </div>
       <p className="w-full max-w-[640px] pt-3 text-[13px] leading-[18px] text-[var(--score-muted)] min-[1360px]:w-[640px]">
         These are real runs. Yours comes by email.
@@ -97,6 +121,9 @@ export function ScoreRunnerView({
   urlInput,
   onUrlChange,
   onSubmit,
+  emailInput,
+  onEmailChange,
+  onEmailSubmit,
   phase,
   error,
   busy,
@@ -111,12 +138,15 @@ export function ScoreRunnerView({
 }: ScoreRunnerViewProps) {
   const headline = scoreRunnerHeadline(phase);
   const lead = scoreRunnerLead(phase);
-  const showForm = phase !== "authorizing" && phase !== "done";
-  const showFeatured = phase === "form";
+  const showUrlForm =
+    phase !== "email" && phase !== "authorizing" && phase !== "done";
+  const showEmailForm = phase === "email";
+  const showFeatured = phase === "form" || phase === "email";
 
   return (
     <ScoreSiteShell
       compactPreview={phase === "authorizing" || phase === "done"}
+      atmosphere={phase === "email" ? "email" : "landing"}
     >
       <div className="flex w-full flex-col items-start gap-6">
         <div className="flex w-full max-w-[720px] flex-col gap-5 pt-10 md:px-12 md:pt-20">
@@ -127,7 +157,7 @@ export function ScoreRunnerView({
             {lead}
           </p>
 
-          {showForm && (
+          {showUrlForm && (
             <form
               onSubmit={onSubmit}
               className="flex w-full max-w-[624px] flex-col gap-2 pt-3 sm:flex-row"
@@ -162,13 +192,48 @@ export function ScoreRunnerView({
             </form>
           )}
 
-          {showForm && (
+          {showUrlForm && (
             <p
               id="score-runner-hint"
               className="text-[13px] leading-[18px] text-[var(--score-muted)]"
             >
               Public URL. No login. About 15 minutes.
             </p>
+          )}
+
+          {showEmailForm && (
+            <form
+              onSubmit={onEmailSubmit}
+              noValidate
+              className="flex w-full max-w-[624px] flex-col gap-2 pt-3 sm:flex-row"
+            >
+              <label className="sr-only" htmlFor="score-delivery-email">
+                Scorecard email
+              </label>
+              <input
+                id="score-delivery-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                spellCheck={false}
+                required
+                maxLength={320}
+                value={emailInput}
+                onChange={(event) => onEmailChange(event.target.value)}
+                placeholder="you@acme.com"
+                disabled={formDisabled}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? "score-runner-error" : undefined}
+                className="h-12 min-w-0 shrink-0 rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-4 font-[family-name:var(--font-score-mono)] text-sm leading-5 text-[var(--score-fg)] placeholder:text-[var(--score-muted)] disabled:opacity-60 sm:flex-1"
+              />
+              <button
+                type="submit"
+                disabled={formDisabled}
+                className="h-12 shrink-0 rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)] disabled:opacity-60"
+              >
+                Email the scorecard
+              </button>
+            </form>
           )}
 
           {appReadyMessage && (
@@ -239,7 +304,11 @@ export function ScoreRunnerView({
           )}
         </div>
 
-        {showFeatured && <FeaturedScores onSelect={onUrlChange} />}
+        {showFeatured && (
+          <FeaturedScores
+            onSelect={phase === "form" ? onUrlChange : undefined}
+          />
+        )}
       </div>
     </ScoreSiteShell>
   );

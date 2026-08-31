@@ -20,6 +20,10 @@
   left: max(0px, calc((100% - 1440px) / 2));
 }
 
+.score-site-email-glow {
+  left: max(859px, calc((100% - 1440px) / 2 + 859px));
+}
+
 @media (min-width: 1360px) and (min-height: 700px) {
   .score-site-layout {
     position: static;

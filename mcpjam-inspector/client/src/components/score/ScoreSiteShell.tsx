@@ -9,10 +9,14 @@ const FONT_HREF =
 export function ScoreSiteShell({
   children,
   compactPreview = false,
+  atmosphere = "landing",
 }: {
   children: ReactNode;
   compactPreview?: boolean;
+  atmosphere?: "landing" | "email";
 }) {
+  const emailAtmosphere = atmosphere === "email";
+
   return (
     <div className="score-site relative isolate flex min-h-dvh w-full flex-col overflow-x-clip antialiased xl:h-dvh xl:min-h-[700px] xl:overflow-y-auto">
       <link rel="stylesheet" href={FONT_HREF} />
@@ -21,9 +25,18 @@ export function ScoreSiteShell({
         className="pointer-events-none absolute inset-0 overflow-hidden"
       >
         <div className="score-site-glow absolute bottom-0 h-[120px] w-[1440px] bg-[#030303]">
-          <div className="absolute left-[816px] top-[-60px] h-[720px] w-[720px] rounded-full bg-[#EE362F38]" />
-          <div className="absolute left-[644px] top-[15px] h-[420px] w-[420px] rounded-full bg-[#E0785659]" />
+          {emailAtmosphere ? (
+            <div className="absolute left-[601px] top-[15px] h-[420px] w-[420px] rounded-full bg-[#E0785659]" />
+          ) : (
+            <>
+              <div className="absolute left-[816px] top-[-60px] h-[720px] w-[720px] rounded-full bg-[#EE362F38]" />
+              <div className="absolute left-[644px] top-[15px] h-[420px] w-[420px] rounded-full bg-[#E0785659]" />
+            </>
+          )}
         </div>
+        {emailAtmosphere && (
+          <div className="score-site-email-glow absolute top-[646px] h-[720px] w-[720px] rounded-full bg-[#EE362F38]" />
+        )}
       </div>
 
       <header className="relative z-10 flex h-[54px] shrink-0 items-center px-6 pt-8 md:px-12">

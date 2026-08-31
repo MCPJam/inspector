@@ -12,6 +12,9 @@ function renderView(
     urlInput: "",
     onUrlChange: vi.fn(),
     onSubmit: vi.fn((event: FormEvent) => event.preventDefault()),
+    emailInput: "",
+    onEmailChange: vi.fn(),
+    onEmailSubmit: vi.fn((event: FormEvent) => event.preventDefault()),
     phase: "form" as ScoreRunnerPhase,
     error: null,
     busy: false,
@@ -65,6 +68,45 @@ describe("ScoreRunnerView", () => {
     );
 
     expect(onUrlChange).toHaveBeenCalledWith("https://mcp.linear.app/mcp");
+  });
+
+  it("renders the Paper email state after URL submission", () => {
+    renderView({ phase: "email" });
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Where should we send the scorecard?",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("MCP server URL")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Scorecard email")).toHaveAttribute(
+      "placeholder",
+      "you@acme.com",
+    );
+    expect(
+      screen.getByRole("button", { name: "Email the scorecard" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Featured scores")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Use https://mcp.linear.app/mcp",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("submits the entered scorecard email", async () => {
+    const user = userEvent.setup();
+    const onEmailChange = vi.fn();
+    const onEmailSubmit = vi.fn((event: FormEvent) => event.preventDefault());
+    renderView({ phase: "email", onEmailChange, onEmailSubmit });
+
+    await user.type(screen.getByLabelText("Scorecard email"), "dev@acme.com");
+    await user.click(
+      screen.getByRole("button", { name: "Email the scorecard" }),
+    );
+
+    expect(onEmailChange).toHaveBeenCalled();
+    expect(onEmailSubmit).toHaveBeenCalledOnce();
   });
 
   it("shows an invalid-URL error without losing the entered value", () => {
