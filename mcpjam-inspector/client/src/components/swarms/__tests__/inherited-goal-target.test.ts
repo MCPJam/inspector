@@ -52,3 +52,35 @@ describe("inheritedGoalTarget", () => {
     expect(inheritedGoalTarget([{ environmentIds: [] }])).toBeNull();
   });
 });
+
+describe("inheritedGoalTarget — stale targets", () => {
+  const live = (...ids: string[]) => new Set(ids);
+
+  it("ignores a sibling whose environment is gone", () => {
+    expect(
+      inheritedGoalTarget([goal("env-archived")], live("env-a"))
+    ).toBeNull();
+  });
+
+  it("prefers a live target over a more common dead one", () => {
+    expect(
+      inheritedGoalTarget(
+        [goal("env-dead"), goal("env-dead"), goal("env-live")],
+        live("env-live")
+      )
+    ).toEqual(["env-live"]);
+  });
+
+  it("drops a fan-out when any of its environments is gone", () => {
+    // Half a fan-out is a different target than the one the sibling ran.
+    expect(
+      inheritedGoalTarget([goal("env-a", "env-gone")], live("env-a"))
+    ).toBeNull();
+  });
+
+  it("accepts everything when the live set is unknown", () => {
+    // The environments query can be loading or skipped; blocking then would
+    // drop inheritance for a setup that is fine.
+    expect(inheritedGoalTarget([goal("env-a")], undefined)).toEqual(["env-a"]);
+  });
+});

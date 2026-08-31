@@ -1850,13 +1850,16 @@ function NewJourneyForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const goalsLoading = siblingGoals === undefined;
-  const inherited = inheritedGoalTarget(siblingGoals);
   const target = useSwarmDefaultTarget({
     projectId,
     active: true,
     environments,
     hosts,
   });
+  const inherited = inheritedGoalTarget(
+    siblingGoals,
+    target.liveEnvironmentIds,
+  );
   // The agent bridge can re-prefill an already-open form.
   useEffect(() => {
     setGoal(goalSeed);
@@ -1878,7 +1881,10 @@ function NewJourneyForm({
           id="swarm-journey-goal"
           placeholder="What this persona is trying to accomplish"
           value={goal}
-          onChange={(e) => setGoal(e.target.value)}
+          onChange={(e) => {
+            setGoal(e.target.value);
+            setError(null);
+          }}
           rows={2}
           className="min-h-[56px] resize-none leading-relaxed"
         />

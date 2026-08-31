@@ -18,12 +18,23 @@ function targetKey(environmentIds: string[]): string {
 
 export function inheritedGoalTarget(
   goals: readonly GoalWithTarget[] | undefined,
+  /**
+   * Live environment ids. A sibling pointing at an archived or deleted one is
+   * skipped: nothing validates an inherited target downstream, so copying it
+   * would create a goal that can never launch. `undefined` means the list is
+   * unknown, and an unmeasurable target is kept rather than dropped.
+   */
+  liveEnvironmentIds?: ReadonlySet<string>,
 ): string[] | null {
   if (!goals) return null;
   const counts = new Map<string, { ids: string[]; count: number }>();
   for (const goal of goals) {
     const ids = goal.environmentIds;
     if (!ids || ids.length === 0) continue;
+    // Partly-live is not the target the sibling ran, so it is not inheritable.
+    if (liveEnvironmentIds && !ids.every((id) => liveEnvironmentIds.has(id))) {
+      continue;
+    }
     const key = targetKey(ids);
     const seen = counts.get(key);
     // First occurrence wins, so a tie resolves to whichever target the caller

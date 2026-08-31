@@ -38,6 +38,15 @@ const environments = [
     serverAttachmentId: "att-env-1",
     revision: 1,
   },
+  // The ad-hoc row the persona's existing goals point at, so an inherited
+  // target resolves as live.
+  {
+    environmentId: "env-sibling",
+    projectId: "proj-1",
+    hostId: "host-1",
+    origin: "adhoc" as const,
+    revision: 1,
+  },
 ];
 
 /** The row the backend mints for the composed client + server group. */
@@ -292,5 +301,20 @@ describe("SwarmsTab — new goal form", () => {
         .environmentIds
     ).toEqual(["env-sibling"]);
     expect(ensureAdhocMock).not.toHaveBeenCalled();
+  });
+
+  it("drops the error once the goal is edited", async () => {
+    createJourneyMutation.mockRejectedValue(new Error("backend said no"));
+    await openGoalForm();
+    await createGoal("buy a plan");
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    // The message described the submit that failed, not what is on screen now.
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "buy a plan, carefully" },
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

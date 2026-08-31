@@ -41,8 +41,6 @@ import {
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 
-export const MIN_GENERATED_JOURNEYS = 1;
-export const MAX_GENERATED_JOURNEYS = 5;
 const DEFAULT_JOURNEY_COUNT = 3;
 
 /** Mirrors `personas:createPersona`'s avatar bounds — the mutation THROWS on
