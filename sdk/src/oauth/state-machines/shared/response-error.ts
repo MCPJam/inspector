@@ -10,6 +10,21 @@ import { sanitizeTraceErrorMessage } from "../trace-redaction.js";
  */
 const MAX_REASON_CHARS = 300;
 
+const AUTHENTICATED_REQUEST_FAILURE_PREFIX = "Authenticated request failed";
+
+/**
+ * Whether a debugger step error is the server under test rejecting the
+ * authenticated MCP request.
+ *
+ * The debug proxy reports its own failures separately. This prefix is only
+ * produced after that proxy successfully returns the target server's HTTP
+ * response, so consumers can keep the failure visible without filing it as an
+ * MCPJam defect.
+ */
+export function isAuthenticatedRequestFailure(error: string): boolean {
+  return error.startsWith(`${AUTHENTICATED_REQUEST_FAILURE_PREFIX}: `);
+}
+
 /**
  * Take one candidate field as a reason, or `undefined` if it carries no text.
  *
@@ -166,17 +181,17 @@ interface FailedResponse {
  */
 function describeResponseFailure(
   label: string,
-  response: FailedResponse,
+  response: FailedResponse
 ): string {
   const safeStatusText = toSingleLine(
     sanitizeTraceErrorMessage(response.statusText ?? "", {
       maxLength: MAX_REASON_CHARS,
-    }),
+    })
   );
   const reason = extractResponseErrorReason(response.body);
   const safeReason = reason
     ? toSingleLine(
-        sanitizeTraceErrorMessage(reason, { maxLength: MAX_REASON_CHARS }),
+        sanitizeTraceErrorMessage(reason, { maxLength: MAX_REASON_CHARS })
       )
     : undefined;
   return `${label}: ${response.status}${
@@ -192,9 +207,12 @@ function describeResponseFailure(
  * 2026-07-28 with `tools/list`), so they all report it the same way.
  */
 export function describeAuthenticatedRequestFailure(
-  response: FailedResponse,
+  response: FailedResponse
 ): string {
-  return describeResponseFailure("Authenticated request failed", response);
+  return describeResponseFailure(
+    AUTHENTICATED_REQUEST_FAILURE_PREFIX,
+    response
+  );
 }
 
 /**
