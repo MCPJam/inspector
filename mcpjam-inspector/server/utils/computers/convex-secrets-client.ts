@@ -60,6 +60,12 @@ const FN = {
    * would return one.
    */
   forRuntimeExecution: "projectSecretsNode:listSecretsForRuntimeExecution",
+  /**
+   * Records that the values were actually PUT somewhere. Separate from the
+   * fetch because resolving a secret is not delivering it — see the backend
+   * comment on `markSecretsDelivered`.
+   */
+  markDelivered: "projectSecretsNode:markSecretsDelivered",
 } as const;
 
 function stripBearer(token: string): string {
@@ -95,4 +101,23 @@ export async function convexListSecretsForRuntimeExecution(
   },
 ): Promise<RuntimeSecret[]> {
   return await makeClient(bearer).action(FN.forRuntimeExecution as any, args);
+}
+
+/**
+ * Record that this turn actually delivered the environment's materialized
+ * secrets. Call ONLY when they reached a destination.
+ *
+ * `lastDeliveredAt` is what someone consults before deleting a credential they
+ * believe is dormant, so it has to mean "in use", not "was resolved once". A
+ * turn that fetches and then discards — no project-provisioned box, no
+ * harness — must not move it.
+ *
+ * Best-effort by contract: the caller ignores failures, because failing to
+ * RECORD a delivery must never fail the delivery itself.
+ */
+export async function convexMarkSecretsDelivered(
+  bearer: string,
+  args: { projectId: string; environmentId: string },
+): Promise<{ marked: number }> {
+  return await makeClient(bearer).action(FN.markDelivered as any, args);
 }

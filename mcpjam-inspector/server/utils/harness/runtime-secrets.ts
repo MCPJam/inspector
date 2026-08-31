@@ -24,6 +24,7 @@
  */
 import {
   convexListSecretsForRuntimeExecution,
+  convexMarkSecretsDelivered,
   type RuntimeSecret,
 } from "../computers/convex-secrets-client.js";
 import { logger } from "../logger.js";
@@ -135,4 +136,37 @@ export function toSecretEnv(
   const env: Record<string, string> = {};
   for (const secret of secrets) env[secret.name] = secret.value;
   return env;
+}
+
+/**
+ * Record that this turn actually delivered its materialized secrets.
+ *
+ * Fire-and-forget, and never throws: `lastDeliveredAt` is an operational signal,
+ * and a turn that ran correctly must not fail because a bookkeeping write did
+ * not. The backend throttles the stamp, so calling this on every delivering turn
+ * costs a round trip and at most one row revision a minute.
+ *
+ * Call it only when the values REACHED something. The fetch deliberately does
+ * not stamp: it happens before the turn's destination is known, and a turn that
+ * ends up discarding them (no project-provisioned box, no harness) would
+ * otherwise report a delivery that never happened — turning "is this credential
+ * still in use?" into "was it resolved once?", which is the question someone
+ * asks precisely when deciding whether it is safe to delete.
+ */
+export async function markRuntimeSecretsDelivered(
+  bearer: string | undefined,
+  args: { projectId?: string; environmentId?: string; secretCount: number },
+): Promise<void> {
+  if (!bearer || !args.projectId || !args.environmentId) return;
+  if (args.secretCount <= 0) return;
+  try {
+    await convexMarkSecretsDelivered(bearer, {
+      projectId: args.projectId,
+      environmentId: args.environmentId,
+    });
+  } catch (error) {
+    logger.warn("[runtime-secrets] delivery stamp failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

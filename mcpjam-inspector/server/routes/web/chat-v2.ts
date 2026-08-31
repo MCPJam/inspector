@@ -132,6 +132,7 @@ import {
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import {
   fetchRuntimeSecrets,
+  markRuntimeSecretsDelivered,
   toSecretEnv,
 } from "../../utils/harness/runtime-secrets.js";
 import { logger } from "../../utils/logger.js";
@@ -1469,6 +1470,18 @@ chatV2.post("/", async (c) => {
         },
       );
       sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
+    } else if (secretEnv && Object.keys(secretEnv).length > 0) {
+      // The other side of the same decision: they DID reach a destination, so
+      // record it. Fire-and-forget — the turn must not fail because a
+      // bookkeeping stamp did — and deliberately not done at fetch time, where
+      // the destination is not yet known. See `markRuntimeSecretsDelivered`.
+      void markRuntimeSecretsDelivered(bearerToken, {
+        projectId: hostedBody.projectId,
+        ...(environmentServers
+          ? { environmentId: environmentServers.environmentRef.environmentId }
+          : {}),
+        secretCount: Object.keys(secretEnv).length,
+      });
     }
 
     // Filled by the resolver when browser tools are advertised; forwarded to
