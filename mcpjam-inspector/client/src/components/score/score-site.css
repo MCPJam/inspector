@@ -10,6 +10,7 @@
   --font-score-display: "Montserrat", sans-serif;
   --font-score-sans: "Instrument Sans", sans-serif;
   --font-score-mono: "JetBrains Mono", monospace;
+
   color: var(--score-fg);
   background: var(--score-bg);
   font-family: var(--font-score-sans);

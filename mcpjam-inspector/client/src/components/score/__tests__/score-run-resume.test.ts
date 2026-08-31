@@ -47,13 +47,59 @@ describe("score run resume", () => {
     expect(sessionStorage.length).toBe(0);
   });
 
-  it.each(["not json", JSON.stringify({ serverUrl: 42 })])(
-    "discards an invalid record: %s",
-    (record) => {
-      sessionStorage.setItem("mcpjam-score-run-resume", record);
+  it.each([
+    "not json",
+    "null",
+    JSON.stringify({ serverUrl: 42 }),
+    JSON.stringify({ serverUrl: "https://mcp.acme.com/mcp" }),
+    JSON.stringify({
+      serverUrl: "https://mcp.acme.com/mcp",
+      serverName: "score-acme",
+    }),
+    JSON.stringify({
+      serverUrl: "https://mcp.acme.com/mcp",
+      serverName: "score-acme",
+      startedAt: "yesterday",
+    }),
+  ])("discards an invalid record: %s", (record) => {
+    sessionStorage.setItem("mcpjam-score-run-resume", record);
 
-      expect(readScoreRunResume()).toBeNull();
-      expect(sessionStorage.length).toBe(0);
-    },
-  );
+    expect(readScoreRunResume()).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("drops a non-string delivery email rather than resuming with it", () => {
+    sessionStorage.setItem(
+      "mcpjam-score-run-resume",
+      JSON.stringify({
+        serverUrl: "https://mcp.acme.com/mcp",
+        serverName: "score-acme",
+        deliveryEmail: 42,
+        startedAt: Date.now(),
+      }),
+    );
+
+    expect(readScoreRunResume()).toEqual({
+      serverUrl: "https://mcp.acme.com/mcp",
+      serverName: "score-acme",
+      startedAt: expect.any(Number),
+    });
+  });
+
+  it("stays silent when sessionStorage is unavailable", () => {
+    const unavailable = () => {
+      throw new Error("storage disabled");
+    };
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(unavailable);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(unavailable);
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(unavailable);
+
+    expect(() =>
+      writeScoreRunResume({
+        serverUrl: "https://mcp.acme.com/mcp",
+        serverName: "score-acme",
+      }),
+    ).not.toThrow();
+    expect(readScoreRunResume()).toBeNull();
+  });
 });

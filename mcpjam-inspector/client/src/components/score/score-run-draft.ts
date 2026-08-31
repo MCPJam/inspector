@@ -35,7 +35,9 @@ export function scoreRunDraftReducer(
   action: ScoreRunDraftAction,
 ): ScoreRunDraft {
   if (action.type === "edit-url") {
-    return { ...draft, urlInput: action.value };
+    // Editing the URL revokes its acceptance. Otherwise a later email
+    // acceptance would mint an intent for the URL the visitor just replaced.
+    return { ...draft, urlInput: action.value, serverUrl: undefined };
   }
   if (action.type === "edit-email") {
     return { ...draft, emailInput: action.value };

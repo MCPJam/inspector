@@ -41,15 +41,54 @@ describe("score run draft", () => {
     });
   });
 
-  it("rejects invalid URL and email transitions", () => {
-    expect(
-      acceptScoreServerUrl({ urlInput: "not a url", emailInput: "" }),
-    ).toEqual({ ok: false });
+  it("revokes URL acceptance when the URL input changes", () => {
+    const accepted = acceptScoreServerUrl({
+      urlInput: "https://mcp.acme.com/mcp",
+      emailInput: "dev@acme.com",
+    });
+    if (!accepted.ok) throw new Error("expected the URL to be accepted");
+
+    const edited = scoreRunDraftReducer(accepted.value, {
+      type: "edit-url",
+      value: "https://mcp.other.com/mcp",
+    });
+
+    expect(edited.serverUrl).toBeUndefined();
+    // The regression this guards: a stale `serverUrl` would have minted an
+    // intent for the server the visitor just replaced.
+    expect(acceptScoreDeliveryEmail(edited)).toEqual({ ok: false });
+  });
+
+  it.each([
+    [""],
+    ["   "],
+    ["not a url"],
+    ["https://"],
+    ["javascript:alert(1)"],
+  ])("rejects the URL transition for %j", (urlInput) => {
+    expect(acceptScoreServerUrl({ urlInput, emailInput: "" })).toEqual({
+      ok: false,
+    });
+  });
+
+  it.each([[""], ["   "], ["not-an-email"]])(
+    "rejects the email transition for %j",
+    (emailInput) => {
+      expect(
+        acceptScoreDeliveryEmail({
+          urlInput: "https://mcp.acme.com/mcp",
+          emailInput,
+          serverUrl: "https://mcp.acme.com/mcp",
+        }),
+      ).toEqual({ ok: false });
+    },
+  );
+
+  it("rejects an email submitted before a URL is accepted", () => {
     expect(
       acceptScoreDeliveryEmail({
         urlInput: "https://mcp.acme.com/mcp",
-        emailInput: "not-an-email",
-        serverUrl: "https://mcp.acme.com/mcp",
+        emailInput: "dev@acme.com",
       }),
     ).toEqual({ ok: false });
   });

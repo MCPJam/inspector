@@ -9,6 +9,19 @@ const PREVIEW_STATUSES = [
   "REVIEW",
 ] as const;
 
+/**
+ * The Paper mock's 432px bar, kept as proportions rather than pixel widths:
+ * the card narrows on mobile, where fixed widths pushed the trailing
+ * segments past the `overflow-hidden` edge.
+ */
+const PREVIEW_BAR_SEGMENTS = [
+  { color: "bg-[#3D8A5A]", share: 241 },
+  { color: "bg-[#C45A3A]", share: 31 },
+  { color: "bg-[#C49A4A]", share: 27 },
+  { color: "bg-[var(--score-border)]", share: 103 },
+  { color: "bg-[#1A1918]", share: 30 },
+] as const;
+
 export function ScorePreviewCard({ compact = false }: { compact?: boolean }) {
   return (
     <aside
@@ -50,11 +63,13 @@ export function ScorePreviewCard({ compact = false }: { compact?: boolean }) {
             ))}
           </div>
           <div className="flex h-2 overflow-hidden rounded">
-            <div className="w-[241px] shrink-0 bg-[#3D8A5A]" />
-            <div className="w-[31px] shrink-0 bg-[#C45A3A]" />
-            <div className="w-[27px] shrink-0 bg-[#C49A4A]" />
-            <div className="w-[103px] shrink-0 bg-[var(--score-border)]" />
-            <div className="w-[30px] shrink-0 bg-[#1A1918]" />
+            {PREVIEW_BAR_SEGMENTS.map(({ color, share }) => (
+              <div
+                key={color}
+                className={color}
+                style={{ flex: `${share} 1 0%` }}
+              />
+            ))}
           </div>
         </>
       )}
