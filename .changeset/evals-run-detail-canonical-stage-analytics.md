@@ -35,4 +35,8 @@ The hook is called **once**, in the run detail, and its result passed to the ren
 
 `RunDocument` is exported from the suite panel and reused as-is — pure props, no hooks, no queries. Reusing the panel instead would have dragged a suite listing, its paging and its run selector onto a page that has exactly one run.
 
+A run with no `projectId` still gets a funnel. `EvalSuiteRun.projectId` is optional, and with the flag on and the id absent the hook is never asked — it sits at `idle`, which used to read as in-flight and drew *nothing*: not the canonical funnel that was never going to arrive, and not the legacy one that renders fine today. "Never asked" is the flag-off state and now answers the same way — legacy, unlabelled, nothing attempted. Only `loading` suppresses, because that is the only state where legacy-then-canonical would flash one set of numbers and replace it with different ones.
+
+The route binds **both** halves of the document's identity, not one. `runId` and `suiteId` are each only `string().min(1)` to the schema, and the route already holds the authorized run's `suiteId` — which is what the client links on. An earlier revision checked `runId` and left a comment saying the Convex reader cross-checks the suite. It does, but that is the other side of the wire making its own guarantee, and asserting one half of an identity while delegating the other is how the delegated half stops being checked at all the day that reader is swapped. The suite comparison is skipped when the run itself carries no `suiteId`, so an older run shape cannot turn a good document into a `502`.
+
 Dark until the backend reader is deployed and the flag is enabled.

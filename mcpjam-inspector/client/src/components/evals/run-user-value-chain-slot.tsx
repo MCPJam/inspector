@@ -119,7 +119,28 @@ export function useRunUserValueChainChoice({
       fallbackReason: null,
     };
   }
-  if (status === "loading" || status === "idle") {
+  // `idle` is NOT `loading`, and conflating them suppressed both funnels.
+  //
+  // The hook sits at `idle` whenever it was never asked — and with the flag on
+  // it is never asked when `projectId` is absent, which `EvalSuiteRun.projectId`
+  // permits. Reading that as in-flight drew NOTHING: the canonical funnel that
+  // was never going to arrive, and the legacy one that renders fine today. A
+  // regression on the working path, not merely a missing feature.
+  //
+  // "Never asked" is exactly the flag-off state, so it answers the same way:
+  // legacy, unlabelled, nothing attempted. Only `loading` is genuinely in
+  // flight, and only that suppresses — because legacy-then-canonical would
+  // flash one set of numbers and replace it with different ones.
+  if (status === "idle") {
+    return {
+      choice: "legacy",
+      document: null,
+      serviceNote: null,
+      attempted: false,
+      fallbackReason: null,
+    };
+  }
+  if (status === "loading") {
     return {
       choice: "nothing",
       document: null,

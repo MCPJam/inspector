@@ -4882,6 +4882,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => 
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
+  let runSuiteId: string | undefined;
   try {
     // The run is read and project-matched FIRST, exactly as the suite route
     // matches its suite: a valid run id from another of the caller's projects
@@ -4891,6 +4892,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => 
       runId,
     });
     requireProjectMatch(run, projectId, "Eval run");
+    // Kept for the identity check below — the run we authorized is the only
+    // thing that can say which suite this document is allowed to name.
+    const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
+    runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
     document = await convex.query(
       "testSuites:getEvalRunStageAnalytics" as any,
       { runId },
@@ -4932,12 +4937,23 @@ evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => 
     );
   }
 
-  // Shape is not identity. `runId` is only `string().min(1)` to the schema, so
-  // a valid document for a DIFFERENT run parses perfectly and would then be
-  // served under this run's heading. The Convex reader cross-checks the suite;
-  // this binds the answer to the question actually asked.
-  if (parsed.data.runId !== runId) {
-    logger.warn("[v1 evals] run stage analytics is for a different run", {
+  // Shape is not identity. `runId` and `suiteId` are only `string().min(1)` to
+  // the schema, so a valid document for a DIFFERENT run parses perfectly and
+  // would then be served under this run's heading.
+  //
+  // BOTH halves are checked. An earlier revision checked only `runId` and left
+  // a comment saying the Convex reader cross-checks the suite — it does, but
+  // that is the other side of the wire making its own guarantee, and this route
+  // already holds the authorized run's `suiteId`. Asserting one half of an
+  // identity and delegating the other is how the delegated half stops being
+  // checked at all the day the reader is swapped, and `suiteId` is what the
+  // client links on. `runSuiteId` is only compared when the run actually
+  // carried one, so an older run shape cannot 502 a document that is fine.
+  const identityMismatch =
+    parsed.data.runId !== runId ||
+    (runSuiteId !== undefined && parsed.data.suiteId !== runSuiteId);
+  if (identityMismatch) {
+    logger.warn("[v1 evals] run stage analytics identity does not match", {
       projectId,
       runId,
     });

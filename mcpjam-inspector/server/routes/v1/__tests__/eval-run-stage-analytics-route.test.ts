@@ -208,4 +208,29 @@ describe("GET …/eval-runs/:runId/stage-analytics", () => {
     const res = await request(PATH);
     expect(res.status).toBe(502);
   });
+
+  it("refuses a document naming a DIFFERENT suite than the authorized run", async () => {
+    // The other half of the same identity, and it was not checked. The route
+    // holds the authorized run's `suiteId`, and `suiteId` is what the client
+    // links on — so a mis-keyed row could have been served under this run's
+    // heading pointing at a suite the caller never asked about.
+    //
+    // An earlier revision left a comment saying the Convex reader
+    // cross-checks the suite. It does, but that is the other side of the wire
+    // making its own guarantee: asserting one half of an identity and
+    // delegating the other is how the delegated half stops being checked at
+    // all the day that reader is swapped.
+    stub({ document: row({ suiteId: "suite_somebody_else" }) });
+    const res = await request(PATH);
+    expect(res.status).toBe(502);
+  });
+
+  it("does NOT 502 when the run itself carries no suiteId", async () => {
+    // Only compared when the run actually had one. An older run shape must not
+    // turn a perfectly good document into a service error — the guard exists
+    // to catch a mismatch, not to require a field.
+    stub({ run: { projectId: PROJECT_ID } });
+    const res = await request(PATH);
+    expect(res.status).toBe(200);
+  });
 });

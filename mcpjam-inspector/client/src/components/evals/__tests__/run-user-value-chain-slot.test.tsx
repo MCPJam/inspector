@@ -42,8 +42,14 @@ const {
 const RUN_ID = GOLDEN_STAGE_ANALYTICS.runId;
 const LEGACY_TEXT = "the legacy rollup";
 
-function Slot({ runId = RUN_ID }: { runId?: string }) {
-  const chain = useRunUserValueChainChoice({ projectId: "p1", runId });
+function Slot({
+  runId = RUN_ID,
+  projectId = "p1",
+}: {
+  runId?: string;
+  projectId?: string | null;
+}) {
+  const chain = useRunUserValueChainChoice({ projectId, runId });
   return (
     <RunUserValueChainSlot
       chain={chain}
@@ -94,6 +100,51 @@ describe("the flag gate", () => {
     flagMock.mockReturnValue(false);
     render(<Slot />);
     expect(flagMock).toHaveBeenCalledWith(RUN_STAGE_ANALYTICS_FLAG);
+  });
+});
+
+describe("a run with no project id still gets a funnel", () => {
+  // `EvalSuiteRun.projectId` is OPTIONAL. With the flag on and the id absent
+  // the hook is never asked, so it sits at `idle` — which used to read as
+  // in-flight and drew NOTHING: not the canonical funnel that was never going
+  // to arrive, and not the legacy one that renders fine today. A regression on
+  // the working path, not merely a missing feature.
+  it("renders the legacy rollup when projectId is null", async () => {
+    render(<Slot projectId={null} />);
+
+    expect(screen.getByTestId("legacy")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the legacy rollup when projectId is undefined", async () => {
+    // Rendered inline rather than through `Slot`, because a default parameter
+    // fires on `undefined` and would quietly substitute a real project id —
+    // the test would then pass by never reaching the case it names.
+    function NoProject() {
+      const chain = useRunUserValueChainChoice({
+        projectId: undefined,
+        runId: RUN_ID,
+      });
+      return (
+        <RunUserValueChainSlot
+          chain={chain}
+          legacy={<div data-testid="legacy">{LEGACY_TEXT}</div>}
+        />
+      );
+    }
+    render(<NoProject />);
+
+    expect(screen.getByTestId("legacy")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not LABEL that legacy rollup — nothing was attempted", async () => {
+    // "Never asked" is the flag-off state, and it must answer the same way. A
+    // label would tell a reader the canonical document was tried and missing,
+    // which is a claim about the run rather than about this page.
+    render(<Slot projectId={null} />);
+
+    expect(screen.queryByTestId("run-stage-analytics-legacy-label")).toBeNull();
   });
 });
 
