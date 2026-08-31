@@ -311,7 +311,10 @@ When a search is active and the source filter is hiding matching entries, a bann
 
 ### Shell tab
 
-When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to open a live terminal session:
+
+- **Cloud computer** — provisions or wakes the cloud machine and connects. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+- **Local computer** — opens a shell on your own machine in the project workspace. The terminal stays idle until you click **Open terminal**, so no shell is spawned on Playground load.
 
 Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
 
