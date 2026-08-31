@@ -85,6 +85,18 @@ import {
 export const STAGE_ANALYZER_VERSION = 8;
 
 /**
+ * The 7 above, named — the first analyzer that can report an errored tool call
+ * on a case which authored no tool expectation.
+ *
+ * A reader comparing a stored row against this can tell a chain that found
+ * nothing wrong from one that had no row in which to say so, which is the
+ * difference between an open question and a known, closable one. It lives
+ * beside the history rather than beside the copy that reads it so that a
+ * future bump is edited where the bump is already being written down.
+ */
+export const STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE = 7;
+
+/**
  * Why a stage landed where it did.
  *
  * A closed vocabulary, for the same reason the states are: free-text reasons

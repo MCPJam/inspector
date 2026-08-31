@@ -201,6 +201,40 @@ export const NEXT_ACTION_BY_FAILURE_CATEGORY = Object.freeze({
 export const DECISION_SUMMARY_FALLBACK_NEXT_ACTION =
   "inspect the case trace; no failure category was recorded";
 
+/**
+ * The action when the recorded verdict and the measured chain DISAGREE.
+ *
+ * A narrower, and therefore more useful, statement than the fallback above:
+ * the chain validated, every applicable stage came back ok, and the verdict
+ * still says failed. "No failure category was recorded" is true of that run
+ * but describes it as an absence of information, when in fact two things we
+ * hold are in conflict — which is a different thing to go and look at.
+ *
+ * Named as a disagreement and nothing more. The chain cannot see WHY from
+ * here, and a guess at the cause dressed as a finding is exactly what this
+ * whole vocabulary exists to prevent.
+ */
+export const DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION =
+  "the recorded verdict disagrees with the measured chain; inspect the case trace";
+
+/**
+ * The same disagreement on a run whose chain predates analyzer 7.
+ *
+ * What the version proves is NARROW, and the first draft of this line over-read
+ * it. A pre-7 analyzer could not report an errored tool call on a case that
+ * authored no tool expectation — but that is a statement about what the
+ * analyzer was ABLE to see, never evidence that such a call occurred. Naming
+ * the tool error as the cause would have sent a reader after a specific
+ * finding on every legacy row, whatever actually went wrong.
+ *
+ * So this says only what the row itself establishes: the chain was derived by
+ * an analyzer that measures strictly less than the current one, and
+ * re-deriving may therefore attribute what this one could not. That makes
+ * "re-run" a real instruction without attaching a cause to it.
+ */
+export const DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION =
+  "the recorded verdict disagrees with the measured chain; this run's chain was derived by an older analyzer that measures less than the current one — re-run the case before investigating further";
+
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   stages: USER_VALUE_STAGES,
