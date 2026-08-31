@@ -2965,12 +2965,28 @@ async function composeRunEnvironment(
     stack,
     signal
   );
+  // Truthiness, not `!== undefined`, because that is what actually reaches the
+  // wire: `resolveComposeStack` drops a blank `serverGroup`, so a `""` checked
+  // for presence alone would clear this guard and then compose the exact
+  // unpinned environment it exists to refuse.
+  const pinnedGroup = pinned.serverGroup?.trim();
+  // Asking to follow the host AND to pin is a contradiction, and resolving it
+  // silently would drop one of the two things the caller said. The CLI rejects
+  // the pair too; repeated here because `execute` is reachable without it.
+  if (
+    stack.hostServers === true &&
+    (pinnedGroup || stack.server !== undefined || stack.servers !== undefined)
+  ) {
+    throw operationInputError(
+      "`hostServers` runs against the host's current list, so it cannot be combined with `server`/`servers`/`serverGroup`, which pin one."
+    );
+  }
   // The server is the thing under test, so a composed RUN has to say which one.
   // Without a pin the run reads the host's list at execution time, and editing
   // that shared host silently repoints every eval composed against it — the
   // failure this guard exists to stop. Following the host stays available, but
   // only as something the caller asked for out loud.
-  if (pinned.serverGroup === undefined && stack.hostServers !== true) {
+  if (!pinnedGroup && stack.hostServers !== true) {
     throw operationInputError(
       "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
     );

@@ -636,6 +636,40 @@ describe("compose server selectors", () => {
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
   });
 
+  it("does not accept a blank group as a pin", async () => {
+    // `resolveComposeStack` drops a blank id, so accepting `""` here would wave
+    // through the unpinned run this guard exists to refuse — presence is not
+    // the same question as "will a group actually be sent".
+    const { client, fetchMock } = makeClient();
+    const error = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke", compose: { host: "Claude Code", serverGroup: "  " } },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(String((error as Error).message)).toContain("must say which servers");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("refuses following the host and pinning at once", async () => {
+    const { client, fetchMock } = makeClient();
+    const error = await runEvalSuiteOperation
+      .execute(
+        {
+          suite: "Smoke",
+          compose: {
+            host: "Claude Code",
+            server: "Vercel",
+            hostServers: true,
+          },
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(String((error as Error).message)).toContain("cannot be combined");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
   it("pins the same way for a single case run", async () => {
     const { client, fetchMock } = makeClient();
     await runEvalCaseOperation.execute(
