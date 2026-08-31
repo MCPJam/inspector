@@ -4473,8 +4473,23 @@ export function useChatSession(
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
+        // A scenario switch that beat the FIRST auth resolution (BB-51). The
+        // "no prior session to invalidate" reasoning above does not hold in
+        // that case: a restored tester transcript is applied by the hydration
+        // effect without waiting for auth, so scenario A's messages CAN be on
+        // screen while `hasResolvedBefore` is still false — the in-flight first
+        // pass was cancelled by the switch and never set the flag. Without this,
+        // no reset ever arrives, the persistence effect stays parked on its
+        // `awaiting` branch waiting for an empty transcript, and scenario B
+        // neither resumes nor saves for the rest of the tab's life.
+        const scenarioSwitchNeedsReset =
+          awaitingScenarioTranscriptResetRef.current;
 
-        if (authHeadersChanged || hostedScopeChanged) {
+        if (
+          authHeadersChanged ||
+          hostedScopeChanged ||
+          scenarioSwitchNeedsReset
+        ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
           clearPendingSessionHydration();

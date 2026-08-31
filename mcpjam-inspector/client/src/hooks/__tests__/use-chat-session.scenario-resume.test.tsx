@@ -402,6 +402,87 @@ describe("useChatSession scenario transcript resume", () => {
     expect(readScenarioChatTranscript(SCENARIO_ID)?.messages).toHaveLength(2);
   });
 
+  it("resumes the second link when the switch beats the first auth resolution", async () => {
+    // The companion to the test above: that one proves the two ROWS stay
+    // separate, this one proves scenario B actually comes back on screen.
+    //
+    // The race: a restored transcript is applied by the hydration effect
+    // WITHOUT waiting for auth, so scenario A's messages can already be on
+    // screen while the first `getAccessToken()` is still in flight. Switching
+    // links there cancels that in-flight pass, so it never records that auth
+    // had resolved once. The next pass therefore sees no "headers changed" and
+    // no "scope changed" reason to reset, and before the fix it skipped the
+    // reset entirely: A's messages stayed, the persistence effect stayed parked
+    // waiting for an empty transcript, and B never hydrated or saved again for
+    // the life of the tab.
+    //
+    // So the token is DEFERRED rather than never-resolving: resolving it after
+    // the switch is what lets the auth-bootstrap pass run at all, which is the
+    // real-world sequence this guards.
+    let resolveToken: (token: string | null) => void = () => {};
+    const tokenPromise = new Promise<string | null>((resolve) => {
+      resolveToken = resolve;
+    });
+    const originalGetAccessToken =
+      mockState.getAccessToken.getMockImplementation();
+    mockState.getAccessToken.mockImplementation(() => tokenPromise);
+
+    try {
+      const scenarioBStored = {
+        chatSessionId: "chat-session-b",
+        messages: [
+          { id: "user-b", role: "user", parts: [{ type: "text", text: "b?" }] },
+        ] as any[],
+      };
+      writeScenarioChatTranscript("scn_2", scenarioBStored);
+
+      const optionsFor = (scenarioId: string) => ({
+        selectedServers: [] as string[],
+        hostedContext: {
+          projectId: "project-1",
+          scenarioId,
+          selectedServerIds: [] as string[],
+        },
+      });
+
+      const { result, rerender } = renderHook(
+        ({ scenarioId }: { scenarioId: string }) =>
+          useChatSession(optionsFor(scenarioId)),
+        { initialProps: { scenarioId: SCENARIO_ID } }
+      );
+
+      act(() => {
+        result.current.setMessages([userMessage, assistantMessage]);
+      });
+      await waitFor(() => {
+        expect(readScenarioChatTranscript(SCENARIO_ID)?.messages).toHaveLength(
+          2
+        );
+      });
+
+      // The second tester link replaces the first while auth is still pending.
+      rerender({ scenarioId: "scn_2" });
+
+      // Auth resolves only now — for the first time, and after the switch.
+      await act(async () => {
+        resolveToken("tester-token");
+        await tokenPromise;
+      });
+
+      // B's own stored turn is what the tester sees, and B's stored session id
+      // is adopted so the next turn appends to B's server-side thread rather
+      // than to A's.
+      await waitFor(() => {
+        expect(result.current.messages.map((m) => m.id)).toEqual(["user-b"]);
+      });
+      expect(result.current.chatSessionId).toBe("chat-session-b");
+    } finally {
+      mockState.getAccessToken.mockImplementation(
+        originalGetAccessToken ?? (() => new Promise<string | null>(() => {}))
+      );
+    }
+  });
+
   it("does not store a turn that is still streaming", async () => {
     mockState.status = "streaming";
     const { result } = renderHook(() => useChatSession(scenarioOptions));
