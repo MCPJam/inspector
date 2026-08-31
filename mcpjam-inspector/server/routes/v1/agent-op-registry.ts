@@ -86,6 +86,7 @@ import {
   updateClientOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -1335,6 +1336,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getProjectServerConnectionStatusOperation, tier: "direct" },
+  {
+    operation: cancelProjectServerConnectionOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Cancelling a connection request stops an authorization nobody completed, so it needs no approval. Each pending request holds one of the owner's five concurrent-connection slots for an hour — when `connect_project_server` reports ACTIVE_REQUEST_LIMIT, cancelling the abandoned requests is the fix.",
+    ],
+  },
   // Registry directory + cards. Agent ops self-dispatch with the delegated
   // user JWT, not the slk_/dsc_ service token, so there is no
   // surface-allowed-paths.ts delta — the base /agent + proposal-execute

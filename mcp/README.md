@@ -37,6 +37,7 @@ so results respect the caller's project access.
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
 | `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
 | `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
+| `cancel_project_server_connection` | Cancel a pending connection request, releasing the concurrent-connection slot it holds. | — |
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |

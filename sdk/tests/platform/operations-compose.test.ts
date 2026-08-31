@@ -1057,6 +1057,7 @@ describe("compose skill selection", () => {
       suite: "Smoke",
       compose: {
         host: "Claude Code",
+        hostServers: true,
         skills: {
           mode: "explicit",
           skillIds: ["skill-a", "skill-b"],

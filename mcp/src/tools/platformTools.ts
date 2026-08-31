@@ -52,6 +52,7 @@ import {
   ensureAdhocEnvironmentOperation,
   getPluginVersionOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
@@ -207,6 +208,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // do with it is produce a private link for the requester to open.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -613,6 +615,29 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Non-destructive writes a client MAY safely repeat.
+ *
+ * The default for this branch is `false`, and for its usual inhabitants that is
+ * right: starting a run or creating a suite twice produces two of them, so a
+ * client that auto-retried a dropped response would silently double the work.
+ *
+ * Cancelling is the opposite shape. The backend treats cancelling an
+ * already-terminal request as a no-op that returns the row rather than an
+ * error, so a repeat after a dropped response lands on exactly the state the
+ * first call produced. Declaring that is not a nicety: `idempotentHint: false`
+ * tells a client NOT to retry, which on a lost response leaves the request
+ * holding one of the owner's connection slots — the precise failure this
+ * operation exists to clear.
+ *
+ * OPT-IN, one name at a time. Idempotency is a promise about a specific
+ * handler's behavior, and the honest default for anything not examined is the
+ * conservative `false` above.
+ */
+const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
+  cancelProjectServerConnectionOperation.name,
+]);
+
+/**
  * Catalog operations that render as MCP Apps widgets, mapped to their view
  * in the shared UI bundle. The rest stay plain: list_projects and
  * list_project_servers defer to the richer show_servers widget,
@@ -706,8 +731,13 @@ export function operationAnnotations(
     return { readOnlyHint: false };
   }
   // Remaining non-read operations (run_eval_suite, create_eval_suite) create
-  // resources but never destroy or overwrite them.
-  return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+  // resources but never destroy or overwrite them — and creating twice makes
+  // two, so only the names that have been checked claim a safe repeat.
+  return {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
+  };
 }
 
 /**

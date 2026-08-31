@@ -34,6 +34,7 @@ import {
   connectProjectServerOperation,
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
@@ -135,6 +136,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // opens in the same browser they are already signed into.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,

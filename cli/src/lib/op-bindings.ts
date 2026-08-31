@@ -44,6 +44,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_project_server_connection_status: {
     command: "cloud projects servers connect-status",
   },
+  cancel_project_server_connection: {
+    command: "cloud projects servers connect-cancel",
+  },
   get_project_server: { command: "cloud projects servers get" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },

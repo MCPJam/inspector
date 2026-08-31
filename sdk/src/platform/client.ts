@@ -157,6 +157,18 @@ export interface PlatformApiClientOptions {
   timeoutMs?: number;
   /** Optional User-Agent; ignored by browsers (forbidden header). */
   userAgent?: string;
+  /**
+   * Extra headers sent on every request — for a deployment that sits behind an
+   * edge authenticator (Cloudflare Access, a WAF, a corporate proxy) which
+   * demands its own credential BEFORE the platform's bearer is ever seen.
+   *
+   * Applied FIRST, so the headers this client derives from its own contract
+   * always win: `authorization` stays the credential `getAuth` resolved,
+   * `idempotency-key` stays the retry key the caller passed, and
+   * `content-type` stays what the body actually is. A caller cannot swap the
+   * credential or the dedupe key through this door, whatever it passes.
+   */
+  extraHeaders?: Record<string, string>;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -236,6 +248,7 @@ export class PlatformApiClient {
   private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
   private readonly userAgent?: string;
+  private readonly extraHeaders?: Record<string, string>;
 
   constructor(options: PlatformApiClientOptions) {
     this.baseUrl = stripTrailingSlashes(
@@ -248,6 +261,17 @@ export class PlatformApiClient {
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.userAgent = options.userAgent;
+    // Lower-cased at construction so `request` cannot end up with two spellings
+    // of one header — HTTP names are case-insensitive, but a plain object's
+    // keys are not, and `{Authorization, authorization}` would send both.
+    this.extraHeaders = options.extraHeaders
+      ? Object.fromEntries(
+          Object.entries(options.extraHeaders).map(([name, value]) => [
+            name.toLowerCase(),
+            value,
+          ]),
+        )
+      : undefined;
   }
 
   getMe(options?: RequestOptions): Promise<PlatformMe> {
@@ -4206,7 +4230,10 @@ export class PlatformApiClient {
       }
     }
 
+    // Spread FIRST: every assignment below is a contract header this client
+    // owns, and each must survive whatever the caller supplied.
     const headers: Record<string, string> = {
+      ...(this.extraHeaders ?? {}),
       authorization: `Bearer ${await this.getAuth()}`,
     };
     if (init.body !== undefined) {
