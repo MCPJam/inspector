@@ -103,6 +103,247 @@ describe("collectConnectedServerDoctorState", () => {
   });
 });
 
+describe("the skills check", () => {
+  const SKILL_URI = "skill://demo/good/SKILL.md";
+  const MARKDOWN = `---\nname: good\ndescription: A verifiable skill.\n---\n# Good\n`;
+
+  async function sha256(text: string): Promise<string> {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(text)
+    );
+    return [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function skillsManager(options: { tamper?: boolean } = {}) {
+    const entry = {
+      uri: SKILL_URI,
+      frontmatter: { name: "good", description: "A verifiable skill." },
+      resources: [
+        {
+          uri: SKILL_URI,
+          digest: `sha256:${await sha256(
+            options.tamper ? "different bytes entirely" : MARKDOWN
+          )}`,
+          size: new TextEncoder().encode(MARKDOWN).byteLength,
+        },
+      ],
+    };
+    return createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest.fn().mockResolvedValue({ skills: [entry] }),
+      getServerSkill: jest.fn().mockResolvedValue(entry),
+      readResource: jest.fn().mockResolvedValue({
+        contents: [
+          { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },
+        ],
+      }),
+    });
+  }
+
+  const markdownFor = (name: string) =>
+    `---\nname: ${name}\ndescription: Skill ${name}.\n---\n# ${name}\n`;
+
+  /** A server serving `count` distinct, individually verifiable skills. */
+  async function manySkillsManager(count: number) {
+    const entries = await Promise.all(
+      Array.from({ length: count }, async (_unused, index) => {
+        const name = `skill-${index + 1}`;
+        const uri = `skill://demo/${name}/SKILL.md`;
+        const markdown = markdownFor(name);
+        return {
+          uri,
+          frontmatter: { name, description: `Skill ${name}.` },
+          resources: [
+            {
+              uri,
+              digest: `sha256:${await sha256(markdown)}`,
+              size: new TextEncoder().encode(markdown).byteLength,
+            },
+          ],
+        };
+      })
+    );
+    const byUri = new Map(entries.map((entry) => [entry.uri, entry]));
+    return createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest.fn().mockResolvedValue({ skills: entries }),
+      getServerSkill: jest
+        .fn()
+        .mockImplementation(async (_serverId: string, uri: string) =>
+          byUri.get(uri)
+        ),
+      readResource: jest
+        .fn()
+        .mockImplementation(
+          async (_serverId: string, params: { uri: string }) => ({
+            contents: [
+              {
+                uri: params.uri,
+                text: markdownFor(params.uri.split("/").at(-2) as string),
+                mimeType: "text/markdown",
+              },
+            ],
+          })
+        ),
+    });
+  }
+
+  it("says how much of the catalog it actually sampled", async () => {
+    // The cap is deliberate, so it has to be visible. "8 skills discovered. 5
+    // verified" reads as "only 5 of them check out" — a far worse claim about
+    // the server than the true one, which is that the doctor stopped at 5.
+    const manager = await manySkillsManager(8);
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("ok");
+    expect(result.checks.skills.detail).toContain("5 of 8 sampled and verified");
+    expect(result.skills).toHaveLength(8);
+  });
+
+  it("does not claim a sample when it verified the whole catalog", async () => {
+    const manager = await manySkillsManager(2);
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.detail).toContain("2 verified");
+    expect(result.checks.skills.detail).not.toContain("sampled");
+  });
+
+  it("skips when the extension was never negotiated", async () => {
+    // Most servers serve no skills. Reporting that as a failure would make the
+    // doctor cry wolf on almost every run.
+    const manager = createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: false,
+        advertised: true,
+        directoryRead: false,
+        active: false,
+      }),
+    });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("skipped");
+    expect(result.checks.skills.detail).toContain("does not declare");
+    expect(result.skills).toEqual([]);
+  });
+
+  it("blames the capability pin, not the server, when we were the ones who did not ask", async () => {
+    // `active` is the AND of two declarations, so a single message for both
+    // sides reports our own omission as a fact about the server. A server
+    // author running the doctor behind `--host cursor` against a server that
+    // serves skills perfectly well must not read "not active" as their bug.
+    const manager = createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: false,
+        directoryRead: false,
+        active: false,
+      }),
+    });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("skipped");
+    expect(result.checks.skills.detail).toContain("DOES declare");
+    expect(result.checks.skills.detail).toContain("pinned for this run");
+    // The failure this guards against is the detail reading as a server defect.
+    expect(result.checks.skills.detail).not.toContain("does not declare");
+  });
+
+  it("verifies the skills it lists, rather than counting them", async () => {
+    const manager = await skillsManager();
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("ok");
+    expect(result.checks.skills.detail).toContain("verified");
+    expect(result.skills).toHaveLength(1);
+  });
+
+  it("fails when the listing carried entries it had to reject", async () => {
+    // A REJECTED entry is a defect, unlike an `unloadable` one. Unloadable
+    // means the server told the truth about something it cannot serve
+    // verifiably; rejected means the manifest made no sense — here, an entry
+    // pointing outside the skill's own directory, which is a containment
+    // violation. Reporting `ok` because the sampled skill happened to verify
+    // would tell an author their serving is fine while a conforming host drops
+    // entries on the floor.
+    const good = {
+      uri: SKILL_URI,
+      frontmatter: { name: "good", description: "A verifiable skill." },
+      resources: [
+        {
+          uri: SKILL_URI,
+          digest: `sha256:${await sha256(MARKDOWN)}`,
+          size: new TextEncoder().encode(MARKDOWN).byteLength,
+        },
+      ],
+    };
+    const escaping = {
+      uri: "skill://demo/other/SKILL.md",
+      frontmatter: { name: "other", description: "Escapes its directory." },
+      resources: [
+        {
+          uri: "skill://demo/elsewhere/secrets.env",
+          digest: `sha256:${"0".repeat(64)}`,
+          size: 1,
+        },
+      ],
+    };
+    const manager = createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest
+        .fn()
+        .mockResolvedValue({ skills: [good, escaping] }),
+      getServerSkill: jest.fn().mockResolvedValue(good),
+      readResource: jest.fn().mockResolvedValue({
+        contents: [
+          { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },
+        ],
+      }),
+    });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain("rejected as malformed");
+    expect(result.checks.skills.detail).toContain("outside the skill directory");
+  });
+
+  it("reports a digest that does not match its bytes, naming the kind", async () => {
+    // The reason this check exists at all: a listing looks identical whether
+    // or not the content behind it verifies, so counting proves nothing. The
+    // KIND is in the detail because `digest_mismatch` and `frontmatter_drift`
+    // send a server author to completely different code.
+    const manager = await skillsManager({ tamper: true });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain("digest_mismatch");
+  });
+});
+
 describe("runServerDoctor", () => {
   it("returns a ready report for a healthy server", async () => {
     const result = await runServerDoctor(

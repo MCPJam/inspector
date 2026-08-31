@@ -2682,6 +2682,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
       "extensions": {
         "io.modelcontextprotocol/enterprise-managed-authorization": {},
         "io.modelcontextprotocol/ui": {
@@ -2868,6 +2872,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
       "extensions": {
         "io.modelcontextprotocol/enterprise-managed-authorization": {},
         "io.modelcontextprotocol/ui": {

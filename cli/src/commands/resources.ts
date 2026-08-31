@@ -149,7 +149,8 @@ export function registerResourcesCommands(program: Command): void {
       (manager, serverId) =>
         manager.listResourceTemplates(
           serverId,
-          options.cursor ? { cursor: options.cursor } : undefined,
+          // Presence, not truthiness: `""` is a valid continuation cursor.
+          options.cursor !== undefined ? { cursor: options.cursor } : undefined,
         ),
       {
         timeout: globalOptions.timeout,

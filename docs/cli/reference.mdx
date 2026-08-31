@@ -875,6 +875,38 @@ Permanently delete a sandbox image from a project.
 
 ---
 
+## `cloud skills` commands
+
+List and read the Cloud Skills in your hosted MCPJam projects. These commands exist to close a gap: three flags across the CLI take a skill ID (`eval run --compose-skill`, `eval cases run --compose-skill`, `environments ensure-adhoc --skill`) and until now there was no way to discover those IDs without opening the web app. Authoring stays in the app — these commands are read-only.
+
+All `skills` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `cloud skills list`
+
+List the skills visible to you in a project — the project-shared ones plus your own personal drafts. Each row includes a `pinnability` field that says whether the skill's ID is usable with `--compose-skill` and environment `skillSelection`, and why not if it isn't.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud skills get`
+
+Show one skill, including its SKILL.md body.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--skill <id>` | Yes | Skill ID, from `cloud skills list` |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
 ## `inspector` commands
 
 ### `inspector open`

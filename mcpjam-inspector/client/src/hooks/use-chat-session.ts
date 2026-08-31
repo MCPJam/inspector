@@ -154,6 +154,11 @@ import {
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import {} from "@/state/oauth-orchestrator";
+import {
+  deferPageToolCallForApproval,
+  snapshotPageToolsForTurn,
+} from "@/lib/webmcp-inspector/chat-dispatch";
+import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -207,6 +212,12 @@ import * as AppStateContext from "@/state/app-state-context";
 import { findProjectByAnyId, type AppState } from "@/state/app-types";
 import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { isEmbeddedPreview } from "@/lib/embedded-preview";
+import {
+  clearScenarioChatTranscript,
+  readScenarioChatTranscript,
+  writeScenarioChatTranscript,
+} from "@/lib/scenario-chat-transcript";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -372,6 +383,13 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Offer this turn the WebMCP tools of the page the inspector currently has
+   * open. Off unless the caller opts in: a chat that silently gained tools from
+   * a browser session opened in another tab would be a surprise, and page tools
+   * run code on a third-party site.
+   */
+  usePageTools?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -1706,7 +1724,41 @@ export function useChatSession(
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
   const [temperature, setTemperature] = useState(initialTemperature);
-  const [chatSessionId, setChatSessionId] = useState(generateId());
+  /**
+   * The scenario whose transcript this surface may resume across a refresh, or
+   * null for every other surface.
+   *
+   * The embedded Preview iframe is excluded for the same reason it is excluded
+   * from reading the scenario grant: it is same-origin with the dashboard and
+   * shares its sessionStorage, so writing there would leak a preview's
+   * conversation into the tester page (and back). A preview reloads by
+   * re-redeeming its token anyway.
+   */
+  const resumableScenarioId =
+    hostedScenarioId && !isEmbeddedPreview() ? hostedScenarioId : null;
+  /**
+   * Read ONCE, during the first render, before anything can overwrite the row:
+   * this is what a refresh has to work from, and both the initial
+   * `chatSessionId` below and the hydration effect further down consume it.
+   *
+   * A LAZY `useState` initializer, not `useRef(read(...))`: `useRef` evaluates
+   * its argument on every render and throws the result away after the first,
+   * so the ref form re-ran a `getItem` + `JSON.parse` on every render while
+   * only ever using the first value. This hook re-renders on every streaming
+   * chunk, and a transcript here is allowed to approach `MAX_SERIALIZED_LENGTH`
+   * (~2MB — one image attachment rides along as a `data:` URL, which is why
+   * the oldest-turn trimming exists), so that slip put a multi-megabyte
+   * synchronous parse on the streaming path. The value never changes after the
+   * first render, so state is the honest shape for it.
+   */
+  const [restoredScenarioTranscript] = useState(() =>
+    resumableScenarioId ? readScenarioChatTranscript(resumableScenarioId) : null
+  );
+  // Restoring the stored id — rather than minting a fresh one and seeding it —
+  // is what keeps the resumed turns appending to the SAME server-side thread.
+  const [chatSessionId, setChatSessionId] = useState(
+    () => restoredScenarioTranscript?.chatSessionId ?? generateId()
+  );
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
   /**
@@ -1865,6 +1917,11 @@ export function useChatSession(
   const builtInToolIdsRef = useRef<string[] | undefined>(undefined);
   builtInToolIdsRef.current =
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
+  // Read through a ref for the same reason the ids above are: the transport's
+  // body builder is created once and must see the CURRENT value at POST time,
+  // not the one captured when the transport was memoized.
+  const usePageToolsRef = useRef(false);
+  usePageToolsRef.current = options.usePageTools === true;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -2958,6 +3015,15 @@ export function useChatSession(
           appTools: useAppToolsRegistry
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
+          // WebMCP page tools, when the caller opted this turn into the tools
+          // of an open inspector session. Drained fresh at POST time for the
+          // same reason as `appTools`: the page may have registered or dropped
+          // tools since the last turn. `setAdvertisedPageTools` records what
+          // this turn advertised so an alias in the response resolves back to
+          // the tool it stood for.
+          ...(usePageToolsRef.current
+            ? { pageTools: snapshotPageToolsForTurn() }
+            : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -3031,7 +3097,7 @@ export function useChatSession(
     status,
     error,
     setMessages: baseSetMessages,
-    addToolApprovalResponse,
+    addToolApprovalResponse: sdkAddToolApprovalResponse,
     addToolOutput,
   } = useChat({
     id: chatSessionId,
@@ -3049,10 +3115,26 @@ export function useChatSession(
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
     // `addToolOutput(...)`. Server-tool calls bypass this handler (they
-    // resolve via the server's `execute` function); only client-fulfilled
-    // app aliases land here.
+    // resolve via the server's `execute` function); client-fulfilled app and
+    // page aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
+
+      // WebMCP page tools: the model asked for a tool a real web page
+      // registered, and the browser session that owns that page lives in this
+      // app. Claim it synchronously and wait for the approval pill to fulfill
+      // it. AI SDK delivers tool-input-available before tool-approval-request,
+      // so invoking here would bypass the user's decision.
+      if (
+        deferPageToolCallForApproval({
+          toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          input: (toolCall as { input: unknown }).input,
+        })
+      ) {
+        return;
+      }
+
       const entry = useAppToolsRegistry
         .getState()
         .resolve(toolName, chatSessionIdRef.current);
@@ -3215,6 +3297,19 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // UI/page tools are client-fulfilled. Their approval response must be
+  // routed through the shared defer/fulfill handler; a raw AI SDK approval
+  // response would leave a no-execute page tool without a result.
+  const addToolApprovalResponse = useMemo(
+    () =>
+      createUiAwareApprovalResponseHandler({
+        getMessages: () => messagesRef.current,
+        addToolApprovalResponse: sdkAddToolApprovalResponse,
+        addToolOutput,
+      }),
+    [sdkAddToolApprovalResponse, addToolOutput],
+  );
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
@@ -3875,6 +3970,98 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
+  // ── Tester-surface transcript resume (BB-51) ──────────────────────────────
+  //
+  // Apply the row read during the first render. `queueSessionHydration` takes
+  // its same-session branch — `chatSessionId` was INITIALIZED from this very
+  // record — so the messages land without minting a second session, and the
+  // restored thread is the one the next turn appends to.
+  const hasAppliedRestoredTranscriptRef = useRef(false);
+  useEffect(() => {
+    if (hasAppliedRestoredTranscriptRef.current) return;
+    hasAppliedRestoredTranscriptRef.current = true;
+    const restored = restoredScenarioTranscript;
+    if (!restored) return;
+    void queueSessionHydration({
+      sessionId: restored.chatSessionId,
+      messages: restored.messages,
+      // Null, not a stored number: the tab that wrote those turns is gone, so
+      // there is no version this one can be optimistic about. The first ingest
+      // after a resume therefore carries no `expectedVersion` and cannot 409.
+      resumedVersion: null,
+      persistedSnapshotToolCallIds: [],
+    });
+  }, [queueSessionHydration, restoredScenarioTranscript]);
+
+  // The scenario the transcript on screen belongs to. A tester can open a
+  // SECOND tester link in the same tab: `session` is replaced in place, so
+  // `hostedContext.scenarioId` flips from A to B under a mounted chat that is
+  // still holding A's messages.
+  // True once this mount has HELD messages for the attached scenario, which is
+  // what separates "the tester reset the chat" from "the restore has not landed
+  // yet". Reset by the switch effect below, so a scenario change starts clean.
+  const hasHeldMessagesThisMountRef = useRef(false);
+  const attachedTranscriptScenarioRef = useRef(resumableScenarioId);
+  // Set while a scenario switch is settling. Persistence is OFF in that window,
+  // and it has to be: the messages on screen still belong to the PREVIOUS
+  // scenario, so a write would file one tester's conversation under another's
+  // key — and the empty pass that follows the reset would then delete the row
+  // the new scenario is supposed to resume from.
+  const awaitingScenarioTranscriptResetRef = useRef(false);
+  useEffect(() => {
+    if (attachedTranscriptScenarioRef.current === resumableScenarioId) return;
+    attachedTranscriptScenarioRef.current = resumableScenarioId;
+    hasHeldMessagesThisMountRef.current = false;
+    awaitingScenarioTranscriptResetRef.current = true;
+  }, [resumableScenarioId]);
+
+  // Save after every SETTLED turn, never mid-stream, so a resumed transcript
+  // only ever holds turns the tester watched finish — the same turns the owner
+  // sees persisted server-side.
+  useEffect(() => {
+    if (!resumableScenarioId) return;
+    if (status === "submitted" || status === "streaming") return;
+    // Mid-switch. The scope change also reaches the auth-bootstrap effect,
+    // whose reset empties the transcript; THAT is the signal the messages on
+    // screen are no longer the previous scenario's, and the point at which the
+    // new one may restore its own row and resume being saved.
+    if (awaitingScenarioTranscriptResetRef.current) {
+      if (messages.length > 0) return;
+      awaitingScenarioTranscriptResetRef.current = false;
+      const restored = readScenarioChatTranscript(resumableScenarioId);
+      if (restored) {
+        void queueSessionHydration({
+          sessionId: restored.chatSessionId,
+          messages: restored.messages,
+          resumedVersion: null,
+          persistedSnapshotToolCallIds: [],
+        });
+      }
+      return;
+    }
+    if (messages.length > 0) {
+      hasHeldMessagesThisMountRef.current = true;
+      writeScenarioChatTranscript(resumableScenarioId, {
+        chatSessionId,
+        messages,
+      });
+      return;
+    }
+    // An empty transcript is only news once this mount has HAD messages — the
+    // tester reset the chat. On the first render it means the restore has not
+    // been applied yet, and clearing there would delete the very row this
+    // mount is about to resume from.
+    if (hasHeldMessagesThisMountRef.current) {
+      clearScenarioChatTranscript(resumableScenarioId);
+    }
+  }, [
+    resumableScenarioId,
+    status,
+    messages,
+    chatSessionId,
+    queueSessionHydration,
+  ]);
+
   const startChatWithMessages = useCallback(
     (
       messages: UIMessage[],
@@ -4341,8 +4528,23 @@ export function useChatSession(
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
+        // A scenario switch that beat the FIRST auth resolution (BB-51). The
+        // "no prior session to invalidate" reasoning above does not hold in
+        // that case: a restored tester transcript is applied by the hydration
+        // effect without waiting for auth, so scenario A's messages CAN be on
+        // screen while `hasResolvedBefore` is still false — the in-flight first
+        // pass was cancelled by the switch and never set the flag. Without this,
+        // no reset ever arrives, the persistence effect stays parked on its
+        // `awaiting` branch waiting for an empty transcript, and scenario B
+        // neither resumes nor saves for the rest of the tab's life.
+        const scenarioSwitchNeedsReset =
+          awaitingScenarioTranscriptResetRef.current;
 
-        if (authHeadersChanged || hostedScopeChanged) {
+        if (
+          authHeadersChanged ||
+          hostedScopeChanged ||
+          scenarioSwitchNeedsReset
+        ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
           clearPendingSessionHydration();

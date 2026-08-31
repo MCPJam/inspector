@@ -383,7 +383,6 @@ export type EvalCase = {
   _creationTime?: number; // Convex auto field
 };
 
-
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
@@ -976,6 +975,54 @@ export type EvalRunDiffSide = {
   };
 };
 
+/** Delivery channel a pinned skill reached the run through. */
+export type EvalRunSkillChannel =
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
+
+/** One skill's identity + content fingerprint on one side of a comparison. */
+export type EvalRunSkillSide = {
+  contentHash: string;
+  /** Complete-artifact hash; present only when supporting files diverge it. */
+  aggregateHash?: string;
+  /** Authored-skill revision, when the run recorded one. */
+  versionNumber?: number;
+  /** MCP-captured revision, when the run recorded one. */
+  serverSkillVersionNumber?: number;
+};
+
+export type EvalRunSkillChange = {
+  key: string;
+  name: string;
+  modelRef?: string;
+  channels: EvalRunSkillChannel[];
+  kind: "added" | "removed" | "changed";
+  /** The skill was renamed between the runs; ids still matched it as one skill. */
+  renamedFrom?: string;
+  base?: EvalRunSkillSide;
+  compare?: EvalRunSkillSide;
+  /** `v3 → v4`, present only when BOTH sides recorded a revision number. */
+  versionDelta?: string;
+};
+
+/**
+ * Which skills changed between two runs — the configuration attribution that
+ * usually explains the case-level regressions next to it.
+ *
+ * `null` (not an empty section) when neither run recorded pinned skills:
+ * rendering "no skills changed" for two legacy runs would be a claim nobody
+ * verified.
+ */
+export type EvalRunSkillDiff = {
+  base: { excluded: boolean; count: number };
+  compare: { excluded: boolean; count: number };
+  /** Added / removed / changed only, changed first. Unchanged are counted. */
+  changes: EvalRunSkillChange[];
+  unchangedCount: number;
+};
+
 export type EvalRunDiff = {
   suite: {
     id: string;
@@ -1018,6 +1065,8 @@ export type EvalRunDiff = {
     passed: EvalRunNumericDiff;
     failed: EvalRunNumericDiff;
   };
+  /** See {@link EvalRunSkillDiff}. Absent on responses from an older backend. */
+  skills?: EvalRunSkillDiff | null;
   cases: Array<{
     caseKey: string;
     title: string;

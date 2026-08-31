@@ -64,6 +64,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         requestTimeout: 10000,
       },
       clientCapabilities: {
+        elicitation: {
+          form: {},
+          url: {},
+        },
         extensions: {
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app"],

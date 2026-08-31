@@ -113,7 +113,10 @@ import {
   reconcileSkillDirs,
   appendManagedSkills,
 } from "./reconcile-skill-dirs.js";
-import { adoptSandboxSkills } from "./adopt-sandbox-skills.js";
+import {
+  adoptSandboxSkills,
+  shouldAdoptSandboxSkills,
+} from "./adopt-sandbox-skills.js";
 import {
   claimHarnessSessionState,
   commitHarnessSessionState,
@@ -2603,17 +2606,26 @@ export async function runHarnessTurn(
           // fail-soft. NOTE: a fresh adoption adds a new skillId to the runtime set
           // NEXT turn, so the runtime fingerprint intentionally forks then (the
           // adapter (re)writes on the fresh start) — expected, not a bug.
+          //
+          // See `shouldAdoptSandboxSkills` for why each condition is there —
+          // in particular why a PINNED turn must never adopt.
           if (
-            runSucceeded &&
-            !aborted &&
-            !pausedForApproval &&
-            harnessAdapter.supportsSkills &&
-            runtimeSkills !== null &&
-            !executionScope &&
+            shouldAdoptSandboxSkills({
+              runSucceeded,
+              aborted,
+              pausedForApproval,
+              supportsSkills: harnessAdapter.supportsSkills,
+              runtimeSkillsKnown: runtimeSkills !== null,
+              skillsArePinned,
+              hasExecutionScope: Boolean(executionScope),
+              hasCredentials: Boolean(authHeader && projectId),
+              hasFileSession: Boolean(sandboxFileSession),
+              adoptionDisabled:
+                process.env.HARNESS_SKILL_ADOPTION_DISABLED === "1",
+            }) &&
             authHeader &&
             projectId &&
-            sandboxFileSession &&
-            process.env.HARNESS_SKILL_ADOPTION_DISABLED !== "1"
+            sandboxFileSession
           ) {
             const fileSession = sandboxFileSession;
             const { adopted } = await adoptSandboxSkills({

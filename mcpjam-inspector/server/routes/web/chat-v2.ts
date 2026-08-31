@@ -1,8 +1,12 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
+import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
-import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  listCloudRuntimeSkills,
+  shouldEnableCloudSkillTools,
+} from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError, TaskCreatedSink } from "@mcpjam/sdk";
 import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
@@ -95,6 +99,7 @@ import {
   type PluginRuntimeAttribution,
 } from "../../services/environments/plugin-attribution.js";
 import {
+  buildLiveEffectiveCapabilities,
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
   type EffectiveCapabilitySet,
@@ -235,7 +240,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        normalizedTarget.error
+        normalizedTarget.error,
       );
     }
     const executionTarget = normalizedTarget.target;
@@ -260,7 +265,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "messages are required"
+        "messages are required",
       );
     }
 
@@ -269,7 +274,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "model is not supported"
+        "model is not supported",
       );
     }
 
@@ -307,7 +312,7 @@ chatV2.post("/", async (c) => {
       // delegated JWT (and passes JWTs through untouched), same as the eval
       // launch path.
       const convexClient = createConvexClient(
-        await getConvexBearerForRequest(c)
+        await getConvexBearerForRequest(c),
       );
       // One atomic member-read: host runtime config + closed server set +
       // composed skill union + pinned plugin versions, at one revision. The
@@ -327,7 +332,7 @@ chatV2.post("/", async (c) => {
       const attribution = await fetchPluginRuntimeAttribution(convexClient, {
         projectId: hostedBody.projectId,
         pluginVersionIds: (environmentSpec.pluginVersions ?? []).map(
-          (plugin) => plugin.pluginVersionId
+          (plugin) => plugin.pluginVersionId,
         ),
       });
       // INS-4: the Playground's ephemeral plugin narrowing, applied to the
@@ -353,7 +358,7 @@ chatV2.post("/", async (c) => {
       }
       effectiveCapabilities = resolveEffectiveCapabilities(
         environmentSpec,
-        attribution
+        attribution,
       );
       if (effectiveCapabilities.problems.length > 0) {
         // Codes and ids only, never `problem.message` — those messages
@@ -365,14 +370,14 @@ chatV2.post("/", async (c) => {
           environmentId: environmentSpec.environmentRef.environmentId,
           codes: effectiveCapabilities.problems.map((problem) => problem.code),
           skillIds: effectiveCapabilities.problems.flatMap((problem) =>
-            "skillId" in problem ? [problem.skillId] : []
+            "skillId" in problem ? [problem.skillId] : [],
           ),
         });
       }
       // Plugin origin on every RPC frame this turn produces, so a trace answers
       // "which plugin revision served this tool call" without a second lookup.
       rpcCollector?.setPluginOriginByServerId(
-        pluginOriginByServerId(effectiveCapabilities)
+        pluginOriginByServerId(effectiveCapabilities),
       );
     } else if (isScenarioSession && scenarioId) {
       const runtime = await fetchScenarioRuntimeConfig({
@@ -395,12 +400,12 @@ chatV2.post("/", async (c) => {
         if (environmentRead.kind === "invalid") {
           logger.warn(
             "[chat-v2] scenario environment payload malformed; failing closed",
-            { scenarioId, detail: environmentRead.detail }
+            { scenarioId, detail: environmentRead.detail },
           );
           throw new WebRouteError(
             502,
             ErrorCode.INTERNAL_ERROR,
-            "Couldn't load this scenario's environment, so the turn was stopped to avoid running with the wrong configuration."
+            "Couldn't load this scenario's environment, so the turn was stopped to avoid running with the wrong configuration.",
           );
         }
         if (environmentRead.kind === "present") {
@@ -423,7 +428,7 @@ chatV2.post("/", async (c) => {
                 {
                   projectId: hostedBody.projectId,
                   pluginVersionIds: pinnedVersionIds,
-                }
+                },
               );
             } catch (error) {
               // `fetchPluginRuntimeAttribution` already swallows probe
@@ -434,7 +439,7 @@ chatV2.post("/", async (c) => {
                 {
                   scenarioId,
                   error: error instanceof Error ? error.message : String(error),
-                }
+                },
               );
             }
           }
@@ -443,7 +448,7 @@ chatV2.post("/", async (c) => {
           // "resolved") instead of silently delivering zero.
           effectiveCapabilities = resolveEffectiveCapabilities(
             scenarioEnvironment,
-            attribution
+            attribution,
           );
           if (effectiveCapabilities.problems.length > 0) {
             // Codes and ids only — same redaction rationale as the
@@ -451,10 +456,10 @@ chatV2.post("/", async (c) => {
             logger.warn("[chat-v2] effective capability problems", {
               environmentId: scenarioEnvironment.environmentRef.environmentId,
               codes: effectiveCapabilities.problems.map(
-                (problem) => problem.code
+                (problem) => problem.code,
               ),
               skillIds: effectiveCapabilities.problems.flatMap((problem) =>
-                "skillId" in problem ? [problem.skillId] : []
+                "skillId" in problem ? [problem.skillId] : [],
               ),
             });
           }
@@ -462,7 +467,7 @@ chatV2.post("/", async (c) => {
           // environment target stamps it. Empty (no-op) until the backend
           // serves `pluginVersions` and the probe attributes them.
           rpcCollector?.setPluginOriginByServerId(
-            pluginOriginByServerId(effectiveCapabilities)
+            pluginOriginByServerId(effectiveCapabilities),
           );
         }
         hostRuntimeConfig = runtime.config as unknown as Record<
@@ -493,7 +498,7 @@ chatV2.post("/", async (c) => {
           throw new WebRouteError(
             409,
             ErrorCode.SCENARIO_ACCESS_STALE,
-            failClosedMessage
+            failClosedMessage,
           );
         }
         throw new WebRouteError(
@@ -501,7 +506,7 @@ chatV2.post("/", async (c) => {
           runtime.status === 403
             ? ErrorCode.SCENARIO_ACCESS_DENIED
             : ErrorCode.INTERNAL_ERROR,
-          failClosedMessage
+          failClosedMessage,
         );
       }
     } else if (executionTarget.kind === "host") {
@@ -529,12 +534,12 @@ chatV2.post("/", async (c) => {
             hostId: targetHostId,
             status: runtime.status,
             error: runtime.error,
-          }
+          },
         );
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           ErrorCode.INTERNAL_ERROR,
-          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`
+          `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
         );
       }
     }
@@ -572,8 +577,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-      : undefined;
+        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+        : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -585,7 +590,7 @@ chatV2.post("/", async (c) => {
     // closed on a malformed/unsupported policy (409, never silently off).
     const xaaPolicy = hostRuntimeConfig
       ? xaaPolicyFromMcpProfile(
-          (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+          (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
         )
       : parseXaaPolicyValue((body as Record<string, unknown>).xaaPolicy);
 
@@ -608,12 +613,12 @@ chatV2.post("/", async (c) => {
           applyHostParamMirroring(
             initializePins,
             mirrorToolParamHeadersFromMcpProfile(
-              (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
-            )
+              (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+            ),
           ),
           conformanceKnobsFromMcpProfile(
-            (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
-          )
+            (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+          ),
         )
       : initializePins;
 
@@ -645,7 +650,7 @@ chatV2.post("/", async (c) => {
             scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -654,7 +659,7 @@ chatV2.post("/", async (c) => {
             scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -663,7 +668,7 @@ chatV2.post("/", async (c) => {
             scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -675,7 +680,7 @@ chatV2.post("/", async (c) => {
             scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       }
     }
@@ -705,7 +710,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
-        }
+        },
       );
       modelDefinition = hostModel;
     }
@@ -759,7 +764,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           503,
           ErrorCode.INTERNAL_ERROR,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
         );
       }
     }
@@ -770,9 +775,7 @@ chatV2.post("/", async (c) => {
     // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        | { executionScope?: ExecutionScope }
-        | null
-        | undefined
+        { executionScope?: ExecutionScope } | null | undefined
     )?.executionScope;
 
     // COMP-16: the host-configured computer working directory — the SAME
@@ -814,6 +817,30 @@ chatV2.post("/", async (c) => {
         hasProjectId: Boolean(hostedBody.projectId),
       });
 
+    // The project pool as a live capability set. A catalog failure is logged
+    // and dropped rather than raised: losing skills must not lose the turn,
+    // and `listCloudRuntimeSkills` throwing is still distinguishable from a
+    // project that genuinely has none.
+    let liveProjectCapabilities: EffectiveCapabilitySet | undefined;
+    if (cloudSkillsEnabled && hostedBody.projectId) {
+      try {
+        liveProjectCapabilities = buildLiveEffectiveCapabilities({
+          standaloneSkills: await listCloudRuntimeSkills({
+            authHeader: `Bearer ${bearerToken}`,
+            projectId: hostedBody.projectId,
+          }),
+        });
+      } catch (error) {
+        logger.warn(
+          "[chat-v2] project skill catalog fetch failed; turn proceeds without them",
+          {
+            projectId: hostedBody.projectId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
+    }
+
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
     // `resolveElicitationGate` for why scenario turns must not read the body.
@@ -852,7 +879,7 @@ chatV2.post("/", async (c) => {
       Boolean(modelDefinition.id) &&
       isHostedCatalogModel(
         String(modelDefinition.id),
-        modelDefinition.provider
+        modelDefinition.provider,
       ) &&
       !resolvedExecution.harness;
     const rawMrtrVersion = (rawBody as Record<string, unknown>)
@@ -869,7 +896,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Malformed mrtrResume descriptor"
+        "Malformed mrtrResume descriptor",
       );
     }
     if (mrtrResumeRequest && !mrtrEnabled) {
@@ -878,7 +905,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         409,
         ErrorCode.VALIDATION_ERROR,
-        "This turn cannot resume an MRTR continuation (version or engine mismatch)"
+        "This turn cannot resume an MRTR continuation (version or engine mismatch)",
       );
     }
     const rawScopeStepUpResume = (rawBody as Record<string, unknown>)
@@ -889,7 +916,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Malformed scopeStepUpResume descriptor"
+        "Malformed scopeStepUpResume descriptor",
       );
     }
     const rawScopeStepUpCancel = (rawBody as Record<string, unknown>)
@@ -900,14 +927,14 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Malformed scopeStepUpCancel descriptor"
+        "Malformed scopeStepUpCancel descriptor",
       );
     }
     if (scopeStepUpResumeRequest && scopeStepUpCancelRequest) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Only one scope step-up continuation action is allowed"
+        "Only one scope step-up continuation action is allowed",
       );
     }
     const scopeStepUpEnabled =
@@ -970,7 +997,7 @@ chatV2.post("/", async (c) => {
     const taskCreatedBridge =
       tasksSeam &&
       isCompatibleHostedTasksVersion(
-        (rawBody as Record<string, unknown>).hostedTasksVersion
+        (rawBody as Record<string, unknown>).hostedTasksVersion,
       )
         ? new HostedTaskCreatedBridge({
             serverNamesById:
@@ -1057,7 +1084,7 @@ chatV2.post("/", async (c) => {
         // component colocates into THIS turn's machine rather than waking the
         // member's personal one alongside it.
         ...(executionScope ? { executionScope } : {}),
-      }
+      },
     );
     oauthServerUrls = urls;
     // Inject the live manager so the collector's fingerprint/era thunks can
@@ -1079,12 +1106,12 @@ chatV2.post("/", async (c) => {
                 serverId: mrtrResumeRequest.serverId,
                 ...(buildServerNamesById(
                   selectedServerIds,
-                  selectedServerNames
+                  selectedServerNames,
                 )?.[mrtrResumeRequest.serverId]
                   ? {
                       serverName: buildServerNamesById(
                         selectedServerIds,
-                        selectedServerNames
+                        selectedServerNames,
                       )![mrtrResumeRequest.serverId],
                     }
                   : {}),
@@ -1125,7 +1152,7 @@ chatV2.post("/", async (c) => {
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext
+        body.widgetModelContext,
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -1181,8 +1208,7 @@ chatV2.post("/", async (c) => {
     // stream layer calls this right after writing the SSE parts; until it does,
     // the notices stay pending server-side and are re-delivered next turn.
     let ackSandboxNotices:
-      | ((delivered: SandboxNoticeReason[]) => void)
-      | undefined;
+      ((delivered: SandboxNoticeReason[]) => void) | undefined;
     // Drop the personal-computer resource for every suppressing plan, so
     // `bash` is not advertised at all rather than falling back to the member's
     // own box — which is precisely the behaviour this feature replaces:
@@ -1200,7 +1226,7 @@ chatV2.post("/", async (c) => {
     const sandboxPlan = planScenarioSandbox({
       mode: computerSandboxMode,
       bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
-        BASH_TOOL_NAME
+        BASH_TOOL_NAME,
       ),
       ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
       hasChatSessionId: Boolean(body.chatSessionId),
@@ -1213,12 +1239,12 @@ chatV2.post("/", async (c) => {
       // shared box. No shell beats the wrong shell.
       logger.warn(
         "[chat-v2] ephemeral scenario sandbox requested without a chatSessionId; bash suppressed",
-        { scenarioId }
+        { scenarioId },
       );
     } else if (sandboxPlan.suppressReason === "not_a_data_plane") {
       logger.warn(
         "[chat-v2] ephemeral scenario sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",
-        { scenarioId }
+        { scenarioId },
       );
       if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
     }
@@ -1246,7 +1272,7 @@ chatV2.post("/", async (c) => {
           lifetime: "conversation",
         };
         const notices = (provisioned.value.notices ?? []).filter(
-          isSandboxNoticeReason
+          isSandboxNoticeReason,
         );
         if (notices.length > 0) sandboxNotices = notices;
         // PEEK/ACK (mcpjam-backend #829). The control plane hands the notice
@@ -1290,12 +1316,15 @@ chatV2.post("/", async (c) => {
             scenarioId,
             status: provisioned.status,
             error: provisioned.error,
-          }
+          },
         );
         suppressComputerResource = true;
       }
     }
 
+    // Filled by the resolver when browser tools are advertised; forwarded to
+    // the turn runner, which merges it into the engines' one approval slot.
+    let browserToolApprovals: UiToolApprovalClassification | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1324,7 +1353,13 @@ chatV2.post("/", async (c) => {
         // would be either rejected or — worse — wire-forgeable.
         ...(sandboxBinding ? { sandboxBinding } : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-      }
+        // This surface threads the classification (below), so it may advertise
+        // interactive browser tools.
+        browserApprovalDelivery: { kind: "attested" },
+        onBrowserApprovals: (approvals) => {
+          browserToolApprovals = approvals;
+        },
+      },
     );
 
     // Blueprint knowledge/maintenance: when this turn advertises bash, append
@@ -1364,7 +1399,7 @@ chatV2.post("/", async (c) => {
     // the exhaustive SANDBOX_NOTICE_MODEL_CONTEXT record, so no binding gate.
     const effectiveSystemPrompt = appendSandboxNoticeContext(
       withEnvironmentContext,
-      sandboxNotices
+      sandboxNotices,
     );
 
     try {
@@ -1480,21 +1515,25 @@ chatV2.post("/", async (c) => {
           appTools: validatedAppTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
+          ...(browserToolApprovals ? { browserToolApprovals } : {}),
           // COMP-16: root the harness Shell at the host-configured working
           // directory — the same `computer.workdir` the bash tool runs in.
           ...(harnessComputerWorkdir
             ? { computerWorkdir: harnessComputerWorkdir }
             : {}),
-          ...(cloudSkillsEnabled
+          // The project's skills as a capability set, for a target that
+          // resolves no environment (host / adhoc). Same gate as before, same
+          // laziness as before — a body is fetched for the skill the model
+          // loads, not for the catalog — but delivered through the one merged
+          // surface instead of a parallel branch of the orchestrator.
+          ...(liveProjectCapabilities
             ? {
-                cloudSkills: {
-                  authHeader: `Bearer ${bearerToken}`,
-                  projectId: hostedBody.projectId,
-                },
+                effectiveCapabilities: liveProjectCapabilities,
+                liveSkillSurface: true,
               }
             : {}),
           // Emulated-engine delivery of the environment's resolved skills.
-          // Mutually exclusive with `cloudSkills` above (gated on the same
+          // Mutually exclusive with the live set above (gated on the same
           // `environmentSpec`), and ignored by the helper on a harness turn.
           //
           // Both are set for an environment turn: the capability set drives the
@@ -1637,7 +1676,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
       );
     }
     // `webErrorFromRoute`, not `webError` — this call dropped
@@ -1665,7 +1704,7 @@ chatV2.post("/", async (c) => {
     return webErrorFromRoute(
       c,
       mapTargetServerError(error),
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
   }
 });
