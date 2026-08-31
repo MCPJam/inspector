@@ -666,11 +666,12 @@ chatV2.post("/", async (c) => {
     // Still purely a recording concern: it feeds `persist`, never the engines,
     // so what reaches the model is byte-identical either way. A turn with no
     // environment records nothing — there is nothing to record.
-    const skillDeliveryMode: EnvironmentSkillDelivery = !resolvedExecution.harness
-      ? "emulated"
-      : harnessSupportsSkills(resolvedExecution.harness)
-      ? "harness"
-      : "unsupported";
+    const skillDeliveryMode: EnvironmentSkillDelivery =
+      !resolvedExecution.harness
+        ? "emulated"
+        : harnessSupportsSkills(resolvedExecution.harness)
+        ? "harness"
+        : "unsupported";
     const turnProvenance = environmentSpec
       ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
       : scenarioEnvironment
@@ -679,7 +680,7 @@ chatV2.post("/", async (c) => {
             environmentRef: scenarioEnvironment.environmentRef,
             skills: scenarioEnvironment.skills ?? [],
           },
-          { delivery: skillDeliveryMode }
+          { delivery: skillDeliveryMode },
         )
       : undefined;
 
@@ -1272,8 +1273,35 @@ chatV2.post("/", async (c) => {
         : {}),
       ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
     });
-    const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
-    const secretEnv = runtimeSecrets ? toSecretEnv(runtimeSecrets) : undefined;
+    // A FAILED FETCH IS NOT "NO SECRETS", AND MUST NOT RUN THE TURN.
+    //
+    // The tri-state exists precisely so a transient Convex failure cannot read
+    // as an empty grant, but passing `null` downstream re-collapsed it: a null
+    // list omits the secrets dimension from the harness runtime fingerprint,
+    // which RESUMES the session — and a resumed harness session reattaches to a
+    // bridge process that still holds the previously delivered values. So the
+    // box would go on holding live credentials this process can no longer
+    // enumerate, which means no scrubber, which means anything the box echoes
+    // is persisted into the transcript verbatim. That is the exact leak
+    // materialized delivery is scrubbed to prevent, reached by way of a blip.
+    //
+    // `null` downstream therefore has to keep meaning "the caller established
+    // there are none", never "the caller could not find out". Refusing the turn
+    // is the only answer that preserves that: the failure is transient and the
+    // message says to retry, where an unscrubbed transcript is permanent.
+    //
+    // Only reachable when a grant boundary exists — `fetchRuntimeSecrets`
+    // returns an empty SUCCESS for a turn with no environment or no bearer, so
+    // a project with no secrets never lands here.
+    if (!secretsFetch.ok) {
+      throw new WebRouteError(
+        503,
+        ErrorCode.INTERNAL_ERROR,
+        "Couldn't resolve this environment's project secrets, so this turn was not started. This is usually transient — try again.",
+      );
+    }
+    const runtimeSecrets = secretsFetch.secrets;
+    const secretEnv = toSecretEnv(runtimeSecrets);
 
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
@@ -1416,11 +1444,13 @@ chatV2.post("/", async (c) => {
     // said, leaving a tester to debug a 401 from a credential they can see
     // selected in the environment editor.
     //
-    // Harness turns are excluded because they are not affected: `run-harness-turn`
-    // fetches its own secrets and delivers them as `sessionEnv`, so a notice
-    // there would be a false alarm. Brokered secrets never reach this code at
-    // all — they are injected outside the box — so this speaks only for the
-    // mode that actually went missing.
+    // Harness turns are excluded because they are not affected: THIS route hands
+    // its own `runtimeSecrets` to `runAssistantTurn`, and `run-harness-turn`
+    // delivers them as `sessionEnv` on the box it is bound to. (It never fetches
+    // for itself — `runtimeSecretsOverride ?? null` — so "the harness will sort
+    // it out" is true only because the caller already did.) Brokered secrets
+    // never reach this code at all — they are injected outside the box — so this
+    // speaks only for the mode that actually went missing.
     if (
       shouldWarnSecretsUndelivered({
         secretCount: secretEnv ? Object.keys(secretEnv).length : 0,

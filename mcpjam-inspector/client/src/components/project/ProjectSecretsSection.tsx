@@ -191,7 +191,7 @@ export function ProjectSecretsSection({
                       setDeleteError(null);
                       setDeleting(secret);
                     }}
-                    title="Revoke this secret"
+                    title="Delete this secret"
                   >
                     <Trash2 className="size-3.5 text-destructive" />
                   </Button>
@@ -226,14 +226,19 @@ export function ProjectSecretsSection({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Revoke {deleting?.name ?? "this secret"}?
+              Delete {deleting?.name ?? "this secret"}?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm">
                 <p>
-                  The stored value is deleted permanently. Runs already in
-                  flight keep the credential they were handed; every new run
-                  gets nothing.
+                  The stored value is deleted permanently and MCPJam stops
+                  delivering it. Runs already in flight keep the credential they
+                  were handed; every new run gets nothing.
+                </p>
+                <p>
+                  This does not revoke the credential itself. The key stays
+                  valid wherever it was issued — if it may have been exposed,
+                  rotate or revoke it there as well.
                 </p>
                 {environmentsUsing.length > 0 ? (
                   <p>
@@ -265,7 +270,7 @@ export function ProjectSecretsSection({
                 void confirmDelete();
               }}
             >
-              {busy ? "Revoking…" : "Revoke"}
+              {busy ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

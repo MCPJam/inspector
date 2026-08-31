@@ -437,7 +437,7 @@ export function registerSecretsCommands(program: Command): void {
   secrets
     .command("rm")
     .description(
-      "Revoke a secret. HARD: the row and the encrypted value both go. Not blocked when an environment still selects it — revocation never waits on cleanup."
+      "Delete a secret. HARD: the row and the encrypted value both go, and MCPJam stops delivering it. Not blocked when an environment still selects it — deletion never waits on cleanup. This does NOT revoke the credential at the provider that issued it, and runs already in flight keep the value they were handed."
     )
     .requiredOption("--secret <id>", "Secret ID, from `cloud secrets list`")
     .option("--project <id-or-name>", "Project name or ID")

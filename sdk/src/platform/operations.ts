@@ -11178,7 +11178,7 @@ export const deleteSecretOperation: PlatformOperation<
   name: "delete_secret",
   title: "Delete an MCPJam project secret",
   description:
-    "Revoke a credential. HARD — the row and the encrypted value both go, and nothing keeps resolving it. Deliberately NOT blocked when an environment still selects it: refusing would make a leaked credential un-revokable until someone edited every environment naming it, and revocation must never wait on cleanup. Runs already in flight keep the value they were handed.",
+    "Delete a stored credential. HARD — the row and the encrypted value both go, and MCPJam stops resolving and delivering it. Deliberately NOT blocked when an environment still selects it: refusing would leave a leaked credential undeletable until someone edited every environment naming it, and deletion must never wait on cleanup. TWO LIMITS, both important when responding to a leak: runs already in flight keep the value they were handed, and this does NOT revoke the credential at the provider that issued it — the key stays valid until it is rotated or revoked there.",
   readOnly: false,
   risk: "destructive",
   permalink: noPermalink("mutation-only"),

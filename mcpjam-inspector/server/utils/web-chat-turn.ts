@@ -1224,9 +1224,15 @@ export async function streamWebChatTurn(
       : {}),
     ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
     // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
-    // (even empty) means "this turn's secrets are already resolved, do not
-    // fetch again". A harness turn reached from somewhere that does not resolve
-    // them (the eval/swarm driver) still fetches for itself.
+    // (even empty) means "this turn's secrets are already resolved".
+    //
+    // ABSENT MEANS NO SECRETS ARE DELIVERED — it does not mean somebody else
+    // fetches them. `run-harness-turn` takes the list from its caller and never
+    // reads Convex itself (`runtimeSecretsOverride ?? null`), deliberately, so
+    // that delivery and transcript-scrubbing come from ONE read. A driver that
+    // has not wired secrets therefore runs with an empty env bag, silently.
+    // That is fail-closed, and it is exactly why the eval and swarm drivers
+    // need wiring rather than inheriting this for free.
     ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
