@@ -289,6 +289,7 @@ When two or more host configurations are attached to a suite, a **By case / By h
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn.
 - **Per-model breakdown** to compare how the same case behaves across models.
+- **User-value chain** — when the run has stage funnel data, a funnel panel appears in the insight rail showing how users progressed through the measured stages. The panel is only shown when there is data to display; runs with no derived chain produce no panel.
 - **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
 
