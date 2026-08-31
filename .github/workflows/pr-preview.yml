@@ -79,7 +79,6 @@ jobs:
       # all — until then.
       RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
-      STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # Default Convex backend for previews when no per-PR backend preview
       # exists. Points at the shared preview deployment once the
       # PREVIEW_BACKEND_* repo vars are provisioned (see
@@ -169,9 +168,7 @@ jobs:
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -384,7 +381,6 @@ jobs:
       # all — until then.
       RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
-      STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # Default Convex backend for previews when no per-PR backend preview
       # exists. Points at the shared preview deployment once the
       # PREVIEW_BACKEND_* repo vars are provisioned (see
@@ -453,9 +449,7 @@ jobs:
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -789,7 +783,6 @@ jobs:
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
-      STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # See upsert-preview: shared preview deployment when provisioned,
       # staging deployment until then.
       DEFAULT_BACKEND_VITE_CONVEX_URL: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL || vars.STAGING_VITE_CONVEX_URL }}
@@ -851,9 +844,7 @@ jobs:
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             VITE_CONVEX_URL="${{ steps.backend_target.outputs.vite_convex_url }}" \
             CONVEX_HTTP_URL="${{ steps.backend_target.outputs.convex_http_url }}"
 
