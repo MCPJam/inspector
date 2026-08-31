@@ -246,8 +246,8 @@ describe("evidence is attached to the claim it supports", () => {
     expect(ahead!.chain.status).toBe("verified");
     if (ahead!.chain.status === "verified") {
       expect(ahead!.chain.analyzerVersionAhead).toEqual({
-        reported: 5,
-        known: 4,
+        reported: 6,
+        known: 5,
       });
       expect(ahead!.chain.firstFailedStage).toBe("call");
     }

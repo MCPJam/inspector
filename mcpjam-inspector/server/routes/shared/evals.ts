@@ -1,7 +1,10 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
-import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
+import {
+  caseIntentSchema,
+  evalSuiteFileToolPolicySchema,
+} from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
@@ -13,6 +16,7 @@ import {
 import { resolveFrozenRunGradingMode } from "../../services/evals/grading-mode.js";
 import {
   startSuiteRunWithRecorder,
+  type EvalRunProvenance,
   type SuiteRunRecorder,
 } from "../../services/evals/recorder";
 import {
@@ -62,6 +66,7 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
+import type { BenchmarkWriteGuard } from "../../services/evals/artifact-ledger.js";
 import {
   environmentEffectiveServerIds,
   environmentServerIds,
@@ -209,6 +214,10 @@ export const RunEvalsRequestSchema = z.object({
         isNegativeTest: z.boolean().optional(),
         scenario: z.string().optional(),
         expectedOutput: z.string().optional(),
+        // Optional analytics label. This authoring/run shape only creates or
+        // updates from a complete test definition, so it carries the stored
+        // string form; only the authoritative PATCH wire accepts `null`.
+        intent: caseIntentSchema.optional(),
         // Unified `TestStep[]` model — the source of truth for execution.
         // Declared explicitly so Zod does not silently strip it off the wire
         // (feedback_zod_strips_unthreaded_fields). Optional on the wire so
@@ -408,18 +417,77 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   skillsOverride: z.literal("exclude").optional(),
+  /**
+   * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
+   *
+   * Claim-only in both directions: the caller supplies an id and a reason, and
+   * the backend derives the approver from the authenticated launcher, stamps
+   * the time, and FREEZES the resulting decision into the run's own case
+   * snapshot. A caller-supplied approver would file one person's approval
+   * under another's name and a caller-supplied timestamp could be backdated
+   * past the edit that invalidated the claim, so neither is representable
+   * here.
+   *
+   * Nothing about this persists on the case. The next run of the same
+   * approximation needs a new approval — that is the difference between
+   * approving a RUN and accepting a CASE, and the whole reason there is no
+   * second concept.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently, and a silently-stripped approval
+   * would be reported to the caller as a backend policy refusal.
+   */
+  importApprovals: z
+    .array(
+      z
+        .object({
+          testCaseId: z.string().min(1),
+          reason: z.string().trim().min(1).max(500),
+        })
+        .strict()
+    )
+    .min(1)
+    .optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
+/**
+ * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api', the
+ * scheduled-evals worker passes 'schedule', the GitHub-checks worker passes
+ * 'github_check', and the bench worker passes 'benchmark' — which, alone among
+ * them, must also carry the `benchmarkRunId` of its live parent run.
+ *
+ * Server-internal on purpose: neither field is on `RunEvalsRequestSchema`, so
+ * API callers cannot spoof run provenance. The pairing rule lives in
+ * {@link EvalRunProvenance} beside the mutation call that has to honour it.
+ */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
-   * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
-   * the scheduled-evals worker passes 'schedule', and the GitHub-checks
-   * worker passes 'github_check'. Server-internal on purpose: it is NOT on
-   * `RunEvalsRequestSchema`, so API callers cannot spoof run provenance.
+   * Extra headers stamped on every per-step Convex request this run makes.
+   *
+   * The bench worker's channel for `x-mcpjam-benchmark-grant`: a benchmark
+   * cell's model calls are billed against the run's budget, and the grant is
+   * what tells `/stream` which run to charge. It rides the request headers
+   * rather than the run row because it is a short-lived credential — a run
+   * snapshot is member-readable and would make it forgeable.
+   *
+   * Passed by REFERENCE all the way to `processOneStep`, which reads it per
+   * step, so a caller holding the same object can rotate a credential inside
+   * it mid-run without restarting anything.
    */
-  source?: "ui" | "api" | "schedule" | "github_check";
+  extraHeaders?: Record<string, string>;
+  /**
+   * The benchmark's write-manifest enforcement for this cell.
+   *
+   * Server-internal like `source`: it is NOT on `RunEvalsRequestSchema`, so an
+   * API caller cannot hand itself permission to write to a target. The
+   * manifests inside are pinned in the definition and verified against the
+   * claim BEFORE the cell launches; the artifact ledger inside is the run's,
+   * shared by reference so every iteration writes into the one the run's
+   * cleanup will read.
+   */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /**
    * Pre-resolved environment from the caller's manager-priming preflight (the
    * hosted `/run` route and the scheduled worker resolve the environment ONCE
@@ -431,7 +499,7 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * retry) rather than pairing a stale manager with a newer run snapshot.
    */
   resolvedEnvironment?: ResolvedEnvironmentForLaunch;
-};
+} & EvalRunProvenance;
 
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
@@ -1150,6 +1218,7 @@ function toCaseBatchItem(
     isNegativeTest?: boolean;
     scenario?: string;
     expectedOutput?: string;
+    intent?: string;
     steps?: TestStep[];
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
@@ -1168,6 +1237,9 @@ function toCaseBatchItem(
     isNegativeTest: testCaseData.isNegativeTest,
     scenario: testCaseData.scenario,
     expectedOutput: testCaseData.expectedOutput,
+    ...(testCaseData.intent !== undefined
+      ? { intent: testCaseData.intent }
+      : {}),
     steps: sanitizeForConvexTransport(testCaseData.steps),
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
@@ -1396,6 +1468,7 @@ export async function authorEvalSuite(args: {
       isNegativeTest?: boolean;
       scenario?: string;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       judgeRequirement?: string;
       advancedConfig?: any;
@@ -1417,6 +1490,7 @@ export async function authorEvalSuite(args: {
         isNegativeTest: test.isNegativeTest,
         scenario: test.scenario,
         expectedOutput: test.expectedOutput,
+        intent: test.intent,
         steps: authoringSteps,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
@@ -1524,6 +1598,12 @@ export async function authorEvalSuite(args: {
             const expectedOutputChanged =
               normalize(existingTestCase.expectedOutput) !==
               normalize(testCaseData.expectedOutput);
+            // Omitted intent is a preserve, not an implicit clear. Only a
+            // caller that supplied the label may make an existing row differ.
+            const intentChanged =
+              testCaseData.intent !== undefined &&
+              normalize(existingTestCase.intent) !==
+                normalize(testCaseData.intent);
             const stepsChanged =
               JSON.stringify(
                 normalizeForComparison(existingTestCase.steps || [])
@@ -1556,6 +1636,7 @@ export async function authorEvalSuite(args: {
               isNegativeTestChanged ||
               scenarioChanged ||
               expectedOutputChanged ||
+              intentChanged ||
               stepsChanged ||
               judgeRequirementChanged ||
               advancedConfigChanged ||
@@ -1573,6 +1654,9 @@ export async function authorEvalSuite(args: {
                 isNegativeTest: testCaseData.isNegativeTest,
                 scenario: testCaseData.scenario,
                 expectedOutput: testCaseData.expectedOutput,
+                ...(testCaseData.intent !== undefined
+                  ? { intent: testCaseData.intent }
+                  : {}),
                 steps: sanitizeForConvexTransport(testCaseData.steps),
                 advancedConfig: sanitizeForConvexTransport(
                   testCaseData.advancedConfig
@@ -1890,13 +1974,27 @@ export async function prepareEvalRun(
     runGroupId,
     environmentId,
     resolvedEnvironment,
-    source,
     idempotencyKey,
     sourceHash,
     skillsOverride,
     ephemeralEnvironment,
     toolPolicy,
+    importApprovals,
+    extraHeaders,
+    benchmarkWriteGuard,
   } = request;
+
+  /**
+   * `source` and its licence are ONE fact (see {@link EvalRunProvenance}), so
+   * they travel as one value instead of being destructured apart. Two variables
+   * pulled out of a discriminated union are no longer correlated, and re-pairing
+   * them at the recorder call would take a cast — which is exactly the escape
+   * hatch that let `source: 'benchmark'` ship with no `benchmarkRunId`.
+   */
+  const provenance: EvalRunProvenance =
+    request.source === "benchmark"
+      ? { source: "benchmark", benchmarkRunId: request.benchmarkRunId }
+      : { source: request.source };
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
     throw new WebRouteError(
@@ -2087,11 +2185,20 @@ export async function prepareEvalRun(
     expectedEnvironmentServerIds: environmentLaunch
       ? environmentEffectiveServerIds(environmentLaunch)
       : undefined,
-    source,
+    // Spread as ONE value: `source: 'benchmark'` without its parent id is
+    // refused by `startTestSuiteRun`, so anything that can drop the id here
+    // turns a valid launch into a FORBIDDEN at the wire.
+    ...provenance,
     idempotencyKey,
     ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+    // Named explicitly, like every other field in this call: `startSuiteRun-
+    // WithRecorder` reconstructs the mutation args from its own parameters,
+    // so a field nobody destructures here is a field the backend never sees —
+    // and an approval that never arrives is reported to the caller as the
+    // backend refusing a run they did approve.
+    ...(importApprovals?.length ? { importApprovals } : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -2240,6 +2347,25 @@ export async function prepareEvalRun(
         harness: harnessAdmission.harness,
       }
     );
+  }
+  // Benchmark write manifests currently enforce argument/prefix ownership in
+  // the in-process tool-policy gate. Native harnesses execute MCP calls in a
+  // separate process, where that gate cannot inspect arguments or harvest
+  // created ids. Refuse this combination until the proxy carries the full
+  // side-effect guard; running it would make a consented write benchmark
+  // unbounded on the target server.
+  if (
+    benchmarkWriteGuard?.requireManifest === true &&
+    harnessAdmission.harness
+  ) {
+    const reason =
+      "benchmark write cases are not supported on an out-of-process harness yet; " +
+      "run this benchmark with an emulated client so argument and cleanup guards apply";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "BENCHMARK_WRITE_UNSUPPORTED",
+      harness: harnessAdmission.harness,
+    });
   }
   // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
   // derives `configSnapshot.executionEngine` from the run's own
@@ -2450,6 +2576,10 @@ export async function prepareEvalRun(
       // this checks for undefined rather than truthiness.
       ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
+      // The SAME object, never a copy — see `extraHeaders` on the request type.
+      ...(extraHeaders ? { extraHeaders } : {}),
+      // Likewise by reference: the ledger inside is the RUN's.
+      ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     });
   };
 
@@ -2607,6 +2737,10 @@ export async function runEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Freeze the authored analytics label onto the runtime case. The runner
+    // carries it into each iteration snapshot; reading it live later would
+    // re-attribute historical trials after a case is retagged.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
@@ -3032,6 +3166,9 @@ export async function streamEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Keep quick and streamed single-case runs identical to suite runs: the
+    // label is authored metadata, but it must be frozen at iteration create.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:

@@ -27,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  projectResolutionError,
   resolveEnvironmentOperation,
   resolveProject,
   runEvalCaseOperation,
@@ -35,10 +36,16 @@ import {
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
+  buildAppPermalink,
   type CreateEvalSuiteInput,
   type PlatformEvalRunDisclosure,
   type PlatformOperation,
+  type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
+import {
+  validateImportToolReferences,
+  type ImportToolFinding,
+} from "../lib/eval-import-live-validation.js";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
@@ -76,6 +83,7 @@ import {
   type GateReport,
   type LoadedCorpus,
   type PublicMatchOptions,
+  type ResolvedEvalSuiteFile,
   type StructuredCaseResult,
   type StructuredEvalRunInput,
   type StructuredRunReport,
@@ -101,6 +109,7 @@ import {
 import {
   executeEvalRunFromFile,
   looksLikeVersionedSuiteFile,
+  MAX_APPROVAL_REASON_LENGTH,
 } from "../lib/eval-run-file.js";
 import {
   CORPUS_DRIFT_EXIT_CODE,
@@ -132,6 +141,8 @@ import {
   policyFromOptions,
   parseWaiverExpiry,
   policyNeedsIterations,
+  importEvidenceBlocksGate,
+  importIneligibleReport,
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
@@ -554,15 +565,24 @@ function writeRunLink(
   if (format !== "human") return;
   const suiteId = run.suiteId?.trim();
   const runId = run.runId?.trim();
-  if (!suiteId || !runId) return;
-  const query = run.projectId?.trim()
-    ? `?project=${encodeURIComponent(run.projectId.trim())}`
-    : "";
-  process.stdout.write(
-    `View: ${webOrigin}/evals/suite/${encodeURIComponent(
-      suiteId
-    )}/runs/${encodeURIComponent(runId)}${query}\n`
-  );
+  const projectId = run.projectId?.trim();
+  if (!suiteId || !runId || !projectId) return;
+  let permalink: PlatformPermalink;
+  try {
+    permalink = buildAppPermalink(
+      {
+        type: "eval_run",
+        id: runId,
+        parent: { type: "eval_suite", id: suiteId },
+        projectId,
+      },
+      { appOrigin: webOrigin }
+    );
+  } catch {
+    // A convenience line may never fail a command that already succeeded.
+    return;
+  }
+  process.stdout.write(`View: ${permalink.url}\n`);
 }
 
 /** Judge keys the CLI knows how to label, in the order it prints them. */
@@ -1321,6 +1341,39 @@ async function runEvalGate(
                 },
               ],
             },
+            run,
+            iterations: iterations?.items ?? [],
+            iterationsComplete: iterations?.complete ?? false,
+            ...(iterationError ? { iterationError } : {}),
+          };
+        }
+
+        // Import evidence, BEFORE any verdict is computed and before
+        // `--baseline` gets a chance to merge one in.
+        //
+        // Early-returned rather than folded into the threshold report because
+        // the merge ranks `failed` above `incomplete`: a baseline regression
+        // alongside ineligible evidence would surface as exit 1, reporting a
+        // measured verdict this run is explicitly not allowed to produce.
+        // A waiver cannot reach it either — `applyGateWaiver` refuses to touch
+        // `incomplete`, which is the property that keeps import completeness
+        // un-overridable.
+        if (importEvidenceBlocksGate(run)) {
+          decisionSummary =
+            iterations && iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run,
+                  iterations,
+                })
+              : await readEvalRunDecisionSummary(
+                  client,
+                  signal,
+                  project.id,
+                  run,
+                );
+          return {
+            report: importIneligibleReport(run),
             run,
             iterations: iterations?.items ?? [],
             iterationsComplete: iterations?.complete ?? false,
@@ -2264,6 +2317,23 @@ type ValidateResult = {
     enabledCases: number;
   };
   findings: unknown[];
+  /**
+   * Present ONLY when `--project` was passed.
+   *
+   * A separate block rather than more entries in `findings`, because the two
+   * answer different questions: `findings` is "is this a valid suite file?",
+   * which is a property of the bytes and reproducible on any machine, and this
+   * is "does it resolve against THIS project right now?", which is a property
+   * of a live inventory that changes under you. Merging them would make a
+   * caller unable to tell a file it must edit from a project it must fix.
+   */
+  projectValidation?: {
+    project: { id: string; name: string };
+    /** Every target the file resolved to, so a finding's scope is readable. */
+    targets: string[];
+    valid: boolean;
+    findings: ImportToolFinding[];
+  };
 };
 
 /**
@@ -2280,15 +2350,151 @@ type ValidateResult = {
  * network round trip, and it is a later step's work. "Valid" here therefore
  * means "a valid suite file", never "this will run".
  */
-function runEvalValidate(options: { file: string }, command: Command): void {
+/**
+ * Parse `--allow-approximated` / `--approval-reason` into the file-run knob.
+ *
+ * Every rule here is enforced BEFORE the launch, and each one exists because
+ * the alternative silently spends money or silently weakens the policy:
+ *
+ *   - **`--suite` rejects them.** A hosted suite's cases are not the ones this
+ *     invocation authored, so an authored-id selector has nothing to resolve
+ *     against. Accepting the flags and ignoring them would let somebody believe
+ *     an approximation had been approved when the run refused it.
+ *   - **Selectors require a reason, and a reason requires selectors.** An
+ *     override with no stated reason is indistinguishable from an accident,
+ *     and a reason with nothing to apply it to is a typo the caller wants to
+ *     hear about before the run starts, not after.
+ *   - **Duplicates refuse.** Naming a case twice is either a mistake or a
+ *     misunderstanding of what approving twice would mean; neither should be
+ *     resolved by quietly deduplicating.
+ *
+ * Returns `undefined` when neither flag was passed, which is the ordinary case
+ * and must stay indistinguishable from the pre-flag behaviour.
+ */
+export function parseApprovalFlags(options: {
+  suite?: string;
+  allowApproximated?: string[];
+  approvalReason?: string;
+}): { cases: string[]; reason: string } | undefined {
+  const selectors = options.allowApproximated ?? [];
+  const rawReason = options.approvalReason;
+  if (selectors.length === 0 && rawReason === undefined) return undefined;
+
+  if (options.suite) {
+    throw usageError(
+      "--allow-approximated and --approval-reason apply to a file run (--file). A hosted suite's cases are not the ones this command authored, so there is no authored case id to approve."
+    );
+  }
+  if (selectors.length === 0) {
+    throw usageError(
+      "--approval-reason needs at least one --allow-approximated <case> to apply to."
+    );
+  }
+  if (rawReason === undefined) {
+    throw usageError(
+      "--allow-approximated requires --approval-reason <text>: an approval with no stated reason is indistinguishable from an accident."
+    );
+  }
+  const reason = rawReason.trim();
+  if (reason.length === 0 || reason.length > MAX_APPROVAL_REASON_LENGTH) {
+    throw usageError(
+      `--approval-reason must be 1-${MAX_APPROVAL_REASON_LENGTH} characters after trimming (received ${reason.length}).`
+    );
+  }
+  const seen = new Set<string>();
+  for (const selector of selectors) {
+    const trimmed = selector.trim();
+    if (trimmed.length === 0) {
+      throw usageError("--allow-approximated does not accept a blank case.");
+    }
+    if (seen.has(trimmed)) {
+      throw usageError(
+        `--allow-approximated names "${trimmed}" more than once. Approving a case twice is not twice the approval; name it once.`
+      );
+    }
+    seen.add(trimmed);
+  }
+  return { cases: [...seen], reason };
+}
+
+/**
+ * Findings from a live check, rendered the way `formatSuiteFileFindings`
+ * renders structural ones — same pointer-first shape, so a reader scanning both
+ * halves of a `--project` validation is reading one format, not two.
+ */
+export function formatImportToolFindings(
+  findings: readonly ImportToolFinding[]
+): string {
+  return findings
+    .map(
+      (entry) =>
+        `  ${entry.pointer}: ${entry.message} ` +
+        `(case ${entry.caseId}${entry.disabled ? ", disabled" : ""}` +
+        `${entry.imported ? ", imported" : ""})`
+    )
+    .join("\n");
+}
+
+/**
+ * The live half of `eval validate --project`.
+ *
+ * Authenticates and resolves the named project with the same helpers every
+ * other cloud command uses, then runs the ONE shared reference check. A failure
+ * to authenticate, reach the project, or list a server's tools propagates as a
+ * command error: the file has not been judged, and saying it has would be a
+ * lie in the one direction that matters.
+ */
+async function runProjectValidation(
+  options: PlatformOptions & { project?: string },
+  command: Command,
+  resolved: ResolvedEvalSuiteFile
+): Promise<NonNullable<ValidateResult["projectValidation"]>> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = resolveCloudProjectArgs(options);
+  return runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const page = await client.listProjects({}, { signal });
+      const resolution = resolveProject(page.items, scope.project);
+      if (!resolution.ok) throw projectResolutionError(resolution.message);
+      const project = resolution.project;
+      const outcome = await validateImportToolReferences(client, {
+        projectId: project.id,
+        resolved,
+        signal,
+      });
+      return {
+        project: { id: project.id, name: project.name },
+        targets: outcome.targets.map((target) => target.label),
+        valid: outcome.findings.length === 0,
+        findings: outcome.findings,
+      };
+    }
+  );
+}
+
+async function runEvalValidate(
+  options: PlatformOptions & { file: string; project?: string },
+  command: Command
+): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const source = readSuiteFileInput(options.file);
   const label = options.file === "-" ? "<stdin>" : options.file;
   const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
 
   if (loaded.ok) {
+    // Keyed off the FLAG, never off the resolved project scope. A linked
+    // directory or an `MCPJAM_PROJECT` in the environment must not silently
+    // turn the one offline command in this CLI into a networked one —
+    // somebody validating a file on a plane would get an auth error for a
+    // question that needs no auth.
+    const projectValidation =
+      options.project === undefined
+        ? undefined
+        : await runProjectValidation(options, command, loaded.resolved);
     const result: ValidateResult = {
-      valid: true,
+      valid: projectValidation ? projectValidation.valid : true,
       file: label,
       suite: {
         id: loaded.authored.suite.id,
@@ -2297,17 +2503,33 @@ function runEvalValidate(options: { file: string }, command: Command): void {
         enabledCases: loaded.resolved.enabledCases.length,
       },
       findings: [],
+      ...(projectValidation ? { projectValidation } : {}),
     };
     if (globalOptions.format === "human") {
       const total = result.suite?.cases ?? 0;
       process.stdout.write(
-        `${label}: valid — suite ${result.suite?.id} ` +
+        `${label}: ${result.valid ? "valid" : "invalid"} — suite ${result.suite?.id} ` +
           `(${total} ${total === 1 ? "case" : "cases"}, ` +
           `${result.suite?.enabledCases} enabled)\n`
       );
-      return;
+      if (projectValidation && !projectValidation.valid) {
+        process.stdout.write(
+          `${projectValidation.findings.length} unresolved reference(s) ` +
+            `against project ${projectValidation.project.name}:\n` +
+            formatImportToolFindings(projectValidation.findings) +
+            "\n"
+        );
+      }
+    } else {
+      writeResult(result, globalOptions.format);
     }
-    writeResult(result, globalOptions.format);
+    // A completed live check that found unresolved references is a VERDICT on
+    // the file, so it takes the command's ordinary "file judged invalid" exit.
+    // An auth or network failure never reaches here — it threw, and threw as a
+    // command error.
+    if (projectValidation && !projectValidation.valid) {
+      setProcessExitCode(SUITE_FILE_INVALID_EXIT_CODE);
+    }
     return;
   }
 
@@ -2716,9 +2938,19 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--allow-approximated <case...>",
+        "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason."
+      )
+      .option(
+        "--approval-reason <text>",
+        "Why the approximations named by --allow-approximated are acceptable for this run (1-500 characters). Recorded on the run by the server."
       ).action(
     async (
       options: PlatformOptions & {
+        allowApproximated?: string[];
+        approvalReason?: string;
         composeHost?: string;
         composeComputer?: string;
         composeModel?: string[];
@@ -2772,6 +3004,7 @@ export function registerEvalCommands(program: Command): void {
       if (options.waitTimeout !== undefined && !options.wait) {
         throw usageError("--wait-timeout requires --wait.");
       }
+      const approvals = parseApprovalFlags(options);
       const globalOptions = getGlobalOptions(command);
       const reporter = parseReporterFormat(options.reporter);
       const waitTimeoutMs =
@@ -2879,6 +3112,7 @@ export function registerEvalCommands(program: Command): void {
                   ...(options.idempotencyKey
                     ? { idempotencyKey: options.idempotencyKey }
                     : {}),
+                  ...(approvals ? { approvals } : {}),
                   ...composeField(options),
                 },
               }
@@ -3723,15 +3957,24 @@ export function registerEvalCommands(program: Command): void {
   evals
     .command("validate")
     .description(
-      "Validate a local eval suite file offline — no auth, no network (0 valid, 1 contract-invalid, 2 unreadable/oversize/malformed)"
+      "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)"
     )
     .requiredOption(
       "--file <path>",
       "Suite file to validate, .yaml or .json (or - for stdin)"
     )
-    .action((options: { file: string }, command: Command) => {
-      runEvalValidate(options, command);
-    });
+    .option(
+      "--project <id-or-name>",
+      "Also resolve the file's deterministic tool references against this project's live servers. Opt-in: without it the command stays entirely offline."
+    )
+    .action(
+      async (
+        options: PlatformOptions & { file: string; project?: string },
+        command: Command
+      ) => {
+        await runEvalValidate(options, command);
+      }
+    );
 
       evals
       .command("export")

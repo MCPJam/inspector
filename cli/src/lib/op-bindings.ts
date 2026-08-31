@@ -185,13 +185,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_case: { command: "cloud eval cases run" },
 
   // ── Hosts, environments, images ─────────────────────────────────────────
-  list_hosts: { command: "cloud hosts list" },
-  get_host: { command: "cloud hosts get" },
-  create_host: { command: "cloud hosts create" },
-  update_host: { command: "cloud hosts update" },
-  delete_host: { command: "cloud hosts delete" },
-  set_host_servers: { command: "cloud hosts servers" },
-  duplicate_host: { command: "cloud hosts duplicate" },
+  // `cloud clients …`, with `cloud hosts …` kept as a command alias so existing
+  // scripts keep working. The binding names the CANONICAL path — the alias is
+  // resolvable by the same Commander tree, and pointing the binding at it would
+  // document the spelling we are moving away from.
+  list_clients: { command: "cloud clients list" },
+  get_client: { command: "cloud clients get" },
+  create_client: { command: "cloud clients create" },
+  update_client: { command: "cloud clients update" },
+  delete_client: { command: "cloud clients delete" },
+  set_client_servers: { command: "cloud clients servers" },
+  duplicate_client: { command: "cloud clients duplicate" },
   list_project_environments: { command: "cloud environments list" },
   get_project_environment_capabilities: {
     excluded:
@@ -213,6 +217,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
   },
+  list_project_skills: { command: "cloud skills list" },
+  get_project_skill: { command: "cloud skills get" },
   list_sandbox_images: { command: "cloud images list" },
   get_sandbox_image: { command: "cloud images get" },
   create_sandbox_image: { command: "cloud images create" },
@@ -275,6 +281,18 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   read_server_resource: {
     excluded:
       "`resources read` connects to the server directly, so it works without a project or an API key.",
+  },
+  list_server_skills: {
+    excluded:
+      "`skills list` connects to the server directly, so it works without a project or an API key.",
+  },
+  get_server_skill: {
+    excluded:
+      "`skills get` connects to the server directly, so it works without a project or an API key.",
+  },
+  read_server_skill_file: {
+    excluded:
+      "`skills read` connects to the server directly, so it works without a project or an API key.",
   },
   diagnose_server: {
     excluded:

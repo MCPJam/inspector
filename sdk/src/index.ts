@@ -132,6 +132,9 @@ export {
   SkillsExtGetMethod,
   SkillsExtListMethod,
   INODE_DIRECTORY_MIME_TYPE,
+  DYNAMIC_SKILL_RESOURCES,
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
   clientDeclaresSkillsExtension,
   resolveSkillsSupport,
   serverDeclaresSkillsExtension,
@@ -156,7 +159,10 @@ export {
   comparableAdvertisedFrontmatter,
   splitAdvertisedFrontmatter,
   computeSkillVersionHash,
+  checkManifestLimits,
+  enumeratedResources,
   findListedResource,
+  isDynamicResources,
   isListedResource,
   parseDigest,
   sha256HexOfBytes,
@@ -164,6 +170,7 @@ export {
   skillNameFromUri,
   splitSkillMarkdown,
   verifyDigest,
+  verifySize,
   verifySkillMarkdown,
 } from "./mcp-client-manager/index.js";
 export type {
@@ -179,6 +186,33 @@ export type {
   ParsedDigest,
   SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
+
+// Skills over MCP (SEP-2640) — the VERIFIED READ PATH.
+//
+// The orchestration above the integrity primitives: every SKILL.md fetched via
+// `resources/read` and digest-checked before a caller sees a byte, the manifest
+// enforced as the read allowlist, and each server behaviour mapped to a named
+// refusal. Exported here rather than behind a subpath because every consumer
+// already imports from the package root.
+export {
+  EXTENSION_INACTIVE_REFUSAL,
+  MAX_SERVER_SKILL_READ_BYTES,
+  ServerSkillRefusalError,
+  getVerifiedServerSkill,
+  isServerSkillRefusalError,
+  listServerSkillCatalog,
+  normalizeCatalogText,
+  probeServerSkillMissing,
+  readVerifiedServerSkillFile,
+  serverSkillsActive,
+} from "./server-skills.js";
+export type {
+  ServerSkillListing,
+  ServerSkillRefusal,
+  ServerSkillSummary,
+  ServerSkillsLogger,
+  VerifiedServerSkill,
+} from "./server-skills.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
@@ -340,6 +374,7 @@ export {
   SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_FINDING_CODES,
   SUITE_FILE_VALIDITY_DEFAULTS,
+  declareEvalSuiteFileValidity,
   formatSuiteFileFindings,
   loadEvalSuiteFile,
   resolveEvalSuiteFile,
@@ -941,6 +976,12 @@ export type {
   ParsedLLMString,
   ProviderLanguageModel,
 } from "./model-factory.js";
+
+// Which sampling parameters a model accepts. Also exported from
+// `@mcpjam/sdk/browser` so client code can gate a temperature control without
+// pulling the Node graph in; exported here so a Node consumer building its own
+// request doesn't re-derive the version thresholds locally.
+export { modelRejectsTemperature } from "./model-sampling-support.js";
 
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {

@@ -49,6 +49,9 @@ describe("sidebar section grouping", () => {
       "Resources",
       "Prompts",
       "Tasks",
+      // Same primitive as Tools, from the other side of the browser boundary:
+      // what a live PAGE registers rather than what a server exposes.
+      "WebMCP",
     ]);
     expect(titlesIn("Educate")).toEqual(["Learning"]);
   });

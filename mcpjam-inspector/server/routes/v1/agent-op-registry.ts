@@ -73,14 +73,17 @@ import {
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
-  getHostOperation,
+  createClientOperation,
+  getClientOperation,
   getServerPromptOperation,
   listEnvironmentsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
-  listHostsOperation,
+  listClientsOperation,
+  setClientServersOperation,
+  updateClientOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
   searchRegistryDirectoryOperation,
@@ -95,6 +98,9 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -150,7 +156,10 @@ import type {
   ProposedActionSeverity,
   ProposedActionTarget,
 } from "@mcpjam/sdk/public-api";
-import type { PlatformApiClient } from "@mcpjam/sdk/platform";
+import {
+  derivePermalinksFor,
+  type PlatformApiClient,
+} from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 
@@ -189,19 +198,6 @@ export interface GatedProposalMeta {
   confirmSeverity?:
     | ProposedActionSeverity
     | ((input: Record<string, unknown>) => ProposedActionSeverity | undefined);
-  /**
-   * What the executed action produced, when it produced something linkable.
-   *
-   * Built HERE rather than by the host, because building it needs the
-   * operation's result shape — and a host that knew every result shape would
-   * silently start linking to nothing the moment one changed. Absent means the
-   * action produces nothing to look at (a cancellation), which is different
-   * from "the host could not work out a link".
-   */
-  resource?(
-    result: unknown,
-    context: { projectId: string },
-  ): ExecutedActionResource | undefined;
   /**
    * What the proposal is ABOUT, from validated input, when that is a nameable
    * resource. Lets a host correlate the proposal with other turn output —
@@ -308,22 +304,6 @@ function describeChatMessage(input: Record<string, unknown>): string {
     .join(" · ");
 }
 
-/** The session a turn produced, as a linkable resource. */
-function chatSessionResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const sessionId = readString(result, "sessionId");
-  if (!sessionId) return undefined;
-  return {
-    type: "chat_session",
-    id: sessionId,
-    url: `${MCPJAM_HOSTED_ORIGIN}/sessions/${encodeURIComponent(
-      sessionId,
-    )}?project=${encodeURIComponent(projectId)}`,
-  };
-}
-
 /**
  * The suite both run-ops are ABOUT, in the validated input's own selector
  * vocabulary (the server's post-create offer passes the suite id; a
@@ -334,48 +314,6 @@ function evalSuiteTarget(
 ): ProposedActionTarget | undefined {
   const selector = named(input, "suite");
   return selector ? { type: "eval_suite", selector } : undefined;
-}
-
-/**
- * The run both run-ops produce, as a linkable resource.
- *
- * `?project=` makes the link self-describing: eval routes carry no project
- * segment, so without it the app renders whatever project the viewer's picker
- * was parked on — an empty state for everyone but the author.
- */
-function evalRunResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const suiteId =
-    readString(result, "suite.id") ?? readString(result, "suiteId");
-  if (!suiteId) return undefined;
-  const suiteUrl = `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
-    suiteId,
-  )}`;
-
-  // A GROUPED launch links to the group, not to one of its runs. The contract
-  // carries a single resource, and linking to the first run would hide the
-  // fact that a sibling failed — the one thing the approver most needs to see
-  // after approving N paid runs.
-  const runGroupId = readString(result, "runGroupId");
-  if (runGroupId) {
-    return {
-      type: "eval_run_group",
-      id: runGroupId,
-      url: `${suiteUrl}?view=runs&project=${encodeURIComponent(projectId)}`,
-    };
-  }
-
-  const runId = readString(result, "runId");
-  if (!runId) return undefined;
-  return {
-    type: "eval_run",
-    id: runId,
-    url:
-      `${suiteUrl}/runs/${encodeURIComponent(runId)}` +
-      `?project=${encodeURIComponent(projectId)}`,
-  };
 }
 
 /**
@@ -707,15 +645,113 @@ async function freezeComposeRunTarget(
 export function proposalInputForIdempotency(
   input: Record<string, unknown>,
 ): Record<string, unknown> {
-  const compose = input.compose;
+  // Client writes: drop the two proposal-only keys. `clientLabel` is a display
+  // name and `resolvedClientId` is a duplicate of the already-frozen `client`
+  // id kept as proof of the freeze — neither changes WHAT the approval does, so
+  // a harmless rename between redeliveries must not mint a second approval
+  // control for the same frozen action. Everything that decides the action
+  // stays in the hash: the frozen `client` id, both tokens, the `set`/`config`
+  // body, and `expectedImpact` — a changed impact IS a different action and
+  // SHOULD mint a new one.
+  const withoutClientDisplay =
+    "resolvedClientId" in input || "clientLabel" in input
+      ? (({
+          resolvedClientId: _resolved,
+          clientLabel: _label,
+          ...rest
+        }: Record<string, unknown>) => rest)(input)
+      : input;
+
+  const compose = withoutClientDisplay.compose;
   if (!compose || typeof compose !== "object" || Array.isArray(compose)) {
-    return input;
+    return withoutClientDisplay;
   }
   const { hostLabel: _dropped, ...restCompose } = compose as Record<
     string,
     unknown
   >;
-  return { ...input, compose: restCompose };
+  return { ...withoutClientDisplay, compose: restCompose };
+}
+
+/**
+ * Describe what a client edit will DO, in the approver's terms.
+ *
+ * Branches on the actual edit, because "rename" and "change the model every
+ * later turn runs on" are not the same decision and must not read the same. A
+ * rename claims nothing about execution; a config edit enumerates every durable
+ * consumer that follows it, and says so even when all three counts are zero —
+ * "this affects nothing else" is information, and omitting the sentence would
+ * read as the counts having been left out.
+ */
+function describeClientEdit(input: Record<string, unknown>): string {
+  const label =
+    named(input, "clientLabel") ?? named(input, "client") ?? "(unnamed)";
+  const bold = `**${label}**`;
+  const nextName = named(input, "name");
+  const set = input.set;
+  const hasSet = Boolean(set && typeof set === "object" && !Array.isArray(set));
+  const hasConfig = Boolean(input.config);
+
+  if (nextName && !hasSet && !hasConfig) {
+    // Deliberately silent about execution: nothing an environment or a journey
+    // resolves changes, and saying otherwise would ask for consent to an effect
+    // that does not happen.
+    return `Rename client ${bold} to **${nextName}**`;
+  }
+
+  const changes = hasConfig
+    ? "replace its whole configuration"
+    : describeFieldSet(set as Record<string, unknown>);
+  const renamePart = nextName ? ` and rename it to **${nextName}**` : "";
+  return `Edit client ${bold}: ${changes}${renamePart}. ${describeClientImpact(
+    input,
+  )}`;
+}
+
+/** "set temperature to 0.2 and clear harness" — the fields, in plain words. */
+function describeFieldSet(set: Record<string, unknown>): string {
+  const parts = Object.entries(set).map(([field, value]) => {
+    if (value === null) return `clear ${field}`;
+    if (typeof value === "object") return `replace ${field}`;
+    return `set ${field} to ${JSON.stringify(value)}`;
+  });
+  if (parts.length === 0) return "change nothing";
+  if (parts.length === 1) return parts[0]!;
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * The blast-radius sentence.
+ *
+ * Reads `expectedImpact` — the SAME value the freeze injected and the backend
+ * checks — so the sentence a human agreed to and the precondition the write
+ * enforces cannot describe different worlds.
+ */
+function describeClientImpact(input: Record<string, unknown>): string {
+  const impact = input.expectedImpact;
+  const unchanged = "Past runs and pinned suite snapshots are unaffected.";
+  if (!impact || typeof impact !== "object" || Array.isArray(impact)) {
+    // No frozen impact means the mint should have been refused; say nothing
+    // that implies a count rather than inventing a reassuring one.
+    return `Future direct client and playground use follows the edit. ${unchanged}`;
+  }
+  const counts = impact as Record<string, unknown>;
+  const n = (key: string) =>
+    typeof counts[key] === "number" ? (counts[key] as number) : 0;
+  const parts = [
+    [n("liveEnvironmentCount"), "live environment"],
+    [n("scenarioAttachmentCount"), "scenario attachment"],
+    [n("activeLegacyJourneyCount"), "active legacy journey"],
+  ] as const;
+  const total = parts.reduce((sum, [count]) => sum + count, 0);
+  const listed = parts
+    .map(([count, noun]) => `${count} ${noun}${count === 1 ? "" : "s"}`)
+    .join(", ");
+  const affected =
+    total === 0
+      ? "Nothing durable currently uses this client"
+      : `This will affect ${listed}`;
+  return `${affected}; future direct client and playground use also follows the edit. ${unchanged}`;
 }
 
 /** Read a string array off validated input, dropping non-strings. */
@@ -740,6 +776,100 @@ function readOptionalNumber(
 ): number | undefined {
   const value = input[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Freeze a CLIENT WRITE at proposal time: pin the target, the tokens, and what
+ * the edit affects.
+ *
+ * Three things about a client-edit proposal can change between minting it and a
+ * human clicking, and each one breaks the approval differently:
+ *
+ *   1. THE TARGET. The model may write a NAME. A rename between propose and
+ *      click would repoint the approved edit at whatever answers to that name
+ *      then — possibly a different client entirely. Resolving the selector to
+ *      an exact id makes "edit Claude" mean one row forever.
+ *   2. THE TOKENS. `expectedConfigId` / `expectedName` are what make the write
+ *      compare-and-set. Verified here against a server read, so a model that
+ *      invented a token, or echoed one from a stale read, is refused at MINT
+ *      time rather than after a human has already agreed to the edit.
+ *   3. WHAT IT AFFECTS. The approval copy quotes impact counts. If an
+ *      environment is attached between propose and click, the edit would
+ *      silently affect more than the human read. `expectedImpact` is injected
+ *      from the same detail read the copy is built from, and it is a REAL
+ *      operation field, so it reaches the backend precondition and turns that
+ *      case into a 409 requiring a fresh proposal.
+ *
+ * `clientLabel` and `resolvedClientId` are proposal-only: display and proof.
+ * Operation validation strips them at execution — they are not operation
+ * fields, and no schema accepts them.
+ *
+ * FAIL-CLOSED via `requiredFrozenKeys`. A proposal that cannot pin its target
+ * or its impact must not exist: an unpinned one would execute against a name,
+ * and one without impact would carry approval copy nothing checks. The
+ * `getClient` read is the DEFAULT one, so a private User Testing backing client
+ * is a 404 here — the agent surface never opts into those.
+ */
+export async function freezeClientWriteArgs(
+  input: Record<string, unknown>,
+  context: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const selector = named(input, "client");
+  if (!selector) {
+    // Validated input requires it; reachable only through an upstream bug.
+    throw new Error("client write carries no client selector to pin");
+  }
+  const detail = await context.client.getClient({
+    projectId: context.projectId,
+    client: selector,
+  });
+  if (!detail?.id) {
+    throw new Error(`client "${selector}" could not be resolved to an id`);
+  }
+
+  // Verify, never substitute. A token the model did not read is not a
+  // precondition, it is a rubber stamp — freezing in whatever the server
+  // currently has would turn compare-and-set into "overwrite whatever is
+  // there", which is the exact failure the token exists to prevent.
+  const expectedConfigId = readOptionalString(input, "expectedConfigId");
+  if (expectedConfigId && !detail.configId) {
+    // `configId` is optional on the DTO (an older backend omits it), and
+    // skipping the comparison when it is absent would mint a proposal whose
+    // token nothing verified — the opposite of what the block above promises.
+    // The backend enforces the token either way, so all that skipping buys is a
+    // human clicking approve on an edit that cannot succeed.
+    throw new Error(
+      `client "${detail.name}" reported no configId to verify expectedConfigId ` +
+        "against — re-read it and propose again",
+    );
+  }
+  if (expectedConfigId && expectedConfigId !== detail.configId) {
+    throw new Error(
+      `client "${detail.name}" changed since it was read (expectedConfigId ` +
+        `${expectedConfigId}, current ${detail.configId}) — re-read it and propose again`,
+    );
+  }
+  const expectedName = readOptionalString(input, "expectedName");
+  if (expectedName && expectedName !== detail.name) {
+    throw new Error(
+      `client was renamed since it was read (expectedName "${expectedName}", ` +
+        `current "${detail.name}") — re-read it and propose again`,
+    );
+  }
+  if (!detail.impact) {
+    throw new Error(
+      `client "${detail.name}" did not report what an edit affects; refusing to ` +
+        "mint an approval whose description cannot be checked",
+    );
+  }
+
+  return {
+    ...input,
+    client: detail.id,
+    resolvedClientId: detail.id,
+    clientLabel: detail.name,
+    expectedImpact: detail.impact,
+  };
 }
 
 /**
@@ -832,39 +962,6 @@ export async function freezeCardInstallArgs(
 }
 
 /**
- * The run a launch produces, as a linkable resource.
- *
- * Built here rather than by the host for the reason the eval builder above
- * documents: a host assembling URLs from a result payload would have to know
- * each operation's result shape, and would silently link to nothing the moment
- * one changed.
- */
-/**
- * The /conformance section a finished readiness run is read on.
- *
- * The EXACT run id travels in the link, not just the page. The section can
- * rediscover "the newest run for this server" when it has nothing better, but
- * that is the wrong run for somebody following a link about a specific one —
- * two runs started minutes apart would send an approver to the other one's
- * verdict.
- */
-function readinessRunResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const runId = readString(result, "run.runId") ?? readString(result, "run.id");
-  if (!runId) return undefined;
-  return {
-    type: "readiness_run",
-    id: runId,
-    url:
-      `${MCPJAM_HOSTED_ORIGIN}/conformance` +
-      `?project=${encodeURIComponent(projectId)}` +
-      `&readinessRun=${encodeURIComponent(runId)}`,
-  };
-}
-
-/**
  * Resolve a server selector to its stable project server id.
  *
  * A name is a pointer: rename or reuse between proposal and approval would
@@ -888,40 +985,49 @@ async function freezeConformanceServer(
   return { ...input, server: match.id };
 }
 
-export function conformanceRunResource(
+/**
+ * What an executed action produced, when it produced something linkable.
+ *
+ * Delegates to the OPERATION's own permalink policy rather than to a builder
+ * kept here. This registry used to carry five of those — one each for chat
+ * sessions, eval runs, readiness runs, conformance runs and journey runs — and
+ * three separate places assembled the same eval-run URL by string
+ * concatenation. Each copy had to remember `?project=`, and each was one
+ * result-shape change away from linking to nothing. Now the catalog declares
+ * where a result can be opened, exactly once, and every surface reads that.
+ *
+ * FIRST permalink only: `ExecutedActionResource` carries one resource by
+ * contract, and the policies order theirs so the first is the thing the action
+ * produced (a run, not its suite). An operation whose policy says `none`
+ * returns undefined here, which is the honest "nothing to look at" the
+ * contract already meant.
+ */
+export function executedActionResource(
+  operation: AnyPlatformOperation,
   result: unknown,
-  { projectId }: { projectId: string },
+  input: unknown,
+  context: { projectId: string },
 ): ExecutedActionResource | undefined {
-  const runId =
-    readString(result, "run.runId") ??
-    readString(result, "run.id") ??
-    readString(result, "runId");
-  if (!runId) return undefined;
+  const [permalink] = derivePermalinksFor(
+    operation,
+    result,
+    input,
+    {
+      appOrigin: MCPJAM_HOSTED_ORIGIN,
+      resolvedScope: { projectId: context.projectId },
+    },
+    (error, operationName) => {
+      logger.warn("[v1/agent] could not build a permalink", {
+        operation: operationName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
+  if (!permalink) return undefined;
   return {
-    type: "conformance_run",
-    id: runId,
-    url:
-      `${MCPJAM_HOSTED_ORIGIN}/conformance/runs/${encodeURIComponent(runId)}` +
-      `?project=${encodeURIComponent(projectId)}`,
-  };
-}
-
-function journeyRunResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const runId = readString(result, "run.id") ?? readString(result, "runId");
-  if (!runId) return undefined;
-  return {
-    type: "journey_run",
-    id: runId,
-    // `/swarms/<runId>` — the client routes on the FIRST segment after
-    // `/swarms/` (App.tsx takes `.split("/")[0]` as the run id), so a
-    // `/swarms/runs/<id>` link resolves to a run named literally "runs" and
-    // dead-links the approver.
-    url:
-      `${MCPJAM_HOSTED_ORIGIN}/swarms/${encodeURIComponent(runId)}` +
-      `?project=${encodeURIComponent(projectId)}`,
+    type: permalink.resource.type,
+    id: permalink.resource.id,
+    url: permalink.url,
   };
 }
 
@@ -1296,7 +1402,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         (input as { includeLlmObservations?: boolean }).includeLlmObservations
           ? "spend"
           : "none",
-      resource: readinessRunResource,
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1323,7 +1428,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         (input as { includeLlmObservations?: boolean }).includeLlmObservations
           ? "spend"
           : "none",
-      resource: readinessRunResource,
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1347,7 +1451,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: () => "none",
-      resource: conformanceRunResource,
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1383,6 +1486,20 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   },
   {
     operation: readServerResourceOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  { operation: listServerSkillsOperation, tier: "direct" },
+  {
+    // A skill body is instructions written by a third party, aimed at a model.
+    // That is the same untrusted-content problem as a resource or a prompt, and
+    // more pointed: the content's whole purpose is to be acted on.
+    operation: getServerSkillOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: readServerSkillFileOperation,
     tier: "direct",
     promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
   },
@@ -1424,8 +1541,14 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- To find out why an iteration failed, start with `get_eval_run_steps`: it gives the per-step verdicts and reasons in a fraction of the tokens. Reach for `get_eval_iteration_trace` only when the steps do not explain it — a full trace is the whole message history and can be large enough to crowd out the rest of the turn.",
     ],
   },
-  { operation: listHostsOperation, tier: "direct" },
-  { operation: getHostOperation, tier: "direct" },
+  { operation: listClientsOperation, tier: "direct" },
+  {
+    operation: getClientOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
+    ],
+  },
   { operation: listEnvironmentsOperation, tier: "direct" },
   { operation: getEnvironmentOperation, tier: "direct" },
 
@@ -1476,7 +1599,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // side-effect warning is carried in the describe line where the
       // approver actually reads it.
       confirmSeverity: "spend",
-      resource: chatSessionResource,
     },
   },
   {
@@ -1500,7 +1622,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // the schedule entry below decides per argument), so the two are
       // deliberately separate fields that happen to agree here.
       confirmSeverity: "spend",
-      resource: evalRunResource,
       target: evalSuiteTarget,
       normalizeProposalArgs: freezeEvalRunTargets,
     },
@@ -1513,7 +1634,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: "spend",
-      resource: evalRunResource,
       target: evalSuiteTarget,
       // Same freeze as the suite run, and for the same reasons. This operation
       // takes the full `compose` input, so without it `compose.host` and
@@ -1816,7 +1936,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Launch it",
       kind: "start",
       confirmSeverity: "spend",
-      resource: journeyRunResource,
       target: (input) => {
         const journey = named(input, "journey");
         return journey ? { type: "journey", selector: journey } : undefined;
@@ -2010,6 +2129,109 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
+  // ── Client authoring ──────────────────────────────────────────────────
+  //
+  // GATED, all three, and each is an exception to what its `risk` alone would
+  // pick: `create_client` is `risk: "none"` and would otherwise be direct;
+  // `update_client` and `set_client_servers` are `risk: "destructive"` and
+  // would otherwise be excluded. The named exceptions in
+  // `agent-op-registry.test.ts` are where that is written down.
+  //
+  // The same reason covers both directions. A client IS the execution surface
+  // every later turn runs on, so a human approves changes to it — but an
+  // approval is only worth asking for if it means something, and these do:
+  // the target is frozen to an id, the tokens are verified before the proposal
+  // is minted, and the impact the card quotes is preconditioned transactionally.
+  // A consumer added between the proposal and the click makes the write
+  // conflict rather than quietly widening what was agreed to.
+  //
+  // `delete_client` and `duplicate_client` stay excluded — see EXCLUDED_FROM_AGENT.
+  {
+    operation: createClientOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const name = named(input, "name") ?? "(unnamed)";
+        const template = named(input, "template");
+        return template
+          ? `Create client **${name}** from template ${template}`
+          : `Create client **${name}** from an explicit configuration`;
+      },
+      buttonLabel: "Create it",
+      kind: "schedule",
+      // Additive: nothing that exists changes, and no credits are spent.
+      confirmSeverity: "none",
+      target: (input) => {
+        const selector = named(input, "name");
+        return selector ? { type: "client", selector } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `create_client` mints a NEW client and changes nothing that exists. To change an existing one, use `update_client` — never create a near-duplicate to work around a failed edit.",
+    ],
+  },
+  {
+    operation: updateClientOperation,
+    tier: "gated",
+    proposal: {
+      describe: describeClientEdit,
+      buttonLabel: "Apply the edit",
+      kind: "schedule",
+      // Not `spend`: the edit costs nothing. Its hazard is that it changes what
+      // later runs execute, which the description states in counts.
+      confirmSeverity: "none",
+      // The FROZEN id where the freeze ran, so a host correlating this
+      // proposal with turn output matches the row, not the spelling.
+      target: (input) => {
+        const selector = named(input, "client");
+        return selector ? { type: "client", selector } : undefined;
+      },
+      normalizeProposalArgs: freezeClientWriteArgs,
+      // Fail-closed. Without the resolved id the approval executes against a
+      // NAME, which a rename can repoint; without the frozen impact the card's
+      // blast-radius sentence is a claim nothing checks.
+      requiredFrozenKeys: ["resolvedClientId", "expectedImpact"],
+    },
+    promptNotes: [
+      "- Editing a client is a three-step loop: call `get_client` first; echo its `configId` back as `expectedConfigId` (and its `name` as `expectedName` when you are renaming); on a conflict, re-read and retry with the fresh values. Never guess a token.",
+      "- Prefer `set` over `config`. `set` changes named fields over the client's CURRENT config inside the write transaction; `config` replaces everything and will revert any edit made since you read it. In `set`, absent means keep and `null` means reset-or-clear.",
+      "- A client edit changes what every later run of every environment, scenario and journey on it executes. Say what you are changing and what it affects before proposing it.",
+    ],
+  },
+  {
+    operation: setClientServersOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const label =
+          named(input, "clientLabel") ?? named(input, "client") ?? "(unnamed)";
+        const required = readStringList(input, "serverIds").length;
+        const optional = readStringList(input, "optionalServerIds").length;
+        const optionalNote = optional > 0 ? ` and ${optional} optional` : "";
+        return (
+          `Replace client **${label}**'s servers with ${required} required` +
+          `${optionalNote} server${
+            required === 1 && optional === 0 ? "" : "s"
+          }. ` +
+          `Servers not listed are detached. ${describeClientImpact(input)}`
+        );
+      },
+      buttonLabel: "Apply the edit",
+      kind: "schedule",
+      confirmSeverity: "none",
+      // The FROZEN id where the freeze ran, so a host correlating this
+      // proposal with turn output matches the row, not the spelling.
+      target: (input) => {
+        const selector = named(input, "client");
+        return selector ? { type: "client", selector } : undefined;
+      },
+      normalizeProposalArgs: freezeClientWriteArgs,
+      requiredFrozenKeys: ["resolvedClientId", "expectedImpact"],
+    },
+    promptNotes: [
+      "- `set_client_servers` REPLACES the server set: every server you leave out is detached. Read the current list with `get_client` first, and send `expectedConfigId` from the same read.",
+    ],
+  },
   { operation: getShareSettingsOperation, tier: "direct" },
   {
     operation: setShareModeOperation,
@@ -2103,7 +2325,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   delete_eval_case:
     "Irreversible delete; the agent proposes authoring, never destruction.",
   delete_project: "Irreversible and cascades across every project resource.",
-  delete_host: "Irreversible and rotates every host config that referenced it.",
+  delete_client:
+    "Removes the client identity every environment, journey and eval suite points at, and nothing here can put it back. The edit operations are gated rather than excluded because a preconditioned overwrite names what it replaces and leaves the client standing; a removal does neither.",
   delete_sandbox_image: "Irreversible; image lifecycle is an operator task.",
   delete_project_server:
     "Irreversible and cascades into hosts, evals and credentials.",
@@ -2118,12 +2341,13 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Covered by list_project_servers, which the agent already has.",
   update_project_server:
     "Server credentials and transport are an administrative surface.",
-  create_host:
-    "Host creation re-wires the execution surface the agent runs on.",
-  update_host: "Host config changes affect every subsequent turn.",
-  set_host_servers:
-    "Re-wiring a host's server set is an administrative surface.",
-  duplicate_host: "Host administration is not a turn concern.",
+  // `create_client`, `update_client` and `set_client_servers` moved OUT of this
+  // map and into the gated block above. What used to be written here —
+  // "re-wires the execution surface", "affects every subsequent turn" — is
+  // still true; it is the reason they are gated rather than direct, not a
+  // reason they cannot be proposed at all.
+  duplicate_client:
+    "Duplicating a client is roster housekeeping, not a turn concern: nothing in a turn needs a second copy of a configuration, and `create_client` covers the case where the agent genuinely needs a new one. Available on REST, the CLI and MCP.",
   create_project_environment:
     "Environment authoring is an administrative surface.",
   update_project_environment:
@@ -2146,6 +2370,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Plugin inventory is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
   get_plugin_version:
     "Plugin version detail is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+
+  // Cloud Skills. Same shape and same decision as plugins: read-only
+  // inventory, shipped for the MCP catalog and the CLI, not registered on the
+  // in-turn agent brief until skill questions become a turn concern.
+  list_project_skills:
+    "Skill inventory is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+  get_project_skill:
+    "Skill detail (including the SKILL.md body) is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
 
   // Sandbox images and computers: minutes-long builds and billable compute.
   list_sandbox_images:

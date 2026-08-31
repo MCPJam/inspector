@@ -173,7 +173,18 @@ export function CaniuseCapabilityPage({
                   </span>
                 </div>
                 <div>
-                  <SupportChip level={level} label={label} truncateLabel />
+                  {level === "unknown" ? (
+                    // Not probed yet. An em dash rather than a chip: a chip
+                    // reads as a verdict, and we have not measured this host.
+                    <span
+                      className="text-muted-foreground"
+                      title="Not yet tested"
+                    >
+                      —
+                    </span>
+                  ) : (
+                    <SupportChip level={level} label={label} truncateLabel />
+                  )}
                 </div>
                 <div className="text-xs tabular-nums text-muted-foreground">
                   {CANIUSE_LAST_VERIFIED_DATE}
