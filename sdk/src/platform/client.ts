@@ -96,6 +96,7 @@ import type {
   PlatformServerConnection,
   PlatformServerConnectionCreateBody,
   PlatformProjectServer,
+  PlatformServerGroup,
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
@@ -515,6 +516,33 @@ export class PlatformApiClient {
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/servers`,
       {},
+      options,
+    );
+  }
+
+  listServerGroups(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformServerGroup>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
+      {},
+      options,
+    );
+  }
+
+  createServerGroup(
+    params: {
+      projectId: string;
+      body: { name: string; description?: string; serverIds: string[] };
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformServerGroup> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
+      { body: params.body },
       options,
     );
   }

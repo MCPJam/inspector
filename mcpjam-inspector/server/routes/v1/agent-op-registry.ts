@@ -563,8 +563,12 @@ async function freezeEvalRunTargets(
  * "name or ID" and resolved by name at execute time, so an image renamed or
  * replaced between the proposal and the click repoints which sandbox the
  * approved run boots — the pointer problem this function exists to close, one
- * slot over. `serverGroup`, `skills.skillIds` and `pluginVersionIds` are
- * ID-only by contract and so are not pointers to freeze.
+ * slot over. `server`/`servers` are pointers for the same reason and frozen
+ * the same way: to SERVER ids, not to a group id. The group is minted at
+ * execute time and is content-determined by those ids, so freezing the ids
+ * closes the pointer without doing a write inside what must stay a read.
+ * `serverGroup`, `skills.skillIds` and `pluginVersionIds` are ID-only by
+ * contract and so are not pointers to freeze.
  *
  * `includeClientDefault` and `saveTargets` stay as written — they are
  * closed choices, not pointers. Compose itself is kept: dropping it would
@@ -614,6 +618,36 @@ async function freezeComposeRunTarget(
             computerSelector.toLocaleLowerCase(),
         );
       if (match) nextCompose.computer = match.id;
+    } catch {
+      // Same posture as the host lookup: a platform that cannot answer must
+      // not cost the caller the proposal. Execute still resolves the selector.
+    }
+  }
+
+  const serverSelectors = [
+    ...new Set([
+      ...readStringList(compose, "servers"),
+      ...(named(compose, "server") ? [named(compose, "server")!] : []),
+    ]),
+  ];
+  if (serverSelectors.length > 0) {
+    try {
+      const page = await client.listProjectServers({ projectId });
+      // All-or-nothing: a partially frozen list would pair resolved ids with
+      // a name still free to repoint, which is worse than freezing none —
+      // execute resolves the whole list under one set of rules either way.
+      const matches = serverSelectors.map(
+        (selector) =>
+          page.items.find((server) => server.id === selector) ??
+          page.items.find(
+            (server) =>
+              server.name.toLocaleLowerCase() === selector.toLocaleLowerCase(),
+          ),
+      );
+      if (matches.every((match) => match !== undefined)) {
+        nextCompose.servers = matches.map((match) => match!.id);
+        delete nextCompose.server;
+      }
     } catch {
       // Same posture as the host lookup: a platform that cannot answer must
       // not cost the caller the proposal. Execute still resolves the selector.
