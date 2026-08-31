@@ -7,6 +7,9 @@ on:
     branches:
       - main
       - "claude/mcp-benchmarks-v2-b0tw4b-**"
+      # CONVEX-19R guest-actor stack: #4505 sits on #4504, so without this it
+      # merges having never been tested. Drop with the stack.
+      - "fix/guest-actor-cloud-skills-catalog"
   push:
     branches: [main]
 
