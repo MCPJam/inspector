@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
+import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import {
   listCloudRuntimeSkills,
@@ -93,6 +94,8 @@ import {
   runtimeServerNames,
   runtimeServersAreOverridden,
   runtimeSkills as environmentRuntimeSkills,
+  turnSkillProvenance,
+  type EnvironmentSkillDelivery,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
 import {
@@ -647,6 +650,39 @@ chatV2.post("/", async (c) => {
       // precedence can't leak them from the body).
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+    // What this turn will RECORD about the configuration it ran with. Computed
+    // from the POST-narrowing spec (plugin overrides filtered `environmentSpec`
+    // above), so it reflects what actually ran rather than what the environment
+    // would resolve on its own.
+    //
+    // Sits AFTER `resolvedExecution` because the record has to follow DELIVERY,
+    // and delivery depends on the resolved engine: the emulated engine mints a
+    // tool for every channel including captured MCP-server skills, the harness
+    // adapter receives only `runtimeSkills(spec)` (captures are not addressable
+    // there — their `<serverSlug>/<name>` ref fails `isValidSkillName`), and a
+    // skills-incapable harness delivers nothing at all. Recording the resolved
+    // set instead would make the trace claim a skill the model never saw.
+    //
+    // Still purely a recording concern: it feeds `persist`, never the engines,
+    // so what reaches the model is byte-identical either way. A turn with no
+    // environment records nothing — there is nothing to record.
+    const skillDeliveryMode: EnvironmentSkillDelivery = !resolvedExecution.harness
+      ? "emulated"
+      : harnessSupportsSkills(resolvedExecution.harness)
+      ? "harness"
+      : "unsupported";
+    const turnProvenance = environmentSpec
+      ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
+      : scenarioEnvironment
+      ? turnSkillProvenance(
+          {
+            environmentRef: scenarioEnvironment.environmentRef,
+            skills: scenarioEnvironment.skills ?? [],
+          },
+          { delivery: skillDeliveryMode }
+        )
+      : undefined;
+
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
         logger.warn(
@@ -1405,6 +1441,9 @@ chatV2.post("/", async (c) => {
       sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
     }
 
+    // Filled by the resolver when browser tools are advertised; forwarded to
+    // the turn runner, which merges it into the engines' one approval slot.
+    let browserToolApprovals: UiToolApprovalClassification | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1439,6 +1478,12 @@ chatV2.post("/", async (c) => {
           ? { secretEnv }
           : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
+        // This surface threads the classification (below), so it may advertise
+        // interactive browser tools.
+        browserApprovalDelivery: { kind: "attested" },
+        onBrowserApprovals: (approvals) => {
+          browserToolApprovals = approvals;
+        },
       },
     );
 
@@ -1595,6 +1640,7 @@ chatV2.post("/", async (c) => {
           appTools: validatedAppTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
+          ...(browserToolApprovals ? { browserToolApprovals } : {}),
           // COMP-16: root the harness Shell at the host-configured working
           // directory — the same `computer.workdir` the bash tool runs in.
           ...(harnessComputerWorkdir
@@ -1644,6 +1690,7 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
+          ...(turnProvenance ? { turnProvenance } : {}),
           // INS-7: the same resolution, unflattened, for Computer delivery —
           // supporting files (the flat list drops them, and the project-wide
           // file query cannot return a plugin skill's) and the pinned plugin

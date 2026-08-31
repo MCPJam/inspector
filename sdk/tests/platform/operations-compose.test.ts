@@ -628,3 +628,79 @@ describe("expandComposeModelChoices", () => {
     ]);
   });
 });
+
+describe("compose skill selection", () => {
+  it("carries versionPins through to the ensure-adhoc body", async () => {
+    // The regression: `compose` declared its own narrower `skills` schema that
+    // parsed `mode` + `skillIds` and dropped `versionPins` on the floor, so
+    // composing a pinned stack silently ran Latest — the exact arm the caller
+    // pinned away from, invisibly, in a comparison meant to tell two revisions
+    // apart. Both surfaces parse through one schema now.
+    const { client, fetchMock } = makeClient();
+    // Through the SCHEMA, the way every real caller arrives (MCP tool call,
+    // CLI flag parse). `execute` on a hand-built object would sail past the
+    // very stripping this covers.
+    const input = runEvalSuiteOperation.inputSchema.parse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        skills: {
+          mode: "explicit",
+          skillIds: ["skill-a", "skill-b"],
+          versionPins: [{ skillId: "skill-a", versionId: "ver-a1" }],
+        },
+      },
+    });
+    await runEvalSuiteOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      skillSelection: {
+        mode: "explicit",
+        skillIds: ["skill-a", "skill-b"],
+        versionPins: [{ skillId: "skill-a", versionId: "ver-a1" }],
+      },
+    });
+  });
+
+  it("rejects a duplicate pin and a pin for an unselected skill, before any write", () => {
+    // Sharing the schema means sharing its refinements: `compose` inherits the
+    // relational checks it never had, so these fail immediately instead of
+    // after a round trip.
+    const duplicate = runEvalSuiteOperation.inputSchema.safeParse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        skills: {
+          mode: "explicit",
+          skillIds: ["skill-a"],
+          versionPins: [
+            { skillId: "skill-a", versionId: "ver-a1" },
+            { skillId: "skill-a", versionId: "ver-a2" },
+          ],
+        },
+      },
+    });
+    expect(duplicate.success).toBe(false);
+    expect(JSON.stringify(duplicate.error?.issues)).toContain(
+      "more than one version pin",
+    );
+
+    const unselected = runEvalCaseOperation.inputSchema.safeParse({
+      suite: "Smoke",
+      case: "c1",
+      compose: {
+        host: "Claude Code",
+        skills: {
+          mode: "explicit",
+          skillIds: ["skill-a"],
+          versionPins: [{ skillId: "skill-b", versionId: "ver-b1" }],
+        },
+      },
+    });
+    expect(unselected.success).toBe(false);
+    expect(JSON.stringify(unselected.error?.issues)).toContain(
+      "which is not in skillIds",
+    );
+  });
+});

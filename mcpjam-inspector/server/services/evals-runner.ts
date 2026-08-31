@@ -6,6 +6,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
@@ -3366,6 +3367,7 @@ const runLocalIteration = async ({
     activeTraceCtx: null,
     iterationError: undefined,
     iterationErrorDetails: undefined,
+    stepErrorSource: undefined,
     pinnedSetupFailure: false,
   };
   // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
@@ -3847,6 +3849,13 @@ const runLocalIteration = async ({
     // consumer than the stored transcript).
     const finishParams = buildIterationFinishParams({
       iterationId,
+      // The layer that failed, when this driver could tell — the local twin of
+      // the hosted path's `stepError`. Without it a local-BYOK trial that died
+      // on the model call finalizes uncategorised, which is the very failure
+      // the provider-error work removed on the hosted path.
+      ...(acc.stepErrorSource
+        ? { stepError: { source: acc.stepErrorSource } }
+        : {}),
       // Keys shadow-mismatch telemetry only; never read for the verdict.
       ...(runId !== null ? { runId: String(runId) } : {}),
       // The run's FROZEN position. Threaded so a per-suite `off` is honoured on
@@ -4083,6 +4092,12 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      // Same as the success path: carry the layer when the driver could tell.
+      // This branch is the one a model-call failure most often ends on, so
+      // omitting it here would leave the fix half-applied.
+      ...(acc.stepErrorSource
+        ? { stepError: { source: acc.stepErrorSource } }
+        : {}),
       ...(runId !== null ? { runId: String(runId) } : {}),
       ...(gradingMode ? { gradingMode } : {}),
       scoreMatchOptions: scoreMatchOptionsFor(test),
@@ -4425,10 +4440,21 @@ const runHostedIterationWithBrowser = async (
   // `builtInToolIds` resolve via the shared registry, billed against the
   // project target the org-BYOK/jam billing paths derive.
   const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
+  // Unattended: nothing here can pause to ask, so the run's DECLARED policy is
+  // the only thing that can authorize browser tools. Absent or malformed ⇒
+  // undefined ⇒ they are not advertised at all (fail-closed).
+  const browserApprovalDelivery = browserApprovalDeliveryFor(
+    resolvedExecution.browserToolPolicy,
+    { source: "evals-runner" }
+  );
   const builtInTools = resolveHostTools(
     { builtInToolIds: resolvedExecution.builtInToolIds },
     builtInTarget && "projectId" in builtInTarget
-      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
+      ? {
+          authHeader: convexAuthToken,
+          projectId: builtInTarget.projectId,
+          ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+        }
       : null
   );
   // ── Harness execution inputs, resolved once per iteration.
@@ -4667,6 +4693,10 @@ const runHostedIterationWithBrowser = async (
 
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
+  /** Which layer raised `iterationError`, when the executor classified it. */
+  let iterationStepError:
+    | { source?: "model" | "setup"; code?: string; httpStatus?: number }
+    | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
   // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
   // `prepareChatV2` try.
@@ -4860,6 +4890,15 @@ const runHostedIterationWithBrowser = async (
   if (result.iterationError) {
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;
+    if (result.errorSource) {
+      iterationStepError = {
+        source: result.errorSource,
+        ...(result.errorCode ? { code: result.errorCode } : {}),
+        ...(typeof result.errorHttpStatus === "number"
+          ? { httpStatus: result.errorHttpStatus }
+          : {}),
+      };
+    }
   }
   // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
   // below, mirroring the local runner.
@@ -4965,6 +5004,9 @@ const runHostedIterationWithBrowser = async (
       : {}),
     spans: capturedSpans,
     prompts: promptTraceSummaries,
+    // UVH-IN2: the layer that raised the fatal error, so the chain can say a
+    // provider outage was ours rather than filing it against the server.
+    ...(iterationStepError ? { stepError: iterationStepError } : {}),
     ...(widgetSnapshots ? { widgetSnapshots } : {}),
     // Browser-rendered MCP App eval (PR 14): hosted-path browser artifacts
     // (see the non-stream backend runner).

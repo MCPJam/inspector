@@ -79,12 +79,14 @@ import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import {
   classifyUiToolApprovals,
+  mergeUiToolApprovalClassifications,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
@@ -282,6 +284,16 @@ export interface WebChatTurnPersistContext {
    * helper fetches from {@link environmentId}.
    */
   runtimeSecrets?: { name: string; value: string }[];
+  /**
+   * What this turn should RECORD about the configuration it ran with —
+   * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
+   * from the POST-narrowing spec so it reflects what actually ran.
+   *
+   * Separate from `runtimeSkillsOverride` and `effectiveCapabilities` on
+   * purpose: those decide what reaches the model, this only decides what gets
+   * written down. Delivery is byte-identical whether this is present or not.
+   */
+  turnProvenance?: TurnSkillProvenance;
 }
 
 /**
@@ -319,6 +331,15 @@ export interface WebChatTurnPrepareInputs {
   uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
+  /**
+   * Approval classification for the `browser_*` tools this turn advertises,
+   * produced by `resolveHostTools`. Merged with the `ui_*` classification
+   * below: the engines have ONE `uiToolApprovals` slot, and whichever
+   * namespace filled it alone left the other falling through to the
+   * `requireToolApproval` default (off by default) — which strands a turn
+   * whose gated call never gets its approval request.
+   */
+  browserToolApprovals?: UiToolApprovalClassification;
   /** Host-configured computer working directory (COMP-16); roots the harness
    *  Shell under the same dir the bash tool runs in. */
   computerWorkdir?: string;
@@ -551,8 +572,12 @@ export function stripUiContextModelParts(
 function uiToolApprovalsFrom(
   uiTools: UiToolEntry[] | undefined,
   requireToolApproval: boolean | undefined,
+  browserToolApprovals?: UiToolApprovalClassification,
 ): UiToolApprovalClassification {
-  return classifyUiToolApprovals(uiTools, requireToolApproval === true);
+  return mergeUiToolApprovalClassifications(
+    classifyUiToolApprovals(uiTools, requireToolApproval === true),
+    browserToolApprovals,
+  );
 }
 
 /**
@@ -974,7 +999,14 @@ export async function streamWebChatTurn(
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
           : {}),
-        turnTrace,
+        // Merged OUTSIDE the `isDirectChat` gate above: a scenario turn runs
+        // through an environment too, and skipping it there would leave User
+        // Testing's most environment-driven surface with no record of what it
+        // ran. Distinct from `resumeConfig`, which is gated because it is the
+        // restorable-resume surface; this is provenance and restores nothing.
+        turnTrace: persist.turnProvenance
+          ? { ...turnTrace, ...persist.turnProvenance }
+          : turnTrace,
         ...(persist.expectedVersion !== undefined
           ? { expectedVersion: persist.expectedVersion }
           : {}),
@@ -1091,6 +1123,7 @@ export async function streamWebChatTurn(
       uiToolApprovals: uiToolApprovalsFrom(
         effectiveUiTools,
         persist.requireToolApproval,
+        prepare.browserToolApprovals,
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
@@ -1169,6 +1202,7 @@ export async function streamWebChatTurn(
     uiToolApprovals: uiToolApprovalsFrom(
       effectiveUiTools,
       persist.requireToolApproval,
+      prepare.browserToolApprovals,
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // Harness engine only: it builds its own MCP tool set (host-executed

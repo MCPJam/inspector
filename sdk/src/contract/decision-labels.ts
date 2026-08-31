@@ -102,6 +102,13 @@ export const STAGE_REASON_LABELS = Object.freeze({
   blockedByPolicy: "a policy blocked the run before it could be measured",
   evaluatorError:
     "the evaluator itself failed, so the run says nothing about the server",
+  // Scoped to THIS STAGE, not to the run. `providerError` is applied per row,
+  // and a multi-turn iteration whose provider died at turn 4 keeps its earlier
+  // measured rows — so a run-level "never reached the server" would sit
+  // directly beside a `call: passed` that disproves it, and send a reader
+  // after the wrong timeline.
+  providerError:
+    "the model provider failed the call, so this stage was never measured",
   setupAborted: "the environment was never prepared, so the test never began",
   connectFailed:
     "the configured server was reached and initialize failed there",
@@ -120,11 +127,22 @@ export const STAGE_REASON_LABELS = Object.freeze({
   predicateFailed: "a check on the result did not hold",
   observed: "the evidence was inspected and the stage held",
   impliedByLaterEvidence: "a later stage's success implies it",
-  judgeObserved: "the judge scored at or above the threshold",
-  judgePartial: "the judge scored inside the partial band",
-  judgeFailed: "the judge scored below the partial floor",
-  judgePending: "a judge verdict is owed and has not arrived",
-  judgeNotRequested: "no judge verdict was ever owed",
+  // "LLM judge", not "judge". These five are the only reasons in the
+  // vocabulary decided by a model rather than by a deterministic rule, and a
+  // reader who cannot tell the two apart cannot weigh the row: an assertion
+  // that failed and an advisory verdict that came in low are different kinds
+  // of claim. The provenance belongs in the label because these strings are
+  // the ONE place all four renderers read from.
+  judgeObserved: "the LLM judge scored at or above the threshold",
+  // "AT or above the floor": the band is `>= partialFloor` and `< threshold`
+  // (`stage-derivation.ts`), so a score exactly ON the floor is partial. These
+  // strings are the one place every renderer reads from, and "above the floor"
+  // described the boundary score as outside a band it is inside.
+  judgePartial:
+    "the LLM judge scored inside the partial band — at or above the floor, below the threshold",
+  judgeFailed: "the LLM judge scored below the partial floor",
+  judgePending: "an LLM judge verdict is owed and has not arrived",
+  judgeNotRequested: "no LLM judge verdict was ever owed",
 } satisfies Record<StageReason, string>);
 
 /**
@@ -182,6 +200,40 @@ export const NEXT_ACTION_BY_FAILURE_CATEGORY = Object.freeze({
  */
 export const DECISION_SUMMARY_FALLBACK_NEXT_ACTION =
   "inspect the case trace; no failure category was recorded";
+
+/**
+ * The action when the recorded verdict and the measured chain DISAGREE.
+ *
+ * A narrower, and therefore more useful, statement than the fallback above:
+ * the chain validated, every applicable stage came back ok, and the verdict
+ * still says failed. "No failure category was recorded" is true of that run
+ * but describes it as an absence of information, when in fact two things we
+ * hold are in conflict — which is a different thing to go and look at.
+ *
+ * Named as a disagreement and nothing more. The chain cannot see WHY from
+ * here, and a guess at the cause dressed as a finding is exactly what this
+ * whole vocabulary exists to prevent.
+ */
+export const DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION =
+  "the recorded verdict disagrees with the measured chain; inspect the case trace";
+
+/**
+ * The same disagreement on a run whose chain predates analyzer 7.
+ *
+ * What the version proves is NARROW, and the first draft of this line over-read
+ * it. A pre-7 analyzer could not report an errored tool call on a case that
+ * authored no tool expectation — but that is a statement about what the
+ * analyzer was ABLE to see, never evidence that such a call occurred. Naming
+ * the tool error as the cause would have sent a reader after a specific
+ * finding on every legacy row, whatever actually went wrong.
+ *
+ * So this says only what the row itself establishes: the chain was derived by
+ * an analyzer that measures strictly less than the current one, and
+ * re-deriving may therefore attribute what this one could not. That makes
+ * "re-run" a real instruction without attaching a cause to it.
+ */
+export const DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION =
+  "the recorded verdict disagrees with the measured chain; this run's chain was derived by an older analyzer that measures less than the current one — re-run the case before investigating further";
 
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({

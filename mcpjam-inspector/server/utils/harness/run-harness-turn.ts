@@ -744,6 +744,19 @@ export async function runHarnessTurn(
   // PersistedTurnTrace / abort). Constructed at STREAM start once `traceBaseMs`
   // is finalized; read by `onFinishEngine` (a sibling closure) for the trace.
   let driver: StreamTurnDriver | undefined;
+  /**
+   * Whether the model request was HANDED OVER — the boundary between our own
+   * preparation and the provider's turn.
+   *
+   * Not `driver.traceStarted`, which was the first version of this and is set
+   * far too late: the driver is only built after `agent.stream(...)` RESOLVES,
+   * so an immediate provider rejection (auth, quota, a rate limit) would be
+   * reported as our setup failing when the model had in fact been asked.
+   *
+   * Set immediately before the call instead, so the flag marks the handover
+   * itself rather than a successful one.
+   */
+  let modelInvoked = false;
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
@@ -1926,6 +1939,9 @@ export async function runHarnessTurn(
         // WS3: a resume carries no new user prompt — feed the approval decision
         // into the in-flight turn via continueStream (the adapter collapses
         // `messages` to the last user message, so stream() would re-prompt).
+        // Everything above this line is ours; everything at or below it is the
+        // model's turn. See `modelInvoked`.
+        modelInvoked = true;
         const res = resumeFromApproval
           ? await agent.continueStream({
               session,
@@ -2829,6 +2845,14 @@ export async function runHarnessTurn(
         message: errorText,
         rawText: errorText,
         promptIndex,
+        // This catch covers the WHOLE turn, preparation included: the throws
+        // for a missing projectId, a missing auth bearer and disabled broker
+        // delivery all land here, and none of them ever reached a model.
+        //
+        // The flag is set at the HANDOVER, not once the stream is running, so
+        // a provider that rejects the request outright still reads as the
+        // model's failure rather than ours.
+        phase: modelInvoked ? "stream" : "setup",
       });
     } finally {
       stopScopeStepUpBridge();

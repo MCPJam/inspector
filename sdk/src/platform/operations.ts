@@ -92,6 +92,7 @@ import type {
   PlatformEvalRunGroupCreated,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
+  PlatformEnvironmentSkillSelection,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -2958,7 +2959,7 @@ async function composeRunEnvironment(
     includeClientDefault?: boolean;
     saveTargets?: boolean;
     computer?: string;
-    skills?: { mode: "explicit"; skillIds: string[] };
+    skills?: PlatformEnvironmentSkillSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined,
@@ -3349,6 +3350,73 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
  * until someone hits it.
  */
 /**
+ * The ONE skill-selection schema. Every surface that accepts a pinned skill
+ * selection — `create_project_environment`, `update_project_environment`,
+ * `ensure_adhoc_environment`, and the run ops' `compose` field — parses
+ * through this, so a selection means the same thing wherever it is written.
+ *
+ * `compose` used to declare its own narrower twin, which parsed `mode` and
+ * `skillIds` and dropped `versionPins` on the floor: composing a pinned stack
+ * silently ran Latest, which is precisely the arm the caller pinned away from.
+ *
+ * Declared HERE, above the run inputs, for the same temporal-dead-zone reason
+ * `composeRunTargetInput` is — the environment ops that also use it are far
+ * below.
+ */
+const skillSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    skillIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
+      ),
+    versionPins: z
+      .array(
+        z.object({
+          skillId: z.string().trim().min(1),
+          versionId: z.string().trim().min(1),
+        })
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+      ),
+  })
+  // The pins are only meaningful RELATIVE to the selection they ride on, so the
+  // relation is checked here rather than left to the API: a duplicate pin makes
+  // "which revision does this skill run?" ambiguous, and a pin for an
+  // unselected skill silently does nothing. Both are rejected server-side too —
+  // catching them in the SDK turns a round-trip error into an immediate one.
+  .superRefine((selection, ctx) => {
+    const pins = selection.versionPins ?? [];
+    const selected = new Set(selection.skillIds);
+    const seen = new Set<string>();
+    for (const pin of pins) {
+      if (seen.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
+        });
+      }
+      seen.add(pin.skillId);
+      if (!selected.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
+        });
+      }
+    }
+  })
+  .describe(
+    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
+  );
+
+/**
  * A COMPOSED run target: assemble a stack instead of naming a saved
  * environment. Declared here, above the run inputs, for the same
  * temporal-dead-zone reason `publicMatchOptionsSchema` is.
@@ -3409,13 +3477,11 @@ const composeRunTargetInput = z
       .describe(
         "Sandbox image (name or ID) to pin, so the run boots a fresh computer from it. Must be project-shared."
       ),
-    skills: z
-      .object({
-        mode: z.literal("explicit"),
-        skillIds: z.array(z.string().trim().min(1)).min(1),
-      })
+    skills: skillSelectionInput
       .optional()
-      .describe("Explicit pinned skill selection for the composed stack."),
+      .describe(
+        "Explicit pinned skill selection for the composed stack, `versionPins` included — the same schema every other skill-selection surface uses."
+      ),
     pluginVersionIds: z
       .array(z.string().trim().min(1))
       .min(1)
@@ -8742,59 +8808,6 @@ export const resolveEnvironmentOperation: PlatformOperation<
   },
 };
 
-const skillSelectionInput = z
-  .object({
-    mode: z.literal("explicit"),
-    skillIds: z
-      .array(z.string().trim().min(1))
-      .min(1)
-      .describe(
-        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
-      ),
-    versionPins: z
-      .array(
-        z.object({
-          skillId: z.string().trim().min(1),
-          versionId: z.string().trim().min(1),
-        })
-      )
-      .min(1)
-      .optional()
-      .describe(
-        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
-      ),
-  })
-  // The pins are only meaningful RELATIVE to the selection they ride on, so the
-  // relation is checked here rather than left to the API: a duplicate pin makes
-  // "which revision does this skill run?" ambiguous, and a pin for an
-  // unselected skill silently does nothing. Both are rejected server-side too —
-  // catching them in the SDK turns a round-trip error into an immediate one.
-  .superRefine((selection, ctx) => {
-    const pins = selection.versionPins ?? [];
-    const selected = new Set(selection.skillIds);
-    const seen = new Set<string>();
-    for (const pin of pins) {
-      if (seen.has(pin.skillId)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["versionPins"],
-          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
-        });
-      }
-      seen.add(pin.skillId);
-      if (!selected.has(pin.skillId)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["versionPins"],
-          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
-        });
-      }
-    }
-  })
-  .describe(
-    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
-  );
-
 const pluginVersionIdsInput = z
   .array(z.string().trim().min(1))
   .min(1)
@@ -8986,7 +8999,7 @@ async function resolveComposeStack(
     serverGroup?: string;
     model?: string;
     computer?: string;
-    skills?: { mode: "explicit"; skillIds: string[] };
+    skills?: PlatformEnvironmentSkillSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined
