@@ -49,6 +49,10 @@ import {
   SuiteRunStageFunnelAvailability,
   SuiteRunStageFunnelPanel,
 } from "@/components/shared/user-value-chain/StageFunnelPanels";
+import {
+  RunUserValueChainSlot,
+  useRunUserValueChainChoice,
+} from "./run-user-value-chain-slot";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -600,9 +604,44 @@ export function RunDetailView({
     [],
   );
 
-  const hasStageFunnel =
+  const legacyStageFunnel =
     stageFunnelFor.suiteRunId === selectedRunDetails._id &&
     stageFunnelFor.hasFunnel;
+
+  /**
+   * What the chain slot will actually draw — resolved HERE, once, and handed
+   * both to the rail's emptiness check and to the slot itself.
+   *
+   * One call, not two. The rail has to know whether to open before it mounts
+   * what it would open around, and the slot needs the same answer to render;
+   * but this hook wraps a plain `fetch` rather than a Convex subscription, so
+   * calling it in both places would issue two HTTP requests per run with
+   * nothing de-duplicating them.
+   */
+  const runChain = useRunUserValueChainChoice({
+    projectId: selectedRunDetails.projectId ?? null,
+    runId: selectedRunDetails._id,
+    // A run opened while it is still going has no document yet. Passing the
+    // status lets the read happen again once it finishes, instead of the
+    // too-early "no document" answer standing until this view remounts.
+    runStatus: selectedRunDetails.status,
+  });
+
+  /**
+   * Either reading counts as content — but only the one the slot will draw.
+   *
+   * The probe below answers only for the LEGACY rollup, so on a run with a
+   * canonical document and no rollup it reports "no funnel" and would close a
+   * rail over content that is there.
+   */
+  const hasStageFunnel =
+    runChain.choice === "canonical" ||
+    (runChain.choice === "legacy" && legacyStageFunnel) ||
+    // A canonical read that really FAILED is content too. Without this, a run
+    // with no legacy rollup and no other insight card closes the rail over the
+    // service note written specifically to report that failure — the one case
+    // where the message is the only thing there is to say.
+    runChain.serviceNote !== null;
 
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
@@ -800,9 +839,17 @@ export function RunDetailView({
    */
   const userValueChainPanel = (
     <>
-      <SuiteRunStageFunnelPanel
-        suiteRunId={selectedRunDetails._id}
+      {/* Canonical document or legacy rollup, never both — the slot decides.
+          Flag-off is today's page exactly: the legacy panel, unlabelled. */}
+      <RunUserValueChainSlot
+        chain={runChain}
         className="m-3"
+        legacy={
+          <SuiteRunStageFunnelPanel
+            suiteRunId={selectedRunDetails._id}
+            className="m-3"
+          />
+        }
       />
       <ExplanatoryFlowOptIn scope={flowScope} className="m-3" />
     </>

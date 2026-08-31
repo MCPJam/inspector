@@ -1,5 +1,11 @@
 /**
- * The browser read for a suite's materialized stage analytics (D5c).
+ * The browser reads for materialized stage analytics (D5c) — a suite's runs as
+ * a page, and one run's document on its own.
+ *
+ * TWO reads rather than one plus a filter. Paging a suite until a particular
+ * run appears is unbounded work whose cost grows with how long ago the run
+ * finished, and cannot answer once the run falls outside the pages walked. A
+ * caller that already knows the run asks for the run.
  *
  * Same shape and the same reasons as `eval-run-decision-summary-api.ts`:
  * `PlatformApiClient` already speaks this endpoint with typed parameters and
@@ -20,6 +26,13 @@
  * It also does not merge pages into one funnel. Each item is one run's complete
  * document and the SDK has no cross-run merge on purpose; summing them here
  * would be inventing a number the contract deliberately refuses to store.
+ *
+ * ── One caveat on `notFound` ─────────────────────────────────────────────────
+ *
+ * On the RUN read it means absence, not an error: the API answers the same 404
+ * for "this run has no document" and "this run is not visible to you", on
+ * purpose, so that the API cannot confirm the existence of runs in projects the
+ * caller cannot see. A caller renders it as unmeasured.
  *
  * ── The four ways this can fail, kept apart ──────────────────────────────────
  *
@@ -227,4 +240,79 @@ export async function fetchEvalSuiteStageAnalytics(
       ? { nextCursor: envelope.nextCursor }
       : {}),
   };
+}
+
+/**
+ * ONE run's document, addressed by run.
+ *
+ * A separate read from the suite listing rather than a filter over it. Paging
+ * a suite until a particular run appears is unbounded work whose cost grows
+ * with how long ago the run finished, and it cannot answer at all once the run
+ * falls outside the page walked — a run detail page already knows its run and
+ * should ask for it.
+ *
+ * `notFound` here is ABSENCE, not an error to shout about: the API deliberately
+ * gives the same answer for "no document" and "not visible", so a caller must
+ * render it as unmeasured rather than as a failure. The other three kinds keep
+ * the meanings they have in the listing.
+ */
+export async function fetchEvalRunStageAnalytics(
+  params: { projectId: string; runId: string },
+  signal?: AbortSignal,
+): Promise<EvalStageAnalyticsV1> {
+  let raw: unknown;
+  try {
+    raw = await client().getEvalRunStageAnalytics(
+      { projectId: params.projectId, runId: params.runId },
+      { signal },
+    );
+  } catch (error) {
+    // A caller's abort is the caller's, not a failure of the read.
+    if (signal?.aborted) throw error;
+    if (isPlatformApiError(error)) {
+      if (isRouteUnavailable(error.status, error.code)) {
+        throw new EvalStageAnalyticsError(
+          "routeUnavailable",
+          "This deployment does not serve eval stage analytics.",
+          { status: error.status, cause: error },
+        );
+      }
+      if (error.status === 404) {
+        throw new EvalStageAnalyticsError("notFound", error.message, {
+          status: error.status,
+          cause: error,
+        });
+      }
+      throw new EvalStageAnalyticsError("requestFailed", error.message, {
+        status: error.status,
+        cause: error,
+      });
+    }
+    throw new EvalStageAnalyticsError(
+      "requestFailed",
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+
+  // Parsed HERE with the REFINED schema, exactly as the listing does. The route
+  // validates too; this is not redundant, because the browser is where the
+  // numbers get drawn and a document that reached it through any other path
+  // (a cache, a future transport) must meet the same bar.
+  const parsed = evalStageAnalyticsSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new EvalStageAnalyticsError(
+      "invalidContract",
+      "The stage analytics document did not match the published contract.",
+      { cause: parsed.error },
+    );
+  }
+  // Shape is not identity — the same binding the suite read makes on `suiteId`.
+  if (parsed.data.runId !== params.runId) {
+    throw new EvalStageAnalyticsError(
+      "invalidContract",
+      "The stage analytics document is for a different run than the one requested.",
+    );
+  }
+  return parsed.data as EvalStageAnalyticsV1;
 }
