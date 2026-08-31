@@ -6,12 +6,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { serversRef, attachmentsRef, createMock } = vi.hoisted(() => ({
+const { serversRef, attachmentsRef, createMock, onChangeMock } = vi.hoisted(() => ({
   serversRef: { current: [] as Array<{ _id: string; name: string }> },
   attachmentsRef: {
     current: [] as Array<{ _id: string; name: string; serverIds: string[] }>,
   },
   createMock: vi.fn(),
+  onChangeMock: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -42,7 +43,7 @@ async function openCreateForm() {
     <ServerGroupPicker
       projectId="p-1"
       value={null}
-      onChange={vi.fn()}
+      onChange={onChangeMock}
       triggerTestId="picker"
     />
   );
@@ -54,7 +55,7 @@ async function openCreateForm() {
 describe("ServerGroupPicker — the create form's opening state", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    createMock.mockResolvedValue("new-id");
+    createMock.mockResolvedValue({ _id: "new-id" });
     attachmentsRef.current = [];
   });
 
@@ -117,7 +118,7 @@ describe("ServerGroupPicker — the create form's opening state", () => {
 describe("ServerGroupPicker — click-away only commits what the user built", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    createMock.mockResolvedValue("new-id");
+    createMock.mockResolvedValue({ _id: "new-id" });
     attachmentsRef.current = [];
   });
 
@@ -138,5 +139,14 @@ describe("ServerGroupPicker — click-away only commits what the user built", ()
     await user.click(document.body);
 
     expect(createMock).toHaveBeenCalled();
+    // The mutation answers with the created row; the id it carries is what the
+    // caller selects by. Asserting only that it fired would pass while the
+    // selection is handed an undefined id.
+    await vi.waitFor(() =>
+      expect(onChangeMock).toHaveBeenCalledWith(
+        "new-id",
+        expect.objectContaining({ _id: "new-id" })
+      )
+    );
   });
 });
