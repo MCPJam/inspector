@@ -4,6 +4,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { ToolsPanel } from "./ToolsPanel";
 import { ToolInvokePane } from "./ToolInvokePane";
 import { ActivityTimeline } from "./ActivityTimeline";
@@ -58,6 +59,15 @@ export function WebmcpInspectorTab() {
   const [url, setUrl] = useState("http://localhost:3000");
   const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>();
   const [rightTab, setRightTab] = useState<"tools" | "activity">("tools");
+  /**
+   * Opt-in, and deliberately not remembered: a hosted session reserves a
+   * desktop computer and bills its awake time, so it is a choice made per
+   * session rather than a preference that quietly persists.
+   */
+  const [hosted, setHosted] = useState(false);
+  const activeProjectId = useHostContextStore(
+    (state) => state.activeProjectId,
+  );
 
   // The browser outlives this screen on purpose — a developer may tab away
   // mid-flow — so unmounting closes the event stream and nothing else. Coming
@@ -189,10 +199,33 @@ export function WebmcpInspectorTab() {
             </Button>
           </>
         ) : null}
+        {!live && activeProjectId ? (
+          <Button
+            size="sm"
+            variant={hosted ? "default" : "outline"}
+            aria-pressed={hosted}
+            onClick={() => setHosted((on) => !on)}
+            disabled={starting}
+            title={
+              hosted
+                ? "Runs on your MCPJam computer. It cannot reach localhost, and its awake time is billed."
+                : "Runs in a window on this machine."
+            }
+          >
+            {hosted ? "On my computer" : "On this machine"}
+          </Button>
+        ) : null}
         {!live ? (
           <Button
             size="sm"
-            onClick={() => void startSession(url)}
+            onClick={() =>
+              void startSession(
+                url,
+                hosted && activeProjectId
+                  ? { transport: "hosted", projectId: activeProjectId }
+                  : undefined,
+              )
+            }
             disabled={starting}
           >
             {starting ? "Opening…" : "Open browser"}

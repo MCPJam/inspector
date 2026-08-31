@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import "../../types/hono";
-import { WEBMCP_INSPECTOR_ENABLED } from "../../config";
+import { WEBMCP_INSPECTOR_ENABLED, hostedBrowserEnabled } from "../../config";
 import {
   startWebMcpSession,
   webMcpSessions,
@@ -18,6 +18,8 @@ import {
   WebMcpUnsupportedError,
 } from "../../services/webmcp-inspector/provider";
 import { WebMcpQueueFullError } from "../../services/webmcp-inspector/session-runtime";
+import { createBrowserdWebMcpProvider } from "../../services/webmcp-inspector/browserd-provider";
+import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 /**
@@ -61,7 +63,27 @@ const httpUrlSchema = z
     { message: "Enter an http:// or https:// URL." },
   );
 
-const startSchema = z.object({ url: httpUrlSchema });
+/**
+ * WHERE the browser runs, chosen per session rather than per deployment.
+ *
+ * `local` (the default, and what every existing caller gets by omitting the
+ * field) opens Chromium on the machine running this inspector — the V1
+ * behaviour, unchanged.
+ *
+ * `hosted` runs it on the member's MCPJam computer through browserd and
+ * reports `remote-interactive-url`, so the viewport lives in the Browser
+ * panel. It is opt-IN and never inferred: a hosted session reserves a desktop
+ * computer and bills for its awake time, and silently spending someone's
+ * credits because they clicked "Open browser" is not a default anyone would
+ * choose. It also cannot reach `localhost` — the browser is in a datacenter,
+ * so the page has to be somewhere that datacenter can fetch.
+ */
+const startSchema = z.object({
+  url: httpUrlSchema,
+  transport: z.enum(["local", "hosted"]).optional(),
+  /** Required for `hosted`: the project whose desktop computer is reserved. */
+  projectId: z.string().min(1).optional(),
+});
 
 const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("navigate"), url: httpUrlSchema }),
@@ -145,8 +167,65 @@ webmcpInspector.post("/sessions", async (c) => {
       400,
     );
   }
+  const { url, transport, projectId } = parsed.data;
+
+  let provider;
+  if (transport === "hosted") {
+    // Every refusal below is a 4xx with a code the UI can explain, never a
+    // 500: each one is a thing the person can actually fix (turn the feature
+    // on, pick a project, sign in).
+    if (!hostedBrowserEnabled()) {
+      return c.json(
+        {
+          error:
+            "The hosted browser is not enabled on this server. Start it locally, or ask an operator to enable the hosted runtime.",
+          code: "hosted-browser-disabled",
+        },
+        503,
+      );
+    }
+    if (!projectId) {
+      return c.json(
+        {
+          error: "Pick a project first — a hosted browser runs on that project's computer.",
+          code: "hosted-project-required",
+        },
+        400,
+      );
+    }
+    // The USER's control-plane bearer, exactly as the chat routes take it. The
+    // hosted browser is billed to whoever owns the computer, so it needs a
+    // real identity — unlike the local browser, which needs none because it
+    // runs on the machine the caller is already sitting at.
+    const bearer = c.req.header("authorization");
+    if (!bearer) {
+      return c.json(
+        {
+          error: "Sign in to run the browser on your MCPJam computer.",
+          code: "hosted-auth-required",
+        },
+        401,
+      );
+    }
+    provider = createBrowserdWebMcpProvider({
+      ensureSession: ({ signal }) =>
+        ensureLiveBrowserSession({
+          bearer,
+          projectId,
+          // The inspector is a person driving their own page, so it gets the
+          // persistent profile — the same rule the built-in browser tools
+          // follow, and the reason evals get an ephemeral one instead.
+          contextMode: "persistent",
+          ...(signal ? { signal } : {}),
+        }),
+    });
+  }
+
   try {
-    const session = await startWebMcpSession({ url: parsed.data.url });
+    const session = await startWebMcpSession({
+      url,
+      ...(provider ? { provider } : {}),
+    });
     return c.json(session, 201);
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not open a browser session.");

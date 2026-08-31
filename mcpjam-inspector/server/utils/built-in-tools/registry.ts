@@ -46,6 +46,7 @@
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
+import { hostedBrowserEnabled } from "../../config.js";
 import { isHostedBrowserExposable } from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
@@ -425,7 +426,7 @@ export function resolveHostTools(
       // Dark switch: the runtime ships behind an env flag so staging can drive
       // it before the durable backend exposure gate opens (W7). Absent ⇒ the
       // capability simply is not advertised.
-      if (process.env.HOSTED_BROWSER_TOOLS_ENABLED !== "1") {
+      if (!hostedBrowserEnabled()) {
         logger.debug(
           "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
           { projectId: ctx.projectId },
