@@ -135,7 +135,7 @@ beforeEach(() => {
 function openForm() {
   openPersonasTab();
   fireEvent.click(screen.getAllByText("Persona One")[0]);
-  fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
+  fireEvent.click(screen.getByRole("button", { name: /add goal/i }));
 }
 
 async function pickEnvironment(name: string | RegExp) {

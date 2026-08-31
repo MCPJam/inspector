@@ -23,6 +23,7 @@ const {
   createPersonaMutation,
   updatePersonaMutation,
   deletePersonaMutation,
+  archiveJourneyMutation,
   runningPersonaRefIds,
   personaRows,
   journeyRows,
@@ -30,6 +31,7 @@ const {
   createPersonaMutation: vi.fn(),
   updatePersonaMutation: vi.fn(),
   deletePersonaMutation: vi.fn(),
+  archiveJourneyMutation: vi.fn(),
   runningPersonaRefIds: { current: [] as string[] },
   personaRows: {
     current: [] as {
@@ -63,6 +65,7 @@ vi.mock("convex/react", () => ({
     if (name === "personas:createPersona") return createPersonaMutation;
     if (name === "personas:updatePersona") return updatePersonaMutation;
     if (name === "personas:deletePersona") return deletePersonaMutation;
+    if (name === "journeys:archiveJourney") return archiveJourneyMutation;
     return vi.fn().mockResolvedValue(undefined);
   },
   usePaginatedQuery: () => ({
@@ -105,6 +108,7 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+import { toast } from "@/lib/toast";
 import { SwarmsTab } from "../SwarmsTab";
 import { openPersonasTab } from "./swarms-tab-test-helpers";
 
@@ -311,14 +315,10 @@ describe("SwarmsTab — Personas library mirrors Confirm personas", () => {
     expect(updatePersonaMutation).not.toHaveBeenCalled();
   });
 
-  it("does not put a delete control on a rendered goal row", async () => {
-    // Deliberately absent for now: the design shows a trash icon per goal, but
-    // goals here carry runs and grading, so removing one is not a row-level
-    // gesture yet.
-    //
+  it("renders each goal as a bullet, its text, and a delete control", async () => {
     // A journey is mocked on purpose. The first version of this ran against the
-    // EMPTY goals state, so it asserted the absence of a control on a row that
-    // was never rendered — a test that could not fail.
+    // EMPTY goals state, so it asserted against a row that was never rendered —
+    // a test that could not fail.
     journeyRows.current = [
       {
         _id: "journey-1",
@@ -339,11 +339,79 @@ describe("SwarmsTab — Personas library mirrors Confirm personas", () => {
       await screen.findByText("Reconcile the payouts ledger")
     ).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: /remove goal/i })
+      screen.getByRole("button", {
+        name: "Delete goal Reconcile the payouts ledger",
+      })
+    ).toBeVisible();
+    // The library row is the whole goal: no per-goal run, history or grading
+    // affordances travel with it.
+    expect(
+      screen.queryByRole("button", { name: "Run" })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /delete goal/i })
+      screen.queryByTestId("journey-grading-trigger")
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * Deleting a goal. The gesture is a row-level trash icon now, so the confirm
+   * is the only thing between a mis-click and a write — each of these pins one
+   * leg of that: the decline, the write, and the failure.
+   */
+  describe("deleting a goal", () => {
+    const GOAL = "Reconcile the payouts ledger";
+
+    const renderWithOneGoal = () => {
+      journeyRows.current = [
+        {
+          _id: "journey-1",
+          journeyId: "j1",
+          personaRefId: "persona-1",
+          name: "Reconcile payouts",
+          goal: GOAL,
+          hostIds: [],
+          environmentIds: [],
+          config: { sessionsPerTarget: 1, maxTurns: 6 },
+        },
+      ];
+      renderPersonasTab();
+      return screen.findByRole("button", { name: `Delete goal ${GOAL}` });
+    };
+
+    it("writes nothing when the confirm is declined", async () => {
+      const confirm = vi
+        .spyOn(window, "confirm")
+        .mockReturnValue(false);
+      fireEvent.click(await renderWithOneGoal());
+
+      expect(confirm).toHaveBeenCalled();
+      // The prompt has to say the runs survive, or "delete" reads as data loss.
+      expect(confirm.mock.calls[0]![0]).toMatch(/runs it already produced are kept/i);
+      expect(archiveJourneyMutation).not.toHaveBeenCalled();
+    });
+
+    it("archives by journeyRefId once confirmed", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      archiveJourneyMutation.mockResolvedValue({ ok: true });
+      fireEvent.click(await renderWithOneGoal());
+
+      await waitFor(() =>
+        expect(archiveJourneyMutation).toHaveBeenCalledWith({
+          journeyRefId: "journey-1",
+        })
+      );
+    });
+
+    it("surfaces a failed archive instead of swallowing it", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      archiveJourneyMutation.mockRejectedValue(new Error("Not allowed"));
+      fireEvent.click(await renderWithOneGoal());
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Not allowed"));
+      // The row is still there: nothing was removed, so nothing should look like
+      // it was.
+      expect(screen.getByText(GOAL)).toBeVisible();
+    });
   });
 });
 

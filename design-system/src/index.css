@@ -427,6 +427,11 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  --color-chrome-control: var(--chrome-control);
+  --color-chrome-control-border: var(--chrome-control-border);
+  --color-chrome-hover: var(--chrome-hover);
+  --color-chrome-control-hover: var(--chrome-control-hover);
+  --color-divider: var(--divider);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-success: var(--success);

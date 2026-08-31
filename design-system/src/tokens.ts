@@ -30,6 +30,28 @@ export const tokensCss: string = `@theme {
   --destructive: oklch(0.627 0.208 25.331);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.8847 0.0069 97.3627);
+  /* Chrome controls. Sampled from the Production Redesign frame: the pieces
+     that sit ON the linen ground (--secondary / --sidebar, #E9E6DC) rather
+     than on the panel (--background, #FAF9F5). Those two grounds already had
+     tokens, which is why only the controls are new here.
+
+       --chrome-control         #E4DDD0  nav selector + filled nav buttons
+       --chrome-control-border  #D6CFC0  hairline on those controls only
+       --chrome-hover           #E2DCCF  idle tab / ghost hover (no fill at rest)
+       --divider                #DDD8CC  pane hairlines
+
+     --divider is a hair warmer and lighter than --border (#DAD9D4). It is kept
+     apart because --border also draws inputs and cards on the panel, where the
+     linen cast reads as a tint rather than a neutral line. */
+  --chrome-control: oklch(0.8995 0.0191 83.0632);
+  --chrome-control-border: oklch(0.856 0.0218 85.9495);
+  --chrome-hover: oklch(0.8957 0.0187 86.151);
+  /* #D6CDBE. The hover for a control that is ALREADY filled — the filled
+     nav buttons and the client selector. --chrome-hover above is for things
+     with no fill at rest (idle tabs, ghost buttons); on top of
+     --chrome-control (#E4DDD0) it is a 0.4% step and reads as nothing. */
+  --chrome-control-hover: oklch(0.8515 0.0227 80.6762);
+  --divider: oklch(0.8829 0.0171 88.0071);
   --input: oklch(0.7621 0.0156 98.3528);
   --ring: oklch(0.6171 0.1375 39.0427);
   /* Semantic status colors */
@@ -158,6 +180,23 @@ export const tokensCss: string = `@theme {
   --destructive: oklch(0.6368 0.2078 25.3313);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.3618 0.0101 106.8928);
+  /* Chrome controls, dark. Only the light frame was specified, so these keep
+     the RELATIONSHIP rather than the values: a control is one step away from
+     the ground it sits on, and on a dark ground that step is upward. Hover is
+     the exception — it darkens in both themes, which is what the light frame
+     does too (#E2DCCF sits below the #E9E6DC ground).
+
+     The values are existing dark tokens, reused so the chrome cannot drift
+     from the panel: --popover for the raised control, --accent for hover, and
+     --border for both hairlines. */
+  --chrome-control: oklch(0.3085 0.0035 106.6039);
+  --chrome-control-border: oklch(0.3618 0.0101 106.8928);
+  --chrome-hover: oklch(0.213 0.0078 95.4245);
+  /* Lighter than the fill, not darker: on a dark ground a raised control
+     brightens under the pointer. Reuses --border's dark value, like the
+     other chrome tokens here. */
+  --chrome-control-hover: oklch(0.3618 0.0101 106.8928);
+  --divider: oklch(0.3618 0.0101 106.8928);
   --input: oklch(0.4336 0.0113 100.2195);
   --ring: oklch(0.6724 0.1308 38.7559);
   /* Semantic status colors */
