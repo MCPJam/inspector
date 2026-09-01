@@ -27,8 +27,9 @@ vi.mock("@/lib/apis/mcp-skills-api", () => ({
   getSkill: (...args: unknown[]) => mockGetSkill(...args),
 }));
 
+const mockListServerSkills = vi.fn(async () => ({ skills: [] as unknown[] }));
 vi.mock("@/lib/apis/server-skills-api", () => ({
-  listServerSkills: vi.fn(async () => ({ skills: [] })),
+  listServerSkills: (...args: unknown[]) => mockListServerSkills(...args),
   getServerSkill: vi.fn(),
 }));
 
@@ -90,6 +91,7 @@ function renderPicker(props: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockListServerSkills.mockResolvedValue({ skills: [] });
   mockGetSkill.mockImplementation(async (name: string) => ({
     name,
     description: "d",
@@ -316,6 +318,53 @@ describe("SkillsPopoverSection — local and library in one list", () => {
       />,
     );
     expect(screen.getByText("refunds")).toBeInTheDocument();
+  });
+
+  it("follows a highlighted SERVER row when the local half prepends", async () => {
+    // Server rows occupy the indices AFTER the project list, so a highlight on
+    // one starts out beyond the project range — the case a naive guard skips.
+    // A late local half still shifts them, and the row Enter selects with it.
+    let releaseLocal: (rows: unknown[]) => void = () => {};
+    mockListSkills.mockImplementation(async (source?: { kind: string }) => {
+      if (source?.kind === "cloud") return [libraryItem("refunds")];
+      return new Promise((resolve) => {
+        releaseLocal = resolve as (rows: unknown[]) => void;
+      });
+    });
+    mockListServerSkills.mockResolvedValue({
+      skills: [
+        {
+          name: "lookup",
+          description: "Server lookup",
+          serverId: "srv-1",
+          skillUri: "skill://lookup",
+        },
+      ],
+    });
+    const setHighlightedIndex = vi.fn();
+    render(
+      <SkillsPopoverSection
+        onSkillSelected={vi.fn()}
+        // Index 1 = the server row: one library row precedes it, local pending.
+        highlightedIndex={1}
+        setHighlightedIndex={setHighlightedIndex}
+        startIndex={0}
+        isHovering={false}
+        actionTrigger={null}
+        skillsSource={LIBRARY}
+        mcpServers={[{ serverId: "srv-1", label: "Support", connected: true }]}
+      />,
+    );
+
+    await screen.findByText("refunds");
+    await screen.findByText(/lookup/);
+    expect(setHighlightedIndex).not.toHaveBeenCalled();
+
+    // Local lands and is prepended: the server row moves from 1 to 2.
+    releaseLocal([localItem("notes")]);
+    await screen.findByText("notes");
+
+    await waitFor(() => expect(setHighlightedIndex).toHaveBeenCalledWith(2));
   });
 
   it("counts both halves for the parent's arrow-key range", async () => {
