@@ -1400,11 +1400,34 @@ Get the status and summary of an eval run.
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--diagnostics-limit <n>` | No | Failure diagnostics per page (1–200; default 20) |
+| `--diagnostics-cursor <cursor>` | No | Cursor from a previous response's `decisionSummary.diagnostics.nextCursor` |
+| `--stages` | No | Print all six user-value chain rows for each failing trial (`--format human`) |
 
 The response carries a `judges` block with each advisory grader's state and
 per-case grades. `status: null` means that judge was never requested for the
 run — different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
+
+The failure diagnostics inside `decisionSummary` are **paginated**, and a page
+that is not the whole set says so: `diagnostics.complete` is `false` and
+`diagnostics.nextCursor` carries the next page. Without `--diagnostics-cursor`
+a run with more failures than the page size reports only its first 20, so a
+script that concludes "only these failed" from one page is reading a sample.
+Walk the pages:
+
+```bash
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 --format json
+# then, while .decisionSummary.diagnostics.complete is false:
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 \
+  --diagnostics-cursor "$NEXT_CURSOR" --format json
+```
+
+`--stages` expands each failing trial from one first-failed-stage line to all
+six chain rows — connection, discovery, selection, tool call, response, user
+value — with each row's state and reason in words. It is off by default because
+six rows per trial is a lot of terminal on a run with twenty failures; the
+first-break line above the per-trial detail is printed either way.
 
 ### `cloud eval judge`
 

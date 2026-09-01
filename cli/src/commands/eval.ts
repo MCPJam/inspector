@@ -2024,6 +2024,9 @@ async function runEvalCompare(
       reporter,
       out: options.out,
       format: globalOptions.format,
+      ...(outcome.decisionSummary
+        ? { decisionSummary: outcome.decisionSummary }
+        : {}),
     },
     outcome.compare
       ? buildRunCompareReport(outcome.compare, outcome.report, {
@@ -2271,6 +2274,15 @@ async function writeCompareResult(
     reporter: ReturnType<typeof parseReporterFormat>;
     out?: string;
     format: ReturnType<typeof getGlobalOptions>["format"];
+    /**
+     * The COMPARE side's own decision, for the JSON document.
+     *
+     * Already built by the caller for the report and the human block; carried
+     * here so `--format json` stops being the one terminal that gets the gate
+     * verdict without the run's verdict. Absent whenever it could not be
+     * assembled — an incomplete comparison, a failed walk.
+     */
+    decisionSummary?: EvalRunDecisionSummary;
   },
   structured: StructuredRunReport | undefined
 ): Promise<void> {
@@ -2285,7 +2297,13 @@ async function writeCompareResult(
     return;
   }
   writeResult(
-    { compare: args.report, exitCode: evalGateExitCode(args.report) },
+    {
+      compare: args.report,
+      exitCode: evalGateExitCode(args.report),
+      ...(args.decisionSummary
+        ? { decisionSummary: args.decisionSummary }
+        : {}),
+    },
     args.format
   );
 }
@@ -3317,15 +3335,21 @@ export function registerEvalCommands(program: Command): void {
 
           if (!needsReport) {
             // No report was asked for, so no iteration walk was paid for — but
-            // in human format the whole value of `--wait` is being told what
-            // happened, and today a failing wait prints a receipt and an exit
-            // code and nothing about why. One bounded read buys that back.
+            // the whole value of `--wait` is being told what happened, and
+            // without this a failing wait prints a receipt and an exit code and
+            // nothing about why. One bounded read buys that back.
+            //
+            // NOT human-only any more. `--format json` used to drop this on the
+            // floor — the guard read `format === "human"` — so the machine
+            // consumer, the one that cannot ask a follow-up question, was the
+            // one surface that never got the decision. The cost is exactly one
+            // extra read on `--wait --format json` single-run paths (and, on a
+            // deployment without the endpoint, a bounded fallback walk).
             //
             // SINGLE-RUN ONLY, here and below. `StructuredRunReport` carries
             // one summary and a fan-out has several runs; attaching one of them
             // would label a report about N runs with the decision of one.
             const soloSummary =
-              globalOptions.format === "human" &&
               result.targets.length === 1 &&
               runs.length === 1 &&
               TERMINAL_RUN_STATUSES.has(runs[0]!.status)
@@ -3491,7 +3515,17 @@ export function registerEvalCommands(program: Command): void {
         writeReporterResult(reporter, report);
       } else {
         writeResult(
-          { launch: result, runs: completion.runs },
+          {
+            launch: result,
+            runs: completion.runs,
+            // ONE DOCUMENT, and the decision belongs in it. `--format json` is
+            // the stable contract and the human block below is not, so a
+            // pipeline that reads stdout used to get run ids and a status and
+            // had to make a second call to learn what the run decided.
+            ...(completion.decisionSummary
+              ? { decisionSummary: completion.decisionSummary }
+              : {}),
+          },
           globalOptions.format
         );
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
@@ -3548,29 +3582,70 @@ export function registerEvalCommands(program: Command): void {
       .command("status")
       .description("Get the status and summary of an eval run")
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      )
+      .option(
+        "--diagnostics-limit <n>",
+        "Failure diagnostics per page (1–200; default 20)"
+      )
+      .option(
+        "--diagnostics-cursor <cursor>",
+        "Cursor from a previous response's decisionSummary.diagnostics.nextCursor"
+      )
+      .option(
+        "--stages",
+        "Print all six user-value chain rows for each failing trial (human output)"
       ).action(
     async (
-      options: PlatformOptions & { project?: string; run: string },
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        diagnosticsLimit?: string;
+        diagnosticsCursor?: string;
+        stages?: boolean;
+      },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       let decisionSummary: EvalRunDecisionSummary | undefined;
       const resolved = resolveCloudProjectArgs(options);
+      // VALIDATED, not cast. The cast this replaced asserted a shape rather
+      // than checking one, so `--diagnostics-limit 500` would have travelled
+      // to the wire instead of failing here against the schema's own 1..200
+      // bound. `projectOptional` is load-bearing: the schema requires
+      // `project` and the cloud CLI fills it from --project/env/link AFTER
+      // this point, so without the flag omitting the flag becomes a usage
+      // error on a command that has always worked without it.
+      const input = validateOpInput(
+        getEvalRunOperation,
+        {
+          runId: options.run,
+          ...(resolved.project === undefined
+            ? {}
+            : { project: resolved.project }),
+          ...(options.diagnosticsLimit !== undefined
+            ? {
+                diagnosticsLimit: parsePositiveInteger(
+                  options.diagnosticsLimit,
+                  "--diagnostics-limit"
+                ),
+              }
+            : {}),
+          ...(options.diagnosticsCursor !== undefined
+            ? { diagnosticsCursor: options.diagnosticsCursor }
+            : {}),
+        },
+        { projectOptional: true }
+      );
       const result = await runPlatformCommand(
         platformOptionsOf(command),
         globalOptions.timeout,
         async (context) => {
           webOrigin = context.webOrigin;
-          const result = await getEvalRunOperation.execute(
-            {
-              runId: options.run,
-              ...(resolved.project === undefined
-                ? {}
-                : { project: resolved.project }),
-            } as { project: string; runId: string },
-            { client: context.client, signal: context.signal }
-          );
+          const result = await getEvalRunOperation.execute(input, {
+            client: context.client,
+            signal: context.signal,
+          });
           // Any terminal run that did NOT pass — not just a failed one.
           // `inconclusive` and a run that stopped without a verdict are the
           // outcomes a reader is least able to explain on their own, and the
@@ -3615,7 +3690,8 @@ export function registerEvalCommands(program: Command): void {
       writeEvalDecisionSummary(
         globalOptions.format,
         decisionSummary,
-        process.stdout
+        process.stdout,
+        { stages: options.stages === true }
       );
       writeRunLink(globalOptions.format, webOrigin, {
         projectId: result.project.id,

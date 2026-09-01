@@ -35,7 +35,9 @@ import {
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   STAGE_ANALYZER_VERSION,
   STAGE_REASON_LABELS,
+  STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGES,
   assembleEvalRunDecisionSummary,
   measurementUnitLabel,
   stageDerivationSchema,
@@ -516,15 +518,38 @@ export async function readEvalRunDecisionSummary(
 // ── the human renderer ───────────────────────────────────────────────────────
 
 /**
+ * How much detail the prose renderer prints.
+ *
+ * `stages` is the DETAILED layer: all six chain rows for every diagnostic,
+ * rather than the one line naming where the chain first broke. Off by default
+ * so every existing caller's output volume is unchanged — a fan-out of twenty
+ * failing trials would otherwise gain a hundred and twenty lines nobody asked
+ * for. The compact chain line below is NOT optional: it is the answer the
+ * summary owes a reader, not an enrichment.
+ */
+export type FormatEvalRunDecisionSummaryOptions = {
+  stages?: boolean;
+};
+
+/**
  * Render the canonical summary as prose.
+ *
+ * THE ORDER IS THE CONTRACT: what was decided → how much was measured → where
+ * the chain broke → the supporting evidence → the next owner. A reader who
+ * stops after two lines has the verdict and the population it covers; one who
+ * stops after three also knows where value stopped travelling.
  *
  * Every enum passes through the label maps beside the contract, so a terminal
  * says `User value` and `the call arguments did not match what the case
  * expects` rather than `userValue` and `argumentMismatch`. Nothing here
  * inspects the run again: this is presentation over an already-decided object.
+ *
+ * Human output is not a stable contract — `--format json` is. That is what
+ * makes it safe to lead with the chain line rather than gate it behind a flag.
  */
 export function formatEvalRunDecisionSummary(
-  summary: EvalRunDecisionSummary
+  summary: EvalRunDecisionSummary,
+  options: FormatEvalRunDecisionSummaryOptions = {}
 ): string {
   const lines: string[] = [formatDecisionHeadline(summary)];
 
@@ -542,10 +567,105 @@ export function formatEvalRunDecisionSummary(
   }
 
   lines.push(formatDiagnosticsHeadline(summary));
+  const firstBreak = formatFirstBreakLine(summary);
+  if (firstBreak) lines.push(firstBreak);
   for (const item of summary.diagnostics.items) {
-    lines.push(...formatDecisionDiagnostic(item));
+    lines.push(...formatDecisionDiagnostic(item, options));
   }
   return lines.join("\n");
+}
+
+/**
+ * WHERE THE CHAIN BROKE for this run, in one line, above the per-trial detail.
+ *
+ * The stage is the EARLIEST one in chain order at which any readable trial
+ * broke — "first" here means what it means everywhere else in this contract, a
+ * position in `USER_VALUE_STAGES`, never "the most common". The count beside it
+ * is what keeps that honest: a run whose only connection failure sits under
+ * nine user-value failures reports `1 of 10`, and says so again by naming how
+ * many distinct stages broke.
+ *
+ * The denominator is the READABLE population these diagnostics carry — trials
+ * whose chain validated — and never a stage-analytics denominator: that is a
+ * different document, computed over a different population, and mixing the two
+ * would produce a rate belonging to neither.
+ *
+ * Skipped for a passing run, which has no break to name.
+ *
+ * Returns `undefined` rather than a hedge whenever nothing is established.
+ */
+function formatFirstBreakLine(
+  summary: EvalRunDecisionSummary
+): string | undefined {
+  if (summary.verdict === "passed") return undefined;
+  const items = summary.diagnostics.items;
+  if (items.length === 0) return undefined;
+
+  const readable = items.filter((item) => item.chain.status === "verified");
+  if (readable.length === 0) {
+    return (
+      "  First break: not established — none of the " +
+      `${items.length} ${measurementUnitLabel("trial", items.length)} ` +
+      "below recorded a chain that could be read"
+    );
+  }
+
+  const brokeAt = new Map<UserValueStage, number>();
+  for (const item of readable) {
+    const stage =
+      item.chain.status === "verified"
+        ? item.chain.firstFailedStage
+        : undefined;
+    if (stage) brokeAt.set(stage, (brokeAt.get(stage) ?? 0) + 1);
+  }
+  const unit = measurementUnitLabel("trial", readable.length);
+  if (brokeAt.size === 0) {
+    // Every readable chain established a category and no stage — a setup abort
+    // or an evaluator error. Naming a stage here would put a location on a run
+    // that never reached one.
+    const categories = [
+      ...new Set(
+        readable.flatMap((item) =>
+          item.chain.status === "verified" && item.chain.failureCategory
+            ? [FAILURE_CATEGORY_LABELS[item.chain.failureCategory]]
+            : []
+        )
+      ),
+    ];
+    return categories.length > 0
+      ? `  First break: no stage was reached — grouped under ${categories.join(
+          ", "
+        )} (${readable.length} measured ${unit})`
+      : undefined;
+  }
+
+  // Chain ORDER, not insertion order and not a sort: `USER_VALUE_STAGES` is
+  // normative and "earliest" is defined by its positions.
+  const stage = USER_VALUE_STAGES.find((candidate) => brokeAt.has(candidate))!;
+  const row = readable
+    .flatMap((item) =>
+      item.chain.status === "verified" && item.chain.firstFailedStage === stage
+        ? item.chain.stages.filter((entry) => entry.stage === stage)
+        : []
+    )
+    .find((entry) => entry.reason !== undefined);
+  const because = row?.reason ? ` — ${STAGE_REASON_LABELS[row.reason]}` : "";
+  // Said out loud whenever the breaks are spread, because "First break:
+  // Connection (1 of 10)" reads as a connection problem to someone who does
+  // not already know eight of the others stopped somewhere else.
+  const spread =
+    brokeAt.size > 1 ? `; earliest of ${brokeAt.size} stages that broke` : "";
+  // And whenever some chains could not be read at all, because otherwise the
+  // denominator quietly shrinks to the trials that happened to validate and
+  // "1 of 1" is read as "all of them".
+  const withheld = items.length - readable.length;
+  const unreadable =
+    withheld > 0 ? `; ${withheld} more had no readable chain` : "";
+  return (
+    `  First break: ${USER_VALUE_STAGE_LABELS[stage]}${because} ` +
+    `(${brokeAt.get(stage)} of ${readable.length} measured ${unit}` +
+    `${spread}${unreadable})`
+  );
 }
 
 function formatDecisionHeadline(summary: EvalRunDecisionSummary): string {
@@ -589,6 +709,26 @@ function formatDecisionHeadline(summary: EvalRunDecisionSummary): string {
  * them failed" and "we did not look" render identically otherwise — and only
  * one of them means the list below is the whole story.
  */
+/**
+ * One chain row: the stage, what it did, and why.
+ *
+ * Every value through the label maps. The five states stay five different
+ * sentences — "we did not check", "it does not apply" and "it never ran" are
+ * different facts, and one shared word for them is how "we never checked" gets
+ * read as "it passed".
+ */
+function formatStageRow(row: StageResultRow): string {
+  const state = STAGE_STATE_LABELS[row.state];
+  const reason = row.reason ? STAGE_REASON_LABELS[row.reason] : undefined;
+  // A `notReached` row's state already says "never ran (an earlier stage
+  // failed)" and its reason says "an earlier stage failed" — the same sentence
+  // twice on the four rows a reader sees most. Suppressed by CONTAINMENT
+  // rather than by naming that pair, so a future state whose words absorb its
+  // reason gets the same treatment without anyone remembering to add it.
+  const because = reason && !state.includes(reason) ? ` — ${reason}` : "";
+  return `${USER_VALUE_STAGE_LABELS[row.stage]}: ${state}${because}`;
+}
+
 function formatDiagnosticsHeadline(summary: EvalRunDecisionSummary): string {
   const { items, scannedIterations, complete } = summary.diagnostics;
   const scope = complete
@@ -600,7 +740,10 @@ function formatDiagnosticsHeadline(summary: EvalRunDecisionSummary): string {
   );
 }
 
-function formatDecisionDiagnostic(item: EvalRunDecisionDiagnostic): string[] {
+function formatDecisionDiagnostic(
+  item: EvalRunDecisionDiagnostic,
+  options: FormatEvalRunDecisionSummaryOptions = {}
+): string[] {
   const identity = [item.caseId ?? item.testCaseId, `iteration ${item.iterationNumber}`]
     .filter((part): part is string => !!part)
     .join(", ");
@@ -630,6 +773,16 @@ function formatDecisionDiagnostic(item: EvalRunDecisionDiagnostic): string[] {
         ? `    Failure category: ${FAILURE_CATEGORY_LABELS[item.chain.failureCategory]}`
         : "    Failure category: not reported"
     );
+    // THE DETAILED LAYER, and only inside `verified`: the other two states have
+    // no rows to print — one had its rows withheld for failing validation, the
+    // other never had any. Printing six "not measured" rows for either would
+    // state as measured-and-empty exactly what was never measured.
+    if (options.stages) {
+      lines.push("    Chain:");
+      for (const row of item.chain.stages) {
+        lines.push(`      ${formatStageRow(row)}`);
+      }
+    }
   } else if (item.chain.status === "unverified") {
     lines.push(
       "    First failed stage: not established — the recorded stage chain did not validate, so it is withheld"
