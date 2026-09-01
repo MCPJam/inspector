@@ -4364,10 +4364,14 @@ export class PlatformApiClient {
       body && typeof body === "object" && !Array.isArray(body)
         ? (body as { code?: unknown; message?: unknown; details?: unknown })
         : undefined;
-    const code =
+    // Track whether the server supplied a code. A status-derived 404 can mean
+    // an undeployed route, while an envelope code identifies a missing
+    // resource; callers need to distinguish those cases.
+    const sentCode =
       typeof envelope?.code === "string" && envelope.code.length > 0
         ? envelope.code
-        : fallbackCodeForStatus(response.status);
+        : undefined;
+    const code = sentCode ?? fallbackCodeForStatus(response.status);
     const message =
       typeof envelope?.message === "string" && envelope.message.length > 0
         ? envelope.message
@@ -4384,6 +4388,7 @@ export class PlatformApiClient {
       details,
       retryAfter: parseRetryAfter(response.headers.get("retry-after")),
       endpoint: path,
+      codeSource: sentCode !== undefined ? "envelope" : "status",
     });
   }
 }
