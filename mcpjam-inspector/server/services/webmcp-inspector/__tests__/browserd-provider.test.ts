@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserdWebMcpProvider } from "../browserd-provider";
+import { WebMcpBridge } from "../../browserd/daemon/webmcp-bridge";
 import type { BrowserSessionHandle } from "../../browserd/browser-session";
 import type { BrowserCommand } from "../../browserd/protocol";
 import type {
@@ -51,13 +52,19 @@ function build(
   return { provider, commands, toolSets, navigations, callbacks, sendCommand };
 }
 
-const withTools = (tools: unknown[]) => (command: BrowserCommand): Reply => {
-  const action = command.action as any;
-  if (action.kind === "observe" && action.mode === "webmcp_tools") {
-    return { status: "ok", result: { ok: true, output: { tools } }, bootId: "b" };
-  }
-  return { status: "ok", result: { ok: true, output: {} }, bootId: "b" };
-};
+const withTools =
+  (tools: unknown[]) =>
+  (command: BrowserCommand): Reply => {
+    const action = command.action as any;
+    if (action.kind === "observe" && action.mode === "webmcp_tools") {
+      return {
+        status: "ok",
+        result: { ok: true, output: { tools } },
+        bootId: "b",
+      };
+    }
+    return { status: "ok", result: { ok: true, output: {} }, bootId: "b" };
+  };
 
 describe("browserd WebMCP provider", () => {
   it("reports a REMOTE viewport, not a window on the viewer's machine", async () => {
@@ -123,10 +130,50 @@ describe("browserd WebMCP provider", () => {
     expect(toolSets).toHaveLength(1);
   });
 
+  it("can parse what the DAEMON's own bridge actually reports", async () => {
+    // A contract test across the seam, using the real bridge's output rather
+    // than a fixture of what we hope it says. The fixtures above all invent a
+    // `frameId`, and the daemon's `list()` did not report one — so this parser
+    // silently dropped EVERY hosted tool while every test above passed.
+    const handlers = new Map<string, (payload: unknown) => void>();
+    const bridge = new WebMcpBridge({
+      async send() {
+        return {};
+      },
+      on(event, handler) {
+        handlers.set(event, handler);
+      },
+    });
+    await bridge.start(async () => true);
+    handlers.get("Page.frameNavigated")?.({
+      frame: { id: "f1", url: "https://x.test/" },
+    });
+    handlers.get("WebMCP.toolsAdded")?.({
+      tools: [{ name: "search", description: "d", frameId: "f1" }],
+    });
+
+    const { provider, callbacks, toolSets } = build(withTools(bridge.list()));
+    await provider.createSession({ url: "https://x.test/", callbacks });
+
+    expect(toolSets[0]).toHaveLength(1);
+    expect(toolSets[0][0]).toMatchObject({
+      frameId: "f1",
+      name: "search",
+      origin: "https://x.test",
+      isMainFrame: true,
+    });
+  });
+
   it("drops malformed tool entries instead of advertising half a tool", async () => {
     const { provider, callbacks, toolSets } = build(
       withTools([
-        { frameId: "f1", name: "ok", description: "d", origin: "o", isMainFrame: true },
+        {
+          frameId: "f1",
+          name: "ok",
+          description: "d",
+          origin: "o",
+          isMainFrame: true,
+        },
         { name: "no-frame" },
         { frameId: "f2" },
         "not-an-object",

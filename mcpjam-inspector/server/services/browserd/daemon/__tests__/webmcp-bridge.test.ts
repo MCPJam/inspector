@@ -427,3 +427,367 @@ describe("WebMcpBridge — invocation", () => {
     await assertion;
   });
 });
+
+describe("WebMcpBridge — the push channel", () => {
+  it("announces the COMPLETE set on every change, never a delta", async () => {
+    const fake = fakeCdp();
+    const snapshots: Array<Array<{ name: string }>> = [];
+    const bridge = new WebMcpBridge(fake.cdp, {
+      onChange: (tools) => snapshots.push(tools.map(({ name }) => ({ name }))),
+    });
+    await bridge.start(async () => true);
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "frame-main", url: "https://example.com/book" },
+    });
+
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+    fake.emit("WebMCP.toolsAdded", {
+      tools: [{ ...TOOL, name: "cancel_flight" }],
+    });
+    fake.emit("WebMCP.toolsRemoved", {
+      tools: [{ name: "book_flight", frameId: "frame-main" }],
+    });
+
+    // A consumer stitching deltas would serve tools from the previous page
+    // forever, because navigation fires no removal at all. A snapshot is
+    // correct on arrival no matter what its consumer missed.
+    expect(snapshots.map((snapshot) => snapshot.map((t) => t.name))).toEqual([
+      // the navigation that established main-frame identity
+      [],
+      ["book_flight"],
+      ["book_flight", "cancel_flight"],
+      ["cancel_flight"],
+    ]);
+    expect(bridge.list().map((tool) => tool.name)).toEqual(["cancel_flight"]);
+  });
+
+  it("announces the empty set when a navigation takes the tools away", async () => {
+    const fake = fakeCdp();
+    const snapshots: string[][] = [];
+    const bridge = new WebMcpBridge(fake.cdp, {
+      onChange: (tools) => snapshots.push(tools.map((tool) => tool.name)),
+    });
+    await bridge.start(async () => true);
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "frame-main", url: "https://example.com/book" },
+    });
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "frame-main", url: "https://example.com/other" },
+    });
+    // The push channel is what makes the polling provider's lag go away — but
+    // only if the DISAPPEARANCE is pushed too.
+    expect(snapshots.at(-1)).toEqual([]);
+  });
+
+  it("survives a throwing subscriber", async () => {
+    const fake = fakeCdp();
+    const bridge = new WebMcpBridge(fake.cdp, {
+      onChange: () => {
+        throw new Error("consumer exploded");
+      },
+    });
+    await bridge.start(async () => true);
+    // The subscriber is a consumer's reaction to a browser event; letting it
+    // escape would take down the handler doing the bridge's own bookkeeping.
+    expect(() =>
+      fake.emit("WebMCP.toolsAdded", { tools: [TOOL] }),
+    ).not.toThrow();
+    expect(bridge.list()).toHaveLength(1);
+  });
+});
+
+describe("WebMcpBridge — descriptors", () => {
+  it("carries the frame id and always a description", async () => {
+    const fake = fakeCdp();
+    const bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", {
+      tools: [TOOL, { name: "nameless", frameId: "frame-main" }],
+    });
+
+    const [book, nameless] = bridge.list();
+    // Without a frame id a consumer cannot tell two same-named tools apart at
+    // all — which is how the hosted provider's parser came to drop every tool.
+    expect(book.frameId).toBe("frame-main");
+    expect(book.description).toBe("Book a flight");
+    // Empty string, not undefined: every consumer has to render something, and
+    // an optional field is three different placeholder strings for one absence.
+    expect(nameless.description).toBe("");
+  });
+});
+
+describe("WebMcpBridge — explicit frame", () => {
+  it("invokes in the frame the caller names, not the resolved one", async () => {
+    const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+    const bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", {
+      tools: [TOOL, { ...TOOL, frameId: "frame-sub" }],
+    });
+
+    const pending = bridge.invoke({
+      toolName: "book_flight",
+      frameId: "frame-sub",
+      input: {},
+    });
+    await Promise.resolve();
+    fake.emit("WebMCP.toolResponded", {
+      invocationId: "inv-1",
+      status: "Completed",
+      output: { ok: true },
+    });
+    await pending;
+
+    // Name resolution prefers the MAIN frame, so a subframe's tool would
+    // otherwise be shadowed by a same-named one the caller never listed.
+    const invoke = fake.sent.find((s) => s.method === "WebMCP.invokeTool");
+    expect(invoke?.params?.frameId).toBe("frame-sub");
+  });
+
+  it("falls back to resolution when the named frame is gone", async () => {
+    const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+    const bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+    const pending = bridge.invoke({
+      toolName: "book_flight",
+      // A frame the caller listed a moment ago and that has since detached.
+      frameId: "frame-that-detached",
+      input: {},
+    });
+    await Promise.resolve();
+    fake.emit("WebMCP.toolResponded", {
+      invocationId: "inv-1",
+      status: "Completed",
+      output: {},
+    });
+    await pending;
+
+    // Sending a stale id to the browser would fail obscurely; resolving is what
+    // the caller wanted anyway.
+    expect(
+      fake.sent.find((s) => s.method === "WebMCP.invokeTool")?.params?.frameId,
+    ).toBe("frame-main");
+  });
+});
+
+describe("WebMcpBridge — timeout ownership", () => {
+  it("arms NO internal deadline when the caller supplies a signal", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+      const bridge = await started(fake, { invocationTimeoutMs: 10 });
+      fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+      const controller = new AbortController();
+      const pending = bridge.invoke({
+        toolName: "book_flight",
+        input: {},
+        signal: controller.signal,
+      });
+      pending.catch(() => {});
+      await Promise.resolve();
+
+      // Well past the bridge's own deadline. Two deadlines on one invocation
+      // means whichever fires first names the failure, and the caller's is the
+      // one the user reads.
+      vi.advanceTimersByTime(1_000);
+      expect(
+        fake.sent.some((s) => s.method === "WebMCP.cancelInvocation"),
+      ).toBe(false);
+
+      controller.abort("cancelled");
+      await Promise.resolve();
+      expect(
+        fake.sent.some((s) => s.method === "WebMCP.cancelInvocation"),
+      ).toBe(true);
+      fake.emit("WebMCP.toolResponded", {
+        invocationId: "inv-1",
+        status: "Canceled",
+      });
+      await expect(pending).rejects.toMatchObject({
+        cancelReason: "cancelled",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("takes the cancel reason from the signal, so a caller timeout is a timeout", async () => {
+    const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+    const bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+    const controller = new AbortController();
+    const pending = bridge.invoke({
+      toolName: "book_flight",
+      input: {},
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort("timeout");
+    fake.emit("WebMCP.toolResponded", {
+      invocationId: "inv-1",
+      status: "Canceled",
+    });
+
+    // Naive adoption reports every caller-side timeout as a user cancellation —
+    // the exact bug both docstrings warn about.
+    await expect(pending).rejects.toMatchObject({
+      failure: "webmcp_cancelled",
+      cancelReason: "timeout",
+    });
+  });
+
+  it("still owns the deadline when no signal is given", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+      const bridge = await started(fake, {
+        invocationTimeoutMs: 10,
+        cancelSettleGraceMs: 5,
+      });
+      fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+      const pending = bridge.invoke({ toolName: "book_flight", input: {} });
+      const assertion = expect(pending).rejects.toMatchObject({
+        cancelReason: "timeout",
+      });
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(20);
+      await assertion;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("WebMcpBridge — pre-flight abort", () => {
+  it("never starts a tool for an invocation the caller already cancelled", async () => {
+    const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+    const bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+    const controller = new AbortController();
+    controller.abort("cancelled");
+    await expect(
+      bridge.invoke({
+        toolName: "book_flight",
+        input: {},
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ cancelReason: "cancelled" });
+
+    // A queued invocation whose caller gave up must not mutate the page and
+    // then be cancelled a moment later.
+    expect(fake.sent.some((s) => s.method === "WebMCP.invokeTool")).toBe(false);
+  });
+
+  it("reports a pre-flight timeout as a timeout", async () => {
+    const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+    const bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+    const controller = new AbortController();
+    controller.abort("timeout");
+    await expect(
+      bridge.invoke({
+        toolName: "book_flight",
+        input: {},
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ cancelReason: "timeout" });
+  });
+});
+
+describe("WebMcpBridge — external invocations", () => {
+  it("reports a tool this bridge did not start", async () => {
+    const fake = fakeCdp();
+    const external: string[] = [];
+    const bridge = new WebMcpBridge(fake.cdp, {
+      onExternalInvocation: (name) => external.push(name),
+    });
+    await bridge.start(async () => true);
+
+    fake.emit("WebMCP.toolInvoked", {
+      invocationId: "someone-else",
+      toolName: "book_flight",
+    });
+    // It explains state changes the timeline would otherwise attribute to
+    // nothing at all.
+    expect(external).toEqual(["book_flight"]);
+  });
+
+  it("does not report our OWN invocation as external", async () => {
+    const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+    const external: string[] = [];
+    const bridge = new WebMcpBridge(fake.cdp, {
+      onExternalInvocation: (name) => external.push(name),
+    });
+    await bridge.start(async () => true);
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "frame-main", url: "https://example.com/book" },
+    });
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+    const pending = bridge.invoke({ toolName: "book_flight", input: {} });
+    await Promise.resolve();
+    fake.emit("WebMCP.toolInvoked", {
+      invocationId: "inv-1",
+      toolName: "book_flight",
+    });
+    fake.emit("WebMCP.toolResponded", {
+      invocationId: "inv-1",
+      status: "Completed",
+      output: {},
+    });
+    await pending;
+    expect(external).toEqual([]);
+  });
+
+  it("stays quiet while one of our own sends is still outstanding", async () => {
+    // The reply carrying our invocation id has not come back yet, so an unknown
+    // id is genuinely ambiguous. A false "someone else drove your page" misleads
+    // whoever reads the timeline; a missed note is a gap in an advisory one.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fake = fakeCdp({
+      onSend: (method) =>
+        method === "WebMCP.invokeTool"
+          ? gate.then(() => ({ invocationId: "inv-1" }))
+          : {},
+    });
+    const external: string[] = [];
+    const bridge = new WebMcpBridge(fake.cdp, {
+      onExternalInvocation: (name) => external.push(name),
+    });
+    await bridge.start(async () => true);
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "frame-main", url: "https://example.com/book" },
+    });
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+    const pending = bridge.invoke({ toolName: "book_flight", input: {} });
+    await Promise.resolve();
+    fake.emit("WebMCP.toolInvoked", {
+      invocationId: "inv-1",
+      toolName: "book_flight",
+    });
+    expect(external).toEqual([]);
+
+    // Let the gated reply land and the invocation register, then settle it
+    // normally: the point is that nothing was reported while it was in doubt.
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fake.emit("WebMCP.toolResponded", {
+      invocationId: "inv-1",
+      status: "Completed",
+      output: {},
+    });
+    await pending;
+    expect(external).toEqual([]);
+  });
+});

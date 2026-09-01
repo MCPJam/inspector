@@ -37,7 +37,33 @@ server/services/webmcp-inspector/         provider, runtime, registry, hub
 routes — is written against that interface and never imports Playwright, so the
 hosted stage can run the browser elsewhere without reaching into tool identity,
 queueing, activity or lifecycle. `playwright-provider.ts` is the only module in
-the repo that speaks CDP.
+the inspector that speaks CDP.
+
+The WebMCP state machine itself — the tool map, the pending invocations, the
+cancel-reason bookkeeping — lives in ONE place:
+`server/services/browserd/daemon/webmcp-bridge.ts`. It used to exist twice, once
+there and once inline in `playwright-provider.ts`, so every hard-won behaviour
+in it had to be fixed twice or drift. The bridge imports nothing at all, which
+is what lets Playwright's `CDPSession` satisfy its `CdpLike` structurally and
+makes the eventual move into a shared `webmcp-runtime/` package a file move
+rather than a refactor. Anyone doing that extraction should move the file rather
+than inverting the dependency in place.
+
+What stays in the provider is everything OUTSIDE the WebMCP domain — the
+screencast, input dispatch, navigation, screenshots, lifecycle — plus the
+translation between the bridge's vocabulary and this interface's:
+`WebMcpBridgeError{failure}` becomes `WebMcpToolGoneError` or
+`WebMcpInvocationCancelledError{reason}`, and `{invocationId, output}` loses an
+id the runtime already has its own handle for. Unsupported detection stays at
+the provider's `start()`, so a browser that cannot do WebMCP fails session
+creation with an explanation instead of succeeding into an empty tool list.
+
+TIMEOUT OWNERSHIP is the one part worth stating twice. The runtime owns the
+per-invocation deadline, so when it hands the bridge a signal the bridge does
+not arm its own, and it derives the cancel reason from `signal.reason`. Two
+deadlines on one invocation means whichever fires first names the failure — and
+the browser answers every cancel `Canceled` regardless of why, so a bridge that
+ignored the reason would record every timeout as a user cancellation.
 
 `viewportTransport` on the session is the same seam for the viewer. A local
 session reports `native-window` (the browser opens on the developer's machine

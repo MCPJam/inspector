@@ -190,9 +190,30 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     );
     const origin = new URL(fixture.url).origin;
 
+    const activity: WebMcpActivityEntry[] = [];
+    runtime.hub.subscribe((event) => {
+      if (event.type === "activity") activity.push(event.entry);
+    }, 0);
+
+    const { invokeId } = runtime.invoke(`${origin}::slow`, {}, "manual");
     await expect(
       runtime.invoke(`${origin}::slow`, {}, "manual").settled,
     ).rejects.toThrow(/did not respond in time|cancel/i);
+
+    // END TO END, through the shared bridge: the RUNTIME owns the deadline, so
+    // the browser's `Canceled` — which says nothing about why — must still be
+    // recorded as a timeout and not as a user cancellation. That distinction is
+    // the whole reason the reason is carried, and it is the exact bug a naive
+    // adoption of the bridge introduces.
+    await vi.waitFor(() => {
+      const settled = activity.find(
+        (entry) =>
+          entry.kind === "invocation_settled" && entry.invokeId === invokeId,
+      );
+      expect(settled && "state" in settled ? settled.state : undefined).toBe(
+        "timeout",
+      );
+    });
 
     // The session must survive a hung tool: the next call still works.
     const after = await runtime.invoke(

@@ -748,6 +748,8 @@ var WebMcpBridge = class {
     this.cdp = cdp;
     this.invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
     this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
+    this.onChange = options.onChange;
+    this.onExternalInvocation = options.onExternalInvocation;
   }
   /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
   tools = /* @__PURE__ */ new Map();
@@ -757,10 +759,29 @@ var WebMcpBridge = class {
   /** Responses that arrived before their invocation was registered. */
   earlyResponses = /* @__PURE__ */ new Map();
   mainFrameId = "";
+  /** `WebMCP.invokeTool` calls whose reply has not come back yet. See `wire`. */
+  outstandingSends = 0;
   invocationTimeoutMs;
   cancelSettleGraceMs;
   supported = false;
   disposed = false;
+  onChange;
+  onExternalInvocation;
+  /**
+   * Announce the current tool set.
+   *
+   * Every mutation path funnels through here so no path can forget. A throwing
+   * subscriber is swallowed: it is the consumer's own reaction to a browser
+   * event, and letting it escape would take down the CDP handler that is also
+   * responsible for the bridge's own bookkeeping.
+   */
+  announce() {
+    if (!this.onChange) return;
+    try {
+      this.onChange(this.list());
+    } catch {
+    }
+  }
   /**
    * Enable the domains and wire the events. `probeSupported` is the page-side
    * check for `document.modelContext`: `WebMCP.enable` RESOLVES even on a
@@ -784,12 +805,21 @@ var WebMcpBridge = class {
       for (const tool of tools ?? []) {
         this.tools.set(this.key(tool.frameId, tool.name), tool);
       }
+      this.announce();
     });
     this.cdp.on("WebMCP.toolsRemoved", (payload) => {
       const { tools } = payload ?? {};
       for (const tool of tools ?? []) {
         this.tools.delete(this.key(tool.frameId, tool.name));
       }
+      this.announce();
+    });
+    this.cdp.on("WebMCP.toolInvoked", (payload) => {
+      const invoked = payload ?? {};
+      if (!invoked.invocationId) return;
+      if (this.pending.has(invoked.invocationId)) return;
+      if (this.outstandingSends > 0) return;
+      this.onExternalInvocation?.(invoked.toolName ?? "");
     });
     this.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = payload ?? {};
@@ -813,12 +843,14 @@ var WebMcpBridge = class {
       this.frames.set(frame.id, frame.url);
       this.dropFrame(frame.id);
       if (!frame.parentId) this.mainFrameId = frame.id;
+      this.announce();
     });
     this.cdp.on("Page.frameDetached", (payload) => {
       const { frameId } = payload ?? {};
       if (!frameId) return;
       this.frames.delete(frameId);
       this.dropFrame(frameId);
+      this.announce();
     });
   }
   key(frameId, name) {
@@ -862,8 +894,9 @@ var WebMcpBridge = class {
   /** The tools currently on offer, as the model should see them. */
   list() {
     return [...this.tools.values()].map((tool) => ({
+      frameId: tool.frameId,
       name: tool.name,
-      ...tool.description !== void 0 ? { description: tool.description } : {},
+      description: tool.description ?? "",
       ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
       ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
       origin: originOf(this.frames.get(tool.frameId) ?? ""),
@@ -890,7 +923,29 @@ var WebMcpBridge = class {
       `The page no longer offers a tool named "${toolName}".`
     );
   }
-  /** Invoke a page tool and wait for the page's own response. */
+  /**
+   * Pick the frame to invoke in: the caller's, when it still offers the tool.
+   *
+   * A frame id the caller listed a moment ago can be gone (the page navigated,
+   * the subframe detached), so an id that no longer matches falls back to
+   * resolution rather than being sent to the browser to fail obscurely.
+   */
+  frameFor(frameId, toolName) {
+    if (frameId && this.tools.has(this.key(frameId, toolName))) return frameId;
+    return this.resolveFrame(toolName);
+  }
+  /**
+   * Invoke a page tool and wait for the page's own response.
+   *
+   * TIMEOUT OWNERSHIP. With no `signal`, this bridge owns the deadline and
+   * cancels the page after `invocationTimeoutMs`. With a `signal`, the CALLER
+   * owns it and the internal deadline is not armed at all — two deadlines on
+   * one invocation means whichever fires first decides what the failure is
+   * called, and the caller's is the one whose reason the user will read. The
+   * reason is taken from `signal.reason` for the same purpose: a caller that
+   * aborts with `"timeout"` gets a timeout, and naive adoption of this bridge
+   * would otherwise report every caller-side timeout as a user cancellation.
+   */
   async invoke(args) {
     if (this.disposed) {
       throw new WebMcpBridgeError(
@@ -905,14 +960,28 @@ var WebMcpBridge = class {
         "This browser build does not expose the WebMCP page API, so the page's tools cannot be invoked."
       );
     }
-    const frameId = this.resolveFrame(args.toolName);
+    if (args.signal?.aborted) {
+      const reason = args.signal.reason === "timeout" ? "timeout" : "cancelled";
+      throw new WebMcpBridgeError(
+        "webmcp_cancelled",
+        reason === "timeout" ? "The page tool did not respond in time." : "Cancelled before it started.",
+        reason
+      );
+    }
+    const frameId = this.frameFor(args.frameId, args.toolName);
     let invocationId;
     try {
-      const result = await this.cdp.send("WebMCP.invokeTool", {
-        frameId,
-        toolName: args.toolName,
-        input: args.input
-      });
+      this.outstandingSends += 1;
+      let result;
+      try {
+        result = await this.cdp.send("WebMCP.invokeTool", {
+          frameId,
+          toolName: args.toolName,
+          input: args.input
+        });
+      } finally {
+        this.outstandingSends -= 1;
+      }
       if (!result?.invocationId) {
         throw new WebMcpBridgeError(
           "webmcp_error",
@@ -962,14 +1031,20 @@ var WebMcpBridge = class {
           );
         }, this.cancelSettleGraceMs);
       };
-      waiter.timer = setTimeout(
-        () => cancel("timeout"),
-        this.invocationTimeoutMs
+      if (!args.signal) {
+        waiter.timer = setTimeout(
+          () => cancel("timeout"),
+          this.invocationTimeoutMs
+        );
+      }
+      args.signal?.addEventListener(
+        "abort",
+        () => cancel(args.signal?.reason === "timeout" ? "timeout" : "cancelled"),
+        { once: true }
       );
-      args.signal?.addEventListener("abort", () => cancel("cancelled"), {
-        once: true
-      });
-      if (args.signal?.aborted) cancel("cancelled");
+      if (args.signal?.aborted) {
+        cancel(args.signal.reason === "timeout" ? "timeout" : "cancelled");
+      }
     });
     return { invocationId, output: output.output };
   }

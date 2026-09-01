@@ -9,15 +9,18 @@
  *
  * Two gaps, deliberate and specced rather than papered over:
  *
- * 1. TOOL DISCOVERY IS POLLED, not pushed. The daemon knows the real CCDP
- *    events (`toolsAdded` / `toolsRemoved` reach `daemon/webmcp-bridge.ts`),
- *    but there is no server-push channel from the daemon yet, so this provider
- *    asks for a snapshot on an interval and after every command. That is
- *    correct but laggy: a tool registered by a page's own script shows up
- *    within one poll rather than instantly. The fix is an SSE (or long-poll)
- *    endpoint on the daemon that forwards its existing event stream; the
- *    provider then swaps `startPolling` for a subscription and nothing above
- *    it changes. Snapshot semantics are already what the interface wants —
+ * 1. TOOL DISCOVERY IS POLLED, not pushed. This provider asks for a snapshot
+ *    on an interval and after every command. That is correct but laggy: a tool
+ *    registered by a page's own script shows up within one poll rather than
+ *    instantly.
+ *
+ *    HALF of that gap is now closed: `daemon/webmcp-bridge.ts` has an
+ *    `onChange` push channel emitting complete snapshots, which is exactly what
+ *    this provider wants and what the local inspector already consumes. What is
+ *    still missing is the TRANSPORT — an SSE (or long-poll) endpoint on the
+ *    daemon forwarding that channel out of the sandbox. When it exists, this
+ *    provider swaps its interval for a subscription and nothing above it
+ *    changes, because snapshot semantics are already what the interface wants:
  *    `onToolsChanged` takes the COMPLETE set every time, so a missed event
  *    cannot leak a stale tool.
  *
@@ -154,7 +157,9 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   /** Cancel by the DAEMON's invocation id (the V1 id is mapped by the caller). */
   async cancel(invocationId: string): Promise<boolean> {
     const result = await this.run({ kind: "webmcp_cancel", invocationId });
-    return result.output !== undefined && readBoolean(result.output, "cancelled");
+    return (
+      result.output !== undefined && readBoolean(result.output, "cancelled")
+    );
   }
 
   async captureScreenshot(): Promise<string | undefined> {
