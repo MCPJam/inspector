@@ -24,11 +24,14 @@
  * the SDK on purpose. So this lists the runs and renders the SELECTED one.
  * Paging browses further back; it never accumulates into a combined funnel.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
-import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
+import type {
+  EvalStageAnalyticsV1,
+  UserValueStage,
+} from "@mcpjam/sdk/contract";
 import {
   evalSurfaceCardClass,
   evalSurfaceHeaderClass,
@@ -47,14 +50,25 @@ import {
   type StageRateView,
   type StageRowView,
 } from "./stage-analytics-model";
+import { StageChainCards } from "./stage-chain-cards";
+import { StageDetailCard } from "./stage-detail-card";
+import { defaultSelectedStage, toStageCardViews } from "./stage-chain-model";
 
 function formatCompletedAt(epochMs: number | null): string {
   if (epochMs === null) return "no completion stamp";
   return new Date(epochMs).toLocaleString();
 }
 
-/** One rate, with its arithmetic and its exclusions. Words when unmeasured. */
-function RateCell({ rate }: { rate: StageRateView }) {
+/**
+ * One rate, with its arithmetic and its exclusions. Words when unmeasured.
+ *
+ * Exported for the stage detail card, which shows the same three rates for the
+ * selected stage. Re-implementing it there would put a second renderer in
+ * front of the one rule this whole surface rests on — words instead of a bar
+ * when the denominator is zero — and the second copy is the one that gets it
+ * wrong the day somebody "simplifies" a `null` check.
+ */
+export function RateCell({ rate }: { rate: StageRateView }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] text-muted-foreground">{rate.label}</span>
@@ -192,16 +206,20 @@ function SliceBlock({ slice }: { slice: SliceView }) {
 function SliceGroup({ title, slices }: { title: string; slices: SliceView[] }) {
   if (slices.length === 0) return null;
   return (
-    <section className="mt-3">
-      <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <details className="mt-3" data-testid={`stage-slice-group-${title}`}>
+      {/* COLLAPSED by default. The markup inside is unchanged — this is a
+          disclosure around the existing group, not a rewrite of it. A reader
+          who has not yet found the break in the chain is not asking whether it
+          differs by host. */}
+      <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {title}
-      </h4>
+      </summary>
       <div className="mt-1.5 grid gap-2">
         {slices.map((slice) => (
           <SliceBlock key={slice.key} slice={slice} />
         ))}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -218,13 +236,70 @@ function SliceGroup({ title, slices }: { title: string; slices: SliceView[] }) {
  * Pure props, no hooks, no queries: the same document renders identically on
  * both surfaces, which is the whole point of there being one contract.
  */
-export function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
+export function RunDocument({
+  row,
+  renderFindings,
+}: {
+  row: EvalStageAnalyticsV1;
+  /**
+   * The evidence for one stage's failures, when a caller can join it.
+   *
+   * A RENDER PROP, so this component stays pure props with no hooks and no
+   * queries — the property that lets the same document render identically on
+   * the suite page and the run page. The diagnostics that fill it come from a
+   * different read with its own loading and failure states, and every rate
+   * above is true whether or not that read landed.
+   */
+  renderFindings?: (stage: UserValueStage) => ReactNode;
+}) {
   const header = toRunHeaderView(row);
   const overall = overallSlice(row);
   const intents = slicesOfDimension(row, "intent");
   const models = slicesOfDimension(row, "model");
   const hosts = slicesOfDimension(row, "host");
   const setup = row.setup.map(toSetupView);
+
+  const overallView = useMemo(
+    () => (overall ? toSliceView(overall, 0) : null),
+    [overall],
+  );
+  const cards = useMemo(
+    () => (overallView ? toStageCardViews(overall!.stages) : []),
+    [overallView, overall],
+  );
+
+  /**
+   * Which stage's detail is open.
+   *
+   * Local state, and held HERE rather than by either caller, so both mounts of
+   * this document — the suite panel and the run-detail slot — inherit the
+   * behaviour without either one knowing the other exists.
+   *
+   * `undefined` means "the reader has not chosen yet", which is a different
+   * thing from the `null` they get by closing a card. Without that
+   * distinction, auto-selecting the first break would fight every attempt to
+   * close it.
+   */
+  const [chosenStage, setChosenStage] = useState<
+    UserValueStage | null | undefined
+  >(undefined);
+  const documentIdentity = row.runId;
+  const previousIdentity = useRef(documentIdentity);
+  if (previousIdentity.current !== documentIdentity) {
+    // A different run is a different chain. Carrying a selection across would
+    // open a stage the new run may not have broken at.
+    previousIdentity.current = documentIdentity;
+    if (chosenStage !== undefined) setChosenStage(undefined);
+  }
+
+  const selectedStage =
+    chosenStage === undefined ? defaultSelectedStage(cards) : chosenStage;
+  const selectedRow =
+    overallView?.stages.find((stage) => stage.stage === selectedStage) ?? null;
+
+  const setSelectedStage = (
+    update: (current: UserValueStage | null) => UserValueStage | null,
+  ) => setChosenStage(update(selectedStage));
 
   return (
     <div data-testid="stage-analytics-document">
@@ -290,26 +365,72 @@ export function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
         </details>
       ) : null}
 
-      {overall ? (
+      {overallView ? (
         <section className="mt-3">
           <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Overall — where the chain stopped
           </h4>
+          {/* The D9/D5c boundary, said in the UI's own words rather than left
+              as an internal rule. A reader looking at six health chips has to
+              know they are not a second verdict — otherwise a `failed` chip on
+              a run whose verdict is `passed` reads as a contradiction, when in
+              fact policy v2 lets a case pass with a failing trial in it. */}
+          <p className="mt-0.5 text-[10px] text-muted-foreground/80">
+            Stage health explains the request-delivery path; it does not
+            determine the evaluation verdict.
+          </p>
           <div className="mt-1.5">
-            <SliceBlock slice={toSliceView(overall, 0)} />
+            <StageChainCards
+              cards={cards}
+              selected={selectedStage}
+              onSelect={(stage) =>
+                // Toggling off returns the reader to the row. A second click
+                // on the open card should close it, not re-open it.
+                setSelectedStage((current) =>
+                  current === stage ? null : stage,
+                )
+              }
+            />
+            {selectedRow ? (
+              <StageDetailCard
+                stage={selectedRow}
+                {...(renderFindings
+                  ? { findings: renderFindings(selectedRow.stage) }
+                  : {})}
+              />
+            ) : null}
+            {/* The full three-rate table for all six stages, kept VERBATIM and
+                collapsed. The cards answer "where did it break"; this is the
+                complete measurement the cards summarize, and the honesty rules
+                the existing tests pin live in here. */}
+            <details
+              className="mt-2"
+              data-testid="stage-analytics-overall-rows"
+            >
+              <summary className="cursor-pointer text-[10px] text-muted-foreground/80">
+                All six stages, with reach, coverage and pass rates
+              </summary>
+              <div className="mt-1.5">
+                <SliceBlock slice={overallView} />
+              </div>
+            </details>
           </div>
         </section>
       ) : null}
 
+      {/* The marginals keep their existing markup exactly, behind collapsed
+          expanders. They answer a follow-up question ("is this one model?"),
+          and a reader who has not yet located the break in the chain is not
+          asking it. */}
       <SliceGroup title="By intent" slices={intents} />
       <SliceGroup title="By model" slices={models} />
       <SliceGroup title="By host" slices={hosts} />
 
       {setup.length > 0 ? (
-        <section className="mt-3" data-testid="stage-analytics-setup">
-          <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <details className="mt-3" data-testid="stage-analytics-setup">
+          <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Setup
-          </h4>
+          </summary>
           <div className="mt-1.5 grid gap-2">
             {setup.map((phase) => (
               <div
@@ -336,7 +457,7 @@ export function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
               </div>
             ))}
           </div>
-        </section>
+        </details>
       ) : null}
     </div>
   );

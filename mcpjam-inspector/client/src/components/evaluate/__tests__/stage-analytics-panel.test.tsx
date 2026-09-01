@@ -245,7 +245,9 @@ describe("StageAnalyticsPanel", () => {
     await userEvent.click(within(detail).getByText(/3 of 7 trials excluded/));
     expect((detail as HTMLDetailsElement).open).toBe(true);
     expect(detail.textContent).toContain("1 — cancelled before it finished");
-    expect(detail.textContent).toContain("1 — its stage chain did not validate");
+    expect(detail.textContent).toContain(
+      "1 — its stage chain did not validate",
+    );
     expect(detail.textContent).not.toContain("chainUnverified");
   });
 
@@ -265,6 +267,176 @@ describe("StageAnalyticsPanel", () => {
 
     await screen.findByTestId("stage-analytics-document");
     expect(screen.queryByTestId("stage-analytics-excluded-detail")).toBeNull();
+  });
+
+  it("draws the six stage cards, in chain order, with an arrow between them", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    const row = await screen.findByTestId("stage-chain-cards");
+    for (const stage of [
+      "connection",
+      "discovery",
+      "selection",
+      "call",
+      "response",
+      "userValue",
+    ]) {
+      expect(within(row).getByTestId(`stage-chain-card-${stage}`)).toBeTruthy();
+    }
+    // Five separators for six cards, and every one of them decoration.
+    const arrows = row.querySelectorAll('[aria-hidden="true"]');
+    expect(arrows).toHaveLength(5);
+  });
+
+  it("auto-selects the first break in the chain", async () => {
+    // The golden document fails one trial at `selection`; the `notReached` at
+    // `call` after it is a CONSEQUENCE, not a second finding.
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    const detail = await screen.findByTestId("stage-detail-card");
+    expect(detail.dataset.stage).toBe("selection");
+    expect(
+      screen
+        .getByTestId("stage-chain-card-selection")
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    // The stage's QUESTION, from the contract's own map.
+    expect(detail.textContent).toContain(
+      "Did the model choose the right tool for the request?",
+    );
+  });
+
+  it("swaps the detail card when another stage is clicked", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    await screen.findByTestId("stage-detail-card");
+    await userEvent.click(screen.getByTestId("stage-chain-card-connection"));
+
+    const detail = screen.getByTestId("stage-detail-card");
+    expect(detail.dataset.stage).toBe("connection");
+    expect(detail.textContent).toContain(
+      "Could the client reach the server and initialize a session?",
+    );
+    expect(
+      screen
+        .getByTestId("stage-chain-card-selection")
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+
+  it("closes the detail when the open card is clicked again", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    await screen.findByTestId("stage-detail-card");
+    await userEvent.click(screen.getByTestId("stage-chain-card-selection"));
+    expect(screen.queryByTestId("stage-detail-card")).toBeNull();
+  });
+
+  it("opens no detail card on a run with nothing broken", async () => {
+    // Nothing broken means no "what happened" to answer, and auto-opening a
+    // card anyway would manufacture a question the run did not raise.
+    const clean = structuredClone(GOLDEN_STAGE_ANALYTICS);
+    for (const slice of clean.slices) {
+      for (const stage of slice.stages) {
+        Object.assign(stage, {
+          applicable: 2,
+          reached: 2,
+          notReached: 0,
+          reachUnknown: 0,
+          measured: 2,
+          passed: 2,
+          failed: 0,
+          notMeasured: 0,
+          notApplicable: 0,
+          excluded: {},
+          reasons: [],
+        });
+      }
+      slice.includedTrials = 2;
+      slice.failureCategories = [];
+    }
+    clean.includedTrials = 2;
+    fetchMock.mockResolvedValue({ rows: [stageAnalyticsVariation(clean)] });
+    renderPanel();
+
+    await screen.findByTestId("stage-chain-cards");
+    expect(screen.queryByTestId("stage-detail-card")).toBeNull();
+    // A passing card reads as the delivery story, not as a bare "passed".
+    expect(
+      screen.getByTestId("stage-chain-card-response").textContent,
+    ).toContain("Usable response returned");
+  });
+
+  it("never puts a pass word on a stage that measured nothing", async () => {
+    const unmeasured = structuredClone(GOLDEN_STAGE_ANALYTICS);
+    for (const slice of unmeasured.slices) {
+      for (const stage of slice.stages) {
+        Object.assign(stage, {
+          applicable: 3,
+          reached: 0,
+          notReached: 0,
+          reachUnknown: 3,
+          measured: 0,
+          passed: 0,
+          failed: 0,
+          notMeasured: 0,
+          notApplicable: 0,
+          excluded: { reachUnknown: 3 },
+          reasons: [],
+        });
+        delete (stage as { latency?: unknown }).latency;
+      }
+      slice.includedTrials = 3;
+      slice.failureCategories = [];
+    }
+    unmeasured.includedTrials = 3;
+    fetchMock.mockResolvedValue({
+      rows: [stageAnalyticsVariation(unmeasured)],
+    });
+    renderPanel();
+
+    const row = await screen.findByTestId("stage-chain-cards");
+    expect(row.textContent).toContain("nothing captured — reach undecidable");
+    expect(row.textContent).not.toMatch(/\bpassed\b/);
+    expect(row.textContent).not.toContain("Usable response returned");
+  });
+
+  it("states the D9/D5c boundary in the UI's own words", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    const doc = await screen.findByTestId("stage-analytics-document");
+    expect(doc.textContent).toContain(
+      "Stage health explains the request-delivery path; it does not determine the evaluation verdict.",
+    );
+  });
+
+  it("keeps the marginals and setup collapsed, with their markup unchanged", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    await screen.findByTestId("stage-analytics-document");
+    for (const id of [
+      "stage-slice-group-By intent",
+      "stage-slice-group-By model",
+      "stage-slice-group-By host",
+      "stage-analytics-setup",
+      "stage-analytics-overall-rows",
+    ]) {
+      expect((screen.getByTestId(id) as HTMLDetailsElement).open).toBe(false);
+    }
+    // The existing markup still renders inside — the honesty-rule assertions
+    // above pin the same `data-testid`s they always did.
+    expect(screen.getAllByTestId("stage-slice").length).toBeGreaterThan(1);
+    expect(
+      within(screen.getAllByTestId("stage-slice")[0]!).getAllByTestId(
+        "stage-row",
+      ),
+    ).toHaveLength(6);
   });
 
   it("lists runs and loads more without dropping the current view", async () => {
