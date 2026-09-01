@@ -227,12 +227,20 @@ sound `live`; concluding `empty` claims "no member of this group is alive", and
 that claim is not available if a candidate went unread. The scan tracks that and
 answers `unknown` instead.
 
-`EACCES` is deliberately exempt, and the exemption is measured rather than
-assumed: these files are world-readable (as uid 65534, all 79 entries on this
-machine read fine), so a refusal means the process belongs to another user — and
-every member of our group is one we forked. Tainting on it would make the probe
-permanently `unknown` on a `hidepid` mount and stop the janitor reclaiming
-anything there, a worse failure than the exotic case it would cover.
+`EACCES` does **not** get an exemption, and the reasoning that nearly gave it
+one is worth keeping. These files are world-readable (checked: as uid 65534, all
+79 entries on this machine read fine), so a refusal means the process belongs to
+another user — and every member of our group is one we forked. That argument is
+sound right up to the case it misses: a supervised descendant that changes uid
+becomes exactly such an entry under a `hidepid` mount, and exempting the error
+then reports the tree gone while it is running.
+
+The trade is a fail-OPEN safety hole against a fail-CLOSED functional one. On a
+`hidepid` mount the probe will answer `unknown` often, so stops report unproven
+and the janitor retains records — noisy, but the kill still happens either way;
+only the reporting and the record retention change. Given that this file exists
+because the same trade kept being made the wrong way round, it is made the other
+way here.
 
 ### "Gone" and "cannot tell" are different answers
 

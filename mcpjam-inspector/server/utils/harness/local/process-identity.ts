@@ -344,21 +344,22 @@ async function probeLinuxGroup(pgid: number): Promise<GroupProbe> {
       raw = await readFile(`/proc/${entry}/stat`, "utf8");
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      // ENOENT/ESRCH is the ordinary case: the process exited between
-      // `readdir` and this read, so it is not a live member of anything.
+      // ENOENT/ESRCH is the ONLY answer that means "not a live member": the
+      // process exited between `readdir` and this read.
       //
-      // EACCES is the `hidepid=1` case, and it does NOT blind us: these files
-      // are world-readable by default (checked — as uid 65534 all 79 entries
-      // read fine), so a refusal means the process belongs to another user,
-      // and every member of OUR group is one we forked. Tainting on it would
-      // make the probe permanently `unknown` on a hidepid mount and stop the
-      // janitor reclaiming anything there, which is a worse failure than the
-      // exotic case it would cover (a supervised child that changed uid).
-      //
-      // Anything else — EIO, a truncated read — is genuinely "could not look".
-      if (code !== "ENOENT" && code !== "ESRCH" && code !== "EACCES") {
-        blind = true;
-      }
+      // EACCES is not. An earlier version exempted it, reasoning that these
+      // files are world-readable (they are — as uid 65534 all 79 entries on
+      // this machine read fine), so a refusal must mean another user's
+      // process, which cannot be in a group we forked. The hole is a
+      // supervised descendant that changes uid: under a `hidepid` mount it
+      // becomes exactly such an entry, and exempting the error reports the
+      // tree gone while it is running. That is a fail-OPEN safety hole, traded
+      // against a fail-CLOSED functional one (on a hidepid mount the probe
+      // answers `unknown` a lot, so stops report unproven and the janitor
+      // retains records) — and this file exists because that trade keeps being
+      // made the wrong way round. The kill still happens either way; only the
+      // reporting and record retention change.
+      if (code !== "ENOENT" && code !== "ESRCH") blind = true;
       continue;
     }
     const parsed = parseProcStatGroup(raw);
