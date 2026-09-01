@@ -105,6 +105,21 @@ machine's non-loopback addresses and fails the session if one is accepted. The
 bundle build is expected to bind loopback; the probe is what makes that
 enforceable rather than aspirational.
 
+### A zombie is a dead process
+
+`/proc/<pid>/stat` still exists after a process exits, until something reaps it.
+A liveness check built on "can I read the stat file" therefore reports a
+**dead** process as alive — and then a tree we successfully killed is reported
+as having escaped, `stopSession` refuses to say the session stopped, and the
+janitor never reclaims the record.
+
+Whether that is ever *observed* depends on the environment. When PID 1 reaps
+orphans, a killed descendant vanishes at once and nothing looks wrong. Inside a
+container whose PID 1 is an application rather than a real init — which is where
+CI runs — orphaned zombies persist indefinitely. `process-identity.ts` reads the
+state field and treats `Z`/`X`/`x` as gone, on both the Linux `/proc` path and
+the macOS `ps` path, and both parsers are pure and directly tested.
+
 ## Invariants, and where each is enforced
 
 1. Local processes launch only through `LocalHarnessSupervisor` — `supervisor.ts`.

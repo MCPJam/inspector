@@ -30,23 +30,83 @@ export type ProcessBirthIdentity = string;
 
 const PS_TIMEOUT_MS = 3_000;
 
+/**
+ * Parse a `/proc/<pid>/stat` line into the two fields that matter.
+ *
+ * Pure and exported because the field layout is fiddly — field 2 (`comm`) is
+ * parenthesized and may itself contain spaces and parens, so the only reliable
+ * split point is the LAST ')' — and because the ZOMBIE case is the one that
+ * bites. `null` means "not a stat line we understand".
+ */
+export function parseLinuxProcStat(
+  raw: string
+): { state: string; starttime: string } | null {
+  const close = raw.lastIndexOf(")");
+  if (close === -1) return null;
+  const fields = raw.slice(close + 2).split(" ");
+  // After `comm`, the remaining fields are 3..N: index 0 is `state` (field 3),
+  // and `starttime` is field 22, i.e. index 19.
+  const state = fields[0];
+  const starttime = fields[19];
+  if (!state || !/^[A-Za-z]$/.test(state)) return null;
+  if (!starttime || !/^\d+$/.test(starttime)) return null;
+  return { state, starttime };
+}
+
+/**
+ * A ZOMBIE is a dead process. It has exited; only its exit status is still
+ * held open because nothing has reaped it.
+ *
+ * This distinction is not academic, and getting it wrong is not merely a
+ * cosmetic bug. `/proc/<pid>/stat` still exists for a zombie, so a liveness
+ * check built on "can I read the stat file" reports a process that is already
+ * dead as alive — and then `terminateOwnedProcessGroup` reports `escaped` for a
+ * tree it successfully killed, `stopSession` refuses to report the session
+ * stopped, and the janitor never reclaims the record.
+ *
+ * Whether this is ever observed depends entirely on the environment. When PID 1
+ * reaps orphans, a killed descendant vanishes almost immediately and nothing
+ * looks wrong. Inside a container whose PID 1 is an application rather than a
+ * real init — which is where CI runs — orphaned zombies persist indefinitely.
+ * So this is checked, not assumed.
+ */
+function isDeadState(state: string): boolean {
+  // `Z` is a zombie; `X`/`x` are the (rarely observed) dead states.
+  return state === "Z" || state === "X" || state === "x";
+}
+
 async function readLinuxBirthIdentity(
   pid: number
 ): Promise<ProcessBirthIdentity | null> {
   try {
-    const raw = await readFile(`/proc/${pid}/stat`, "utf8");
-    // Field 2 (`comm`) is parenthesized and may itself contain spaces and
-    // parens, so the reliable split point is the LAST ')'.
-    const close = raw.lastIndexOf(")");
-    if (close === -1) return null;
-    const fields = raw.slice(close + 2).split(" ");
-    // After `comm`, fields are 3..N; starttime is field 22, i.e. index 19 here.
-    const starttime = fields[19];
-    if (!starttime || !/^\d+$/.test(starttime)) return null;
-    return `linux:${starttime}`;
+    const parsed = parseLinuxProcStat(await readFile(`/proc/${pid}/stat`, "utf8"));
+    if (parsed === null) return null;
+    if (isDeadState(parsed.state)) return null;
+    return `linux:${parsed.starttime}`;
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse `ps -o state=,lstart=` output.
+ *
+ * macOS decorates the state with modifiers (`Ss`, `S+`, `R<`), so only the
+ * first character names the state. Pure and exported for the same reason as
+ * the Linux parser: it cannot be exercised from a Linux test host, and the
+ * zombie branch is exactly the one worth locking down.
+ */
+export function parseDarwinPsLine(
+  raw: string
+): { state: string; lstart: string } | null {
+  const line = raw.trim();
+  if (line.length === 0) return null;
+  const match = /^(\S+)\s+(.+)$/.exec(line);
+  if (!match) return null;
+  const state = match[1]!;
+  const lstart = match[2]!.trim();
+  if (lstart.length === 0) return null;
+  return { state, lstart };
 }
 
 async function readDarwinBirthIdentity(
@@ -55,14 +115,16 @@ async function readDarwinBirthIdentity(
   const stdout = await new Promise<string | null>((resolve) => {
     execFile(
       "/bin/ps",
-      ["-o", "lstart=", "-p", String(pid)],
+      ["-o", "state=,lstart=", "-p", String(pid)],
       { timeout: PS_TIMEOUT_MS, maxBuffer: 16 * 1024, encoding: "utf8", env: {} },
       (error, out) => resolve(error ? null : typeof out === "string" ? out : null)
     );
   });
-  const line = stdout?.trim();
-  if (!line) return null;
-  return `darwin:${line}`;
+  if (stdout === null) return null;
+  const parsed = parseDarwinPsLine(stdout);
+  if (parsed === null) return null;
+  if (isDeadState(parsed.state.charAt(0))) return null;
+  return `darwin:${parsed.lstart}`;
 }
 
 /**
