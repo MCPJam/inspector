@@ -273,6 +273,50 @@ describe("scrubDeep", () => {
     expect(JSON.stringify(out)).not.toContain(STRIPE.value);
   });
 
+  it("preserves deeply nested PRIMITIVES instead of capping them", () => {
+    // The depth cap exists to stop descent, and a leaf is not a descent. A
+    // number, boolean or null cannot recurse and cannot hide a credential, so
+    // capping one replaced real tool data with the marker string — changing
+    // both the value and its type — at any nesting past the cap.
+    let deep: Record<string, unknown> = {
+      n: 42,
+      b: true,
+      nil: null,
+      s: "plain text",
+    };
+    for (let i = 0; i < 30; i++) deep = { nested: deep };
+    const out = createSecretScrubber([STRIPE])!.scrubDeep(deep) as Record<
+      string,
+      unknown
+    >;
+    // Walk to the capped frontier and confirm what sits there is the marker
+    // for the OBJECT, never a rewritten primitive.
+    let cursor: unknown = out;
+    let hops = 0;
+    while (
+      cursor &&
+      typeof cursor === "object" &&
+      "nested" in (cursor as Record<string, unknown>)
+    ) {
+      cursor = (cursor as Record<string, unknown>).nested;
+      hops += 1;
+    }
+    expect(hops).toBeGreaterThan(0);
+    expect(cursor).toBe("[truncated: max depth]");
+  });
+
+  it("keeps a primitive at the cap boundary intact", () => {
+    // Directly: an object whose own leaves sit exactly at the cap depth.
+    let deep: Record<string, unknown> = { n: 7, b: false, nil: null };
+    for (let i = 0; i < 7; i++) deep = { nested: deep };
+    const serialized = JSON.stringify(
+      createSecretScrubber([STRIPE])!.scrubDeep(deep),
+    );
+    expect(serialized).toContain('"n":7');
+    expect(serialized).toContain('"b":false');
+    expect(serialized).toContain('"nil":null');
+  });
+
   it("passes non-plain objects through by identity", () => {
     // Rebuilding a Date or a typed array as a plain object would corrupt the
     // payload far more than a missed scrub would.

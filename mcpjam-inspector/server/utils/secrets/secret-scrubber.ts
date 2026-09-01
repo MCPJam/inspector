@@ -229,6 +229,15 @@ export function createSecretScrubber(
     //
     // Markers instead. They also make the result acyclic and shallow, so the
     // bounding pass that runs next cannot rediscover either problem.
+    //
+    // PRIMITIVES ARE EXEMPT, and the ordering here is the whole of it. A
+    // number, boolean or null cannot recurse and cannot hide a credential, so
+    // the depth cap has nothing to protect against — capping one replaced real
+    // tool data with the marker STRING, changing both the value and its type.
+    // Strings are already handled above, where they are scrubbed rather than
+    // capped, for the same reason: the cap exists to stop descent, and a leaf
+    // is not a descent.
+    if (value === null || typeof value !== "object") return value;
     if (depth >= MAX_SCRUB_DEPTH) return DEPTH_MARKER as unknown as T;
     if (Array.isArray(value)) {
       if (seen.has(value)) return CYCLE_MARKER as unknown as T;
