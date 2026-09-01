@@ -380,6 +380,53 @@ describe("WebmcpInspectorTab — viewport", () => {
     ]);
   });
 
+  it("does not swallow an ordinary key-up after a paste lost focus", async () => {
+    const sendInput = vi.fn<(events: WebMcpInputEvent[]) => Promise<void>>(
+      async () => {},
+    );
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    await act(async () => {
+      pane.focus();
+      fireEvent.keyDown(pane, { key: "Control", ctrlKey: true });
+      fireEvent.keyDown(pane, { key: "v", ctrlKey: true });
+      // Focus leaves before the `v` key-up arrives — alt-tab, or anything that
+      // takes focus mid-shortcut. The key-up is then never delivered here.
+      fireEvent.blur(pane);
+    });
+    sendInput.mockClear();
+
+    // Back on the pane, an ORDINARY `v`: no modifier, so its key-down IS
+    // forwarded and its key-up must be too.
+    await act(async () => {
+      pane.focus();
+      fireEvent.keyDown(pane, { key: "v" });
+      fireEvent.keyUp(pane, { key: "v" });
+    });
+
+    const sent: Array<Record<string, unknown>> = sendInput.mock.calls.flatMap(
+      (call) => call[0],
+    );
+    // A withheld key surviving the blur would swallow this release and leave
+    // `v` held in the page for the rest of the session — the exact thing
+    // withholding the paste transitions exists to prevent.
+    expect(sent.map((event) => `${event.kind}:${event.key}`)).toEqual([
+      "key_down:v",
+      "key_up:v",
+    ]);
+  });
+
   it("releases held input when the screen unmounts without a blur", async () => {
     const sendInput = vi.fn(async () => {});
     useWebmcpInspectorStore.setState({

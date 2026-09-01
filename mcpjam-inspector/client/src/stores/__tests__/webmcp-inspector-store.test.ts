@@ -672,6 +672,42 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("newer");
   });
 
+  it("lets an older capture through when the newer one failed", async () => {
+    await openSession();
+    const releases: Array<(response: Response) => void> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+
+    const first = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    const second = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+
+    // The newer capture FAILS — a poll hitting a blip, which is why the poll
+    // exists once a second rather than once.
+    releases[1](new Response("{}", { status: 500 }));
+    await second;
+    releases[0](
+      new Response(JSON.stringify({ screenshotBase64: "older" }), {
+        status: 200,
+      }),
+    );
+    await first;
+
+    // A failed capture that claimed the slot on its way to writing nothing
+    // would reject this one too, and a single transient blip would strand the
+    // pane on whatever it was showing before either request.
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("older");
+  });
+
   it("abandons the rest of a split gesture when the session turns over", async () => {
     await openSession();
     const bodies: string[] = [];

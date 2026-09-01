@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -567,16 +567,31 @@ function ViewportPane({
     [onInput],
   );
 
+  /**
+   * Give up every piece of input state at once: the forwarder's held keys and
+   * buttons, and the paste keys whose release is still owed.
+   *
+   * One function rather than two calls at four sites, because forgetting the
+   * second half reintroduces exactly what withholding exists to prevent. A
+   * `withheldKeys` left populated across a blur swallows the NEXT ordinary `v`
+   * key-up — whose key-down WAS forwarded — and the page holds that key down
+   * for the rest of the session.
+   */
+  const releaseAll = useCallback(() => {
+    withheldKeys.current.clear();
+    forwarder.releaseHeld();
+  }, [forwarder]);
+
   useEffect(
     () => () => {
       // RELEASE, then dispose. Unmounting is not a blur — tabbing away from
       // this screen fires no blur on the pane — so disposing alone would clear
       // the held set locally while the page went on believing a key or button
       // was still down, for the rest of the session.
-      forwarder.releaseHeld();
+      releaseAll();
       forwarder.dispose();
     },
-    [forwarder],
+    [forwarder, releaseAll],
   );
 
   /**
@@ -602,8 +617,8 @@ function ViewportPane({
   // A pane that is no longer being driven must not leave keys held in the page.
   useEffect(() => {
     if (interactive) return;
-    forwarder.releaseHeld();
-  }, [interactive, forwarder]);
+    releaseAll();
+  }, [interactive, releaseAll]);
 
   const pointerHandlers = interactive
     ? {
@@ -625,7 +640,7 @@ function ViewportPane({
           // gesture taken over) with no pointerup to follow. Without this the
           // page keeps the button held and every later move reads as a drag.
           event.currentTarget.releasePointerCapture?.(event.pointerId);
-          forwarder.releaseHeld();
+          releaseAll();
         },
         // Suppressed rather than forwarded: a native context menu opens in the
         // browser running the page, which is headless — so the menu would exist
@@ -688,7 +703,7 @@ function ViewportPane({
           // The page never sees that focus left, so a modifier held at this
           // moment would stay held in it for the rest of the session and turn
           // every later click into a ctrl-click.
-          forwarder.releaseHeld();
+          releaseAll();
         },
       }
     : {};

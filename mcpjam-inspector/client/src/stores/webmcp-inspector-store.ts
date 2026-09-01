@@ -609,7 +609,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
       async captureScreenshot(options) {
         const ticket = ++captureIssued;
-        /** True while this capture is still the newest one to have answered. */
+        /**
+         * Claim the slot for this capture, if nothing newer has taken it.
+         *
+         * Called at the point of WRITING, never before the result is known: a
+         * failed capture that claimed the slot on its way to writing nothing
+         * would then reject the older successful one behind it, and a single
+         * transient poll failure would strand the pane on a stale picture.
+         */
         const newest = () => {
           if (ticket < captureApplied) return false;
           captureApplied = ticket;
@@ -619,8 +626,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           const result = (await get().sendCommand({
             type: "capture_screenshot",
           })) as { screenshotBase64?: string } | undefined;
-          if (!newest()) return;
-          set({ lastScreenshot: result?.screenshotBase64 });
+          if (newest()) set({ lastScreenshot: result?.screenshotBase64 });
           return;
         }
         // The polling path, which runs once a second and must be INVISIBLE in
@@ -640,8 +646,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // this write after the session changed would hang the OLD page's paint
         // in the new session's pane, where nothing would ever correct it.
         if (get().session?.sessionId !== sessionId) return;
-        if (!newest()) return;
-        if (result.ok) set({ lastScreenshot: result.data.screenshotBase64 });
+        if (result.ok && newest()) {
+          set({ lastScreenshot: result.data.screenshotBase64 });
+        }
       },
 
       async sendInput(events) {
