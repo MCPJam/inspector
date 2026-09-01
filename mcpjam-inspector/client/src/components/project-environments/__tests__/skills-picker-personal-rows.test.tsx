@@ -162,6 +162,51 @@ describe("ProjectEnvironmentSkillsPicker — personal skills", () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(null));
   });
 
+  it("disables a personal skill on a backend that sends no pinnability", async () => {
+    // `pinnability` is optional on the wire. Consulting it alone was harmless
+    // while personal rows were filtered out; now they are listed, so a row
+    // with no metadata would render selectable and the SAVE would be the first
+    // the user heard of the restriction. Sharing is not optional.
+    const { pinnability: _dropped, ...noMetadata } = PERSONAL_SKILL;
+    mockListSkills.mockResolvedValue([noMetadata]);
+    const onChange = vi.fn();
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={null}
+        onChange={onChange}
+      />,
+    );
+
+    expect(await screen.findByLabelText("scratchpad")).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("scratchpad"));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("still trusts the backend's verdict over its own where both exist", async () => {
+    // The backend knows about restrictions this client cannot see (plugin
+    // components), so a library skill it rejects stays rejected here.
+    mockListSkills.mockResolvedValue([
+      {
+        ...LIBRARY_SKILL,
+        pinnability: { ok: false as const, reason: "plugin_component" },
+      },
+    ]);
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={null}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByLabelText("refunds")).toBeDisabled();
+    fireEvent.focus(screen.getByLabelText("refunds"));
+    expect(
+      (await screen.findAllByText(/Delivered by its plugin/i)).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("shows the empty state only when the project has no skills at all", async () => {
     mockListSkills.mockResolvedValue([]);
     render(

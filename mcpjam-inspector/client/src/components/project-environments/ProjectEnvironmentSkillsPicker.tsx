@@ -31,6 +31,27 @@ export const MAX_ENVIRONMENT_SKILLS = 20;
  * identifier: this list grows on the backend, and a picker on an older client
  * should say something true rather than something internal.
  */
+/**
+ * Why this skill can't be pinned, or `null` if it can.
+ *
+ * `pinnability` is OPTIONAL on the wire — absent on a backend older than P0.3
+ * — so it cannot be the only thing consulted. That was harmless while personal
+ * skills were filtered out client-side and every remaining row was already
+ * eligible; now that they are listed, a row with no metadata would render as
+ * selectable, and the save would be the first the user heard of it.
+ *
+ * Shared-only is the one rule this picker can evaluate for itself, from a
+ * field that is not optional, so it is checked independently. The backend's
+ * own verdict still wins when it is present — it knows about restrictions
+ * (plugin components) this client cannot see.
+ */
+function pinRejection(skill: SkillListItem): string | null {
+  if (skill.pinnability && !skill.pinnability.ok)
+    return skill.pinnability.reason;
+  if (skill.sharing !== "project") return "not_shared";
+  return null;
+}
+
 function ineligibleReason(reason: string | undefined): string {
   switch (reason) {
     case "not_shared":
@@ -214,8 +235,8 @@ export function ProjectEnvironmentSkillsPicker({
         {skills.map((skill) => {
           const skillId = skill.skillId!;
           const checked = selectedIds.has(skillId);
-          const ineligible =
-            skill.pinnability !== undefined && skill.pinnability.ok === false;
+          const rejection = pinRejection(skill);
+          const ineligible = rejection !== null;
           const capBlocked = !checked && atCap;
           // Ineligibility (and the cap) block NEW selections only — a skill that
           // was pinned and later became ineligible must stay uncheckable so the
@@ -271,11 +292,7 @@ export function ProjectEnvironmentSkillsPicker({
               </TooltipTrigger>
               <TooltipContent side="right" className="max-w-[260px]">
                 <p className="text-xs leading-snug">
-                  {ineligibleReason(
-                    skill.pinnability && !skill.pinnability.ok
-                      ? skill.pinnability.reason
-                      : undefined,
-                  )}
+                  {ineligibleReason(rejection ?? undefined)}
                 </p>
               </TooltipContent>
             </Tooltip>

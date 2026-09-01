@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     canManageMembers: false,
+    roleLoading: false,
     uploadSkillFolder: vi.fn(async () => ({
       name: "refunds",
       description: "Handle refunds",
@@ -37,7 +38,7 @@ vi.mock("convex/react", () => ({
 
 const useProjectMembers = vi.fn(() => ({
   canManageMembers: mocks.canManageMembers,
-  isLoading: false,
+  isLoading: mocks.roleLoading,
 }));
 vi.mock("@/hooks/useProjects", () => ({
   useProjectMembers: (...args: unknown[]) => useProjectMembers(...args),
@@ -77,6 +78,7 @@ async function pickSkillFolder() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.canManageMembers = false;
+  mocks.roleLoading = false;
 });
 
 describe("SkillUploadDialog — which tier an upload lands in", () => {
@@ -141,6 +143,37 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
     expect(useProjectMembers).toHaveBeenCalledWith(
       expect.objectContaining({ isAuthenticated: false }),
     );
+  });
+
+  it("holds the upload while the role is still resolving", async () => {
+    // Failing closed is not good enough here. An admin who drops a folder and
+    // submits inside this window would silently land a PERSONAL skill, which
+    // contradicts the rule the dialog itself states two lines above the button.
+    mocks.roleLoading = true;
+    render(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    expect(screen.getByText(/Checking your role in this project/i))
+      .toBeInTheDocument();
+
+    await pickSkillFolder();
+    expect(
+      screen.getByRole("button", { name: /add to library/i }),
+    ).toBeDisabled();
+    expect(mocks.uploadSkillFolder).not.toHaveBeenCalled();
+  });
+
+  it("never holds a local upload on a question that was never asked", async () => {
+    // The members query is not enabled in local mode, so `isLoading` is false
+    // there — but a future hook that reported otherwise must not freeze a
+    // filesystem upload that has no tier to resolve.
+    mocks.roleLoading = true;
+    render(<SkillUploadDialog open onOpenChange={vi.fn()} />);
+
+    await pickSkillFolder();
+    fireEvent.click(screen.getByRole("button", { name: /upload skill/i }));
+
+    await waitFor(() => expect(mocks.uploadSkillFolder).toHaveBeenCalled());
+    expect(mocks.uploadSkillFolder.mock.calls[0][3]).toBe("user");
   });
 
   it("asks nothing of Convex for a local upload", () => {

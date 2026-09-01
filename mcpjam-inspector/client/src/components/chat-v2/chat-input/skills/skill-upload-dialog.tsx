@@ -84,10 +84,25 @@ export function SkillUploadDialog({
    * Convex subscription per mounted composer.
    */
   const { isAuthenticated } = useConvexAuth();
-  const { canManageMembers: canManageShared } = useProjectMembers({
-    isAuthenticated: isAuthenticated && open && isCloud,
-    projectId: source?.kind === "cloud" ? source.projectId : null,
-  });
+  const { canManageMembers: canManageShared, isLoading: roleLoading } =
+    useProjectMembers({
+      isAuthenticated: isAuthenticated && open && isCloud,
+      projectId: source?.kind === "cloud" ? source.projectId : null,
+    });
+  /**
+   * The role hasn't come back yet, so the tier is not yet knowable.
+   *
+   * `canManageShared` is `false` in this window, and merely failing closed is
+   * not good enough HERE: an admin who drops a folder and submits fast enough
+   * would silently land a personal skill, contradicting the rule the dialog
+   * itself states. Uploading is held for the moment it takes to answer, and
+   * the hint says so rather than showing the non-admin copy as if it were
+   * settled.
+   *
+   * False whenever the query is not enabled (local mode, signed out, dialog
+   * closed), so nothing is ever held on a question that was never asked.
+   */
+  const roleResolving = isCloud && roleLoading;
 
   const resetForm = () => {
     setFiles([]);
@@ -267,8 +282,8 @@ export function SkillUploadDialog({
   };
 
   const isSubmitDisabled = useMemo(() => {
-    return files.length === 0 || !skillInfo || isLoading;
-  }, [files.length, skillInfo, isLoading]);
+    return files.length === 0 || !skillInfo || isLoading || roleResolving;
+  }, [files.length, skillInfo, isLoading, roleResolving]);
 
   // Get folder name from paths (for display)
   const folderName = useMemo(() => {
@@ -431,9 +446,11 @@ export function SkillUploadDialog({
           {/* Where it lands — stated, not asked. See `canManageShared`. */}
           {isCloud && (
             <p className="text-xs text-muted-foreground">
-              {canManageShared
-                ? "This skill will be added to the project library. Every member can see and use it."
-                : "This will be added as a personal skill — only you can use it. A project admin can publish it to the project library."}
+              {roleResolving
+                ? "Checking your role in this project…"
+                : canManageShared
+                  ? "This skill will be added to the project library. Every member can see and use it."
+                  : "This will be added as a personal skill — only you can use it. A project admin can publish it to the project library."}
             </p>
           )}
 
