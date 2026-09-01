@@ -269,7 +269,7 @@ export class PlatformApiClient {
           Object.entries(options.extraHeaders).map(([name, value]) => [
             name.toLowerCase(),
             value,
-          ]),
+          ])
         )
       : undefined;
   }
@@ -571,13 +571,13 @@ export class PlatformApiClient {
 
   listServerGroups(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformServerGroup>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
       {},
-      options,
+      options
     );
   }
 
@@ -586,13 +586,13 @@ export class PlatformApiClient {
       projectId: string;
       body: { name: string; description?: string; serverIds: string[] };
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformServerGroup> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -4364,10 +4364,14 @@ export class PlatformApiClient {
       body && typeof body === "object" && !Array.isArray(body)
         ? (body as { code?: unknown; message?: unknown; details?: unknown })
         : undefined;
-    const code =
+    // Tracked, not just resolved: a caller cannot tell an assumed code from a
+    // server-sent one afterwards, and for 404 the difference decides whether
+    // the RESOURCE is missing or the ROUTE is. See `PlatformApiError.codeSource`.
+    const sentCode =
       typeof envelope?.code === "string" && envelope.code.length > 0
         ? envelope.code
-        : fallbackCodeForStatus(response.status);
+        : undefined;
+    const code = sentCode ?? fallbackCodeForStatus(response.status);
     const message =
       typeof envelope?.message === "string" && envelope.message.length > 0
         ? envelope.message
@@ -4384,6 +4388,7 @@ export class PlatformApiClient {
       details,
       retryAfter: parseRetryAfter(response.headers.get("retry-after")),
       endpoint: path,
+      codeSource: sentCode !== undefined ? "envelope" : "status",
     });
   }
 }

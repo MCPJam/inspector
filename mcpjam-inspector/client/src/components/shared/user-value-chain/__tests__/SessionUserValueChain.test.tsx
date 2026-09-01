@@ -9,7 +9,10 @@
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { STAGE_REASON_LABELS } from "@mcpjam/sdk/contract";
+import {
+  STAGE_ANALYZER_VERSION,
+  STAGE_REASON_LABELS,
+} from "@mcpjam/sdk/contract";
 import { SessionUserValueChain } from "../SessionUserValueChain";
 import type {
   ChatSessionStageDerivation,
@@ -225,10 +228,48 @@ describe("a newer analyzer is flagged, not discarded", () => {
   it("keeps the rows and warns", () => {
     const { container } = render(
       <SessionUserValueChain
-        derivation={derivation({ analyzerVersionAhead: true })}
+        derivation={derivation({
+          stageAnalyzerVersion: STAGE_ANALYZER_VERSION + 1,
+        })}
       />
     );
     expect(container.querySelectorAll("[data-stage]")).toHaveLength(6);
+    expect(document.body.textContent).toContain("Derived by a newer analyzer");
+  });
+
+  it("STOPS warning once this build has caught up", () => {
+    // The defect this replaces. `analyzerVersionAhead` is stamped when a chain
+    // arrives, and raising the constant does not rewrite stored rows — so a
+    // session derived during a window when this build lagged kept claiming to
+    // be newer forever. The fixture is stamped at 5 and the stored flag says
+    // "ahead"; against a build at 8 that claim is simply false.
+    //
+    // The previous version of this test asserted the warning DID show here,
+    // which is how the stale flag survived review.
+    render(
+      <SessionUserValueChain
+        derivation={derivation({
+          stageAnalyzerVersion: 5,
+          analyzerVersionAhead: true,
+        })}
+      />
+    );
+    expect(document.body.textContent).not.toContain(
+      "Derived by a newer analyzer"
+    );
+  });
+
+  it("still trusts the stored flag when no version was recorded", () => {
+    // The fallback, for rows written before the version was on the object.
+    // Nothing that was flagged loses its warning.
+    render(
+      <SessionUserValueChain
+        derivation={derivation({
+          stageAnalyzerVersion: undefined,
+          analyzerVersionAhead: true,
+        })}
+      />
+    );
     expect(document.body.textContent).toContain("Derived by a newer analyzer");
   });
 });

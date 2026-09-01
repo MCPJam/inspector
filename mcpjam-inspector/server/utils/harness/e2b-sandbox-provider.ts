@@ -13,7 +13,7 @@
  * Contract → E2B mapping (the whole reason reuse is feasible):
  *   file I/O (readTextFile/writeTextFile/…) → sandbox.files.read / .write
  *   exec (run) / spawn                      → sandbox.commands.run (+ background)
- *   getPortUrl({ port })                    → sandbox.getHost(port)   ← bridge
+ *   getPortEndpoint / getPortUrl ({ port }) → sandbox.getHost(port)   ← bridge
  *   id / defaultWorkingDirectory / ports    → native E2B
  *   stop / destroy                          → no-op (control plane owns teardown)
  */
@@ -430,6 +430,18 @@ export function createE2BHarnessSandboxProvider(
 
       // ── infra surface ─────────────────────────────────────────────────
       ports,
+      // The claude-code adapter leases its bridge port from `ports` and calls
+      // this to open its WebSocket. E2B's `getHost` URL is directly reachable,
+      // so no scoped headers are needed on the endpoint. IMPORTANT for the
+      // broker model: this URL is the in-sandbox bridge, NOT a model endpoint —
+      // model traffic leaves the box through the E2B egress transform that
+      // injects the broker lease outside the VM (see harness-model-broker.ts).
+      getPortEndpoint: async ({ port, protocol }) => {
+        const host = sandbox.getHost(port);
+        const scheme = protocol === "ws" ? "wss" : protocol ?? "https";
+        return { url: `${scheme}://${host}` };
+      },
+      // Deprecated in the stable contract but still required; same resolution.
       getPortUrl: async ({ port, protocol }) => {
         const host = sandbox.getHost(port);
         const scheme = protocol === "ws" ? "wss" : protocol ?? "https";
@@ -442,7 +454,15 @@ export function createE2BHarnessSandboxProvider(
       stop: async () => {
         /* no-op — control-plane-owned box */
       },
-      // destroy intentionally omitted (undefined) for the same reason.
+      // `destroy` is now REQUIRED by the stable contract ("stop, then delete
+      // the backing resource; implementations with no cleanup beyond stopping
+      // may delegate to stop()"). The framework calls it when a harness session
+      // is destroyed and it considers the sandbox harness-owned — but this box
+      // is NOT harness-owned: it is the host's parked computer, kept alive for
+      // resume between turns. So destroy, like stop, must leave it running.
+      destroy: async () => {
+        /* no-op — control-plane-owned box; parked between turns for resume */
+      },
       setPorts: async (next) => {
         // Mutate in place so `session.ports` (same reference) reflects it.
         ports.splice(0, ports.length, ...next);
@@ -459,8 +479,10 @@ export function createE2BHarnessSandboxProvider(
   return {
     specificationVersion: "harness-sandbox-v1",
     providerId: "mcpjam-e2b",
-    // Single-port pool — the bridge leases this one port.
-    bridgePorts: [bridgePort],
+    // The canary-era provider-level `bridgePorts` pool is gone from the stable
+    // contract: adapters now lease the bridge port from the SESSION's `ports`
+    // array (claude-code's resolveBridgePort reads ports[0]) and resolve it
+    // via `getPortEndpoint`. Our sessions already expose `[bridgePort]`.
 
     // `identity` and `onFirstCreate` are deliberately unused: they exist for
     // providers that CREATE and snapshot boxes, and this one only ever attaches
