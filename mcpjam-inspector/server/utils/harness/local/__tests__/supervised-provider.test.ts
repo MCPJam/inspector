@@ -344,7 +344,23 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(
       session.writeTextFile({ path: marker, content: "" }),
     ).rejects.toThrow(/outside every directory/);
+    // The READ path is confined by the same call, and a redirected read is how
+    // a marker could be made to disclose a file outside session state.
+    await expect(session.readTextFile({ path: marker })).rejects.toThrow(
+      /outside every directory/,
+    );
     await expect(readFile(join(outside, "captured.ok"))).rejects.toThrow();
+
+    // ...and an ordinary marker under the overlay still works, so the
+    // confinement is not simply refusing the whole overlay.
+    const plain = join(
+      workspace,
+      ".harness-bootstrap",
+      "claude-code",
+      ".bootstrap-plain.ok",
+    );
+    await session.writeTextFile({ path: plain, content: "" });
+    await expect(session.readTextFile({ path: plain })).resolves.toBe("");
     await session.stop();
   });
 

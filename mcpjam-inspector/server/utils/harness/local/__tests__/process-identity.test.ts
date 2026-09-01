@@ -170,15 +170,25 @@ describe("terminating a tree we own", () => {
         },
       );
       const pid = child.pid!;
-      const identity = await readProcessBirthIdentity(pid);
-      expect(identity).not.toBeNull();
-      const outcome = await terminateOwnedProcessGroup({
-        pid,
-        birthIdentity: identity!,
-        graceMs: 400,
-        pollMs: 25,
-      });
-      expect(["graceful", "forced"]).toContain(outcome.outcome);
+      try {
+        const identity = await readProcessBirthIdentity(pid);
+        expect(identity).not.toBeNull();
+        const outcome = await terminateOwnedProcessGroup({
+          pid,
+          birthIdentity: identity!,
+          graceMs: 400,
+          pollMs: 25,
+        });
+        expect(["graceful", "forced"]).toContain(outcome.outcome);
+      } finally {
+        // A failing assertion must not leak a detached process into the rest
+        // of the run — it is in its own group, so nothing else would reap it.
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
     },
   );
 

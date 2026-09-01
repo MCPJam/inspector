@@ -101,6 +101,20 @@ beforeAll(async () => {
       // test would measure Node's exit behaviour rather than our cap.
     ].join("\n"),
   );
+  // A root that exits promptly on SIGTERM while its child ignores it: the
+  // case where "the root's pid is gone" is emphatically not "the tree is gone".
+  await writeFile(
+    join(scripts, "deserter.js"),
+    [
+      "const { spawn } = require('node:child_process');",
+      "const child = spawn(process.execPath, ['-e',",
+      "  \"process.on('SIGTERM', function(){}); setInterval(()=>{},1000);\"],",
+      "  { stdio: 'ignore' });",
+      "console.log(child.pid);",
+      "process.on('SIGTERM', function(){ process.exit(0); });",
+      "setInterval(()=>{},1000);",
+    ].join("\n"),
+  );
   await writeFile(
     join(scripts, "dump-env.js"),
     "process.stdout.write(JSON.stringify(process.env));",
@@ -158,19 +172,74 @@ describe("launch preconditions", () => {
   });
 });
 
+describe("a root that exits while its tree does not", () => {
+  it.skipIf(!canOwnProcesses)(
+    "does not report stopped just because the ROOT is gone",
+    async () => {
+      // The root exits on SIGTERM; its child ignores it and stays in the same
+      // process group. Reporting `graceful` on the root's own disappearance
+      // would announce a stopped session over a live vendor process — so the
+      // group is checked, escalated to SIGKILL, and confirmed.
+      const sup = supervisor();
+      const handle = await sup.spawnSupervised(
+        request("s-desert", "deserter.js"),
+      );
+      const line = await new Promise<string>((resolve) => {
+        const reader = handle.stdout.getReader();
+        void reader.read().then(({ value }) => {
+          resolve(new TextDecoder().decode(value ?? new Uint8Array()));
+          reader.releaseLock();
+        });
+      });
+      const deserter = Number(line.trim());
+      expect(deserter).toBeGreaterThan(0);
+
+      const result = await sup.stopSession("s-desert");
+      expect(result).toEqual({ stopped: true, escaped: 0 });
+      expect(await waitForExit(handle.pid)).toBe(true);
+      expect(await waitForExit(deserter)).toBe(true);
+    },
+  );
+});
+
 describe("a stop that races a launch", () => {
-  it("refuses to spawn behind a stop that has already been reported", async () => {
-    // The regression: the supervisor's own identity read was hoisted above the
-    // synchronous bucket reservation, so during that await `live` held no
-    // bucket for the session — a concurrent `stopSession` saw nothing to stop,
-    // reported `stopped: true`, and the launch then went on to spawn a root
-    // behind the stop.
-    const sup = supervisor();
-    await sup.stopSession("s-stopped-first");
-    await expect(
-      sup.spawnSupervised(request("s-stopped-first", "idle.js")),
-    ).rejects.toThrow(/was stopped/);
-  });
+  it.skipIf(!canOwnProcesses)(
+    "refuses a launch that a stop landed in the middle of",
+    async () => {
+      // The regression: the supervisor's own identity read was hoisted above
+      // the synchronous bucket reservation, so during that await `live` held
+      // no bucket for the session — a concurrent `stopSession` saw nothing to
+      // stop, reported `stopped: true`, and the launch went on to spawn a root
+      // behind the stop.
+      //
+      // `spawnSupervised` runs synchronously up to its first await (the
+      // identity read), so calling `stopSession` without awaiting the launch
+      // puts the stop exactly in that window.
+      const sup = supervisor();
+      const launch = sup.spawnSupervised(request("s-stop-race", "idle.js"));
+      const stop = sup.stopSession("s-stop-race");
+      await expect(launch).rejects.toThrow(/was stopped while this launch/);
+      await expect(stop).resolves.toEqual({ stopped: true, escaped: 0 });
+    },
+  );
+
+  it.skipIf(!canOwnProcesses)(
+    "still admits a launch that starts AFTER a stop has finished",
+    async () => {
+      // A stop is not a tombstone. The provider's own bridge retry depends on
+      // this: a failed first spawn stops the session on its way out, and the
+      // retry has to be admitted — and re-checked as a bridge — rather than
+      // refused forever by the id it reused.
+      const sup = supervisor();
+      await sup.stopSession("s-stop-then-start");
+      const handle = await sup.spawnSupervised(
+        request("s-stop-then-start", "idle.js"),
+      );
+      expect(handle.pid).toBeGreaterThan(0);
+      await sup.stopSession("s-stop-then-start");
+      expect(await waitForExit(handle.pid)).toBe(true);
+    },
+  );
 
   it("still reports a stop honestly when nothing was running", async () => {
     const sup = supervisor();

@@ -194,6 +194,22 @@ chain or a cycle cannot spin.
 This is distinct from the TOCTOU race described in `confine.ts`'s own header
 and in the invariant table below, which remains open.
 
+### A gone root is not a gone tree
+
+A descendant that ignores `SIGTERM` keeps running while the leader exits, so
+"the root's pid is gone" does not mean "the tree is gone" — and reporting a
+graceful stop on the root's own disappearance announces a stopped session over
+a live vendor process. Every path that would report the tree terminated checks
+the process GROUP first, escalates to `SIGKILL` if anything is still there, and
+reports `escaped` if it survives that.
+
+The group check cannot be `kill(-pgid, 0)`, for the same reason the single
+process probe cannot be "`/proc/<pid>/stat` exists": a ZOMBIE still belongs to
+its group, so signal-0 succeeds over a group whose every member has already
+exited. That answered "the tree survived" for a tree that was entirely dead —
+turning a completed stop into a reported escape and stopping the janitor ever
+reclaiming the record. Members are enumerated and their states read instead.
+
 ### "Gone" and "cannot tell" are different answers
 
 A liveness probe can fail three ways, and collapsing them is a safety bug in

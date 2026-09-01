@@ -30,7 +30,7 @@ import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
 import {
   probeProcess,
-  processGroupExists,
+  processGroupHasLiveMembers,
   signalProcessGroup,
   supportsOwnershipProof,
   terminateOwnedProcessGroup,
@@ -502,9 +502,9 @@ export function reclaimAbandonedProcesses(args: {
         // Confirmed in BOTH cases. Being unable to vouch for the group is a
         // reason not to SIGNAL it; it is an even stronger reason not to throw
         // away the only durable handle on a tree nobody has looked at. (This
-        // path is unreachable on win32, where `processGroupExists` always
-        // answers false — ownership proof gates it above.)
-        if (processGroupExists(record.rootPid, platform)) {
+        // path is unreachable on win32, where the group check always answers
+        // false — ownership proof gates it above.)
+        if (await processGroupHasLiveMembers(record.rootPid, platform)) {
           survivors.push(record);
           results.push({ sessionId: record.sessionId, outcome: "escaped" });
           logger.warn(

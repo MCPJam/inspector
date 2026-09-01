@@ -161,14 +161,28 @@ export class LocalHarnessSupervisor {
   private readonly live = new Map<string, Set<LiveProcess>>();
 
   /**
-   * Sessions `stopSession` has terminated.
+   * How many times each session has been stopped.
    *
-   * Marked SYNCHRONOUSLY when a stop begins, so a launch that is mid-flight
-   * cannot go on to create a process the stop could not see and did not
-   * report. Never cleared: a stopped session id is finished, and a later
-   * launch under the same id would be a tree nobody asked for.
+   * Bumped SYNCHRONOUSLY when a stop begins. A launch reads it at entry and
+   * again before it spawns: a different value means a stop landed while this
+   * launch was in flight, so it refuses rather than starting a process the
+   * stop could not see and did not report.
+   *
+   * A COUNTER, not a tombstone. An earlier draft marked the id stopped
+   * forever, which also refused every legitimate later launch — including the
+   * provider's own bridge retry, whose whole purpose is that a failed first
+   * spawn (which stops the session on its way out) can be tried again and be
+   * re-checked as a bridge. Only launches that straddle a stop are refused.
    */
-  private readonly stopped = new Set<string>();
+  private readonly stopGenerations = new Map<string, number>();
+
+  /**
+   * Launches that have reserved a slot but not yet registered a process.
+   *
+   * The reserved bucket is empty until the child exists, so without this the
+   * ceiling is computed from a count that has not caught up yet.
+   */
+  private readonly pendingLaunches = new Map<string, number>();
   /**
    * This Inspector process's own birth identity, recorded on every process it
    * owns.
@@ -248,6 +262,11 @@ export class LocalHarnessSupervisor {
     }
     assertArgvAllowed(request.args);
 
+    // Read SYNCHRONOUSLY, before anything can yield: this is the value a stop
+    // landing mid-launch will change.
+    const stopGenerationAtEntry =
+      this.stopGenerations.get(request.sessionId) ?? 0;
+
     // ── Everything up to and including bucket registration is SYNCHRONOUS ──
     //
     // Two `spawnSupervised` calls for the same session interleave across the
@@ -257,18 +276,35 @@ export class LocalHarnessSupervisor {
     // running, unregistered, and `stopSession` would never see it. So the
     // slot is reserved before anything can yield.
     const bucket = this.live.get(request.sessionId) ?? new Set<LiveProcess>();
-    if (bucket.size >= this.limits.maxConcurrentProcesses) {
+    // Pending launches count toward the ceiling as well as registered ones. A
+    // reserved bucket is EMPTY until its child is spawned and its entry added,
+    // so counting `bucket.size` alone let concurrent launches all see the same
+    // "0 of 4" across their awaits and admit more processes than the limit.
+    const pending = this.pendingLaunches.get(request.sessionId) ?? 0;
+    const admitted = bucket.size + pending;
+    if (admitted >= this.limits.maxConcurrentProcesses) {
       throw new SupervisorError(
         `session ${request.sessionId} already has ` +
-          `${bucket.size} supervised processes (ceiling ` +
+          `${admitted} supervised processes (ceiling ` +
           `${this.limits.maxConcurrentProcesses})`,
       );
     }
     this.live.set(request.sessionId, bucket);
+    this.pendingLaunches.set(request.sessionId, pending + 1);
+    /** Give back the pending slot. Exactly once, on every path out. */
+    let pendingReleased = false;
+    const releasePending = (): void => {
+      if (pendingReleased) return;
+      pendingReleased = true;
+      const now = (this.pendingLaunches.get(request.sessionId) ?? 1) - 1;
+      if (now <= 0) this.pendingLaunches.delete(request.sessionId);
+      else this.pendingLaunches.set(request.sessionId, now);
+    };
 
     /** Give the reservation back, so a pre-spawn failure does not leave an
      *  empty bucket counting against the session's ceiling forever. */
     const releaseReservation = (): void => {
+      releasePending();
       if (bucket.size === 0 && this.live.get(request.sessionId) === bucket) {
         this.live.delete(request.sessionId);
       }
@@ -304,11 +340,14 @@ export class LocalHarnessSupervisor {
       ownerBirthIdentity = this.supervisorBirthIdentity;
     }
 
-    // The stop may have landed while the identity read was in flight. The
-    // bucket was reserved, so `stopSession` waited for nothing — but it has
-    // already decided this session is over, and starting a process now would
-    // put a tree behind a stop that has already been reported.
-    if (this.stopped.has(request.sessionId)) {
+    // A stop may have landed while the identity read was in flight. The bucket
+    // was reserved, so `stopSession` waited for nothing — but it has already
+    // decided this session is over, and starting a process now would put a
+    // tree behind a stop that has already been reported.
+    if (
+      (this.stopGenerations.get(request.sessionId) ?? 0) !==
+      stopGenerationAtEntry
+    ) {
       releaseReservation();
       throw new SupervisorError(
         `session ${request.sessionId} was stopped while this launch was ` +
@@ -383,6 +422,9 @@ export class LocalHarnessSupervisor {
       killed: false,
     };
     bucket.add(entry);
+    // Registered: it is counted by `bucket.size` from here, so the pending
+    // slot is handed back rather than double-counted.
+    releasePending();
 
     // ── From here on, failures must not leave a live unsupervised process ──
     const abandon = async (): Promise<void> => {
@@ -563,9 +605,12 @@ export class LocalHarnessSupervisor {
     sessionId: string,
   ): Promise<{ stopped: boolean; escaped: number }> {
     // Synchronously, before this method's own awaits: a concurrent launch
-    // checks this after each of its awaits and refuses rather than starting a
-    // process behind a stop that has already been decided.
-    this.stopped.add(sessionId);
+    // compares this against the value it read at entry and refuses rather than
+    // starting a process behind a stop that has already been decided.
+    this.stopGenerations.set(
+      sessionId,
+      (this.stopGenerations.get(sessionId) ?? 0) + 1,
+    );
     const bucket = this.live.get(sessionId);
     await updateLifecycleState(sessionId, "stopping");
     let escaped = 0;
@@ -576,8 +621,19 @@ export class LocalHarnessSupervisor {
       const outcomes = await Promise.all(
         [...bucket].map(async (entry) => {
           if (entry.birthIdentity === null) {
+            // Only the handle is safe to signal — `kill(-pid)` would target a
+            // GROUP keyed on a pid we never verified. But a handle kill reaches
+            // the direct child alone, and nothing here can prove its
+            // descendants went with it, so this counts as UNPROVEN rather than
+            // stopped. Reporting success over it would be the same lie as
+            // reporting `graceful` on a probe that could not look.
             entry.child.kill("SIGKILL");
-            return null;
+            return {
+              outcome: "unknown" as const,
+              reason:
+                "the process was never identified, so only its own " +
+                "handle could be signalled",
+            };
           }
           return terminateOwnedProcessGroup({
             pid: entry.pid,

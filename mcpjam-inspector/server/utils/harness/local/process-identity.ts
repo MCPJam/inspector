@@ -23,7 +23,7 @@
  * compatibility manifest.
  */
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 /** Opaque, comparable string identifying "this exact process instance". */
 export type ProcessBirthIdentity = string;
@@ -267,24 +267,93 @@ export async function isSameProcess(
 export type TreeSignal = "SIGTERM" | "SIGKILL";
 
 /**
- * Does a process GROUP still have members?
+ * Does a process GROUP still have LIVE members?
  *
- * Signal 0 performs the permission and existence checks without delivering
- * anything, so this answers "is there anyone left in that group" without
- * touching them. `EPERM` counts as existing: the group is there, we simply may
- * not signal it — which is emphatically not "gone".
+ * `kill(-pgid, 0)` is not the answer, and the difference is the same one that
+ * bit the single-process probe: a ZOMBIE still belongs to its group, so a
+ * signal-0 to the group succeeds when everything in it has already exited and
+ * is merely awaiting reaping. Built on that, "did the tree survive?" answered
+ * yes for a tree that was entirely dead, which turns a completed stop into a
+ * reported escape and stops the janitor ever reclaiming the record.
+ *
+ * So the members are enumerated and their states read. `false` means every
+ * member is gone or a zombie; `true` means something is genuinely still there.
+ * A platform that cannot enumerate answers `false`, because this value only
+ * ever gates ESCALATION and retention — never a kill — and a check that
+ * cannot look must not manufacture survivors.
  */
-export function processGroupExists(
+export async function processGroupHasLiveMembers(
   pid: number,
   platform: NodeJS.Platform = process.platform,
-): boolean {
-  if (platform === "win32" || !Number.isInteger(pid) || pid <= 0) return false;
+): Promise<boolean> {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (platform === "linux") return linuxGroupHasLiveMembers(pid);
+  if (platform === "darwin") return darwinGroupHasLiveMembers(pid);
+  return false;
+}
+
+/** `state ppid pgrp` are the three fields after `comm` in `/proc/<pid>/stat`. */
+export function parseProcStatGroup(
+  raw: string,
+): { state: string; pgrp: number } | null {
+  const close = raw.lastIndexOf(")");
+  if (close === -1) return null;
+  const fields = raw
+    .slice(close + 1)
+    .trim()
+    .split(/\s+/);
+  const state = fields[0];
+  const pgrp = Number(fields[2]);
+  if (state === undefined || !Number.isInteger(pgrp)) return null;
+  return { state, pgrp };
+}
+
+async function linuxGroupHasLiveMembers(pgid: number): Promise<boolean> {
+  let entries: string[];
   try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    entries = await readdir("/proc");
+  } catch {
+    return false;
   }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    let raw: string;
+    try {
+      raw = await readFile(`/proc/${entry}/stat`, "utf8");
+    } catch {
+      continue; // exited between readdir and read
+    }
+    const parsed = parseProcStatGroup(raw);
+    if (parsed === null) continue;
+    if (parsed.pgrp !== pgid) continue;
+    if (!isDeadState(parsed.state.charAt(0))) return true;
+  }
+  return false;
+}
+
+async function darwinGroupHasLiveMembers(pgid: number): Promise<boolean> {
+  const stdout = await new Promise<string | null>((resolve) => {
+    execFile(
+      "/bin/ps",
+      ["-o", "state=", "-g", String(pgid)],
+      {
+        timeout: PS_TIMEOUT_MS,
+        maxBuffer: 64 * 1024,
+        encoding: "utf8",
+        env: {},
+      },
+      (error, out) =>
+        resolve(error ? null : typeof out === "string" ? out : null),
+    );
+  });
+  // `ps` exits 1 with no rows when the group is empty, which reads as `null`
+  // here and is the same answer as "no live members".
+  if (stdout === null) return false;
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .some((line) => !isDeadState(line.charAt(0)));
 }
 
 /**
@@ -344,8 +413,38 @@ export async function terminateOwnedProcessGroup(args: {
   const platform = args.platform ?? process.platform;
   const pollMs = args.pollMs ?? 50;
 
+  /**
+   * The root is gone. The GROUP may not be.
+   *
+   * A descendant that ignores SIGTERM keeps running while the leader exits, so
+   * "the root's pid is gone" is not "the tree is gone" — and reporting
+   * `graceful` on the root alone is how a session gets announced as stopped
+   * over a live vendor process. Signalling the group here is justified by the
+   * same rule the janitor relies on: a pid still in use as a process-GROUP id
+   * is not handed out as a new process's pid while that group has members, so
+   * this can only reach the group we already proved we own.
+   */
+  const settleGroup = async (
+    goneOutcome: "already-gone" | "graceful" | "forced",
+  ): Promise<
+    | { outcome: "already-gone" }
+    | { outcome: "graceful" }
+    | { outcome: "forced" }
+    | { outcome: "escaped" }
+  > => {
+    if (!(await processGroupHasLiveMembers(args.pid, platform))) {
+      return { outcome: goneOutcome };
+    }
+    signalProcessGroup(args.pid, "SIGKILL", platform);
+    await new Promise((r) => setTimeout(r, Math.min(args.graceMs, 500)));
+    if (!(await processGroupHasLiveMembers(args.pid, platform))) {
+      return { outcome: "forced" };
+    }
+    return { outcome: "escaped" };
+  };
+
   const initial = await probeProcess(args.pid, platform);
-  if (initial.state === "gone") return { outcome: "already-gone" };
+  if (initial.state === "gone") return settleGroup("already-gone");
   if (initial.state === "unknown") {
     // We could not look. Reporting "already-gone" here would let a caller
     // announce a stopped session over a tree that may still be running.
@@ -363,7 +462,7 @@ export async function terminateOwnedProcessGroup(args: {
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollMs));
     if ((await probeProcess(args.pid, platform)).state === "gone") {
-      return { outcome: "graceful" };
+      return settleGroup("graceful");
     }
   }
 
@@ -373,7 +472,7 @@ export async function terminateOwnedProcessGroup(args: {
   // one `false` — and a probe failure reported here as `graceful` is a caller
   // announcing a stopped session over a tree that may still be running.
   const afterGrace = await probeProcess(args.pid, platform);
-  if (afterGrace.state === "gone") return { outcome: "graceful" };
+  if (afterGrace.state === "gone") return settleGroup("graceful");
   if (afterGrace.state === "unknown") {
     return { outcome: "unknown", reason: afterGrace.reason };
   }
@@ -388,14 +487,14 @@ export async function terminateOwnedProcessGroup(args: {
   while (Date.now() < killDeadline) {
     await new Promise((r) => setTimeout(r, pollMs));
     if ((await probeProcess(args.pid, platform)).state === "gone") {
-      return { outcome: "forced" };
+      return settleGroup("forced");
     }
   }
   // The polls above only ever conclude "gone". Ask once more so the difference
   // between "SIGKILL was delivered and the root is STILL there" and "the last
   // few probes could not look" survives into the answer.
   const settled = await probeProcess(args.pid, platform);
-  if (settled.state === "gone") return { outcome: "forced" };
+  if (settled.state === "gone") return settleGroup("forced");
   if (settled.state === "unknown") {
     return { outcome: "unknown", reason: settled.reason };
   }
