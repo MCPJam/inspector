@@ -133,3 +133,22 @@ contextBridge.exposeInMainWorld("electronAPI", electronAPI);
 
 // Also expose a flag to indicate we're running in Electron
 contextBridge.exposeInMainWorld("isElectron", true);
+
+/**
+ * Whether this is the SHIPPED app rather than a dev run.
+ *
+ * `isElectron` alone cannot answer that — it is true in dev too — and the two
+ * differ on something the renderer has to act on: forge packages `.vite` only,
+ * with no `node_modules`, and `playwright` is externalized, so a Playwright
+ * browser can never launch in the packaged app. A UI that offered "Chrome
+ * window" there would be offering a button that always fails.
+ *
+ * Read from `process.argv` rather than `process.env`, because a sandboxed
+ * preload gets argv (the main window passes `--mcpjam-packaged` through
+ * `webPreferences.additionalArguments`) and does not get the main process's
+ * environment.
+ */
+contextBridge.exposeInMainWorld(
+  "isElectronPackaged",
+  process.argv.includes("--mcpjam-packaged"),
+);

@@ -3,7 +3,7 @@
  * The browser is a fake — protocol fidelity is covered against a real Chromium
  * in `services/webmcp-inspector/__tests__/`.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const configState = vi.hoisted(() => ({ enabled: true, hostedBrowser: false }));
 vi.mock("../../../config", () => ({
@@ -27,6 +27,27 @@ vi.mock("../../../services/browserd/live-session-deps.js", () => ({
     hostedState.ensureArgs.push(args);
     return Promise.reject(new Error("ensureLiveBrowserSession not reached in this test"));
   },
+}));
+
+// The embedded-surface transport's seam. Mocked for the same reason as the
+// hosted one: what matters at this layer is WHICH provider the route picks and
+// with what id — attaching to a real `<webview>` needs an Electron main process
+// and is covered against a fake one in
+// `services/webmcp-inspector/__tests__/electron-webview-provider.test.ts`.
+const webviewState = vi.hoisted(() => ({
+  factoryArgs: [] as Array<Record<string, unknown>>,
+}));
+vi.mock("../../../services/webmcp-inspector/electron-webview-provider", () => ({
+  createElectronWebviewProvider: (args: Record<string, unknown>) => {
+    webviewState.factoryArgs.push(args);
+    return {
+      createSession: () =>
+        Promise.reject(
+          new Error("createElectronWebviewProvider not reached in this test"),
+        ),
+    };
+  },
+  WebMcpWebviewAttachError: class WebMcpWebviewAttachError extends Error {},
 }));
 
 import {
@@ -545,5 +566,94 @@ describe("POST /sessions — transport selection", () => {
     );
     expect(status).toBe(400);
     expect(hostedState.ensureArgs).toHaveLength(0);
+  });
+});
+
+describe("POST /sessions — the embedded surface", () => {
+  const saved = process.env.ELECTRON_APP;
+
+  beforeEach(() => {
+    webviewState.factoryArgs.length = 0;
+    delete process.env.ELECTRON_APP;
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ELECTRON_APP;
+    else process.env.ELECTRON_APP = saved;
+  });
+
+  it("refuses a webContentsId outside the desktop app", async () => {
+    const { status, body } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test/", display: "in-app", webContentsId: 7 }),
+    );
+    // There is no `webContents` to resolve outside Electron, and a server that
+    // tried would fail with an unresolved-module stack instead of a sentence.
+    expect(status).toBe(400);
+    expect(body.code).toBe("electron-only");
+    expect(webviewState.factoryArgs).toHaveLength(0);
+  });
+
+  it("refuses a surface asked to be a window", async () => {
+    process.env.ELECTRON_APP = "true";
+    const { status, body } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test/", display: "window", webContentsId: 7 }),
+    );
+    // A surface the client mounted IS the in-app view. Honouring `window`
+    // would report a transport whose pane the client is not rendering.
+    expect(status).toBe(400);
+    expect(body.code).toBe("webview-display-mismatch");
+    expect(webviewState.factoryArgs).toHaveLength(0);
+  });
+
+  it("refuses a surface with no display at all — the wire default is `window`", async () => {
+    process.env.ELECTRON_APP = "true";
+    const { status, body } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test/", webContentsId: 7 }),
+    );
+    expect(status).toBe(400);
+    expect(body.code).toBe("webview-display-mismatch");
+  });
+
+  it.each([
+    ["a non-integer", 1.5],
+    ["zero", 0],
+    ["a negative", -3],
+    ["a string", "7"],
+  ])("rejects %s webContentsId at the boundary", async (_label, id) => {
+    process.env.ELECTRON_APP = "true";
+    const { status } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test/", display: "in-app", webContentsId: id }),
+    );
+    expect(status).toBe(400);
+    expect(webviewState.factoryArgs).toHaveLength(0);
+  });
+
+  it("selects the embedded provider and hands it the id", async () => {
+    process.env.ELECTRON_APP = "true";
+    const { status } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test/", display: "in-app", webContentsId: 7 }),
+    );
+    // The mocked factory's session rejects, so the request fails — reaching it
+    // at all is the proof the embedded provider was selected rather than the
+    // local one, which would have tried to launch Chromium.
+    expect(status).toBe(500);
+    expect(webviewState.factoryArgs).toEqual([{ webContentsId: 7 }]);
+  });
+
+  it("leaves an ordinary in-app session on the local provider", async () => {
+    process.env.ELECTRON_APP = "true";
+    // The compatibility path: a client too old to send a surface, or one
+    // running in a browser, still gets frame-stream.
+    const { status } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "file:///etc/passwd", display: "in-app" }),
+    );
+    expect(status).toBe(400);
+    expect(webviewState.factoryArgs).toHaveLength(0);
   });
 });
