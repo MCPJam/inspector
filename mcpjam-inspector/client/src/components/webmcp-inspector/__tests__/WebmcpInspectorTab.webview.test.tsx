@@ -254,6 +254,31 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not keep the surface for a retained session that is already closed", async () => {
+    // `startSession` does NOT clear the previous session when the new request
+    // fails, so a failed start can leave a CLOSED `electron-webview` session in
+    // the store. A kind check alone reads that as ours and keeps a blank
+    // surface up over a screen with no live session at all.
+    const startSession = vi.fn(async () => {
+      useWebmcpInspectorStore.setState({
+        session: { ...webviewSession(), status: "closed" },
+        error: { message: "The browser could not be opened." },
+      });
+    });
+    useWebmcpInspectorStore.setState({ startSession });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open browser" }));
+    });
+    await act(async () => {
+      bringUpWebview();
+      await Promise.resolve();
+    });
+
+    expect(mountedWebview()).toBeNull();
+  });
+
   it("hides the destination toggle in the packaged app", async () => {
     window.isElectronPackaged = true;
     render(<WebmcpInspectorTab />);

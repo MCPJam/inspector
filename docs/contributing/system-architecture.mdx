@@ -381,7 +381,8 @@ sequenceDiagram
   </Step>
 
 <Step title="Server Start" icon="server">
-  `startHonoServer` in `src/main.ts` starts the embedded Hono server on port 6274
+  `startHonoServer` in `src/main.ts` starts the embedded Hono server on port 6274 by
+  default, probing the next free port when that one is taken
 </Step>
 
 <Step title="Window Creation" icon="app-window">

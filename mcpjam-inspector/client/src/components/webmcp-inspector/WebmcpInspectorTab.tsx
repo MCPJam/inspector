@@ -395,20 +395,27 @@ export function WebmcpInspectorTab() {
     try {
       const webContentsId = await nextWebviewId();
       await startSession(url, { display: "in-app", webContentsId });
-      // WHAT CAME BACK decides whether our surface is the viewport. A server
-      // too old to know `webContentsId` strips it and answers `frame-stream` —
-      // the documented degrade — and the streamed pane it gave us is the one to
-      // render; leaving our surface up would hide it behind a blank
-      // `about:blank`. A start that failed without throwing (the store reports
-      // it as an error and leaves no session) lands here too, and the same
-      // answer is right: take the dead surface down.
+      // WHAT CAME BACK decides whether our surface is the viewport, and the
+      // test is POSITIVE: keep it only for a live session that actually
+      // attached to it. Everything else takes the surface down.
+      //
+      // Three ways to fail that, and each leaves a blank `about:blank` covering
+      // whatever the viewer should be seeing:
+      //   - a server too old to know `webContentsId` answers `frame-stream`,
+      //     the documented degrade, and its streamed pane is the one to render;
+      //   - a start that failed without throwing leaves no session at all;
+      //   - a start that failed leaves the PREVIOUS session in place, because
+      //     the store does not clear it on error — and if that one was a closed
+      //     `electron-webview` session, a kind check alone would read it as
+      //     ours and keep the dead surface up.
       //
       // Read from the store rather than the `session` in scope, which is the
       // render-time value from before the await.
       const started = useWebmcpInspectorStore.getState().session;
-      if (started?.viewportTransport.kind !== "electron-webview") {
-        setWebviewMounted(false);
-      }
+      const attached =
+        started?.viewportTransport.kind === "electron-webview" &&
+        started.status !== "closed";
+      if (!attached) setWebviewMounted(false);
     } catch (error) {
       setWebviewMounted(false);
       setLocalError(

@@ -136,7 +136,7 @@ only path to input that feels native rather than ~200ms behind.
 
 OWNERSHIP IS INVERTED, and everything else follows:
 
-```
+```text
 client mounts <webview>  →  waits for dom-ready  →  getWebContentsId()
       →  POST /sessions {display:"in-app", webContentsId}
       →  server: webContents.fromId → ownership guard → debugger.attach("1.3")
@@ -347,6 +347,14 @@ running two at once would interleave their effects.
   screenshots all still work, only driving the page by hand does not.
 - **Page output is untrusted.** It renders as text, never as markup, and is
   capped. The hosted stage will need more than this.
+- **A surface is not bound to the session that asked for it.** The ownership
+  guard proves a `webContentsId` names one of OUR webview guests — which is what
+  keeps the app's own renderer out of reach — but it does not prove the caller
+  is the tab that mounted that particular guest. A local caller who learned
+  another eligible id could drive that surface. The blast radius is a page the
+  user themselves opened for inspection, and every `/api/mcp/*` route is equally
+  reachable by a local caller today; binding the id to its requesting session
+  (a nonce handed to the pane at mount) is the fix if that changes.
 - **The embedded surface does not survive leaving the tab.** Unmounting the
   component destroys the guest, so the session ends with it. A persistent
   App-level webview host would fix this and is a scoped follow-up.
@@ -396,9 +404,16 @@ facts — so these two passes are part of "done", not extra credit.
 NODE_ENV=development npm run electron:start
 ```
 
-A bare `electron:start` leaves `NODE_ENV` unset, and the embedded server then
-307s documents to a hardcoded `localhost:8080`. With it set, the window loads
-forge's Vite renderer and `/api` proxies to `:6274` (the log says which port).
+The variable is a TIMING problem, not a missing one. `startHonoServer` does set
+`NODE_ENV=development` when the app is unpackaged — but `src/main.ts` reads it
+into `isDev` at module load, before that assignment runs. So a bare
+`electron:start` leaves `isDev` false for the life of the process:
+`createMainWindow` loads the embedded server instead of forge's Vite renderer,
+and that server (unpackaged Electron) 307s every front-end route to the
+hardcoded `http://localhost:8080` from `getInspectorFrontendUrl`. Setting the
+variable on the command line is what makes `isDev` true early enough; the window
+then loads forge's renderer and `/api` proxies to `:6274` (the log says which
+port).
 Then: WebMCP tab → In app →
 `https://googlechromelabs.github.io/webmcp-tools/demos/explainer/`. What to look
 for, in order — scrolling and typing that feel native rather than streamed
