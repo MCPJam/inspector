@@ -1,5 +1,10 @@
 import { type ModelMessage } from "ai";
 import {
+  extractToolCallsExcludingPolicyBlocks,
+  extractToolCallsFromConversation,
+  mergeToolCalls,
+} from "../../shared/eval-tool-call-projection";
+import {
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -1197,122 +1202,6 @@ function buildPromptTraceSummaries(
       }),
     };
   });
-}
-
-function extractToolCallsFromConversation(params: {
-  steps?: ReadonlyArray<any>;
-  messages: ModelMessage[];
-}): ToolCall[] {
-  const toolsCalled: ToolCall[] = [];
-
-  if (params.steps && Array.isArray(params.steps)) {
-    for (const step of params.steps) {
-      const stepToolCalls = (step as any).toolCalls || [];
-      for (const call of stepToolCalls) {
-        if (call?.toolName || call?.name) {
-          toolsCalled.push({
-            toolName: call.toolName ?? call.name,
-            arguments: call.args ?? call.input ?? {},
-            ...(typeof call.toolCallId === "string"
-              ? { toolCallId: call.toolCallId }
-              : {}),
-          });
-        }
-      }
-    }
-  }
-
-  for (const msg of params.messages) {
-    if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
-      for (const item of (msg as any).content) {
-        if (item?.type === "tool-call") {
-          const name = item.toolName ?? item.name;
-          if (name) {
-            const argumentsValue =
-              item.input ?? item.parameters ?? item.args ?? {};
-            const alreadyAdded = toolsCalled.some(
-              (toolCall) =>
-                toolCall.toolName === name &&
-                JSON.stringify(toolCall.arguments) ===
-                  JSON.stringify(argumentsValue)
-            );
-            if (!alreadyAdded) {
-              toolsCalled.push({
-                toolName: name,
-                arguments: argumentsValue,
-                ...(typeof item.toolCallId === "string"
-                  ? { toolCallId: item.toolCallId }
-                  : {}),
-              });
-            }
-          }
-        }
-      }
-    }
-
-    if (msg?.role === "assistant" && Array.isArray((msg as any).toolCalls)) {
-      for (const call of (msg as any).toolCalls) {
-        if (call?.toolName || call?.name) {
-          const toolName = call.toolName ?? call.name;
-          const argumentsValue = call.args ?? call.input ?? {};
-          const alreadyAdded = toolsCalled.some(
-            (toolCall) =>
-              toolCall.toolName === toolName &&
-              JSON.stringify(toolCall.arguments) ===
-                JSON.stringify(argumentsValue)
-          );
-          if (!alreadyAdded) {
-            toolsCalled.push({
-              toolName,
-              arguments: argumentsValue,
-              ...(typeof call.toolCallId === "string"
-                ? { toolCallId: call.toolCallId }
-                : {}),
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return toolsCalled;
-}
-
-function extractToolCallsExcludingPolicyBlocks(
-  params: {
-    steps?: ReadonlyArray<any>;
-    messages: ModelMessage[];
-  },
-  blockedToolCallIds: ReadonlySet<string>
-): ToolCall[] {
-  return extractToolCallsFromConversation(params).filter(
-    (toolCall) =>
-      toolCall.toolCallId === undefined ||
-      !blockedToolCallIds.has(toolCall.toolCallId)
-  );
-}
-
-function toolCallIdentity(toolCall: ToolCall): string {
-  return `${toolCall.toolName}:${JSON.stringify(toolCall.arguments ?? {})}`;
-}
-
-function mergeToolCalls(
-  existingToolCalls: ToolCall[],
-  incomingToolCalls: ToolCall[]
-): ToolCall[] {
-  const seen = new Set(existingToolCalls.map(toolCallIdentity));
-  const merged = [...existingToolCalls];
-
-  for (const toolCall of incomingToolCalls) {
-    const identity = toolCallIdentity(toolCall);
-    if (seen.has(identity)) {
-      continue;
-    }
-    seen.add(identity);
-    merged.push(toolCall);
-  }
-
-  return merged;
 }
 
 function appendPartialToolCallsToPrompt(params: {
