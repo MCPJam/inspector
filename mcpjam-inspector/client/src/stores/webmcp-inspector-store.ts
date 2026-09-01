@@ -95,6 +95,15 @@ export interface WebMcpLiveFrame {
   cssHeight: number;
   ts: number;
   seq: number;
+  /**
+   * The transport this frame ARRIVED on.
+   *
+   * Stamped here rather than read when the frame paints: a frame decodes for
+   * tens of milliseconds, the ladder can move inside that window, and a socket
+   * frame filed under the transport that replaced it makes the split
+   * percentiles describe neither.
+   */
+  rung: WebMcpFrameTransport["rung"];
 }
 
 /**
@@ -131,6 +140,7 @@ function toLiveFrame(
     scale?: number;
   },
   seq: number,
+  rung: WebMcpFrameTransport["rung"],
 ): WebMcpLiveFrame {
   // A missing, zero or nonsense scale reads as 1: an older server never sends
   // one, and dividing by a bad number would put the pane's geometry somewhere
@@ -149,6 +159,7 @@ function toLiveFrame(
     cssHeight: Math.round(frame.deviceHeight / scale),
     ts: frame.ts,
     seq,
+    rung,
   };
 }
 
@@ -584,6 +595,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             `data:image/jpeg;base64,${event.frame.data}`,
             event.frame,
             event.seq,
+            // Whatever is carrying pixels right now — for an SSE frame that is
+            // this stream, however the socket ladder happens to be doing.
+            polling ? "poll" : "sse-frames",
           ),
         });
         return;
@@ -642,7 +656,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       if (frame.seq <= lastAppliedFrameSeq) return;
       lastAppliedFrameSeq = frame.seq;
       set({
-        liveFrame: toLiveFrame(presenter.present(frame.jpeg), frame, frame.seq),
+        liveFrame: toLiveFrame(
+          presenter.present(frame.jpeg),
+          frame,
+          frame.seq,
+          "ws",
+        ),
       });
     }
 
@@ -871,7 +890,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       frameAttempts = 0;
       frameSocketLatched = false;
       ladderRung = "none";
-      polling = false;
+      // `polling` is deliberately NOT cleared: it belongs to the surface that
+      // owns the interval, and that interval outlives a session change — the
+      // pane keeps polling across `startSession`, so clearing it here would
+      // report a transport of `none` for a pane visibly painting screenshots.
+      // The surface reports `false` when its poll actually stops.
       lastAppliedFrameSeq = 0;
       source?.close();
       source = undefined;

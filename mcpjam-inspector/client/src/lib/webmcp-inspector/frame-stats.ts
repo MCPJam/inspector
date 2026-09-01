@@ -62,8 +62,8 @@ export function frameStatsEnabled(): boolean {
   return enabled;
 }
 
-function push(into: Sample[], value: number): void {
-  into.push({ v: value, rung: currentRung });
+function push(into: Sample[], value: number, rung = currentRung): void {
+  into.push({ v: value, rung });
   if (into.length > MAX_SAMPLES) into.splice(0, into.length - MAX_SAMPLES);
 }
 
@@ -88,11 +88,22 @@ export function noteInputSent(afterSeq: number): void {
   );
 }
 
-/** Called from the pane's `onLoad`, i.e. once the frame is actually painted. */
-export function notePainted(frame: { ts: number; seq: number }): void {
+/**
+ * Called from the pane's `onLoad`, i.e. once the frame is actually painted.
+ *
+ * The frame carries the transport it ARRIVED on, rather than this reading the
+ * current one: a frame decodes for tens of milliseconds, the ladder can move
+ * in that window, and filing a socket frame under the transport that replaced
+ * it is exactly the kind of quietly-wrong number this file exists to avoid.
+ */
+export function notePainted(frame: {
+  ts: number;
+  seq: number;
+  rung?: FrameTransportRung;
+}): void {
   if (!frameStatsEnabled()) return;
   const now = Date.now();
-  push(captureToPaint, now - frame.ts);
+  push(captureToPaint, now - frame.ts, frame.rung);
   // Expired HERE as well as on send. `noteInputSent` is not a reliable expiry
   // point: a gesture followed by silence leaves its entry sitting until the
   // next input, and a frame arriving minutes later would settle it as a

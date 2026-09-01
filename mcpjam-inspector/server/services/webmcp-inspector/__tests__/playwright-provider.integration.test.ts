@@ -24,6 +24,8 @@ import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
+  WEBMCP_HOUSEKEEPING_INTERVAL_MS,
+  WEBMCP_SETTLE_QUIET_MS,
   WEBMCP_VIEWPORT,
   type WebMcpActivityEntry,
   type WebMcpFrame,
@@ -65,6 +67,16 @@ if (process.env.CI && CHROMIUM_AVAILABLE && !WEBMCP_CDP_AVAILABLE) {
       "WebMCP domain. Install the pinned Playwright browser before running CI.",
   );
 }
+
+/**
+ * How long to wait for a settled page's still, with slop.
+ *
+ * Derived from the constants the provider actually uses — the quiet window
+ * plus a housekeeping tick to notice it — rather than a round number that
+ * would keep passing while meaning something else.
+ */
+const SETTLE_WAIT_MS =
+  WEBMCP_SETTLE_QUIET_MS + WEBMCP_HOUSEKEEPING_INTERVAL_MS + 2_000;
 
 /** Headless for tests; a real session opens a window the developer drives. */
 class HeadlessProvider extends PlaywrightWebMcpProvider {
@@ -466,10 +478,12 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const streamed = frames.at(-1)!;
 
     // Long enough for the page's own paints to stop and for the quiet window
-    // to elapse. What arrives after that is the still — plus, on a build that
-    // answers a capture with a repaint it does not deduplicate, possibly one
-    // more frame, which is why this takes the LARGEST rather than the last.
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    // to elapse, DERIVED from the constants that decide it rather than a
+    // number that would quietly stop matching them. What arrives after that is
+    // the still — plus, on a build that answers a capture with a repaint it
+    // does not deduplicate, possibly one more frame, which is why this takes
+    // the LARGEST rather than the last.
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
     expect(frames.length, "a still after the paints").toBeGreaterThan(
       streamedCount,
     );
@@ -488,7 +502,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // And no capture loop: a still induces a repaint, and a repaint counted as
     // activity would take another still, forever.
     const after = frames.length;
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
     expect(frames.length - after, "no capture loop").toBeLessThan(2);
     await registry.disposeAll();
   }, 60_000);

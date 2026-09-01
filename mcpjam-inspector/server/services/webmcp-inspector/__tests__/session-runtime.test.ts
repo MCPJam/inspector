@@ -629,6 +629,27 @@ describe("viewport frames", () => {
     ).toBe(45);
   });
 
+  it("does not publish a quality change before a browser is attached", () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/", {
+      sessionId: "session-1",
+    });
+    const events: WebMcpEvent[] = [];
+    runtime.hub.subscribe((event) => events.push(event), 0);
+
+    // An embedded session starts its screencast inside the provider's own
+    // `start()` — before this runtime has a browser and before the registry
+    // has adopted it. A session event published here would sit in the replay
+    // ring advertising `native-window` and an expiry at the epoch.
+    runtime.callbacks().onStreamQualityChanged?.(60);
+    expect(events.filter((event) => event.type === "session")).toHaveLength(0);
+
+    // Remembered all the same, so it rides the first session event that IS
+    // published rather than waiting for the next rung change.
+    const session = new FakeBrowserSession(runtime.callbacks());
+    runtime.attach(session);
+    expect(runtime.toPublic().streamQuality).toBe(60);
+  });
+
   it("omits the quality entirely for a provider that never reports one", () => {
     const { runtime } = makeRuntime();
     // Every provider but the local one: an absent field, not a guess at what

@@ -191,6 +191,72 @@ function latestStreamQuality(text: string): number | undefined {
   return newest?.streamQuality;
 }
 
+/**
+ * Invoke a page tool by NAME and hand back what it returned.
+ *
+ * The tool key is `${origin}::${name}`, but it is read off the session's own
+ * `tools` event rather than constructed here: the key is the runtime's to
+ * assign, and a test that rebuilt it would pass while the two disagreed.
+ */
+async function invokePageTool(
+  token: string,
+  sessionId: string,
+  name: string,
+): Promise<unknown> {
+  const tools = parseSseEvents(
+    await readSse(token, sessionId, "replay=200&frames=off", 1_500),
+  ).filter((event) => event.type === "tools");
+  const descriptors = (tools.at(-1)?.tools ?? []) as Array<{
+    toolKey: string;
+    name: string;
+  }>;
+  const tool = descriptors.find((entry) => entry.name === name);
+  expect(
+    tool,
+    `the fixture should register ${name}; saw ${descriptors
+      .map((entry) => entry.name)
+      .join(", ")}`,
+  ).toBeDefined();
+
+  await command(token, sessionId, {
+    type: "invoke_tool",
+    toolKey: tool!.toolKey,
+    input: {},
+    source: "manual",
+  });
+
+  // The result arrives on the TIMELINE rather than in the command's response:
+  // an invocation is asynchronous, and the settle entry is where it lands.
+  let output: unknown;
+  await expect
+    .poll(
+      async () => {
+        const settled = parseSseEvents(
+          await readSse(token, sessionId, "replay=200&frames=off", 1_000),
+        )
+          .filter((event) => event.type === "activity")
+          .map((event) => event.entry as { kind?: string; output?: unknown })
+          .filter((entry) => entry?.kind === "invocation_settled");
+        output = settled.at(-1)?.output;
+        return output !== undefined;
+      },
+      { message: `${name} should settle`, timeout: 20_000 },
+    )
+    .toBe(true);
+  return output;
+}
+
+/** The JSON a fixture tool put in its first text block. */
+function toolJson(output: unknown): Record<string, number> {
+  const text = (output as { content?: Array<{ text?: string }> })?.content?.[0]
+    ?.text;
+  expect(
+    text,
+    `tool output should carry a text block: ${JSON.stringify(output)}`,
+  ).toBeTruthy();
+  return JSON.parse(text!) as Record<string, number>;
+}
+
 /** Open a session, failing loudly with the server's own words if it refuses. */
 async function openSession(
   token: string,
@@ -572,6 +638,20 @@ test.describe("WebMCP viewport frame stream", () => {
         .toBeGreaterThan(1);
 
       const cssWidth = session.viewportTransport!.width!;
+
+      // THE assertion that only holds if the ratio actually took effect. Every
+      // geometry check below is self-consistent at any ratio — Chromium clamps
+      // the screencast to the CSS surface size, so a server that silently
+      // dropped the field would produce identical frames — and the only place
+      // the ratio IS visible is inside the page that was rendered with it.
+      const reported = toolJson(
+        await invokePageTool(token, sessionId, "viewport_report"),
+      );
+      expect(reported.devicePixelRatio).toBe(2);
+      // …and the page's own CSS size is unchanged by it, which is what makes
+      // the coordinates the client sends back still mean what the page thinks.
+      expect(reported.innerWidth).toBe(cssWidth);
+
       for (const frame of socket.frames) {
         expect([frame.jpeg[0], frame.jpeg[1]]).toEqual([0xff, 0xd8]);
         expect(frame.jpeg.byteLength).toBeLessThanOrEqual(

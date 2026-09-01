@@ -362,6 +362,13 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // the move that first tells the new page where the pointer is.
       this.pointerAt = undefined;
       this.pointerGeneration += 1;
+      // The redundancy check compares bytes, and bytes do not know they belong
+      // to a different document. A reload of a static page paints identically,
+      // so its first frame would be dropped as a duplicate — while the runtime
+      // has just CLEARED the retained frame for this navigation, leaving a
+      // reconnecting pane with nothing at all until the page happened to
+      // repaint. Which, for a settled page, is never.
+      this.lastFrameData = undefined;
       this.callbacks.onNavigated(frame.url, originOf(frame.url));
     });
   }

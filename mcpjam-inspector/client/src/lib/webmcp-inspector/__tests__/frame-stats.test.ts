@@ -74,6 +74,22 @@ describe("frame stats", () => {
     expect(report.byTransport.poll).toBeUndefined();
   });
 
+  it("files a frame under the transport it ARRIVED on", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("ws");
+    // The frame came in on the socket, and the ladder moves while it decodes —
+    // which on a real pane is tens of milliseconds of window.
+    noteFrameTransportRung("sse-frames");
+    notePainted({ ts: 999_990, seq: 1, rung: "ws" });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.ws).toMatchObject({ n: 1 });
+    expect(report.byTransport["sse-frames"]).toBeUndefined();
+  });
+
   it("keeps the active transport when the samples are cleared", () => {
     localStorage.setItem(FLAG, "1");
     resetFrameStatsFlagForTests();

@@ -212,7 +212,15 @@ export class WebMcpSessionRuntime {
         // would be chatter on a stream the timeline shares.
         if (this.streamQuality === quality) return;
         this.streamQuality = quality;
-        this.publishSession();
+        // NOT before `attach`, and the ordering is real: an embedded session
+        // starts its screencast inside the provider's own `start()`, which
+        // runs before this runtime has a browser or the registry has adopted
+        // it. Publishing there would put a session event in the replay ring
+        // advertising `native-window` and an expiry at the epoch — the same
+        // reason `attach` sets its status without publishing. The quality is
+        // remembered either way, and rides the first session event the
+        // registry does publish.
+        if (this.session) this.publishSession();
       },
       onCrashed: (message) => {
         this.setStatus("error", message);

@@ -100,6 +100,13 @@ describe("readJpegDimensions", () => {
       0xff, 0xd8, 0xff, 0xc0, 0x00, 0x02, 0x08, 0x04, 0x00, 0x02, 0x80, 0x03,
     ]);
     expect(readJpegDimensions(short)).toBeUndefined();
+
+    // Seven declares enough bytes to cover width and height but not the
+    // component count every real SOF carries: still malformed, still refused.
+    const sevenByteSegment = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xc0, 0x00, 0x07, 0x08, 0x04, 0x00, 0x02, 0x80, 0x03,
+    ]);
+    expect(readJpegDimensions(sevenByteSegment)).toBeUndefined();
   });
 
   it("refuses a header that declares no pixels", () => {

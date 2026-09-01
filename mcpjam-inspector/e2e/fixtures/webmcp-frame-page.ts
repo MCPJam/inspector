@@ -109,6 +109,30 @@ const PAGE = (variant: FixtureVariant) => `<!doctype html>
       // only starts when the page API is present, so the fixture has to be a
       // real WebMCP page rather than a blank one.
       const context = document.modelContext ?? navigator.modelContext;
+      // What the page believes about its own rendering. The device pixel
+      // ratio a session was started with is otherwise invisible from outside:
+      // Chromium clamps the screencast to the CSS surface size, so the frames
+      // look identical whether the ratio took effect or was dropped.
+      context?.registerTool?.({
+        name: "viewport_report",
+        description: "Reports the page's own device pixel ratio and size.",
+        inputSchema: { type: "object", properties: {} },
+        async execute() {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  devicePixelRatio: window.devicePixelRatio,
+                  innerWidth: window.innerWidth,
+                  innerHeight: window.innerHeight,
+                }),
+              },
+            ],
+          };
+        },
+      });
+
       context?.registerTool?.({
         name: "scroll_report",
         description: "Reports how far the fixture page has been scrolled.",

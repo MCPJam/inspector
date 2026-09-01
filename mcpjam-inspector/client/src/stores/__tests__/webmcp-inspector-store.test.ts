@@ -153,6 +153,7 @@ const TOOL: WebMcpToolDescriptor = {
 function liveFrame(data: string, seq = 2) {
   return {
     src: `data:image/jpeg;base64,${data}`,
+    rung: "ws" as const,
     deviceWidth: 1280,
     deviceHeight: 800,
     // Same numbers at scale 1, and deliberately still stated: the pane lays
@@ -1179,7 +1180,30 @@ describe("webmcp inspector store — frame transport", () => {
       cssHeight: 640,
       ts: 5_000,
       seq: 7,
+      // The transport this frame came in on, carried WITH it: a frame decodes
+      // for tens of milliseconds and the ladder can move in that window.
+      rung: "ws",
     });
+  });
+
+  it("stamps each frame with the transport that delivered it", async () => {
+    const { sse, ws } = await openFrameSession();
+    ws.open();
+    ws.emitFrame(binaryFrame(7));
+    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe("ws");
+
+    // The socket dies; the same session's next frame arrives on SSE. Reading
+    // the CURRENT transport when this paints would file it under whichever
+    // rung the ladder had reached by then.
+    ws.emitClose(1006);
+    sse.emit({
+      type: "frame",
+      seq: 8,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe(
+      "sse-frames",
+    );
   });
 
   it("reports a scaled frame's CSS size, so clicks stay in the page's units", async () => {
@@ -1339,6 +1363,25 @@ describe("webmcp inspector store — frame transport", () => {
       latched: true,
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("leaves the screenshot poll's state to the surface that owns it", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    // A second session starts while the pane is still mounted and still
+    // polling. Its interval outlives the teardown, so clearing the flag here
+    // would report `none` for a pane visibly painting screenshots — the
+    // surface says when its poll actually stops.
+    await openFrameSession("session-2");
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
+      "poll",
+    );
   });
 
   it("reports the screenshot poll as the transport it is", async () => {

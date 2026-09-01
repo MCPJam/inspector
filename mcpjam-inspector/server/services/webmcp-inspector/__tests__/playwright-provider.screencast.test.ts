@@ -518,6 +518,28 @@ describe("PlaywrightWebMcpSession screencast", () => {
     );
   });
 
+  it("forgets the last frame when the page navigates", async () => {
+    // Fake clock, because the throttle HOLDS the second frame rather than
+    // dropping it: a same-tick assertion would pass with this fix reverted and
+    // the frame merely late.
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 1));
+
+    // A reload of a static page paints identically, and bytes do not know they
+    // belong to a different document. Dropped as a duplicate, that frame is
+    // gone for good: the runtime CLEARS its retained frame on navigation, so a
+    // pane connecting after this would have nothing to show until the page
+    // happened to repaint — which for a settled page is never.
+    h.cdp.emit("Page.frameNavigated", {
+      frame: { id: "main", url: "https://example.test/next" },
+    });
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 2));
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(h.frames.map((frame) => frame.data)).toEqual(["paint", "paint"]);
+  });
+
   it("forgets the last frame when the stream stops, so a restart repaints", async () => {
     const h = await started();
     await h.session.setScreencast(true);

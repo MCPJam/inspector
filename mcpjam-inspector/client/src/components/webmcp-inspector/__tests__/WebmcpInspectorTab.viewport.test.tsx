@@ -47,6 +47,7 @@ function session(
 function liveFrame(src: string, seq = 1, scale = 1) {
   return {
     src,
+    rung: "ws" as const,
     deviceWidth: 1280 * scale,
     deviceHeight: 800 * scale,
     // The page's own coordinate space, which is what the pane lays out and
