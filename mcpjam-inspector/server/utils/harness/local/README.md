@@ -217,8 +217,22 @@ escalation, never a kill" — which was simply wrong about its own callers:
 `false` is what reports the tree gone and what makes the janitor DROP a record.
 An unreadable `/proc` or a `ps` timeout therefore announced a stopped session
 over live descendants and discarded the only handle on them. Worth stating
-because it is the third appearance of one mistake in this directory: **a check
-that could not look must never answer "nothing there".**
+because it has now been the same mistake four times in this directory: **a
+check that could not look must never answer "nothing there".**
+
+The fourth was inside the fix for the third — the member scan skipped any
+`/proc/<pid>/stat` it could not read and still concluded `empty`, so a process
+it never examined could have been the live one. Finding a live member is still a
+sound `live`; concluding `empty` claims "no member of this group is alive", and
+that claim is not available if a candidate went unread. The scan tracks that and
+answers `unknown` instead.
+
+`EACCES` is deliberately exempt, and the exemption is measured rather than
+assumed: these files are world-readable (as uid 65534, all 79 entries on this
+machine read fine), so a refusal means the process belongs to another user — and
+every member of our group is one we forked. Tainting on it would make the probe
+permanently `unknown` on a `hidepid` mount and stop the janitor reclaiming
+anything there, a worse failure than the exotic case it would cover.
 
 ### "Gone" and "cannot tell" are different answers
 

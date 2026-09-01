@@ -331,22 +331,46 @@ async function probeLinuxGroup(pgid: number): Promise<GroupProbe> {
     // The enumeration itself failed. Nothing was learned about the group.
     return "unknown";
   }
+  // Set when some process could not be examined for a reason OTHER than
+  // having exited. Finding a live member is still a sound `live` — but
+  // concluding `empty` means "no member of this group is alive", and that
+  // claim is not available if one of the candidates could not be read: the
+  // one we skipped could have been it.
+  let blind = false;
   for (const entry of entries) {
     if (!/^\d+$/.test(entry)) continue;
     let raw: string;
     try {
       raw = await readFile(`/proc/${entry}/stat`, "utf8");
-    } catch {
-      // This ONE process vanished between readdir and read, which is ordinary
-      // and says nothing about the rest of the scan.
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // ENOENT/ESRCH is the ordinary case: the process exited between
+      // `readdir` and this read, so it is not a live member of anything.
+      //
+      // EACCES is the `hidepid=1` case, and it does NOT blind us: these files
+      // are world-readable by default (checked — as uid 65534 all 79 entries
+      // read fine), so a refusal means the process belongs to another user,
+      // and every member of OUR group is one we forked. Tainting on it would
+      // make the probe permanently `unknown` on a hidepid mount and stop the
+      // janitor reclaiming anything there, which is a worse failure than the
+      // exotic case it would cover (a supervised child that changed uid).
+      //
+      // Anything else — EIO, a truncated read — is genuinely "could not look".
+      if (code !== "ENOENT" && code !== "ESRCH" && code !== "EACCES") {
+        blind = true;
+      }
       continue;
     }
     const parsed = parseProcStatGroup(raw);
-    if (parsed === null) continue;
+    if (parsed === null) {
+      // A stat line we cannot parse is a process whose group we do not know.
+      blind = true;
+      continue;
+    }
     if (parsed.pgrp !== pgid) continue;
     if (!isDeadState(parsed.state.charAt(0))) return "live";
   }
-  return "empty";
+  return blind ? "unknown" : "empty";
 }
 
 async function probeDarwinGroup(pgid: number): Promise<GroupProbe> {
