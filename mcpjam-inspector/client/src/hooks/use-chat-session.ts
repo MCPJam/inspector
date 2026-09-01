@@ -77,9 +77,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers"
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import {
-  authFetch,
-} from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 import {
   classifyScenarioAccessResponse,
   patchBodyAccessVersion,
@@ -244,6 +242,8 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
     "This conversation's bash runs in a disposable cloud sandbox, but this inspector can't execute disposable sandboxes. The conversation continues without bash.",
   secrets_undelivered:
     "This environment's materialized secrets weren't delivered: they are only set in a sandbox the project provisions, and this conversation doesn't have one. Commands that need them will fail.",
+  secrets_unavailable:
+    "This conversation's secrets couldn't be checked this turn, so bash is paused. Its sandbox may still hold credentials from an earlier turn and there is nothing to redact them with. Your sandbox is untouched — bash returns as soon as secrets can be read again.",
 };
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
@@ -269,19 +269,19 @@ function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
 
 function isOrgManagedModel(
   orgConfig: OrgVisibleConfig | undefined,
-  model: ModelDefinition
+  model: ModelDefinition,
 ): boolean {
   if (isMCPJamProvidedModelMenuItem(model)) return false;
   const providerKey = getOrgProviderKeyForModel(model);
   if (!providerKey) return false;
   const provider = orgConfig?.providers.find(
-    (p) => p.providerKey === providerKey && p.enabled
+    (p) => p.providerKey === providerKey && p.enabled,
   );
   if (!provider) return false;
 
   if (provider.providerKey === "ollama") {
     return Boolean(
-      provider.baseUrl && provider.modelIds?.includes(String(model.id))
+      provider.baseUrl && provider.modelIds?.includes(String(model.id)),
     );
   }
 
@@ -521,7 +521,7 @@ export interface UseChatSessionReturn {
   selectedModel: ModelDefinition;
   setSelectedModel: (
     model: ModelDefinition,
-    options?: SetSelectedModelOptions
+    options?: SetSelectedModelOptions,
   ) => void;
   /**
    * False while the persisted selection has not (yet) matched an entry in
@@ -591,7 +591,7 @@ export interface UseChatSessionReturn {
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
-    }
+    },
   ) => Promise<string>;
   /**
    * Fork the given transcript onto a fresh `chatSessionId` and confirm the fork
@@ -607,7 +607,7 @@ export interface UseChatSessionReturn {
     messages: UIMessage[],
     options?: {
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
-    }
+    },
   ) => Promise<{ chatSessionId: string } | null>;
   loadChatSession: (
     session: {
@@ -650,7 +650,7 @@ export interface UseChatSessionReturn {
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
       shouldApply?: () => boolean;
-    }
+    },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
   /**
@@ -825,7 +825,7 @@ async function resolveHydratedTurnTraces(
         spansBlobUrl?: string | null;
         modelId?: string;
       }>
-    | undefined
+    | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
   // Preserve the `undefined` sentinel so `queueSessionHydration` can tell
   // "caller didn't provide traces — leave existing state alone" apart from
@@ -866,7 +866,7 @@ async function resolveHydratedTurnTraces(
           // numbers in the trace viewer.
           console.warn(
             `[useChatSession] Failed to fetch spans for turn ${trace.turnId}:`,
-            err
+            err,
           );
         }
       }
@@ -880,13 +880,13 @@ async function resolveHydratedTurnTraces(
         spans,
         modelId: trace.modelId,
       };
-    })
+    }),
   );
   return results;
 }
 
 async function resolveHydratedWidgetSnapshots(
-  raw: PersistedWidgetSnapshot[] | undefined
+  raw: PersistedWidgetSnapshot[] | undefined,
 ): Promise<PersistedWidgetSnapshot[] | undefined> {
   if (raw === undefined) {
     return undefined;
@@ -914,23 +914,23 @@ async function resolveHydratedWidgetSnapshots(
       } catch (err) {
         console.warn(
           `[useChatSession] Failed to fetch tool output for snapshot ${snapshot.toolCallId}:`,
-          err
+          err,
         );
         return snapshot;
       }
-    })
+    }),
   );
 }
 
 function buildLiveTraceStateFromTurnTraces(
-  traces: HydratedTurnTrace[]
+  traces: HydratedTurnTrace[],
 ): LiveTraceAccumulatorState {
   if (traces.length === 0) {
     return createEmptyLiveTraceState();
   }
 
   const ordered = [...traces].sort(
-    (left, right) => left.promptIndex - right.promptIndex
+    (left, right) => left.promptIndex - right.promptIndex,
   );
   const turnOrder: string[] = [];
   const turns: Record<string, LiveTraceTurnState> = {};
@@ -962,7 +962,7 @@ function buildLiveTraceStateFromTurnTraces(
 }
 
 function isTraceEventDataPart(
-  value: unknown
+  value: unknown,
 ): value is { type: "data-trace-event"; data: LiveChatTraceEvent } {
   if (!value || typeof value !== "object") {
     return false;
@@ -974,13 +974,13 @@ function isTraceEventDataPart(
 
 function hasChatToolCall(
   chatMessages: UIMessage[],
-  toolCallId: string
+  toolCallId: string,
 ): boolean {
   return chatMessages.some((message) =>
     message.parts?.some((part) => {
       if (!part || typeof part !== "object") return false;
       return (part as { toolCallId?: unknown }).toolCallId === toolCallId;
-    })
+    }),
   );
 }
 
@@ -993,7 +993,7 @@ function hasChatToolCall(
  */
 export function shouldAutoSendCompletedClientToolCalls(
   options: Parameters<typeof lastAssistantMessageIsCompleteWithToolCalls>[0],
-  scopeStepUpResumeInFlight = false
+  scopeStepUpResumeInFlight = false,
 ): boolean {
   if (
     scopeStepUpResumeInFlight ||
@@ -1006,13 +1006,13 @@ export function shouldAutoSendCompletedClientToolCalls(
   const lastStepStartIndex = message.parts.reduce(
     (lastIndex, part, index) =>
       part.type === "step-start" ? index : lastIndex,
-    -1
+    -1,
   );
   return message.parts
     .slice(lastStepStartIndex + 1)
     .some(
       (part) =>
-        isToolUIPart(part) && isClientFulfilledToolName(getToolName(part))
+        isToolUIPart(part) && isClientFulfilledToolName(getToolName(part)),
     );
 }
 
@@ -1069,7 +1069,7 @@ export function rpcToolCallOperation(message: unknown): string | undefined {
  */
 export function reconcileChatToolCallStepUp(
   pending: Map<string, Map<string | number, string>>,
-  log: { direction: string; serverId: string; message: unknown }
+  log: { direction: string; serverId: string; message: unknown },
 ): string | undefined {
   if (log.direction === "send") {
     // Track only tool invocations; ids from other methods never gate a reset,
@@ -1102,7 +1102,7 @@ export function reconcileChatToolCallStepUp(
 }
 
 function dedupeTraceToolCalls(
-  toolCalls: LiveChatTraceToolCall[] | null | undefined
+  toolCalls: LiveChatTraceToolCall[] | null | undefined,
 ): LiveChatTraceToolCall[] {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
     return [];
@@ -1134,12 +1134,12 @@ function dedupeTraceToolCalls(
 
 function upsertRequestPayloadEntry(
   entries: LiveChatTraceRequestPayloadEntry[],
-  nextEntry: LiveChatTraceRequestPayloadEntry
+  nextEntry: LiveChatTraceRequestPayloadEntry,
 ): LiveChatTraceRequestPayloadEntry[] {
   const existingIndex = entries.findIndex(
     (entry) =>
       entry.turnId === nextEntry.turnId &&
-      entry.stepIndex === nextEntry.stepIndex
+      entry.stepIndex === nextEntry.stepIndex,
   );
 
   if (existingIndex < 0) {
@@ -1147,7 +1147,7 @@ function upsertRequestPayloadEntry(
   }
 
   return entries.map((entry, index) =>
-    index === existingIndex ? nextEntry : entry
+    index === existingIndex ? nextEntry : entry,
   );
 }
 
@@ -1156,7 +1156,7 @@ function upsertRequestPayloadEntry(
 // Also applies a flat backstop cap to `requestPayloadHistory` in case a
 // single turn (still within the turn cap) accumulates many step entries.
 function trimLiveTraceTurns(
-  state: LiveTraceAccumulatorState
+  state: LiveTraceAccumulatorState,
 ): LiveTraceAccumulatorState {
   let turnOrder = state.turnOrder;
   let turns = state.turns;
@@ -1177,13 +1177,13 @@ function trimLiveTraceTurns(
     turns = nextTurns;
 
     requestPayloadHistory = requestPayloadHistory.filter(
-      (entry) => !droppedTurnIds.has(entry.turnId)
+      (entry) => !droppedTurnIds.has(entry.turnId),
     );
   }
 
   if (requestPayloadHistory.length > MAX_LIVE_TRACE_REQUEST_PAYLOADS) {
     requestPayloadHistory = requestPayloadHistory.slice(
-      -MAX_LIVE_TRACE_REQUEST_PAYLOADS
+      -MAX_LIVE_TRACE_REQUEST_PAYLOADS,
     );
   }
 
@@ -1204,7 +1204,7 @@ function trimLiveTraceTurns(
 
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
-  event: LiveChatTraceEvent
+  event: LiveChatTraceEvent,
 ): LiveTraceAccumulatorState {
   // Heartbeat events carry no state. Drop them before any allocation so a
   // long idle stream doesn't bloat the visible event list or trigger
@@ -1223,7 +1223,7 @@ function applyLiveTraceEvent(
 
   const ensureTurnState = (
     turnId: string,
-    promptIndex: number
+    promptIndex: number,
   ): LiveTraceTurnState =>
     baseState.turns[turnId] ?? {
       turnId,
@@ -1278,14 +1278,14 @@ function applyLiveTraceEvent(
             promptIndex: event.promptIndex,
             stepIndex: event.stepIndex,
             payload: event.payload,
-          }
+          },
         ),
       });
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
         event.turnId,
-        event.snapshot.promptIndex
+        event.snapshot.promptIndex,
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
       return trimLiveTraceTurns({
@@ -1303,7 +1303,7 @@ function applyLiveTraceEvent(
               : [],
             usage: event.snapshot.usage,
             actualToolCalls: dedupeTraceToolCalls(
-              event.snapshot.actualToolCalls
+              event.snapshot.actualToolCalls,
             ),
           },
         },
@@ -1351,7 +1351,7 @@ function applyLiveTraceEvent(
 }
 
 function buildLiveTraceEnvelope(
-  state: LiveTraceAccumulatorState
+  state: LiveTraceAccumulatorState,
 ): LiveChatTraceEnvelope | null {
   if (state.events.length === 0 && !state.anySnapshotSeen) {
     return null;
@@ -1435,7 +1435,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   envelope: LiveChatTraceEnvelope,
   state: LiveTraceAccumulatorState,
   previewWallElapsedMs: number | undefined,
-  transcriptFromUi: ModelMessage[] | null
+  transcriptFromUi: ModelMessage[] | null,
 ): LiveChatTraceEnvelope {
   if (!state.activeTurnId || state.activeTurnHasSnapshot) {
     return envelope;
@@ -1456,7 +1456,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   });
   const previewIndexed = applyPreviewSpansUserMessageIndices(
     preview,
-    transcript
+    transcript,
   );
 
   const existing = envelope.spans ?? [];
@@ -1493,7 +1493,7 @@ function isTransientMessage(message: UIMessage): boolean {
 
 function shouldForkChatSession(
   previousMessages: UIMessage[],
-  nextMessages: UIMessage[]
+  nextMessages: UIMessage[],
 ): boolean {
   const previousPersistentIds = previousMessages
     .filter((message) => !isTransientMessage(message))
@@ -1507,13 +1507,13 @@ function shouldForkChatSession(
   }
 
   return nextPersistentIds.every(
-    (messageId, index) => messageId === previousPersistentIds[index]
+    (messageId, index) => messageId === previousPersistentIds[index],
   );
 }
 
 function areAuthHeadersEqual(
   a: Record<string, string> | undefined,
-  b: Record<string, string> | undefined
+  b: Record<string, string> | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
@@ -1576,7 +1576,7 @@ export function hostedTargetKey(input: {
 // must fork rather than append target B's turns onto target A's.
 export function areHostedSessionScopesEqual(
   a: HostedSessionScope,
-  b: HostedSessionScope
+  b: HostedSessionScope,
 ): boolean {
   return a.projectId === b.projectId && a.targetKey === b.targetKey;
 }
@@ -1590,7 +1590,7 @@ function isAuthDeniedError(error: unknown): boolean {
 }
 
 export function useChatSession(
-  options: UseChatSessionOptions
+  options: UseChatSessionOptions,
 ): UseChatSessionReturn {
   const {
     selectedServers,
@@ -1675,7 +1675,7 @@ export function useChatSession(
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
-    executionConfig?.systemPrompt
+    executionConfig?.systemPrompt,
   );
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
@@ -1754,12 +1754,14 @@ export function useChatSession(
    * first render, so state is the honest shape for it.
    */
   const [restoredScenarioTranscript] = useState(() =>
-    resumableScenarioId ? readScenarioChatTranscript(resumableScenarioId) : null
+    resumableScenarioId
+      ? readScenarioChatTranscript(resumableScenarioId)
+      : null,
   );
   // Restoring the stored id — rather than minting a fresh one and seeding it —
   // is what keeps the resumed turns appending to the SAME server-side thread.
   const [chatSessionId, setChatSessionId] = useState(
-    () => restoredScenarioTranscript?.chatSessionId ?? generateId()
+    () => restoredScenarioTranscript?.chatSessionId ?? generateId(),
   );
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
@@ -1815,7 +1817,7 @@ export function useChatSession(
   const mrtrResumeSenderRef = useRef<
     | ((
         round: HostedMrtrRound,
-        responses: Record<string, MrtrElicitationResponse>
+        responses: Record<string, MrtrElicitationResponse>,
       ) => Promise<void>)
     | null
   >(null);
@@ -1863,7 +1865,7 @@ export function useChatSession(
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    initialRequireToolApproval
+    initialRequireToolApproval,
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
@@ -1885,7 +1887,7 @@ export function useChatSession(
     options.progressiveToolDiscovery ??
     options.executionConfig?.progressiveToolDiscovery;
   const [respectToolVisibility, setRespectToolVisibility] = useState(
-    initialRespectToolVisibility
+    initialRespectToolVisibility,
   );
   const respectToolVisibilityRef = useRef<boolean>(respectToolVisibility);
   respectToolVisibilityRef.current =
@@ -1931,30 +1933,30 @@ export function useChatSession(
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
-    undefined
+    undefined,
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
     targetKey: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
-    null
+    null,
   );
   const pendingLiveTraceStateRef = useRef<LiveTraceAccumulatorState | null>(
-    null
+    null,
   );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
-    [selectedServers]
+    [selectedServers],
   );
   const apiContextRevision = useSyncExternalStore(
     subscribeApiContext,
     getApiContextRevision,
-    getApiContextRevision
+    getApiContextRevision,
   );
   const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
-    [liveTraceState]
+    [liveTraceState],
   );
   const hasTraceSnapshot = liveTraceState.activeTurnId
     ? liveTraceState.activeTurnHasSnapshot
@@ -1996,7 +1998,7 @@ export function useChatSession(
         withdraw("client hosted-MRTR version mismatch");
         toast.error(
           `This tab is running an outdated build (hosted-MRTR v${HOSTED_MRTR_VERSION}; ` +
-            `this request needs v${event.version}). Refresh the page and try again.`
+            `this request needs v${event.version}). Refresh the page and try again.`,
         );
         return;
       }
@@ -2029,7 +2031,7 @@ export function useChatSession(
         cancel: () => withdraw("dismissed by user"),
       });
     },
-    []
+    [],
   );
 
   const handleStreamDataPart = useCallback(
@@ -2062,7 +2064,7 @@ export function useChatSession(
           const sessionId = chatSessionIdRef.current;
           if (!server || !sessionId) {
             toast.error(
-              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool."
+              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool.",
             );
             return;
           }
@@ -2077,7 +2079,7 @@ export function useChatSession(
               requiredScope: event.requiredScope,
               resourceMetadataUrl: event.resourceMetadataUrl,
             },
-            event.operation
+            event.operation,
           );
         } else if (isHostedElicitationDataPart(part)) {
           const event = part.data;
@@ -2087,14 +2089,14 @@ export function useChatSession(
             setPendingElicitations((queue) =>
               queue.some((e) => e.rendezvousId === event.rendezvousId)
                 ? queue
-                : [...queue, event]
+                : [...queue, event],
             );
           } else if (event.kind === "resolved") {
             // The server reached a terminal state on its own (TTL expiry, or
             // an answer that landed elsewhere) — close the dialog rather than
             // leave the user submitting into a dead rendezvous.
             setPendingElicitations((queue) =>
-              queue.filter((e) => e.rendezvousId !== event.rendezvousId)
+              queue.filter((e) => e.rendezvousId !== event.rendezvousId),
             );
           } else if (event.kind === "url_required") {
             setUrlElicitationRequired((current) => [...current, event]);
@@ -2149,11 +2151,11 @@ export function useChatSession(
               // Exactly-once: a side-effecting call may or may not have run, so
               // never auto-retry — say so and let the user decide.
               toast.error(
-                "That tool call was interrupted and may or may not have run. Check the server before retrying."
+                "That tool call was interrupted and may or may not have run. Check the server before retrying.",
               );
             } else if (event.outcome === "expired") {
               toast.info(
-                "That request timed out, so the operation was cancelled."
+                "That request timed out, so the operation was cancelled.",
               );
             }
             return;
@@ -2181,7 +2183,7 @@ export function useChatSession(
           // the only signal that clears this server's bounded step-up counter.
           const successfulOperation = reconcileChatToolCallStepUp(
             chatToolCallRequestIdsRef.current,
-            log
+            log,
           );
           if (successfulOperation) {
             const activeProject =
@@ -2240,7 +2242,7 @@ export function useChatSession(
             .setWorkdir(
               hostedProjectId ?? null,
               hostedHostId ?? hostedPresentationHostId ?? null,
-              part.data.workdir
+              part.data.workdir,
             );
         } else if (isSandboxNoticeDataPart(part)) {
           // One-time fact about the scenario's ephemeral sandbox. Exactly-once
@@ -2319,7 +2321,7 @@ export function useChatSession(
       hostedPresentationHostId,
       appState,
       handleMrtrInputRequired,
-    ]
+    ],
   );
 
   /**
@@ -2375,7 +2377,7 @@ export function useChatSession(
       restoredToolRenderOverridesRef.current = overrides;
       setRestoredToolRenderOverrides(overrides);
     },
-    []
+    [],
   );
   const clearPendingSessionHydration = useCallback(() => {
     // Drop any queued trace state so a subsequent resetChat / fork does not
@@ -2421,7 +2423,7 @@ export function useChatSession(
       hostedOrgModelConfig,
       outOfCredits,
       hostedCatalog,
-    ]
+    ],
   );
 
   // Model selection with persistence
@@ -2435,11 +2437,11 @@ export function useChatSession(
   } = usePersistedModel();
   const selectableModels = useMemo(
     () => availableModels.filter((model) => !model.disabled),
-    [availableModels]
+    [availableModels],
   );
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(
-      selectableModels.length > 0 ? selectableModels : availableModels
+      selectableModels.length > 0 ? selectableModels : availableModels,
     );
     const resolveAvailableModel = (modelId?: string | null) => {
       if (!modelId) {
@@ -2464,7 +2466,7 @@ export function useChatSession(
             // must not silently switch the user off it. Other locks (guest,
             // ollama-no-tools) stay unselectable.
             (!model.disabled ||
-              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON)
+              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
         ) ?? null
       );
     };
@@ -2492,7 +2494,7 @@ export function useChatSession(
     if (initialModelId) return true;
     if (!selectedModelId) return true;
     return availableModels.some(
-      (model) => String(model.id) === selectedModelId
+      (model) => String(model.id) === selectedModelId,
     );
   }, [availableModels, initialModelId, selectedModelId]);
 
@@ -2525,7 +2527,7 @@ export function useChatSession(
       }
       setSelectedModelId(String(model.id));
     },
-    [initialModelId, setSelectedModelId]
+    [initialModelId, setSelectedModelId],
   );
 
   const setSelectedModelIds = useCallback(
@@ -2545,7 +2547,7 @@ export function useChatSession(
       }
       persistSelectedModelIds(modelIds);
     },
-    [initialModelId, persistSelectedModelIds]
+    [initialModelId, persistSelectedModelIds],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -2553,13 +2555,13 @@ export function useChatSession(
   }, [selectedModel]);
   const selectedModelUsesOrgRuntime = useMemo(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
-    [hostedOrgModelConfig, selectedModel]
+    [hostedOrgModelConfig, selectedModel],
   );
   const hasLocalOnlySelectedServer = useMemo(() => {
     if (!appState || selectedServers.length === 0) return false;
     const activeProject = findProjectByAnyId(
       appState.projects,
-      hostedProjectId ?? appState.activeProjectId
+      hostedProjectId ?? appState.activeProjectId,
     );
     return selectedServers.some((serverName) => {
       const server =
@@ -2638,7 +2640,7 @@ export function useChatSession(
             });
             if (!response.ok) {
               const replayError = await classifyScenarioAccessResponse(
-                response
+                response,
               );
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
@@ -2680,7 +2682,7 @@ export function useChatSession(
       hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
-    ]
+    ],
   );
 
   const handleChatError = useCallback((chatError: Error) => {
@@ -3082,7 +3084,7 @@ export function useChatSession(
       reconnectToStream: (options) =>
         latestTransportRef.current.reconnectToStream(options),
     }),
-    []
+    [],
   );
 
   // Held until the entire userless resume request settles. AI SDK evaluates
@@ -3252,7 +3254,7 @@ export function useChatSession(
             input: tc.input,
             raw,
           },
-          useTrafficLogStore.getState().addLog
+          useTrafficLogStore.getState().addLog,
         );
         addToolOutput({
           tool: tc.toolName,
@@ -3289,7 +3291,7 @@ export function useChatSession(
       if (
         shouldAutoSendCompletedClientToolCalls(
           options,
-          scopeStepUpResumeInFlightRef.current
+          scopeStepUpResumeInFlightRef.current,
         )
       ) {
         return true;
@@ -3369,7 +3371,7 @@ export function useChatSession(
         toast.error(
           wasCancelled
             ? "Authorization was cancelled, but the suspended tool call could not be updated."
-            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually."
+            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually.",
         );
       })
       .finally(() => {
@@ -3392,11 +3394,11 @@ export function useChatSession(
   const submitMrtrResume = useCallback(
     async (
       round: HostedMrtrRound,
-      responses: Record<string, MrtrElicitationResponse>
+      responses: Record<string, MrtrElicitationResponse>,
     ) => {
       const toolCallId = findUnresolvedMrtrToolCallId(
         messagesRef.current,
-        round.operationLabel
+        round.operationLabel,
       );
       if (!toolCallId) {
         // Nothing to splice the driven result into (history was reset/forked
@@ -3407,7 +3409,7 @@ export function useChatSession(
           reason: "no unresolved tool call to resume",
         }).catch(() => {});
         toast.error(
-          "This chat no longer has the tool call that needed input, so the operation was cancelled."
+          "This chat no longer has the tool call that needed input, so the operation was cancelled.",
         );
         return;
       }
@@ -3427,7 +3429,7 @@ export function useChatSession(
         console.warn("[hosted-mrtr] resume turn failed", error);
       });
     },
-    [baseSendMessage]
+    [baseSendMessage],
   );
   mrtrResumeSenderRef.current = submitMrtrResume;
 
@@ -3471,7 +3473,7 @@ export function useChatSession(
             chatSessionId: sessionId,
             projectId: hostedProjectIdRef.current ?? undefined,
           },
-          { signal: controller.signal }
+          { signal: controller.signal },
         );
         const version = detail?.session?.version;
         // A brand-new chat is persisted the moment the row exists; a resumed
@@ -3509,7 +3511,7 @@ export function useChatSession(
         hold,
         statusRef.current === "error"
           ? undefined
-          : waitForTurnPersistedRef.current
+          : waitForTurnPersistedRef.current,
       );
     };
   }, [isTurnActive]);
@@ -3538,12 +3540,12 @@ export function useChatSession(
         // persisted IDs. Preserve matching live IDs so React updates widgets
         // in place instead of remounting iframes keyed by the parent message.
         baseSetMessages(
-          preserveHydratedMessageIds(messagesRef.current, hydration.messages)
+          preserveHydratedMessageIds(messagesRef.current, hydration.messages),
         );
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setPersistedSnapshotToolCallIds(
-          hydration.persistedSnapshotToolCallIds ?? []
+          hydration.persistedSnapshotToolCallIds ?? [],
         );
         if (hydratedTraceState !== null) {
           setLiveTraceState(hydratedTraceState);
@@ -3562,7 +3564,7 @@ export function useChatSession(
         setChatSessionId(hydration.sessionId);
       });
     },
-    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion]
+    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
   );
 
   const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
@@ -3571,7 +3573,7 @@ export function useChatSession(
 
   useEffect(() => {
     const persistent = messages.filter(
-      (message) => !isTransientMessage(message)
+      (message) => !isTransientMessage(message),
     );
     if (persistent.length === 0) {
       setTraceTranscriptFromUi(null);
@@ -3582,7 +3584,7 @@ export function useChatSession(
       persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
         typeof convertToModelMessages
       >[0],
-      { ignoreIncompleteToolCalls: true }
+      { ignoreIncompleteToolCalls: true },
     ).then((modelMessages) => {
       if (!cancelled) {
         setTraceTranscriptFromUi(modelMessages);
@@ -3604,7 +3606,7 @@ export function useChatSession(
     }
     const id = window.setInterval(
       () => setPreviewWallTick((previous) => previous + 1),
-      400
+      400,
     );
     return () => clearInterval(id);
   }, [
@@ -3639,7 +3641,7 @@ export function useChatSession(
       liveTraceEnvelopeBase,
       liveTraceState,
       previewWallElapsedMs,
-      traceTranscriptFromUi
+      traceTranscriptFromUi,
     );
     // Rehydrated sessions arrive with `state.messages = []` (see
     // buildLiveTraceStateFromTurnTraces), so the envelope's messages stay
@@ -3758,7 +3760,7 @@ export function useChatSession(
         return nextMessages;
       });
     },
-    [baseSetMessages]
+    [baseSetMessages],
   );
 
   useLayoutEffect(() => {
@@ -3773,7 +3775,7 @@ export function useChatSession(
     syncResumedVersion(pendingHydration.resumedVersion);
     syncRestoredToolRenderOverrides(pendingHydration.toolRenderOverrides ?? {});
     setPersistedSnapshotToolCallIds(
-      pendingHydration.persistedSnapshotToolCallIds ?? []
+      pendingHydration.persistedSnapshotToolCallIds ?? [],
     );
     // Force a React state update so that useSyncExternalStore re-reads the
     // messages snapshot that was just written to the Chat store above.
@@ -3871,7 +3873,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
+                "The chat target changed while this message was being prepared. Send it again to run it against the current selection.",
               );
               return false;
             }
@@ -3883,7 +3885,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat changed while this message was being prepared. Send it again to run it in the current thread."
+                "The chat changed while this message was being prepared. Send it again to run it in the current thread.",
               );
               return false;
             }
@@ -3897,7 +3899,7 @@ export function useChatSession(
             toast.error(
               error instanceof Error
                 ? error.message
-                : "Couldn't prepare the selected servers for this run."
+                : "Couldn't prepare the selected servers for this run.",
             );
             return false; // fail closed — do not send with unresolved servers
           }
@@ -3923,7 +3925,7 @@ export function useChatSession(
       hostedEnvironmentId,
       selectedServers,
       shouldUseOrgAwareChatApi,
-    ]
+    ],
   );
 
   // `sendMessage` is NOT a stable function, and callers that cross an `await`
@@ -4070,7 +4072,7 @@ export function useChatSession(
       options?: {
         resetReason?: ChatSessionResetReason;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
-      }
+      },
     ) => {
       skipNextForkDetectionRef.current = true;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
@@ -4094,7 +4096,7 @@ export function useChatSession(
       onResetRef.current?.(options?.resetReason ?? "fork");
       return hydrationPromise.then(() => nextSessionId);
     },
-    [queueSessionHydration]
+    [queueSessionHydration],
   );
 
   /**
@@ -4180,7 +4182,7 @@ export function useChatSession(
       }
 
       const targetIndex = messagesRef.current.findIndex(
-        (message) => message.id === options.messageId
+        (message) => message.id === options.messageId,
       );
       if (targetIndex < 0) {
         return null;
@@ -4246,7 +4248,7 @@ export function useChatSession(
 
       return { previousChatSessionId };
     },
-    [startChatWithMessages]
+    [startChatWithMessages],
   );
 
   /**
@@ -4296,7 +4298,7 @@ export function useChatSession(
       messages: UIMessage[],
       options?: {
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
-      }
+      },
     ): Promise<{ chatSessionId: string } | null> => {
       const forkSessionId = await startChatWithMessages(messages, {
         resetReason: "fork",
@@ -4309,7 +4311,7 @@ export function useChatSession(
         ? { chatSessionId: forkSessionId }
         : null;
     },
-    [startChatWithMessages]
+    [startChatWithMessages],
   );
 
   const loadChatSession = useCallback(
@@ -4342,7 +4344,7 @@ export function useChatSession(
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
-      }
+      },
     ) => {
       let uiMessages: UIMessage[] = [];
 
@@ -4350,7 +4352,7 @@ export function useChatSession(
         // Goes through the dedup cache so a hover-prefetched blob is reused
         // by the click path. Throws on non-OK responses internally.
         const transcript = (await getCachedBlobJson(
-          session.messagesBlobUrl
+          session.messagesBlobUrl,
         )) as unknown[];
         uiMessages = transcriptToUIMessages(transcript);
       }
@@ -4358,13 +4360,13 @@ export function useChatSession(
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
       const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
-        session.widgetSnapshots
+        session.widgetSnapshots,
       );
       const persistedSnapshotToolCallIds =
         hydratedWidgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
       if (hydratedWidgetSnapshots && hydratedWidgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
-          hydratedWidgetSnapshots
+          hydratedWidgetSnapshots,
         );
         // In-flow session revisit: prefer the live MCP Apps fetch over the
         // cached snapshot HTML so the widget re-renders against the active
@@ -4376,7 +4378,7 @@ export function useChatSession(
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
-        session.turnTraces
+        session.turnTraces,
       );
 
       if (options?.shouldApply && !options.shouldApply()) {
@@ -4418,7 +4420,7 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration, setSystemPrompt]
+    [queueSessionHydration, setSystemPrompt],
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when
@@ -4604,22 +4606,22 @@ export function useChatSession(
       if (selectedServers.length === 0) {
         lastObservedTokenCountSelectionKeyRef.current = null;
         setToolsMetadata((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setToolServerMap((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setSerializedTools((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setMcpToolsTokenCount((previous) =>
-          previous !== null ? null : previous
+          previous !== null ? null : previous,
         );
         setMcpToolsTokenCountErrors((previous) =>
-          previous !== null ? null : previous
+          previous !== null ? null : previous,
         );
         setMcpToolsTokenCountLoading((previous) =>
-          previous ? false : previous
+          previous ? false : previous,
         );
         return;
       }
@@ -4658,19 +4660,19 @@ export function useChatSession(
           setMcpToolsTokenCount(
             tokenCounts && Object.keys(tokenCounts).length > 0
               ? tokenCounts
-              : null
+              : null,
           );
           setMcpToolsTokenCountErrors(
             tokenCountErrors && Object.keys(tokenCountErrors).length > 0
               ? tokenCountErrors
-              : null
+              : null,
           );
         }
       } catch (error) {
         if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
-            error
+            error,
           );
         }
         setToolsMetadata({});
@@ -4714,7 +4716,7 @@ export function useChatSession(
         if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
-            error
+            error,
           );
         }
         setSystemPromptTokenCount(null);
@@ -4842,13 +4844,13 @@ export function useChatSession(
         // the row is terminal either way, so keeping the dialog open would
         // only invite a second doomed submit.
         setPendingElicitations((queue) =>
-          queue.filter((e) => e.rendezvousId !== answer.rendezvousId)
+          queue.filter((e) => e.rendezvousId !== answer.rendezvousId),
         );
         if (!result.ok) {
           toast.info(
             result.reason === "expired"
               ? "That request timed out, so it was cancelled."
-              : "That request was already resolved."
+              : "That request was already resolved.",
           );
         }
       } catch (error) {
@@ -4858,12 +4860,12 @@ export function useChatSession(
         setElicitationResponding(false);
       }
     },
-    [convexClient]
+    [convexClient],
   );
 
   const dismissUrlElicitationRequired = useCallback((toolCallId?: string) => {
     setUrlElicitationRequired((current) =>
-      current.filter((e) => e.toolCallId !== toolCallId)
+      current.filter((e) => e.toolCallId !== toolCallId),
     );
   }, []);
 
