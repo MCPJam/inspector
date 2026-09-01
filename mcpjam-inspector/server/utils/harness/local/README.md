@@ -323,6 +323,17 @@ timeout, an unreadable `/proc`, or a platform with no primitive answers
 which meant a probe failure could report a live tree as stopped and let a second
 Inspector window reclaim a healthy instance's sessions.
 
+The distinction has to survive into what the janitor REPORTS, too, which is a
+step it kept skipping. An unsettled termination was announced as `not-owned`
+whether the pid genuinely belonged to somebody else or the answer was merely
+unprovable — and the two want opposite follow-ups: a real mismatch is terminal
+and the record should sit there for a human to look at, while an unprovable one
+is transient and the next sweep should just try again. `skipped-unprovable`,
+which every other blind spot in the file already used, now covers it. Gating the
+group signal on an ownership anchor is what made this bite: `unknown` went from
+a rare probe failure to the routine answer for a tree whose root exited on its
+own.
+
 ### A zombie is a dead process
 
 `/proc/<pid>/stat` still exists after a process exits, until something reaps it.
