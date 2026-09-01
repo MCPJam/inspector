@@ -156,8 +156,8 @@ export function ProjectEnvironmentSkillsPicker({
   if (skills.length === 0 && orphanSelectedIds.length === 0) {
     return (
       <p className="py-1 text-xs italic text-muted-foreground">
-        No shared skills in this project yet. Share a skill with the project to
-        pin it here.
+        No skills in the project library yet. Add a skill to the library to pin
+        it here.
       </p>
     );
   }
@@ -263,7 +263,7 @@ export function ProjectEnvironmentSkillsPicker({
                 </span>
               </span>
               <span className="truncate text-[11px] text-muted-foreground">
-                No longer shared with this project — remove it to save.
+                No longer in the project library — remove it to save.
               </span>
             </span>
           </Label>
@@ -274,7 +274,7 @@ export function ProjectEnvironmentSkillsPicker({
         {pinnedVersionBySkillId.size > 0
           ? ` (${pinnedVersionBySkillId.size} pinned to a version)`
           : ""}
-        {atCap ? " — cap reached" : ""}. Shared skills only.
+        {atCap ? " — cap reached" : ""}. Library skills only.
       </p>
     </div>
   );

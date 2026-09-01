@@ -95,7 +95,7 @@ describe("SuiteProjectEnvironmentsPicker — unresolvable attached ids", () => {
 });
 
 describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
-  it("renders a removable row for a pinned skill missing from the shared list", async () => {
+  it("renders a removable row for a pinned skill missing from the library list", async () => {
     mockListSkills.mockResolvedValue([
       { skillId: "sk-live", name: "Live skill", description: "d" },
     ]);
@@ -119,7 +119,7 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
     });
   });
 
-  it("still surfaces orphaned pins when the project has NO shared skills", async () => {
+  it("still surfaces orphaned pins when the project library is empty", async () => {
     // The empty-list early return would otherwise swallow the pins entirely,
     // leaving them invisible AND unremovable while still counted + saved.
     mockListSkills.mockResolvedValue([]);
@@ -137,7 +137,7 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
       /Unavailable skill sk-gone \(remove\)/i
     );
     expect(
-      screen.queryByText(/No shared skills in this project yet/i)
+      screen.queryByText(/No skills in the project library yet/i)
     ).not.toBeInTheDocument();
 
     // Clearing the last pin emits null, never an empty array.

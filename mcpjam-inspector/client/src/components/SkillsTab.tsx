@@ -549,7 +549,7 @@ export function SkillsTab({
                         onChange={(next) => setSource(next)}
                         options={[
                           { value: "local", label: "Local" },
-                          { value: "cloud", label: "Cloud" },
+                          { value: "cloud", label: "Library" },
                         ]}
                         className="mr-1"
                       />
@@ -675,7 +675,7 @@ export function SkillsTab({
                         >
                           {selectedItem.origin === "cloud"
                             ? selectedItem.sharing === "project"
-                              ? "Shared"
+                              ? "Project"
                               : "Personal"
                             : "Local"}
                         </Badge>
