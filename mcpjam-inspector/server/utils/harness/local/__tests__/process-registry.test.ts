@@ -18,6 +18,7 @@ import {
 } from "../process-identity.js";
 import {
   forgetProcess,
+  janitorOutcomeForUnsettled,
   listProcessRecords,
   mintSupervisorNonce,
   reclaimAbandonedProcesses,
@@ -184,6 +185,24 @@ describe("the durable record", () => {
     );
     expect(stored).toHaveLength(1);
     expect(stored[0]!.rootPid).toBe(11);
+  });
+});
+
+describe("reporting an unsettled termination", () => {
+  it("keeps 'could not prove' apart from 'not ours'", () => {
+    // The janitor said `not-owned` for both, which announces a pid-reuse
+    // mismatch that was never established. They want opposite follow-ups: a
+    // real mismatch is terminal and the record should stay for a human to look
+    // at, while an unprovable answer is transient and the next sweep should
+    // just try again. Every other blind spot in this file already says
+    // `skipped-unprovable`.
+    //
+    // This stopped being academic when the group signal was gated on an
+    // ownership anchor: `unknown` became a routine answer for a tree whose
+    // root exited on its own, not just a rare probe failure.
+    expect(janitorOutcomeForUnsettled("unknown")).toBe("skipped-unprovable");
+    expect(janitorOutcomeForUnsettled("not-owned")).toBe("not-owned");
+    expect(janitorOutcomeForUnsettled("escaped")).toBe("escaped");
   });
 });
 
