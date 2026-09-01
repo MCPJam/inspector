@@ -26,11 +26,15 @@ import {
   EVAL_RUN_MEASUREMENT_UNITS,
   EVAL_VERDICT_DECISION_REASON_LABELS,
   evalRunDecisionSummarySchema,
+  evalStageCoverageDetailSchema,
+  EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
   STAGE_ANALYZER_VERSION,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGE_OUTCOMES,
+  USER_VALUE_STAGE_QUESTIONS,
   type EvalRunDecisionAssemblyInput,
   type EvalRunDecisionSummary,
 } from "../src/contract/index.js";
@@ -607,6 +611,11 @@ describe("labels are total over the vocabularies they render", () => {
 
   it("covers every stage, state, category, stage reason and verdict reason", () => {
     total(USER_VALUE_STAGE_LABELS, DECISION_LABEL_VOCABULARIES.stages);
+    // The two stage maps the chain cards read from. A stage added to the
+    // contract without words here would render a card with a wire spelling
+    // where its question and its outcome belong.
+    total(USER_VALUE_STAGE_QUESTIONS, DECISION_LABEL_VOCABULARIES.stages);
+    total(USER_VALUE_STAGE_OUTCOMES, DECISION_LABEL_VOCABULARIES.stages);
     total(STAGE_STATE_LABELS, DECISION_LABEL_VOCABULARIES.stageStates);
     total(
       FAILURE_CATEGORY_LABELS,
@@ -634,6 +643,47 @@ describe("labels are total over the vocabularies they render", () => {
 
   it("spells the chain's last stage as words", () => {
     expect(USER_VALUE_STAGE_LABELS.userValue).toBe("User value");
+  });
+
+  it("covers the fine-grained exclusion detail against the SCHEMA, not a list", () => {
+    // Read off `evalStageCoverageDetailSchema.shape` rather than a hand list:
+    // a hand list is a second declaration of the vocabulary, and the one that
+    // goes stale silently the day the schema gains a fifteenth key.
+    total(
+      EXCLUDED_TRIAL_DETAIL_LABELS,
+      Object.keys(evalStageCoverageDetailSchema.shape)
+    );
+  });
+
+  it("asks a QUESTION per stage and answers it in the past tense", () => {
+    // The two maps are a pair — one is what the reader came to find out, the
+    // other is what happened when the link held — and they are only a pair if
+    // they stay in their own grammatical mood.
+    for (const question of Object.values(USER_VALUE_STAGE_QUESTIONS)) {
+      expect(question.endsWith("?")).toBe(true);
+    }
+    for (const outcome of Object.values(USER_VALUE_STAGE_OUTCOMES)) {
+      expect(outcome.endsWith("?")).toBe(false);
+    }
+    // The mock's own wording for the stage the chain is most often read at.
+    expect(USER_VALUE_STAGE_OUTCOMES.response).toBe("Usable response returned");
+    expect(USER_VALUE_STAGE_QUESTIONS.response).toBe(
+      "Did the server return data the model could use?"
+    );
+  });
+
+  it("never prints a wire spelling in the exclusion detail's words", () => {
+    for (const [key, label] of Object.entries(EXCLUDED_TRIAL_DETAIL_LABELS)) {
+      // `measurementsVersionAhead` is correct on the wire and unreadable in a
+      // disclosure line; the map exists so the second never happens.
+      //
+      // CAMEL CASE is the test, not "does not contain the key": `cancelled` is
+      // both a wire spelling and an ordinary English word, and a label that
+      // refused to use it would be worse prose for no honesty gained. What
+      // must never appear is an identifier a human did not write.
+      expect(label, key).not.toMatch(/[a-z][A-Z]/);
+      expect(label, key).not.toBe(key);
+    }
   });
 
   it("describes the partial band inclusively at the floor", () => {

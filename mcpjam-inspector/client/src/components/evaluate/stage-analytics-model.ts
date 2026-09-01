@@ -18,8 +18,11 @@
  * `0%`, because that is a real finding. Only a zero DENOMINATOR renders words.
  */
 import {
+  FAILURE_CATEGORY_LABELS,
+  STAGE_REASON_LABELS,
   UNLABELED_INTENT_LABEL,
   USER_VALUE_STAGE_LABELS,
+  describeExcludedTrialDetail,
   latencyMeanMs,
   measuredPassRate,
   measurementCoverageRate,
@@ -30,6 +33,8 @@ import {
   type EvalStageExclusions,
   type EvalStageRate,
   type EvalStageTally,
+  type FailureCategory,
+  type StageReason,
 } from "@mcpjam/sdk/contract";
 import type { StageAnalyticsFailureKind } from "@/lib/apis/eval-stage-analytics-api";
 
@@ -167,7 +172,16 @@ export interface StageRowView {
   reachUnknown: number;
   /** `123 ms · evidence span union`, or `null` when there are no samples. */
   latency: string | null;
-  reasons: { reason: string; count: number }[];
+  /**
+   * Why trials landed where they did, in words AND in the wire spelling.
+   *
+   * Both, deliberately. `label` is the only thing a human should ever read —
+   * `noEvidenceCaptured (3)` on screen was the bug this pair fixes — but the
+   * `reason` enum is what a `data-` attribute and a test pin on, and what a
+   * later join against the same vocabulary matches by. Dropping it would make
+   * every downstream match a string comparison against prose.
+   */
+  reasons: { reason: StageReason; label: string; count: number }[];
 }
 
 export function toStageRowView(tally: EvalStageTally): StageRowView {
@@ -186,7 +200,16 @@ export function toStageRowView(tally: EvalStageTally): StageRowView {
     notApplicable: tally.notApplicable,
     reachUnknown: tally.reachUnknown,
     latency: formatLatency(tally.latency),
-    reasons: tally.reasons.map((entry) => ({ ...entry })),
+    // The label is looked up with NO `?? entry.reason` fallback, for the
+    // reason `decision-labels.ts` gives in its own header: a lookup that
+    // prints an unknown enum raw is the failure nobody notices, and the map is
+    // `satisfies Record<StageReason, string>` precisely so there is nothing to
+    // fall back from.
+    reasons: tally.reasons.map((entry) => ({
+      reason: entry.reason,
+      label: STAGE_REASON_LABELS[entry.reason],
+      count: entry.count,
+    })),
   };
 }
 
@@ -217,7 +240,12 @@ export interface SliceView {
   subtitle: string | null;
   includedTrials: number;
   exclusions: string[];
-  failureCategories: { category: string; count: number }[];
+  /** Same wire-plus-words pair, and for the same reasons, as `reasons` above. */
+  failureCategories: {
+    category: FailureCategory;
+    label: string;
+    count: number;
+  }[];
   stages: StageRowView[];
 }
 
@@ -262,7 +290,11 @@ export function toSliceView(
     subtitle: sliceSubtitle(row.slice),
     includedTrials: row.includedTrials,
     exclusions: describeExclusions(row.excludedTrials),
-    failureCategories: row.failureCategories.map((entry) => ({ ...entry })),
+    failureCategories: row.failureCategories.map((entry) => ({
+      category: entry.category,
+      label: FAILURE_CATEGORY_LABELS[entry.category],
+      count: entry.count,
+    })),
     // Position is meaning — the six tallies are a funnel and are never sorted.
     stages: row.stages.map(toStageRowView),
   };
@@ -329,6 +361,21 @@ export interface RunHeaderView {
   populationLabel: string;
   completedAt: number | null;
   disclosures: string[];
+  /**
+   * The FINE-GRAINED exclusion reasons, for the disclosure the panel collapses.
+   *
+   * Kept apart from `disclosures` rather than folded into it. The coarse
+   * "Excluded: 1 never produced a comparable observation" line is already in
+   * there, and these fourteen say the same trials over again in more detail —
+   * two lines that look like two findings and are one. So this is the SAME
+   * fact at a finer grain, and the panel puts it behind a disclosure that says
+   * so.
+   *
+   * Empty when nothing was excluded, and empty is why the disclosure does not
+   * render at all: a "why were trials excluded" control that opens onto
+   * nothing is a worse answer than no control.
+   */
+  excludedDetail: { key: string; label: string; count: number }[];
 }
 
 export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
@@ -374,5 +421,19 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
     populationLabel: `${row.includedTrials} of ${row.totalTrials} trials in this run`,
     completedAt: row.runCompletedAt ?? null,
     disclosures,
+    excludedDetail: describeExcludedTrialDetail(row.excludedTrialDetail),
   };
+}
+
+/**
+ * The one-line summary above the fine-grained exclusion disclosure.
+ *
+ * Names the population before any of the reasons, the same rule the rest of
+ * this file follows: "3 of 7 trials were excluded" first, then why. A list of
+ * reasons with no denominator lets a reader take three excluded trials out of
+ * seven for three out of three hundred.
+ */
+export function excludedDetailSummary(header: RunHeaderView): string {
+  const excluded = header.totalTrials - header.includedTrials;
+  return `${excluded} of ${header.totalTrials} trials excluded — why`;
 }

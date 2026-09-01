@@ -202,6 +202,71 @@ describe("StageAnalyticsPanel", () => {
     expect(doc.textContent).not.toMatch(/\b0%/);
   });
 
+  it("renders stage reasons in words, one line each, never a wire enum", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    const doc = await screen.findByTestId("stage-analytics-document");
+    // The golden document's `selection` row carries `missingToolCall (1)`.
+    expect(doc.textContent).toContain(
+      "1 — an expected tool call was never made",
+    );
+    // The bug this fixes: the raw enum on screen. The wire spelling survives
+    // only as a `data-` attribute, which is not text a reader sees.
+    expect(doc.textContent).not.toContain("missingToolCall");
+    expect(
+      within(doc).getAllByTestId("stage-reasons")[0]!.querySelector("li")
+        ?.dataset.reason,
+    ).toBe("missingToolCall");
+  });
+
+  it("renders failure categories in words", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    const doc = await screen.findByTestId("stage-analytics-document");
+    const categories = within(doc).getAllByTestId(
+      "stage-slice-failure-categories",
+    );
+    expect(categories[0]!.textContent).toBe("tool selection (1)");
+  });
+
+  it("keeps the fine-grained exclusion detail behind a collapsed disclosure", async () => {
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    renderPanel();
+
+    const detail = await screen.findByTestId("stage-analytics-excluded-detail");
+    // COLLAPSED: the coarse line is already in the disclosures above, and this
+    // says the same trials over again at a finer grain.
+    expect((detail as HTMLDetailsElement).open).toBe(false);
+    // The population comes before the reasons.
+    expect(detail.textContent).toContain("3 of 7 trials excluded");
+
+    await userEvent.click(within(detail).getByText(/3 of 7 trials excluded/));
+    expect((detail as HTMLDetailsElement).open).toBe(true);
+    expect(detail.textContent).toContain("1 — cancelled before it finished");
+    expect(detail.textContent).toContain("1 — its stage chain did not validate");
+    expect(detail.textContent).not.toContain("chainUnverified");
+  });
+
+  it("omits the exclusion disclosure entirely when nothing was excluded", async () => {
+    // A control that opens onto nothing is a worse answer than no control.
+    fetchMock.mockResolvedValue({
+      rows: [
+        stageAnalyticsVariation({
+          excludedTrialDetail: {},
+          excludedTrials: {},
+          includedTrials: 4,
+          totalTrials: 4,
+        }),
+      ],
+    });
+    renderPanel();
+
+    await screen.findByTestId("stage-analytics-document");
+    expect(screen.queryByTestId("stage-analytics-excluded-detail")).toBeNull();
+  });
+
   it("lists runs and loads more without dropping the current view", async () => {
     const second = stageAnalyticsVariation({
       runId: "run_second",

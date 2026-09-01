@@ -37,6 +37,7 @@ import { useEvalSuiteStageAnalytics } from "@/hooks/use-eval-suite-stage-analyti
 import {
   NOT_MEASURED_LABEL,
   deriveStageAnalyticsPanelState,
+  excludedDetailSummary,
   overallSlice,
   slicesOfDimension,
   toRunHeaderView,
@@ -120,11 +121,21 @@ function StageRow({ stage }: { stage: StageRowView }) {
         </p>
       ) : null}
       {stage.reasons.length > 0 ? (
-        <p className="mt-1 text-[10px] text-muted-foreground/80">
-          {stage.reasons
-            .map((entry) => `${entry.reason} (${entry.count})`)
-            .join(", ")}
-        </p>
+        // ONE LINE EACH, not comma-joined. The labels are "…because <fragment>"
+        // sentences ("nothing eligible for that stage was captured"), and three
+        // of them spliced together with commas reads as one long claim about
+        // one population rather than three separate counts.
+        <ul className="mt-1 space-y-0.5" data-testid="stage-reasons">
+          {stage.reasons.map((entry) => (
+            <li
+              key={entry.reason}
+              data-reason={entry.reason}
+              className="text-[10px] text-muted-foreground/80"
+            >
+              {entry.count} — {entry.label}
+            </li>
+          ))}
+        </ul>
       ) : null}
     </li>
   );
@@ -158,9 +169,14 @@ function SliceBlock({ slice }: { slice: SliceView }) {
         </p>
       ) : null}
       {slice.failureCategories.length > 0 ? (
-        <p className="mt-1 text-[10px] text-muted-foreground/80">
+        <p
+          className="mt-1 text-[10px] text-muted-foreground/80"
+          data-testid="stage-slice-failure-categories"
+        >
+          {/* Comma-joined here and NOT above, because these labels are noun
+              phrases ("tool selection", "server data") rather than sentences. */}
           {slice.failureCategories
-            .map((entry) => `${entry.category} (${entry.count})`)
+            .map((entry) => `${entry.label} (${entry.count})`)
             .join(", ")}
         </p>
       ) : null}
@@ -240,6 +256,38 @@ export function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* The fine-grained exclusion reasons, COLLAPSED.
+
+          The coarse "Excluded: 1 never produced a comparable observation" line
+          is already in the disclosures above, and these say the same trials
+          over again at a finer grain — two lines that look like two findings
+          and are one. Collapsed, and labelled as "why", so the second is
+          plainly the first explained rather than more of it.
+
+          Absent entirely when nothing was excluded: a control that opens onto
+          nothing is a worse answer than no control. */}
+      {header.excludedDetail.length > 0 ? (
+        <details
+          className="mt-1.5"
+          data-testid="stage-analytics-excluded-detail"
+        >
+          <summary className="cursor-pointer text-[10px] text-muted-foreground/80">
+            {excludedDetailSummary(header)}
+          </summary>
+          <ul className="mt-1 space-y-0.5 pl-3">
+            {header.excludedDetail.map((entry) => (
+              <li
+                key={entry.key}
+                data-exclusion={entry.key}
+                className="text-[10px] text-muted-foreground/80"
+              >
+                {entry.count} — {entry.label}
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       {overall ? (
