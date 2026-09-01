@@ -634,11 +634,15 @@ function ViewportPane({
             (event.currentTarget as HTMLElement).blur();
             return;
           }
-          // Paste is the one shortcut NOT swallowed. Preventing its default
-          // cancels the clipboard action, so no `paste` event fires and the
-          // text never reaches the page — the browser's own paste is the only
-          // way we get the clipboard at all.
-          if (!isPasteShortcut(event)) event.preventDefault();
+          // Paste is the one shortcut NOT swallowed locally: preventing its
+          // default cancels the clipboard action, so no `paste` event fires and
+          // the text never reaches the page. But its keystrokes must not be
+          // FORWARDED either — `onPaste` already sends the clipboard as a text
+          // event, and a `v` key-down with ctrl held would make the remote page
+          // run its own paste as well, from a clipboard that is not the one the
+          // person copied into.
+          if (isPasteShortcut(event)) return;
+          event.preventDefault();
           forwarder.keyDown(event.nativeEvent);
         },
         onKeyUp: (event: React.KeyboardEvent) => {
@@ -646,7 +650,8 @@ function ViewportPane({
           // Matched to the keydown above: forwarding a lone key-up for a press
           // the page never saw would leave it releasing a key it never got.
           if (event.key === "Escape") return;
-          if (!isPasteShortcut(event)) event.preventDefault();
+          if (isPasteShortcut(event)) return;
+          event.preventDefault();
           forwarder.keyUp(event.nativeEvent);
         },
         onPaste: (event: React.ClipboardEvent) => {

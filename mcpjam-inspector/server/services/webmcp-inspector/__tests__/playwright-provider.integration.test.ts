@@ -307,7 +307,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
   }, 60_000);
 
   it("streams the page, keeps its ack loop turning, and stops on demand", async () => {
-    const { runtime, frames, activity } = await open();
+    const { runtime, frames } = await open();
     await vi.waitFor(() =>
       expect(runtime.currentTools().length).toBeGreaterThan(0),
     );
@@ -337,6 +337,18 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       timeout: 15_000,
     });
 
+    // WHILE STREAMING: the replay buffer holds exactly ONE frame, however many
+    // hundreds were published into it — and every timeline entry is still
+    // there beside it. That is the whole point of the coalesced slot.
+    const streaming = runtime.hub.buffered();
+    expect(streaming.filter((event) => event.type === "frame")).toHaveLength(1);
+    const streamingKinds = streaming
+      .filter((event) => event.type === "activity")
+      .map((event) => event.entry.kind);
+    expect(streamingKinds).toContain("session_started");
+    expect(streamingKinds).toContain("tools_added");
+    expect(streamingKinds).toContain("navigated");
+
     await runtime.setScreencast(false);
     // Let anything already in flight land, then require quiet.
     await new Promise((resolve) => setTimeout(resolve, 750));
@@ -344,22 +356,17 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await new Promise((resolve) => setTimeout(resolve, 750));
     expect(frames.length).toBe(afterStop);
 
-    // The point of keeping frames out of the ring. This subscription started at
-    // session open with no replay, so it holds every entry published since —
-    // and after a stream's worth of paints they are all still here, with the
-    // navigation the reload produced among them.
-    expect(activity.some((entry) => entry.kind === "tools_added")).toBe(true);
-    expect(activity.some((entry) => entry.kind === "navigated")).toBe(true);
-    // And the RING still holds them — `buffered()` is what a reconnecting client
-    // replays, so this is the property a viewer actually experiences.
-    const buffered = runtime.hub.buffered();
-    const replayedKinds = buffered
-      .filter((event) => event.type === "activity")
-      .map((event) => event.entry.kind);
-    expect(replayedKinds).toContain("session_started");
-    expect(replayedKinds).toContain("tools_added");
-    // Exactly one frame in it, however many were published into the stream.
-    expect(buffered.filter((event) => event.type === "frame")).toHaveLength(1);
+    // AFTER STOPPING: no frame at all. Replay promises a reconnecting client
+    // the CURRENT paint, and once the stream is withdrawn there is none — a
+    // retained one would be handed over as though it were live.
+    const stopped = runtime.hub.buffered();
+    expect(stopped.filter((event) => event.type === "frame")).toHaveLength(0);
+    // The timeline is untouched by any of it.
+    expect(
+      stopped
+        .filter((event) => event.type === "activity")
+        .map((event) => event.entry.kind),
+    ).toEqual(streamingKinds);
 
     await registry.disposeAll();
   }, 60_000);

@@ -615,6 +615,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             body: JSON.stringify({ type: "capture_screenshot" }),
           },
         );
+        // The poll runs every second and the request outlives a close: landing
+        // this write after the session changed would hang the OLD page's paint
+        // in the new session's pane, where nothing would ever correct it.
+        if (get().session?.sessionId !== sessionId) return;
         if (result.ok) set({ lastScreenshot: result.data.screenshotBase64 });
       },
 
@@ -674,8 +678,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           const streaming = result.ok && result.data.streaming === true;
           // Nothing is arriving from here on unless frames are flowing.
           // Holding the last one would leave the pane showing a page that has
-          // since moved on, with nothing left to correct it.
-          if (!streaming) set({ liveFrame: undefined });
+          // since moved on, with nothing left to correct it. Re-checked after
+          // the await: a session that changed under us owns its own frame, and
+          // clearing that one would blank a pane that is streaming fine.
+          if (!streaming && get().session?.sessionId === aimedAt) {
+            set({ liveFrame: undefined });
+          }
           return streaming;
         });
       },

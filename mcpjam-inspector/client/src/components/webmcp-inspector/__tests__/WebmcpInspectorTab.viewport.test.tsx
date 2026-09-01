@@ -11,7 +11,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
-import type { WebMcpSessionPublic } from "@/shared/webmcp-inspector-protocol";
+import type {
+  WebMcpInputEvent,
+  WebMcpSessionPublic,
+} from "@/shared/webmcp-inspector-protocol";
 
 class FakeEventSource {
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -144,14 +147,15 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(screen.getByText(/Live view is off/)).toBeInTheDocument();
   });
 
-  it("polls without clearing an error banner someone is reading", async () => {
+  it("polls down the silent path, not the error-clearing one", async () => {
     const { captureScreenshot } = stubViewportActions({
       screencastAccepted: false,
     });
     render(<WebmcpInspectorTab />);
     await act(async () => {});
-    // The poll runs once a second; going through the error-clearing path would
-    // wipe a navigation failure before anyone read it.
+    // What that flag then protects — an error banner surviving a poll — is the
+    // store's behaviour and is asserted there, against the real action rather
+    // than this spy.
     expect(captureScreenshot).toHaveBeenCalledWith({ silent: true });
   });
 
@@ -282,6 +286,56 @@ describe("WebmcpInspectorTab — viewport", () => {
     // And Escape itself never reaches the page, so it cannot close a dialog
     // there on the way out.
     expect(sendInput).not.toHaveBeenCalled();
+  });
+
+  it("sends a paste once, as text, and never as its keystrokes", async () => {
+    const sendInput = vi.fn<(events: WebMcpInputEvent[]) => Promise<void>>(
+      async () => {},
+    );
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    // The real sequence a browser produces: ctrl down, v down, the paste the
+    // default action then fires, v up, ctrl up.
+    await act(async () => {
+      fireEvent.keyDown(pane, { key: "Control", ctrlKey: true });
+      fireEvent.keyDown(pane, { key: "v", ctrlKey: true });
+      fireEvent.paste(pane, {
+        clipboardData: { getData: () => "pasted text" },
+      });
+      fireEvent.keyUp(pane, { key: "v", ctrlKey: true });
+      fireEvent.keyUp(pane, { key: "Control", ctrlKey: false });
+    });
+
+    const sent: Array<Record<string, unknown>> = sendInput.mock.calls.flatMap(
+      (call) => call[0],
+    );
+    // The clipboard reaches the page exactly once, as text.
+    expect(sent.filter((event) => event.kind === "text")).toEqual([
+      { kind: "text", text: "pasted text" },
+    ]);
+    // And the `v` itself never goes: with ctrl still held on the far side, a
+    // forwarded `v` would make the remote page run its OWN paste too — from
+    // the browser profile's clipboard, not the one the person copied into —
+    // and the pasted text would land twice, or wrongly.
+    expect(sent.filter((event) => event.key === "v")).toEqual([]);
+    // Control is still tracked, so a click right after the paste is not a
+    // ctrl-click and a later release is not a release of a key never pressed.
+    expect(sent.map((event) => event.kind)).toEqual([
+      "key_down",
+      "text",
+      "key_up",
+    ]);
   });
 
   it("releases held input when the screen unmounts without a blur", async () => {

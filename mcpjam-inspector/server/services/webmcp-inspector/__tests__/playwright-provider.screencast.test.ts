@@ -236,25 +236,75 @@ describe("PlaywrightWebMcpSession screencast", () => {
   });
 
   it("drops a substitute that a newer frame has already overtaken", async () => {
+    // The capture is pinned open rather than made slow: the race this test is
+    // about only exists WHILE the screenshot is in flight, and a sleep long
+    // enough to make that window likely is also long enough to close early on
+    // a loaded machine and pass without ever testing anything.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const h = await started({
-      // A slow capture, so a real frame can land while it is in flight.
-      screenshot: () =>
-        new Promise((resolve) =>
-          setTimeout(() => resolve(Buffer.from("late-shot")), 30),
-        ),
+      screenshot: async () => {
+        await held;
+        return Buffer.from("late-shot");
+      },
     });
     await h.session.setScreencast(true);
     h.cdp.emit(
       "Page.screencastFrame",
       screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
     );
+    await vi.waitFor(() => expect(h.screenshots).toHaveBeenCalledTimes(1));
+
     // A newer paint arrives while the screenshot is still being taken.
     h.cdp.emit("Page.screencastFrame", screencastFrame("newer"));
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    release();
+    // Everything left in the substitute's path is microtasks, so one turn of
+    // the timer queue runs it to its decision — no wall-clock guess.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     // The substitute is now older than what the pane is showing. Publishing it
     // would drag the picture backwards.
     expect(h.frames.map((frame) => frame.data)).toEqual(["newer"]);
+  });
+
+  it("drops a substitute overtaken by a frame still held in the throttle", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await started({
+      screenshot: async () => {
+        await held;
+        return Buffer.from("late-shot");
+      },
+    });
+    await h.session.setScreencast(true);
+    // Burn the throttle's leading edge, so the next real frame is HELD in the
+    // trailing slot rather than published.
+    h.cdp.emit("Page.screencastFrame", screencastFrame("first"));
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
+    );
+    await vi.waitFor(() => expect(h.screenshots).toHaveBeenCalledTimes(1));
+
+    h.cdp.emit("Page.screencastFrame", screencastFrame("newer"));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Nothing new has been PUBLISHED yet — "newer" is inside the throttle,
+    // waiting for the window to close. A staleness check counting publications
+    // would see no change, let the substitute through, and the throttle would
+    // then coalesce the older picture over the newer one: the pane settles on
+    // the stale paint and stays there until the page happens to repaint.
+    expect(h.frames.map((frame) => frame.data)).toEqual(["first"]);
+    await vi.waitFor(
+      () =>
+        expect(h.frames.map((frame) => frame.data)).toEqual(["first", "newer"]),
+      { timeout: 2_000 },
+    );
   });
 
   it("does not queue a screenshot per oversized frame", async () => {

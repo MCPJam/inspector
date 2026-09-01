@@ -156,8 +156,17 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   private readonly frameThrottle: FrameThrottle<WebMcpFrame>;
   /** One in-flight budgeted substitute at a time; see `substituteFrame`. */
   private substituting = false;
-  /** Monotonic count of published frames, for the substitute's staleness check. */
-  private framesPublished = 0;
+  /**
+   * Monotonic count of frames ACCEPTED from the browser, for the substitute's
+   * staleness check.
+   *
+   * Counted on receipt rather than on publication, because the throttle holds
+   * the newest frame of a burst in its trailing slot without emitting it yet.
+   * A substitute compared against a published count would sail past that check
+   * and overwrite a newer frame that had simply not been flushed — and if no
+   * later paint arrived, the pane would settle on the older picture.
+   */
+  private framesReceived = 0;
   /** Modifier keys Playwright currently believes are down. See `syncModifiers`. */
   private readonly heldModifiers = new Set<string>();
 
@@ -174,10 +183,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     this.url = startUrl;
     this.frameThrottle = createFrameThrottle<WebMcpFrame>({
       minIntervalMs: WEBMCP_FRAME_MIN_INTERVAL_MS,
-      emit: (frame) => {
-        this.framesPublished += 1;
-        this.callbacks.onFrame(frame);
-      },
+      emit: (frame) => this.callbacks.onFrame(frame),
     });
     this.bridge = new WebMcpBridge(cdp as unknown as CdpLike, {
       // The bridge's descriptors are already the raw browser facts this
@@ -299,6 +305,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         return;
       }
 
+      this.framesReceived += 1;
       this.frameThrottle.push({
         data: frame.data,
         deviceWidth: frame.metadata?.deviceWidth ?? WEBMCP_VIEWPORT.width,
@@ -331,12 +338,12 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     // A screenshot takes long enough for the page to paint again, and a
     // substitute that landed after a newer frame would drag the pane backwards
     // to an older picture. Remember where we were and drop it if it did.
-    const generation = this.framesPublished;
+    const generation = this.framesReceived;
     try {
       const data = await this.captureFullViewportFrame();
       if (!data) return;
       if (this.disposed || !this.screencasting) return;
-      if (this.framesPublished !== generation) return;
+      if (this.framesReceived !== generation) return;
       this.frameThrottle.push({
         data,
         deviceWidth: WEBMCP_VIEWPORT.width,

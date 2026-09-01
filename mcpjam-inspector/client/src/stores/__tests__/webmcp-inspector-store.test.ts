@@ -81,6 +81,21 @@ function settled(id: string, invokeId: string): WebMcpActivityEntry {
   };
 }
 
+/**
+ * A `fetch` the test settles by hand, for asserting what happens to a response
+ * that lands after the session it was asked for has gone.
+ */
+function deferredFetch() {
+  let release!: (response: Response) => void;
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+    () =>
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+  );
+  return { fetchSpy, release: (response: Response) => release(response) };
+}
+
 /** Open a session through the real action, with `fetch` stubbed. */
 async function openSession() {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -537,6 +552,56 @@ describe("webmcp inspector store", () => {
     // The MANUAL button still clears it: that is a person acting on the banner.
     await useWebmcpInspectorStore.getState().captureScreenshot();
     expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
+  });
+
+  it("does not land a poll's screenshot in the session that replaced it", async () => {
+    await openSession();
+    const { fetchSpy, release } = deferredFetch();
+
+    const polling = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    // The poll runs once a second and its request outlives a close, so the
+    // session turning over underneath one is routine, not exotic.
+    useWebmcpInspectorStore.setState({
+      session: { ...SESSION, sessionId: "session-2" },
+    });
+    release(
+      new Response(JSON.stringify({ screenshotBase64: "old-site" }), {
+        status: 200,
+      }),
+    );
+    await polling;
+
+    // The pane falls back to `lastScreenshot` before its first frame, so this
+    // would hang the PREVIOUS page's paint in the new session's live view —
+    // where no later poll would correct it, because it is not stale, it is
+    // simply the wrong page.
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBeUndefined();
+  });
+
+  it("does not clear the next session's frame when a stale toggle is refused", async () => {
+    await openSession();
+    const { fetchSpy, release } = deferredFetch();
+
+    const toggling = useWebmcpInspectorStore.getState().setScreencast(true);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    useWebmcpInspectorStore.setState({
+      session: { ...SESSION, sessionId: "session-2" },
+      liveFrame: { data: "fresh", deviceWidth: 1280, deviceHeight: 800, ts: 2 },
+    });
+    release(
+      new Response(JSON.stringify({ error: "Invalid command." }), {
+        status: 400,
+      }),
+    );
+    expect(await toggling).toBe(false);
+
+    // The refusal belongs to the session that asked. Acting on it here would
+    // blank a pane that is streaming perfectly well, and nothing would repaint
+    // it until the page next changed on its own.
+    expect(useWebmcpInspectorStore.getState().liveFrame?.data).toBe("fresh");
   });
 
   it("splits an input batch past the route's cap, in order", async () => {
