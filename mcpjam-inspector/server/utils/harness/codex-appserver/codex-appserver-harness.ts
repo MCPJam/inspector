@@ -221,8 +221,8 @@ export function createCodexAppServer(
       const parsed: CodexAppServerResumeState =
         lifecycle?.data == null
           ? {}
-          : (codexAppServerResumeStateSchema.safeParse(lifecycle.data).data ??
-            {});
+          : codexAppServerResumeStateSchema.safeParse(lifecycle.data).data ??
+            {};
       const coords = parsed.bridge;
 
       const report = startOpts.observability?.report;
@@ -322,7 +322,9 @@ export function createCodexAppServer(
 
       if (respawnStrategy === undefined) {
         await toolSafeSandboxSession.run({
-          command: `mkdir -p ${shellQuote(workDir)} ${shellQuote(bridgeStateDir)} ${shellQuote(sessionDataDir)}`,
+          command: `mkdir -p ${shellQuote(workDir)} ${shellQuote(
+            bridgeStateDir,
+          )} ${shellQuote(sessionDataDir)}`,
           abortSignal: startOpts.abortSignal,
         });
       }

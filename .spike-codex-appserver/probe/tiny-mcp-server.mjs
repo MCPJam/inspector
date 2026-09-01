@@ -10,7 +10,8 @@ import { appendFileSync } from "node:fs";
 
 const LOG = process.env.MCP_PROBE_LOG;
 const log = (entry) => {
-  if (LOG) appendFileSync(LOG, `${JSON.stringify({ t: Date.now(), ...entry })}\n`);
+  if (LOG)
+    appendFileSync(LOG, `${JSON.stringify({ t: Date.now(), ...entry })}\n`);
 };
 
 const TOOLS = [

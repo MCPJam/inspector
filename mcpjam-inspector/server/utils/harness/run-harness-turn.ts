@@ -494,6 +494,23 @@ export function harnessRuntimeFingerprint(parts: {
    */
   secretsHash?: string;
   /**
+   * WHICH TRANSPORT the adapter speaks, when a harness has more than one.
+   *
+   * Codex has two: the published `codex exec` adapter and MCPJam's own
+   * `codex app-server` one. They share a harness id — one Codex host, one
+   * history — but they are NOT resume-compatible: a session created over exec
+   * has no app-server thread to resume, and a live bridge speaks one protocol
+   * only. Flipping the transport flag under a running conversation would
+   * otherwise reattach it to a bridge that cannot understand the next frame.
+   *
+   * Appended ONLY when set and not the default `"exec"`, so every existing
+   * session — Codex and Claude Code and Cursor alike — hashes byte-identically
+   * to before this dimension existed and keeps resuming. An unconditional
+   * append would fork the whole fleet on deploy, which is the cost
+   * `HARNESS_RUNTIME_COMPAT_VERSION` exists to make deliberate.
+   */
+  transport?: string;
+  /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
    * is why rather than an oversight. Their credential is a materialized project
    * secret, so a rotation already forks through `secretsHash`; and the harness
@@ -510,6 +527,9 @@ export function harnessRuntimeFingerprint(parts: {
     parts.permissionMode,
     ...(pluginDimension ? [pluginDimension] : []),
     ...(parts.secretsHash ? [parts.secretsHash] : []),
+    ...(parts.transport && parts.transport !== "exec"
+      ? [`transport:${parts.transport}`]
+      : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -1396,6 +1416,12 @@ export async function runHarnessTurn(
           ? { secretsHash: "unavailable" }
           : runtimeSecrets !== null
           ? { secretsHash: deliveredSecretsFingerprint(runtimeSecrets) }
+          : {}),
+        // Two Codex transports share this harness id and are not
+        // resume-compatible; see the field's note. Absent or `"exec"` hashes
+        // exactly as before, so no existing session forks on deploy.
+        ...(harnessAdapter.transport
+          ? { transport: harnessAdapter.transport }
           : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =

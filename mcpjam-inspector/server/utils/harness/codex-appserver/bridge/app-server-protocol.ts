@@ -39,7 +39,9 @@ export type JsonRpcResponse = {
   error?: { code: number; message: string; data?: unknown };
 };
 export type JsonRpcFrame =
-  JsonRpcRequest | JsonRpcNotification | JsonRpcResponse;
+  | JsonRpcRequest
+  | JsonRpcNotification
+  | JsonRpcResponse;
 
 /* ── Client → server ─────────────────────────────────────────────────────── */
 
@@ -73,9 +75,13 @@ export type ThreadResumeParams = ThreadStartParams & { threadId: string };
 
 export type CodexApprovalPolicy = "untrusted" | "on-request" | "never";
 export type CodexApprovalsReviewer =
-  "user" | "auto_review" | "guardian_subagent";
+  | "user"
+  | "auto_review"
+  | "guardian_subagent";
 export type CodexSandboxMode =
-  "read-only" | "workspace-write" | "danger-full-access";
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
 
 export type TurnStartParams = {
   threadId: string;
@@ -188,7 +194,10 @@ export type McpElicitationParams = {
  * `declined` item and no execution.
  */
 export type ApprovalDecision =
-  "accept" | "acceptForSession" | "decline" | "cancel";
+  | "accept"
+  | "acceptForSession"
+  | "decline"
+  | "cancel";
 
 /* ── Notifications ───────────────────────────────────────────────────────── */
 

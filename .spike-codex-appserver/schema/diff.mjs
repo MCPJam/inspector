@@ -25,8 +25,8 @@ const methods = (schema) =>
       (variant) =>
         variant.properties?.method?.enum?.[0] ??
         variant.properties?.method?.const ??
-        "<unnamed>",
-    ),
+        "<unnamed>"
+    )
   );
 const bullets = (label, values) =>
   values.length ? `  ${label}: ${values.join(", ")}\n` : "";
@@ -43,7 +43,7 @@ const newFiles = newManifest.files;
 const added = Object.keys(newFiles).filter((f) => !(f in oldFiles));
 const removed = Object.keys(oldFiles).filter((f) => !(f in newFiles));
 const changed = Object.keys(newFiles).filter(
-  (f) => f in oldFiles && oldFiles[f] !== newFiles[f],
+  (f) => f in oldFiles && oldFiles[f] !== newFiles[f]
 );
 out += `payload files: +${added.length} -${removed.length} ~${changed.length}\n`;
 out += bullets("added", added);
@@ -71,7 +71,7 @@ for (const file of [
 process.stdout.write(out);
 if (removedAnything) {
   process.stderr.write(
-    "\nA method was REMOVED upstream. The adapter's schema-snapshot test will fail until it is re-pinned.\n",
+    "\nA method was REMOVED upstream. The adapter's schema-snapshot test will fail until it is re-pinned.\n"
   );
   process.exit(1);
 }

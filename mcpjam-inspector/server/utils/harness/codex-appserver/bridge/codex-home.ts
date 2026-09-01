@@ -88,10 +88,14 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
       "",
       `[mcp_servers.${RELAY_MCP_SERVER_NAME}.env]`,
       `MCPJAM_HOST_TOOL_RELAY_URL = ${tomlString(input.relayUrl)}`,
-      `MCPJAM_HOST_TOOL_RELAY_CREDENTIAL = ${tomlString(input.relayCredential)}`,
+      `MCPJAM_HOST_TOOL_RELAY_CREDENTIAL = ${tomlString(
+        input.relayCredential,
+      )}`,
       ...(input.hostToolCatalogPath
         ? [
-            `MCPJAM_HOST_TOOL_CATALOG = ${tomlString(input.hostToolCatalogPath)}`,
+            `MCPJAM_HOST_TOOL_CATALOG = ${tomlString(
+              input.hostToolCatalogPath,
+            )}`,
           ]
         : []),
     );

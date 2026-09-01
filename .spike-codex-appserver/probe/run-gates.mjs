@@ -7,7 +7,14 @@
 //
 // Every gate writes its raw frames to artifacts/<gate>.ndjson so a claim in
 // RESULTS.md can be checked against the wire rather than taken on trust.
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  readFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,11 +38,9 @@ function resolveCodex() {
   if (explicit) return explicit;
   process.stdout.write(`fetching @openai/codex@${PINNED_CODEX} via npx...\n`);
   const dir = mkdtempSync(join(tmpdir(), "codex-bin-"));
-  execFileSync(
-    "npx",
-    ["-y", `@openai/codex@${PINNED_CODEX}`, "--version"],
-    { stdio: "inherit" },
-  );
+  execFileSync("npx", ["-y", `@openai/codex@${PINNED_CODEX}`, "--version"], {
+    stdio: "inherit",
+  });
   rmSync(dir, { recursive: true, force: true });
   return "codex";
 }
@@ -57,7 +62,9 @@ function writeCodexHome({ baseUrl, mcpServers = {}, extra = "" }) {
   for (const [name, config] of Object.entries(mcpServers)) {
     lines.push("", `[mcp_servers.${name}]`);
     lines.push(`command = ${JSON.stringify(config.command)}`);
-    lines.push(`args = [${config.args.map((a) => JSON.stringify(a)).join(", ")}]`);
+    lines.push(
+      `args = [${config.args.map((a) => JSON.stringify(a)).join(", ")}]`
+    );
     if (config.env) {
       lines.push("", `[mcp_servers.${name}.env]`);
       for (const [key, value] of Object.entries(config.env)) {
@@ -146,7 +153,9 @@ async function runTurn({
     }
     result.completed = await Promise.race([
       completed,
-      new Promise((resolve) => setTimeout(() => resolve({ status: "timeout" }), 45_000)),
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ status: "timeout" }), 45_000)
+      ),
     ]);
     result.client = client;
     result.codexHome = home;
@@ -197,16 +206,33 @@ const gates = {
       // convention can be probed in ONE run: whichever produces an mcpToolCall
       // item is the real one.
       script: [
-        { functionCalls: [{ name: "mcp__probe__probe_echo", arguments: { message: "a" } }] },
-        { functionCalls: [{ name: "probe_echo", arguments: { message: "b" } }] },
-        { functionCalls: [{ name: "mcp__probe", arguments: { tool: "probe_echo", arguments: { message: "c" } } }] },
-        { functionCalls: [{ name: "probe.probe_echo", arguments: { message: "d" } }] },
+        {
+          functionCalls: [
+            { name: "mcp__probe__probe_echo", arguments: { message: "a" } },
+          ],
+        },
+        {
+          functionCalls: [{ name: "probe_echo", arguments: { message: "b" } }],
+        },
+        {
+          functionCalls: [
+            {
+              name: "mcp__probe",
+              arguments: { tool: "probe_echo", arguments: { message: "c" } },
+            },
+          ],
+        },
+        {
+          functionCalls: [
+            { name: "probe.probe_echo", arguments: { message: "d" } },
+          ],
+        },
         { text: "Echoed." },
       ],
       onServerRequest: async () => ({ decision: "accept" }),
     });
     const declaredTools = (run.http[0]?.body?.tools ?? []).map(
-      (t) => t?.name ?? t?.function?.name ?? t?.type,
+      (t) => t?.name ?? t?.function?.name ?? t?.type
     );
     const mcpCalls = itemsOfType(run.notifications, "mcpToolCall");
     const startup = run.notifications
@@ -216,9 +242,13 @@ const gates = {
       startup,
       declaredToolCount: declaredTools.length,
       declaredTools,
-      mcpToolsDeclared: declaredTools.filter((t) => String(t).includes("probe")),
+      mcpToolsDeclared: declaredTools.filter((t) =>
+        String(t).includes("probe")
+      ),
       mcpToolCallItems: mcpCalls.length,
-      mcpToolCallStatus: mcpCalls.map((c) => `${c.server}/${c.tool}:${c.status}`),
+      mcpToolCallStatus: mcpCalls.map(
+        (c) => `${c.server}/${c.tool}:${c.status}`
+      ),
       mcpToolCallResult: mcpCalls.find((c) => c.result)?.result,
       approvalRequestsDuringMcpCall: run.serverRequests.map((r) => r.method),
       unsupportedNames: (() => {
@@ -274,12 +304,14 @@ const gates = {
       },
     });
     for (const n of run.notifications) {
-      if (n.method === "item/started") order.push(`started:${n.params.item.type}`);
-      if (n.method === "item/completed") order.push(`completed:${n.params.item.type}`);
+      if (n.method === "item/started")
+        order.push(`started:${n.params.item.type}`);
+      if (n.method === "item/completed")
+        order.push(`completed:${n.params.item.type}`);
     }
     const commands = itemsOfType(run.notifications, "commandExecution");
     const declaredTools = (run.http[0]?.body?.tools ?? []).map(
-      (t) => t?.name ?? t?.function?.name ?? t?.type,
+      (t) => t?.name ?? t?.function?.name ?? t?.type
     );
     return {
       declaredTools,
@@ -292,7 +324,14 @@ const gates = {
       turnStatus: run.completed?.status,
       threadStatusFlags: run.notifications
         .filter((n) => n.method === "thread/status/changed")
-        .map((n) => `${n.params.status.type}${(n.params.status.activeFlags ?? []).join("+") ? `(${n.params.status.activeFlags.join("+")})` : ""}`),
+        .map(
+          (n) =>
+            `${n.params.status.type}${
+              (n.params.status.activeFlags ?? []).join("+")
+                ? `(${n.params.status.activeFlags.join("+")})`
+                : ""
+            }`
+        ),
     };
   },
 
@@ -310,7 +349,10 @@ const gates = {
       script: [
         {
           functionCalls: [
-            { name: "exec_command", arguments: { cmd: "echo hi > denied.txt" } },
+            {
+              name: "exec_command",
+              arguments: { cmd: "echo hi > denied.txt" },
+            },
           ],
         },
         { text: "I could not create it." },
@@ -366,7 +408,9 @@ const gates = {
     return {
       interrupted: run.after !== undefined,
       turnStatus: run.completed?.status,
-      commandStatus: itemsOfType(run.notifications, "commandExecution").map((c) => c.status),
+      commandStatus: itemsOfType(run.notifications, "commandExecution").map(
+        (c) => c.status
+      ),
     };
   },
 
@@ -392,7 +436,9 @@ const gates = {
       script: [{ text: "Hello." }],
     });
     return {
-      threadStartAcceptedConfig: run.error ? `ERROR: ${run.error.message}` : "accepted",
+      threadStartAcceptedConfig: run.error
+        ? `ERROR: ${run.error.message}`
+        : "accepted",
       endpointsHit: [...new Set(run.http.map((r) => `${r.method} ${r.path}`))],
       mcpStartupFromConfig: run.notifications
         .filter((n) => n.method === "mcpServer/startupStatus/updated")
@@ -463,13 +509,15 @@ const gates = {
         .filter((n) => n.method === "warning")
         .map((n) => n.params.message);
       const tools = (run.http[0]?.body?.tools ?? []).map(
-        (t) => t?.name ?? t?.type,
+        (t) => t?.name ?? t?.type
       );
       matrix[model] = {
         knownToCli: !warnings.some((w) => w.includes("not found")),
         toolCount: tools.length,
         turnStatus: run.completed?.status,
-        ...(run.error ? { error: String(run.error.message).slice(0, 120) } : {}),
+        ...(run.error
+          ? { error: String(run.error.message).slice(0, 120) }
+          : {}),
       };
     }
     return matrix;
@@ -508,5 +556,8 @@ for (const [name, run] of Object.entries(gates)) {
   process.stdout.write(`${JSON.stringify(results[name], null, 2)}\n`);
 }
 mkdirSync(ARTIFACTS, { recursive: true });
-writeFileSync(join(ARTIFACTS, "gates.json"), `${JSON.stringify(results, null, 2)}\n`);
+writeFileSync(
+  join(ARTIFACTS, "gates.json"),
+  `${JSON.stringify(results, null, 2)}\n`
+);
 process.stdout.write(`\nwrote ${join(ARTIFACTS, "gates.json")}\n`);

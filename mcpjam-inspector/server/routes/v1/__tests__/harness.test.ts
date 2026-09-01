@@ -55,7 +55,7 @@ function makeApp(): Hono {
 function request(
   method: string,
   path: string,
-  opts: { token?: string | null } = {}
+  opts: { token?: string | null } = {},
 ): Promise<Response> {
   const { token = "tok" } = opts;
   const headers: Record<string, string> = {};
@@ -86,11 +86,11 @@ describe("v1 harness routes", () => {
       const res = await request(
         "GET",
         "/api/v1/harness/claude-code/builtin-tools",
-        { token: null }
+        { token: null },
       );
       expect(res.status).toBe(401);
       expect(((await res.json()) as { code?: string }).code).toBe(
-        "UNAUTHORIZED"
+        "UNAUTHORIZED",
       );
     });
 
@@ -102,7 +102,7 @@ describe("v1 harness routes", () => {
       const res = await request(
         "GET",
         "/api/v1/harness/claude-code/builtin-tools",
-        { token: "guest-jwt" }
+        { token: "guest-jwt" },
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: unknown[] };
@@ -111,11 +111,67 @@ describe("v1 harness routes", () => {
     });
   });
 
+  describe("GET capabilities", () => {
+    type Capabilities = {
+      harnessId: string;
+      transport?: string;
+      supportsNativeToolApproval: boolean;
+      supportsHostExecutedToolApproval: boolean;
+      supportsMcpToolApproval: boolean;
+      mcpDelivery: string;
+    };
+
+    async function capabilities(harnessId: string) {
+      const res = await request(
+        "GET",
+        `/api/v1/harness/${harnessId}/capabilities`,
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as Capabilities;
+    }
+
+    it("reports what claude-code can be asked to do", async () => {
+      const body = await capabilities("claude-code");
+      expect(body.harnessId).toBe("claude-code");
+      // One transport, so the field is absent rather than invented.
+      expect(body.transport).toBeUndefined();
+      expect(body.supportsNativeToolApproval).toBe(true);
+      expect(body.mcpDelivery).toBe("native");
+    });
+
+    it("tracks the codex transport, which is the reason this route exists", async () => {
+      // A static client-side map cannot know which transport a deployment
+      // enabled. This is the answer the host editor needs to decide whether the
+      // approval switch is really unavailable or merely off by default.
+      const execCaps = await capabilities("codex");
+      expect(execCaps.transport).toBe("exec");
+      expect(execCaps.supportsNativeToolApproval).toBe(false);
+      expect(execCaps.supportsHostExecutedToolApproval).toBe(false);
+
+      process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT = "true";
+      try {
+        const appServerCaps = await capabilities("codex");
+        expect(appServerCaps.transport).toBe("app-server");
+        expect(appServerCaps.supportsNativeToolApproval).toBe(true);
+        expect(appServerCaps.supportsHostExecutedToolApproval).toBe(true);
+        // Delivery is unchanged: this is a transport swap, not a new harness.
+        expect(appServerCaps.mcpDelivery).toBe(execCaps.mcpDelivery);
+      } finally {
+        delete process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT;
+      }
+    });
+
+    it("404s for an unknown harness id", async () => {
+      const res = await request("GET", "/api/v1/harness/pi/capabilities");
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe("GET builtin-tools", () => {
     it("returns the claude-code native tool catalog as a page of display DTOs", async () => {
       const res = await request(
         "GET",
-        "/api/v1/harness/claude-code/builtin-tools"
+        "/api/v1/harness/claude-code/builtin-tools",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: ToolInfo[] };
@@ -143,6 +199,29 @@ describe("v1 harness routes", () => {
         expect(keys).toContain(expected);
       }
       for (const t of body.items) expect(t.name.length).toBeGreaterThan(0);
+    });
+
+    it("reports the codex catalog for the transport that is enabled", async () => {
+      // The catalog is a property of the TRANSPORT, not of the harness name:
+      // app-server reports typed items for shell, patches and web search where
+      // exec could attribute two tools.
+      process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT = "true";
+      try {
+        const res = await request("GET", "/api/v1/harness/codex/builtin-tools");
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { items: ToolInfo[] };
+        const keys = new Set(body.items.map((t) => t.key));
+        for (const expected of ["bash", "webSearch", "fileChange"]) {
+          expect(keys).toContain(expected);
+        }
+        // Native names measured against the pinned binary, not copied from the
+        // exec transport (which reports `shell`).
+        const names = new Set(body.items.map((t) => t.name));
+        expect(names).toContain("exec_command");
+        expect(names).toContain("apply_patch");
+      } finally {
+        delete process.env.MCPJAM_CODEX_APPSERVER_TRANSPORT;
+      }
     });
 
     it("404s for an unknown / not-yet-installed harness id", async () => {

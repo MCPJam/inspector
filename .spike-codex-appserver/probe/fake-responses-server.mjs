@@ -80,7 +80,7 @@ export function createFakeResponsesServer({
           JSON.stringify({
             object: "list",
             data: [{ id: "gpt-5-nano", object: "model", owned_by: "fake" }],
-          }),
+          })
         );
         return;
       }
@@ -97,7 +97,7 @@ export function createFakeResponsesServer({
       const declared = new Set(
         (parsed?.tools ?? [])
           .map((tool) => tool?.name ?? tool?.function?.name ?? tool?.type)
-          .filter(Boolean),
+          .filter(Boolean)
       );
       const missing = (step.functionCalls ?? [])
         .map((call) => call.name)
@@ -108,10 +108,14 @@ export function createFakeResponsesServer({
           JSON.stringify({
             error: {
               message:
-                `script step ${stepIndex} calls ${missing.join(", ")}, which this ` +
-                `request does not declare. Declared: ${[...declared].join(", ") || "(none)"}`,
+                `script step ${stepIndex} calls ${missing.join(
+                  ", "
+                )}, which this ` +
+                `request does not declare. Declared: ${
+                  [...declared].join(", ") || "(none)"
+                }`,
             },
-          }),
+          })
         );
         return;
       }
@@ -253,7 +257,9 @@ function streamStep(res, step, turn) {
   for (const [callIndex, call] of (step.customToolCalls ?? []).entries()) {
     const itemId = `ctc_fake_${turn}_${callIndex}`;
     const input =
-      typeof call.input === "string" ? call.input : JSON.stringify(call.input ?? {});
+      typeof call.input === "string"
+        ? call.input
+        : JSON.stringify(call.input ?? {});
     const item = {
       id: itemId,
       type: "custom_tool_call",
@@ -274,7 +280,10 @@ function streamStep(res, step, turn) {
       input,
     });
     const done = { ...item, status: "completed", input };
-    sse(res, "response.output_item.done", { output_index: outputIndex, item: done });
+    sse(res, "response.output_item.done", {
+      output_index: outputIndex,
+      item: done,
+    });
     output.push(done);
     outputIndex += 1;
   }

@@ -20,10 +20,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const adapterDir = join(
-  __dirname,
-  "../server/utils/harness/codex-appserver",
-);
+const adapterDir = join(__dirname, "../server/utils/harness/codex-appserver");
 const outputPath = join(
   adapterDir,
   "bootstrap/generated/codex-appserver-bridge.bundled.ts",
@@ -69,7 +66,8 @@ async function bundleEntry(relativeEntry) {
     },
   });
   const output = result.outputFiles?.[0];
-  if (!output) throw new Error(`esbuild produced no output for ${relativeEntry}`);
+  if (!output)
+    throw new Error(`esbuild produced no output for ${relativeEntry}`);
   return output.text;
 }
 
@@ -121,7 +119,10 @@ export const CODEX_APPSERVER_BUNDLE_VERSION = ${JSON.stringify(version)};
 }
 
 // Run as a script (the `bundle:*` npm task); importable as a module (the test).
-if (process.argv[1] && process.argv[1].endsWith("bundle-codex-appserver-bridge.mjs")) {
+if (
+  process.argv[1] &&
+  process.argv[1].endsWith("bundle-codex-appserver-bridge.mjs")
+) {
   try {
     const { bridgeSource, hostToolsSource, version } =
       await bundleCodexAppServerBridge();

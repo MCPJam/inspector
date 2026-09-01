@@ -14,14 +14,16 @@ if (!dir || !codexVersion) {
 const files = {};
 const walk = (abs, prefix) => {
   const entries = readdirSync(abs, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
+    a.name.localeCompare(b.name)
   );
   for (const entry of entries) {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     const next = join(abs, entry.name);
     if (entry.isDirectory()) walk(next, rel);
     else
-      files[rel] = createHash("sha256").update(readFileSync(next)).digest("hex");
+      files[rel] = createHash("sha256")
+        .update(readFileSync(next))
+        .digest("hex");
   }
 };
 walk(dir, "");
@@ -36,6 +38,6 @@ process.stdout.write(
       files,
     },
     null,
-    2,
-  )}\n`,
+    2
+  )}\n`
 );

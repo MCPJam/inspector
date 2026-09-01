@@ -76,7 +76,11 @@ export type HarnessControlState =
   | { enforced: true }
   | { enforced: false; note: string };
 
-const ENFORCED: HarnessControlState = { enforced: true };
+/** "This control reaches the runtime." Exported so a caller that learns the
+ *  same thing from the server (see `useHarnessCapabilities`) can return the
+ *  identical value rather than constructing a look-alike. */
+export const ENFORCED_CONTROL: HarnessControlState = { enforced: true };
+const ENFORCED = ENFORCED_CONTROL;
 
 /** Controls owned by the harness's own agent loop — no MCPJam-side mediation
  *  can change these answers, so they are declared per harness. */

@@ -472,8 +472,8 @@ export function createStreamTranslator(input: {
             kind === "add" || kind === "create"
               ? "create"
               : kind === "delete" || kind === "remove"
-                ? "delete"
-                : "modify";
+              ? "delete"
+              : "modify";
           emit({ type: "file-change", event, path: change.path });
         }
         return;
@@ -573,8 +573,8 @@ export function createStreamTranslator(input: {
           outcome.status === "completed"
             ? "stop"
             : outcome.status === "failed"
-              ? "error"
-              : "other",
+            ? "error"
+            : "other",
         raw: outcome.status,
       },
       totalUsage: turnUsage(),

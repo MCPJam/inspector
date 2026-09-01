@@ -33,8 +33,9 @@ export class AppServerExitedError extends Error {
     tail: string,
   ) {
     super(
-      `codex app-server exited (code=${code ?? "null"} signal=${signal ?? "null"})` +
-        (tail ? `: ${tail}` : ""),
+      `codex app-server exited (code=${code ?? "null"} signal=${
+        signal ?? "null"
+      })` + (tail ? `: ${tail}` : ""),
     );
     this.name = "AppServerExitedError";
     this.code = code;

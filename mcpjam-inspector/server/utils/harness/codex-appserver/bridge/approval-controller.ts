@@ -87,15 +87,14 @@ export function createApprovalController(input: {
     });
     try {
       const decision = await Promise.race([
-        turn
-          .requestToolApproval(approvalId)
-          .then(({ approved }): ApprovalDecision =>
+        turn.requestToolApproval(approvalId).then(
+          ({ approved }): ApprovalDecision =>
             // `decline` and not `cancel`: cancel reads to Codex as "the user
             // walked away", decline as "the user said no". Verified live that
             // decline is honoured even when `availableDecisions` omits it, and
             // it produces the `declined` item status the trace should show.
             approved ? "accept" : "decline",
-          ),
+        ),
         cancellation,
       ]);
       return decision;

@@ -33,8 +33,8 @@ const OUT = arg(
     "harness",
     "codex-appserver",
     "__tests__",
-    "fixtures",
-  ),
+    "fixtures"
+  )
 );
 
 /** Approval answers, by scenario. */
@@ -116,7 +116,7 @@ function writeCodexHome(baseUrl) {
       `base_url = ${JSON.stringify(`${baseUrl}/v1`)}`,
       'env_key = "PROBE_API_KEY"',
       'wire_api = "responses"',
-    ].join("\n") + "\n",
+    ].join("\n") + "\n"
   );
   return home;
 }
@@ -178,6 +178,6 @@ for (const [name, scenario] of Object.entries(SCENARIOS)) {
   process.stdout.write(
     `${name}: ${frames.length} frames -> ${path}\n  methods: ${[
       ...new Set(frames.map((f) => f.method)),
-    ].join(", ")}\n`,
+    ].join(", ")}\n`
   );
 }

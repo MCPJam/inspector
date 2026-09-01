@@ -238,7 +238,8 @@ describe("codex app-server stream translation", () => {
     });
     translator.finishTurn({ status: "interrupted" });
     const finish = partsOfType(parts, "finish")[0] as
-      { finishReason?: { unified?: string; raw?: string } } | undefined;
+      | { finishReason?: { unified?: string; raw?: string } }
+      | undefined;
     expect(finish?.finishReason?.unified).toBe("other");
     expect(finish?.finishReason?.raw).toBe("interrupted");
   });

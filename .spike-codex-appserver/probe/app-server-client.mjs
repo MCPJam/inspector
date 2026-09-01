@@ -25,7 +25,7 @@ export function spawnAppServer({
     if (!logPath) return;
     appendFileSync(
       logPath,
-      `${JSON.stringify({ t: Date.now(), direction, frame })}\n`,
+      `${JSON.stringify({ t: Date.now(), direction, frame })}\n`
     );
   };
 
@@ -57,7 +57,7 @@ export function spawnAppServer({
             jsonrpc: "2.0",
             id: frame.id,
             error: { code: -32603, message: String(error?.message ?? error) },
-          }),
+          })
       );
       return;
     }
