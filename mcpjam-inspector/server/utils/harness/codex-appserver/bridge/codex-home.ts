@@ -22,6 +22,20 @@ import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
  *  string, escapes included, so this is exact rather than approximate. */
 const tomlString = (value: string): string => JSON.stringify(value);
 
+/*
+ * ON THE RELAY CREDENTIAL IN THIS FILE.
+ *
+ * It lands in a config file the agent's shell can read, and that is inherent:
+ * Codex spawns the host-tool MCP server, so the credential has to reach that
+ * process through Codex's own config. One uid runs everything in the sandbox,
+ * so no path or file mode hides it from the model.
+ *
+ * That is accounted for rather than overlooked — see the threat-model note in
+ * `host-tool-relay.ts`. The credential is defence in depth against everything
+ * that is NOT the agent; what bounds the agent is the host-side approval gate,
+ * which a relayed call passes through exactly like an MCP-initiated one.
+ */
+
 export type CodexHomeInput = {
   /** Where to write. Created if absent. */
   codexHome: string;

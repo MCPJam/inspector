@@ -143,6 +143,15 @@ export function spawnAppServerClient(options: {
         handleFrame(JSON.parse(line) as JsonRpcFrame);
       } catch (error) {
         options.onFrameError?.(line, error);
+        // NOT recoverable, and not ignorable. The transport is strict JSONL, so
+        // a line that will not parse means the stream is desynchronized and no
+        // further response can be correlated. Ignoring it (the production
+        // caller passes no `onFrameError`) left every pending request waiting
+        // forever, which surfaces as a turn that hangs rather than fails.
+        failClient(
+          `app-server sent a frame that is not JSON: ${line.slice(0, 200)}`,
+        );
+        return;
       }
     }
   });
@@ -175,6 +184,28 @@ export function spawnAppServerClient(options: {
     settleExit(dead);
   };
   child.on("exit", onGone);
+
+  /** Fail the client outright, rejecting everything still waiting. */
+  const failClient = (reason: string) => {
+    if (dead) return;
+    dead = new AppServerExitedError(null, null, reason);
+    for (const entry of pending.values()) entry.reject(dead);
+    pending.clear();
+    settleExit(dead);
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // Already gone; the rejection above is what callers needed.
+    }
+  };
+
+  // A stream `error` with no listener is an UNCAUGHT exception that takes the
+  // whole bridge down. `dead` is latched from the async `exit`/`error` events,
+  // so there is a window where a write reaches a pipe the child has already
+  // closed and Node emits EPIPE / ERR_STREAM_DESTROYED here.
+  child.stdin.on("error", (error: unknown) => {
+    failClient(`app-server stdin failed: ${String(error)}`);
+  });
   child.on("error", (error) => {
     if (dead) return;
     dead = new AppServerExitedError(null, null, String(error));

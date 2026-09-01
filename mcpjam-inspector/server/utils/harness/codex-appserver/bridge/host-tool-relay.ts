@@ -12,13 +12,36 @@
  * is what this is. The shape is the one `@ai-sdk/harness-acp` uses for the same
  * reason.
  *
- * ## Bound to loopback, and still authenticated
+ * ## Bound to loopback, authenticated — and NOT a boundary against the agent
  *
  * The listener binds `127.0.0.1` on an OS-assigned port, so nothing outside the
- * box can reach it. It still requires a per-session bearer credential, because
- * "inside the box" includes the agent itself: the model has a shell, and an
- * unauthenticated local port would let it invoke the user's MCP tools directly,
- * bypassing the approval gate that is the whole point of this transport.
+ * box can reach it, and it requires a per-session bearer credential so that an
+ * unrelated process in the box cannot drive it by accident.
+ *
+ * It is NOT a boundary against the agent, and an earlier version of this note
+ * claimed it was ("an unauthenticated port would let the model bypass the
+ * approval gate"). That was wrong twice over, and both halves are worth stating
+ * because the wrong version invites a fix that cannot exist:
+ *
+ *  1. The credential is READABLE BY THE AGENT, unavoidably. Codex spawns the
+ *     MCP server, so the credential must reach that process through config the
+ *     agent's own shell can read (`$CODEX_HOME/config.toml`). The sandbox runs
+ *     everything as one uid, so no file mode, path, or descriptor hides it from
+ *     a shell running as the same user. Moving it out of the workspace changes
+ *     nothing.
+ *  2. It was never what gates approval. A relayed call is emitted as a
+ *     `tool-call` with `providerExecuted: false` and then AWAITS
+ *     `turn.requestToolResult` — the host runs the tool, and `HarnessAgent`'s
+ *     `toolApproval` fires there, before `execute`. A caller holding the
+ *     credential therefore reaches exactly the same gate as the MCP server
+ *     does; it cannot resolve a call itself, and every call it starts appears
+ *     in the trace as an ordinary host tool call.
+ *
+ * So what the credential actually buys is defence in depth against everything
+ * that is not the agent. What bounds the agent is the host-side approval gate
+ * plus the fact that the relay exposes only the tools the user already selected
+ * for this turn — the same tools Codex can call through the sanctioned MCP
+ * channel anyway, which is the entire reason this relay exists.
  *
  * ## No timeout on a call
  *
