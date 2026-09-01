@@ -166,6 +166,33 @@ export function literalAnchorOf(value: string): string {
   return longest;
 }
 
+/**
+ * The characters every ESCAPED form of `value` is guaranteed to contain.
+ *
+ * Each character's escaped representation ends in a literal that re-escaping
+ * never removes: an ordinary character is itself, `"` stays `"`, a backslash
+ * stays a backslash, a newline becomes `n`, a tab `t`, and so on. Deeper
+ * escaping only lengthens the backslash runs in front of those tails.
+ *
+ * This is the companion to {@link literalAnchorOf} and exists for the case that
+ * one cannot cover: a value made ENTIRELY of escapable characters has no
+ * literal anchor, so the anchor test is vacuous and a pathological payload
+ * would build its forms anyway. Character presence is a weaker condition than a
+ * substring, but it is defined for every value and still sound.
+ *
+ * Applies to escaped forms ONLY. The RAW value is exempt and must never be
+ * gated on it — a newline-bearing secret's raw form contains newlines, not the
+ * letter `n`.
+ */
+export function escapedFormTailsOf(value: string): ReadonlySet<string> {
+  const tails = new Set<string>();
+  for (const char of value) {
+    const escaped = JSON.stringify(char).slice(1, -1);
+    tails.add(escaped[escaped.length - 1]!);
+  }
+  return tails;
+}
+
 export function createSecretScrubber(
   secrets: readonly SecretRegistryEntry[]
 ): SecretScrubber | null {
@@ -177,7 +204,11 @@ export function createSecretScrubber(
     .filter((entry) => entry.value.length >= MIN_SCRUBBABLE_LENGTH)
     .slice()
     .sort((a, b) => b.value.length - a.value.length)
-    .map((entry) => ({ ...entry, anchor: literalAnchorOf(entry.value) }));
+    .map((entry) => ({
+      ...entry,
+      anchor: literalAnchorOf(entry.value),
+      tails: escapedFormTailsOf(entry.value),
+    }));
   if (entries.length === 0) return null;
 
   // Each secret contributes its raw form plus one form per level of JSON
@@ -261,10 +292,39 @@ export function createSecretScrubber(
   const byLongestSearch = (a: Needle, b: Needle): number =>
     b.search.length - a.search.length;
 
-  function buildNeedleLists(
+  /**
+   * Escaped forms, memoised per SECRET and depth rather than per assembled
+   * list.
+   *
+   * Keying a whole needle list on which secrets a given input could contain
+   * looked cheap and was not: `scrubDeep` calls this once per string leaf, and
+   * leaves carrying different subsets of the secrets produce a different key
+   * each — up to one retained list per subset, for the lifetime of the turn.
+   * Keying on (secret, depth, size) instead bounds the cache by the secrets
+   * registered and the handful of shapes their payloads take, and assembling a
+   * list from it is array work rather than string generation.
+   */
+  const formCache = new Map<string, readonly string[]>();
+  function formsFor(
+    index: number,
+    entry: (typeof entries)[number],
     maxDepth: number,
     maxFormLength: number,
-    possible: readonly boolean[],
+    lengthExponent: number,
+  ): readonly string[] {
+    const key = `${index}:${maxDepth}:${lengthExponent}`;
+    const cached = formCache.get(key);
+    if (cached) return cached;
+    const built = escapedForms(entry.value, maxDepth, maxFormLength);
+    formCache.set(key, built);
+    return built;
+  }
+
+  function buildNeedleLists(
+    input: string,
+    maxDepth: number,
+    maxFormLength: number,
+    lengthExponent: number,
   ): {
     all: Needle[];
     /**
@@ -277,22 +337,42 @@ export function createSecretScrubber(
     const all: Needle[] = [];
     const json: Needle[] = [];
     for (const [index, entry] of entries.entries()) {
-      // Its literal anchor is absent, so no form of it — raw or escaped, at any
-      // depth — can occur in this input. Building them would be pure waste.
-      if (!possible[index]) continue;
       const replace = replacementFor(entry.name);
+      // The anchor gates the RAW form too — the value contains its own anchor,
+      // so an input without it cannot contain the value either. The tail
+      // condition below does NOT apply here: a newline-bearing secret's raw
+      // form holds newlines, not the letter `n`.
+      const anchored = entry.anchor === "" || input.includes(entry.anchor);
+      if (!anchored) continue;
       all.push({ search: entry.value, replace });
       // Whether escaping is IDENTITY for this value is a different question
-      // from whether its escaped forms fit: a value with no special characters
-      // is its own escaped form and the JSON set needs it, whereas a value
-      // whose forms were all too long to fit simply cannot occur here, and
-      // adding its raw form would reintroduce the structural false match the
-      // JSON set exists to avoid.
+      // from whether its escaped forms can occur: a value with no special
+      // characters is its own escaped form and the JSON set needs it.
       if (JSON.stringify(entry.value).slice(1, -1) === entry.value) {
         json.push({ search: entry.value, replace });
         continue;
       }
-      for (const form of escapedForms(entry.value, maxDepth, maxFormLength)) {
+      // The second necessary condition, and the one that covers a value with no
+      // anchor at all. Neither is a heuristic: the anchor appears verbatim in
+      // every form, and so does each tail character. Failing either means no
+      // form can match, and generating them would be pure waste — which is what
+      // a payload holding one pathological backslash run used to cost, for
+      // secrets it plainly does not contain.
+      let tailsPresent = true;
+      for (const tail of entry.tails) {
+        if (!input.includes(tail)) {
+          tailsPresent = false;
+          break;
+        }
+      }
+      if (!tailsPresent) continue;
+      for (const form of formsFor(
+        index,
+        entry,
+        maxDepth,
+        maxFormLength,
+        lengthExponent,
+      )) {
         json.push({ search: form, replace });
         all.push({ search: form, replace });
       }
@@ -302,33 +382,22 @@ export function createSecretScrubber(
     return { all, json };
   }
 
-  // `scrubDeep` calls `scrubString` once per string leaf, so the lists are
-  // memoised rather than rebuilt per call. Keying on the DEPTH rather than on
-  // anything about the input's size means the whole cache is at most a few
-  // entries: almost every payload resolves to depth 1.
-  const listCache = new Map<string, { all: Needle[]; json: Needle[] }>();
   function needleListsFor(input: string): {
     all: Needle[];
     json: Needle[];
   } {
     const maxDepth = escapeDepthOf(input);
-    // Which secrets could occur here at all. Cheap next to form building, and
-    // it collapses to all-ones or all-zeros for virtually every real payload,
-    // so the cache stays a handful of entries.
-    const possible = entries.map(
-      (entry) => entry.anchor === "" || input.includes(entry.anchor),
-    );
     // Rounded UP to a power of two so the key stays coarse: a form between the
     // real length and the rounded one is merely a needle too long to match,
     // never a missing one.
     const lengthExponent =
       input.length <= 1 ? 0 : Math.ceil(Math.log2(input.length));
-    const key = `${maxDepth}:${lengthExponent}:${possible.map((p) => (p ? "1" : "0")).join("")}`;
-    const cached = listCache.get(key);
-    if (cached) return cached;
-    const built = buildNeedleLists(maxDepth, 2 ** lengthExponent, possible);
-    listCache.set(key, built);
-    return built;
+    return buildNeedleLists(
+      input,
+      maxDepth,
+      2 ** lengthExponent,
+      lengthExponent,
+    );
   }
 
   function applyNeedles(input: string, list: readonly Needle[]): string {

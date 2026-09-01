@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSecretScrubber,
   escapeDepthOf,
+  escapedFormTailsOf,
   literalAnchorOf,
   MIN_SCRUBBABLE_LENGTH,
 } from "../secret-scrubber";
@@ -328,13 +329,39 @@ describe("scrubDeep", () => {
     expect(scrubber.scrubString(withSecret)).toContain("[secret:ODD_KEY]");
   });
 
-  it("has no anchor for a value made only of escapable characters", () => {
-    // Then there is nothing to test against and generation proceeds as before,
-    // rather than the empty anchor matching everything or nothing by accident.
-    expect(literalAnchorOf('"\\\n"')).toBe("");
+  it("still bounds a value made only of escapable characters", () => {
+    // It has no literal anchor, so the anchor test is vacuous for it — which
+    // would leave exactly this value building its forms against a pathological
+    // payload. The tail characters cover that case: every escaped form ends
+    // each character in a literal that re-escaping never removes.
     const oddball = { name: "WEIRD", value: '"""\\\\""""' };
+    expect(literalAnchorOf(oddball.value)).toBe("");
+    expect([...escapedFormTailsOf(oddball.value)].sort()).toEqual(['"', "\\"]);
+
     const scrubber = createSecretScrubber([oddball])!;
+    // A payload of solid backslashes holds no `"`, so no ESCAPED form can occur
+    // in it. One needle survives — the raw value, which has no anchor to be
+    // gated on and costs nothing to register. What the tails prevent is the
+    // twenty exponentially growing forms this payload's depth would otherwise
+    // ask for.
+    const solidBackslashes = "\\".repeat(200_000);
+    expect(scrubber.needleCountFor(solidBackslashes)).toBe(1);
+    expect(scrubber.scrubString(solidBackslashes)).toBe(solidBackslashes);
+
+    // And it is still found where it genuinely appears.
     expect(scrubber.scrubString(`x${oddball.value}y`)).toBe("x[secret:WEIRD]y");
+  });
+
+  it("does not gate the RAW form on tail characters", () => {
+    // A newline-bearing value's raw form contains newlines, not the letter `n`
+    // its escaped form ends with. Gating the raw needle on tails would stop it
+    // being found in ordinary unescaped output.
+    const pem = { name: "PEM_KEY", value: "-----BEGIN-----\nabcdefgh\n" };
+    expect(escapedFormTailsOf(pem.value).has("n")).toBe(true);
+    const scrubber = createSecretScrubber([pem])!;
+    // No literal `n` anywhere except inside the value itself.
+    const payload = `>>>${pem.value}<<<`;
+    expect(scrubber.scrubString(payload)).toBe(">>>[secret:PEM_KEY]<<<");
   });
 
   it("leaves a large UNESCAPED payload untouched, and cheaply", () => {
