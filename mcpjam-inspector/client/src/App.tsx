@@ -277,6 +277,7 @@ import {
 } from "@mcpjam/sdk/host-config/templates";
 import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -1013,6 +1014,7 @@ function useTemplateVerifyDeepLink({
   const { createHost } = useHostMutations();
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
+  const cursorCliEnabled = useCursorHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1082,6 +1084,7 @@ function useTemplateVerifyDeepLink({
     const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags

@@ -1928,6 +1928,90 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "systemPrompt": "",
     "temperature": 0.7,
   },
+  "cursor-cli/dark": {
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {
+      "elicitation": {},
+      "roots": {},
+    },
+    "computer": {
+      "kind": "personal",
+    },
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "harness": "cursor",
+    "hostCapabilitiesOverride": {},
+    "hostContext": {},
+    "hostStyle": "cursor-cli",
+    "mcpProfile": {
+      "initialize": {
+        "clientInfo": {
+          "description": "Cursor's agentic coding CLI",
+          "name": "cursor-agent",
+          "title": "Cursor CLI",
+          "websiteUrl": "https://cursor.com/cli",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "cursor/auto",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 1,
+  },
+  "cursor-cli/light": {
+    "builtInToolIds": [],
+    "chatUiOverride": undefined,
+    "clientCapabilities": {
+      "elicitation": {},
+      "roots": {},
+    },
+    "computer": {
+      "kind": "personal",
+    },
+    "connectionDefaults": {
+      "headers": {},
+      "requestTimeout": 10000,
+    },
+    "harness": "cursor",
+    "hostCapabilitiesOverride": {},
+    "hostContext": {},
+    "hostStyle": "cursor-cli",
+    "mcpProfile": {
+      "initialize": {
+        "clientInfo": {
+          "description": "Cursor's agentic coding CLI",
+          "name": "cursor-agent",
+          "title": "Cursor CLI",
+          "websiteUrl": "https://cursor.com/cli",
+        },
+        "supportedProtocolVersions": [
+          "2025-11-25",
+        ],
+      },
+      "profileVersion": 1,
+    },
+    "modelId": "cursor/auto",
+    "optionalServerIds": [],
+    "progressiveToolDiscovery": false,
+    "requireToolApproval": false,
+    "respectToolVisibility": true,
+    "serverConnectionOverrides": undefined,
+    "serverIds": [],
+    "systemPrompt": "",
+    "temperature": 1,
+  },
   "cursor/dark": {
     "builtInToolIds": [],
     "chatUiOverride": undefined,

@@ -9,6 +9,7 @@ import { useHostCatalog } from "./use-host-catalog";
 import { useWidgetUsageState } from "./use-widget-usage";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "./feature-visibility";
 
 const TOOLS_FETCH_MAX_ATTEMPTS = 3;
@@ -30,7 +31,7 @@ export type ServerToolsDataState = {
  * an in-flight request from a terminal failure.
  */
 export function useServerToolsData(
-  server: ServerWithName | null
+  server: ServerWithName | null,
 ): ServerToolsDataState {
   const isConnected = server?.connectionStatus === "connected";
   const serverName = server?.name;
@@ -62,7 +63,7 @@ export function useServerToolsData(
             // after every attempt has failed.
             retryTimer = setTimeout(
               () => attempt(tries + 1),
-              1000 * (tries + 1)
+              1000 * (tries + 1),
             );
           } else {
             setState({ data: null, status: "failed" });
@@ -86,7 +87,7 @@ export function useServerToolsData(
  * (the detail modal) should call `evaluateAllHosts` directly instead.
  */
 export function useHostCompatReports(
-  server: ServerWithName
+  server: ServerWithName,
 ): HostCompatEvaluation {
   const toolsState = useServerToolsData(server);
   const widgetScan = useWidgetUsageState(server.name, toolsState.data);
@@ -96,6 +97,7 @@ export function useHostCompatReports(
   const catalogState = useHostCatalog();
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
 
   const protocolVersion = server.initializationInfo?.protocolVersion;
   const connectionStatus = server.connectionStatus;
@@ -104,7 +106,7 @@ export function useHostCompatReports(
       toolsState.data,
       widgetUsage,
       { protocolVersion },
-      catalogState?.catalog
+      catalogState?.catalog,
     );
     return {
       ...evaluation,
@@ -121,6 +123,7 @@ export function useHostCompatReports(
       reports: filterReportsByFeatureFlags(evaluation.reports, {
         claudeCode: claudeCodeEnabled,
         codex: codexEnabled,
+        cursorCli: cursorCliEnabled,
       }),
     };
   }, [

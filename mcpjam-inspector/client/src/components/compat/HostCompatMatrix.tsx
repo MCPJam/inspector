@@ -17,6 +17,7 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterProfilesByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 
 type HostColumn = {
@@ -164,6 +165,7 @@ export function HostCompatMatrix({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
   // Live catalog so the column set matches the per-row verdicts (which also
   // recompute on catalogState via useHostCompatReports).
   const catalogState = useHostCatalog();
@@ -172,6 +174,7 @@ export function HostCompatMatrix({
       filterProfilesByFeatureFlags(getHostProfiles(catalogState?.catalog), {
         claudeCode: claudeCodeEnabled,
         codex: codexEnabled,
+        cursorCli: cursorCliEnabled,
       }).map((p) => ({
         id: p.id,
         label: p.label,

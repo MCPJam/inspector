@@ -2331,6 +2331,104 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
     },
+    "cursor-cli": {
+      id: "cursor-cli",
+      label: "Cursor CLI",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1788220800000,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      hostStyle: "cursor-cli",
+      modelId: "cursor/auto",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "cursor",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        roots: {
+          listChanged: true,
+        },
+        elicitation: {},
+      },
+      hostContext: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "cursor-agent",
+            title: "Cursor CLI",
+            websiteUrl: "https://cursor.com/cli",
+          },
+        },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
     codex: {
       id: "codex",
       label: "Codex",
