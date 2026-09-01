@@ -565,13 +565,19 @@ function patchModernClaudeCodeBridgeContent(content: string): string {
 function patchClaudeCodeBridgeContent(content: string): string {
   let patched = content;
 
-  // 1.0.100+ uses the direct turn loop (`mcpToolUseIds` is unique to that
-  // shape). Patch it separately because the older closure-based anchors are
-  // intentionally strict drift alarms.
-  if (
-    patched.includes("mcpToolUseIds") &&
-    patched.includes("const partialBlocks")
-  ) {
+  // Route the CANARY line to its own anchor set. Despite the name, the
+  // `MODERN_*` group below is the canary one: the stable-line anchors are the
+  // `CLAUDE_CODE_BRIDGE_*` group above, and those are what 1.0.100 matches.
+  //
+  // The discriminator is the stream-event call shape — canary passes its
+  // arguments positionally, stable passes a single object. `mcpToolUseIds` and
+  // a `const partialBlocks` binding, which used to gate this, are present on
+  // BOTH lines (stable's reads `state.partialBlocks`), so the pair never
+  // discriminated: every bridge took the canary branch and the stable anchors
+  // were unreachable, which is why a `npm ci` install of the pinned 1.0.100
+  // threw "modern bridge shape changed" while a stale canary node_modules
+  // passed.
+  if (patched.includes("handleStreamEvent(msg.event,")) {
     return patchModernClaudeCodeBridgeContent(patched);
   }
 
