@@ -5,9 +5,11 @@ import {
   EVAL_BASH_TOOL_NAME,
 } from "../built-in-tools/sandbox-bash";
 import {
+  DEFAULT_COMMAND_TIMEOUT_S,
   MAX_COMMAND_TIMEOUT_S,
   type BashRunner,
 } from "../computers/run-command";
+import { TimeoutError } from "e2b";
 
 // The sandbox bash tool binds directly to a KNOWN sandbox id (no control-plane
 // reserve/sandbox-info) — exercise it with an injectable runner. The
@@ -90,12 +92,31 @@ describe("buildEvalBashTool", () => {
       // there holding them. Recording that as never-delivered is the dangerous
       // direction: it is the signal read before deciding a credential was never
       // exposed and needs no rotation.
+      //
+      // The vendor's real `TimeoutError`, not a plain one: the implementation
+      // branches on `instanceof`, so a plain Error would land in the generic
+      // failure path and this test would claim a timeout it never exercised.
       const { result, onSecretEnvDelivered } = await runWith(
         dispatching(async () => {
-          throw new Error("command timed out");
+          throw new TimeoutError("timed out");
         }),
       );
-      expect(result).toMatchObject({ error: expect.any(String) });
+      expect(result).toMatchObject({
+        error: `Command timed out after ${DEFAULT_COMMAND_TIMEOUT_S}s.`,
+      });
+      expect(onSecretEnvDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it("stamps when a NON-timeout failure follows dispatch", async () => {
+      // The other post-dispatch branch: the values are in the box either way.
+      const { result, onSecretEnvDelivered } = await runWith(
+        dispatching(async () => {
+          throw new Error("boom");
+        }),
+      );
+      expect(result).toMatchObject({
+        error: "Command failed to run in the sandbox.",
+      });
       expect(onSecretEnvDelivered).toHaveBeenCalledTimes(1);
     });
 
