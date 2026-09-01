@@ -63,9 +63,27 @@ export class McpjamApiError extends Error {
 	}
 }
 
-/** @param {string} value */
+/**
+ * Strip trailing slashes from an origin, in LINEAR time.
+ *
+ * This was `.replace(/\/+$/, "")`, which is a polynomial-ReDoS shape: the `+`
+ * is greedy and `$` can fail, so the engine retries from every start position
+ * and the cost is quadratic in the run of slashes. Measured on this repo, an
+ * input of 60k slashes followed by one other character took ~3 SECONDS; the
+ * scan below takes microseconds.
+ *
+ * The regex predates this change — CodeQL surfaced it because a new caller
+ * reached it — but a base URL arrives from caller options and the environment,
+ * and a config value is not a reason to keep a quadratic scan on the request
+ * path. Fixed at the sink, so every caller of `getConfig` gets it.
+ *
+ * @param {string} value
+ */
 function trimOrigin(value) {
-	return String(value || "").replace(/\/+$/, "");
+	const text = String(value || "");
+	let end = text.length;
+	while (end > 0 && text[end - 1] === "/") end -= 1;
+	return text.slice(0, end);
 }
 
 /**
