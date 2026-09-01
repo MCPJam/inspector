@@ -377,6 +377,55 @@ describe("PlaywrightWebMcpSession screencast", () => {
     await h.session.setScreencast(false);
     expect(h.cdp.methods()).not.toContain("Page.stopScreencast");
   });
+
+  it("lets a stop that lands mid-start win", async () => {
+    // Two clients can hold one session, and a pane that unmounts while its own
+    // enable is still in flight sends the disable right behind it.
+    let releaseStart: (() => void) | undefined;
+    const h = await started();
+    const originalSend = h.cdp.send.bind(h.cdp);
+    // The command goes out immediately and only its REPLY is held. Delaying
+    // the send itself would be testing this stub's ordering rather than the
+    // session's — CDP writes when asked and answers when it answers.
+    h.cdp.send = async (method: string, params?: unknown) => {
+      const sent = originalSend(method, params);
+      if (method === "Page.startScreencast") {
+        await new Promise<void>((resolve) => {
+          releaseStart = resolve;
+        });
+      }
+      return sent;
+    };
+
+    const starting = h.session.setScreencast(true);
+    await vi.waitFor(() => expect(releaseStart).toBeTypeOf("function"));
+    const stopping = h.session.setScreencast(false);
+    releaseStart!();
+
+    // The start reports FALSE, because by the time it returned the stream had
+    // been withdrawn. Answering `true` here would tell its caller to sit and
+    // wait for frames that are not coming.
+    expect(await starting).toBe(false);
+    expect(await stopping).toBe(false);
+    // Both commands reached the browser, in the order they were asked for: one
+    // CDP session, so Chromium ends stopped rather than in whichever state the
+    // promises happened to settle in.
+    expect(
+      h.cdp
+        .methods()
+        .filter((method) => method.startsWith("Page.st"))
+        .filter(
+          (method) =>
+            method === "Page.startScreencast" ||
+            method === "Page.stopScreencast",
+        ),
+    ).toEqual(["Page.startScreencast", "Page.stopScreencast"]);
+
+    // And nothing is left believing it is streaming: a later frame is acked
+    // (Chromium gates on that) but published nowhere.
+    h.cdp.emit("Page.screencastFrame", screencastFrame("after"));
+    expect(h.frames).toHaveLength(0);
+  });
 });
 
 describe("PlaywrightWebMcpSession input", () => {
