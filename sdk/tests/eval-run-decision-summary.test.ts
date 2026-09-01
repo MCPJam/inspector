@@ -971,8 +971,11 @@ describe("the human renderer", () => {
     const text = formatEvalRunDecisionSummary({
       ...base,
       verdict: "verdictFromTheFuture" as unknown as typeof base.verdict,
-      verdictSource: "sourceFromTheFuture" as unknown as typeof base.verdictSource,
-      undecided: { reason: "reasonFromTheFuture" } as unknown as typeof base.undecided,
+      verdictSource:
+        "sourceFromTheFuture" as unknown as typeof base.verdictSource,
+      undecided: {
+        reason: "reasonFromTheFuture",
+      } as unknown as typeof base.undecided,
     });
     expect(text).toContain("verdictFromTheFuture");
     expect(text).toContain("sourceFromTheFuture");
