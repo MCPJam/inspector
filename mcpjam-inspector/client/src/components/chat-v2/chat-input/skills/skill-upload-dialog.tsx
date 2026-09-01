@@ -282,7 +282,9 @@ export function SkillUploadDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isCloud ? "Add to library" : "Upload Skill"}</DialogTitle>
+          <DialogTitle>
+            {isCloud ? "Add to library" : "Upload Skill"}
+          </DialogTitle>
           <DialogDescription>
             {source?.kind === "cloud" ? (
               <>
