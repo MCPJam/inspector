@@ -1310,6 +1310,10 @@ describe("eval run polling operations", () => {
     expect(description).toContain(
       "authorizes proposing a change to the server under test"
     );
+    // The full 29-reason vocabulary does not belong in a tool description; it
+    // belongs where an agent already fetches reference material. Named here so
+    // the pointer cannot be dropped while the skill stays served.
+    expect(description).toContain("user-value-chain-glossary");
     // And the phrase that would make a client render a spend warning on a
     // read-only operation (mcp/tests/platformTools.test.ts ties it to
     // `risk: "spend"`, which a read must never declare).
