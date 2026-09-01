@@ -98,6 +98,16 @@ export interface StartSessionOptions {
    * older server that has never heard of it behaves exactly as it does today.
    */
   display?: "window" | "in-app";
+  /**
+   * A Chromium surface the client has already mounted, for the server to
+   * attach to instead of launching a browser.
+   *
+   * Only ever set inside the desktop app, and only alongside `display:
+   * "in-app"` — the server refuses every other combination. Omitted otherwise,
+   * so a server that has never heard of the field starts an ordinary in-app
+   * session and the client renders the frame-stream pane it is handed.
+   */
+  webContentsId?: number;
 }
 
 interface WebMcpInspectorState {
@@ -140,7 +150,10 @@ interface WebMcpInspectorState {
    * project's MCPJam computer and needs `projectId`, because that is the
    * computer being reserved and billed.
    */
-  startSession(url: string, options?: StartSessionOptions): Promise<void>;
+  startSession(
+    url: string,
+    options?: StartSessionOptions,
+  ): Promise<string | undefined>;
   closeSession(): Promise<void>;
   sendCommand(command: WebMcpCommand): Promise<unknown>;
   invokeTool(toolKey: string, input: Record<string, unknown>): Promise<void>;
@@ -780,14 +793,26 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             // unknown field lands on exactly the same behaviour it would have
             // chosen anyway.
             ...(options?.display === "in-app" ? { display: "in-app" } : {}),
+            // Omitted unless the caller mounted a surface. An older server
+            // strips the unknown field and answers with a `frame-stream`
+            // session, which the pane renders — a graceful degrade rather than
+            // a failed start.
+            ...(options?.webContentsId !== undefined
+              ? { webContentsId: options.webContentsId }
+              : {}),
           }),
         });
         if (!result.ok) {
           set({ starting: false, error: result.error });
-          return;
+          return undefined;
         }
         set({ session: result.data, starting: false });
         connect(result.data.sessionId);
+        // Returned so a caller can tell ITS session apart from whatever the
+        // store holds later. An async caller that reads `session` after its
+        // await sees whichever session is current, which is not necessarily
+        // the one it just created.
+        return result.data.sessionId;
       },
 
       async closeSession() {

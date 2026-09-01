@@ -54,9 +54,18 @@ env:
 
 jobs:
   upsert-preview:
+    # Dependabot PRs are excluded for the same reason as fork PRs: GitHub
+    # hands Dependabot-triggered runs the Dependabot secret store, not the
+    # Actions one, so RAILWAY_API_TOKEN and BACKEND_PREVIEW_DISPATCH_TOKEN
+    # arrive empty and the job dies on `BACKEND_PREVIEW_DISPATCH_TOKEN
+    # cannot access MCPJam/mcpjam-backend (HTTP 401)`. That is not a
+    # failure anyone can fix on the PR — it made every Dependabot PR show a
+    # red X that had nothing to do with the bump, which is how a real
+    # breakage hides in plain sight.
     if: >
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     # Newer pushes cancel older upsert/sync runs for the same PR. Prevents
     # the "commit A's sync clobbers commit B's env vars" race the audit
@@ -630,9 +639,13 @@ jobs:
             });
 
   destroy-preview:
+    # Must mirror upsert-preview's exclusions exactly: a PR that never got
+    # an environment has nothing to destroy, and the teardown would fail on
+    # the same empty token.
     if: >
       github.event_name == 'pull_request' &&
       github.event.action == 'closed' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     # Same group as upsert so closing a PR cancels any in-flight upsert
     # for that PR; destroy runs last.

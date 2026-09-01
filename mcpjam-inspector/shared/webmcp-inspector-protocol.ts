@@ -79,9 +79,13 @@ export type WebMcpSessionStatus =
   | "closed";
 
 /**
- * How the viewer sees (and drives) the browser. V1 ships `native-window` only;
- * the other two exist so adding them later is a provider change, not a protocol
- * change.
+ * How the viewer sees (and drives) the browser.
+ *
+ * Adding a kind here is a PROVIDER change, never a consumer change — which
+ * only holds if consumers branch exhaustively. The client does (see
+ * `viewportBehaviour` in `WebmcpInspectorTab.tsx`, whose `satisfies never`
+ * makes the next addition a compile error rather than a silent fall-through to
+ * "a browser window is open on this machine").
  */
 export type WebMcpViewportTransport =
   /** A real window on the viewer's own machine; they drive it directly. */
@@ -98,7 +102,36 @@ export type WebMcpViewportTransport =
    * appears, and any click landing in that moment is scaled against the wrong
    * box.
    */
-  | { kind: "frame-stream"; width: number; height: number };
+  | { kind: "frame-stream"; width: number; height: number }
+  /**
+   * A REAL Chromium surface, embedded in the desktop app, that the CLIENT owns.
+   *
+   * The inversion is the whole point. Every other kind describes a browser the
+   * server started and the client observes; this one describes a browser the
+   * client mounted and the server merely ATTACHED to. So it carries no
+   * dimensions (the element is laid out by CSS and resizes with the window), it
+   * is never screencast (there is nothing to encode — the pixels are already
+   * on the viewer's screen), and it is never driven by forwarded input (the
+   * surface receives the viewer's real mouse and keyboard natively). A client
+   * that treated it like `frame-stream` would ask for an encoder nobody reads
+   * and deliver every click twice.
+   */
+  | { kind: "electron-webview" };
+
+/**
+ * The Electron session partition every embedded WebMCP surface runs in.
+ *
+ * Named here, in the file both halves already import, because it is enforced
+ * at THREE points that must agree exactly: the client's `<webview partition>`
+ * attribute, the main process's `will-attach-webview` guard, and the server
+ * provider's check that the `webContents` it was handed is really one of ours.
+ * Three string literals would drift; one constant cannot.
+ *
+ * `persist:` on purpose — the local inspector's stance everywhere else is a
+ * persistent profile, because a developer inspecting their own site should not
+ * have to sign in again on every session.
+ */
+export const WEBMCP_WEBVIEW_PARTITION = "persist:webmcp-inspector";
 
 export interface WebMcpSessionPublic {
   sessionId: string;

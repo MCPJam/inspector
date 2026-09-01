@@ -374,12 +374,24 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // retained one would be handed over as though it were live.
     const stopped = runtime.hub.buffered();
     expect(stopped.filter((event) => event.type === "frame")).toHaveLength(0);
-    // The timeline is untouched by any of it.
-    expect(
-      stopped
-        .filter((event) => event.type === "activity")
-        .map((event) => event.entry.kind),
-    ).toEqual(streamingKinds);
+    // The timeline is untouched by any of it: every entry that was there
+    // before the stop is still there, in the same order.
+    //
+    // A PREFIX rather than an equality, and the difference is a real race
+    // rather than a nicety. `streamingKinds` was sampled the moment a frame
+    // arrived after the reload — but the reloaded page re-registers its tools
+    // asynchronously, in however many batches Chromium happens to deliver, and
+    // the two 750ms sleeps above give it 1.5 seconds to add more. Demanding
+    // equality asserts that a live browser stopped doing anything at all,
+    // which is not a property this test is about and not one the code
+    // provides. What the stop must not do is LOSE or REORDER an entry, and
+    // that is what this checks.
+    const stoppedKinds = stopped
+      .filter((event) => event.type === "activity")
+      .map((event) => event.entry.kind);
+    expect(stoppedKinds.slice(0, streamingKinds.length)).toEqual(
+      streamingKinds,
+    );
 
     await registry.disposeAll();
   }, 60_000);

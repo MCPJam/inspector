@@ -19,6 +19,10 @@ import {
 } from "../../services/webmcp-inspector/provider";
 import { WebMcpQueueFullError } from "../../services/webmcp-inspector/session-runtime";
 import { createBrowserdWebMcpProvider } from "../../services/webmcp-inspector/browserd-provider";
+import {
+  createElectronWebviewProvider,
+  WebMcpWebviewAttachError,
+} from "../../services/webmcp-inspector/electron-webview-provider";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
@@ -46,6 +50,13 @@ import {
  * The browser opens as a real window on the machine running the inspector: the
  * developer drives their own page directly, and this API is the instrument
  * panel beside it, not a remote control for it.
+ *
+ * One session shape inverts that. Inside the desktop app the client can mount
+ * a real Chromium surface itself and pass its `webContentsId` here; the server
+ * then ATTACHES to a browser it did not start, and disposing detaches without
+ * destroying anything. The field is optional on purpose — an older server
+ * strips it and starts an ordinary in-app session, so a newer client degrades
+ * rather than fails.
  */
 
 // Tear down live browsers on process shutdown (idempotent).
@@ -99,6 +110,17 @@ const startSchema = z.object({
    * makes for everybody.
    */
   display: z.enum(["window", "in-app"]).optional(),
+  /**
+   * A `<webview>` the desktop app's renderer has already mounted, to attach to
+   * instead of launching a browser.
+   *
+   * OPTIONAL, and the whole compatibility story lives in that: an older server
+   * strips the field and starts an ordinary in-app (frame-stream) session, so a
+   * newer client degrades to the previous experience rather than failing. It is
+   * also never inferred — the id is a fact only the client can know, and the
+   * checks below refuse it anywhere it could not be true.
+   */
+  webContentsId: z.number().int().positive().optional(),
 });
 
 /**
@@ -230,6 +252,12 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   if (error instanceof WebMcpToolGoneError) {
     return c.json({ error: error.message, code: "tool-gone" }, 409);
   }
+  if (error instanceof WebMcpWebviewAttachError) {
+    // 400, not 500: the id the client sent no longer names a surface we can
+    // attach to (its pane unmounted, or devtools took the debugger slot). The
+    // request was malformed by the time it arrived, and the fix is the client's.
+    return c.json({ error: error.message, code: "webview-attach-failed" }, 400);
+  }
   reportRouteFailure("[webmcp] unhandled route error", error, {
     source: "mcp.webmcp-inspector",
     hop: "mcpjam_internal",
@@ -259,7 +287,7 @@ webmcpInspector.post("/sessions", async (c) => {
       400,
     );
   }
-  const { url, transport, projectId, display } = parsed.data;
+  const { url, transport, projectId, display, webContentsId } = parsed.data;
 
   if (display === "in-app" && transport === "hosted") {
     // Refused rather than silently downgraded. A hosted browser already has a
@@ -277,7 +305,36 @@ webmcpInspector.post("/sessions", async (c) => {
   }
 
   let provider;
-  if (transport === "hosted") {
+  if (webContentsId !== undefined) {
+    // Both refusals are 400s that name what the caller got wrong, because both
+    // describe a request that could never be honoured rather than a server that
+    // failed to honour it.
+    if (process.env.ELECTRON_APP !== "true") {
+      return c.json(
+        {
+          error:
+            "The embedded browser surface only exists inside the MCPJam desktop app.",
+          code: "electron-only",
+        },
+        400,
+      );
+    }
+    if (display !== "in-app") {
+      // A surface the client mounted IS the in-app view. Honouring a window
+      // request with it would report a transport whose pane the client is not
+      // rendering, and the person would watch an empty box beside a browser
+      // that never opened.
+      return c.json(
+        {
+          error:
+            'An embedded browser surface is the in-app view; ask for `display: "in-app"` or omit the surface.',
+          code: "webview-display-mismatch",
+        },
+        400,
+      );
+    }
+    provider = createElectronWebviewProvider({ webContentsId });
+  } else if (transport === "hosted") {
     // Every refusal below is a 4xx with a code the UI can explain, never a
     // 500: each one is a thing the person can actually fix (turn the feature
     // on, pick a project, sign in).

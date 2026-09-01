@@ -620,6 +620,44 @@ describe("webmcp inspector store", () => {
     });
   });
 
+  it("carries a mounted surface's id, and omits the field without one", async () => {
+    // `mockImplementation`, not `mockResolvedValue`, for the reason the frames
+    // test above spells out: a Response body reads once, so a shared instance
+    // would leave the SECOND start with an empty body and a `{}` session —
+    // and this test would still pass, because it reads the request bodies
+    // rather than the sessions they produced.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => new Response(JSON.stringify(SESSION), { status: 201 }),
+      );
+    await useWebmcpInspectorStore
+      .getState()
+      .startSession("https://shop.test/", {
+        display: "in-app",
+        webContentsId: 7,
+      });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
+      url: "https://shop.test/",
+      display: "in-app",
+      webContentsId: 7,
+    });
+    expect(useWebmcpInspectorStore.getState().session).toEqual(SESSION);
+
+    await useWebmcpInspectorStore
+      .getState()
+      .startSession("https://shop.test/", { display: "in-app" });
+    // Omitted, not sent as null or 0: an older server strips the unknown field
+    // and starts an ordinary in-app session, which is the graceful degrade.
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
+      url: "https://shop.test/",
+      display: "in-app",
+    });
+    // The half the body-sharing bug hid: the second start produced a real
+    // session, not the `{}` an unreadable body would have left behind.
+    expect(useWebmcpInspectorStore.getState().session).toEqual(SESSION);
+  });
+
   it("sends an input batch as one command, and nothing for an empty one", async () => {
     await openSession();
     const fetchSpy = vi

@@ -421,6 +421,49 @@ describe("WebmcpInspectorTab — viewport", () => {
     }
   });
 
+  it("does not record a paint for a pane that unmounted before the frame", async () => {
+    localStorage.setItem("webmcp:frame-stats", "1");
+    resetFrameStatsFlagForTests();
+    const frames: Array<() => void> = [];
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        frames.push(() => cb(0));
+        return frames.length;
+      });
+    try {
+      stubViewportActions({ screencastAccepted: true });
+      const view = render(<WebmcpInspectorTab />);
+      await act(async () => {});
+      await act(async () => {
+        useWebmcpInspectorStore.setState({
+          liveFrame: liveFrame("data:image/jpeg;base64,paint"),
+        });
+      });
+
+      const image = screen.getByAltText("Live view of the inspected page");
+      Object.defineProperty(image, "currentSrc", {
+        value: "data:image/jpeg;base64,paint",
+        configurable: true,
+      });
+      await act(async () => {
+        fireEvent.load(image);
+      });
+
+      // The screen goes away between the decode and the frame that would have
+      // shown it. Nothing was painted, so nothing should be recorded.
+      view.unmount();
+      await act(async () => {
+        frames.forEach((run) => run());
+      });
+      expect(frameStatsReport().captureToPaint.n).toBe(0);
+    } finally {
+      raf.mockRestore();
+      localStorage.removeItem("webmcp:frame-stats");
+      resetFrameStatsFlagForTests();
+    }
+  });
+
   it("leaves a native-window session view-only", async () => {
     useWebmcpInspectorStore.setState({
       liveFrame: liveFrame("data:image/jpeg;base64,paint"),
