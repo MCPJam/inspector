@@ -493,21 +493,35 @@ test.describe("WebMCP viewport frame stream", () => {
       await expect
         .poll(() => socket!.frames.length, { timeout: 20_000 })
         .toBeGreaterThan(0);
+      // Let the page finish loading and settle once, so what follows is not
+      // measuring the difference between a half-painted page and a whole one.
+      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+
+      // Scroll, which is the gesture this whole trade is about: motion the
+      // stream carries at its own quality, and then a page at rest showing
+      // text somebody is going to read.
+      await command(token, sessionId, {
+        type: "input",
+        events: [{ kind: "wheel", x: 400, y: 300, deltaX: 0, deltaY: 400 }],
+      });
+      await expect
+        .poll(() => socket!.frames.length, { timeout: 10_000 })
+        .toBeGreaterThan(0);
+      await sleep(500);
       const streamedCount = socket.frames.length;
       const streamed = socket.frames.at(-1)!;
 
-      // Long enough for the page's own paints to stop and the quiet window to
-      // pass. The fixture never repaints, so anything arriving now is a still
-      // — or the repaint Chromium produces to satisfy the capture, which is
-      // dropped as redundant before it reaches this socket.
+      // The fixture never repaints on its own, so anything arriving now is the
+      // still — or the repaint Chromium produces to satisfy the capture, which
+      // is dropped as redundant before it reaches this socket.
       await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
       expect(
         socket.frames.length,
         "a still after the page settled",
       ).toBeGreaterThan(streamedCount);
 
-      // Same picture, more bytes. Taken as the largest frame that arrived
-      // after the page settled rather than as the last one, so a build that
+      // The same scrolled page, in more bytes. Taken as the largest frame that
+      // arrived after it settled rather than as the last one, so a build that
       // answers a capture with one extra repaint does not turn this into a
       // flake — what must hold is that the sharp still got through.
       const settled = socket.frames.slice(streamedCount);
