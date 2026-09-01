@@ -116,6 +116,15 @@ export function parseVars(block) {
 
     decl += ch;
   }
+
+  // An unmatched `(` would keep every following `;` inside the value, quietly
+  // swallowing the rest of the block into one declaration. Making the `;`
+  // paren-aware fixed a truncation bug by opening this one, so it is checked
+  // rather than trusted: CSS values always balance, and a block where they do
+  // not is malformed input, not a value.
+  if (parens !== 0) {
+    throw new Error("Unterminated parentheses in tokens.css");
+  }
   flush();
 
   return out;
