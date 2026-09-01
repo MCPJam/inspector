@@ -10,7 +10,7 @@ import {
   isPresetHostId,
 } from "../host-compare-presets";
 
-const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 describe("host-compare-presets", () => {
   it("builds one preset host + subject per catalog host, in catalog order", () => {
@@ -66,6 +66,38 @@ describe("host-compare-presets", () => {
     expect(subjects[hostId]?.config.hostStyle).toBe("slack");
     expect(subjects[hostId]?.config.mcpProfile).toEqual(
       catalog.hostsById.slack.mcpProfile,
+    );
+  });
+
+  it("uses the web deployment stamp only for MCPJam", () => {
+    const catalog = clone(bundledHostCompatCatalog()) as HostCompatCatalog;
+    const catalogMcpjamVerifiedAt = 1_000;
+    const catalogSlackVerifiedAt = 2_000;
+    const deployedAt = 3_000;
+    catalog.hostsById.mcpjam.verifiedAt = catalogMcpjamVerifiedAt;
+    catalog.hostsById.slack.verifiedAt = catalogSlackVerifiedAt;
+
+    const { subjects } = buildPresetCompareEntries(catalog, {
+      mcpjamWebDeployedAt: deployedAt,
+    });
+
+    expect(subjects[`${PRESET_HOST_ID_PREFIX}mcpjam`]?.verifiedAt).toBe(
+      deployedAt,
+    );
+    expect(subjects[`${PRESET_HOST_ID_PREFIX}slack`]?.verifiedAt).toBe(
+      catalogSlackVerifiedAt,
+    );
+  });
+
+  it("uses the catalog date when no production deployment stamp exists", () => {
+    const catalog = clone(bundledHostCompatCatalog()) as HostCompatCatalog;
+    const catalogVerifiedAt = 1_000;
+    catalog.hostsById.mcpjam.verifiedAt = catalogVerifiedAt;
+
+    const { subjects } = buildPresetCompareEntries(catalog);
+
+    expect(subjects[`${PRESET_HOST_ID_PREFIX}mcpjam`]?.verifiedAt).toBe(
+      catalogVerifiedAt,
     );
   });
 });

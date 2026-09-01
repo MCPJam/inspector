@@ -6,6 +6,7 @@ import {
   getCatalogTemplate,
   type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
+import { MCPJAM_WEB_DEPLOYED_AT } from "@/generated/mcpjam-web-deployed-at";
 
 /**
  * Static host profiles surfaced in Host Compare so a user can compare against
@@ -32,6 +33,23 @@ export interface PresetCompareEntries {
 
 interface PresetCompareOptions {
   excludedTemplateIds?: ReadonlySet<string>;
+  mcpjamWebDeployedAt?: number | null;
+}
+
+function resolveVerifiedAt(
+  hostId: string,
+  catalogVerifiedAt: number | undefined,
+  mcpjamWebDeployedAt: number | null,
+): number | undefined {
+  if (
+    hostId !== "mcpjam" ||
+    mcpjamWebDeployedAt === null ||
+    !Number.isFinite(mcpjamWebDeployedAt) ||
+    mcpjamWebDeployedAt <= 0
+  ) {
+    return catalogVerifiedAt;
+  }
+  return mcpjamWebDeployedAt;
 }
 
 /**
@@ -41,10 +59,12 @@ interface PresetCompareOptions {
  */
 export function buildPresetCompareEntries(
   catalog: HostCompatCatalog,
-  options: PresetCompareOptions = {}
+  options: PresetCompareOptions = {},
 ): PresetCompareEntries {
   const hosts: HostListItem[] = [];
   const subjects: Record<string, HostComparisonSubject> = {};
+  const mcpjamWebDeployedAt =
+    options.mcpjamWebDeployedAt ?? MCPJAM_WEB_DEPLOYED_AT;
 
   for (const host of getCatalogHosts(catalog)) {
     if (options.excludedTemplateIds?.has(host.id)) continue;
@@ -85,7 +105,11 @@ export function buildPresetCompareEntries(
       hostName: host.label,
       hostStyle: config.hostStyle,
       configHashShort: host.id,
-      verifiedAt: host.verifiedAt,
+      verifiedAt: resolveVerifiedAt(
+        host.id,
+        host.verifiedAt,
+        mcpjamWebDeployedAt,
+      ),
       config,
     };
   }
