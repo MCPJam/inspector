@@ -825,22 +825,40 @@ describe("bootstrap recipes are auth-independent", () => {
       const ra = await a.getBootstrap!();
       const rb = await b.getBootstrap!();
 
+      // ORDER MATTERS, and it is the whole value of this block. Every value in
+      // `auth()` varies by suffix, so a leaked credential makes the two runs
+      // DIFFER — meaning the equality assertions below would throw first, on a
+      // multi-kilobyte tree diff, and a scan placed after them could never run.
+      // Scanned after the fact it is also unfalsifiable: if equality passed,
+      // the two runs are identical and no suffix-varying value can be present.
+      //
+      // So: scan first, each run against its OWN credentials, and name the
+      // VARIABLE rather than printing its value.
+      // `commands` is `{ command: string }[]`, not `string[]` — spreading it
+      // straight into the join stringifies each entry as "[object Object]" and
+      // makes the scan blind to command TEXT, which is exactly where a
+      // credential passed as an argument would sit.
+      const emitted = (r: typeof ra) =>
+        [
+          ...r.commands.map((c) => c.command),
+          ...r.files.map((f) => `${f.path}\n${f.content}`),
+        ].join("\n");
+      for (const [output, creds] of [
+        [emitted(ra), auth("one")],
+        [emitted(rb), auth("two")],
+      ] as const) {
+        for (const [name, value] of Object.entries(creds)) {
+          expect(output, `${id} bootstrap embeds ${name}`).not.toContain(value);
+        }
+      }
+
+      // The backstop: catches anything else that varies with auth, including a
+      // credential DERIVED into some form the literal scan above cannot see.
       // `hashBootstrap` is not exported, so compare exactly what it hashes.
       expect(rb.harnessId).toBe(ra.harnessId);
       expect(rb.bootstrapDir).toBe(ra.bootstrapDir);
       expect(rb.commands).toEqual(ra.commands);
       expect(rb.files).toEqual(ra.files);
-
-      // The equality above already implies this — a credential in the output
-      // would make the two runs differ — but state it directly so a failure
-      // says WHICH secret leaked instead of dumping two large file trees.
-      const emitted = [
-        ...ra.commands,
-        ...ra.files.map((f) => `${f.path}\n${f.content}`),
-      ].join("\n");
-      for (const value of Object.values(auth("one"))) {
-        expect(emitted, `${id} bootstrap embeds ${value}`).not.toContain(value);
-      }
     });
   }
 
