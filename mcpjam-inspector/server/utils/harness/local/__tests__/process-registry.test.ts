@@ -2,7 +2,10 @@ import { mkdtemp, mkdir, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { supportsOwnershipProof, readProcessBirthIdentity } from "../process-identity.js";
+import {
+  supportsOwnershipProof,
+  readProcessBirthIdentity,
+} from "../process-identity.js";
 import {
   forgetProcess,
   listProcessRecords,
@@ -21,7 +24,7 @@ let scripts: string;
 const realHome = process.env.HOME;
 
 function record(
-  overrides: Partial<LocalHarnessProcessRecord> = {}
+  overrides: Partial<LocalHarnessProcessRecord> = {},
 ): LocalHarnessProcessRecord {
   return {
     sessionId: "s-x",
@@ -50,7 +53,7 @@ beforeAll(async () => {
   await mkdir(scripts, { recursive: true });
   await writeFile(
     join(scripts, "idle.js"),
-    "console.log('ready');setInterval(()=>{},1000);"
+    "console.log('ready');setInterval(()=>{},1000);",
   );
 });
 
@@ -67,62 +70,80 @@ describe("the durable record", () => {
   it("round-trips and updates lifecycle state", async () => {
     await recordProcess(record({ sessionId: "s-round" }));
     await updateLifecycleState("s-round", "suspended");
-    const stored = (await listProcessRecords()).find((r) => r.sessionId === "s-round");
+    const stored = (await listProcessRecords()).find(
+      (r) => r.sessionId === "s-round",
+    );
     expect(stored?.lifecycleState).toBe("suspended");
   });
 
   it("replaces a record for the same session rather than accumulating", async () => {
     await recordProcess(record({ sessionId: "s-dup", rootPid: 10 }));
     await recordProcess(record({ sessionId: "s-dup", rootPid: 11 }));
-    const stored = (await listProcessRecords()).filter((r) => r.sessionId === "s-dup");
+    const stored = (await listProcessRecords()).filter(
+      (r) => r.sessionId === "s-dup",
+    );
     expect(stored).toHaveLength(1);
     expect(stored[0]!.rootPid).toBe(11);
   });
 });
 
 describe("the janitor", () => {
-  it("will not reclaim records owned by a supervisor that is still alive", async () => {
-    // A foreign nonce means "another supervisor made this", NOT "that
-    // supervisor is gone". A second Inspector window must not kill the first's
-    // live sessions.
-    await recordProcess(
-      record({
+  it.skipIf(!canOwnProcesses)(
+    "will not reclaim records owned by a supervisor that is still alive",
+    async () => {
+      // A foreign nonce means "another supervisor made this", NOT "that
+      // supervisor is gone". A second Inspector window must not kill the first's
+      // live sessions.
+      await recordProcess(
+        record({
+          sessionId: "s-other-live",
+          supervisorPid: process.pid,
+          supervisorBirthIdentity:
+            (await readProcessBirthIdentity(process.pid)) ?? "linux:0",
+        }),
+      );
+      const results = await reclaimAbandonedProcesses({
+        liveNonce: "sup_live",
+      });
+      expect(results).toContainEqual({
         sessionId: "s-other-live",
-        supervisorPid: process.pid,
-        supervisorBirthIdentity:
-          (await readProcessBirthIdentity(process.pid)) ?? "linux:0",
-      })
-    );
-    const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
-    expect(results).toContainEqual({
-      sessionId: "s-other-live",
-      outcome: "skipped-live-supervisor",
-    });
-    expect(
-      (await listProcessRecords()).find((r) => r.sessionId === "s-other-live")
-    ).toBeDefined();
-    await forgetProcess("s-other-live");
-  });
+        outcome: "skipped-live-supervisor",
+      });
+      expect(
+        (await listProcessRecords()).find(
+          (r) => r.sessionId === "s-other-live",
+        ),
+      ).toBeDefined();
+      await forgetProcess("s-other-live");
+    },
+  );
 
-  it("treats a record with no recorded owner as still-owned", async () => {
-    // Written before supervisor liveness was recorded: we cannot prove the
-    // owner exited, so it is left alone rather than reclaimed on a guess.
-    const legacy = record({ sessionId: "s-legacy" });
-    delete (legacy as { supervisorPid?: number }).supervisorPid;
-    delete (legacy as { supervisorBirthIdentity?: string })
-      .supervisorBirthIdentity;
-    await recordProcess(legacy);
-    const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
-    expect(results).toContainEqual({
-      sessionId: "s-legacy",
-      outcome: "skipped-live-supervisor",
-    });
-    await forgetProcess("s-legacy");
-  });
+  it.skipIf(!canOwnProcesses)(
+    "treats a record with no recorded owner as still-owned",
+    async () => {
+      // Written before supervisor liveness was recorded: we cannot prove the
+      // owner exited, so it is left alone rather than reclaimed on a guess.
+      const legacy = record({ sessionId: "s-legacy" });
+      delete (legacy as { supervisorPid?: number }).supervisorPid;
+      delete (legacy as { supervisorBirthIdentity?: string })
+        .supervisorBirthIdentity;
+      await recordProcess(legacy);
+      const results = await reclaimAbandonedProcesses({
+        liveNonce: "sup_live",
+      });
+      expect(results).toContainEqual({
+        sessionId: "s-legacy",
+        outcome: "skipped-live-supervisor",
+      });
+      await forgetProcess("s-legacy");
+    },
+  );
 
   it("leaves the live supervisor's own sessions alone", async () => {
     const nonce = mintSupervisorNonce();
-    await recordProcess(record({ sessionId: "s-mine", supervisorNonce: nonce }));
+    await recordProcess(
+      record({ sessionId: "s-mine", supervisorNonce: nonce }),
+    );
     const results = await reclaimAbandonedProcesses({ liveNonce: nonce });
     expect(results).toContainEqual({
       sessionId: "s-mine",
@@ -134,31 +155,33 @@ describe("the janitor", () => {
   it.skipIf(!canOwnProcesses)(
     "drops a record whose process is simply gone, and cleans its state",
     async () => {
-    const sessionStateDir = join(
-      base,
-      ".mcpjam",
-      "harness-local",
-      "sessions",
-      "s-gone"
-    );
-    await mkdir(sessionStateDir, { recursive: true });
-    await writeFile(join(sessionStateDir, "leftover"), "x");
-    // A pid that has certainly exited: this test's own throwaway child.
-    await recordProcess(
-      record({
-        sessionId: "s-gone",
-        rootPid: 2_147_480_000,
-        sessionStateDir,
-      })
-    );
-      const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
+      const sessionStateDir = join(
+        base,
+        ".mcpjam",
+        "harness-local",
+        "sessions",
+        "s-gone",
+      );
+      await mkdir(sessionStateDir, { recursive: true });
+      await writeFile(join(sessionStateDir, "leftover"), "x");
+      // A pid that has certainly exited: this test's own throwaway child.
+      await recordProcess(
+        record({
+          sessionId: "s-gone",
+          rootPid: 2_147_480_000,
+          sessionStateDir,
+        }),
+      );
+      const results = await reclaimAbandonedProcesses({
+        liveNonce: "sup_live",
+      });
       expect(results).toContainEqual({
         sessionId: "s-gone",
         outcome: "already-gone",
       });
       expect(await listProcessRecords()).toHaveLength(0);
       await expect(readdir(sessionStateDir)).rejects.toThrow();
-    }
+    },
   );
 
   it.skipIf(!canOwnProcesses)(
@@ -191,24 +214,29 @@ describe("the janitor", () => {
           sessionId: "s-reused",
           rootPid: handle.pid,
           processBirthIdentity: "linux:1",
-        })
+        }),
       );
 
-      const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
-      expect(results).toContainEqual({ sessionId: "s-reused", outcome: "not-owned" });
+      const results = await reclaimAbandonedProcesses({
+        liveNonce: "sup_live",
+      });
+      expect(results).toContainEqual({
+        sessionId: "s-reused",
+        outcome: "not-owned",
+      });
       // The stranger is untouched…
       expect(await readProcessBirthIdentity(handle.pid)).toBe(realIdentity);
       // …and the record survives, because dropping it would erase the only
       // evidence an operator has.
       expect(
-        (await listProcessRecords()).find((r) => r.sessionId === "s-reused")
+        (await listProcessRecords()).find((r) => r.sessionId === "s-reused"),
       ).toBeDefined();
 
       await sup.stopSession("s-live");
       await handle.kill();
       await forgetProcess("s-reused");
     },
-    20_000
+    20_000,
   );
 
   it.skipIf(!canOwnProcesses)(
@@ -235,7 +263,7 @@ describe("the janitor", () => {
       // would rightly leave it alone; rewriting the owner to a pid that cannot
       // be running is what makes this the abandoned-tree case it claims to be.
       const stored = (await listProcessRecords()).find(
-        (r) => r.sessionId === "s-orphan"
+        (r) => r.sessionId === "s-orphan",
       );
       expect(stored).toBeDefined();
       await recordProcess({
@@ -255,10 +283,10 @@ describe("the janitor", () => {
       });
       expect(await readProcessBirthIdentity(handle.pid)).toBeNull();
       expect(
-        (await listProcessRecords()).find((r) => r.sessionId === "s-orphan")
+        (await listProcessRecords()).find((r) => r.sessionId === "s-orphan"),
       ).toBeUndefined();
     },
-    20_000
+    20_000,
   );
 
   it("cannot be turned into an arbitrary-delete primitive by a corrupt record", async () => {
@@ -270,7 +298,7 @@ describe("the janitor", () => {
         sessionId: "s-evil",
         rootPid: 2_147_480_001,
         sessionStateDir: outside,
-      })
+      }),
     );
     await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
     // The record is dropped (its process is gone), but the directory outside
@@ -289,7 +317,7 @@ describe("the janitor", () => {
       outcome: "skipped-unprovable",
     });
     expect(
-      (await listProcessRecords()).find((r) => r.sessionId === "s-win")
+      (await listProcessRecords()).find((r) => r.sessionId === "s-win"),
     ).toBeDefined();
   });
 });

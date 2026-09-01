@@ -46,7 +46,10 @@ describe("parseLinuxProcStat", () => {
 
   it("survives a comm containing spaces and parens", () => {
     const raw = RUNNING_STAT.replace("(node)", "(my (odd) name)");
-    expect(parseLinuxProcStat(raw)).toEqual({ state: "S", starttime: "998877" });
+    expect(parseLinuxProcStat(raw)).toEqual({
+      state: "S",
+      starttime: "998877",
+    });
   });
 
   it("returns null for anything that is not a stat line", () => {
@@ -59,7 +62,7 @@ describe("parseLinuxProcStat", () => {
 describe("parseDarwinPsLine", () => {
   it("splits state, the five-token start time, and the full argv", () => {
     expect(
-      parseDarwinPsLine("S     Mon Sep  1 01:00:00 2026 /usr/local/bin/node\n")
+      parseDarwinPsLine("S     Mon Sep  1 01:00:00 2026 /usr/local/bin/node\n"),
     ).toEqual({
       // Whitespace-normalized: `ps` space-pads a single-digit day, and an
       // identity that changed with the padding would be a worse discriminator,
@@ -76,8 +79,8 @@ describe("parseDarwinPsLine", () => {
     // a supervised bridge's argv carries its session's own paths.
     expect(
       parseDarwinPsLine(
-        "S Mon Sep  1 01:00:00 2026 /usr/bin/node /bundle/bridge.mjs --workdir /w/a"
-      )?.command
+        "S Mon Sep  1 01:00:00 2026 /usr/bin/node /bundle/bridge.mjs --workdir /w/a",
+      )?.command,
     ).toBe("/usr/bin/node /bundle/bridge.mjs --workdir /w/a");
   });
 
@@ -86,8 +89,8 @@ describe("parseDarwinPsLine", () => {
     // does not assume `comm` is one token — which it is not for an app bundle.
     expect(
       parseDarwinPsLine(
-        "Ss   Mon Sep  1 01:00:00 2026 /Applications/My App.app/Contents/MacOS/My App"
-      )
+        "Ss   Mon Sep  1 01:00:00 2026 /Applications/My App.app/Contents/MacOS/My App",
+      ),
     ).toEqual({
       state: "Ss",
       lstart: "Mon Sep 1 01:00:00 2026",
@@ -99,12 +102,12 @@ describe("parseDarwinPsLine", () => {
     // macOS decorates state with modifiers: `Ss`, `S+`, `R<`. The parser keeps
     // them; `readDarwinBirthIdentity` is what looks at charAt(0) to decide
     // whether the state is a dead one.
-    expect(parseDarwinPsLine("Ss+   Mon Sep  1 01:00:00 2026 /bin/x")?.state).toBe(
-      "Ss+"
-    );
-    expect(parseDarwinPsLine("Z     Mon Sep  1 01:00:00 2026 /bin/x")?.state).toBe(
-      "Z"
-    );
+    expect(
+      parseDarwinPsLine("Ss+   Mon Sep  1 01:00:00 2026 /bin/x")?.state,
+    ).toBe("Ss+");
+    expect(
+      parseDarwinPsLine("Z     Mon Sep  1 01:00:00 2026 /bin/x")?.state,
+    ).toBe("Z");
   });
 
   it("returns null for empty or truncated output", () => {
@@ -140,8 +143,8 @@ describe.skipIf(!supportsOwnershipProof())("readProcessBirthIdentity", () => {
       expect(parsed).not.toBeNull();
       expect(parsed!.state).not.toBe("Z");
       expect(await readProcessBirthIdentity(process.pid)).toBe(
-        `linux:${parsed!.starttime}`
+        `linux:${parsed!.starttime}`,
       );
-    }
+    },
   );
 });

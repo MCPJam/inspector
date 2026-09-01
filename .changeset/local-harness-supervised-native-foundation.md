@@ -18,8 +18,9 @@ must not — so the translator recognizes only the exact pinned shapes, turns th
 into structured operations, and rejects everything else. There is no shell
 parser and no `shell: true`. It also remaps the adapters' `.harness-bootstrap`
 directory, which the framework resolves inside the user's workspace, onto a
-digest-verified managed bundle, so a vendor CLI's dependency graph never lands
-in somebody's checkout. Separately, the vendor bridges bind `0.0.0.0`; on a
+digest-verified managed bundle — both the commands and the recipe *files*, which
+the framework writes through the session's file API — so a vendor CLI's
+dependency graph never lands in somebody's checkout. Separately, the vendor bridges bind `0.0.0.0`; on a
 laptop that publishes an agent control channel to the local network, so the
 provider waits for the bridge to listen on loopback and then proves it is not
 also reachable through a non-loopback address, stopping the session if it is.

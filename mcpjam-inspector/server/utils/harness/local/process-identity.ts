@@ -28,6 +28,22 @@ import { readFile } from "node:fs/promises";
 /** Opaque, comparable string identifying "this exact process instance". */
 export type ProcessBirthIdentity = string;
 
+/**
+ * What a liveness probe actually learned.
+ *
+ * The three states are kept apart because collapsing them is a safety bug in
+ * both directions. "Gone" authorizes dropping a durable record and reporting a
+ * session stopped; "unknown" — a `ps` timeout, an unreadable `/proc`, a
+ * platform with no primitive — authorizes neither, and must never be mistaken
+ * for it. An earlier draft returned `null` for both, which meant a probe
+ * failure could report a live tree as stopped and let the janitor reclaim a
+ * healthy supervisor's sessions.
+ */
+export type ProcessProbe =
+  | { state: "alive"; identity: ProcessBirthIdentity }
+  | { state: "gone" }
+  | { state: "unknown"; reason: string };
+
 const PS_TIMEOUT_MS = 3_000;
 
 /**
@@ -39,7 +55,7 @@ const PS_TIMEOUT_MS = 3_000;
  * bites. `null` means "not a stat line we understand".
  */
 export function parseLinuxProcStat(
-  raw: string
+  raw: string,
 ): { state: string; starttime: string } | null {
   const close = raw.lastIndexOf(")");
   if (close === -1) return null;
@@ -75,17 +91,27 @@ function isDeadState(state: string): boolean {
   return state === "Z" || state === "X" || state === "x";
 }
 
-async function readLinuxBirthIdentity(
-  pid: number
-): Promise<ProcessBirthIdentity | null> {
+async function probeLinux(pid: number): Promise<ProcessProbe> {
+  let raw: string;
   try {
-    const parsed = parseLinuxProcStat(await readFile(`/proc/${pid}/stat`, "utf8"));
-    if (parsed === null) return null;
-    if (isDeadState(parsed.state)) return null;
-    return `linux:${parsed.starttime}`;
-  } catch {
-    return null;
+    raw = await readFile(`/proc/${pid}/stat`, "utf8");
+  } catch (error) {
+    // ENOENT is the kernel saying there is no such process. Anything else —
+    // EACCES, EIO, a procfs that is not mounted — is a failure to LOOK, and
+    // reporting that as "gone" would authorize a cleanup we have not earned.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ESRCH") return { state: "gone" };
+    return {
+      state: "unknown",
+      reason: `/proc read failed (${code ?? "unknown"})`,
+    };
   }
+  const parsed = parseLinuxProcStat(raw);
+  if (parsed === null) {
+    return { state: "unknown", reason: "unparseable /proc stat line" };
+  }
+  if (isDeadState(parsed.state)) return { state: "gone" };
+  return { state: "alive", identity: `linux:${parsed.starttime}` };
 }
 
 /**
@@ -116,54 +142,109 @@ async function readLinuxBirthIdentity(
  * and both the zombie branch and this parsing are worth locking down.
  */
 export function parseDarwinPsLine(
-  raw: string
+  raw: string,
 ): { state: string; lstart: string; command: string } | null {
   const line = raw.trim();
   if (line.length === 0) return null;
-  const tokens = line.split(/\s+/);
-  // state + 5 lstart tokens, then the command and its arguments.
-  if (tokens.length < 6) return null;
-  const state = tokens[0]!;
-  const lstart = tokens.slice(1, 6).join(" ");
-  const command = tokens.slice(6).join(" ");
+  // Anchored positionally: state, then exactly five lstart tokens, then the
+  // command and its arguments as a RAW substring. Splitting and rejoining the
+  // command would collapse runs of whitespace, so two executable paths that
+  // differ only in spacing would present the same identity — and this value
+  // exists precisely to tell two processes apart.
+  const match =
+    /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([\s\S]+)$/.exec(line);
+  if (match === null) return null;
+  const state = match[1]!;
+  const lstart = [match[2], match[3], match[4], match[5], match[6]].join(" ");
+  const command = match[7]!;
   return { state, lstart, command };
 }
 
-async function readDarwinBirthIdentity(
-  pid: number
-): Promise<ProcessBirthIdentity | null> {
-  const stdout = await new Promise<string | null>((resolve) => {
+async function probeDarwin(pid: number): Promise<ProcessProbe> {
+  const result = await new Promise<
+    | { ok: true; stdout: string }
+    | { ok: false; exitCode: number | null; reason: string }
+  >((resolve) => {
     execFile(
       "/bin/ps",
       ["-o", "state=,lstart=,command=", "-p", String(pid)],
-      { timeout: PS_TIMEOUT_MS, maxBuffer: 16 * 1024, encoding: "utf8", env: {} },
-      (error, out) => resolve(error ? null : typeof out === "string" ? out : null)
+      {
+        timeout: PS_TIMEOUT_MS,
+        maxBuffer: 16 * 1024,
+        encoding: "utf8",
+        env: {},
+      },
+      (error, out) => {
+        if (!error) {
+          resolve({ ok: true, stdout: typeof out === "string" ? out : "" });
+          return;
+        }
+        const err = error as NodeJS.ErrnoException & {
+          code?: number | string;
+          killed?: boolean;
+        };
+        resolve({
+          ok: false,
+          // `ps` exits 1 when no process matches — that IS an answer. A kill
+          // (timeout) or a spawn failure is not.
+          exitCode: typeof err.code === "number" ? err.code : null,
+          reason: err.killed
+            ? "ps timed out"
+            : `ps failed (${String(err.code ?? "unknown")})`,
+        });
+      },
     );
   });
-  if (stdout === null) return null;
-  const parsed = parseDarwinPsLine(stdout);
-  if (parsed === null) return null;
-  if (isDeadState(parsed.state.charAt(0))) return null;
-  return `darwin:${parsed.lstart}|${parsed.command}`;
+
+  if (!result.ok) {
+    if (result.exitCode === 1) return { state: "gone" };
+    return { state: "unknown", reason: result.reason };
+  }
+  const parsed = parseDarwinPsLine(result.stdout);
+  if (parsed === null) {
+    // A successful `ps` with no row is the same answer as exit 1.
+    return result.stdout.trim().length === 0
+      ? { state: "gone" }
+      : { state: "unknown", reason: "unparseable ps output" };
+  }
+  if (isDeadState(parsed.state.charAt(0))) return { state: "gone" };
+  return {
+    state: "alive",
+    identity: `darwin:${parsed.lstart}|${parsed.command}`,
+  };
+}
+
+/** Probe a pid, distinguishing gone from unprovable. */
+export async function probeProcess(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<ProcessProbe> {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return { state: "unknown", reason: "implausible pid" };
+  }
+  if (platform === "linux") return probeLinux(pid);
+  if (platform === "darwin") return probeDarwin(pid);
+  return { state: "unknown", reason: `no liveness primitive on ${platform}` };
 }
 
 /**
- * Read the kernel's birth identity for a live pid, or null when the process is
- * gone or the platform cannot answer.
+ * The birth identity of a LIVE pid, or null.
+ *
+ * A convenience over `probeProcess` for the one caller that only needs the
+ * identity of a process it just started. Anything making a cleanup decision
+ * must use `probeProcess` instead, so it can tell "gone" from "cannot tell".
  */
 export async function readProcessBirthIdentity(
   pid: number,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): Promise<ProcessBirthIdentity | null> {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (platform === "linux") return readLinuxBirthIdentity(pid);
-  if (platform === "darwin") return readDarwinBirthIdentity(pid);
-  return null;
+  const probe = await probeProcess(pid, platform);
+  return probe.state === "alive" ? probe.identity : null;
 }
 
 /** Does this platform support the ownership proof the supervisor requires? */
 export function supportsOwnershipProof(
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   return platform === "linux" || platform === "darwin";
 }
@@ -177,13 +258,34 @@ export function supportsOwnershipProof(
 export async function isSameProcess(
   pid: number,
   expected: ProcessBirthIdentity,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): Promise<boolean> {
-  const live = await readProcessBirthIdentity(pid, platform);
-  return live !== null && live === expected;
+  const probe = await probeProcess(pid, platform);
+  return probe.state === "alive" && probe.identity === expected;
 }
 
 export type TreeSignal = "SIGTERM" | "SIGKILL";
+
+/**
+ * Does a process GROUP still have members?
+ *
+ * Signal 0 performs the permission and existence checks without delivering
+ * anything, so this answers "is there anyone left in that group" without
+ * touching them. `EPERM` counts as existing: the group is there, we simply may
+ * not signal it — which is emphatically not "gone".
+ */
+export function processGroupExists(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === "win32" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
 
 /**
  * Signal a whole process GROUP.
@@ -198,7 +300,7 @@ export type TreeSignal = "SIGTERM" | "SIGKILL";
 export function signalProcessGroup(
   pid: number,
   signal: TreeSignal,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -237,15 +339,22 @@ export async function terminateOwnedProcessGroup(args: {
   | { outcome: "graceful" }
   | { outcome: "forced" }
   | { outcome: "escaped" }
+  | { outcome: "unknown"; reason: string }
 > {
   const platform = args.platform ?? process.platform;
   const pollMs = args.pollMs ?? 50;
 
-  if (!(await isSameProcess(args.pid, args.birthIdentity, platform))) {
-    // Either the process exited (its pid may now belong to someone else) or we
-    // cannot prove ownership. Both mean: do not signal.
-    const live = await readProcessBirthIdentity(args.pid, platform);
-    return { outcome: live === null ? "already-gone" : "not-owned" };
+  const initial = await probeProcess(args.pid, platform);
+  if (initial.state === "gone") return { outcome: "already-gone" };
+  if (initial.state === "unknown") {
+    // We could not look. Reporting "already-gone" here would let a caller
+    // announce a stopped session over a tree that may still be running.
+    return { outcome: "unknown", reason: initial.reason };
+  }
+  if (initial.identity !== args.birthIdentity) {
+    // Pid reuse: this is somebody else's process now. Emphatically do not
+    // signal it.
+    return { outcome: "not-owned" };
   }
 
   signalProcessGroup(args.pid, "SIGTERM", platform);
@@ -253,7 +362,7 @@ export async function terminateOwnedProcessGroup(args: {
   const deadline = Date.now() + args.graceMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollMs));
-    if ((await readProcessBirthIdentity(args.pid, platform)) === null) {
+    if ((await probeProcess(args.pid, platform)).state === "gone") {
       return { outcome: "graceful" };
     }
   }
@@ -268,7 +377,7 @@ export async function terminateOwnedProcessGroup(args: {
   const killDeadline = Date.now() + Math.max(args.graceMs, 1_000);
   while (Date.now() < killDeadline) {
     await new Promise((r) => setTimeout(r, pollMs));
-    if ((await readProcessBirthIdentity(args.pid, platform)) === null) {
+    if ((await probeProcess(args.pid, platform)).state === "gone") {
       return { outcome: "forced" };
     }
   }

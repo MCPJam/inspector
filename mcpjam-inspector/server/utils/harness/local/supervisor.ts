@@ -103,9 +103,7 @@ interface LiveProcess {
   killed: boolean;
 }
 
-function bufferedStream(
-  maxBytes: number
-): {
+function bufferedStream(maxBytes: number): {
   stream: ReadableStream<Uint8Array>;
   push: (chunk: Uint8Array) => void;
   close: () => void;
@@ -184,7 +182,7 @@ export class LocalHarnessSupervisor {
     this.platform = opts?.platform ?? process.platform;
     this.supervisorIdentityReady = readProcessBirthIdentity(
       process.pid,
-      this.platform
+      this.platform,
     ).then((identity) => {
       this.supervisorBirthIdentity = identity;
     });
@@ -215,19 +213,19 @@ export class LocalHarnessSupervisor {
    * that cannot satisfy the invariants does not happen.
    */
   async spawnSupervised(
-    request: SupervisedSpawnRequest
+    request: SupervisedSpawnRequest,
   ): Promise<SupervisedProcessHandle> {
     if (!isAbsolute(request.executable)) {
       throw new SupervisorError(
         `refusing to spawn ${JSON.stringify(request.executable)}: the ` +
           `supervisor launches absolute, pre-verified paths only. A bare name ` +
           `would be resolved through a mutable PATH at spawn time, which is ` +
-          `not the runtime consent was granted for.`
+          `not the runtime consent was granted for.`,
       );
     }
     if (!isAbsolute(request.workingDirectory)) {
       throw new SupervisorError(
-        "refusing to spawn with a relative working directory"
+        "refusing to spawn with a relative working directory",
       );
     }
     if (request.role === "root" && !supportsOwnershipProof(this.platform)) {
@@ -235,7 +233,7 @@ export class LocalHarnessSupervisor {
         `local harness execution is not available on ${this.platform}: this ` +
           `Inspector cannot prove ownership of a process tree here, so it ` +
           `could not guarantee that stopping a session stops everything it ` +
-          `started.`
+          `started.`,
       );
     }
     assertArgvAllowed(request.args);
@@ -253,7 +251,7 @@ export class LocalHarnessSupervisor {
       throw new SupervisorError(
         `session ${request.sessionId} already has ` +
           `${bucket.size} supervised processes (ceiling ` +
-          `${this.limits.maxConcurrentProcesses})`
+          `${this.limits.maxConcurrentProcesses})`,
       );
     }
     this.live.set(request.sessionId, bucket);
@@ -280,8 +278,12 @@ export class LocalHarnessSupervisor {
     // slot that the promise, built later, reads or subscribes to.
     const out = bufferedStream(this.limits.maxOutputBytesPerStream);
     const err = bufferedStream(this.limits.maxOutputBytesPerStream);
-    child.stdout?.on("data", (chunk: Buffer) => out.push(new Uint8Array(chunk)));
-    child.stderr?.on("data", (chunk: Buffer) => err.push(new Uint8Array(chunk)));
+    child.stdout?.on("data", (chunk: Buffer) =>
+      out.push(new Uint8Array(chunk)),
+    );
+    child.stderr?.on("data", (chunk: Buffer) =>
+      err.push(new Uint8Array(chunk)),
+    );
 
     let exitResult: { exitCode: number } | null = null;
     let notifyExit: ((result: { exitCode: number }) => void) | null = null;
@@ -305,8 +307,13 @@ export class LocalHarnessSupervisor {
 
     const pid = child.pid;
     if (pid === undefined) {
+      // The slot was reserved before the spawn; release it, or an empty bucket
+      // stays in `live` forever and counts against the session's ceiling.
+      if (bucket.size === 0 && this.live.get(request.sessionId) === bucket) {
+        this.live.delete(request.sessionId);
+      }
       throw new SupervisorError(
-        `the ${request.role} process failed to start (no pid was assigned)`
+        `the ${request.role} process failed to start (no pid was assigned)`,
       );
     }
 
@@ -344,7 +351,12 @@ export class LocalHarnessSupervisor {
         }
       }
       bucket.delete(entry);
-      if (bucket.size === 0) this.live.delete(request.sessionId);
+      // Only ours to remove: `stopSession` may have dropped this key and a
+      // later spawn may have installed a different Set under the same id.
+      // Deleting that one would silently un-supervise live processes.
+      if (bucket.size === 0 && this.live.get(request.sessionId) === bucket) {
+        this.live.delete(request.sessionId);
+      }
     };
 
     // Read the birth identity immediately: this is the value that later proves
@@ -358,23 +370,34 @@ export class LocalHarnessSupervisor {
       await abandon();
       throw new SupervisorError(
         "could not read the process birth identity for the harness root; " +
-          "refusing to run a tree this Inspector cannot prove it owns"
+          "refusing to run a tree this Inspector cannot prove it owns",
       );
     }
 
     if (request.role === "root") {
       await this.supervisorIdentityReady;
+      if (this.supervisorBirthIdentity === null) {
+        // Without our own identity the record cannot say whether its owner is
+        // alive, so the janitor would have to treat it as permanently live and
+        // never reclaim it. A tree nobody can ever clean up is worse than a
+        // refused launch.
+        await abandon();
+        throw new SupervisorError(
+          "this Inspector could not read its own process identity, so a " +
+            "supervised root would be recorded without a reclaimable owner; " +
+            "refusing to start it",
+        );
+      }
       const record: LocalHarnessProcessRecord = {
         sessionId: request.sessionId,
         supervisorNonce: this.nonce,
         supervisorPid: process.pid,
-        ...(this.supervisorBirthIdentity !== null
-          ? { supervisorBirthIdentity: this.supervisorBirthIdentity }
-          : {}),
+        supervisorBirthIdentity: this.supervisorBirthIdentity,
         runtimeId: request.runtimeId,
         rootPid: pid,
         processBirthIdentity: birthIdentity!,
-        processGroupIdentity: this.platform === "win32" ? undefined : String(pid),
+        processGroupIdentity:
+          this.platform === "win32" ? undefined : String(pid),
         startedAt: new Date().toISOString(),
         workspaceGrantId: request.workspaceGrantId,
         targetKind: request.targetKind,
@@ -393,7 +416,7 @@ export class LocalHarnessSupervisor {
           `could not record the supervised process for session ` +
             `${request.sessionId}, so it was terminated rather than left ` +
             `running unrecoverably: ` +
-            `${error instanceof Error ? error.message : String(error)}`
+            `${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -453,7 +476,9 @@ export class LocalHarnessSupervisor {
       clearTimeout(wallClockTimer);
       request.abortSignal?.removeEventListener("abort", onAbort);
       bucket.delete(entry);
-      if (bucket.size === 0) this.live.delete(request.sessionId);
+      if (bucket.size === 0 && this.live.get(request.sessionId) === bucket) {
+        this.live.delete(request.sessionId);
+      }
       if (out.truncated() || err.truncated()) {
         logger.warn("[local-harness] output ceiling reached; output dropped", {
           sessionId: request.sessionId,
@@ -490,7 +515,7 @@ export class LocalHarnessSupervisor {
    * can forget a helper.
    */
   async stopSession(
-    sessionId: string
+    sessionId: string,
   ): Promise<{ stopped: boolean; escaped: number }> {
     const bucket = this.live.get(sessionId);
     await updateLifecycleState(sessionId, "stopping");
@@ -511,9 +536,13 @@ export class LocalHarnessSupervisor {
             graceMs: this.limits.terminationGraceMs,
             platform: this.platform,
           });
-        })
+        }),
       );
-      escaped = outcomes.filter((o) => o?.outcome === "escaped").length;
+      // "unknown" counts with "escaped": both mean we cannot say the tree is
+      // gone, and `stopped` must never be reported on a guess.
+      escaped = outcomes.filter(
+        (o) => o?.outcome === "escaped" || o?.outcome === "unknown",
+      ).length;
       this.live.delete(sessionId);
     }
     if (escaped === 0) {

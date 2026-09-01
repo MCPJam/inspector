@@ -62,7 +62,7 @@ function isUnder(candidate: string, root: string): boolean {
  * pathological input cannot spin here.
  */
 async function resolveExistingAncestor(
-  path: string
+  path: string,
 ): Promise<{ base: string; tail: string[] }> {
   const tail: string[] = [];
   let current = path;
@@ -101,7 +101,7 @@ export interface ConfinementRoots {
  */
 export async function confinePath(
   requested: string,
-  { roots }: ConfinementRoots
+  { roots }: ConfinementRoots,
 ): Promise<string> {
   if (typeof requested !== "string" || requested.length === 0) {
     throw new PathConfinementError("no path was given", String(requested));
@@ -109,7 +109,7 @@ export async function confinePath(
   if (requested.length > MAX_PATH_LENGTH) {
     throw new PathConfinementError(
       `path exceeds ${MAX_PATH_LENGTH} characters`,
-      `${requested.slice(0, 64)}…`
+      `${requested.slice(0, 64)}…`,
     );
   }
   if (requested.includes("\0")) {
@@ -119,13 +119,13 @@ export async function confinePath(
     throw new PathConfinementError(
       "path must be absolute; the local provider does not resolve relative " +
         "paths against an ambient working directory",
-      requested
+      requested,
     );
   }
   if (roots.length === 0) {
     throw new PathConfinementError(
       "no writable root is configured for this session",
-      requested
+      requested,
     );
   }
 
@@ -141,6 +141,6 @@ export async function confinePath(
     "path resolves outside every directory this session was granted. The " +
       "workspace grant and the session state directory are the only roots the " +
       "Inspector file API will touch.",
-    requested
+    requested,
   );
 }

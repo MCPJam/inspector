@@ -23,7 +23,7 @@ let workspace: string;
 const realHome = process.env.HOME;
 
 function binding(
-  overrides: Partial<HarnessGrantBinding> = {}
+  overrides: Partial<HarnessGrantBinding> = {},
 ): HarnessGrantBinding {
   return {
     userId: "user_1",
@@ -69,7 +69,7 @@ describe("workspace grants", () => {
     expect(result.grant.canonicalPath).toBe(workspace);
     const direct = await registerWorkspaceGrant(workspace);
     expect(direct.ok && direct.grant.workspaceGrantId).toBe(
-      result.grant.workspaceGrantId
+      result.grant.workspaceGrantId,
     );
   });
 
@@ -78,7 +78,7 @@ describe("workspace grants", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     await expect(
-      resolveWorkspaceGrant(result.grant.workspaceGrantId)
+      resolveWorkspaceGrant(result.grant.workspaceGrantId),
     ).resolves.toEqual({ ok: true, canonicalPath: workspace });
   });
 
@@ -96,7 +96,9 @@ describe("workspace grants", () => {
       ok: false,
       message: expect.stringMatching(/not a directory/),
     });
-    await expect(registerWorkspaceGrant(join(base, "nope"))).resolves.toMatchObject({
+    await expect(
+      registerWorkspaceGrant(join(base, "nope")),
+    ).resolves.toMatchObject({
       ok: false,
     });
     await expect(registerWorkspaceGrant(base)).resolves.toMatchObject({
@@ -124,13 +126,18 @@ describe("workspace grants", () => {
         workspaces: [{ nonsense: true }],
         harnessGrants: [
           { grantId: "g1", tokenHash: 42, bindingHash: "x", expiresAt: "soon" },
-          { grantId: "g2", tokenHash: "zz", bindingHash: "x", expiresAt: "nope" },
+          {
+            grantId: "g2",
+            tokenHash: "zz",
+            bindingHash: "x",
+            expiresAt: "nope",
+          },
           null,
         ],
-      })
+      }),
     );
     await expect(
-      verifyLocalHarnessGrant("x".repeat(64), binding())
+      verifyLocalHarnessGrant("x".repeat(64), binding()),
     ).resolves.toMatchObject({ ok: false, reason: "absent" });
     await expect(resolveWorkspaceGrant("ws_1")).resolves.toMatchObject({
       ok: false,
@@ -142,7 +149,9 @@ describe("workspace grants", () => {
 describe("harness consent", () => {
   it("verifies a capability against the exact terms it was minted for", async () => {
     const { token } = await grantLocalHarnessConsent(binding());
-    await expect(verifyLocalHarnessGrant(token, binding())).resolves.toMatchObject({
+    await expect(
+      verifyLocalHarnessGrant(token, binding()),
+    ).resolves.toMatchObject({
       ok: true,
     });
   });
@@ -152,20 +161,24 @@ describe("harness consent", () => {
     const { readFile } = await import("node:fs/promises");
     const raw = await readFile(
       join(base, ".mcpjam", "harness-local", "grants.json"),
-      "utf8"
+      "utf8",
     );
     expect(raw).not.toContain(token);
   });
 
   it("rejects an absent or malformed capability", async () => {
-    await expect(verifyLocalHarnessGrant(undefined, binding())).resolves.toMatchObject({
-      reason: "invalid",
-    });
-    await expect(verifyLocalHarnessGrant("short", binding())).resolves.toMatchObject({
+    await expect(
+      verifyLocalHarnessGrant(undefined, binding()),
+    ).resolves.toMatchObject({
       reason: "invalid",
     });
     await expect(
-      verifyLocalHarnessGrant("x".repeat(64), binding())
+      verifyLocalHarnessGrant("short", binding()),
+    ).resolves.toMatchObject({
+      reason: "invalid",
+    });
+    await expect(
+      verifyLocalHarnessGrant("x".repeat(64), binding()),
     ).resolves.toMatchObject({ reason: "absent" });
   });
 
@@ -184,12 +197,15 @@ describe("harness consent", () => {
     ],
   ];
 
-  it.each(drifts)("refuses the same capability under %s", async (_label, drift) => {
-    const { token } = await grantLocalHarnessConsent(binding());
-    await expect(
-      verifyLocalHarnessGrant(token, binding(drift))
-    ).resolves.toMatchObject({ reason: "binding-mismatch" });
-  });
+  it.each(drifts)(
+    "refuses the same capability under %s",
+    async (_label, drift) => {
+      const { token } = await grantLocalHarnessConsent(binding());
+      await expect(
+        verifyLocalHarnessGrant(token, binding(drift)),
+      ).resolves.toMatchObject({ reason: "binding-mismatch" });
+    },
+  );
 
   it("refuses a grant minted under a superseded policy version", async () => {
     const stale = binding({ policyVersion: "local-harness-policy-1999-01-01" });
@@ -206,31 +222,35 @@ describe("harness consent", () => {
       now,
     });
     await expect(
-      verifyLocalHarnessGrant(token, binding(), { now: now + 2_000 })
+      verifyLocalHarnessGrant(token, binding(), { now: now + 2_000 }),
     ).resolves.toMatchObject({ reason: "expired" });
   });
 
   it("rotates rather than accumulating when the same terms are re-consented", async () => {
     const first = await grantLocalHarnessConsent(binding());
     const second = await grantLocalHarnessConsent(binding());
-    await expect(verifyLocalHarnessGrant(first.token, binding())).resolves.toMatchObject(
-      { ok: false }
-    );
     await expect(
-      verifyLocalHarnessGrant(second.token, binding())
+      verifyLocalHarnessGrant(first.token, binding()),
+    ).resolves.toMatchObject({ ok: false });
+    await expect(
+      verifyLocalHarnessGrant(second.token, binding()),
     ).resolves.toMatchObject({ ok: true });
   });
 
   it("revokes by grant id, by binding, and wholesale", async () => {
     const a = await grantLocalHarnessConsent(binding());
     expect(await revokeLocalHarnessGrants({ grantId: a.grantId })).toBe(1);
-    await expect(verifyLocalHarnessGrant(a.token, binding())).resolves.toMatchObject({
+    await expect(
+      verifyLocalHarnessGrant(a.token, binding()),
+    ).resolves.toMatchObject({
       ok: false,
     });
 
     const b = await grantLocalHarnessConsent(binding());
     expect(await revokeLocalHarnessGrants({ binding: binding() })).toBe(1);
-    await expect(verifyLocalHarnessGrant(b.token, binding())).resolves.toMatchObject({
+    await expect(
+      verifyLocalHarnessGrant(b.token, binding()),
+    ).resolves.toMatchObject({
       ok: false,
     });
 

@@ -97,7 +97,7 @@ export async function computeTreeDigest(root: string): Promise<string> {
       if (entry.isSymbolicLink()) {
         throw new Error(
           `managed runtime bundle contains a symlink at ${rel}; bundles are ` +
-            `built as plain files so their digest describes exactly what runs`
+            `built as plain files so their digest describes exactly what runs`,
         );
       }
       if (entry.isDirectory()) {
@@ -107,11 +107,13 @@ export async function computeTreeDigest(root: string): Promise<string> {
       }
       if (!entry.isFile()) {
         throw new Error(
-          `managed runtime bundle contains a non-regular file at ${rel}`
+          `managed runtime bundle contains a non-regular file at ${rel}`,
         );
       }
       if (++files > MAX_BUNDLE_FILES) {
-        throw new Error("managed runtime bundle exceeds the file-count ceiling");
+        throw new Error(
+          "managed runtime bundle exceeds the file-count ceiling",
+        );
       }
       const info = await stat(full);
       bytes += info.size;
@@ -130,7 +132,10 @@ export async function computeTreeDigest(root: string): Promise<string> {
 }
 
 function runtimeIdOf(parts: readonly string[]): string {
-  return `rt_${createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 32)}`;
+  return `rt_${createHash("sha256")
+    .update(parts.join("\u0000"))
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 /**
@@ -264,17 +269,14 @@ export function systemInstallSearchPaths(platform: LocalPlatform): string[] {
     case "linux":
       return ["/usr/local/bin", "/usr/bin", "/bin"];
     case "win32":
-      return [
-        "C:\\Program Files",
-        "C:\\Program Files (x86)",
-      ];
+      return ["C:\\Program Files", "C:\\Program Files (x86)"];
   }
 }
 
 /** Paths a discovered executable must NOT resolve into. */
 function isUntrustedInstallPath(
   canonical: string,
-  forbiddenRoots: readonly string[]
+  forbiddenRoots: readonly string[],
 ): string | null {
   for (const root of forbiddenRoots) {
     if (canonical === root || canonical.startsWith(root + sep)) {
@@ -287,28 +289,41 @@ function isUntrustedInstallPath(
   return null;
 }
 
-/** First dotted version number in a probe line (`claude 1.2.3` → `1.2.3`). */
+/**
+ * The version a probe line reports, INCLUDING any prerelease qualifier.
+ *
+ * Capturing only `x.y.z` would silently read `2.0.0-beta.1` as `2.0.0` and let
+ * a prerelease satisfy a stable minimum. The qualifier is kept so the range
+ * check below can refuse it explicitly.
+ */
 function extractVersion(line: string): string | null {
-  return /(\d+\.\d+\.\d+)/.exec(line)?.[1] ?? null;
+  return /(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(line)?.[1] ?? null;
 }
 
 /**
- * Minimal `>=x.y.z` range check.
+ * Range check for the ONLY grammar a manifest may write: `>=x.y.z`.
  *
- * Deliberately narrow rather than a semver dependency: the manifest is
- * Inspector-owned, so the only range shape that needs supporting is the one it
- * is allowed to write, and anything else fails closed.
+ * Deliberately not a semver dependency, and deliberately not a partial
+ * implementation of one: the manifest is Inspector-owned, so the supported
+ * grammar is a closed set, and every range outside it — every prerelease
+ * version — is refused rather than approximated. `isSupportedVersionRange`
+ * exists so the manifest itself can be validated against the same grammar
+ * instead of failing only at discovery time.
  */
+export function isSupportedVersionRange(range: string): boolean {
+  return /^>=\s*\d+\.\d+\.\d+$/.test(range.trim());
+}
+
 function satisfiesMinimumRange(version: string, range: string): boolean {
   const match = /^>=\s*(\d+)\.(\d+)\.(\d+)$/.exec(range.trim());
   if (!match) return false;
+  // A prerelease is not a released version; accepting one against a stable
+  // minimum would run a build the manifest never approved.
+  if (version.includes("-")) return false;
   const parts = version.split(".").map((n) => Number.parseInt(n, 10));
-  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return false;
-  const min = [
-    Number(match[1]),
-    Number(match[2]),
-    Number(match[3]),
-  ];
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n)))
+    return false;
+  const min = [Number(match[1]), Number(match[2]), Number(match[3])];
   for (let i = 0; i < 3; i += 1) {
     if (parts[i]! > min[i]!) return true;
     if (parts[i]! < min[i]!) return false;
@@ -327,13 +342,13 @@ export interface SystemDiscoveryOptions {
   /** Override for tests; runs the identity probe. */
   probe?: (
     executable: string,
-    args: readonly string[]
+    args: readonly string[],
   ) => Promise<{ stdout: string; exitCode: number }>;
 }
 
 async function defaultProbe(
   executable: string,
-  args: readonly string[]
+  args: readonly string[],
 ): Promise<{ stdout: string; exitCode: number }> {
   return await new Promise((resolvePromise) => {
     // `execFile`, never `exec`: no shell, argv passed structurally, bounded
@@ -354,7 +369,7 @@ async function defaultProbe(
           stdout: typeof stdout === "string" ? stdout : "",
           exitCode: error ? 1 : 0,
         });
-      }
+      },
     );
   });
 }
@@ -367,7 +382,7 @@ async function defaultProbe(
  * how consent ends up bound to a different binary than the one that runs.
  */
 export async function resolveSystemInstall(
-  opts: SystemDiscoveryOptions
+  opts: SystemDiscoveryOptions,
 ): Promise<RuntimeResolution> {
   const { manifest, platform } = opts;
   if (manifest.runtime.source !== "system-install") {
@@ -471,7 +486,10 @@ export async function resolveSystemInstall(
         continue;
       }
 
-      const result = await probe(canonical, policy.vendorIdentityPolicy.probeArgs);
+      const result = await probe(
+        canonical,
+        policy.vendorIdentityPolicy.probeArgs,
+      );
       const line = result.stdout.trim().split("\n")[0] ?? "";
       if (
         result.exitCode !== 0 ||
@@ -488,19 +506,36 @@ export async function resolveSystemInstall(
 
       // [15] The manifest declares a version range; accepting anything whose
       // first line merely matches the identity pattern would ignore it.
-      const version = extractVersion(line);
-      if (version === null || !satisfiesMinimumRange(version, policy.executableVersionRange)) {
+      if (!isSupportedVersionRange(policy.executableVersionRange)) {
         rejections.push({
           status: "system-runtime-identity-mismatch",
           message:
-            `${candidate} reports version ${version ?? "(unparseable)"}, which ` +
+            `the ${manifest.harnessId} manifest declares version range ` +
+            `${JSON.stringify(policy.executableVersionRange)}, which is not ` +
+            `one of the shapes this Inspector evaluates (">=x.y.z")`,
+        });
+        continue;
+      }
+      const version = extractVersion(line);
+      if (
+        version === null ||
+        !satisfiesMinimumRange(version, policy.executableVersionRange)
+      ) {
+        rejections.push({
+          status: "system-runtime-identity-mismatch",
+          message:
+            `${candidate} reports version ${
+              version ?? "(unparseable)"
+            }, which ` +
             `is outside the manifest range ${policy.executableVersionRange}`,
         });
         continue;
       }
 
       const content = await readFile(canonical);
-      const digest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+      const digest = `sha256:${createHash("sha256")
+        .update(content)
+        .digest("hex")}`;
       accepted.push({
         runtimeId: runtimeIdOf([
           "system-install",
@@ -546,7 +581,9 @@ export async function resolveSystemInstall(
         status: "system-runtime-ambiguous",
         message:
           `more than one ${manifest.harnessId} installation is acceptable ` +
-          `(${[...distinct].join(", ")}). Remove or disambiguate them: consent ` +
+          `(${[...distinct].join(
+            ", ",
+          )}). Remove or disambiguate them: consent ` +
           `must name exactly one runtime.`,
       };
     }
@@ -564,7 +601,7 @@ export async function resolveSystemInstall(
  * replacement that happened after the user clicked Allow.
  */
 export async function revalidateRuntime(
-  runtime: ResolvedRuntime
+  runtime: ResolvedRuntime,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     if (runtime.source === "managed-bundle") {
@@ -580,7 +617,9 @@ export async function revalidateRuntime(
       return { ok: true };
     }
     const content = await readFile(runtime.launcherPath);
-    const digest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    const digest = `sha256:${createHash("sha256")
+      .update(content)
+      .digest("hex")}`;
     if (digest !== runtime.digest) {
       return {
         ok: false,

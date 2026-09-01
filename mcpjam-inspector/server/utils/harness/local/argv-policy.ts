@@ -92,7 +92,7 @@ export class ArgvPolicyViolation extends Error {
   constructor(
     message: string,
     rule: "structure" | "capability" | "count",
-    argument: string
+    argument: string,
   ) {
     super(message);
     this.name = "ArgvPolicyViolation";
@@ -106,9 +106,7 @@ function normalizeForCapabilityCheck(arg: string): string[] {
   const eq = lower.indexOf("=");
   // Check the whole argument, and — for `--flag=value` — the flag and the
   // value separately, so a denied value cannot hide behind an allowed flag.
-  return eq === -1
-    ? [lower]
-    : [lower, lower.slice(0, eq), lower.slice(eq + 1)];
+  return eq === -1 ? [lower] : [lower, lower.slice(0, eq), lower.slice(eq + 1)];
 }
 
 /**
@@ -121,42 +119,61 @@ export function assertArgumentAllowed(arg: string): void {
     throw new ArgvPolicyViolation(
       "argv entries must be strings",
       "structure",
-      String(arg)
+      String(arg),
     );
   }
   if (arg.length === 0) {
-    throw new ArgvPolicyViolation(
-      "empty argv entry",
-      "structure",
-      arg
-    );
+    throw new ArgvPolicyViolation("empty argv entry", "structure", arg);
   }
   if (arg.length > MAX_ARG_LENGTH) {
     throw new ArgvPolicyViolation(
       `argv entry exceeds ${MAX_ARG_LENGTH} characters`,
       "structure",
-      `${arg.slice(0, 64)}…`
+      `${arg.slice(0, 64)}…`,
     );
   }
   const forbidden = FORBIDDEN_ARG_CHARS.exec(arg);
   if (forbidden) {
     throw new ArgvPolicyViolation(
-      `argv entry contains shell metacharacter ${JSON.stringify(forbidden[0])} ` +
+      `argv entry contains shell metacharacter ${JSON.stringify(
+        forbidden[0],
+      )} ` +
         `— the supervisor never uses a shell, so this argument was built from ` +
         `a command string rather than structured input`,
       "structure",
-      arg
+      arg,
     );
   }
+  // `--flag=value` is checked against the flag/value table as well: an entry
+  // there is denied in BOTH spellings, so a vendor cannot slip past the
+  // separated-form check simply by using an equals sign.
+  const eq = arg.indexOf("=");
+  if (eq !== -1) {
+    const flag = arg.slice(0, eq).toLowerCase();
+    const value = arg.slice(eq + 1).toLowerCase();
+    if (DENIED_ARGV_FLAG_VALUES[flag]?.includes(value)) {
+      throw new ArgvPolicyViolation(
+        `argv entry ${JSON.stringify(
+          arg,
+        )} requests a value that disables the ` +
+          `vendor permission controls local execution depends on`,
+        "capability",
+        arg,
+      );
+    }
+  }
+
   const candidates = normalizeForCapabilityCheck(arg);
   for (const denied of DENIED_ARGV_CAPABILITIES) {
     if (candidates.includes(denied)) {
       throw new ArgvPolicyViolation(
-        `argv entry ${JSON.stringify(arg)} requests ${JSON.stringify(denied)}, ` +
+        `argv entry ${JSON.stringify(arg)} requests ${JSON.stringify(
+          denied,
+        )}, ` +
           `which disables the vendor permission controls local execution ` +
           `depends on`,
         "capability",
-        arg
+        arg,
       );
     }
   }
@@ -169,7 +186,7 @@ export function assertArgvAllowed(args: readonly string[]): readonly string[] {
     throw new ArgvPolicyViolation(
       `argv has ${args.length} entries (max ${MAX_ARG_COUNT})`,
       "count",
-      ""
+      "",
     );
   }
   for (const arg of args) assertArgumentAllowed(arg);
@@ -183,7 +200,7 @@ export function assertArgvAllowed(args: readonly string[]): readonly string[] {
         `argv requests ${JSON.stringify(`${args[i]} ${args[i + 1]}`)}, which ` +
           `disables the vendor permission controls local execution depends on`,
         "capability",
-        args[i]!
+        args[i]!,
       );
     }
   }

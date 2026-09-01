@@ -77,7 +77,9 @@ export interface VendorIdentityPolicy {
 /** Which SDK permission mode an Inspector profile maps to, per harness. A
  *  profile absent from the map is not offered for that harness. */
 export type PermissionProfileMapping = Readonly<
-  Partial<Record<LocalPermissionProfile, "allow-reads" | "allow-edits" | "allow-all">>
+  Partial<
+    Record<LocalPermissionProfile, "allow-reads" | "allow-edits" | "allow-all">
+  >
 >;
 
 export interface HarnessArgvPolicy {
@@ -119,6 +121,20 @@ export interface LocalHarnessCompatibility {
    * bundle, so a vendor dependency graph never lands in somebody's checkout.
    */
   adapterBootstrapDir: string;
+  /**
+   * The exact files the pinned adapter's bootstrap recipe writes into that
+   * directory, relative to it.
+   *
+   * A closed list, for the same reason `ADAPTER_COMMAND_SHAPES` is one: the
+   * framework applies the recipe by calling `writeTextFile` on the session, so
+   * without this the adapter's dependency manifests and bridge source would be
+   * written straight into the user's checkout — files that are then never even
+   * read, because every reference to them is remapped onto the managed bundle.
+   * Each of these is satisfied from the bundle instead; anything else under the
+   * bootstrap directory fails the session closed, which is the signal that an
+   * adapter upgrade changed its recipe and the manifest needs re-review.
+   */
+  adapterBootstrapFiles: readonly string[];
   /** SHA-256 of the bridge artifact shipped with Inspector. */
   bridgeBundleDigest: string;
 }
@@ -166,6 +182,12 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     isolatedBackends: {},
     lifecycleConformanceVersion: "",
     adapterBootstrapDir: ".harness-bootstrap/claude-code",
+    adapterBootstrapFiles: [
+      "package.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "bridge.mjs",
+    ],
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },
   codex: {
@@ -192,6 +214,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     isolatedBackends: {},
     lifecycleConformanceVersion: "",
     adapterBootstrapDir: ".harness-bootstrap/codex",
+    adapterBootstrapFiles: ["package.json", "pnpm-lock.yaml", "bridge.mjs"],
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },
 };
@@ -207,8 +230,16 @@ export type LocalCompatibilityStatus =
   | "adapter-version-mismatch";
 
 export type LocalCompatibilityResult =
-  | { ok: true; manifest: LocalHarnessCompatibility; permissionMode: "allow-reads" | "allow-edits" | "allow-all" }
-  | { ok: false; status: Exclude<LocalCompatibilityStatus, "ok">; message: string };
+  | {
+      ok: true;
+      manifest: LocalHarnessCompatibility;
+      permissionMode: "allow-reads" | "allow-edits" | "allow-all";
+    }
+  | {
+      ok: false;
+      status: Exclude<LocalCompatibilityStatus, "ok">;
+      message: string;
+    };
 
 export interface LocalCompatibilityQuery {
   harnessId: string;
@@ -235,7 +266,7 @@ export function resolveLocalCompatibility(
   // answer rather than a type error a caller has to cast around.
   manifests: Readonly<
     Partial<Record<string, LocalHarnessCompatibility>>
-  > = LOCAL_HARNESS_MANIFEST
+  > = LOCAL_HARNESS_MANIFEST,
 ): LocalCompatibilityResult {
   // OWN properties only: a `harnessId` off the wire spelled `toString` or
   // `__proto__` would otherwise resolve to an inherited Object property, pass
@@ -243,7 +274,7 @@ export function resolveLocalCompatibility(
   // returning the named refusal this function promises.
   const manifest = Object.prototype.hasOwnProperty.call(
     manifests,
-    query.harnessId
+    query.harnessId,
   )
     ? manifests[query.harnessId]
     : undefined;

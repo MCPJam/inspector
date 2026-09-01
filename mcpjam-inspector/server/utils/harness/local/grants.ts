@@ -88,7 +88,14 @@ export interface HarnessGrantBinding {
   backend?: LocalIsolationBackend;
   runtimeId: string;
   permissionProfile: LocalPermissionProfile;
+  /** The local-harness policy version. Applies to EVERY local target: the argv
+   *  denylist, the environment allowlist, and the permission mapping govern an
+   *  isolated session just as much as a native one. */
   policyVersion: string;
+  /** The isolation policy version. Present only for an isolated target, where
+   *  the backend and its mount/syscall/egress rules are also part of what the
+   *  user was shown. */
+  isolationPolicyVersion?: string;
 }
 
 interface PersistedHarnessGrant {
@@ -127,7 +134,7 @@ function withGrantLock<T>(op: () => Promise<T>): Promise<T> {
   const run = mutationChain.then(op, op);
   mutationChain = run.then(
     () => undefined,
-    () => undefined
+    () => undefined,
   );
   return run;
 }
@@ -152,7 +159,8 @@ export function hashGrantBinding(binding: HarnessGrantBinding): string {
       binding.runtimeId,
       binding.permissionProfile,
       binding.policyVersion,
-    ])
+      binding.isolationPolicyVersion ?? null,
+    ]),
   );
 }
 
@@ -169,16 +177,19 @@ async function readState(): Promise<PersistedState> {
     // whose whole contract is to RETURN a verification result.
     return {
       version: 1,
-      workspaces: (Array.isArray(record.workspaces) ? record.workspaces : [])
-        .filter(
-          (w): w is WorkspaceGrant =>
-            !!w &&
-            typeof w === "object" &&
-            typeof (w as WorkspaceGrant).workspaceGrantId === "string" &&
-            typeof (w as WorkspaceGrant).canonicalPath === "string"
-        ),
-      harnessGrants: (
-        Array.isArray(record.harnessGrants) ? record.harnessGrants : []
+      workspaces: (Array.isArray(record.workspaces)
+        ? record.workspaces
+        : []
+      ).filter(
+        (w): w is WorkspaceGrant =>
+          !!w &&
+          typeof w === "object" &&
+          typeof (w as WorkspaceGrant).workspaceGrantId === "string" &&
+          typeof (w as WorkspaceGrant).canonicalPath === "string",
+      ),
+      harnessGrants: (Array.isArray(record.harnessGrants)
+        ? record.harnessGrants
+        : []
       ).filter((g): g is PersistedHarnessGrant => {
         if (!g || typeof g !== "object") return false;
         const grant = g as PersistedHarnessGrant;
@@ -232,7 +243,10 @@ export async function getLocalMachineId(): Promise<string> {
     try {
       const raw = await readFile(machineFilePath(), "utf8");
       const parsed = JSON.parse(raw) as { machineId?: unknown };
-      if (typeof parsed.machineId === "string" && parsed.machineId.length >= 8) {
+      if (
+        typeof parsed.machineId === "string" &&
+        parsed.machineId.length >= 8
+      ) {
         return parsed.machineId;
       }
     } catch {
@@ -250,8 +264,7 @@ export async function getLocalMachineId(): Promise<string> {
 }
 
 export type WorkspaceGrantResult =
-  | { ok: true; grant: WorkspaceGrant }
-  | { ok: false; message: string };
+  { ok: true; grant: WorkspaceGrant } | { ok: false; message: string };
 
 /**
  * Register a directory the user picked, and return its opaque id.
@@ -263,7 +276,7 @@ export type WorkspaceGrantResult =
  * session-authenticated route — never from a renderer-submitted string.
  */
 export function registerWorkspaceGrant(
-  rawPath: string
+  rawPath: string,
 ): Promise<WorkspaceGrantResult> {
   return withGrantLock(async () => {
     let canonicalPath: string;
@@ -271,7 +284,10 @@ export function registerWorkspaceGrant(
       canonicalPath = await realpath(rawPath);
       const info = await stat(canonicalPath);
       if (!info.isDirectory()) {
-        return { ok: false as const, message: "the selection is not a directory" };
+        return {
+          ok: false as const,
+          message: "the selection is not a directory",
+        };
       }
     } catch (error) {
       return {
@@ -298,7 +314,7 @@ export function registerWorkspaceGrant(
 
     const state = await readState();
     const existing = state.workspaces.find(
-      (w) => w.canonicalPath === canonicalPath
+      (w) => w.canonicalPath === canonicalPath,
     );
     if (existing) return { ok: true as const, grant: existing };
 
@@ -318,11 +334,13 @@ export function registerWorkspaceGrant(
  *  directory still resolves to the SAME place — a workspace replaced by a
  *  symlink after registration is not the workspace that was granted. */
 export async function resolveWorkspaceGrant(
-  workspaceGrantId: string
-): Promise<{ ok: true; canonicalPath: string } | { ok: false; message: string }> {
+  workspaceGrantId: string,
+): Promise<
+  { ok: true; canonicalPath: string } | { ok: false; message: string }
+> {
   const state = await readState();
   const grant = state.workspaces.find(
-    (w) => w.workspaceGrantId === workspaceGrantId
+    (w) => w.workspaceGrantId === workspaceGrantId,
   );
   if (!grant) {
     return { ok: false, message: "unknown workspace grant" };
@@ -339,11 +357,17 @@ export async function resolveWorkspaceGrant(
     }
     const info = await stat(canonical);
     if (!info.isDirectory()) {
-      return { ok: false, message: "the granted workspace is no longer a directory" };
+      return {
+        ok: false,
+        message: "the granted workspace is no longer a directory",
+      };
     }
     return { ok: true, canonicalPath: canonical };
   } catch {
-    return { ok: false, message: "the granted workspace is no longer reachable" };
+    return {
+      ok: false,
+      message: "the granted workspace is no longer reachable",
+    };
   }
 }
 
@@ -364,7 +388,7 @@ export interface MintedHarnessGrant {
  */
 export function grantLocalHarnessConsent(
   binding: HarnessGrantBinding,
-  opts?: { ttlMs?: number; now?: number }
+  opts?: { ttlMs?: number; now?: number },
 ): Promise<MintedHarnessGrant> {
   return withGrantLock(async () => {
     const now = opts?.now ?? Date.now();
@@ -388,7 +412,7 @@ export function grantLocalHarnessConsent(
     // One live grant per binding: re-consenting rotates rather than
     // accumulating capabilities nobody can enumerate.
     state.harnessGrants = state.harnessGrants.filter(
-      (g) => g.bindingHash !== grant.bindingHash
+      (g) => g.bindingHash !== grant.bindingHash,
     );
     state.harnessGrants.push(grant);
     await writeState(state);
@@ -404,7 +428,11 @@ export function grantLocalHarnessConsent(
 
 export type GrantVerification =
   | { ok: true; grantId: string }
-  | { ok: false; reason: "absent" | "expired" | "binding-mismatch" | "invalid"; message: string };
+  | {
+      ok: false;
+      reason: "absent" | "expired" | "binding-mismatch" | "invalid";
+      message: string;
+    };
 
 /**
  * Verify a presented capability against the terms it must have been minted
@@ -414,26 +442,45 @@ export type GrantVerification =
 export async function verifyLocalHarnessGrant(
   token: string | null | undefined,
   binding: HarnessGrantBinding,
-  opts?: { now?: number }
+  opts?: { now?: number },
 ): Promise<GrantVerification> {
   if (!token || token.length < 16 || token.length > 256) {
-    return { ok: false, reason: "invalid", message: "no local harness grant was presented" };
+    return {
+      ok: false,
+      reason: "invalid",
+      message: "no local harness grant was presented",
+    };
   }
-  // A native binding carries the local-harness policy version; an isolated one
-  // carries the ISOLATION policy version, because those are the terms its user
-  // was shown. Either must be current.
-  const expectedPolicy =
-    binding.targetKind === "local-isolated"
-      ? LOCAL_ISOLATION_POLICY_VERSION
-      : LOCAL_HARNESS_POLICY_VERSION;
-  if (binding.policyVersion !== expectedPolicy) {
+  // BOTH policies must be current for an isolated target. The local-harness
+  // policy governs argv, environment, and permission mapping for every local
+  // session; the isolation policy adds the backend's own rules on top. Binding
+  // only one of them would let a change to the other pass unnoticed.
+  if (binding.policyVersion !== LOCAL_HARNESS_POLICY_VERSION) {
     return {
       ok: false,
       reason: "binding-mismatch",
       message:
         `this grant was minted under policy ${binding.policyVersion}; the ` +
-        `current policy is ${expectedPolicy}. The terms changed, ` +
-        `so consent is asked again.`,
+        `current policy is ${LOCAL_HARNESS_POLICY_VERSION}. The terms ` +
+        `changed, so consent is asked again.`,
+    };
+  }
+  if (binding.targetKind === "local-isolated") {
+    if (binding.isolationPolicyVersion !== LOCAL_ISOLATION_POLICY_VERSION) {
+      return {
+        ok: false,
+        reason: "binding-mismatch",
+        message:
+          `this grant was minted under isolation policy ` +
+          `${binding.isolationPolicyVersion ?? "(none)"}; the current ` +
+          `isolation policy is ${LOCAL_ISOLATION_POLICY_VERSION}.`,
+      };
+    }
+  } else if (binding.isolationPolicyVersion !== undefined) {
+    return {
+      ok: false,
+      reason: "binding-mismatch",
+      message: "a native grant must not carry an isolation policy version",
     };
   }
   const bindingHash = hashGrantBinding(binding);
@@ -460,7 +507,8 @@ export async function verifyLocalHarnessGrant(
       return {
         ok: false,
         reason: "expired",
-        message: "the local harness grant expired; consent is attended and short-lived",
+        message:
+          "the local harness grant expired; consent is attended and short-lived",
       };
     }
     return { ok: true, grantId: grant.grantId };
@@ -485,12 +533,12 @@ export function revokeLocalHarnessGrants(selector?: {
       state.harnessGrants = [];
     } else if (selector.grantId) {
       state.harnessGrants = state.harnessGrants.filter(
-        (g) => g.grantId !== selector.grantId
+        (g) => g.grantId !== selector.grantId,
       );
     } else if (selector.binding) {
       const hash = hashGrantBinding(selector.binding);
       state.harnessGrants = state.harnessGrants.filter(
-        (g) => g.bindingHash !== hash
+        (g) => g.bindingHash !== hash,
       );
     }
     const removed = before - state.harnessGrants.length;
@@ -508,7 +556,7 @@ export function pruneExpiredHarnessGrants(now = Date.now()): Promise<number> {
     const state = await readState();
     const before = state.harnessGrants.length;
     state.harnessGrants = state.harnessGrants.filter(
-      (g) => Date.parse(g.expiresAt) > now
+      (g) => Date.parse(g.expiresAt) > now,
     );
     const removed = before - state.harnessGrants.length;
     if (removed > 0) await writeState(state);

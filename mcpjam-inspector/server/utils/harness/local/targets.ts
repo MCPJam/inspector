@@ -46,10 +46,7 @@ export type LocalPlatform = "darwin" | "linux" | "win32";
  *  a backend is advertised only after `isolatedBackends` lists it for the
  *  harness AND its startup escape probes pass. */
 export type LocalIsolationBackend =
-  | "linux-bwrap"
-  | "darwin-seatbelt"
-  | "oci-v1"
-  | "vm-v1";
+  "linux-bwrap" | "darwin-seatbelt" | "oci-v1" | "vm-v1";
 
 /**
  * Inspector's permission intent for a turn, mapped per adapter onto the SDK's
@@ -124,7 +121,7 @@ export type LocalHarnessExecutionTarget = Extract<
 >;
 
 export function isLocalTarget(
-  target: HarnessExecutionTarget
+  target: HarnessExecutionTarget,
 ): target is LocalHarnessExecutionTarget {
   return target.kind === "local-native" || target.kind === "local-isolated";
 }
@@ -153,7 +150,7 @@ export function executionTargetLabel(target: HarnessExecutionTarget): string {
  * OS user.
  */
 export function targetHasHostContainment(
-  target: HarnessExecutionTarget
+  target: HarnessExecutionTarget,
 ): boolean {
   return target.kind === "cloud" || target.kind === "local-isolated";
 }
@@ -161,7 +158,7 @@ export function targetHasHostContainment(
 /** The current platform as a `LocalPlatform`, or null where local execution is
  *  not a supported concept at all. */
 export function currentLocalPlatform(
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): LocalPlatform | null {
   if (platform === "darwin" || platform === "linux" || platform === "win32") {
     return platform;

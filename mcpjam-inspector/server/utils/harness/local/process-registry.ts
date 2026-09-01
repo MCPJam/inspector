@@ -29,7 +29,8 @@ import { join, resolve, sep } from "node:path";
 import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
 import {
-  readProcessBirthIdentity,
+  probeProcess,
+  processGroupExists,
   signalProcessGroup,
   supportsOwnershipProof,
   terminateOwnedProcessGroup,
@@ -37,12 +38,7 @@ import {
 } from "./process-identity.js";
 
 export type LocalHarnessLifecycleState =
-  | "starting"
-  | "running"
-  | "suspended"
-  | "stopping"
-  | "stopped"
-  | "failed";
+  "starting" | "running" | "suspended" | "stopping" | "stopped" | "failed";
 
 export interface LocalHarnessProcessRecord {
   sessionId: string;
@@ -86,51 +82,109 @@ function lockPath(): string {
   return join(localHarnessStateRoot(), "processes.lock");
 }
 
+/**
+ * A lock whose holder is provably dead is broken immediately; the age bound
+ * below is the fallback for a holder we cannot probe (another user, a
+ * platform with no signal). The timeout is deliberately LONGER than the
+ * staleness bound: an earlier draft had it shorter, which meant a lock left by
+ * a crashed Inspector could never be broken by the waiters that needed it —
+ * every mutation, including the crash-recovery sweep itself, would time out
+ * while the lock sat under the staleness threshold.
+ */
 const LOCK_STALE_MS = 30_000;
 const LOCK_POLL_MS = 25;
-const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_TIMEOUT_MS = 45_000;
+
+interface LockFileBody {
+  pid: number;
+  nonce: string;
+  at: number;
+}
+
+async function readLockBody(file: string): Promise<LockFileBody | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    const body = parsed as Partial<LockFileBody>;
+    if (typeof body.pid !== "number" || typeof body.nonce !== "string") {
+      return null;
+    }
+    return { pid: body.pid, nonce: body.nonce, at: Number(body.at) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** Is the process named by a lock file provably gone? */
+function lockHolderProvablyGone(body: LockFileBody | null): boolean {
+  if (body === null) return false;
+  if (body.pid === process.pid) return false;
+  try {
+    process.kill(body.pid, 0);
+    return false; // alive
+  } catch (error) {
+    // EPERM means alive but not ours to signal. Only ESRCH is proof of death.
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
 
 /**
  * Acquire the cross-process registry lock.
  *
  * In-process serialization alone is not enough here: two Inspector instances
- * read-modify-write this same file, so without an exclusive lock one instance's
- * `recordProcess` can be written over the other's — losing the durable record
- * of a tree that is still running, which is precisely the record crash recovery
- * depends on.
+ * read-modify-write this same file, so without an exclusive lock one
+ * instance's `recordProcess` can be written over the other's — losing the
+ * durable record of a tree that is still running, which is precisely the
+ * record crash recovery depends on.
  *
- * `wx` is the atomic primitive (create-or-fail). A lock whose holder died is
- * broken after `LOCK_STALE_MS` so a crash cannot wedge every future session.
+ * `wx` is the atomic primitive (create-or-fail). The lock body carries the
+ * holder's pid and a nonce, so a release can verify the lock is still ITS
+ * lock: an unconditional unlink would let a process whose lock was broken as
+ * stale delete its successor's lock, admitting two writers at once — the exact
+ * lost update this exists to prevent.
  */
 async function acquireFileLock(): Promise<() => Promise<void>> {
   const file = lockPath();
   await mkdir(localHarnessStateRoot(), { recursive: true, mode: 0o700 });
+  const nonce = randomUUID();
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   for (;;) {
     try {
-      await writeFile(file, JSON.stringify({ pid: process.pid, at: Date.now() }), {
-        flag: "wx",
-        mode: 0o600,
-      });
+      await writeFile(
+        file,
+        JSON.stringify({ pid: process.pid, nonce, at: Date.now() }),
+        { flag: "wx", mode: 0o600 },
+      );
       return async () => {
+        const held = await readLockBody(file);
+        if (held?.nonce !== nonce) {
+          // Someone else holds it now — ours was broken as stale. Removing
+          // theirs would put two writers in the critical section.
+          logger.warn(
+            "[local-harness] registry lock was taken over; not releasing",
+          );
+          return;
+        }
         await rm(file, { force: true }).catch(() => {});
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const body = await readLockBody(file);
       const age = await stat(file).then(
         (info) => Date.now() - info.mtimeMs,
-        () => 0
+        () => 0,
       );
-      if (age > LOCK_STALE_MS) {
-        // The holder is gone or wedged. Breaking a stale lock is safer than
-        // refusing every session forever.
-        logger.warn("[local-harness] breaking a stale registry lock", { age });
+      if (lockHolderProvablyGone(body) || age > LOCK_STALE_MS) {
+        logger.warn("[local-harness] breaking an abandoned registry lock", {
+          age,
+          holderGone: lockHolderProvablyGone(body),
+        });
         await rm(file, { force: true }).catch(() => {});
         continue;
       }
       if (Date.now() > deadline) {
         throw new Error(
-          "timed out waiting for the local harness process registry lock"
+          "timed out waiting for the local harness process registry lock",
         );
       }
       await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
@@ -157,7 +211,7 @@ function withRegistryLock<T>(op: () => Promise<T>): Promise<T> {
   const run = mutationChain.then(guarded, guarded);
   mutationChain = run.then(
     () => undefined,
-    () => undefined
+    () => undefined,
   );
   return run;
 }
@@ -180,7 +234,7 @@ async function readRegistry(): Promise<PersistedRegistry> {
     }
     throw new RegistryUnreadableError(
       `the local harness process registry could not be read: ` +
-        `${error instanceof Error ? error.message : String(error)}`
+        `${error instanceof Error ? error.message : String(error)}`,
     );
   }
   let parsed: unknown;
@@ -189,18 +243,18 @@ async function readRegistry(): Promise<PersistedRegistry> {
   } catch {
     throw new RegistryUnreadableError(
       "the local harness process registry is corrupt; refusing to overwrite " +
-        "it, because it may name process trees that are still running"
+        "it, because it may name process trees that are still running",
     );
   }
   if (!parsed || typeof parsed !== "object") {
     throw new RegistryUnreadableError(
-      "the local harness process registry is not an object"
+      "the local harness process registry is not an object",
     );
   }
   const record = parsed as Partial<PersistedRegistry>;
   if (record.version !== 1 || !Array.isArray(record.records)) {
     throw new RegistryUnreadableError(
-      "the local harness process registry has an unrecognized shape"
+      "the local harness process registry has an unrecognized shape",
     );
   }
   return { version: 1, records: record.records };
@@ -224,12 +278,12 @@ export function mintSupervisorNonce(): string {
  *  anything, so a crash in the next millisecond still leaves a cleanable
  *  trace. */
 export function recordProcess(
-  record: LocalHarnessProcessRecord
+  record: LocalHarnessProcessRecord,
 ): Promise<void> {
   return withRegistryLock(async () => {
     const registry = await readRegistry();
     registry.records = registry.records.filter(
-      (r) => r.sessionId !== record.sessionId
+      (r) => r.sessionId !== record.sessionId,
     );
     registry.records.push(record);
     await writeRegistry(registry);
@@ -238,7 +292,7 @@ export function recordProcess(
 
 export function updateLifecycleState(
   sessionId: string,
-  lifecycleState: LocalHarnessLifecycleState
+  lifecycleState: LocalHarnessLifecycleState,
 ): Promise<void> {
   return withRegistryLock(async () => {
     const registry = await readRegistry();
@@ -253,7 +307,9 @@ export function forgetProcess(sessionId: string): Promise<void> {
   return withRegistryLock(async () => {
     const registry = await readRegistry();
     const before = registry.records.length;
-    registry.records = registry.records.filter((r) => r.sessionId !== sessionId);
+    registry.records = registry.records.filter(
+      (r) => r.sessionId !== sessionId,
+    );
     if (registry.records.length !== before) await writeRegistry(registry);
   });
 }
@@ -264,19 +320,30 @@ export async function listProcessRecords(): Promise<
   return (await readRegistry()).records;
 }
 
-/** Is the Inspector process that created this record still running? */
-async function isOwningSupervisorAlive(
+/**
+ * Has the Inspector process that created this record provably exited?
+ *
+ * Only `true` authorizes reclaiming its trees. A probe that could not look —
+ * an unreadable `/proc`, a `ps` timeout, a platform with no primitive — is not
+ * evidence of death, and a record written before these fields existed is not
+ * either; both answer `false`, so the record is left alone.
+ */
+async function owningSupervisorProvablyExited(
   record: LocalHarnessProcessRecord,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
 ): Promise<boolean> {
-  if (record.supervisorPid === undefined) {
-    // Written before this field existed. We cannot prove the owner is gone,
-    // and "cannot prove" never authorizes a kill.
-    return true;
+  if (
+    record.supervisorPid === undefined ||
+    record.supervisorBirthIdentity === undefined
+  ) {
+    return false;
   }
-  if (record.supervisorBirthIdentity === undefined) return true;
-  const live = await readProcessBirthIdentity(record.supervisorPid, platform);
-  return live !== null && live === record.supervisorBirthIdentity;
+  const probe = await probeProcess(record.supervisorPid, platform);
+  if (probe.state === "gone") return true;
+  if (probe.state === "unknown") return false;
+  // Alive, but is it still the SAME Inspector? A reused pid means the original
+  // owner is gone.
+  return probe.identity !== record.supervisorBirthIdentity;
 }
 
 export type JanitorOutcome =
@@ -348,19 +415,9 @@ export function reclaimAbandonedProcesses(args: {
         continue;
       }
 
-      // A foreign nonce means "another supervisor created this" — NOT "that
-      // supervisor is gone". A second Inspector window opened alongside the
-      // first would otherwise reclaim the first's live sessions. Only an owner
-      // we can prove has exited leaves its trees for us to clean up.
-      if (await isOwningSupervisorAlive(record, platform)) {
-        survivors.push(record);
-        results.push({
-          sessionId: record.sessionId,
-          outcome: "skipped-live-supervisor",
-        });
-        continue;
-      }
-
+      // Platform first, so a runner with no liveness primitive reports the
+      // reason it actually has rather than being described as somebody else's
+      // live session.
       if (!supportsOwnershipProof(platform)) {
         survivors.push(record);
         results.push({
@@ -370,8 +427,30 @@ export function reclaimAbandonedProcesses(args: {
         continue;
       }
 
-      const live = await readProcessBirthIdentity(record.rootPid, platform);
-      if (live === null) {
+      // A foreign nonce means "another supervisor created this" — NOT "that
+      // supervisor is gone". A second Inspector window opened alongside the
+      // first would otherwise reclaim the first's live sessions. Only an owner
+      // we can PROVE has exited leaves its trees for us to clean up; a probe
+      // that could not look answers "no" here.
+      if (!(await owningSupervisorProvablyExited(record, platform))) {
+        survivors.push(record);
+        results.push({
+          sessionId: record.sessionId,
+          outcome: "skipped-live-supervisor",
+        });
+        continue;
+      }
+
+      const rootProbe = await probeProcess(record.rootPid, platform);
+      if (rootProbe.state === "unknown") {
+        survivors.push(record);
+        results.push({
+          sessionId: record.sessionId,
+          outcome: "skipped-unprovable",
+        });
+        continue;
+      }
+      if (rootProbe.state === "gone") {
         // The ROOT is gone, but a descendant it spawned can still be running:
         // the process group outlives its leader. Signal the recorded group
         // before dropping the record, otherwise this is the moment the only
@@ -381,14 +460,28 @@ export function reclaimAbandonedProcesses(args: {
         // process-group id is not handed out as a new process's pid while the
         // group has members, so this can only reach the group we recorded. If
         // the group is already empty the signal is a harmless ESRCH.
-        if (record.processGroupIdentity !== undefined) {
+        // Only signal a group the record itself vouches for: a malformed
+        // `processGroupIdentity` is not a licence to signal an arbitrary pid.
+        if (record.processGroupIdentity === String(record.rootPid)) {
           signalProcessGroup(record.rootPid, "SIGKILL", platform);
+          // Give the survivors a moment, then confirm. The record is the only
+          // durable handle on them, so it is not dropped on a hope.
+          await new Promise((r) => setTimeout(r, 200));
+          if (processGroupExists(record.rootPid, platform)) {
+            survivors.push(record);
+            results.push({ sessionId: record.sessionId, outcome: "escaped" });
+            logger.warn(
+              "[local-harness] descendants outlived their root; record kept",
+              { sessionId: record.sessionId },
+            );
+            continue;
+          }
         }
         await removeSessionState(record.sessionStateDir);
         results.push({ sessionId: record.sessionId, outcome: "already-gone" });
         continue;
       }
-      if (live !== record.processBirthIdentity) {
+      if (rootProbe.identity !== record.processBirthIdentity) {
         // Pid reuse. Emphatically do not signal it; keep the record so the
         // mismatch stays visible.
         survivors.push(record);

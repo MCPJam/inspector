@@ -44,7 +44,7 @@ export function resolveNodeLauncher(opts?: {
   const execPath = opts?.execPath ?? process.execPath;
   if (!execPath || !isAbsolute(execPath)) {
     throw new NodeLauncherError(
-      "could not determine an absolute Node executable for the harness bridge"
+      "could not determine an absolute Node executable for the harness bridge",
     );
   }
   const isElectron =

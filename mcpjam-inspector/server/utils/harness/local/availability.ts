@@ -50,7 +50,7 @@ import {
 } from "./runtime-identity.js";
 import {
   currentLocalPlatform,
-  LOCAL_ISOLATION_POLICY_VERSION,
+  LOCAL_HARNESS_POLICY_VERSION,
   type LocalHarnessExecutionTarget,
 } from "./targets.js";
 import { supportsOwnershipProof } from "./process-identity.js";
@@ -59,6 +59,7 @@ export type LocalHarnessUnavailableStatus =
   | "server-disabled"
   | "hosted"
   | "actor-not-eligible"
+  | "machine-identity-unavailable"
   | "machine-mismatch"
   | "ownership-unprovable"
   | "workspace-grant-invalid"
@@ -101,7 +102,7 @@ export interface LocalHarnessActor {
 }
 
 export function isActorEligibleForLocalHarness(
-  actor: LocalHarnessActor
+  actor: LocalHarnessActor,
 ): boolean {
   return (
     !actor.isGuest &&
@@ -134,13 +135,13 @@ export interface LocalHarnessAvailabilityQuery {
 
 function unavailable(
   status: LocalHarnessUnavailableStatus,
-  message: string
+  message: string,
 ): LocalHarnessAvailability {
   return { available: false, status, message };
 }
 
 export async function resolveLocalHarnessAvailability(
-  query: LocalHarnessAvailabilityQuery
+  query: LocalHarnessAvailabilityQuery,
 ): Promise<LocalHarnessAvailability> {
   const hosted = query.hosted ?? HOSTED_MODE;
   const enabled = query.killSwitchEnabled ?? LOCAL_HARNESS_ENABLED;
@@ -149,14 +150,14 @@ export async function resolveLocalHarnessAvailability(
   if (hosted) {
     return unavailable(
       "hosted",
-      "a hosted Inspector never runs a harness on its own machine"
+      "a hosted Inspector never runs a harness on its own machine",
     );
   }
   if (!enabled) {
     return unavailable(
       "server-disabled",
       "local harness execution is disabled on this server " +
-        "(MCPJAM_LOCAL_HARNESS_ENABLED)"
+        "(MCPJAM_LOCAL_HARNESS_ENABLED)",
     );
   }
   if (!isActorEligibleForLocalHarness(query.actor)) {
@@ -164,19 +165,33 @@ export async function resolveLocalHarnessAvailability(
       "actor-not-eligible",
       "local execution requires an attended, signed-in member running their " +
         "own turn. Guests, shared scenario sessions, and swarm-scoped runs " +
-        "run hosted."
+        "run hosted.",
     );
   }
   // A target names the machine it was consented on. Without this check the
   // gate would happily accept one minted for a different installation, and the
   // consent binding below would then be compared against a machine id the
   // caller chose rather than the one this Inspector actually is.
-  const localMachineId = query.localMachineId ?? (await getLocalMachineId());
+  let localMachineId: string;
+  try {
+    localMachineId = query.localMachineId ?? (await getLocalMachineId());
+  } catch (error) {
+    // Minting or reading the machine id touches owner-only local state. If
+    // that fails we cannot say which machine this is, so the gate refuses by
+    // name rather than rejecting out of a function whose contract is to return
+    // a decision.
+    return unavailable(
+      "machine-identity-unavailable",
+      `this Inspector could not establish its local machine identity, so a ` +
+        `machine-scoped consent grant cannot be checked: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (query.target.machineId !== localMachineId) {
     return unavailable(
       "machine-mismatch",
       "this local execution target was granted on a different machine; " +
-        "consent is per-installation and must be granted again here"
+        "consent is per-installation and must be granted again here",
     );
   }
 
@@ -185,7 +200,7 @@ export async function resolveLocalHarnessAvailability(
       "ownership-unprovable",
       `this Inspector cannot prove ownership of a process tree on ${platform}, ` +
         `so it could not guarantee that stopping a session stops everything it ` +
-        `started`
+        `started`,
     );
   }
 
@@ -199,7 +214,7 @@ export async function resolveLocalHarnessAvailability(
       ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
       installedAdapterVersion: query.installedAdapterVersion,
     },
-    query.manifests ?? LOCAL_HARNESS_MANIFEST
+    query.manifests ?? LOCAL_HARNESS_MANIFEST,
   );
   if (!compatibility.ok) {
     return unavailable(compatibility.status, compatibility.message);
@@ -237,7 +252,7 @@ export async function resolveLocalHarnessAvailability(
     return unavailable(
       "runtime-changed",
       "the resolved runtime is not the one this target names; consent is " +
-        "bound to a runtime identity, so it must be re-granted"
+        "bound to a runtime identity, so it must be re-granted",
     );
   }
 
@@ -251,28 +266,19 @@ export async function resolveLocalHarnessAvailability(
     ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
     runtimeId: runtimeResolution.runtime.runtimeId,
     permissionProfile: target.permissionProfile,
-    // An isolated target's terms are its ISOLATION policy — the backend
-    // selection, mount and syscall rules, egress restriction. Binding the
-    // native policy version here instead would leave an isolation rule change
-    // unable to invalidate the grants that depend on it, which is exactly the
-    // separation `targets.ts` documents.
+    // Every local target carries the local-harness policy version, because the
+    // argv denylist, environment allowlist, and permission mapping govern an
+    // isolated session as much as a native one. An isolated target ALSO
+    // carries the isolation policy version, so a change to either invalidates
+    // the grants that depend on it — the separation `targets.ts` documents.
     policyVersion:
       target.kind === "local-native"
         ? target.policyVersion
-        : target.isolationPolicyVersion,
+        : LOCAL_HARNESS_POLICY_VERSION,
+    ...(target.kind === "local-isolated"
+      ? { isolationPolicyVersion: target.isolationPolicyVersion }
+      : {}),
   };
-  if (
-    target.kind === "local-isolated" &&
-    target.isolationPolicyVersion !== LOCAL_ISOLATION_POLICY_VERSION
-  ) {
-    return unavailable(
-      "consent-required",
-      `this grant was minted under isolation policy ` +
-        `${target.isolationPolicyVersion}; the current isolation policy is ` +
-        `${LOCAL_ISOLATION_POLICY_VERSION}. The terms changed, so consent is ` +
-        `asked again.`
-    );
-  }
   const consent = await verifyLocalHarnessGrant(query.grantToken, binding);
   if (!consent.ok) {
     return unavailable("consent-required", consent.message);

@@ -41,9 +41,14 @@ import type {
 } from "@ai-sdk/harness";
 import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
-import { assertBridgeLoopbackOnly, localBridgeUrl } from "./bridge-endpoint.js";
+import {
+  assertBridgeLoopbackOnly,
+  assertBridgePortUnclaimed,
+  localBridgeUrl,
+} from "./bridge-endpoint.js";
 import { confinePath } from "./confine.js";
 import {
+  classifyBootstrapPath,
   translateAdapterCommand,
   type CommandTranslationContext,
   type TranslatedCommand,
@@ -121,7 +126,7 @@ function completedProcess(stdout: string, exitCode = 0) {
  */
 async function collectStreamBytes(
   stream: ReadableStream<Uint8Array>,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
 ): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
@@ -151,19 +156,24 @@ async function collectStreamBytes(
 
 /** Text view of a byte stream — for process output, never for file content. */
 async function collectStream(
-  stream: ReadableStream<Uint8Array>
+  stream: ReadableStream<Uint8Array>,
 ): Promise<string> {
   return new TextDecoder().decode(await collectStreamBytes(stream));
 }
 
 export function createSupervisedLocalHarnessProvider(
-  opts: SupervisedLocalHarnessProviderOptions
+  opts: SupervisedLocalHarnessProviderOptions,
 ): HarnessV1SandboxProvider {
   const syntheticHome = join(opts.sessionStateDir, "home");
+  // The writable half of the adapter's bootstrap directory. The framework
+  // writes a `.bootstrap-<identity>.ok` marker there to skip re-bootstrapping;
+  // ours lives in disposable session state instead of the user's checkout, so
+  // a local session leaves no adapter scaffolding behind.
+  const bootstrapOverlay = join(opts.sessionStateDir, "bootstrap");
 
   const buildSession = async (
     sessionId: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
   ): Promise<HarnessV1NetworkSandboxSession> => {
     // Session state first: the synthetic home must exist before a vendor CLI's
     // first write, and it must be owner-only from the moment it exists rather
@@ -171,6 +181,7 @@ export function createSupervisedLocalHarnessProvider(
     for (const dir of syntheticHomeDirectories(syntheticHome)) {
       await mkdir(dir, { recursive: true, mode: 0o700 });
     }
+    await mkdir(bootstrapOverlay, { recursive: true, mode: 0o700 });
 
     // The two roots the Inspector file API will touch, and nothing else.
     const roots = [opts.sessionStateDir, opts.workspacePath];
@@ -192,9 +203,11 @@ export function createSupervisedLocalHarnessProvider(
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
         opts.workspacePath,
-        opts.manifest.adapterBootstrapDir
+        opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
+      adapterBootstrapFiles: opts.manifest.adapterBootstrapFiles,
+      bootstrapOverlayDir: bootstrapOverlay,
       nodeExecutable: opts.launcher.executable,
       sessionRoot: opts.workspacePath,
       syntheticHome,
@@ -204,6 +217,66 @@ export function createSupervisedLocalHarnessProvider(
       // otherwise check: they are consumed by the child, not by a filesystem
       // call we make.
       confine,
+    };
+
+    /**
+     * Where a read should actually come from.
+     *
+     * The adapter's bootstrap files live in the verified managed bundle, not in
+     * the workspace, so a read of one has to follow the same remap the command
+     * translator applies — otherwise the framework's own `readTextFile` of its
+     * marker, and any read-back of a recipe file, would miss.
+     */
+    const resolveForRead = async (path: string): Promise<string> => {
+      const target = classifyBootstrapPath(path, translationContext);
+      if (target.kind === "bundle-asset") return target.bundlePath;
+      if (target.kind === "session-overlay") return target.overlayPath;
+      return confine(path);
+    };
+
+    /**
+     * Where a write should actually go, or `null` when the verified bundle
+     * already satisfies it.
+     *
+     * A declared bootstrap asset is never written: the bundle holds the copy
+     * that will actually run. It is COMPARED instead, and a difference fails
+     * the session closed — the adapter is telling us its recipe no longer
+     * matches the bundle the manifest pins, which is a manifest review, not
+     * something to paper over by writing a file nothing will read.
+     */
+    const resolveForWrite = async (
+      path: string,
+      bytes: Uint8Array,
+    ): Promise<string | null> => {
+      const target = classifyBootstrapPath(path, translationContext);
+      if (target.kind === "session-overlay") return target.overlayPath;
+      if (target.kind === "workspace") return confine(path);
+
+      let existing: Buffer;
+      try {
+        existing = await readFile(target.bundlePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        throw new Error(
+          `the managed ${opts.harnessId} bundle does not contain ` +
+            `${target.relativePath}, which the pinned adapter's bootstrap ` +
+            `recipe writes. The bundle and the pinned adapter disagree; ` +
+            `refusing rather than installing it into the workspace.`,
+        );
+      }
+      if (!existing.equals(Buffer.from(bytes))) {
+        throw new Error(
+          `the pinned adapter's ${target.relativePath} differs from the copy ` +
+            `in the verified managed bundle. Local sessions run the bundle's ` +
+            `copy, so this session would not be running what the adapter ` +
+            `bootstrapped; refusing until the bundle is rebuilt for this ` +
+            `adapter version.`,
+        );
+      }
+      logger.debug("[local-harness] bootstrap file satisfied by bundle", {
+        file: target.relativePath,
+      });
+      return null;
     };
 
     // Mutated IN PLACE by setPorts. Rebinding a fresh array would leave
@@ -220,7 +293,7 @@ export function createSupervisedLocalHarnessProvider(
       if (!ports.includes(port)) {
         throw new Error(
           `port ${port} is not leased to this session; the local provider ` +
-            `only resolves ports it opened`
+            `only resolves ports it opened`,
         );
       }
     };
@@ -239,20 +312,23 @@ export function createSupervisedLocalHarnessProvider(
       if (!result.ok) {
         throw new Error(
           `refusing to launch: ${result.message}. Local execution is bound to ` +
-            `a runtime identity, so a changed runtime needs fresh consent.`
+            `a runtime identity, so a changed runtime needs fresh consent.`,
         );
       }
     };
 
     /** Session environment plus the adapter's allowlisted per-call additions. */
     const envFor = (
-      supplied: Readonly<Record<string, string>> | undefined
-    ): Record<string, string> => ({ ...env, ...filterBridgeSuppliedEnv(supplied) });
+      supplied: Readonly<Record<string, string>> | undefined,
+    ): Record<string, string> => ({
+      ...env,
+      ...filterBridgeSuppliedEnv(supplied),
+    });
 
     const runTranslated = async (
       translated: TranslatedCommand,
       abort?: AbortSignal,
-      suppliedEnv?: Readonly<Record<string, string>>
+      suppliedEnv?: Readonly<Record<string, string>>,
     ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
       switch (translated.kind) {
         case "reply":
@@ -310,8 +386,14 @@ export function createSupervisedLocalHarnessProvider(
         `harness's own permission settings.`,
 
       // ── file I/O (confined to the granted roots) ──────────────────────
-      readTextFile: async ({ path, abortSignal: _s, encoding, startLine, endLine }) => {
-        const canonical = await confine(path);
+      readTextFile: async ({
+        path,
+        abortSignal: _s,
+        encoding,
+        startLine,
+        endLine,
+      }) => {
+        const canonical = await resolveForRead(path);
         let text: string;
         try {
           text = await readFile(canonical, {
@@ -324,11 +406,14 @@ export function createSupervisedLocalHarnessProvider(
         if (startLine === undefined && endLine === undefined) return text;
         const lines = text.split("\n");
         const from = Math.max((startLine ?? 1) - 1, 0);
-        const to = endLine === undefined ? lines.length : Math.min(endLine, lines.length);
+        const to =
+          endLine === undefined
+            ? lines.length
+            : Math.min(endLine, lines.length);
         return lines.slice(from, to).join("\n");
       },
       readBinaryFile: async ({ path }) => {
-        const canonical = await confine(path);
+        const canonical = await resolveForRead(path);
         try {
           return new Uint8Array(await readFile(canonical));
         } catch (error) {
@@ -337,7 +422,7 @@ export function createSupervisedLocalHarnessProvider(
         }
       },
       readFile: async ({ path }) => {
-        const canonical = await confine(path);
+        const canonical = await resolveForRead(path);
         let bytes: Uint8Array;
         try {
           bytes = new Uint8Array(await readFile(canonical));
@@ -353,23 +438,30 @@ export function createSupervisedLocalHarnessProvider(
         });
       },
       writeTextFile: async ({ path, content, encoding }) => {
-        const canonical = await confine(path);
+        const charset = (encoding as BufferEncoding | undefined) ?? "utf8";
+        const canonical = await resolveForWrite(
+          path,
+          Buffer.from(content, charset),
+        );
+        if (canonical === null) return;
         await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
         await writeFile(canonical, content, {
-          encoding: (encoding as BufferEncoding | undefined) ?? "utf8",
+          encoding: charset,
           mode: 0o600,
         });
       },
       writeBinaryFile: async ({ path, content }) => {
-        const canonical = await confine(path);
+        const canonical = await resolveForWrite(path, content);
+        if (canonical === null) return;
         await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
         await writeFile(canonical, content, { mode: 0o600 });
       },
       writeFile: async ({ path, content, abortSignal: signal }) => {
-        const canonical = await confine(path);
-        await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
         // Bytes, not text: this is the contract's binary write primitive.
         const bytes = await collectStreamBytes(content, signal ?? abortSignal);
+        const canonical = await resolveForWrite(path, bytes);
+        if (canonical === null) return;
+        await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
         await writeFile(canonical, bytes, { mode: 0o600 });
       },
 
@@ -382,7 +474,7 @@ export function createSupervisedLocalHarnessProvider(
       }) => {
         const translated = await translateAdapterCommand(
           { command, workingDirectory, env: suppliedEnv },
-          translationContext
+          translationContext,
         );
         return runTranslated(translated, signal ?? abortSignal, suppliedEnv);
       },
@@ -395,7 +487,7 @@ export function createSupervisedLocalHarnessProvider(
       }) => {
         const translated = await translateAdapterCommand(
           { command, workingDirectory, env: suppliedEnv },
-          translationContext
+          translationContext,
         );
         if (translated.kind !== "exec") {
           // The adapters only ever `spawn` the bridge, but the contract allows
@@ -404,28 +496,50 @@ export function createSupervisedLocalHarnessProvider(
           const result = await runTranslated(
             translated,
             signal ?? abortSignal,
-            suppliedEnv
+            suppliedEnv,
           );
           return completedProcess(result.stdout, result.exitCode);
         }
         const isBridge = !bridgeClaimed;
         if (isBridge) bridgeClaimed = true;
-        await assertRuntimeUnchanged();
-        const handle = await opts.supervisor.spawnSupervised({
-          sessionId,
-          executable: translated.executable,
-          args: translated.args,
-          workingDirectory: translated.workingDirectory,
-          env: envFor(suppliedEnv),
-          runtimeId: opts.runtime.runtimeId,
-          workspaceGrantId: opts.workspaceGrantId,
-          targetKind: opts.targetKind,
-          sessionStateDir: opts.sessionStateDir,
-          // The first spawned process is the session's root: killing it must
-          // take the whole tree, and it is the record the janitor reclaims.
-          role: isBridge ? "root" : "helper",
-          ...(signal ?? abortSignal ? { abortSignal: (signal ?? abortSignal)! } : {}),
-        });
+        // Released on ANY failure below. Leaving the claim set after a failed
+        // first spawn would make a same-session retry a "helper" — and helpers
+        // skip the mandatory exposure probe, which is exactly how a LAN-bound
+        // bridge would get admitted unchecked.
+        const releaseBridgeClaim = () => {
+          if (isBridge) bridgeClaimed = false;
+        };
+        let handle: Awaited<ReturnType<typeof opts.supervisor.spawnSupervised>>;
+        try {
+          await assertRuntimeUnchanged();
+          // Before the bridge exists, not after: once it is running, an
+          // accepted connection on the leased port is indistinguishable from
+          // "our bridge came up" and "our bridge failed to bind and something
+          // else answered".
+          if (isBridge) {
+            await assertBridgePortUnclaimed({ port: opts.bridgePort });
+          }
+          handle = await opts.supervisor.spawnSupervised({
+            sessionId,
+            executable: translated.executable,
+            args: translated.args,
+            workingDirectory: translated.workingDirectory,
+            env: envFor(suppliedEnv),
+            runtimeId: opts.runtime.runtimeId,
+            workspaceGrantId: opts.workspaceGrantId,
+            targetKind: opts.targetKind,
+            sessionStateDir: opts.sessionStateDir,
+            // The first spawned process is the session's root: killing it must
+            // take the whole tree, and it is the record the janitor reclaims.
+            role: isBridge ? "root" : "helper",
+            ...((signal ?? abortSignal)
+              ? { abortSignal: (signal ?? abortSignal)! }
+              : {}),
+          });
+        } catch (error) {
+          releaseBridgeClaim();
+          throw error;
+        }
         if (isBridge) {
           try {
             // MANDATORY, not an optional callback: the loopback guarantee is
@@ -439,6 +553,10 @@ export function createSupervisedLocalHarnessProvider(
               ...(opts.bridgeReadinessTimeoutMs !== undefined
                 ? { readinessTimeoutMs: opts.bridgeReadinessTimeoutMs }
                 : {}),
+              // Ties the listener to the process we started: a port answering
+              // after our bridge died is somebody else's.
+              isBridgeAlive: async () =>
+                opts.supervisor.liveProcessCount(sessionId) > 0,
             });
             if (opts.onBridgeStarted) {
               await opts.onBridgeStarted({
@@ -448,7 +566,9 @@ export function createSupervisedLocalHarnessProvider(
             }
           } catch (error) {
             // Never leave the root running while reporting a failed spawn: the
-            // caller has no handle to it, so nothing else would stop it.
+            // caller has no handle to it, so nothing else would stop it. And
+            // release the claim, so a retry is checked as a bridge again.
+            releaseBridgeClaim();
             await opts.supervisor.stopSession(sessionId).catch(() => {});
             throw error;
           }
@@ -485,7 +605,7 @@ export function createSupervisedLocalHarnessProvider(
         if (!result.stopped) {
           throw new Error(
             `${result.escaped} supervised process tree(s) survived termination ` +
-              `for session ${sessionId}; the session is NOT reported stopped`
+              `for session ${sessionId}; the session is NOT reported stopped`,
           );
         }
       },
@@ -494,7 +614,7 @@ export function createSupervisedLocalHarnessProvider(
         if (!result.stopped) {
           throw new Error(
             `${result.escaped} supervised process tree(s) survived termination ` +
-              `for session ${sessionId}`
+              `for session ${sessionId}`,
           );
         }
         // `destroy` discards resumability, so the session's disposable state —
@@ -543,7 +663,9 @@ async function removeSessionStateDir(dir: string): Promise<void> {
     });
     return;
   }
-  await rm(target, { recursive: true, force: true }).catch(() => {});
+  // Deliberately NOT swallowed: `destroy` promises the session's disposable
+  // state is gone, and a caller that is told it succeeded will not retry.
+  await rm(target, { recursive: true, force: true });
 }
 
 /** Session state directory for a local harness session. Always inside the
@@ -551,11 +673,13 @@ async function removeSessionStateDir(dir: string): Promise<void> {
  *  can never be tripped by a legitimate value. */
 export function sessionStateDirFor(
   stateRoot: string,
-  sessionId: string
+  sessionId: string,
 ): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) {
     throw new Error(
-      `session id ${JSON.stringify(sessionId)} is not a single safe path segment`
+      `session id ${JSON.stringify(
+        sessionId,
+      )} is not a single safe path segment`,
     );
   }
   return join(stateRoot, "sessions", sessionId);

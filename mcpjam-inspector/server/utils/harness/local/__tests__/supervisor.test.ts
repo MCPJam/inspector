@@ -44,7 +44,7 @@ function supervisor(overrides = {}) {
 function request(
   sessionId: string,
   script: string,
-  role: "root" | "helper" = "root"
+  role: "root" | "helper" = "root",
 ) {
   return {
     sessionId,
@@ -72,7 +72,7 @@ beforeAll(async () => {
 
   await writeFile(
     join(scripts, "idle.js"),
-    "console.log('ready');setInterval(()=>{},1000);"
+    "console.log('ready');setInterval(()=>{},1000);",
   );
   await writeFile(
     join(scripts, "tree.js"),
@@ -81,7 +81,7 @@ beforeAll(async () => {
       "const kid = spawn(process.execPath, ['-e', 'setInterval(function(){},1000)'], { stdio: 'ignore' });",
       "console.log(JSON.stringify({ grandchild: kid.pid }));",
       "setInterval(function(){}, 1000);",
-    ].join("\n")
+    ].join("\n"),
   );
   await writeFile(
     join(scripts, "stubborn.js"),
@@ -90,7 +90,7 @@ beforeAll(async () => {
       "process.on('SIGINT', function(){});",
       "console.log('ready');",
       "setInterval(function(){}, 1000);",
-    ].join("\n")
+    ].join("\n"),
   );
   await writeFile(
     join(scripts, "flood.js"),
@@ -99,13 +99,16 @@ beforeAll(async () => {
       "for (let i = 0; i < 200; i++) process.stdout.write(chunk);",
       // No process.exit(): it would discard the pending pipe writes and the
       // test would measure Node's exit behaviour rather than our cap.
-    ].join("\n")
+    ].join("\n"),
   );
   await writeFile(
     join(scripts, "dump-env.js"),
-    "process.stdout.write(JSON.stringify(process.env));"
+    "process.stdout.write(JSON.stringify(process.env));",
   );
-  await writeFile(join(scripts, "argv.js"), "process.stdout.write(JSON.stringify(process.argv.slice(2)));");
+  await writeFile(
+    join(scripts, "argv.js"),
+    "process.stdout.write(JSON.stringify(process.argv.slice(2)));",
+  );
 });
 
 afterAll(() => {
@@ -117,7 +120,10 @@ describe("launch preconditions", () => {
   it("refuses a bare executable name — there is no spawn-time PATH lookup", async () => {
     const sup = supervisor();
     await expect(
-      sup.spawnSupervised({ ...request("s-rel", "idle.js"), executable: "node" })
+      sup.spawnSupervised({
+        ...request("s-rel", "idle.js"),
+        executable: "node",
+      }),
     ).rejects.toThrow(/absolute, pre-verified paths only/);
   });
 
@@ -127,7 +133,7 @@ describe("launch preconditions", () => {
       sup.spawnSupervised({
         ...request("s-cwd", "idle.js"),
         workingDirectory: "relative",
-      })
+      }),
     ).rejects.toThrow(SupervisorError);
   });
 
@@ -137,7 +143,7 @@ describe("launch preconditions", () => {
       sup.spawnSupervised({
         ...request("s-argv", "idle.js"),
         args: [join(scripts, "idle.js"), "; rm -rf /"],
-      })
+      }),
     ).rejects.toThrow(/shell metacharacter/);
   });
 
@@ -147,7 +153,7 @@ describe("launch preconditions", () => {
       sup.spawnSupervised({
         ...request("s-bypass", "idle.js"),
         args: [join(scripts, "idle.js"), "--dangerously-skip-permissions"],
-      })
+      }),
     ).rejects.toThrow(/disables the vendor permission controls/);
   });
 });
@@ -165,7 +171,7 @@ describe("a launch that fails at the OS", () => {
       sup.spawnSupervised({
         ...request("s-enoent", "idle.js", "helper"),
         executable: join(scripts, "does-not-exist"),
-      })
+      }),
     ).rejects.toThrow(SupervisorError);
     // Give the late 'error' event its turn. Reaching the next line at all is
     // the assertion: an unhandled one would have ended this process.
@@ -195,7 +201,11 @@ describe.skipIf(!canOwnProcesses)("supervised processes", () => {
     });
     const text = await new Response(handle.stdout).text();
     await handle.wait();
-    expect(Object.keys(JSON.parse(text)).sort()).toEqual(["HOME", "LANG", "PATH"]);
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual([
+      "HOME",
+      "LANG",
+      "PATH",
+    ]);
   });
 
   it("records the root process with a birth identity before it runs", async () => {
@@ -206,7 +216,7 @@ describe.skipIf(!canOwnProcesses)("supervised processes", () => {
     expect(record).toBeDefined();
     expect(record!.rootPid).toBe(handle.pid);
     expect(record!.processBirthIdentity).toBe(
-      await readProcessBirthIdentity(handle.pid)
+      await readProcessBirthIdentity(handle.pid),
     );
     expect(record!.supervisorNonce).toBe(sup.nonce);
     await sup.stopSession("s-record");
@@ -233,7 +243,9 @@ describe.skipIf(!canOwnProcesses)("supervised processes", () => {
 
   it("force-kills a child that ignores SIGTERM", async () => {
     const sup = supervisor();
-    const handle = await sup.spawnSupervised(request("s-stubborn", "stubborn.js"));
+    const handle = await sup.spawnSupervised(
+      request("s-stubborn", "stubborn.js"),
+    );
     await new Promise((r) => setTimeout(r, 200));
     const result = await sup.stopSession("s-stubborn");
     expect(result.stopped).toBe(true);
@@ -252,14 +264,18 @@ describe.skipIf(!canOwnProcesses)("supervised processes", () => {
   it("stop is idempotent", async () => {
     const sup = supervisor();
     await sup.spawnSupervised(request("s-idem", "idle.js"));
-    await expect(sup.stopSession("s-idem")).resolves.toMatchObject({ stopped: true });
-    await expect(sup.stopSession("s-idem")).resolves.toMatchObject({ stopped: true });
+    await expect(sup.stopSession("s-idem")).resolves.toMatchObject({
+      stopped: true,
+    });
+    await expect(sup.stopSession("s-idem")).resolves.toMatchObject({
+      stopped: true,
+    });
   }, 20_000);
 
   it("caps retained output without blocking a flooding child", async () => {
     const sup = supervisor();
     const handle = await sup.spawnSupervised(
-      request("s-flood", "flood.js", "helper")
+      request("s-flood", "flood.js", "helper"),
     );
     const text = await new Response(handle.stdout).text();
     const result = await handle.wait();
@@ -292,7 +308,7 @@ describe.skipIf(!canOwnProcesses)("supervised processes", () => {
     const sup = supervisor({ maxConcurrentProcesses: 1 });
     await sup.spawnSupervised(request("s-cap", "idle.js"));
     await expect(
-      sup.spawnSupervised(request("s-cap", "idle.js", "helper"))
+      sup.spawnSupervised(request("s-cap", "idle.js", "helper")),
     ).rejects.toThrow(/ceiling/);
     await sup.stopSession("s-cap");
   }, 20_000);
@@ -302,7 +318,7 @@ describe("platforms that cannot prove ownership", () => {
   it("refuses to start a root process there at all", async () => {
     const sup = new LocalHarnessSupervisor({ platform: "win32" });
     await expect(
-      sup.spawnSupervised(request("s-win", "idle.js"))
+      sup.spawnSupervised(request("s-win", "idle.js")),
     ).rejects.toThrow(/cannot prove ownership of a process tree/);
   });
 });

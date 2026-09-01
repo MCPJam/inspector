@@ -29,27 +29,27 @@ afterAll(() => {
 
 describe("confinePath", () => {
   it("allows an existing file inside a granted root", async () => {
-    await expect(confinePath(join(workspace, "src", "a.ts"), { roots })).resolves.toBe(
-      join(workspace, "src", "a.ts")
-    );
+    await expect(
+      confinePath(join(workspace, "src", "a.ts"), { roots }),
+    ).resolves.toBe(join(workspace, "src", "a.ts"));
   });
 
   it("allows a file that does not exist yet inside a granted root", async () => {
     await expect(
-      confinePath(join(workspace, "src", "nested", "new.ts"), { roots })
+      confinePath(join(workspace, "src", "nested", "new.ts"), { roots }),
     ).resolves.toBe(join(workspace, "src", "nested", "new.ts"));
   });
 
   it("allows the second granted root too", async () => {
-    await expect(confinePath(join(stateDir, "home", "x"), { roots })).resolves.toBe(
-      join(stateDir, "home", "x")
-    );
+    await expect(
+      confinePath(join(stateDir, "home", "x"), { roots }),
+    ).resolves.toBe(join(stateDir, "home", "x"));
   });
 
   it("rejects a plain path outside every root", async () => {
-    await expect(confinePath(join(outside, "secret.txt"), { roots })).rejects.toThrow(
-      PathConfinementError
-    );
+    await expect(
+      confinePath(join(outside, "secret.txt"), { roots }),
+    ).rejects.toThrow(PathConfinementError);
   });
 
   it("rejects a literal `..` segment, unnormalized", async () => {
@@ -57,26 +57,34 @@ describe("confinePath", () => {
     // value is ever passed, so the joined form only re-tests the plain
     // outside-the-root case and says nothing about traversal.
     await expect(
-      confinePath(`${workspace}/../outside/secret.txt`, { roots })
+      confinePath(`${workspace}/../outside/secret.txt`, { roots }),
     ).rejects.toThrow(PathConfinementError);
     await expect(
-      confinePath(`${workspace}/src/../../outside/secret.txt`, { roots })
+      confinePath(`${workspace}/src/../../outside/secret.txt`, { roots }),
     ).rejects.toThrow(PathConfinementError);
   });
 
   it("rejects an empty path", async () => {
     await expect(confinePath("", { roots })).rejects.toThrow(
-      PathConfinementError
+      PathConfinementError,
     );
   });
 
   it("does not drop a character when the parent is the filesystem root", async () => {
-    // `/ttmp/x` must not be able to resolve to `/tmp/x`: the ancestor walk
-    // slices the segment off its parent, and adding a separator offset when
-    // the parent already ends in one eats the segment's first character.
+    // Discriminating on purpose: the buggy slice turned `/ttmp/x` into
+    // `/tmp/x`, so the root set here must CONTAIN the malformed result. With
+    // the old offset the path resolved inside `/tmp` and was accepted; with
+    // the fix it stays `/ttmp/...` and is rejected. Asserting against a root
+    // set that excludes both spellings would pass either way.
+    const tmpRoot = await realpath("/tmp");
     await expect(
-      confinePath("/ttmp/definitely-not-here", { roots })
+      confinePath("/ttmp/definitely-not-here", { roots: [tmpRoot] }),
     ).rejects.toThrow(PathConfinementError);
+    // The same shape one character shorter really is inside, so the test is
+    // measuring the slice and not simply a missing directory.
+    await expect(
+      confinePath(`${tmpRoot}/definitely-not-here`, { roots: [tmpRoot] }),
+    ).resolves.toBe(`${tmpRoot}/definitely-not-here`);
   });
 
   it("rejects a read THROUGH a symlink that leaves the root", async () => {
@@ -84,37 +92,39 @@ describe("confinePath", () => {
     // path is inside the workspace.
     await symlink(outside, join(workspace, "escape"));
     await expect(
-      confinePath(join(workspace, "escape", "secret.txt"), { roots })
+      confinePath(join(workspace, "escape", "secret.txt"), { roots }),
     ).rejects.toThrow(PathConfinementError);
   });
 
   it("rejects a WRITE through a symlinked parent to a file that does not exist", async () => {
     await symlink(outside, join(workspace, "escape-write"));
     await expect(
-      confinePath(join(workspace, "escape-write", "planted.txt"), { roots })
+      confinePath(join(workspace, "escape-write", "planted.txt"), { roots }),
     ).rejects.toThrow(PathConfinementError);
   });
 
   it("allows a symlink that stays inside the root", async () => {
     await symlink(join(workspace, "src"), join(workspace, "src-link"));
     await expect(
-      confinePath(join(workspace, "src-link", "a.ts"), { roots })
+      confinePath(join(workspace, "src-link", "a.ts"), { roots }),
     ).resolves.toBe(join(workspace, "src", "a.ts"));
   });
 
   it("rejects a relative path rather than resolving it against a cwd", async () => {
     await expect(confinePath("relative/path", { roots })).rejects.toThrow(
-      /must be absolute/
+      /must be absolute/,
     );
   });
 
   it("rejects a NUL byte without echoing the path back", async () => {
-    await expect(confinePath("/tmp/a\0b", { roots })).rejects.toThrow(/NUL byte/);
+    await expect(confinePath("/tmp/a\0b", { roots })).rejects.toThrow(
+      /NUL byte/,
+    );
   });
 
   it("rejects when no root is configured", async () => {
     await expect(confinePath("/tmp/x", { roots: [] })).rejects.toThrow(
-      /no writable root/
+      /no writable root/,
     );
   });
 

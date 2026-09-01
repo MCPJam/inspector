@@ -98,7 +98,7 @@ describe("the child environment is an allowlist", () => {
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME",
         "XDG_STATE_HOME",
-      ].sort()
+      ].sort(),
     );
   });
 
@@ -160,7 +160,7 @@ describe("scoped values", () => {
         platform: "linux",
         base: PARENT,
         scoped: { [name]: "/evil" },
-      })
+      }),
     ).toThrow(LocalHarnessEnvError);
   });
 
@@ -171,7 +171,7 @@ describe("scoped values", () => {
         sessionRoot: ROOT,
         base: PARENT,
         scoped: { TOKEN: "a\nB=c" },
-      })
+      }),
     ).toThrow(/control character/);
   });
 
@@ -182,7 +182,7 @@ describe("scoped values", () => {
         sessionRoot: ROOT,
         base: PARENT,
         scoped: { "A-B": "x" },
-      })
+      }),
     ).toThrow(LocalHarnessEnvError);
   });
 });
@@ -195,7 +195,7 @@ describe("the adapter's own per-spawn environment", () => {
         BRIDGE_CHANNEL_TOKEN: "tok",
         BRIDGE_WS_PORT: "39271",
         ANTHROPIC_BASE_URL: "http://127.0.0.1:1/gw",
-      })
+      }),
     ).toEqual({
       BRIDGE_CHANNEL_TOKEN: "tok",
       BRIDGE_WS_PORT: "39271",
@@ -211,13 +211,34 @@ describe("the adapter's own per-spawn environment", () => {
         PATH: "/evil",
         LD_PRELOAD: "/evil.so",
         SOMETHING_NEW: "x",
-      })
+      }),
     ).toEqual({});
   });
 
   it("drops a value carrying a control character", async () => {
     const { filterBridgeSuppliedEnv } = await import("../session-env.js");
-    expect(filterBridgeSuppliedEnv({ BRIDGE_CHANNEL_TOKEN: "a\nB=c" })).toEqual({});
+    expect(filterBridgeSuppliedEnv({ BRIDGE_CHANNEL_TOKEN: "a\nB=c" })).toEqual(
+      {},
+    );
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["a runtime null", null],
+  ])("returns an empty map for %s", async (_label, value) => {
+    const { filterBridgeSuppliedEnv } = await import("../session-env.js");
+    expect(
+      filterBridgeSuppliedEnv(value as unknown as Record<string, string>),
+    ).toEqual({});
+  });
+
+  it("keeps an allowlisted empty value rather than inventing one", async () => {
+    // An empty string is a value the adapter chose; dropping it would make the
+    // child fall back to a default the adapter deliberately overrode.
+    const { filterBridgeSuppliedEnv } = await import("../session-env.js");
+    expect(filterBridgeSuppliedEnv({ BRIDGE_CHANNEL_TOKEN: "" })).toEqual({
+      BRIDGE_CHANNEL_TOKEN: "",
+    });
   });
 });
 
@@ -237,10 +258,10 @@ describe("windows", () => {
 describe("preconditions", () => {
   it("requires absolute paths", () => {
     expect(() =>
-      buildLocalHarnessEnv({ syntheticHome: "home", sessionRoot: ROOT })
+      buildLocalHarnessEnv({ syntheticHome: "home", sessionRoot: ROOT }),
     ).toThrow(/absolute/);
     expect(() =>
-      buildLocalHarnessEnv({ syntheticHome: HOME, sessionRoot: "project" })
+      buildLocalHarnessEnv({ syntheticHome: HOME, sessionRoot: "project" }),
     ).toThrow(/absolute/);
   });
 

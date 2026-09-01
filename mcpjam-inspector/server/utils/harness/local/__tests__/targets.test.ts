@@ -40,7 +40,7 @@ describe("labels say what a mode actually is", () => {
 
   it("names the backend an isolated mode depends on", () => {
     expect(executionTargetLabel(isolated)).toBe(
-      "Isolated on this machine (linux-bwrap)"
+      "Isolated on this machine (linux-bwrap)",
     );
   });
 
@@ -53,7 +53,7 @@ describe("host containment", () => {
   it("is false for native, whatever else the target says", () => {
     expect(targetHasHostContainment(native)).toBe(false);
     expect(
-      targetHasHostContainment({ ...native, permissionProfile: "read-only" })
+      targetHasHostContainment({ ...native, permissionProfile: "read-only" }),
     ).toBe(false);
   });
 
@@ -91,6 +91,8 @@ describe("policy versions", () => {
   it("keeps the native and isolation policies separate", () => {
     // An isolation rule change must not re-ask for native consent, and vice
     // versa; one shared constant would couple them.
-    expect(LOCAL_HARNESS_POLICY_VERSION).not.toBe(LOCAL_ISOLATION_POLICY_VERSION);
+    expect(LOCAL_HARNESS_POLICY_VERSION).not.toBe(
+      LOCAL_ISOLATION_POLICY_VERSION,
+    );
   });
 });

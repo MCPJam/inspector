@@ -110,6 +110,18 @@ export interface CommandTranslationContext {
   adapterBootstrapDir: string;
   /** Verified, read-only managed runtime bundle root that stands in for it. */
   managedBundleRoot: string;
+  /**
+   * The pinned adapter's declared bootstrap files, relative to
+   * `adapterBootstrapDir`. Straight from the manifest — an adapter cannot
+   * widen its own list.
+   */
+  adapterBootstrapFiles: readonly string[];
+  /**
+   * Session-owned directory that stands in for the writable half of the
+   * bootstrap directory: the framework's `.bootstrap-<identity>.ok` marker,
+   * and nothing else. Owner-only, disposable, and outside the user's checkout.
+   */
+  bootstrapOverlayDir: string;
   /** Absolute path to the Node launcher shipped/verified with the bundle. */
   nodeExecutable: string;
   /** Absolute canonical session root: the granted workspace, and the session's
@@ -143,11 +155,7 @@ export const ADAPTER_COMMAND_SHAPES: Readonly<
   // Issued by `@ai-sdk/harness` itself, for every adapter. The two `mkdir`s
   // pass their path through the environment rather than the command string,
   // which is why those two shapes have no interpolation to inspect.
-  framework: [
-    'mkdir -p "$BOOTSTRAP_DIR"',
-    'mkdir -p "$WORK_DIR"',
-    "pwd",
-  ],
+  framework: ['mkdir -p "$BOOTSTRAP_DIR"', 'mkdir -p "$WORK_DIR"', "pwd"],
   "claude-code": [
     "pnpm install --frozen-lockfile --store-dir .pnpm-store",
     "./node_modules/.bin/claude --version",
@@ -206,7 +214,7 @@ function splitQuotedTokens(operands: string, command: string): string[] {
         if (end === -1) {
           throw new CommandTranslationError(
             "unterminated single quote in mkdir operands",
-            command
+            command,
           );
         }
         const inner = operands.slice(i + 1, end);
@@ -216,7 +224,7 @@ function splitQuotedTokens(operands: string, command: string): string[] {
         if (inner.includes("\\")) {
           throw new CommandTranslationError(
             "backslash escape in a quoted mkdir operand",
-            command
+            command,
           );
         }
         token += inner;
@@ -239,15 +247,17 @@ function assertPlainPathOperand(path: string, command: string): void {
   }
   if (/[\0\n\r"`$*?[\]{}\\|&;<>()!~]/.test(path)) {
     throw new CommandTranslationError(
-      `path operand ${JSON.stringify(path)} contains a shell metacharacter or ` +
+      `path operand ${JSON.stringify(
+        path,
+      )} contains a shell metacharacter or ` +
         `glob — the adapters emit literal paths, so this is not a shape we know`,
-      command
+      command,
     );
   }
   if (!isAbsolute(path)) {
     throw new CommandTranslationError(
       `path operand ${JSON.stringify(path)} is not absolute`,
-      command
+      command,
     );
   }
 }
@@ -266,7 +276,10 @@ function underBootstrapDir(path: string, bootstrapDir: string): boolean {
   return p === root || p.startsWith(root + "/");
 }
 
-function remapBootstrapPath(path: string, ctx: CommandTranslationContext): string {
+function remapBootstrapPath(
+  path: string,
+  ctx: CommandTranslationContext,
+): string {
   const root = normalize(ctx.adapterBootstrapDir);
   const normalizedPath = normalize(path);
   // Containment is checked on the NORMALIZED path before any slicing. Slicing
@@ -278,7 +291,7 @@ function remapBootstrapPath(path: string, ctx: CommandTranslationContext): strin
     throw new CommandTranslationError(
       `path ${JSON.stringify(path)} was given where a path inside the ` +
         `adapter bootstrap directory was expected`,
-      path
+      path,
     );
   }
   const rest = normalizedPath.slice(root.length).replace(/^\//, "");
@@ -293,16 +306,88 @@ function remapBootstrapPath(path: string, ctx: CommandTranslationContext): strin
   ) {
     throw new CommandTranslationError(
       `bootstrap path ${JSON.stringify(path)} escapes the managed bundle root`,
-      path
+      path,
     );
   }
   return normalized;
 }
 
+/**
+ * The framework's per-identity bootstrap marker: `.bootstrap-<identity>.ok`,
+ * a direct child of the bootstrap directory. Identities are adapter-derived
+ * slugs, so the character class is deliberately narrow — a marker name is not
+ * a place to accept arbitrary text.
+ */
+const BOOTSTRAP_MARKER = /^\.bootstrap-[A-Za-z0-9._-]{1,128}\.ok$/;
+
+/**
+ * Where a file operation on a path inside the adapter's bootstrap directory
+ * must actually go.
+ *
+ * `run` is not the only way the bootstrap recipe reaches the machine: the
+ * framework applies the recipe's FILES by calling `writeTextFile` on the
+ * session. Translating the commands but letting the writes through would put
+ * the adapter's `package.json`, `pnpm-lock.yaml` and `bridge.mjs` into the
+ * user's checkout — dead files, since every reference to them is remapped onto
+ * the managed bundle, and visible in their VCS status. So the same closed
+ * grammar applies to file paths.
+ */
+export type BootstrapFileTarget =
+  /** Not a bootstrap path. The caller proceeds with its normal confinement. */
+  | { kind: "workspace" }
+  /** A declared adapter asset the verified bundle already provides. */
+  | { kind: "bundle-asset"; bundlePath: string; relativePath: string }
+  /** The framework's own bootstrap marker, kept in session-owned state. */
+  | { kind: "session-overlay"; overlayPath: string };
+
+/**
+ * Classify a file path the adapter or framework named.
+ *
+ * Fails closed: a path under the bootstrap directory that is neither a
+ * declared asset nor the marker is rejected rather than written somewhere
+ * plausible, because an unrecognized bootstrap file means the recipe changed
+ * and the manifest has not been re-reviewed.
+ */
+export function classifyBootstrapPath(
+  path: string,
+  ctx: CommandTranslationContext,
+): BootstrapFileTarget {
+  const root = normalize(ctx.adapterBootstrapDir);
+  const normalized = normalize(path);
+  if (!underBootstrapDir(normalized, root)) return { kind: "workspace" };
+
+  const relative = normalized.slice(root.length).replace(/^\//, "");
+  if (relative.length === 0) {
+    throw new CommandTranslationError(
+      `the adapter bootstrap directory itself is not a file`,
+      path,
+    );
+  }
+  if (BOOTSTRAP_MARKER.test(relative)) {
+    return {
+      kind: "session-overlay",
+      overlayPath: `${ctx.bootstrapOverlayDir}${sep}${relative}`,
+    };
+  }
+  if (ctx.adapterBootstrapFiles.includes(relative)) {
+    return {
+      kind: "bundle-asset",
+      bundlePath: remapBootstrapPath(normalized, ctx),
+      relativePath: relative,
+    };
+  }
+  throw new CommandTranslationError(
+    `file ${JSON.stringify(relative)} is not part of the pinned ` +
+      `${ctx.harnessId} bootstrap recipe, so this session will not create it. ` +
+      `An adapter upgrade that adds a bootstrap file needs a manifest review.`,
+    path,
+  );
+}
+
 /** Translate a `mkdir -p …` command. */
 async function translateMkdir(
   command: string,
-  ctx: CommandTranslationContext
+  ctx: CommandTranslationContext,
 ): Promise<TranslatedCommand> {
   const raw = splitQuotedTokens(command.slice("mkdir -p ".length), command);
   if (raw.length === 0) {
@@ -339,7 +424,7 @@ async function translateMkdir(
  */
 function matchBootstrapInstall(
   command: string,
-  ctx: CommandTranslationContext
+  ctx: CommandTranslationContext,
 ): TranslatedCommand | null {
   if (command === "pnpm install --frozen-lockfile --store-dir .pnpm-store") {
     return {
@@ -366,7 +451,7 @@ function matchBootstrapInstall(
 /** Translate the adapters' `node '<bootstrapDir>/bridge.mjs' …` launch. */
 async function matchBridgeLaunch(
   command: string,
-  ctx: CommandTranslationContext
+  ctx: CommandTranslationContext,
 ): Promise<TranslatedCommand | null> {
   if (!command.startsWith("node ")) return null;
   const tokens = splitQuotedTokens(command.slice("node ".length), command);
@@ -376,17 +461,18 @@ async function matchBridgeLaunch(
   // change slip through as a valid launch — the opposite of the fail-closed
   // behaviour this module promises. Codex carries `--cli-shim-dir`; Claude
   // Code does not.
-  const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> = {
-    "claude-code": ["--workdir", "--bridge-state-dir"],
-    codex: ["--workdir", "--bridge-state-dir", "--cli-shim-dir"],
-  };
+  const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> =
+    {
+      "claude-code": ["--workdir", "--bridge-state-dir"],
+      codex: ["--workdir", "--bridge-state-dir", "--cli-shim-dir"],
+    };
   const flags = expected[ctx.harnessId];
 
   if (tokens.length !== 1 + flags.length * 2) {
     throw new CommandTranslationError(
       `the ${ctx.harnessId} bridge launch must be the bridge path followed by ` +
         `exactly ${flags.join(", ")}, but ${tokens.length} tokens were given`,
-      command
+      command,
     );
   }
 
@@ -397,7 +483,7 @@ async function matchBridgeLaunch(
     throw new CommandTranslationError(
       `bridge launch names ${JSON.stringify(bridgeToken)}, but the only ` +
         `bridge this session may run is the one in its managed bundle`,
-      command
+      command,
     );
   }
 
@@ -409,7 +495,7 @@ async function matchBridgeLaunch(
       throw new CommandTranslationError(
         `expected bridge flag ${JSON.stringify(flags[i])} at position ` +
           `${i + 1}, found ${JSON.stringify(flag)}`,
-        command
+        command,
       );
     }
     assertPlainPathOperand(value, command);
@@ -443,7 +529,7 @@ export async function translateAdapterCommand(
     workingDirectory?: string | undefined;
     env?: Readonly<Record<string, string>> | undefined;
   },
-  ctx: CommandTranslationContext
+  ctx: CommandTranslationContext,
 ): Promise<TranslatedCommand> {
   const { command } = invocation;
   if (typeof command !== "string" || command.length === 0) {
@@ -452,13 +538,13 @@ export async function translateAdapterCommand(
   if (command.length > 8192) {
     throw new CommandTranslationError(
       "command exceeds the length any pinned adapter shape can reach",
-      `${command.slice(0, 120)}…`
+      `${command.slice(0, 120)}…`,
     );
   }
   if (command !== command.trim()) {
     throw new CommandTranslationError(
       "command has leading or trailing whitespace, which no pinned shape has",
-      command
+      command,
     );
   }
 
@@ -475,7 +561,7 @@ export async function translateAdapterCommand(
     if (typeof target !== "string" || target.length === 0) {
       throw new CommandTranslationError(
         `${command} was issued without a ${envVar} value to create`,
-        command
+        command,
       );
     }
     assertPlainPathOperand(target, command);
@@ -503,7 +589,7 @@ export async function translateAdapterCommand(
       throw new CommandTranslationError(
         `a bootstrap command was issued from ${JSON.stringify(cwd)} rather ` +
           `than the adapter's bootstrap directory`,
-        command
+        command,
       );
     }
     return bootstrapNoop;
@@ -522,6 +608,6 @@ export async function translateAdapterCommand(
       `the session fails closed. If this arrived from an adapter upgrade, the ` +
       `compatibility manifest and conformance suite must be re-reviewed before ` +
       `the new shape is accepted.`,
-    command
+    command,
   );
 }

@@ -66,7 +66,10 @@ export const LOCAL_HARNESS_ENV_ALLOWLIST: readonly string[] = [
  */
 const SYSTEM_PATH_POSIX = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 
-function systemPath(platform: NodeJS.Platform, base: NodeJS.ProcessEnv): string {
+function systemPath(
+  platform: NodeJS.Platform,
+  base: NodeJS.ProcessEnv,
+): string {
   if (platform === "win32") {
     const root = base.SYSTEMROOT ?? base.WINDIR ?? "C:\\Windows";
     return [
@@ -136,7 +139,7 @@ export class LocalHarnessEnvError extends Error {}
  * it straight to `spawn`, and a test can assert the exact key set.
  */
 export function buildLocalHarnessEnv(
-  opts: LocalHarnessEnvOptions
+  opts: LocalHarnessEnvOptions,
 ): Record<string, string> {
   const platform = opts.platform ?? process.platform;
   const base = opts.base ?? process.env;
@@ -182,18 +185,18 @@ export function buildLocalHarnessEnv(
     if (SCOPED_NAME_DENYLIST.has(name.toUpperCase())) {
       throw new LocalHarnessEnvError(
         `scoped environment entry ${name} is not allowed: it would redirect ` +
-          `executable, library, or config resolution for the child`
+          `executable, library, or config resolution for the child`,
       );
     }
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
       throw new LocalHarnessEnvError(
         `scoped environment name ${JSON.stringify(name)} is not a valid ` +
-          `environment variable name`
+          `environment variable name`,
       );
     }
     if (/[\0\n\r]/.test(value)) {
       throw new LocalHarnessEnvError(
-        `scoped environment value for ${name} contains a control character`
+        `scoped environment value for ${name} contains a control character`,
       );
     }
     env[name] = value;
@@ -240,7 +243,7 @@ export const BRIDGE_SUPPLIED_ENV_ALLOWLIST: readonly string[] = [
  * introduce a new variable into a supervised process.
  */
 export function filterBridgeSuppliedEnv(
-  env: Readonly<Record<string, string>> | undefined
+  env: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> {
   const filtered: Record<string, string> = {};
   if (!env) return filtered;
@@ -260,7 +263,7 @@ export function filterBridgeSuppliedEnv(
  */
 export function syntheticHomeDirectories(
   syntheticHome: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): string[] {
   const path = pathFor(platform);
   const dirs = [
@@ -274,7 +277,7 @@ export function syntheticHomeDirectories(
   if (platform === "win32") {
     dirs.push(
       path.join(syntheticHome, "AppData", "Roaming"),
-      path.join(syntheticHome, "AppData", "Local")
+      path.join(syntheticHome, "AppData", "Local"),
     );
   }
   return dirs;

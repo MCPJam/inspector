@@ -25,7 +25,7 @@ const PINNED_CODEX = LOCAL_HARNESS_MANIFEST.codex.adapterVersion;
  *  until evidence exists, which the first test below is about. */
 function conformed(
   base: LocalHarnessCompatibility,
-  overrides: Partial<LocalHarnessCompatibility> = {}
+  overrides: Partial<LocalHarnessCompatibility> = {},
 ): Record<string, LocalHarnessCompatibility> {
   return {
     [base.harnessId]: {
@@ -71,11 +71,11 @@ describe("the shipped manifest", () => {
     // The manifest states what the adapter can do; the adapter is the source
     // of truth. A canary bump that flips either value should fail HERE, before
     // it silently changes what native mode is allowed to do.
-    expect(LOCAL_HARNESS_MANIFEST["claude-code"].supportsBuiltinToolApprovals).toBe(
-      createClaudeCode().supportsBuiltinToolApprovals
-    );
+    expect(
+      LOCAL_HARNESS_MANIFEST["claude-code"].supportsBuiltinToolApprovals,
+    ).toBe(createClaudeCode().supportsBuiltinToolApprovals);
     expect(LOCAL_HARNESS_MANIFEST.codex.supportsBuiltinToolApprovals).toBe(
-      createCodex().supportsBuiltinToolApprovals
+      createCodex().supportsBuiltinToolApprovals,
     );
     expect(createCodex().supportsBuiltinToolApprovals).toBe(false);
   });
@@ -85,10 +85,10 @@ describe("the shipped manifest", () => {
     // against `1.0.0-canary.9`, the repo moved to the stable line, and this
     // assertion is what said so rather than the translator failing at runtime.
     expect(LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion).toBe(
-      claudeAdapterPkg.version
+      claudeAdapterPkg.version,
     );
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterVersion).toBe(
-      codexAdapterPkg.version
+      codexAdapterPkg.version,
     );
   });
 
@@ -97,10 +97,10 @@ describe("the shipped manifest", () => {
     // session's working directory. A stale absolute `/tmp` value here would
     // make the translator match nothing the adapters emit.
     expect(LOCAL_HARNESS_MANIFEST["claude-code"].adapterBootstrapDir).toBe(
-      ".harness-bootstrap/claude-code"
+      ".harness-bootstrap/claude-code",
     );
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterBootstrapDir).toBe(
-      ".harness-bootstrap/codex"
+      ".harness-bootstrap/codex",
     );
   });
 
@@ -108,7 +108,7 @@ describe("the shipped manifest", () => {
     // The type already makes a missing entry a compile error; this catches the
     // runtime half — an id added to the union with a manifest bolted on later.
     expect(Object.keys(LOCAL_HARNESS_MANIFEST).sort()).toEqual(
-      [...SUPPORTED_LOCAL_HARNESS_IDS].sort()
+      [...SUPPORTED_LOCAL_HARNESS_IDS].sort(),
     );
   });
 
@@ -122,7 +122,7 @@ describe("the shipped manifest", () => {
 
   it("never offers an unrestricted profile for an approval-capable harness", () => {
     expect(
-      LOCAL_HARNESS_MANIFEST["claude-code"].permissionProfileMapping
+      LOCAL_HARNESS_MANIFEST["claude-code"].permissionProfileMapping,
     ).not.toHaveProperty("unrestricted");
   });
 });
@@ -140,13 +140,13 @@ describe("codex is structurally barred from native mode", () => {
           platform,
           targetKind: "local-native",
           installedAdapterVersion: PINNED_CODEX,
-        permissionProfile: "unrestricted",
+          permissionProfile: "unrestricted",
         },
-        conformed(LOCAL_HARNESS_MANIFEST.codex)
+        conformed(LOCAL_HARNESS_MANIFEST.codex),
       );
       expect(result).toMatchObject({ status: "native-not-eligible" });
       expect((result as { message: string }).message).toMatch(
-        /cannot surface tool approvals/
+        /cannot surface tool approvals/,
       );
     }
   });
@@ -167,10 +167,10 @@ describe("claude-code native resolution", () => {
           platform: "darwin",
           targetKind: "local-native",
           installedAdapterVersion: PINNED,
-        permissionProfile: "read-only",
+          permissionProfile: "read-only",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ ok: true, permissionMode: "allow-reads" });
 
     expect(
@@ -180,10 +180,10 @@ describe("claude-code native resolution", () => {
           platform: "linux",
           targetKind: "local-native",
           installedAdapterVersion: PINNED,
-        permissionProfile: "workspace-edits",
+          permissionProfile: "workspace-edits",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ ok: true, permissionMode: "allow-edits" });
   });
 
@@ -195,10 +195,10 @@ describe("claude-code native resolution", () => {
           platform: "win32",
           targetKind: "local-native",
           installedAdapterVersion: PINNED,
-        permissionProfile: "workspace-edits",
+          permissionProfile: "workspace-edits",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ status: "native-not-eligible" });
   });
 
@@ -214,11 +214,13 @@ describe("claude-code native resolution", () => {
         installedAdapterVersion: PINNED,
         permissionProfile: "unrestricted",
       },
-      permissive
+      permissive,
     );
-    expect(result).toMatchObject({ status: "permission-profile-not-supported" });
+    expect(result).toMatchObject({
+      status: "permission-profile-not-supported",
+    });
     expect((result as { message: string }).message).toMatch(
-      /requires a verified isolation backend/
+      /requires a verified isolation backend/,
     );
   });
 
@@ -231,10 +233,10 @@ describe("claude-code native resolution", () => {
           targetKind: "local-isolated",
           backend: "linux-bwrap",
           installedAdapterVersion: PINNED,
-        permissionProfile: "workspace-edits",
+          permissionProfile: "workspace-edits",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ status: "backend-not-verified" });
   });
 
@@ -246,10 +248,10 @@ describe("claude-code native resolution", () => {
           platform: "linux",
           targetKind: "local-isolated",
           installedAdapterVersion: PINNED,
-        permissionProfile: "workspace-edits",
+          permissionProfile: "workspace-edits",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ status: "backend-not-verified" });
   });
 
@@ -262,7 +264,7 @@ describe("claude-code native resolution", () => {
         installedAdapterVersion: "1.0.0-canary.99",
         permissionProfile: "workspace-edits",
       },
-      manifests
+      manifests,
     );
     expect(result).toMatchObject({ status: "adapter-version-mismatch" });
     expect((result as { message: string }).message).toMatch(/command shapes/);
@@ -276,10 +278,10 @@ describe("claude-code native resolution", () => {
           platform: "linux",
           targetKind: "local-native",
           installedAdapterVersion: PINNED,
-        permissionProfile: "read-only",
+          permissionProfile: "read-only",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ status: "harness-not-supported" });
   });
 
@@ -298,10 +300,10 @@ describe("claude-code native resolution", () => {
             installedAdapterVersion: PINNED,
             permissionProfile: "read-only",
           },
-          manifests
-        )
+          manifests,
+        ),
       ).toMatchObject({ status: "harness-not-supported" });
-    }
+    },
   );
 
   it("refuses a caller that cannot state the installed adapter version", () => {
@@ -314,8 +316,8 @@ describe("claude-code native resolution", () => {
           installedAdapterVersion: undefined,
           permissionProfile: "read-only",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ status: "adapter-version-mismatch" });
   });
 
@@ -327,10 +329,10 @@ describe("claude-code native resolution", () => {
           platform: null,
           targetKind: "local-native",
           installedAdapterVersion: PINNED,
-        permissionProfile: "read-only",
+          permissionProfile: "read-only",
         },
-        manifests
-      )
+        manifests,
+      ),
     ).toMatchObject({ status: "platform-not-supported" });
   });
 });

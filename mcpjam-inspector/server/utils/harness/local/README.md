@@ -28,32 +28,32 @@ a mode gets a user-facing name.
 
 ## Guarantee matrix
 
-| Property | Hosted (E2B) | Local native | Local isolated |
-|---|---|---|---|
-| Runs on the user's machine | No | Yes | Yes |
-| Outer host containment | Cloud sandbox | **No** | Backend-dependent, verified |
-| Vendor permission controls | Adapter-dependent | Required | Required where compatible |
-| Inspector process supervision | Cloud provider | Required | Required |
-| Workspace path restriction | Cloud mount | Inspector file API + policy only | OS/backend enforced |
-| Network restriction | Cloud policy | **No Inspector guarantee** | Backend policy + gateway allowlist |
-| Hard CPU/memory quota | Cloud policy | Best effort | Required where advertised |
-| Suitable for unattended work | Yes | **No** | Only after a separate product decision |
+| Property                      | Hosted (E2B)      | Local native                     | Local isolated                         |
+| ----------------------------- | ----------------- | -------------------------------- | -------------------------------------- |
+| Runs on the user's machine    | No                | Yes                              | Yes                                    |
+| Outer host containment        | Cloud sandbox     | **No**                           | Backend-dependent, verified            |
+| Vendor permission controls    | Adapter-dependent | Required                         | Required where compatible              |
+| Inspector process supervision | Cloud provider    | Required                         | Required                               |
+| Workspace path restriction    | Cloud mount       | Inspector file API + policy only | OS/backend enforced                    |
+| Network restriction           | Cloud policy      | **No Inspector guarantee**       | Backend policy + gateway allowlist     |
+| Hard CPU/memory quota         | Cloud policy      | Best effort                      | Required where advertised              |
+| Suitable for unattended work  | Yes               | **No**                           | Only after a separate product decision |
 
 Per platform, for `local-native`:
 
-| Platform | Native offered | Why |
-|---|---|---|
-| linux | Yes | POSIX process groups; `/proc/<pid>/stat` gives an exact process birth identity |
-| darwin | Yes | POSIX process groups; `ps -o lstart=` gives a second-granular birth identity |
-| win32 | **No** | No process-group primitive here, and no Job Object implementation yet, so whole-tree cleanup cannot be guaranteed — and Job Objects would not be filesystem or network isolation in any case |
+| Platform | Native offered | Why                                                                                                                                                                                          |
+| -------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| linux    | Yes            | POSIX process groups; `/proc/<pid>/stat` gives an exact process birth identity                                                                                                               |
+| darwin   | Yes            | POSIX process groups; `ps -o lstart=` gives a second-granular birth identity                                                                                                                 |
+| win32    | **No**         | No process-group primitive here, and no Job Object implementation yet, so whole-tree cleanup cannot be guaranteed — and Job Objects would not be filesystem or network isolation in any case |
 
 Per harness:
 
-| Harness | Native | Why |
-|---|---|---|
-| claude-code | Eligible (darwin, linux) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks |
-| codex | **Never** | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
-| cursor | Not supported | No AI SDK adapter to pin or audit |
+| Harness     | Native                   | Why                                                                                                                                                                                                                                               |
+| ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| claude-code | Eligible (darwin, linux) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                             |
+| codex       | **Never**                | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
+| cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
 `isolatedBackends` is empty for every harness: no backend has passed escape
 probes yet, so isolated mode cannot be selected. **Isolated never falls back to
@@ -61,23 +61,23 @@ native.**
 
 ## Module map
 
-| Module | Responsibility |
-|---|---|
-| `targets.ts` | The three execution targets, permission profiles, policy versions, and the honesty predicates |
-| `compatibility.ts` | The Inspector-owned manifest. An adapter cannot self-assert local compatibility |
-| `argv-policy.ts` | Structural + capability checks on every argument the supervisor passes |
-| `command-translation.ts` | The closed adapter command grammar → structured operations. **No shell, ever** |
-| `runtime-identity.ts` | Managed-bundle tree digests, system-install discovery, and re-verification before spawn |
-| `grants.ts` | Workspace grants (opaque ids → canonical paths) and the local harness consent capability |
-| `confine.ts` | Symlink-aware confinement for the Inspector file API |
-| `session-env.ts` | Allowlisted child environment and synthetic `$HOME` |
-| `node-launcher.ts` | Which absolute Node binary launches the bridge |
-| `process-identity.ts` | Process birth identity and whole-tree termination |
-| `process-registry.ts` | The durable owned-process record and the crash-recovery janitor |
-| `supervisor.ts` | The only process owner |
-| `bridge-endpoint.ts` | Loopback URLs, and the probe that proves the bridge is loopback-only |
+| Module                   | Responsibility                                                                                                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `targets.ts`             | The three execution targets, permission profiles, policy versions, and the honesty predicates                                |
+| `compatibility.ts`       | The Inspector-owned manifest. An adapter cannot self-assert local compatibility                                              |
+| `argv-policy.ts`         | Structural + capability checks on every argument the supervisor passes                                                       |
+| `command-translation.ts` | The closed adapter command grammar → structured operations. **No shell, ever**                                               |
+| `runtime-identity.ts`    | Managed-bundle tree digests, system-install discovery, and re-verification before spawn                                      |
+| `grants.ts`              | Workspace grants (opaque ids → canonical paths) and the local harness consent capability                                     |
+| `confine.ts`             | Symlink-aware confinement for the Inspector file API                                                                         |
+| `session-env.ts`         | Allowlisted child environment and synthetic `$HOME`                                                                          |
+| `node-launcher.ts`       | Which absolute Node binary launches the bridge                                                                               |
+| `process-identity.ts`    | Process birth identity and whole-tree termination                                                                            |
+| `process-registry.ts`    | The durable owned-process record and the crash-recovery janitor                                                              |
+| `supervisor.ts`          | The only process owner                                                                                                       |
+| `bridge-endpoint.ts`     | Loopback URLs, and the probe that proves the bridge is loopback-only                                                         |
 | `supervised-provider.ts` | `HarnessV1SandboxProvider` over the supervisor (stable contract: required `getPortEndpoint` and `destroy`, no `bridgePorts`) |
-| `availability.ts` | The single chokepoint: kill switch → actor → compatibility → workspace → runtime → consent |
+| `availability.ts`        | The single chokepoint: kill switch → actor → compatibility → workspace → runtime → consent                                   |
 
 ## Two findings this code exists to handle
 
@@ -106,6 +106,28 @@ CLI's whole dependency graph does not belong in somebody's checkout, and the
 `pnpm install` that would put it there is exactly the runtime bootstrapping the
 design forbids. Both become no-ops against a bundle built in CI.
 
+### The bootstrap recipe is not only commands
+
+`run` is not the only way the recipe reaches the machine: the framework applies
+the recipe's FILES by calling `writeTextFile` on the session. Translating the
+commands but letting those writes through would still put the adapter's
+`package.json`, `pnpm-lock.yaml` and `bridge.mjs` into the user's checkout —
+files that then sit in their VCS status and are never even read, because every
+reference to them is remapped onto the bundle.
+
+So the same closed grammar applies to paths. `classifyBootstrapPath` sorts a
+path under the bootstrap directory into exactly three outcomes:
+
+| Path                                                 | Outcome                                                                                                                |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| a file the manifest lists in `adapterBootstrapFiles` | served from the verified bundle; a write is **compared** against the bundle's bytes and fails closed on any difference |
+| the framework's `.bootstrap-<identity>.ok` marker    | written to session-owned state, so nothing is left behind in the workspace                                             |
+| anything else                                        | rejected — the recipe changed and the manifest needs re-review                                                         |
+
+Comparing rather than writing is the point: if the adapter's `bridge.mjs`
+differs from the bundle's, the session would be running bytes the adapter did
+not bootstrap. That is a bundle rebuild, not something to paper over.
+
 **The pinned bridges bind `0.0.0.0`.**
 Harmless inside a sandbox; on a laptop it publishes an agent control channel to
 the local network. `bridge-endpoint.ts` returns loopback authorities only, and
@@ -120,9 +142,29 @@ An exposure probe that runs before the listener exists proves nothing: every
 connection is refused, the probe passes, and a bridge that binds `0.0.0.0` a
 moment later is admitted with a clean bill of health. So the provider waits for
 the port to accept a loopback connection, and only then tests whether it is
-*also* reachable through this machine's non-loopback addresses. Either failure
+_also_ reachable through this machine's non-loopback addresses. Either failure
 stops the session, and the root process is killed rather than left running
 behind the refusal.
+
+It also has to be _our_ bridge. A TCP probe answers "something is listening",
+not "the process we started is". Two checks close the gap from both sides: the
+leased port must be unclaimed on both loopback families immediately **before**
+the spawn, and the supervised process must still be alive **after** the binding
+is verified. What is left is the window between the pre-launch check and the
+bridge's own `bind`, which only a process already running as this user could
+win, and closing even that needs a handshake nonce the vendor bridges do not
+speak.
+
+### "Gone" and "cannot tell" are different answers
+
+A liveness probe can fail three ways, and collapsing them is a safety bug in
+both directions. `probeProcess` returns `alive` / `gone` / `unknown`: only
+`gone` authorizes dropping a durable record or reporting a session stopped, and
+only a supervisor we can PROVE exited leaves its trees for the janitor. A `ps`
+timeout, an unreadable `/proc`, or a platform with no primitive answers
+`unknown`, which authorizes nothing. An earlier draft returned `null` for both,
+which meant a probe failure could report a live tree as stopped and let a second
+Inspector window reclaim a healthy instance's sessions.
 
 ### A zombie is a dead process
 
@@ -132,7 +174,7 @@ A liveness check built on "can I read the stat file" therefore reports a
 as having escaped, `stopSession` refuses to say the session stopped, and the
 janitor never reclaims the record.
 
-Whether that is ever *observed* depends on the environment. When PID 1 reaps
+Whether that is ever _observed_ depends on the environment. When PID 1 reaps
 orphans, a killed descendant vanishes at once and nothing looks wrong. Inside a
 container whose PID 1 is an application rather than a real init — which is where
 CI runs — orphaned zombies persist indefinitely. `process-identity.ts` reads the
@@ -151,8 +193,8 @@ the macOS `ps` path, and both parsers are pure and directly tested.
 8. Permission mode always explicit; the SDK's `allow-all` default is never inherited — `compatibility.ts`, `availability.ts`.
 9. Nothing is installed during a session — `command-translation.ts`.
 10. Secrets stay out of argv, persisted state, and logs — `session-env.ts`, `grants.ts`.
-11. Every terminal path kills the whole owned tree — `supervisor.ts`, `process-identity.ts`.
-12. A pid alone never proves ownership — `process-identity.ts`, `process-registry.ts`. A supervisor *nonce* alone does not prove its owner exited either: the janitor requires the owning Inspector's pid and birth identity to be provably gone, so a second window cannot reclaim the first's live sessions.
+11. Every terminal path kills the whole owned tree — `supervisor.ts`, `process-identity.ts`. `stopped` is reported only on a proven `gone`; an `unknown` probe counts with `escaped`.
+12. A pid alone never proves ownership — `process-identity.ts`, `process-registry.ts`. A supervisor _nonce_ alone does not prove its owner exited either: the janitor requires the owning Inspector's pid and birth identity to be provably gone, so a second window cannot reclaim the first's live sessions.
 13. Unsupported tuples fail closed with actionable diagnostics — `compatibility.ts`, `availability.ts`.
 14. Attended, explicitly scoped consent — `grants.ts`, `availability.ts`.
 

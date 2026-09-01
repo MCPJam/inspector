@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { LOCAL_HARNESS_MANIFEST, type LocalHarnessCompatibility } from "../compatibility.js";
+import {
+  LOCAL_HARNESS_MANIFEST,
+  type LocalHarnessCompatibility,
+} from "../compatibility.js";
 import {
   grantLocalHarnessConsent,
   registerWorkspaceGrant,
@@ -33,7 +36,9 @@ const PROJECT = "proj_1";
 const MACHINE = "mach_1";
 
 function target(
-  overrides: Partial<Extract<LocalHarnessExecutionTarget, { kind: "local-native" }>> = {}
+  overrides: Partial<
+    Extract<LocalHarnessExecutionTarget, { kind: "local-native" }>
+  > = {},
 ): LocalHarnessExecutionTarget {
   return {
     kind: "local-native",
@@ -75,7 +80,8 @@ async function query(overrides: Record<string, unknown> = {}) {
     projectId: PROJECT,
     grantToken: null,
     runtimeRoot,
-    installedAdapterVersion: LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
+    installedAdapterVersion:
+      LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
     localMachineId: MACHINE,
     manifests,
     platform: "linux",
@@ -119,7 +125,8 @@ beforeAll(async () => {
     projectId: PROJECT,
     grantToken: null,
     runtimeRoot,
-    installedAdapterVersion: LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
+    installedAdapterVersion:
+      LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
     localMachineId: MACHINE,
     manifests,
     platform: "linux",
@@ -149,7 +156,7 @@ beforeEach(async () => {
 describe("the machine gate", () => {
   it("refuses a target granted on a different installation", async () => {
     await expect(
-      query({ target: target({ machineId: "mach_elsewhere" }) })
+      query({ target: target({ machineId: "mach_elsewhere" }) }),
     ).resolves.toMatchObject({ status: "machine-mismatch" });
   });
 });
@@ -174,7 +181,7 @@ describe("the gates, in order", () => {
     ["a swarm-scoped run", { executionScopeKind: "swarm" as const }],
   ])("refuses %s", async (_label, actorOverrides) => {
     await expect(
-      query({ actor: { ...ATTENDED, ...actorOverrides } })
+      query({ actor: { ...ATTENDED, ...actorOverrides } }),
     ).resolves.toMatchObject({ status: "actor-not-eligible" });
   });
 
@@ -186,18 +193,20 @@ describe("the gates, in order", () => {
 
   it("refuses an unknown workspace grant", async () => {
     await expect(
-      query({ target: target({ workspaceGrantId: "ws_unknown" }) })
+      query({ target: target({ workspaceGrantId: "ws_unknown" }) }),
     ).resolves.toMatchObject({ status: "workspace-grant-invalid" });
   });
 
   it("refuses when the runtime is not the one the target names", async () => {
     await expect(
-      query({ target: target({ runtimeId: "rt_someone_elses" }) })
+      query({ target: target({ runtimeId: "rt_someone_elses" }) }),
     ).resolves.toMatchObject({ status: "runtime-changed" });
   });
 
   it("refuses without consent, even when everything else resolves", async () => {
-    await expect(query()).resolves.toMatchObject({ status: "consent-required" });
+    await expect(query()).resolves.toMatchObject({
+      status: "consent-required",
+    });
   });
 });
 
@@ -239,13 +248,19 @@ describe("a fully authorized turn", () => {
   it("stops honoring a capability once the bundle changes underneath it", async () => {
     const t = target();
     const { token } = await grantLocalHarnessConsent(binding(t));
-    await writeFile(join(runtimeRoot, "claude-code", "bridge.mjs"), "console.log(2)");
+    await writeFile(
+      join(runtimeRoot, "claude-code", "bridge.mjs"),
+      "console.log(2)",
+    );
     const result = await query({ grantToken: token });
     expect(result.available).toBe(false);
     // The digest check fires before the identity comparison, so this reports
     // the bundle failing verification rather than a mismatched runtime id.
     expect(result).toMatchObject({ status: "runtime-unavailable" });
-    await writeFile(join(runtimeRoot, "claude-code", "bridge.mjs"), "console.log(1)");
+    await writeFile(
+      join(runtimeRoot, "claude-code", "bridge.mjs"),
+      "console.log(1)",
+    );
   });
 });
 
@@ -266,7 +281,7 @@ describe("codex", () => {
         grantToken: token,
         manifests: codexManifests,
         installedAdapterVersion: LOCAL_HARNESS_MANIFEST.codex.adapterVersion,
-      })
+      }),
     ).resolves.toMatchObject({ status: "native-not-eligible" });
   });
 });
@@ -275,10 +290,16 @@ describe("actor eligibility", () => {
   it("mirrors the personal-computer engine's rule", () => {
     expect(isActorEligibleForLocalHarness(ATTENDED)).toBe(true);
     expect(
-      isActorEligibleForLocalHarness({ ...ATTENDED, executionScopeKind: "project" })
+      isActorEligibleForLocalHarness({
+        ...ATTENDED,
+        executionScopeKind: "project",
+      }),
     ).toBe(true);
     expect(
-      isActorEligibleForLocalHarness({ ...ATTENDED, executionScopeKind: "swarm" })
+      isActorEligibleForLocalHarness({
+        ...ATTENDED,
+        executionScopeKind: "swarm",
+      }),
     ).toBe(false);
   });
 });

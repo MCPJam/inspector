@@ -30,6 +30,9 @@ import { networkInterfaces } from "node:os";
 /** Loopback host used for every URL handed to an adapter. */
 export const LOOPBACK_HOST_V4 = "127.0.0.1";
 
+/** The other loopback a squatter could be holding while v4 looks free. */
+export const LOOPBACK_HOST_V6 = "::1";
+
 export class BridgeExposureError extends Error {}
 
 /**
@@ -59,7 +62,7 @@ export function localBridgeUrl(opts: {
 export function nonLoopbackLocalAddresses(
   interfaces: NodeJS.Dict<
     Array<{ address: string; internal: boolean; family: string | number }>
-  > = networkInterfaces()
+  > = networkInterfaces(),
 ): string[] {
   const found: string[] = [];
   for (const entries of Object.values(interfaces)) {
@@ -75,7 +78,7 @@ export function nonLoopbackLocalAddresses(
 function canConnect(
   host: string,
   port: number,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<boolean> {
   return new Promise((resolvePromise) => {
     let done = false;
@@ -95,6 +98,42 @@ function canConnect(
     socket.once("timeout", () => finish(false));
     socket.once("error", () => finish(false));
   });
+}
+
+/**
+ * Refuse to launch a bridge onto a port something else already holds.
+ *
+ * Without this, the readiness probe below cannot tell "our bridge came up" from
+ * "our bridge failed to bind and a squatter answered": both look like an
+ * accepted loopback connection. Checking that the leased port is free
+ * IMMEDIATELY BEFORE the spawn narrows that to the window between this check
+ * and the bridge's own `bind` — which only a process already running as this
+ * user could win, and which the liveness checks in
+ * `assertBridgeLoopbackOnly` then bound further.
+ *
+ * Both loopback families are probed: a listener on `::1` alone would leave
+ * `127.0.0.1` looking free while still answering anything that resolves
+ * `localhost` to IPv6 first.
+ */
+export async function assertBridgePortUnclaimed(args: {
+  port: number;
+  timeoutMs?: number;
+  hosts?: readonly string[];
+  connect?: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+}): Promise<void> {
+  const connect = args.connect ?? canConnect;
+  const timeoutMs = args.timeoutMs ?? 500;
+  const hosts = args.hosts ?? [LOOPBACK_HOST_V4, LOOPBACK_HOST_V6];
+  for (const host of hosts) {
+    if (await connect(host, args.port, timeoutMs)) {
+      throw new BridgeExposureError(
+        `port ${args.port} is already accepting connections on ${host} before ` +
+          `this session's bridge started, so a listener on it could not be ` +
+          `attributed to the bridge. The session stops rather than talking to ` +
+          `whatever is there.`,
+      );
+    }
+  }
 }
 
 /**
@@ -135,7 +174,33 @@ export async function assertBridgeLoopbackOnly(args: {
   addresses?: readonly string[];
   timeoutMs?: number;
   connect?: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+  /**
+   * Is the supervised bridge process still running?
+   *
+   * A TCP probe answers "something is listening on that port", not "our bridge
+   * is". Checking that the process we started is still alive — before and
+   * after the exposure probe — rules out the two ways this check could pass
+   * over the wrong endpoint: our bridge died and something else holds the
+   * port, or it dies between readiness and use.
+   *
+   * A listener that was ALREADY squatting the port is ruled out separately, by
+   * `assertBridgePortUnclaimed` immediately before the spawn. What remains is
+   * the window between that check and the bridge's own `bind`, which only a
+   * process already running as this user could win; closing even that needs a
+   * nonce the bridge echoes back, which the vendor bridges do not speak.
+   */
+  isBridgeAlive?: () => Promise<boolean>;
 }): Promise<void> {
+  const assertAlive = async (when: string): Promise<void> => {
+    if (args.isBridgeAlive === undefined) return;
+    if (await args.isBridgeAlive()) return;
+    throw new BridgeExposureError(
+      `the supervised harness bridge was no longer running ${when}, so the ` +
+        `listener on port ${args.port} cannot be attributed to it`,
+    );
+  };
+
+  await assertAlive("while waiting for it to listen");
   const ready = await waitForLoopbackListener({
     port: args.port,
     ...(args.readinessTimeoutMs !== undefined
@@ -147,10 +212,11 @@ export async function assertBridgeLoopbackOnly(args: {
     throw new BridgeExposureError(
       `the harness bridge never started listening on ` +
         `${LOOPBACK_HOST_V4}:${args.port}, so its binding could not be ` +
-        `verified. The session stops rather than proceeding unverified.`
+        `verified. The session stops rather than proceeding unverified.`,
     );
   }
   await assertBridgeIsLoopbackOnly(args);
+  await assertAlive("after its binding was verified");
 }
 
 /**
@@ -178,7 +244,7 @@ export async function assertBridgeIsLoopbackOnly(args: {
         `the harness bridge on port ${args.port} accepted a connection on a ` +
           `non-loopback address, so it is reachable from the local network. ` +
           `Local execution stops rather than leaving an agent's control ` +
-          `channel published to the LAN.`
+          `channel published to the LAN.`,
       );
     }
   }
