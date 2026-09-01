@@ -1,0 +1,151 @@
+# Local AI SDK harness execution
+
+Running an official vendor harness (Claude Code, Codex) as a **supervised
+process on the user's own machine**, without Docker, and without claiming a
+containment boundary that does not exist.
+
+This directory is the foundation: target types, the reviewed compatibility
+manifest, runtime identity, consent, the supervisor, and the AI SDK provider
+that sits on top of them. It is gated off by default and is not yet wired into
+the turn path — see [What is not here yet](#what-is-not-here-yet).
+
+## The one thing to keep straight
+
+`local-native` is **not a sandbox**. A supervised vendor process runs with the
+operating-system user's authority. What bounds it is:
+
+- the vendor harness's own permission and approval controls,
+- an explicit consent grant the user saw the terms of,
+- process supervision (what Inspector starts, and what it can stop),
+- the workspace the user selected.
+
+An allowlisted environment, a synthetic `$HOME`, owner-only state directories,
+and a confined Inspector file API all reduce accidents. **None of them contains
+a process running as the same OS user.** Product copy, telemetry, audit records,
+and code comments must all say so; `targetHasHostContainment()` is the single
+predicate everything agrees on, and `executionTargetLabel()` is the only place
+a mode gets a user-facing name.
+
+## Guarantee matrix
+
+| Property | Hosted (E2B) | Local native | Local isolated |
+|---|---|---|---|
+| Runs on the user's machine | No | Yes | Yes |
+| Outer host containment | Cloud sandbox | **No** | Backend-dependent, verified |
+| Vendor permission controls | Adapter-dependent | Required | Required where compatible |
+| Inspector process supervision | Cloud provider | Required | Required |
+| Workspace path restriction | Cloud mount | Inspector file API + policy only | OS/backend enforced |
+| Network restriction | Cloud policy | **No Inspector guarantee** | Backend policy + gateway allowlist |
+| Hard CPU/memory quota | Cloud policy | Best effort | Required where advertised |
+| Suitable for unattended work | Yes | **No** | Only after a separate product decision |
+
+Per platform, for `local-native`:
+
+| Platform | Native offered | Why |
+|---|---|---|
+| linux | Yes | POSIX process groups; `/proc/<pid>/stat` gives an exact process birth identity |
+| darwin | Yes | POSIX process groups; `ps -o lstart=` gives a second-granular birth identity |
+| win32 | **No** | No process-group primitive here, and no Job Object implementation yet, so whole-tree cleanup cannot be guaranteed — and Job Objects would not be filesystem or network isolation in any case |
+
+Per harness:
+
+| Harness | Native | Why |
+|---|---|---|
+| claude-code | Eligible (darwin, linux) | The pinned adapter declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks |
+| codex | **Never** | The pinned adapter declares `supportsBuiltinToolApprovals: false`, rejects every mode but `allow-all`, and starts Codex with `sandboxMode: 'danger-full-access'`, `approvalPolicy: 'never'`. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
+| cursor | Not supported | No AI SDK adapter to pin or audit |
+
+`isolatedBackends` is empty for every harness: no backend has passed escape
+probes yet, so isolated mode cannot be selected. **Isolated never falls back to
+native.**
+
+## Module map
+
+| Module | Responsibility |
+|---|---|
+| `targets.ts` | The three execution targets, permission profiles, policy versions, and the honesty predicates |
+| `compatibility.ts` | The Inspector-owned manifest. An adapter cannot self-assert local compatibility |
+| `argv-policy.ts` | Structural + capability checks on every argument the supervisor passes |
+| `command-translation.ts` | The closed adapter command grammar → structured operations. **No shell, ever** |
+| `runtime-identity.ts` | Managed-bundle tree digests, system-install discovery, and re-verification before spawn |
+| `grants.ts` | Workspace grants (opaque ids → canonical paths) and the local harness consent capability |
+| `confine.ts` | Symlink-aware confinement for the Inspector file API |
+| `session-env.ts` | Allowlisted child environment and synthetic `$HOME` |
+| `node-launcher.ts` | Which absolute Node binary launches the bridge |
+| `process-identity.ts` | Process birth identity and whole-tree termination |
+| `process-registry.ts` | The durable owned-process record and the crash-recovery janitor |
+| `supervisor.ts` | The only process owner |
+| `bridge-endpoint.ts` | Loopback URLs, and the probe that proves the bridge is loopback-only |
+| `supervised-provider.ts` | `HarnessV1SandboxProvider` over the supervisor |
+| `availability.ts` | The single chokepoint: kill switch → actor → compatibility → workspace → runtime → consent |
+
+## Two findings this code exists to handle
+
+**The adapters emit shell command strings.**
+`Experimental_SandboxSession.run/spawn` takes `{ command: string }`, and the
+pinned adapters fill it with `mkdir -p …`, `pnpm … install …`, and
+`node /tmp/harness/<id>/bridge.mjs …`. In a cloud sandbox that string goes to a
+shell inside the box. On a host it must not. `command-translation.ts` takes the
+reviewed option: recognize only the exact pinned shapes, translate them to
+structured operations, and **reject everything else** — there is no general
+shell parser and no `shell: true`. An adapter upgrade that changes a shape
+fails the session closed, which is the signal to re-review the manifest.
+
+It also **remaps** the adapters' hardcoded `/tmp/harness/<id>` bootstrap
+directory onto the digest-verified managed bundle. That path is predictable and
+world-writable — a pre-created-symlink target — and the `pnpm install` that
+would populate it is exactly the runtime bootstrapping the design forbids. Both
+become no-ops against a bundle built in CI.
+
+**The pinned bridges bind `0.0.0.0`.**
+Harmless inside a sandbox; on a laptop it publishes an agent control channel to
+the local network. `bridge-endpoint.ts` returns loopback authorities only, and
+`assertBridgeIsLoopbackOnly()` actually attempts a connection through this
+machine's non-loopback addresses and fails the session if one is accepted. The
+bundle build is expected to bind loopback; the probe is what makes that
+enforceable rather than aspirational.
+
+## Invariants, and where each is enforced
+
+1. Local processes launch only through `LocalHarnessSupervisor` — `supervisor.ts`.
+2. Absolute launcher path, structured argv, `shell: false`, sanitized env, registered owner — `supervisor.ts`, `argv-policy.ts`, `session-env.ts`.
+3. Runtime identity resolved and verified before consent, and re-verified before spawn; no spawn-time `PATH` lookup — `runtime-identity.ts`, `availability.ts`.
+4. No user, model, repository, or MCP input becomes a shell command string — `command-translation.ts`.
+5. Workspace canonicalized and bound to a grant; symlink checks at the boundary — `grants.ts`, `confine.ts`.
+6. Native is never labelled sandboxed or isolated — `targets.ts`.
+7. Isolated starts only after backend verification, and never degrades to native — `compatibility.ts`.
+8. Permission mode always explicit; the SDK's `allow-all` default is never inherited — `compatibility.ts`, `availability.ts`.
+9. Nothing is installed during a session — `command-translation.ts`.
+10. Secrets stay out of argv, persisted state, and logs — `session-env.ts`, `grants.ts`.
+11. Every terminal path kills the whole owned tree — `supervisor.ts`, `process-identity.ts`.
+12. A pid alone never proves ownership — `process-identity.ts`, `process-registry.ts`.
+13. Unsupported tuples fail closed with actionable diagnostics — `compatibility.ts`, `availability.ts`.
+14. Attended, explicitly scoped consent — `grants.ts`, `availability.ts`.
+
+## Enabling it
+
+`MCPJAM_LOCAL_HARNESS_ENABLED=true`, and only on a non-hosted server. Default
+off, unlike the local computer engine's flag: a local bash command is discrete
+and separately approved, a local harness is a long-lived agent process.
+
+The flag alone is not enough, and deliberately so. Every shipped manifest entry
+carries an empty `lifecycleConformanceVersion` and an all-zero bundle digest, so
+`resolveLocalHarnessAvailability` refuses with `conformance-missing` or
+`bundle-digest-mismatch` until real evidence and a real CI-built bundle exist.
+The flag enables the feature; it does not certify it.
+
+## What is not here yet
+
+Deliberately out of scope for this change, and none of it is faked:
+
+- **B1** the proof-bound local broker capability, and the scoped model gateway
+  (`scopedEnv` is the seam it plugs into);
+- **I1's** UI: the Electron directory picker and loopback consent routes that
+  call `registerWorkspaceGrant` / `grantLocalHarnessConsent`;
+- **I2's** CI bundle build, SBOM, signing, and license review — until it lands,
+  the manifest digests are placeholders that cannot match a real tree;
+- **I5's** turn integration, suspend/continue, and staged materialization with
+  diff-based apply-back;
+- **I6's** isolation backends (bubblewrap, Seatbelt);
+- **I7's** consent and diagnostics UI;
+- **I8's** rollout gating and the full cross-platform conformance run.
