@@ -554,7 +554,7 @@ describe("system install search paths", () => {
   });
 });
 
-describe("system install search paths", () => {
+describe("system install discovery without a candidate", () => {
   // Runs as any user: an empty search path returns before `resolveSystemInstall`
   // looks at ownership at all, so this case needs none of the root-only setup.
   const searchManifest: LocalHarnessCompatibility = {

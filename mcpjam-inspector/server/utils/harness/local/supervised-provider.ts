@@ -33,7 +33,7 @@
  * confine the vendor process, which runs as the OS user. Both facts must
  * survive into product copy.
  */
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, resolve, sep } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
@@ -218,7 +218,14 @@ export function createSupervisedLocalHarnessProvider(
     await mkdir(bootstrapOverlay, { recursive: true, mode: 0o700 });
 
     // The two roots the Inspector file API will touch, and nothing else.
-    const roots = [opts.sessionStateDir, opts.workspacePath];
+    //
+    // Both are CANONICAL: `confinePath` compares an already-resolved candidate
+    // against these, so a root that still contains a symlink (a symlinked
+    // $HOME, or macOS's /var -> /private/var) would never match its own
+    // canonical children and would refuse every path under it. The workspace
+    // is realpath'd when its grant is issued; the state directory is resolved
+    // here, after the directories above exist.
+    const roots = [await realpath(opts.sessionStateDir), opts.workspacePath];
     const confine = (path: string) => confinePath(path, { roots });
 
     const env = {

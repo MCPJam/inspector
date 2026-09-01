@@ -179,7 +179,8 @@ file API to write `x`. Every not-yet-resolved segment is therefore `lstat`ed,
 and one that exists as a symlink is followed explicitly, with a hop cap so a
 chain or a cycle cannot spin.
 
-This is distinct from the TOCTOU below, which is a race and remains open.
+This is distinct from the TOCTOU race described in `confine.ts`'s own header
+and in the invariant table below, which remains open.
 
 ### "Gone" and "cannot tell" are different answers
 

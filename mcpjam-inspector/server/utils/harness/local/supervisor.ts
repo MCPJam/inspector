@@ -159,6 +159,16 @@ export class LocalHarnessSupervisor {
   private readonly limits: SupervisorLimits;
   private readonly platform: NodeJS.Platform;
   private readonly live = new Map<string, Set<LiveProcess>>();
+
+  /**
+   * Sessions `stopSession` has terminated.
+   *
+   * Marked SYNCHRONOUSLY when a stop begins, so a launch that is mid-flight
+   * cannot go on to create a process the stop could not see and did not
+   * report. Never cleared: a stopped session id is finished, and a later
+   * launch under the same id would be a tree nobody asked for.
+   */
+  private readonly stopped = new Set<string>();
   /**
    * This Inspector process's own birth identity, recorded on every process it
    * owns.
@@ -238,29 +248,6 @@ export class LocalHarnessSupervisor {
     }
     assertArgvAllowed(request.args);
 
-    // Captured where it is proven non-null, because the field is mutable and
-    // the record below is built after several awaits.
-    let ownerBirthIdentity: ProcessBirthIdentity | undefined;
-    if (request.role === "root") {
-      // BEFORE the spawn, not after. Without our own identity the durable
-      // record cannot say whether its owner is alive, so the janitor would
-      // have to treat it as permanently live and never reclaim it — a tree
-      // nobody can ever clean up. Checking afterwards meant the refusal came
-      // with a process already running that we then had to abandon, and an
-      // abandon whose termination cannot be proven is exactly the outcome
-      // this refusal exists to avoid. Refusing here costs nothing: no process
-      // has been created yet.
-      await this.supervisorIdentityReady;
-      if (this.supervisorBirthIdentity === null) {
-        throw new SupervisorError(
-          "this Inspector could not read its own process identity, so a " +
-            "supervised root would be recorded without a reclaimable owner; " +
-            "refusing to start it",
-        );
-      }
-      ownerBirthIdentity = this.supervisorBirthIdentity;
-    }
-
     // ── Everything up to and including bucket registration is SYNCHRONOUS ──
     //
     // Two `spawnSupervised` calls for the same session interleave across the
@@ -278,6 +265,56 @@ export class LocalHarnessSupervisor {
       );
     }
     this.live.set(request.sessionId, bucket);
+
+    /** Give the reservation back, so a pre-spawn failure does not leave an
+     *  empty bucket counting against the session's ceiling forever. */
+    const releaseReservation = (): void => {
+      if (bucket.size === 0 && this.live.get(request.sessionId) === bucket) {
+        this.live.delete(request.sessionId);
+      }
+    };
+
+    // Captured where it is proven non-null, because the field is mutable and
+    // the record below is built after several awaits.
+    let ownerBirthIdentity: ProcessBirthIdentity | undefined;
+    if (request.role === "root") {
+      // BEFORE the spawn, not after. Without our own identity the durable
+      // record cannot say whether its owner is alive, so the janitor would
+      // have to treat it as permanently live and never reclaim it — a tree
+      // nobody can ever clean up. Checking afterwards meant the refusal came
+      // with a process already running that we then had to abandon, and an
+      // abandon whose termination cannot be proven is exactly the outcome
+      // this refusal exists to avoid. Refusing here costs nothing: no process
+      // has been created yet.
+      //
+      // But it comes AFTER the reservation above, and that ordering is load-
+      // bearing: an await placed before it left `live` with no bucket for this
+      // session, so a concurrent `stopSession` saw nothing to stop, reported
+      // `stopped: true`, and the launch then went on to spawn a root behind
+      // the stop.
+      await this.supervisorIdentityReady;
+      if (this.supervisorBirthIdentity === null) {
+        releaseReservation();
+        throw new SupervisorError(
+          "this Inspector could not read its own process identity, so a " +
+            "supervised root would be recorded without a reclaimable owner; " +
+            "refusing to start it",
+        );
+      }
+      ownerBirthIdentity = this.supervisorBirthIdentity;
+    }
+
+    // The stop may have landed while the identity read was in flight. The
+    // bucket was reserved, so `stopSession` waited for nothing — but it has
+    // already decided this session is over, and starting a process now would
+    // put a tree behind a stop that has already been reported.
+    if (this.stopped.has(request.sessionId)) {
+      releaseReservation();
+      throw new SupervisorError(
+        `session ${request.sessionId} was stopped while this launch was ` +
+          `starting; refusing to spawn a process the stop cannot account for`,
+      );
+    }
 
     const child = spawn(request.executable, [...request.args], {
       cwd: request.workingDirectory,
@@ -332,9 +369,7 @@ export class LocalHarnessSupervisor {
     if (pid === undefined) {
       // The slot was reserved before the spawn; release it, or an empty bucket
       // stays in `live` forever and counts against the session's ceiling.
-      if (bucket.size === 0 && this.live.get(request.sessionId) === bucket) {
-        this.live.delete(request.sessionId);
-      }
+      releaseReservation();
       throw new SupervisorError(
         `the ${request.role} process failed to start (no pid was assigned)`,
       );
@@ -527,6 +562,10 @@ export class LocalHarnessSupervisor {
   async stopSession(
     sessionId: string,
   ): Promise<{ stopped: boolean; escaped: number }> {
+    // Synchronously, before this method's own awaits: a concurrent launch
+    // checks this after each of its awaits and refuses rather than starting a
+    // process behind a stop that has already been decided.
+    this.stopped.add(sessionId);
     const bucket = this.live.get(sessionId);
     await updateLifecycleState(sessionId, "stopping");
     let escaped = 0;

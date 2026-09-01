@@ -152,24 +152,35 @@ describe.skipIf(!supportsOwnershipProof())("readProcessBirthIdentity", () => {
 
 describe("terminating a tree we own", () => {
   // These drive the real primitive against a real child so the outcomes are
-  // the ones a session would actually see.
-  it("reports the tree gone only when it is PROVABLY gone", async () => {
-    const { spawn } = await import("node:child_process");
-    const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
-      detached: true,
-      stdio: "ignore",
-    });
-    const pid = child.pid!;
-    const identity = await readProcessBirthIdentity(pid);
-    expect(identity).not.toBeNull();
-    const outcome = await terminateOwnedProcessGroup({
-      pid,
-      birthIdentity: identity!,
-      graceMs: 400,
-      pollMs: 25,
-    });
-    expect(["graceful", "forced"]).toContain(outcome.outcome);
-  });
+  // the ones a session would actually see. The two that depend on a real
+  // liveness answer are gated: on a platform with no ownership proof every
+  // probe is `unknown`, so they would be asserting the wrong thing rather than
+  // measuring anything. The `win32` case below is the one that DOES assert the
+  // unprovable answer, and it runs everywhere.
+  it.skipIf(!supportsOwnershipProof())(
+    "reports the tree gone only when it is PROVABLY gone",
+    async () => {
+      const { spawn } = await import("node:child_process");
+      const child = spawn(
+        process.execPath,
+        ["-e", "setInterval(()=>{},1000)"],
+        {
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+      const pid = child.pid!;
+      const identity = await readProcessBirthIdentity(pid);
+      expect(identity).not.toBeNull();
+      const outcome = await terminateOwnedProcessGroup({
+        pid,
+        birthIdentity: identity!,
+        graceMs: 400,
+        pollMs: 25,
+      });
+      expect(["graceful", "forced"]).toContain(outcome.outcome);
+    },
+  );
 
   it("says 'unknown', not 'graceful', when the platform cannot be asked", async () => {
     // A platform with no liveness primitive answers `unknown` at every probe.
@@ -186,13 +197,16 @@ describe("terminating a tree we own", () => {
     expect(outcome.outcome).toBe("unknown");
   });
 
-  it("refuses to signal a pid that is no longer the process we recorded", async () => {
-    const outcome = await terminateOwnedProcessGroup({
-      pid: process.pid,
-      birthIdentity: "linux:definitely-not-this-process",
-      graceMs: 50,
-      pollMs: 10,
-    });
-    expect(outcome.outcome).toBe("not-owned");
-  });
+  it.skipIf(!supportsOwnershipProof())(
+    "refuses to signal a pid that is no longer the process we recorded",
+    async () => {
+      const outcome = await terminateOwnedProcessGroup({
+        pid: process.pid,
+        birthIdentity: "linux:definitely-not-this-process",
+        graceMs: 50,
+        pollMs: 10,
+      });
+      expect(outcome.outcome).toBe("not-owned");
+    },
+  );
 });

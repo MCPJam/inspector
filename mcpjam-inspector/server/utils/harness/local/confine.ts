@@ -123,7 +123,18 @@ async function resolveDanglingLinks(
       let isLink: boolean;
       try {
         isLink = (await lstat(next)).isSymbolicLink();
-      } catch {
+      } catch (error) {
+        // ENOENT is the only answer that means "not there". Anything else —
+        // EACCES on a directory we may not traverse, ELOOP, EIO — is "could
+        // not look", and treating that as an absence would re-attach the rest
+        // of the tail literally and hand back a path inside the root that
+        // resolution might never have reached.
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw new PathConfinementError(
+            "path could not be resolved well enough to confine it",
+            requested,
+          );
+        }
         // Genuinely absent. Nothing below it can exist either, so the rest of
         // the tail is a path to be created.
         return resolve(next, ...tail.slice(index + 1));

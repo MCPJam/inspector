@@ -158,6 +158,29 @@ describe("launch preconditions", () => {
   });
 });
 
+describe("a stop that races a launch", () => {
+  it("refuses to spawn behind a stop that has already been reported", async () => {
+    // The regression: the supervisor's own identity read was hoisted above the
+    // synchronous bucket reservation, so during that await `live` held no
+    // bucket for the session — a concurrent `stopSession` saw nothing to stop,
+    // reported `stopped: true`, and the launch then went on to spawn a root
+    // behind the stop.
+    const sup = supervisor();
+    await sup.stopSession("s-stopped-first");
+    await expect(
+      sup.spawnSupervised(request("s-stopped-first", "idle.js")),
+    ).rejects.toThrow(/was stopped/);
+  });
+
+  it("still reports a stop honestly when nothing was running", async () => {
+    const sup = supervisor();
+    await expect(sup.stopSession("s-never-started")).resolves.toEqual({
+      stopped: true,
+      escaped: 0,
+    });
+  });
+});
+
 describe("a launch that fails at the OS", () => {
   it("rejects, and its late 'error' event does not take the Inspector down", async () => {
     // Node reports a missing executable two ways at once: `child.pid` is

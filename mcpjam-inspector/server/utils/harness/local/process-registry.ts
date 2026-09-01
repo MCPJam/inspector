@@ -118,7 +118,17 @@ async function readLockBody(file: string): Promise<LockFileBody | null> {
     const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
     if (!parsed || typeof parsed !== "object") return null;
     const body = parsed as Partial<LockFileBody>;
-    if (typeof body.pid !== "number" || typeof body.nonce !== "string") {
+    // A pid that cannot name a process makes the body unattributable, not
+    // "held by someone alive": `process.kill(0, 0)` signals THIS process's
+    // group and succeeds, so a body carrying 0 would read as a live holder and
+    // wedge the registry forever. Same for a negative pid, which is a group.
+    if (
+      typeof body.pid !== "number" ||
+      !Number.isInteger(body.pid) ||
+      body.pid <= 0 ||
+      typeof body.nonce !== "string" ||
+      body.nonce.length === 0
+    ) {
       return null;
     }
     return { pid: body.pid, nonce: body.nonce, at: Number(body.at) || 0 };
