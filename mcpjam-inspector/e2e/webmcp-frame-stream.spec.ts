@@ -673,10 +673,15 @@ test.describe("WebMCP viewport frame stream", () => {
         expect(frame.deviceHeight).toBe(sof!.height);
         expect(frame.scale ?? 1).toBeCloseTo(sof!.width / cssWidth, 2);
       }
-      console.log(
-        `[frame-stream] dpr 2: ${socket.frames[0]!.deviceWidth}x` +
+      // Through Playwright's own reporting rather than `console.log`: this is
+      // what a build actually handed over, and it belongs in the report beside
+      // the result rather than in the job's stdout.
+      test.info().annotations.push({
+        type: "frame-geometry",
+        description:
+          `dpr 2: ${socket.frames[0]!.deviceWidth}x` +
           `${socket.frames[0]!.deviceHeight} at scale ${socket.frames[0]!.scale}`,
-      );
+      });
     } finally {
       socket?.close();
       if (sessionId) {
