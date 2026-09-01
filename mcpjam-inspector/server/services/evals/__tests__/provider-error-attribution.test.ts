@@ -30,9 +30,15 @@ describe("the hosted path reads the engine's reported phase", () => {
   });
 
   it("still says model when the engine reports no phase at all", () => {
-    // The compatibility floor. Every emitter that omits a phase today is a
-    // real stream failure, and defaulting the other way would un-attribute
-    // the outages this work was built for.
+    // The compatibility floor, and the comment here used to justify it with
+    // something false: "every emitter that omits a phase today is a real
+    // stream failure". `runChatEngineLoop`'s three emitters all omitted one,
+    // so this branch was answering for the entire emulated path — including
+    // failures thrown before the model was ever contacted.
+    //
+    // Both engines report a phase now, so this governs only emitters outside
+    // them, where a stream failure really is the likelier reading. The value
+    // is unchanged; the reason for it is no longer a fiction.
     expect(failedLayerForEngineError({})).toBe("model");
     expect(failedLayerForEngineError(undefined)).toBe("model");
   });

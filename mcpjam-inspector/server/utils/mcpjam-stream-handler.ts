@@ -425,17 +425,22 @@ export interface MCPJamEngineErrorEvent {
   /**
    * WHICH LAYER was running when this fired — not what the message says.
    *
-   * `"setup"` means the turn died before the model stream began: the harness
-   * catches its own pre-stream preparation (no `projectId`, no auth bearer,
-   * broker credential delivery disabled, a sandbox it could not reserve) in
-   * the same block that catches a stream failure, and reports both here.
-   * A consumer that assumed every engine error was a provider failure would
-   * file our own setup bug as the provider's outage.
+   * `"setup"` means the turn died before the model stream began. Both engines
+   * catch their own pre-stream preparation in the same block that catches a
+   * stream failure — the harness its missing `projectId` / auth bearer /
+   * sandbox, this file its trace-payload clone, message scrubbing and tool
+   * narrowing — and report both here. A consumer that assumed every engine
+   * error was a provider failure would file our own setup bug as the
+   * provider's outage.
    *
-   * Derived from a flag the emitter already holds — whether the turn's trace
-   * ever started — never from reading the message. Omitted by emitters that
-   * cannot distinguish the two, and a consumer must treat that as unknown
-   * rather than as either answer.
+   * Derived from a flag the emitter already holds — whether the turn handed
+   * over to the model — never from reading the message.
+   *
+   * BOTH in-repo engines now populate it: `runHarnessTurn` from its own
+   * `modelInvoked`, and `runChatEngineLoop` from its (this file's two inner
+   * emitters are post-response and say `"stream"` outright). It stays
+   * optional for emitters outside those two, and a consumer must treat
+   * absence as unknown rather than as either answer.
    */
   phase?: "setup" | "stream";
   /**
@@ -944,6 +949,16 @@ interface StepContext {
   // processOneStep, processStream/tool-execution catch, outer
   // agentic-loop catch). Optional.
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
+  /**
+   * Fired at the HANDOVER to the model, immediately before the `/stream`
+   * request leaves. Lets `runChatEngineLoop`'s outer catch — a different
+   * function, so it cannot see this one's locals — say whether a turn that
+   * threw had reached the model yet.
+   *
+   * A callback rather than a returned flag because the interesting case is
+   * the one where this function THROWS and returns nothing at all.
+   */
+  onModelHandover?: () => void;
   // Typed mid-stream failure telemetry; threaded from runChatEngineLoop
   // (already oncePerTurn-wrapped and fallback-resolved there).
   failureReporter: StreamFailureReporter;
@@ -2393,6 +2408,7 @@ async function processOneStep(
     onToolResult,
     // PR 5b-followup-2 structured-error callback.
     onEngineError,
+    onModelHandover,
     failureReporter,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
@@ -2541,6 +2557,11 @@ async function processOneStep(
     convexHeaders[GUEST_IP_HASH_HEADER] = ipHash;
   }
   let res: Response;
+  // Everything above this line is ours; everything at or below it is the
+  // model's turn. Marked HERE, at the handover, not once a response comes
+  // back: a provider that rejects the request outright still failed as the
+  // model, while a throw in the preparation above genuinely is ours.
+  onModelHandover?.();
   try {
     res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
       method: "POST",
@@ -2713,6 +2734,9 @@ async function processOneStep(
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized,
+      // A response is in hand, so this is unambiguously the model's leg —
+      // no flag needed to know it.
+      phase: "stream",
     });
     return { shouldContinue: false, didEmitFinish: false };
   }
@@ -3209,6 +3233,10 @@ async function processOneStep(
         promptIndex: traceTurn.promptIndex,
         stepIndex,
         normalized: stepNormalized,
+        // The enclosing `try` opens on tool wrapping and execution, which is
+        // reached only after the stream responded. Nothing pre-request can
+        // land here.
+        phase: "stream",
       });
       return { shouldContinue: false, didEmitFinish: false };
     }
@@ -3534,6 +3562,24 @@ export async function runChatEngineLoop(
       }
     }
 
+    /**
+     * Has this turn handed over to the model yet?
+     *
+     * The `try` below covers the WHOLE turn, preparation included — the
+     * trace-payload clone, message scrubbing, the guest-IP hash, tool
+     * narrowing, `emitTurnStart`, pending-approval processing and the MRTR
+     * resume pre-phase all sit inside it. Without this flag its catch cannot
+     * tell an Inspector bug from a provider outage, and the consumer's
+     * no-phase default (`model`) then files ours as theirs — silently
+     * WITHDRAWING the eval failures a provider outage is supposed to excuse.
+     *
+     * Mirrors the harness's `modelInvoked` (`harness/run-harness-turn.ts`),
+     * including its timing rule: set at the handover, not on a successful
+     * response, so a provider rejecting the request outright still reads as
+     * the model's failure.
+     */
+    let modelInvoked = false;
+
     try {
       onStreamWriterReady?.(safeWriter);
 
@@ -3697,6 +3743,9 @@ export async function runChatEngineLoop(
           // the two `processOneStep` error sites (non-OK Convex
           // response + processStream/tool catch).
           onEngineError,
+          onModelHandover: () => {
+            modelInvoked = true;
+          },
           failureReporter,
           // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
           prepareAdvertisedTools,
@@ -3834,6 +3883,9 @@ export async function runChatEngineLoop(
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
+          // The only one of this file's three emitters that can fire on
+          // either side of the handover. See `modelInvoked`.
+          phase: modelInvoked ? "stream" : "setup",
         });
       }
     } finally {
