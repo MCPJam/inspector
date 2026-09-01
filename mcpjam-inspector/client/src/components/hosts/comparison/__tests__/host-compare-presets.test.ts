@@ -100,4 +100,28 @@ describe("host-compare-presets", () => {
       catalogVerifiedAt,
     );
   });
+
+  it.each([
+    null,
+    0,
+    -1,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ])(
+    "uses the catalog date for invalid web deployment stamp %s",
+    (mcpjamWebDeployedAt) => {
+      const catalog = clone(bundledHostCompatCatalog()) as HostCompatCatalog;
+      const catalogVerifiedAt = 1_000;
+      catalog.hostsById.mcpjam.verifiedAt = catalogVerifiedAt;
+
+      const { subjects } = buildPresetCompareEntries(catalog, {
+        mcpjamWebDeployedAt,
+      });
+
+      expect(subjects[`${PRESET_HOST_ID_PREFIX}mcpjam`]?.verifiedAt).toBe(
+        catalogVerifiedAt,
+      );
+    },
+  );
 });

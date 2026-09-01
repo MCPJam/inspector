@@ -181,6 +181,7 @@ jobs:
       # client-build layer when the same SHA is deliberately redeployed.
       - name: Stamp web deployment time
         run: |
+          # shellcheck disable=SC2016
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
             const deployedAt = Date.now();

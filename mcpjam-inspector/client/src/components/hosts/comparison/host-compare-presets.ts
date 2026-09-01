@@ -64,7 +64,9 @@ export function buildPresetCompareEntries(
   const hosts: HostListItem[] = [];
   const subjects: Record<string, HostComparisonSubject> = {};
   const mcpjamWebDeployedAt =
-    options.mcpjamWebDeployedAt ?? MCPJAM_WEB_DEPLOYED_AT;
+    options.mcpjamWebDeployedAt === undefined
+      ? MCPJAM_WEB_DEPLOYED_AT
+      : options.mcpjamWebDeployedAt;
 
   for (const host of getCatalogHosts(catalog)) {
     if (options.excludedTemplateIds?.has(host.id)) continue;
