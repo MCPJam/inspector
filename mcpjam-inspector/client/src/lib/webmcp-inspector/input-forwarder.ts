@@ -22,6 +22,7 @@
  * way to read the current geometry, which is what makes all of the above
  * testable without rendering anything.
  */
+import { WEBMCP_INPUT_TEXT_MAX_CHARS } from "@/shared/webmcp-inspector-protocol";
 import type {
   WebMcpInputEvent,
   WebMcpInputModifiers,
@@ -109,9 +110,20 @@ export function modifiersOf(event: {
   return Object.keys(modifiers).length > 0 ? modifiers : undefined;
 }
 
-/** DOM `button` numbers, as the protocol names them. */
-export function buttonOf(button: number): WebMcpMouseButton {
-  return button === 2 ? "right" : button === 1 ? "middle" : "left";
+/**
+ * DOM `button` numbers, as the protocol names them.
+ *
+ * Undefined for the auxiliary buttons (back, forward, and whatever a gaming
+ * mouse reports). Folding those into "left" would turn a thumb-button press
+ * into a click on whatever the pointer happened to be over, which is a page
+ * mutation the person did not ask for — far worse than the button doing
+ * nothing.
+ */
+export function buttonOf(button: number): WebMcpMouseButton | undefined {
+  if (button === 0) return "left";
+  if (button === 1) return "middle";
+  if (button === 2) return "right";
+  return undefined;
 }
 
 export interface InputForwarder {
@@ -178,6 +190,13 @@ export function createInputForwarder(
   /** Keys and buttons the page believes are down because we told it so. */
   const heldKeys = new Set<string>();
   const heldButtons = new Set<WebMcpMouseButton>();
+  /**
+   * The last point inside the picture, so a release can always be delivered
+   * SOMEWHERE. A drag that ends over a letterbox bar or off the pane still has
+   * to end in the page; a swallowed mouse-up leaves the button held there and
+   * every later movement reads as a continuing drag.
+   */
+  let lastPoint = { x: 0, y: 0 };
 
   const flush = () => {
     if (timer !== undefined) {
@@ -218,7 +237,9 @@ export function createInputForwarder(
   const at = (event: PointerLikeEvent) => {
     const geometry = options.geometry();
     if (!geometry) return undefined;
-    return toFrameCoordinates(event.clientX, event.clientY, geometry);
+    const point = toFrameCoordinates(event.clientX, event.clientY, geometry);
+    if (point) lastPoint = point;
+    return point;
   };
 
   return {
@@ -229,9 +250,10 @@ export function createInputForwarder(
     },
 
     mouseDown(event) {
+      const button = buttonOf(event.button);
+      if (!button) return;
       const point = at(event);
       if (!point) return;
-      const button = buttonOf(event.button);
       heldButtons.add(button);
       queue(
         {
@@ -252,10 +274,14 @@ export function createInputForwarder(
     },
 
     mouseUp(event) {
-      const point = at(event);
       const button = buttonOf(event.button);
+      if (!button) return;
+      // Falls back to the last point inside the picture rather than dropping
+      // the release. A drag released over a letterbox bar or outside the pane
+      // still delivers its mouse-up here — otherwise the page keeps the button
+      // held forever and every later move is an ongoing drag.
+      const point = at(event) ?? lastPoint;
       heldButtons.delete(button);
-      if (!point) return;
       queue(
         {
           kind: "mouse_up",
@@ -297,16 +323,28 @@ export function createInputForwarder(
 
     text(text) {
       if (!text) return;
-      queue({ kind: "text", text }, true);
+      // Split rather than sent whole and refused: the route caps one `text`
+      // event, and a long paste arriving as an invalid command would lose the
+      // whole paste rather than arrive as two.
+      for (let i = 0; i < text.length; i += WEBMCP_INPUT_TEXT_MAX_CHARS) {
+        queue(
+          {
+            kind: "text",
+            text: text.slice(i, i + WEBMCP_INPUT_TEXT_MAX_CHARS),
+          },
+          true,
+        );
+      }
     },
 
     releaseHeld() {
       for (const key of heldKeys) buffer.push({ kind: "key_up", key });
       heldKeys.clear();
       for (const button of heldButtons) {
-        // Released where the pointer last was, as far as the page is concerned:
-        // a drag interrupted by an alt-tab ends rather than staying held.
-        buffer.push({ kind: "mouse_up", x: 0, y: 0, button });
+        // Released where the pointer last WAS, not at the origin: a drag
+        // interrupted by an alt-tab should end where the person left it, and
+        // releasing at (0,0) would drag the page's content there first.
+        buffer.push({ kind: "mouse_up", ...lastPoint, button });
       }
       heldButtons.clear();
       flush();

@@ -221,17 +221,30 @@ describe("webmcp-inspector routes", () => {
         `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
         json({ type: "set_screencast", enabled: true }),
       ),
-    ).toEqual({ status: 200, body: { ok: true } });
+    ).toEqual({ status: 200, body: { ok: true, streaming: true } });
     expect(
-      (
-        await call(
-          `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
-          json({ type: "set_screencast", enabled: false }),
-        )
-      ).status,
-    ).toBe(200);
+      await call(
+        `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+        json({ type: "set_screencast", enabled: false }),
+      ),
+    ).toEqual({ status: 200, body: { ok: true, streaming: false } });
 
     expect(session.screencastCalls).toEqual([true, false]);
+  });
+
+  it("says 200 with streaming:false when the browser cannot screencast", async () => {
+    const started = await openSession(provider);
+    provider.sessions[0].screencastAvailable = false;
+
+    const { status, body } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "set_screencast", enabled: true }),
+    );
+    // The REQUEST was fine, so not an error — but the client has to be able to
+    // tell "streaming" from "understood", or it waits forever for frames that
+    // are never coming instead of falling back to polling.
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true, streaming: false });
   });
 
   it("rejects a set_screencast with no enabled flag", async () => {

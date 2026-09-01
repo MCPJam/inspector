@@ -167,8 +167,11 @@ export function WebmcpInspectorTab() {
     let poll: ReturnType<typeof setInterval> | undefined;
     const startPolling = () => {
       if (cancelled || poll !== undefined) return;
-      void captureScreenshot();
-      poll = setInterval(() => void captureScreenshot(), SCREENSHOT_POLL_MS);
+      // `silent`, so a once-a-second capture cannot clear the error banner from
+      // a navigation or invocation failure before anyone has read it.
+      const shoot = () => void captureScreenshot({ silent: true });
+      shoot();
+      poll = setInterval(shoot, SCREENSHOT_POLL_MS);
     };
 
     if (hostedViewport) {
@@ -503,7 +506,11 @@ function ViewportPane({
   transport: WebMcpViewportTransport | undefined;
   onInput: (events: WebMcpInputEvent[]) => void;
 }) {
-  const source = frame?.data ?? fallbackScreenshot;
+  // The screenshot is a FALLBACK for a stream that is meant to be running, not
+  // a still to leave up once it stops. With Live view off, holding it would
+  // freeze the pane on an old picture still labelled "live" — and the "Live
+  // view is off" placeholder would never appear, because a source was present.
+  const source = frame?.data ?? (streaming ? fallbackScreenshot : undefined);
   /**
    * Whether this pane drives the page.
    *
@@ -514,6 +521,7 @@ function ViewportPane({
    */
   const interactive = transport?.kind === "frame-stream";
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
 
   /**
@@ -549,6 +557,26 @@ function ViewportPane({
 
   useEffect(() => () => forwarder.dispose(), [forwarder]);
 
+  /**
+   * Wheel, attached natively and NON-PASSIVELY.
+   *
+   * React registers `wheel` as a passive listener at its root, so
+   * `preventDefault()` inside an `onWheel` prop is ignored — and without it the
+   * same gesture scrolls the inspector's own column, sliding the pane out from
+   * under the person while the page inside it also scrolls. The only way to
+   * consume the event is to register it directly.
+   */
+  useEffect(() => {
+    const element = paneRef.current;
+    if (!element || !interactive) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      forwarder.wheel(event);
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [interactive, forwarder]);
+
   // A pane that is no longer being driven must not leave keys held in the page.
   useEffect(() => {
     if (interactive) return;
@@ -570,8 +598,13 @@ function ViewportPane({
           event.currentTarget.releasePointerCapture?.(event.pointerId);
           forwarder.mouseUp(event.nativeEvent);
         },
-        onWheel: (event: React.WheelEvent) =>
-          forwarder.wheel(event.nativeEvent),
+        onPointerCancel: (event: React.PointerEvent) => {
+          // The browser can cancel a pointer mid-drag (a touch interrupted, a
+          // gesture taken over) with no pointerup to follow. Without this the
+          // page keeps the button held and every later move reads as a drag.
+          event.currentTarget.releasePointerCapture?.(event.pointerId);
+          forwarder.releaseHeld();
+        },
         // Suppressed rather than forwarded: a native context menu opens in the
         // browser running the page, which is headless — so the menu would exist
         // nowhere and never appear in a frame, while this browser's own menu
@@ -581,16 +614,28 @@ function ViewportPane({
           // Only while the pane holds focus, so the app's own shortcuts keep
           // working everywhere else. Tab is forwarded rather than moving focus:
           // tabbing through a form is a thing people do to the page.
-          event.preventDefault();
+          if (isComposing(event)) return;
+          // Paste is the one shortcut NOT swallowed. Preventing its default
+          // cancels the clipboard action, so no `paste` event fires and the
+          // text never reaches the page — the browser's own paste is the only
+          // way we get the clipboard at all.
+          if (!isPasteShortcut(event)) event.preventDefault();
           forwarder.keyDown(event.nativeEvent);
         },
         onKeyUp: (event: React.KeyboardEvent) => {
-          event.preventDefault();
+          if (isComposing(event)) return;
+          if (!isPasteShortcut(event)) event.preventDefault();
           forwarder.keyUp(event.nativeEvent);
         },
         onPaste: (event: React.ClipboardEvent) => {
           event.preventDefault();
           forwarder.text(event.clipboardData.getData("text"));
+        },
+        onCompositionEnd: (event: React.CompositionEvent) => {
+          // An IME commits its result here, and only here. Its key events carry
+          // placeholder values like "Process", so a pane forwarding only keys
+          // types nothing at all in Japanese, Chinese or Korean.
+          forwarder.text(event.data);
         },
         onFocus: () => setFocused(true),
         onBlur: () => {
@@ -606,6 +651,7 @@ function ViewportPane({
   return (
     <figure className="m-0 border-b bg-muted/20 p-3">
       <div
+        ref={paneRef}
         // Focusable only when it drives something: a tab stop that does nothing
         // is a trap for anyone navigating by keyboard.
         {...(interactive ? { tabIndex: 0 } : {})}
@@ -654,6 +700,16 @@ function ViewportPane({
       </figcaption>
     </figure>
   );
+}
+
+/** True while an IME is mid-composition; its key events are placeholders. */
+function isComposing(event: React.KeyboardEvent): boolean {
+  return event.nativeEvent.isComposing || event.key === "Process";
+}
+
+/** Ctrl-V / Cmd-V, whose default action is the only way to reach the clipboard. */
+function isPasteShortcut(event: React.KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
 }
 
 function StatusBadge({ status }: { status: WebMcpSessionStatus }) {

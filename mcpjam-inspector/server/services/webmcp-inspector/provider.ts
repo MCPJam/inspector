@@ -86,16 +86,21 @@ export interface WebMcpBrowserSession {
   currentUrl(): string;
   viewportTransport(): WebMcpViewportTransport;
   /**
-   * Start or stop streaming frames. Idempotent: the client asks on every pane
-   * mount and every visibility change, so "already on" must be a no-op rather
-   * than a second encoder.
+   * Start or stop streaming frames, reporting whether frames are now flowing.
    *
-   * A provider with no screencast (the hosted one drives its own stream) logs
-   * and returns. It must NEVER throw: the client asks unconditionally, and a
-   * throw here would surface as a failed command on a session that is working
-   * perfectly well through a different viewport.
+   * The RETURN VALUE is what lets the client fall back. A provider with no
+   * screencast (the hosted one drives its own stream) answers `false`, and so
+   * does one whose browser refused `Page.startScreencast` — and the client
+   * polls screenshots instead of sitting on "Waiting for the first frame…"
+   * forever. Reporting a failed start as success is the same bug as not having
+   * a fallback at all.
+   *
+   * Idempotent: the client asks on every pane mount and every visibility
+   * change, so "already on" is a no-op rather than a second encoder. Must
+   * never throw — the client asks unconditionally, and a throw would surface as
+   * a failed command on a session whose viewport may be working fine.
    */
-  setScreencast(enabled: boolean): Promise<void>;
+  setScreencast(enabled: boolean): Promise<boolean>;
   /**
    * Apply a batch of input to the page, in order.
    *

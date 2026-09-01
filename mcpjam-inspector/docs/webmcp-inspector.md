@@ -76,7 +76,7 @@ URL; and a session whose picture comes from the CDP screencast reports
 The inspector's left pane shows the page as it paints, over the same session
 that carries tools and invocations:
 
-```
+```text
 Page.screencastFrame → ack FIRST → oversize drop → 10fps throttle (with a
 mandatory trailing frame) → runtime publishFrame → hub's coalesced slot → SSE
 → store liveFrame → the pane

@@ -9,6 +9,7 @@
  */
 import { create } from "zustand";
 import { addTokenToUrl, getAuthHeaders } from "@/lib/session-token";
+import { WEBMCP_INPUT_BATCH_LIMIT } from "@/shared/webmcp-inspector-protocol";
 import type {
   WebMcpActivityEntry,
   WebMcpCommand,
@@ -115,7 +116,14 @@ interface WebMcpInspectorState {
     input: Record<string, unknown>,
   ): Promise<PageToolInvocationResult>;
   cancelInvocation(invokeId: string): Promise<void>;
-  captureScreenshot(): Promise<void>;
+  /**
+   * Capture the page into `lastScreenshot`.
+   *
+   * `silent` is for the background poll: it neither sets nor clears `error`, so
+   * a once-a-second capture cannot erase the banner from a navigation or
+   * invocation failure before anyone has read it.
+   */
+  captureScreenshot(options?: { silent?: boolean }): Promise<void>;
   /**
    * Ask the server to start or stop streaming the viewport.
    *
@@ -258,6 +266,26 @@ function failOutstandingWaiters(errorMessage: string) {
  */
 let sessionGeneration = 0;
 
+/**
+ * A tail promise that serializes the commands whose ORDER is the whole point.
+ *
+ * Two of them: input, where a release applied before its press turns a click
+ * into a stuck drag; and the screencast toggle, where an enable landing after a
+ * disable leaves Chromium encoding for a pane nobody is looking at. Both are
+ * fired from UI events that can overlap, and `fetch` makes no promise at all
+ * about the order two in-flight requests reach a handler.
+ *
+ * Rejections are folded into the chain so one failed command cannot wedge every
+ * later one.
+ */
+let commandTail: Promise<unknown> = Promise.resolve();
+
+function inOrder<T>(run: () => Promise<T>): Promise<T> {
+  const next = commandTail.then(run, run);
+  commandTail = next.catch(() => {});
+  return next;
+}
+
 export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
   (set, get) => {
     /**
@@ -357,6 +385,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               // The stream that fed it is gone, so the picture is a lie the
               // moment we stop being told it is current.
               liveFrame: undefined,
+              lastScreenshot: undefined,
             });
             failOutstandingWaiters(
               "The browser session went away before this tool finished.",
@@ -418,6 +447,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           tools: [],
           pending: [],
           liveFrame: undefined,
+          // A capture of the LAST page. The pane falls back to it before the
+          // first frame arrives, so keeping it would present the previous
+          // site's picture as this session's live view.
+          lastScreenshot: undefined,
         });
         const result = await request<WebMcpSessionPublic>("/sessions", {
           method: "POST",
@@ -457,6 +490,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           pending: [],
           chatEnabled: false,
           liveFrame: undefined,
+          lastScreenshot: undefined,
         });
         if (sessionId) {
           const result = await request(`/sessions/${sessionId}`, {
@@ -560,38 +594,82 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         await get().sendCommand({ type: "cancel_invocation", invokeId });
       },
 
-      async captureScreenshot() {
-        const result = (await get().sendCommand({
-          type: "capture_screenshot",
-        })) as { screenshotBase64?: string } | undefined;
-        set({ lastScreenshot: result?.screenshotBase64 });
+      async captureScreenshot(options) {
+        if (!options?.silent) {
+          const result = (await get().sendCommand({
+            type: "capture_screenshot",
+          })) as { screenshotBase64?: string } | undefined;
+          set({ lastScreenshot: result?.screenshotBase64 });
+          return;
+        }
+        // The polling path, which runs once a second and must be INVISIBLE in
+        // the error banner. `sendCommand` clears `error` on every success, so
+        // polling through it would wipe a navigation or invocation failure
+        // within a second of it appearing — usually before anyone read it.
+        const sessionId = get().session?.sessionId;
+        if (!sessionId) return;
+        const result = await request<{ screenshotBase64?: string }>(
+          `/sessions/${sessionId}/command`,
+          {
+            method: "POST",
+            body: JSON.stringify({ type: "capture_screenshot" }),
+          },
+        );
+        if (result.ok) set({ lastScreenshot: result.data.screenshotBase64 });
       },
 
       async sendInput(events) {
         if (events.length === 0) return;
-        // Through `sendCommand`, unlike `set_screencast`: input that the server
-        // refuses is a person's click going nowhere, which they should be told
-        // about rather than left to wonder at.
-        await get().sendCommand({ type: "input", events });
+        // Chunked to the route's cap rather than sent whole and refused. A
+        // flush that happened to exceed it would otherwise drop the gesture
+        // entirely — the one outcome worse than sending it as two requests.
+        const batches: WebMcpInputEvent[][] = [];
+        for (let i = 0; i < events.length; i += WEBMCP_INPUT_BATCH_LIMIT) {
+          batches.push(events.slice(i, i + WEBMCP_INPUT_BATCH_LIMIT));
+        }
+        // Serialized: a release that reached the browser before its press would
+        // leave the page mid-drag, and concurrent POSTs give no ordering.
+        await inOrder(async () => {
+          for (const batch of batches) {
+            // Through `sendCommand`, unlike `set_screencast`: input the server
+            // refuses is a person's click going nowhere, which they should be
+            // told about rather than left to wonder at.
+            await get().sendCommand({ type: "input", events: batch });
+          }
+        });
       },
 
       async setScreencast(enabled) {
-        const sessionId = get().session?.sessionId;
-        if (!sessionId) return false;
-        // Not routed through `sendCommand`: a server that does not know this
-        // command answers 400, and that is a compatibility fact for the caller
-        // to act on rather than an error to show the user. Surfacing it in the
-        // banner would put "Invalid command" in front of someone whose pane is
-        // about to start working anyway, via the poll fallback.
-        const result = await request(`/sessions/${sessionId}/command`, {
-          method: "POST",
-          body: JSON.stringify({ type: "set_screencast", enabled }),
+        // Serialized with input and with itself: an enable that reached the
+        // server after a disable would leave Chromium encoding for a pane
+        // nobody is looking at, and `fetch` promises nothing about the order
+        // two in-flight requests are handled in.
+        return inOrder(async () => {
+          const sessionId = get().session?.sessionId;
+          if (!sessionId) return false;
+          // Not routed through `sendCommand`: a server that does not know this
+          // command answers 400, and that is a compatibility fact for the
+          // caller to act on rather than an error to show the user. Surfacing
+          // it in the banner would put "Invalid command" in front of someone
+          // whose pane is about to start working anyway, via the poll fallback.
+          const result = await request<{ streaming?: boolean }>(
+            `/sessions/${sessionId}/command`,
+            {
+              method: "POST",
+              body: JSON.stringify({ type: "set_screencast", enabled }),
+            },
+          );
+          // `ok` says the server understood; `streaming` says frames are
+          // actually flowing. They differ exactly when a browser refuses
+          // `Page.startScreencast` — which is a 200, and is precisely when the
+          // caller must fall back to polling rather than wait for frames.
+          const streaming = result.ok && result.data.streaming === true;
+          // Nothing is arriving from here on unless frames are flowing.
+          // Holding the last one would leave the pane showing a page that has
+          // since moved on, with nothing left to correct it.
+          if (!streaming) set({ liveFrame: undefined });
+          return streaming;
         });
-        // Nothing is arriving from here on either way: the stream stopped, or
-        // it never started. Holding the last frame would leave the pane showing
-        // a page that has since moved on, with nothing left to correct it.
-        if (!enabled || !result.ok) set({ liveFrame: undefined });
-        return result.ok;
       },
 
       clearError() {

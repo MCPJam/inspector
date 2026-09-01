@@ -177,6 +177,11 @@ export class WebMcpSessionRuntime {
       onToolsChanged: (tools) => this.applyTools(tools),
       onNavigated: (url, origin) => {
         this.url = url;
+        // The retained frame depicts a page that is gone. Held, it would be
+        // replayed to a reconnecting client as the current one — the same class
+        // of lie as serving the previous page's tools, which is why the
+        // provider drops those here too.
+        this.hub.clearFrame();
         this.setStatus("ready");
         this.pushActivity({ kind: "navigated", url, origin });
       },
@@ -312,15 +317,27 @@ export class WebMcpSessionRuntime {
   }
 
   /**
-   * Start or stop the viewport stream.
+   * Start or stop the viewport stream, reporting whether frames are flowing.
    *
-   * Ticks the idle clock, unlike the frames it produces: ASKING for frames is a
-   * person opening the pane, which is exactly the kind of interest that should
-   * postpone reaping. The frames themselves are the page painting, which is not.
+   * `false` is a real answer, not a failure: this browser cannot screencast, or
+   * the provider has no such thing. The caller turns it into the screenshot
+   * fallback, which is the difference between a degraded pane and a pane stuck
+   * on "Waiting for the first frame…".
+   *
+   * Ticks the idle clock only when TURNING IT ON. Asking for frames is a person
+   * opening the pane — interest worth postponing a reap for. Withdrawing them
+   * is the opposite, and since the client withdraws on every visibility change,
+   * ticking there would let a flapping background tab keep an abandoned session
+   * alive indefinitely.
    */
-  async setScreencast(enabled: boolean): Promise<void> {
-    await this.requireSession().setScreencast(enabled);
-    this.onActivity();
+  async setScreencast(enabled: boolean): Promise<boolean> {
+    const streaming = await this.requireSession().setScreencast(enabled);
+    if (enabled) this.onActivity();
+    // Nothing is going to replace that retained frame now, and replay promises
+    // a reconnecting client the CURRENT paint rather than the last one before
+    // the stream stopped.
+    if (!streaming) this.hub.clearFrame();
+    return streaming;
   }
 
   /**

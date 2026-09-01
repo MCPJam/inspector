@@ -91,6 +91,19 @@ export class WebMcpStreamHub {
     return events.sort((a, b) => a.seq - b.seq);
   }
 
+  /**
+   * Forget the retained frame.
+   *
+   * Called when the stream stops and when the page navigates away. Replay
+   * promises a reconnecting client "exactly one frame: the current one", and a
+   * frame of a page that has been left — or of a stream nobody is running any
+   * more — is not that. Nothing is published: a connected client already knows,
+   * and this only governs what a RECONNECT is handed.
+   */
+  clearFrame(): void {
+    this.latestFrame = undefined;
+  }
+
   close(): void {
     this.closed = true;
     this.listeners.clear();

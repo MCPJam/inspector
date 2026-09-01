@@ -46,17 +46,29 @@ function base64OfSize(bytes: number): string {
   return Buffer.alloc(bytes, 0x41).toString("base64");
 }
 
-function harness(options: { viewportMode?: WebMcpViewportMode } = {}) {
+function harness(
+  options: {
+    viewportMode?: WebMcpViewportMode;
+    onSend?: (method: string) => unknown;
+    screenshot?: (options?: Record<string, unknown>) => Promise<Buffer>;
+  } = {},
+) {
   const cdp = new FakeCdp();
   /** ONE ordered log, so "ack came first" is a real assertion, not two counts. */
   const log: string[] = [];
   const frames: WebMcpFrame[] = [];
-  const screenshots = vi.fn(async () => Buffer.from("tiny-screenshot"));
+  // Typed with the options argument Playwright's `page.screenshot` takes, so a
+  // test can assert on it — the substitute path's geometry is the whole point
+  // of one of them.
+  const screenshots = vi.fn<
+    (options?: Record<string, unknown>) => Promise<Buffer>
+  >(options.screenshot ?? (async () => Buffer.from("tiny-screenshot")));
 
   const originalSend = cdp.send.bind(cdp);
   cdp.send = async (method: string, params?: unknown) => {
     if (method === "Page.screencastFrameAck") log.push("ack");
-    return originalSend(method, params);
+    await originalSend(method, params);
+    return options.onSend?.(method) ?? {};
   };
 
   const callbacks: WebMcpSessionCallbacks = {
@@ -115,7 +127,7 @@ function harness(options: { viewportMode?: WebMcpViewportMode } = {}) {
 }
 
 /** Wire the CDP listeners the way `start()` does, without a browser. */
-async function started(options: { viewportMode?: WebMcpViewportMode } = {}) {
+async function started(options: Parameters<typeof harness>[0] = {}) {
   const h = harness(options);
   await h.session.start("https://example.test/");
   return h;
@@ -201,6 +213,50 @@ describe("PlaywrightWebMcpSession screencast", () => {
     expect(h.log[0]).toBe("ack");
   });
 
+  it("substitutes a FULL-VIEWPORT capture, never the thumbnail's crop", async () => {
+    const h = await started();
+    await h.session.setScreencast(true);
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
+    );
+    await vi.waitFor(() => expect(h.frames).toHaveLength(1));
+
+    // The thumbnail path's retry CLIPS to the top-left 640x400 — right for
+    // evidence viewed as-is, wrong for a surface the client scales clicks
+    // against. A crop published as 1280x800 would stretch a quarter of the page
+    // across the pane and put every click at up to twice its true coordinate.
+    for (const call of h.screenshots.mock.calls) {
+      expect(call[0]).not.toHaveProperty("clip");
+    }
+    expect(h.frames[0]).toMatchObject({
+      deviceWidth: WEBMCP_VIEWPORT.width,
+      deviceHeight: WEBMCP_VIEWPORT.height,
+    });
+  });
+
+  it("drops a substitute that a newer frame has already overtaken", async () => {
+    const h = await started({
+      // A slow capture, so a real frame can land while it is in flight.
+      screenshot: () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(Buffer.from("late-shot")), 30),
+        ),
+    });
+    await h.session.setScreencast(true);
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
+    );
+    // A newer paint arrives while the screenshot is still being taken.
+    h.cdp.emit("Page.screencastFrame", screencastFrame("newer"));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    // The substitute is now older than what the pane is showing. Publishing it
+    // would drag the picture backwards.
+    expect(h.frames.map((frame) => frame.data)).toEqual(["newer"]);
+  });
+
   it("does not queue a screenshot per oversized frame", async () => {
     const h = await started();
     await h.session.setScreencast(true);
@@ -222,9 +278,41 @@ describe("PlaywrightWebMcpSession screencast", () => {
     h.cdp.emit("Page.screencastFrame", screencastFrame("late"));
 
     expect(h.cdp.methods()).toContain("Page.stopScreencast");
-    // The late frame is still acknowledged — but publishing it would repaint a
-    // pane the client has just cleared, with nothing left to correct it.
+    // Still ACKNOWLEDGED — asserted, not just claimed. Chromium gates the next
+    // frame on the ack, so a regression that stopped acking late frames would
+    // wedge a stream that was about to be restarted.
+    expect(
+      h.cdp.sent.filter((call) => call.method === "Page.screencastFrameAck"),
+    ).toHaveLength(2);
+    // But not published: that would repaint a pane the client has just
+    // cleared, with nothing left to correct it.
     expect(h.frames.map((frame) => frame.data)).toEqual(["first"]);
+  });
+
+  it("reports whether frames are actually flowing", async () => {
+    const h = await started();
+    // The plain case: the browser took the command.
+    expect(await h.session.setScreencast(true)).toBe(true);
+    expect(await h.session.setScreencast(false)).toBe(false);
+
+    // And the case the client's fallback depends on.
+    const refusing = await started({
+      onSend: (method) => {
+        if (method === "Page.startScreencast") {
+          throw new Error(
+            "Protocol error: 'Page.startScreencast' wasn't found",
+          );
+        }
+        return {};
+      },
+    });
+    // Reported, not thrown: the request was fine and this browser simply
+    // cannot screencast. A resolved `void` here would tell the client the
+    // stream was accepted and leave the pane waiting for frames forever.
+    expect(await refusing.session.setScreencast(true)).toBe(false);
+    // And it stays off, so a later stop does not send a stray command.
+    expect(await refusing.session.setScreencast(false)).toBe(false);
+    expect(refusing.cdp.methods()).not.toContain("Page.stopScreencast");
   });
 
   it("stops the cast on dispose", async () => {
@@ -288,6 +376,70 @@ describe("PlaywrightWebMcpSession input", () => {
     // A batch is a person's gesture. One exotic key that cannot be mapped must
     // not swallow the click queued behind it.
     expect(h.driven).toContain('down({"button":"left"})');
+  });
+
+  it("presses a modifier the person was already holding before the click", async () => {
+    const h = await started();
+    // Someone holds Shift, THEN clicks into the pane. No keydown was ever
+    // forwarded — the pane had no focus — so Playwright's own modifier state
+    // says nothing is held, and the page would get an unmodified click.
+    await h.session.dispatchInput([
+      {
+        kind: "mouse_down",
+        x: 5,
+        y: 5,
+        button: "left",
+        modifiers: { shift: true },
+      },
+      {
+        kind: "mouse_up",
+        x: 5,
+        y: 5,
+        button: "left",
+        modifiers: { shift: true },
+      },
+    ]);
+    expect(h.driven[0]).toBe('key.down("Shift")');
+    expect(h.driven).toContain('down({"button":"left"})');
+    // Held across the whole gesture, not pressed and released per event.
+    expect(
+      h.driven.filter((call) => call === 'key.down("Shift")'),
+    ).toHaveLength(1);
+  });
+
+  it("releases a modifier once the snapshot stops reporting it", async () => {
+    const h = await started();
+    await h.session.dispatchInput([
+      { kind: "mouse_move", x: 1, y: 1, modifiers: { ctrl: true } },
+      { kind: "mouse_move", x: 2, y: 2 },
+    ]);
+    // Otherwise a server-side "ctrl is down" would outlive the gesture and turn
+    // every later click into a ctrl-click, with nothing to correct it.
+    expect(h.driven).toEqual([
+      'key.down("Control")',
+      "move(1,1)",
+      'key.up("Control")',
+      "move(2,2)",
+    ]);
+  });
+
+  it("does not re-press a modifier the client forwarded as a key", async () => {
+    const h = await started();
+    await h.session.dispatchInput([
+      { kind: "key_down", key: "Shift" },
+      {
+        kind: "mouse_down",
+        x: 1,
+        y: 1,
+        button: "left",
+        modifiers: { shift: true },
+      },
+    ]);
+    // The key event already put it down; pressing again would be a second
+    // keydown the page sees as a repeat.
+    expect(
+      h.driven.filter((call) => call === 'key.down("Shift")'),
+    ).toHaveLength(1);
   });
 
   it("clamps a coordinate that arrived outside the viewport", async () => {

@@ -12,12 +12,15 @@ function harness(minIntervalMs = 100) {
   const emitted: string[] = [];
   const timers = new Map<number, { at: number; fn: () => void }>();
   let nextHandle = 1;
+  /** How many times a timer was ARMED, which is the claim under test below. */
+  let armings = 0;
 
   const throttle = createFrameThrottle<string>({
     minIntervalMs,
     emit: (value) => emitted.push(value),
     now: () => clock,
     setTimer: (fn, ms) => {
+      armings += 1;
       const handle = nextHandle++;
       timers.set(handle, { at: clock + ms, fn });
       return handle;
@@ -31,6 +34,7 @@ function harness(minIntervalMs = 100) {
     throttle,
     emitted,
     pendingTimers: () => timers.size,
+    armings: () => armings,
     /**
      * Move the clock WITHOUT running due timers — a timer callback that has not
      * been reached yet. Node makes no promise about firing on the millisecond,
@@ -83,14 +87,23 @@ describe("createFrameThrottle", () => {
   it("arms the trailing timer once per window, not once per frame", () => {
     const h = harness(100);
     h.throttle.push("a");
-    // A continuous stream: every push lands inside the window, and re-arming on
-    // each one would postpone the flush forever.
+    // Twenty pushes, all inside ONE window (20ms of a 100ms floor). Re-arming
+    // on each would postpone the flush for as long as the stream kept going.
     for (let i = 0; i < 20; i++) {
-      h.advance(5);
+      h.advance(1);
       h.throttle.push(`f${i}`);
     }
+    // The COUNT of arms, not just the count outstanding. A per-frame re-arming
+    // implementation happens to land on the same absolute deadline here
+    // (`minIntervalMs - elapsed` from a fixed `lastEmitAt`), so it would leave
+    // one pending timer and the same output — and pass a test that only looked
+    // at those. Twenty pushes inside one window must arm exactly once.
+    expect(h.armings()).toBe(1);
     expect(h.pendingTimers()).toBe(1);
-    expect(h.emitted).toEqual(["a", "f18"]);
+    expect(h.emitted).toEqual(["a"]);
+
+    h.advance(100);
+    expect(h.emitted).toEqual(["a", "f19"]);
   });
 
   it("emits immediately again once the window has passed", () => {

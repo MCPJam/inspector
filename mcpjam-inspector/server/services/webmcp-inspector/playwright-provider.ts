@@ -22,6 +22,7 @@ import {
   WEBMCP_VIEWPORT,
   type WebMcpFrame,
   type WebMcpInputEvent,
+  type WebMcpInputModifiers,
   type WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
 import { createFrameThrottle, type FrameThrottle } from "./frame-throttle";
@@ -55,6 +56,9 @@ const CLOSE_TIMEOUT_MS = 5_000;
 /** Thumbnail width; small enough that a timeline of them stays cheap. */
 const SCREENSHOT_WIDTH = 640;
 const SCREENSHOT_MAX_BYTES = 64 * 1024;
+/** The modifier keys a pointer event's snapshot can name, in Playwright's spelling. */
+const MODIFIER_KEYS = ["Alt", "Control", "Meta", "Shift"] as const;
+
 /**
  * The one CDP payload this file still names.
  *
@@ -152,6 +156,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   private readonly frameThrottle: FrameThrottle<WebMcpFrame>;
   /** One in-flight budgeted substitute at a time; see `substituteFrame`. */
   private substituting = false;
+  /** Monotonic count of published frames, for the substitute's staleness check. */
+  private framesPublished = 0;
+  /** Modifier keys Playwright currently believes are down. See `syncModifiers`. */
+  private readonly heldModifiers = new Set<string>();
 
   constructor(
     private readonly browser: Browser,
@@ -166,7 +174,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     this.url = startUrl;
     this.frameThrottle = createFrameThrottle<WebMcpFrame>({
       minIntervalMs: WEBMCP_FRAME_MIN_INTERVAL_MS,
-      emit: (frame) => this.callbacks.onFrame(frame),
+      emit: (frame) => {
+        this.framesPublished += 1;
+        this.callbacks.onFrame(frame);
+      },
     });
     this.bridge = new WebMcpBridge(cdp as unknown as CdpLike, {
       // The bridge's descriptors are already the raw browser facts this
@@ -298,12 +309,17 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   }
 
   /**
-   * Publish one frame through the BUDGETED screenshot path, for a paint the
-   * screencast could not deliver under the frame cap.
+   * Publish one screenshot as a frame, for a paint the screencast could not
+   * deliver under the frame cap.
    *
-   * Reuses `captureScreenshot()` rather than re-encoding here: that path is
-   * already the tested one (64 KiB, q50 then q30@640 on retry), and having two
-   * shrink policies would mean two things to keep in step.
+   * Its own capture rather than `captureScreenshot()`, and the difference is
+   * geometric: that path's retry CLIPS to the top-left 640x400, which is
+   * correct for a timeline thumbnail (evidence, viewed as-is) and wrong for a
+   * frame (a surface the client scales pointer coordinates against). Publishing
+   * a crop as a full viewport would stretch a quarter of the page across the
+   * pane and put every click at up to twice its true coordinate. So this
+   * degrades QUALITY only, never geometry, and the frame's reported dimensions
+   * are always the real ones.
    *
    * Single-flight, because the frames that trigger it arrive in bursts and a
    * screenshot per oversized frame would queue CDP round trips behind a page
@@ -312,14 +328,17 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   private async substituteFrame(): Promise<void> {
     if (this.substituting || this.disposed || !this.screencasting) return;
     this.substituting = true;
+    // A screenshot takes long enough for the page to paint again, and a
+    // substitute that landed after a newer frame would drag the pane backwards
+    // to an older picture. Remember where we were and drop it if it did.
+    const generation = this.framesPublished;
     try {
-      const data = await this.captureScreenshot();
-      if (!data || this.disposed || !this.screencasting) return;
+      const data = await this.captureFullViewportFrame();
+      if (!data) return;
+      if (this.disposed || !this.screencasting) return;
+      if (this.framesPublished !== generation) return;
       this.frameThrottle.push({
         data,
-        // The budgeted retry may have clipped to a narrower crop, but the
-        // client scales by the frame's own dimensions, so reporting the
-        // viewport it was captured from keeps the picture in the right box.
         deviceWidth: WEBMCP_VIEWPORT.width,
         deviceHeight: WEBMCP_VIEWPORT.height,
         ts: Date.now(),
@@ -327,6 +346,31 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     } finally {
       this.substituting = false;
     }
+  }
+
+  /**
+   * The whole viewport as a frame-budget JPEG, quality-degraded if need be.
+   *
+   * Undefined when even the low-quality pass does not fit: at that point the
+   * pane keeps the picture it has, which is the same outcome as before but
+   * without a wrong-geometry frame in between.
+   */
+  private async captureFullViewportFrame(): Promise<string | undefined> {
+    for (const quality of [WEBMCP_FRAME_QUALITY, 25]) {
+      try {
+        const buffer = await this.page.screenshot({
+          type: "jpeg",
+          quality,
+          timeout: 5_000,
+        });
+        if (buffer.byteLength <= WEBMCP_FRAME_MAX_BYTES) {
+          return buffer.toString("base64");
+        }
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   }
 
   private wirePage(): void {
@@ -469,6 +513,20 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   }
 
   private async applyInput(event: WebMcpInputEvent): Promise<void> {
+    // POINTER events only. Their snapshot is the only source of truth for a
+    // modifier that was held before the pane had focus — and note that "nothing
+    // held" is an ABSENT field, so this must run for events with no snapshot
+    // too, or a modifier could never be released. Key events are left alone:
+    // they carry their own state through the presses the client forwards, and
+    // syncing there would double-press the very key being reported.
+    if (
+      event.kind === "mouse_move" ||
+      event.kind === "mouse_down" ||
+      event.kind === "mouse_up" ||
+      event.kind === "wheel"
+    ) {
+      await this.syncModifiers(event.modifiers);
+    }
     switch (event.kind) {
       case "mouse_move":
         await this.page.mouse.move(...this.clamp(event.x, event.y));
@@ -493,9 +551,11 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         return;
       case "key_down":
         await this.page.keyboard.down(event.key);
+        this.noteModifierKey(event.key, true);
         return;
       case "key_up":
         await this.page.keyboard.up(event.key);
+        this.noteModifierKey(event.key, false);
         return;
       case "text":
         // `insertText`, not a synthesized key sequence. Paste and IME
@@ -504,6 +564,51 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         await this.page.keyboard.insertText(event.text);
         return;
     }
+  }
+
+  /**
+   * Make Playwright's modifier state match what the person was actually
+   * holding when they produced this event.
+   *
+   * Playwright tracks modifiers from the key events IT has seen, and the pane
+   * only forwards keys while it has focus. So someone who holds Shift, THEN
+   * clicks into the pane, produces a click whose snapshot says shift — and a
+   * page that receives it unmodified, because no keydown was ever forwarded.
+   * Shift-click to extend a selection, ctrl-click to open in a new tab and
+   * ctrl-scroll to zoom all fail exactly that way.
+   *
+   * The snapshot rides on every event rather than being tracked here for the
+   * same reason: focus can leave mid-chord, and a server holding its own idea
+   * of "shift is down" would apply it to every later click with nothing to
+   * correct it.
+   */
+  private async syncModifiers(
+    modifiers: WebMcpInputModifiers | undefined,
+  ): Promise<void> {
+    const wanted = new Set<string>();
+    if (modifiers?.alt) wanted.add("Alt");
+    if (modifiers?.ctrl) wanted.add("Control");
+    if (modifiers?.meta) wanted.add("Meta");
+    if (modifiers?.shift) wanted.add("Shift");
+
+    for (const key of MODIFIER_KEYS) {
+      const held = this.heldModifiers.has(key);
+      if (wanted.has(key) === held) continue;
+      if (wanted.has(key)) {
+        await this.page.keyboard.down(key);
+        this.heldModifiers.add(key);
+      } else {
+        await this.page.keyboard.up(key);
+        this.heldModifiers.delete(key);
+      }
+    }
+  }
+
+  /** Keep the tracked set honest when the client forwards a modifier key itself. */
+  private noteModifierKey(key: string, down: boolean): void {
+    if (!(MODIFIER_KEYS as readonly string[]).includes(key)) return;
+    if (down) this.heldModifiers.add(key);
+    else this.heldModifiers.delete(key);
   }
 
   /**
@@ -522,8 +627,9 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     ];
   }
 
-  async setScreencast(enabled: boolean): Promise<void> {
-    if (this.disposed || enabled === this.screencasting) return;
+  async setScreencast(enabled: boolean): Promise<boolean> {
+    if (this.disposed) return false;
+    if (enabled === this.screencasting) return this.screencasting;
     this.screencasting = enabled;
     if (enabled) {
       // Rides the session's existing CDPSession — the same one `Page.enable`
@@ -543,15 +649,19 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           } as never,
         )
         .catch((error) => {
+          // Reported, not thrown. The caller turns `false` into the screenshot
+          // fallback; a throw would be an error banner on a session whose only
+          // problem is that this browser cannot screencast.
           this.screencasting = false;
           logger.debug("[webmcp] could not start the screencast", {
             error: error instanceof Error ? error.message : String(error),
           });
         });
-      return;
+      return this.screencasting;
     }
     this.frameThrottle.reset();
     await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
+    return false;
   }
 
   viewportTransport(): WebMcpViewportTransport {

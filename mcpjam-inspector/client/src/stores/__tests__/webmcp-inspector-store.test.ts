@@ -403,11 +403,17 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
   });
 
-  it("reports an accepted screencast, and clears the frame when it is turned off", async () => {
+  it("reports frames flowing, and clears the frame when they stop", async () => {
     await openSession();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), { status: 200 }),
-    );
+    // `mockImplementation`, not `mockResolvedValue`: a Response body can only be
+    // read once, so a single shared instance makes the SECOND call here look
+    // like an empty body.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const { enabled } = JSON.parse(String((init as RequestInit)?.body));
+      return new Response(JSON.stringify({ ok: true, streaming: enabled }), {
+        status: 200,
+      });
+    });
     expect(await useWebmcpInspectorStore.getState().setScreencast(true)).toBe(
       true,
     );
@@ -415,8 +421,9 @@ describe("webmcp inspector store", () => {
     useWebmcpInspectorStore.setState({
       liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
     });
+    // False after a stop is the honest answer: nothing is flowing now.
     expect(await useWebmcpInspectorStore.getState().setScreencast(false)).toBe(
-      true,
+      false,
     );
     expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
   });
@@ -469,6 +476,118 @@ describe("webmcp inspector store", () => {
       type: "input",
       events: [{ kind: "mouse_move", x: 1, y: 2 }],
     });
+  });
+
+  it("treats a 200 with streaming:false as a screencast to fall back from", async () => {
+    await openSession();
+    useWebmcpInspectorStore.setState({
+      liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, streaming: false }), {
+        status: 200,
+      }),
+    );
+
+    // The server understood the command and the browser still cannot stream.
+    // Reading only the status here would leave the pane waiting for frames that
+    // are never coming.
+    expect(await useWebmcpInspectorStore.getState().setScreencast(true)).toBe(
+      false,
+    );
+    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+  });
+
+  it("does not carry one session's screenshot into the next", async () => {
+    await openSession();
+    useWebmcpInspectorStore.setState({ lastScreenshot: "first-site" });
+
+    await useWebmcpInspectorStore.getState().closeSession();
+    // The pane falls back to this before the first frame arrives, so keeping it
+    // would present the previous site's capture as the new session's live view.
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBeUndefined();
+
+    useWebmcpInspectorStore.setState({ lastScreenshot: "stale" });
+    await openSession();
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBeUndefined();
+  });
+
+  it("does not let the background screenshot poll clear an error banner", async () => {
+    await openSession();
+    useWebmcpInspectorStore.setState({
+      error: { message: "That page could not be reached." },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ screenshotBase64: "shot" }), {
+        status: 200,
+      }),
+    );
+
+    await useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
+    // The poll runs once a second. Clearing here would wipe a navigation or
+    // invocation failure within a second of it appearing — usually before
+    // anyone had read it.
+    expect(useWebmcpInspectorStore.getState().error?.message).toBe(
+      "That page could not be reached.",
+    );
+
+    // The MANUAL button still clears it: that is a person acting on the banner.
+    await useWebmcpInspectorStore.getState().captureScreenshot();
+    expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
+  });
+
+  it("splits an input batch past the route's cap, in order", async () => {
+    await openSession();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
+    const events = Array.from({ length: 70 }, (_, i) => ({
+      kind: "mouse_move" as const,
+      x: i,
+      y: 0,
+    }));
+    await useWebmcpInspectorStore.getState().sendInput(events);
+
+    // Sent whole it would be refused and the gesture lost entirely.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const sent = fetchSpy.mock.calls.flatMap(
+      (call) => JSON.parse(String(call[1]?.body)).events,
+    );
+    expect(sent).toHaveLength(70);
+    expect(sent.map((event: { x: number }) => event.x)).toEqual(
+      events.map((event) => event.x),
+    );
+  });
+
+  it("serializes overlapping commands so a release cannot precede its press", async () => {
+    await openSession();
+    const order: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String((init as RequestInit)?.body));
+      order.push(body.events?.[0]?.kind ?? body.type);
+      // The first request answers SLOWLY. Unserialized, the second would reach
+      // the handler first and the page would see a release with no press.
+      const delay = order.length === 1 ? 20 : 0;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    const store = useWebmcpInspectorStore.getState();
+    const first = store.sendInput([
+      { kind: "mouse_down", x: 1, y: 1, button: "left" },
+    ]);
+    const second = store.sendInput([
+      { kind: "mouse_up", x: 1, y: 1, button: "left" },
+    ]);
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(["mouse_down", "mouse_up"]);
   });
 
   it("does not ask for a screencast with no session open", async () => {

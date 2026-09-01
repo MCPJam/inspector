@@ -124,6 +124,37 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(captureScreenshot).toHaveBeenCalled();
   });
 
+  it("hides the stale picture when Live view is switched off", async () => {
+    stubViewportActions({ screencastAccepted: true });
+    useWebmcpInspectorStore.setState({ lastScreenshot: "old-capture" });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    expect(
+      screen.getByAltText("Live view of the inspected page"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Live view" }).click();
+    });
+
+    // Holding the screenshot would freeze the pane on an old picture still
+    // labelled "live", and the "Live view is off" line would never appear
+    // because a source was present.
+    expect(screen.queryByAltText("Live view of the inspected page")).toBeNull();
+    expect(screen.getByText(/Live view is off/)).toBeInTheDocument();
+  });
+
+  it("polls without clearing an error banner someone is reading", async () => {
+    const { captureScreenshot } = stubViewportActions({
+      screencastAccepted: false,
+    });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    // The poll runs once a second; going through the error-clearing path would
+    // wipe a navigation failure before anyone read it.
+    expect(captureScreenshot).toHaveBeenCalledWith({ silent: true });
+  });
+
   it("stops asking once Live view is switched off", async () => {
     const { setScreencast } = stubViewportActions({ screencastAccepted: true });
     render(<WebmcpInspectorTab />);

@@ -231,8 +231,9 @@ describe("createInputForwarder", () => {
     h.forwarder.mouseDown(pointer({ clientX: 1, clientY: 1 }));
     h.sent.length = 0;
     h.forwarder.releaseHeld();
+    // At the last point the pointer was actually over.
     expect(h.flat()).toEqual([
-      { kind: "mouse_up", x: 0, y: 0, button: "left" },
+      { kind: "mouse_up", x: 1, y: 1, button: "left" },
     ]);
   });
 
@@ -275,16 +276,60 @@ describe("createInputForwarder", () => {
     expect(h.sent).toHaveLength(0);
   });
 
-  it("still forgets a held button when its release lands outside the picture", () => {
+  it("still releases a drag that ends outside the picture", () => {
     const h = harness({ geometry: geometry({ width: 800, height: 400 }) });
     h.forwarder.mouseDown(pointer({ clientX: 400, clientY: 200 }));
     h.sent.length = 0;
-    // Released over a letterbox bar: nothing is dispatched for it, but the
-    // button must stop being tracked or `releaseHeld` would later send a second
-    // mouse_up for a button the page already saw released.
+
+    // Released over a letterbox bar. Swallowing this — as an earlier version
+    // did — leaves the page believing the button is still down, so every later
+    // movement reads as a continuing drag and the next click extends it.
     h.forwarder.mouseUp(pointer({ clientX: 10, clientY: 200 }));
+    expect(h.flat()).toEqual([
+      // At the last point INSIDE the picture, which is where the person last
+      // actually pointed.
+      { kind: "mouse_up", x: 640, y: 400, button: "left" },
+    ]);
+
+    // And it is no longer tracked, so the blur cleanup does not send a second.
+    h.sent.length = 0;
     h.forwarder.releaseHeld();
     expect(h.sent).toHaveLength(0);
+  });
+
+  it("releases a held button where the pointer last was, not at the origin", () => {
+    const h = harness();
+    h.forwarder.mouseDown(pointer({ clientX: 300, clientY: 200 }));
+    h.sent.length = 0;
+    h.forwarder.releaseHeld();
+    // Releasing at (0,0) would drag whatever was grabbed to the corner first.
+    expect(h.flat()).toEqual([
+      { kind: "mouse_up", x: 300, y: 200, button: "left" },
+    ]);
+  });
+
+  it("ignores an auxiliary mouse button rather than clicking with it", () => {
+    const h = harness();
+    // Thumb buttons (back/forward) and whatever a gaming mouse reports. Folding
+    // them into "left" would mutate the page in a way nobody asked for.
+    h.forwarder.mouseDown(pointer({ clientX: 10, clientY: 10, button: 3 }));
+    h.forwarder.mouseUp(pointer({ clientX: 10, clientY: 10, button: 4 }));
+    expect(h.sent).toHaveLength(0);
+    expect(buttonOf(3)).toBeUndefined();
+    expect(buttonOf(4)).toBeUndefined();
+  });
+
+  it("splits a paste too long for one protocol event", () => {
+    const h = harness();
+    const long = "x".repeat(4 * 1024 + 10);
+    h.forwarder.text(long);
+    // Sent whole, the route would refuse it and the paste would be lost
+    // entirely — worse than arriving as two events.
+    const texts = h.flat().filter((event) => event.kind === "text");
+    expect(texts).toHaveLength(2);
+    expect(
+      texts.map((event) => (event as { text: string }).text).join(""),
+    ).toBe(long);
   });
 
   it("drops the buffer and its timer on dispose", () => {

@@ -184,18 +184,19 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   }
 
   /**
-   * No-op: the hosted browser already publishes its own viewport, as
+   * Always `false`: the hosted browser publishes its own viewport, as
    * `remote-interactive-url`, and there is no CDP screencast to start on this
    * side of the daemon.
    *
-   * Logged rather than thrown, per the interface contract. The client asks for
-   * a screencast unconditionally when its pane is visible, and throwing here
-   * would report a failure on a session whose viewport is working fine.
+   * Reported rather than thrown, per the interface contract. The client asks
+   * unconditionally when its pane is visible, and `false` is exactly what tells
+   * it to poll screenshots instead of waiting for frames that will never come.
    */
-  async setScreencast(enabled: boolean): Promise<void> {
+  async setScreencast(enabled: boolean): Promise<boolean> {
     logger.debug("[webmcp] hosted sessions have no screencast to toggle", {
       enabled,
     });
+    return false;
   }
 
   /**

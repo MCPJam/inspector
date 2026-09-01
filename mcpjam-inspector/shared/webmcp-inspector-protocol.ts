@@ -145,7 +145,12 @@ export interface WebMcpInputModifiers {
  * is exact even mid-resize.
  */
 export type WebMcpInputEvent =
-  | { kind: "mouse_move"; x: number; y: number; modifiers?: WebMcpInputModifiers }
+  | {
+      kind: "mouse_move";
+      x: number;
+      y: number;
+      modifiers?: WebMcpInputModifiers;
+    }
   | {
       kind: "mouse_down";
       x: number;
@@ -222,7 +227,9 @@ export type WebMcpCommandResult =
   | { ok: true }
   | { ok: true; invokeId: string }
   | { ok: true; cancelled: boolean }
-  | { ok: true; screenshotBase64?: string };
+  | { ok: true; screenshotBase64?: string }
+  /** `set_screencast`: whether frames are actually flowing now. */
+  | { ok: true; streaming: boolean };
 
 /** Terminal state of an invocation, ours rather than CDP's. */
 export type WebMcpInvocationState =

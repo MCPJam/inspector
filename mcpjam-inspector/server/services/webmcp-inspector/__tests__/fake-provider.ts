@@ -138,8 +138,12 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
     return this.transport;
   }
 
-  async setScreencast(enabled: boolean): Promise<void> {
+  /** Set false to model a browser that refuses `Page.startScreencast`. */
+  screencastAvailable = true;
+
+  async setScreencast(enabled: boolean): Promise<boolean> {
     this.screencastCalls.push(enabled);
+    return enabled && this.screencastAvailable;
   }
 
   async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {

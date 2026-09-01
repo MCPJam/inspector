@@ -359,6 +359,8 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
 
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
+  /** Set by `start`, called by `pull`. See `pendingFrame`. */
+  let flushPending: (() => void) | undefined;
   const encoder = new TextEncoder();
 
   // Shared by the abort listener and `cancel()`. A consumer that cancels the
@@ -370,18 +372,59 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
     keepalive = undefined;
     unsubscribe?.();
     unsubscribe = undefined;
+    // A held frame for a consumer that is gone is just retained bytes.
+    pendingFrame = undefined;
+    flushPending = undefined;
   };
+
+  /**
+   * The one frame this subscriber is behind on, if any.
+   *
+   * The hub's coalesced slot bounds what is REPLAYED; it does nothing for a
+   * consumer that has stopped reading. Frames are the only event large enough
+   * and frequent enough to matter there — 10fps at a 256 KiB cap is 2.5 MiB/s
+   * into a `ReadableStream` queue that grows without limit while a client or
+   * its network stalls. So a frame offered to a full queue is HELD here instead
+   * of enqueued, exactly one of them, replaced by each newer one; `pull` sends
+   * whatever survived once the consumer drains. Bounded memory, and no
+   * permanently stale pane the way a plain drop would leave.
+   *
+   * Everything else is enqueued unconditionally: the timeline is small, bounded
+   * by its own ring, and losing an entry to backpressure would silently corrupt
+   * the record the session exists to produce.
+   */
+  let pendingFrame: Uint8Array | undefined;
 
   const stream = new ReadableStream({
     start(controller) {
-      const send = (payload: unknown) => {
+      const write = (chunk: Uint8Array) => {
         try {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
-          );
+          controller.enqueue(chunk);
         } catch {
           /* client went away mid-write */
         }
+      };
+      const send = (payload: unknown) => {
+        const chunk = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+        const isFrame =
+          typeof payload === "object" &&
+          payload !== null &&
+          (payload as { type?: unknown }).type === "frame";
+        if (isFrame) {
+          const room = controller.desiredSize;
+          if (room !== null && room <= 0) {
+            pendingFrame = chunk;
+            return;
+          }
+          pendingFrame = undefined;
+        }
+        write(chunk);
+      };
+      flushPending = () => {
+        if (!pendingFrame) return;
+        const chunk = pendingFrame;
+        pendingFrame = undefined;
+        write(chunk);
       };
 
       try {
@@ -411,6 +454,14 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
           /* already closed */
         }
       });
+    },
+    /**
+     * Called when the consumer has room again. Sending the held frame here is
+     * what keeps a slow client's pane converging on the current paint instead
+     * of freezing at whatever it last managed to read.
+     */
+    pull() {
+      flushPending?.();
     },
     cancel() {
       teardown();
@@ -482,8 +533,14 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           screenshotBase64: await runtime.screenshotNow(),
         });
       case "set_screencast":
-        await runtime.setScreencast(command.enabled);
-        return c.json({ ok: true });
+        // `streaming` is the load-bearing half of this answer. A browser that
+        // refuses `Page.startScreencast`, or a provider with no screencast at
+        // all, still answers 200 — the request was fine — and the client reads
+        // this flag to start polling screenshots instead of waiting forever.
+        return c.json({
+          ok: true,
+          streaming: await runtime.setScreencast(command.enabled),
+        });
       case "input":
         await runtime.dispatchInput(command.events);
         return c.json({ ok: true });

@@ -515,15 +515,58 @@ describe("viewport frames", () => {
     expect(onActivity).not.toHaveBeenCalled();
   });
 
-  it("passes setScreencast to the browser and DOES tick the idle clock", async () => {
+  it("ticks the idle clock when asked for frames, but not when they stop", async () => {
     const { runtime, session, onActivity } = makeRuntime();
     onActivity.mockClear();
-    await runtime.setScreencast(true);
-    await runtime.setScreencast(false);
-    expect(session.screencastCalls).toEqual([true, false]);
+
+    expect(await runtime.setScreencast(true)).toBe(true);
     // Asking for frames is a person opening the pane — interest worth
     // postponing a reap for, unlike the frames themselves.
-    expect(onActivity).toHaveBeenCalledTimes(2);
+    expect(onActivity).toHaveBeenCalledTimes(1);
+
+    expect(await runtime.setScreencast(false)).toBe(false);
+    expect(session.screencastCalls).toEqual([true, false]);
+    // Withdrawing them is the opposite, and the client withdraws on EVERY
+    // visibility change: ticking here would let a flapping background tab keep
+    // an abandoned session alive indefinitely.
+    expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a browser that cannot screencast, so the caller can fall back", async () => {
+    const { runtime, session } = makeRuntime();
+    session.screencastAvailable = false;
+    // A 200 with `streaming: false`, not an error: the request was fine and
+    // this browser simply cannot do it. The client polls screenshots instead of
+    // waiting forever for frames that will never come.
+    expect(await runtime.setScreencast(true)).toBe(false);
+  });
+
+  it("forgets the retained frame once the stream stops", async () => {
+    const { runtime, session } = makeRuntime();
+    await runtime.setScreencast(true);
+    session.emitFrame({ data: "paint" });
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(true);
+
+    await runtime.setScreencast(false);
+    // Replay promises a reconnecting client the CURRENT paint. A frame from a
+    // stream nobody is running any more is not that.
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(false);
+  });
+
+  it("forgets the retained frame when the page navigates away", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitFrame({ data: "old-page" });
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(true);
+
+    session.callbacks.onNavigated(
+      "https://elsewhere.test/",
+      "https://elsewhere.test",
+    );
+
+    // Same class of lie as serving the previous page's tools: the retained
+    // picture depicts a page that is gone, and replay would hand it to a
+    // reconnecting client as the current one.
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(false);
   });
 
   it("refuses setScreencast before a browser is attached", async () => {
