@@ -68,9 +68,14 @@ Only `sharing: "project"` skills (library skills) can be pinned. Personal drafts
 You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
 
 - **Local:** Uploaded skills are stored in `~/.mcpjam/skills/`.
-- **Hosted (cloud):** Cloud skills carry supporting files. A folder may contain `SKILL.md` plus scripts, references, and assets; the model reaches them with `listSkillFiles` and `readSkillFile` after loading the skill.
+- **Hosted (library):** Library skills carry supporting files. A folder may contain `SKILL.md` plus scripts, references, and assets; the model reaches them with `listSkillFiles` and `readSkillFile` after loading the skill.
 
-Hosted skill folders are bounded by three limits, enforced when the files are attached:
+When uploading to the project library, the dialog shows **"Add to library"** and states where the skill will land:
+
+- **Project admins:** The skill goes directly to the project library and is visible to all members.
+- **Other members:** The skill is saved as a personal skill. A project admin can publish it to the library using the **"Publish to project library"** button (globe icon) on the skill's detail view.
+
+Library skill folders are bounded by three limits, enforced when the files are attached:
 
 | Limit | Value |
 |---|---|
