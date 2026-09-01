@@ -41,7 +41,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { readTokenModes } from "./lib/tokens-css.mjs";
+import { contrastRatio, readTokenModes } from "./lib/tokens-css.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -250,6 +250,68 @@ function buildFrontMatter(modes) {
   return lines.join("\n");
 }
 
+/*
+ * Markers for the contrast table generated into the Colors prose.
+ *
+ * A second generated region, rather than a hand-written paragraph, because
+ * the numbers are derived: hand-written ones would be wrong the first time
+ * anyone retunes a token, and being wrong here means telling an agent that
+ * unreadable text is fine.
+ */
+const CONTRAST_BEGIN = "<!-- BEGIN GENERATED: contrast — run npm run design:sync -->";
+const CONTRAST_END = "<!-- END GENERATED: contrast -->";
+
+/**
+ * Every `X` / `X-foreground` pair in the palette, discovered rather than
+ * listed, so a new role cannot quietly skip the audit.
+ */
+function foregroundPairs(lightVars) {
+  const pairs = [["--background", "--foreground"]];
+  for (const cssVar of lightVars.keys()) {
+    if (!cssVar.endsWith("-foreground")) continue;
+    const base = cssVar.slice(0, -"-foreground".length);
+    if (lightVars.has(base)) pairs.push([base, cssVar]);
+  }
+  return pairs;
+}
+
+/**
+ * WCAG verdict for a ratio.
+ *
+ * Three bands, because 3:1 is a real pass for large text (>=24px, or >=18.66px
+ * bold) and for UI component boundaries under SC 1.4.11 — but not for the body
+ * copy an agent is most likely to write.
+ */
+function verdict(ratio) {
+  if (ratio >= 4.5) return "AA, any text";
+  if (ratio >= 3) return "Large text & UI only";
+  return "**Fails 3:1**";
+}
+
+/** The generated contrast table, both modes, worst pairs first. */
+function buildContrastTable(modes) {
+  const rows = foregroundPairs(modes.light).map(([bg, fg]) => {
+    const light = contrastRatio(modes.light.get(bg), modes.light.get(fg));
+    const dark = contrastRatio(modes.dark.get(bg), modes.dark.get(fg));
+    return { name: tokenName(bg), light, dark, worst: Math.min(light, dark) };
+  });
+  rows.sort((a, b) => a.worst - b.worst);
+
+  return [
+    CONTRAST_BEGIN,
+    "",
+    "| Pair (`X` / `X-foreground`) | Light | Dark |",
+    "| --- | --- | --- |",
+    ...rows.map(
+      (r) =>
+        `| \`${r.name}\` | ${r.light.toFixed(2)} — ${verdict(r.light)} | ` +
+        `${r.dark.toFixed(2)} — ${verdict(r.dark)} |`,
+    ),
+    "",
+    CONTRAST_END,
+  ].join("\n");
+}
+
 function nextDesignMd(current, modes) {
   const fence = /^---\n([\s\S]*?\n)?---/;
   if (!fence.test(current)) {
@@ -258,7 +320,24 @@ function nextDesignMd(current, modes) {
         "The file must open with a --- delimited block for this script to own.",
     );
   }
-  return current.replace(fence, buildFrontMatter(modes));
+  let next = current.replace(fence, buildFrontMatter(modes));
+
+  const contrastFence = new RegExp(
+    `${escapeRe(CONTRAST_BEGIN)}[\\s\\S]*?${escapeRe(CONTRAST_END)}`,
+    "m",
+  );
+  if (!contrastFence.test(next)) {
+    throw new Error(
+      `Could not find the contrast-table markers in ${DESIGN_MD}. ` +
+        "Add the BEGIN/END GENERATED: contrast markers in the Colors section.",
+    );
+  }
+
+  return next.replace(contrastFence, buildContrastTable(modes));
+}
+
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function main() {

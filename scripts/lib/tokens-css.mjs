@@ -179,6 +179,29 @@ export function srgbToHslTriplet({ r, g, b }) {
   return `${round(h)} ${round(s * 100)}% ${round(l * 100)}%`;
 }
 
+/**
+ * WCAG 2.x relative luminance of an sRGB color.
+ */
+function relativeLuminance({ r, g, b }) {
+  const channel = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+/**
+ * WCAG contrast ratio between two token values, as a number from 1 to 21.
+ *
+ * This exists so DESIGN.md can state what the palette's role pairs ACTUALLY
+ * deliver instead of promising they are all legible. The promise was easy to
+ * write and wrong: several solid status fills land nearer 3:1 than 4.5:1, and
+ * an agent told they are safe will put small body copy on them.
+ */
+export function contrastRatio(valueA, valueB) {
+  const a = relativeLuminance(oklchToSrgb(valueA));
+  const b = relativeLuminance(oklchToSrgb(valueB));
+  const [hi, lo] = a > b ? [a, b] : [b, a];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 /** Convenience: canonical token value straight to hex. */
 export function oklchToHex(value) {
   return srgbToHex(oklchToSrgb(value));

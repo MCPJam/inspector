@@ -227,9 +227,44 @@ chat-ui hold generated mirrors of these tokens; both are checked in CI.
 
 ## Colors
 
-Colors are **roles, not hues**. Every surface role pairs with a `-foreground` role
-that is guaranteed legible on it — `card` with `card-foreground`, `primary` with
+Colors are **roles, not hues**. Every surface role pairs with a `-foreground`
+role intended to sit on it — `card` with `card-foreground`, `primary` with
 `primary-foreground`. Reach for the pair, never for a hand-picked text color.
+
+**The pairing is a convention, not a contrast guarantee.** The reading surfaces
+(`background`, `card`, `popover`, `code-bg`) clear WCAG AA comfortably. Several
+solid brand and status fills do not: they were chosen as fills first, and at
+normal text sizes their white labels fall short of 4.5:1. Check the table before
+putting body copy on one — and if you need small text on a tinted background,
+use a tint (`bg-destructive/10`) with the *reading* foreground rather than a
+solid fill.
+
+<!-- BEGIN GENERATED: contrast — run npm run design:sync -->
+
+| Pair (`X` / `X-foreground`) | Light | Dark |
+| --- | --- | --- |
+| `warning` | 7.96 — AA, any text | 2.00 — **Fails 3:1** |
+| `pending` | 7.96 — AA, any text | 2.00 — **Fails 3:1** |
+| `success` | 2.53 — **Fails 3:1** | 3.05 — Large text & UI only |
+| `primary` | 3.00 — Large text & UI only | 3.12 — Large text & UI only |
+| `muted` | 3.17 — Large text & UI only | 8.38 — AA, any text |
+| `diagram-sandbox` | 3.19 — Large text & UI only | 10.27 — AA, any text |
+| `diagram-server` | 3.39 — Large text & UI only | 9.99 — AA, any text |
+| `info` | 3.75 — Large text & UI only | 3.75 — Large text & UI only |
+| `destructive` | 3.92 — Large text & UI only | 3.76 — Large text & UI only |
+| `diagram-view` | 3.94 — Large text & UI only | 9.55 — AA, any text |
+| `secondary` | 6.39 — AA, any text | 12.55 — AA, any text |
+| `background` | 10.98 — AA, any text | 8.33 — AA, any text |
+| `popover` | 15.18 — AA, any text | 10.48 — AA, any text |
+| `accent` | 12.16 — AA, any text | 15.97 — AA, any text |
+| `card` | 17.50 — AA, any text | 14.39 — AA, any text |
+
+<!-- END GENERATED: contrast -->
+
+Ratios are computed from the canonical tokens; 3:1 is a genuine pass for large
+text (≥24px, or ≥18.66px bold) and for UI component boundaries under WCAG
+1.4.11, but not for body copy. A pair marked **Fails 3:1** should not carry text
+at any size — treat those as known debt, not as license.
 
 Every token has exactly one `-dark` twin holding its dark-mode value. A `-dark`
 token is not a shade variant or a darker version of its sibling; it is the same
@@ -353,6 +388,9 @@ tables are bottom-hairline only, callouts are left-rail editorial marks.
 - Add new colors to `design-system/src/tokens.css`, then run `npm run design:sync`.
 - Use `success`/`warning`/`info`/`pending` for state, and status only.
 - Prefer a border or a tonal step over a shadow; prefer space over either.
+- Check the contrast table above before putting text on a solid fill, and
+  check the mode you are actually shipping — several pairs pass in one mode
+  and fail in the other.
 - Extend primitives via variants; keep one-off styling at the call site rare.
 
 **Don't**
@@ -365,5 +403,8 @@ tables are bottom-hairline only, callouts are left-rail editorial marks.
 - Don't use `diagram-*` outside the architecture diagram.
 - Don't style the JSON viewer with `code-*` tokens, or code blocks with `json-*`.
 - Don't add glass, glow, or heavy elevation.
+- Don't put small text on `primary`, `destructive`, `success`, `info` or
+  `pending` fills, and don't read the pairing convention as a promise that
+  any `-foreground` is legible on its role.
 - Don't propagate the score micro-site's fonts to other surfaces.
 - Don't restyle a shadcn primitive ad hoc, and don't fork preset token values.
