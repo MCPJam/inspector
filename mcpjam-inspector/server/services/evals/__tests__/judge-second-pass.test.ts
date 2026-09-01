@@ -592,6 +592,45 @@ describe("judgeEvidenceFromVerdict", () => {
     expect(line).toContain("0.6999 partial floor");
   });
 
+  test("admits the rounding rather than claiming two values are equal", () => {
+    // The cap's own blind spot. Precision stops growing at six decimals — past
+    // that a judge score is float noise — but it used to fall through to the
+    // six-decimal rendering ANYWAY, printing two different numbers identically.
+    // "scored 0.7 against a 0.7 threshold" for values that were never equal is
+    // the exact contradiction the whole function exists to prevent.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.70000001,
+        threshold: 0.70000002,
+      }) as { reasons: string[] }
+    ).reasons;
+
+    // Both are marked, because each is indistinguishable from the other...
+    expect(line).toBe(
+      "LLM judge scored \u22480.7 against a \u22480.7 threshold",
+    );
+    // ...and crucially the line no longer ASSERTS they are the same number.
+    expect(line).not.toBe("LLM judge scored 0.7 against a 0.7 threshold");
+  });
+
+  test("marks only the values that actually collide", () => {
+    // A blanket marker would make a number the reader CAN trust look uncertain.
+    // The floor here is distinguishable at six decimals; the other two are not.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.70000001,
+        threshold: 0.70000002,
+        partialFloor: 0.5,
+      }) as { reasons: string[] }
+    ).reasons;
+    expect(line).toContain("0.5 partial floor");
+    expect(line).not.toContain("\u22480.5");
+  });
+
   test("still reads equal when the score IS the threshold", () => {
     // The other half: growing precision must not manufacture a difference
     // where none exists. A score exactly on its threshold should say so.
