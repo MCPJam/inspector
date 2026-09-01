@@ -247,8 +247,16 @@ export class WebMcpBridge {
   async start(probeSupported: () => Promise<boolean>): Promise<void> {
     this.wire();
     await this.cdp.send("Page.enable").catch(() => {});
-    await this.cdp.send("WebMCP.enable").catch(() => {});
-    this.supported = await probeSupported().catch(() => false);
+    // BOTH halves have to hold. The page probe alone would accept a browser
+    // that exposes `document.modelContext` while the CDP domain is unavailable
+    // — a session that can never be told about a tool, reported as healthy and
+    // showing an empty registry that looks like the page's fault.
+    let domainEnabled = true;
+    await this.cdp.send("WebMCP.enable").catch(() => {
+      domainEnabled = false;
+    });
+    this.supported =
+      domainEnabled && (await probeSupported().catch(() => false));
   }
 
   isSupported(): boolean {

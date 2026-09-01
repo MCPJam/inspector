@@ -45,10 +45,22 @@ function harness(options: { onSend?: (method: string) => unknown } = {}) {
   const toolSnapshots: ProviderToolDescriptor[][] = [];
   const navigations: Array<{ url: string; origin: string }> = [];
   const external: Array<{ note: string; toolName?: string }> = [];
+  /**
+   * ONE ordered log across both callbacks. Two independent arrays cannot show
+   * that navigation was reported BEFORE the snapshot from the same CDP event —
+   * they would look identical in either registration order.
+   */
+  const log: string[] = [];
 
   const callbacks: WebMcpSessionCallbacks = {
-    onToolsChanged: (tools) => toolSnapshots.push(tools),
-    onNavigated: (url, origin) => navigations.push({ url, origin }),
+    onToolsChanged: (tools) => {
+      log.push(`tools:${tools.length}`);
+      toolSnapshots.push(tools);
+    },
+    onNavigated: (url, origin) => {
+      log.push("navigated");
+      navigations.push({ url, origin });
+    },
     onPopupOpened: () => {},
     onExternalInvocation: (note, toolName) => external.push({ note, toolName }),
     onActivityObserved: () => {},
@@ -74,7 +86,7 @@ function harness(options: { onSend?: (method: string) => unknown } = {}) {
     true,
   );
 
-  return { session, emit, sent, toolSnapshots, navigations, external };
+  return { session, emit, sent, toolSnapshots, navigations, external, log };
 }
 
 async function started(options?: Parameters<typeof harness>[0]) {
@@ -123,22 +135,41 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
   it("reports navigation before the tool snapshot from the same event", async () => {
     const h = await started();
     h.emit("WebMCP.toolsAdded", { tools: [TOOL] });
-    const before = h.toolSnapshots.length;
+    h.log.length = 0;
 
+    // ONE event, producing both callbacks.
     h.emit("Page.frameNavigated", {
       frame: { id: "frame-main", url: "https://example.test/other" },
     });
 
-    // Ordering, not just presence: the timeline reads "navigated, then these
-    // tools" and would read backwards if the bridge's handler ran first.
+    // Ordering, on one log: the timeline reads "navigated, then these tools"
+    // and would read backwards if the bridge's handler had been registered
+    // first. Two separate arrays could not tell the difference.
+    expect(h.log).toEqual(["navigated", "tools:0"]);
     expect(h.navigations.at(-1)).toEqual({
       url: "https://example.test/other",
       origin: "https://example.test",
     });
-    expect(h.toolSnapshots.length).toBeGreaterThan(before);
     // Chromium fires no removal on navigation, so an empty snapshot here is the
     // bridge synthesizing it — the behaviour the inline copy existed to carry.
     expect(h.toolSnapshots.at(-1)).toEqual([]);
+  });
+
+  it("fails a session whose browser has no WebMCP CDP domain", async () => {
+    const h = harness({
+      onSend: (method) => {
+        if (method === "WebMCP.enable") {
+          throw new Error("Protocol error: 'WebMCP.enable' wasn't found");
+        }
+        return {};
+      },
+    });
+    // The page probe alone would accept this: `document.modelContext` can be
+    // present while the domain is not, and the session would then be reported
+    // healthy while never being told about a single tool.
+    await expect(h.session.start("https://example.test/book")).rejects.toThrow(
+      /does not expose the WebMCP page API/i,
+    );
   });
 
   it("ignores a subframe navigation for the session's own URL", async () => {

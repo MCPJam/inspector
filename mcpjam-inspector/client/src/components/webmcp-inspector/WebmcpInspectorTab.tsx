@@ -555,7 +555,17 @@ function ViewportPane({
     [onInput],
   );
 
-  useEffect(() => () => forwarder.dispose(), [forwarder]);
+  useEffect(
+    () => () => {
+      // RELEASE, then dispose. Unmounting is not a blur — tabbing away from
+      // this screen fires no blur on the pane — so disposing alone would clear
+      // the held set locally while the page went on believing a key or button
+      // was still down, for the rest of the session.
+      forwarder.releaseHeld();
+      forwarder.dispose();
+    },
+    [forwarder],
+  );
 
   /**
    * Wheel, attached natively and NON-PASSIVELY.
@@ -612,9 +622,18 @@ function ViewportPane({
         onContextMenu: (event: React.MouseEvent) => event.preventDefault(),
         onKeyDown: (event: React.KeyboardEvent) => {
           // Only while the pane holds focus, so the app's own shortcuts keep
-          // working everywhere else. Tab is forwarded rather than moving focus:
-          // tabbing through a form is a thing people do to the page.
+          // working everywhere else.
           if (isComposing(event)) return;
+          // ESCAPE IS THE WAY OUT, and is never forwarded. Tab IS forwarded —
+          // tabbing between fields is most of what people do to a form — which
+          // means Tab cannot also be the way out, and a keyboard-only user
+          // would otherwise be trapped in the pane with no key that leaves it.
+          // The caption says so while the pane has focus.
+          if (event.key === "Escape") {
+            event.preventDefault();
+            (event.currentTarget as HTMLElement).blur();
+            return;
+          }
           // Paste is the one shortcut NOT swallowed. Preventing its default
           // cancels the clipboard action, so no `paste` event fires and the
           // text never reaches the page — the browser's own paste is the only
@@ -624,6 +643,9 @@ function ViewportPane({
         },
         onKeyUp: (event: React.KeyboardEvent) => {
           if (isComposing(event)) return;
+          // Matched to the keydown above: forwarding a lone key-up for a press
+          // the page never saw would leave it releasing a key it never got.
+          if (event.key === "Escape") return;
           if (!isPasteShortcut(event)) event.preventDefault();
           forwarder.keyUp(event.nativeEvent);
         },
@@ -694,7 +716,7 @@ function ViewportPane({
           ? "Snapshots of your MCPJam computer's browser. Open the Browser panel to interact with it."
           : interactive
             ? focused
-              ? "Typing and clicking here goes to the page."
+              ? "Typing and clicking here goes to the page. Press Esc to leave."
               : "Click to interact with the page."
             : "A live view of the page. Interact with it in the browser window."}
       </figcaption>

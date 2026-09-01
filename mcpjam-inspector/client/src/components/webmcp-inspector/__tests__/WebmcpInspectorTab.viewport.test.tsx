@@ -8,7 +8,7 @@
  * they never typed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type { WebMcpSessionPublic } from "@/shared/webmcp-inspector-protocol";
@@ -249,6 +249,68 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(
       screen.getByText(/Interact with it in the browser window/),
     ).toBeInTheDocument();
+  });
+
+  it("lets a keyboard user leave the pane with Escape", async () => {
+    const sendInput = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    await act(async () => {
+      pane.focus();
+    });
+    expect(document.activeElement).toBe(pane);
+
+    await act(async () => {
+      fireEvent.keyDown(pane, { key: "Escape" });
+    });
+
+    // Tab is FORWARDED — tabbing between fields is most of what people do to a
+    // form — so Tab cannot also be the way out. Without a key that leaves, a
+    // keyboard-only user would be trapped in the live view.
+    expect(document.activeElement).not.toBe(pane);
+    // And Escape itself never reaches the page, so it cannot close a dialog
+    // there on the way out.
+    expect(sendInput).not.toHaveBeenCalled();
+  });
+
+  it("releases held input when the screen unmounts without a blur", async () => {
+    const sendInput = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    const view = render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    await act(async () => {
+      fireEvent.keyDown(pane, { key: "Shift" });
+    });
+    sendInput.mockClear();
+
+    view.unmount();
+    await act(async () => {});
+
+    // Tabbing away from this screen fires no blur on the pane, so without an
+    // explicit release the page would believe Shift was held for the rest of
+    // the session and every later click would be a shift-click.
+    expect(sendInput).toHaveBeenCalledWith([{ kind: "key_up", key: "Shift" }]);
   });
 
   it("offers no Live view switch for a session that IS the pane", async () => {

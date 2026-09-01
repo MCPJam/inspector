@@ -792,9 +792,11 @@ var WebMcpBridge = class {
     this.wire();
     await this.cdp.send("Page.enable").catch(() => {
     });
+    let domainEnabled = true;
     await this.cdp.send("WebMCP.enable").catch(() => {
+      domainEnabled = false;
     });
-    this.supported = await probeSupported().catch(() => false);
+    this.supported = domainEnabled && await probeSupported().catch(() => false);
   }
   isSupported() {
     return this.supported;

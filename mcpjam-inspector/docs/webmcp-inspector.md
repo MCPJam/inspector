@@ -131,8 +131,8 @@ browser already has a viewport with its own take-control lease, and honouring
 
 Input is a BATCH (`{type:"input", events:[…]}`), capped at 64 events. Pointer
 movement is the flooding vector, and batching solves the rate at the transport
-rather than asking every caller to remember to. `client/src/lib/webmcp-inspector/
-input-forwarder.ts` does the client half:
+rather than asking every caller to remember to. The client half lives in
+`client/src/lib/webmcp-inspector/input-forwarder.ts`:
 
 - **Scaling** happens on the client, against the dimensions of the frame
   currently on screen — only the client knows its rendered rectangle and how
