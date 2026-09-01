@@ -12,8 +12,8 @@
     "verify": "npm run test && npm run check && npm run lint"
   },
   "dependencies": {
-    "@slack/bolt": "^5.0.0",
     "@mcpjam/surface-core": "*",
+    "@slack/bolt": "^5.0.0",
     "dotenv": "~17.4.2",
     "undici": "^7.24.8"
   },

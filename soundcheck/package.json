@@ -27,6 +27,6 @@
     "postcss": "^8.4.38",
     "tailwindcss": "^4.1.11",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5.5.2"
+    "typescript": "^7.0.2"
   }
 }

@@ -160,7 +160,7 @@
     "ts-jest": "^29.4.12",
     "tsup": "^8.0.1",
     "tsx": "^4.23.12",
-    "typescript": "^5.3.3",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.68.0",
     "vitest": "^3.2.7"
   },
