@@ -535,7 +535,6 @@ export async function runHarnessTurn(
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
-    environmentId,
     runtimeSecrets: runtimeSecretsOverride,
     secretsUnavailable,
     onSecretEnvDelivered,
