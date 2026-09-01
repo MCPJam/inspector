@@ -32,7 +32,10 @@ import {
   openWebMcpFrameStream,
   type FrameStreamConnection,
 } from "@/lib/webmcp-inspector/frame-stream-connection";
-import { noteInputSent } from "@/lib/webmcp-inspector/frame-stats";
+import {
+  noteInputSent,
+  resetFrameStats,
+} from "@/lib/webmcp-inspector/frame-stats";
 
 const BASE = "/api/mcp/webmcp";
 /** Timeline entries kept in memory. Older ones scroll out of usefulness. */
@@ -711,6 +714,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       sourceFrames = "on";
       set({ liveFrame: undefined });
       presenter.clear();
+      // Measurement samples belong to the session that produced them. `seq`
+      // restarts per session, so a gesture still waiting on its echo would
+      // otherwise be settled by an unrelated frame of the NEXT page and
+      // recorded as that page's latency.
+      resetFrameStats();
     }
 
     return {

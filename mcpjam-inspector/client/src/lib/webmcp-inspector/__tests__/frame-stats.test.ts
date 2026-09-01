@@ -56,15 +56,21 @@ describe("frame stats", () => {
   });
 
   it("stays off, rather than throwing, when localStorage is unavailable", () => {
+    // Spied on `window.localStorage` itself, NOT `Storage.prototype`: the test
+    // setup replaces `window.localStorage` with a plain object, so a prototype
+    // spy would decorate a method this code never reaches and the test would
+    // pass with the try/catch deleted.
     const getItem = vi
-      .spyOn(Storage.prototype, "getItem")
+      .spyOn(window.localStorage, "getItem")
       .mockImplementation(() => {
         throw new Error("access denied");
       });
     try {
       // A private window or a storage-less embedding. This sits in the paint
       // path, so it degrades to off rather than taking the pane with it.
+      expect(() => frameStatsEnabled()).not.toThrow();
       expect(frameStatsEnabled()).toBe(false);
+      expect(getItem).toHaveBeenCalledWith(FLAG);
       expect(() => notePainted({ ts: 1, seq: 1 })).not.toThrow();
     } finally {
       getItem.mockRestore();
@@ -142,6 +148,18 @@ describe("frame stats", () => {
     expect(frameStatsReport().captureToPaint.n).toBe(1);
     resetFrameStats();
     expect(frameStatsReport().captureToPaint.n).toBe(0);
+  });
+
+  it("drops a pending gesture on reset, so it cannot settle on a new session", () => {
+    enable();
+    noteInputSent(2);
+    // The session turns over. `seq` restarts from scratch, so without this the
+    // next page's third frame would settle a gesture aimed at the previous one
+    // and record the gap between two unrelated sessions as an echo.
+    resetFrameStats();
+    vi.setSystemTime(1_000_030);
+    notePainted({ ts: 1_000_030, seq: 3 });
+    expect(frameStatsReport().inputToPaint.n).toBe(0);
   });
 
   it("exposes the report on window once enabled", () => {

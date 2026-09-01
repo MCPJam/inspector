@@ -753,8 +753,20 @@ function ViewportPane({
             draggable={false}
             // The one place a paint is observable. Dark unless the frame-stats
             // flag is set; see lib/webmcp-inspector/frame-stats.
-            onLoad={() => {
-              if (frame) notePainted(frame);
+            //
+            // Deferred to the next animation frame, because `load` fires when
+            // the image has DECODED, not when the compositor has shown it —
+            // recording there would report a number consistently smaller than
+            // the thing being measured. Re-checked after the wait, so a frame
+            // superseded before it was ever shown is not counted as one that
+            // was.
+            onLoad={(event) => {
+              const image = event.currentTarget;
+              if (!frame || image.currentSrc !== frame.src) return;
+              const painted = frame;
+              requestAnimationFrame(() => {
+                if (image.currentSrc === painted.src) notePainted(painted);
+              });
             }}
             // Frames arrive faster than a decode; letting the browser paint the
             // previous one until this decodes is what keeps the pane from

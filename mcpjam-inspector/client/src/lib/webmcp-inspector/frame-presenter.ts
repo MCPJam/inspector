@@ -56,11 +56,12 @@ export function createFramePresenter(
 
   return {
     present(jpeg) {
-      // Copied into its own ArrayBuffer: the decoder hands back a slice, and a
-      // Blob must own bytes nothing else is going to reuse.
-      const url = createUrl(
-        new Blob([jpeg.slice().buffer as ArrayBuffer], { type: "image/jpeg" }),
-      );
+      // `slice()` — a right-sized copy — and NOT `jpeg.buffer`. A decoded
+      // frame is routinely a view onto a larger pooled allocation, and its
+      // `.buffer` is that whole allocation: the frame plus whatever bytes
+      // happen to surround it. Ownership is not the reason; the Blob
+      // constructor copies its input either way.
+      const url = createUrl(new Blob([jpeg.slice()], { type: "image/jpeg" }));
       if (previous) revokeUrl(previous);
       previous = current;
       current = url;

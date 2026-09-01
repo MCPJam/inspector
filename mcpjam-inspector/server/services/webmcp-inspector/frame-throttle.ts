@@ -75,6 +75,21 @@ export function createFrameThrottle<T>(
   const flush = () => {
     timer = undefined;
     if (!trailing) return;
+    // The floor can have GROWN since this timer was armed: a boost that
+    // expired in the meantime takes the interval from 33ms back to 100ms, and
+    // emitting on the old deadline would put one frame under the resting
+    // floor. Re-arm for what is actually left.
+    //
+    // This cannot postpone the trailing frame indefinitely — the failure this
+    // module exists to prevent. The interval only ever grows once, at boost
+    // expiry, and the re-armed deadline is measured against a `lastEmitAt`
+    // that does not move while a frame is held. So there is at most one
+    // re-arm, after which the frame is due and goes.
+    const remaining = interval() - (now() - lastEmitAt);
+    if (remaining > 0) {
+      timer = setTimer(flush, remaining);
+      return;
+    }
     const { value } = trailing;
     trailing = undefined;
     lastEmitAt = now();

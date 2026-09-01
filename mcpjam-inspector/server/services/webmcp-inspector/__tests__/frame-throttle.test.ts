@@ -211,6 +211,40 @@ describe("createFrameThrottle", () => {
     expect(h.armings()).toBe(0);
   });
 
+  it("re-arms a trailing frame whose timer crossed the boost expiry", () => {
+    const h = harness(100);
+    h.throttle.boost(33, 40);
+    h.throttle.push("a");
+    h.advance(5);
+    // Held with a ~28ms deadline, set while the boost was in force.
+    h.throttle.push("held");
+    expect(h.emitted).toEqual(["a"]);
+
+    // The boost expires (at +40ms) BEFORE that timer fires. Emitting on the
+    // old deadline would put this frame 33ms after the last one, under a
+    // resting floor of 100ms.
+    h.advance(45);
+    expect(h.emitted).toEqual(["a"]);
+
+    // …and it is not postponed forever either: the interval grows once, so
+    // there is exactly one re-arm and then the frame goes.
+    h.advance(60);
+    expect(h.emitted).toEqual(["a", "held"]);
+    expect(h.pendingTimers()).toBe(0);
+  });
+
+  it("emits a trailing frame on time when the boost is still in force", () => {
+    const h = harness(100);
+    h.throttle.boost(33, 5_000);
+    h.throttle.push("a");
+    h.advance(5);
+    h.throttle.push("held");
+    // The re-arm must not cost the boost its speed: with the boost still on,
+    // the frame is due at 33ms and goes then.
+    h.advance(30);
+    expect(h.emitted).toEqual(["a", "held"]);
+  });
+
   it("clears the boost on reset", () => {
     const h = harness(100);
     h.throttle.boost(33, 10_000);

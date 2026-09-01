@@ -11,6 +11,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import {
+  frameStatsReport,
+  resetFrameStatsFlagForTests,
+} from "@/lib/webmcp-inspector/frame-stats";
 import type {
   WebMcpInputEvent,
   WebMcpSessionPublic,
@@ -327,6 +331,94 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(sendInput.mock.calls[1]![0]).toEqual([
       expect.objectContaining({ kind: "wheel", deltaY: -100 }),
     ]);
+  });
+
+  it("records a paint on the next animation frame, not on decode", async () => {
+    localStorage.setItem("webmcp:frame-stats", "1");
+    resetFrameStatsFlagForTests();
+    const frames: Array<() => void> = [];
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        frames.push(() => cb(0));
+        return frames.length;
+      });
+    try {
+      stubViewportActions({ screencastAccepted: true });
+      render(<WebmcpInspectorTab />);
+      await act(async () => {});
+      await act(async () => {
+        useWebmcpInspectorStore.setState({
+          liveFrame: liveFrame("data:image/jpeg;base64,paint"),
+        });
+      });
+
+      const image = screen.getByAltText("Live view of the inspected page");
+      Object.defineProperty(image, "currentSrc", {
+        value: "data:image/jpeg;base64,paint",
+        configurable: true,
+      });
+      await act(async () => {
+        fireEvent.load(image);
+      });
+
+      // `load` means DECODED, not shown. Recording there reports a number
+      // consistently smaller than the thing being measured.
+      expect(frameStatsReport().captureToPaint.n).toBe(0);
+      await act(async () => {
+        frames.forEach((run) => run());
+      });
+      expect(frameStatsReport().captureToPaint.n).toBe(1);
+    } finally {
+      raf.mockRestore();
+      localStorage.removeItem("webmcp:frame-stats");
+      resetFrameStatsFlagForTests();
+    }
+  });
+
+  it("does not record a frame superseded before it was shown", async () => {
+    localStorage.setItem("webmcp:frame-stats", "1");
+    resetFrameStatsFlagForTests();
+    const frames: Array<() => void> = [];
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        frames.push(() => cb(0));
+        return frames.length;
+      });
+    try {
+      stubViewportActions({ screencastAccepted: true });
+      render(<WebmcpInspectorTab />);
+      await act(async () => {});
+      await act(async () => {
+        useWebmcpInspectorStore.setState({
+          liveFrame: liveFrame("data:image/jpeg;base64,paint"),
+        });
+      });
+
+      const image = screen.getByAltText("Live view of the inspected page");
+      Object.defineProperty(image, "currentSrc", {
+        value: "data:image/jpeg;base64,paint",
+        configurable: true,
+      });
+      await act(async () => {
+        fireEvent.load(image);
+      });
+      // A newer frame replaced it before the compositor ever showed this one,
+      // so it never was a paint.
+      Object.defineProperty(image, "currentSrc", {
+        value: "data:image/jpeg;base64,newer",
+        configurable: true,
+      });
+      await act(async () => {
+        frames.forEach((run) => run());
+      });
+      expect(frameStatsReport().captureToPaint.n).toBe(0);
+    } finally {
+      raf.mockRestore();
+      localStorage.removeItem("webmcp:frame-stats");
+      resetFrameStatsFlagForTests();
+    }
   });
 
   it("leaves a native-window session view-only", async () => {

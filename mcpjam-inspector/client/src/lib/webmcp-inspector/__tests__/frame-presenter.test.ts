@@ -100,9 +100,40 @@ describe("frame presenter", () => {
     expect(revoked.filter((url) => url === created[0])).toHaveLength(1);
   });
 
-  it("hands the browser bytes it owns", () => {
-    // The decoder returns a slice of a socket buffer some transports reuse; a
-    // Blob viewing it would change under an image that is still decoding.
+  /** Read a Blob's bytes back; jsdom's Blob has no `arrayBuffer()`. */
+  async function bytesOf(blob: Blob): Promise<number[]> {
+    const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(blob);
+    });
+    return [...new Uint8Array(buffer)];
+  }
+
+  it("hands over only the frame's own bytes, not its whole allocation", async () => {
+    // A decoded frame is routinely a VIEW onto a larger pooled buffer. Handing
+    // the Blob `jpeg.buffer` would give it the surrounding bytes too — a
+    // corrupt image built from a frame that was itself perfectly fine.
+    const blobs: Blob[] = [];
+    const presenter = createFramePresenter({
+      createUrl: (blob) => {
+        blobs.push(blob);
+        return `blob:${blobs.length}`;
+      },
+      revokeUrl: () => {},
+      defer: (fn) => fn(),
+    });
+    const pool = new Uint8Array([9, 9, 9, 0xff, 0xd8, 0x42, 9, 9]);
+    presenter.present(pool.subarray(3, 6));
+    expect(await bytesOf(blobs[0]!)).toEqual([0xff, 0xd8, 0x42]);
+  });
+
+  it("hands the browser the bytes as they were, not a live view of them", async () => {
+    // The decoder returns a slice of a socket buffer some transports reuse, so
+    // the blob must hold the bytes AS OF `present`. Asserted by reading the
+    // blob back: `size` and `type` are identical whether it copied or aliased,
+    // so checking those proves nothing at all.
     const blobs: Blob[] = [];
     const presenter = createFramePresenter({
       createUrl: (blob) => {
@@ -115,7 +146,8 @@ describe("frame presenter", () => {
     const bytes = jpeg(7);
     presenter.present(bytes);
     bytes[2] = 0x00;
-    expect(blobs[0]!.size).toBe(3);
+
+    expect(await bytesOf(blobs[0]!)).toEqual([0xff, 0xd8, 0x07]);
     expect(blobs[0]!.type).toBe("image/jpeg");
   });
 

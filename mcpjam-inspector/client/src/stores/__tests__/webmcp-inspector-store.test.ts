@@ -10,6 +10,12 @@ import {
 } from "../webmcp-inspector-store";
 import { createFramePresenter } from "@/lib/webmcp-inspector/frame-presenter";
 import * as sessionToken from "@/lib/session-token";
+import {
+  frameStatsReport,
+  notePainted,
+  noteInputSent,
+  resetFrameStatsFlagForTests,
+} from "@/lib/webmcp-inspector/frame-stats";
 import { encodeWebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
 import type {
   WebMcpActivityEntry,
@@ -1364,6 +1370,34 @@ describe("webmcp inspector store — frame transport", () => {
     // would swallow every frame of it, and the pane would never paint again.
     next.emitFrame(binaryFrame(1));
     expect(useWebmcpInspectorStore.getState().liveFrame?.seq).toBe(1);
+  });
+
+  it("drops pending latency samples when the session is torn down", async () => {
+    localStorage.setItem("webmcp:frame-stats", "1");
+    resetFrameStatsFlagForTests();
+    try {
+      const { ws } = await openFrameSession("session-old");
+      ws.open();
+      ws.emitFrame(binaryFrame(2));
+      // The gesture, as `sendInput` records it. Called directly rather than
+      // through the pane, because the settling half (`notePainted`) is the
+      // <img>'s `onLoad` and no pane is rendered here — what this test owns is
+      // whether the store's TEARDOWN drops what is pending.
+      noteInputSent(2);
+
+      const { ws: next } = await openFrameSession("session-new");
+      next.open();
+      next.emitFrame(binaryFrame(9));
+
+      // `seq` restarts per session, so without teardown clearing this, the
+      // next page's ninth frame settles a gesture aimed at the previous page
+      // and reports the gap between two unrelated sessions as latency.
+      notePainted({ ts: Date.now(), seq: 9 });
+      expect(frameStatsReport().inputToPaint.n).toBe(0);
+    } finally {
+      localStorage.removeItem("webmcp:frame-stats");
+      resetFrameStatsFlagForTests();
+    }
   });
 
   it("closes the socket and clears the frame when the session goes away", async () => {
