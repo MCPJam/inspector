@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   buttonOf,
   createInputForwarder,
+  cutBefore,
   modifiersOf,
   toFrameCoordinates,
   type ViewportGeometry,
@@ -317,6 +318,40 @@ describe("createInputForwarder", () => {
     expect(h.sent).toHaveLength(0);
     expect(buttonOf(3)).toBeUndefined();
     expect(buttonOf(4)).toBeUndefined();
+  });
+
+  it("never splits an emoji in half when chunking a paste", () => {
+    const h = harness();
+    // One ASCII character shifts the boundary onto a surrogate pair — every
+    // emoji and every astral-plane script is one. The halves travel as separate
+    // events to separate `insertText` calls, so a pair broken here reaches the
+    // page as two lone surrogates and the character is LOST, not merely late.
+    const long = "a" + "😀".repeat(3000);
+    h.forwarder.text(long);
+
+    const texts = h
+      .flat()
+      .filter((event) => event.kind === "text")
+      .map((event) => (event as { text: string }).text);
+    expect(texts.length).toBeGreaterThan(1);
+    expect(texts.join("")).toBe(long);
+    for (const chunk of texts) {
+      const first = chunk.charCodeAt(0);
+      const last = chunk.charCodeAt(chunk.length - 1);
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+      expect(first >= 0xdc00 && first <= 0xdfff).toBe(false);
+    }
+  });
+
+  it("cuts before a pair rather than through it", () => {
+    // The cut lands on the low half of a pair, so it backs off by one.
+    expect(cutBefore("a😀b", 0, 2)).toBe(1);
+    // Nothing to avoid: the cut is already on a character boundary.
+    expect(cutBefore("abc", 0, 2)).toBe(2);
+    // The whole rest fits.
+    expect(cutBefore("ab", 0, 10)).toBe(2);
+    // A cut that could make no progress takes the pair rather than looping.
+    expect(cutBefore("😀😀", 0, 1)).toBe(1);
   });
 
   it("splits a paste too long for one protocol event", () => {

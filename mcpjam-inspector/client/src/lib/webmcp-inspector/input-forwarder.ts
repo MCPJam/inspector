@@ -95,6 +95,27 @@ export function toFrameCoordinates(
   };
 }
 
+/**
+ * Where to cut a string so the piece is at most `max` UTF-16 units AND the cut
+ * never lands between a surrogate pair.
+ *
+ * The halves of a split paste travel as SEPARATE events, in separate requests,
+ * and each is handed to `keyboard.insertText` on its own — so a pair broken at
+ * the boundary reaches the page as a lone high surrogate followed by a lone low
+ * one, and the character is lost rather than merely delayed. Every emoji and
+ * every astral-plane script is a pair, so this is ordinary pasted text rather
+ * than an exotic case.
+ */
+export function cutBefore(text: string, start: number, max: number): number {
+  const end = Math.min(start + max, text.length);
+  if (end >= text.length) return end;
+  // A high surrogate at the end means its low half is the very next unit.
+  const last = text.charCodeAt(end - 1);
+  const splitsPair = last >= 0xd800 && last <= 0xdbff;
+  // Never return `start`: a cut that made no progress would loop forever.
+  return splitsPair && end - 1 > start ? end - 1 : end;
+}
+
 /** Read the modifier flags off a DOM event, omitting the ones that are off. */
 export function modifiersOf(event: {
   altKey: boolean;
@@ -326,14 +347,10 @@ export function createInputForwarder(
       // Split rather than sent whole and refused: the route caps one `text`
       // event, and a long paste arriving as an invalid command would lose the
       // whole paste rather than arrive as two.
-      for (let i = 0; i < text.length; i += WEBMCP_INPUT_TEXT_MAX_CHARS) {
-        queue(
-          {
-            kind: "text",
-            text: text.slice(i, i + WEBMCP_INPUT_TEXT_MAX_CHARS),
-          },
-          true,
-        );
+      for (let i = 0; i < text.length;) {
+        const end = cutBefore(text, i, WEBMCP_INPUT_TEXT_MAX_CHARS);
+        queue({ kind: "text", text: text.slice(i, end) }, true);
+        i = end;
       }
     },
 

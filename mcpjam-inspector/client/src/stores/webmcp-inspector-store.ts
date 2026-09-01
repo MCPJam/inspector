@@ -627,9 +627,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         for (let i = 0; i < events.length; i += WEBMCP_INPUT_BATCH_LIMIT) {
           batches.push(events.slice(i, i + WEBMCP_INPUT_BATCH_LIMIT));
         }
+        // Bound to the session this input was AIMED at. The chain can hold work
+        // across a close-and-reopen, and a click meant for one page landing on
+        // the next one is worse than a click that goes nowhere.
+        const aimedAt = get().session?.sessionId;
         // Serialized: a release that reached the browser before its press would
         // leave the page mid-drag, and concurrent POSTs give no ordering.
         await inOrder(async () => {
+          if (get().session?.sessionId !== aimedAt) return;
           for (const batch of batches) {
             // Through `sendCommand`, unlike `set_screencast`: input the server
             // refuses is a person's click going nowhere, which they should be
@@ -644,9 +649,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // server after a disable would leave Chromium encoding for a pane
         // nobody is looking at, and `fetch` promises nothing about the order
         // two in-flight requests are handled in.
+        const aimedAt = get().session?.sessionId;
         return inOrder(async () => {
           const sessionId = get().session?.sessionId;
-          if (!sessionId) return false;
+          // Same reasoning as `sendInput`: a toggle queued for one session must
+          // not start or stop the stream of whichever session replaced it.
+          if (!sessionId || sessionId !== aimedAt) return false;
           // Not routed through `sendCommand`: a server that does not know this
           // command answers 400, and that is a compatibility fact for the
           // caller to act on rather than an error to show the user. Surfacing

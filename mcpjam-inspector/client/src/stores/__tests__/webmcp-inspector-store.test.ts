@@ -590,6 +590,42 @@ describe("webmcp inspector store", () => {
     expect(order).toEqual(["mouse_down", "mouse_up"]);
   });
 
+  it("drops input queued for a session that has since been replaced", async () => {
+    await openSession();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const bodies: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      bodies.push(String((init as RequestInit)?.body));
+      // The first command hangs, holding the queue open across the swap below.
+      if (bodies.length === 1) await gate;
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    const store = useWebmcpInspectorStore.getState();
+    const first = store.sendInput([{ kind: "mouse_move", x: 1, y: 1 }]);
+    // Let the first command actually reach `fetch` and hang there, so the
+    // second is genuinely QUEUED behind it rather than merely scheduled.
+    await vi.waitFor(() => expect(bodies).toHaveLength(1));
+    const queued = store.sendInput([
+      { kind: "mouse_down", x: 2, y: 2, button: "left" },
+    ]);
+
+    // The session is replaced while that second batch waits its turn.
+    useWebmcpInspectorStore.setState({
+      session: { ...SESSION, sessionId: "session-2" },
+    });
+    release();
+    await Promise.all([first, queued]);
+
+    // A click aimed at one page landing on the next one is worse than a click
+    // that goes nowhere.
+    expect(bodies).toHaveLength(1);
+    expect(JSON.parse(bodies[0]).events[0].kind).toBe("mouse_move");
+  });
+
   it("does not ask for a screencast with no session open", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     expect(await useWebmcpInspectorStore.getState().setScreencast(true)).toBe(
