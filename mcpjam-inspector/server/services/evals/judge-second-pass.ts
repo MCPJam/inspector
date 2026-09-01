@@ -405,23 +405,30 @@ function isPredicateRow(value: unknown): value is StoredPredicateRow {
 }
 
 /**
- * Recover the FIRST derivation's verdict about the model layer from the chain
- * it wrote.
+ * Recover the FIRST derivation's verdict about the model layer.
  *
- * `stepError` is transient runner state — an INPUT to that derivation, never
- * persisted — so the judge second pass re-derived without it and silently
- * dropped `providerError` and the `setup` category the moment a verdict
- * arrived. A run our own provider killed went back to being filed against the
- * server, which is exactly what that reason exists to prevent.
+ * `stepError` is transient runner state — an INPUT to that derivation — so a
+ * second pass that does not receive it derives from strictly less evidence
+ * than the first, and silently drops `providerError` and the `setup` category
+ * the moment a verdict arrives. A run our own provider killed goes back to
+ * being filed against the server, which is what that reason exists to prevent.
  *
- * Read from the stored chain rather than from a new persisted field, because
- * the chain already says it: `providerError` is written if and only if the
- * model layer was classified as the failure, so its presence is a faithful
- * witness of that input. Nothing is invented here.
+ * PREFERRED SOURCE: `metadata.stageStepErrorSource`, written beside the chain
+ * at finalize time. An earlier revision recovered it from the chain alone, on
+ * the stated grounds that "`providerError` is written if and only if the model
+ * layer was classified as the failure". THAT WAS NOT TRUE. `categoryFor`
+ * returns `setup` for a model-call failure where NOTHING failed — there was
+ * nothing to fail against — and on that shape no row is relabelled at all. The
+ * witness was empty exactly when the fact was true, and the category vanished
+ * with no missing row to show for it.
  *
- * `code` and `httpStatus` are not recoverable and are not recovered. They are
- * diagnostics for a reader and were explicitly never part of the
- * classification, so their absence changes no verdict.
+ * The chain scan REMAINS as a fallback, for iterations finalized before the
+ * marker shipped. It is still a faithful witness where it fires; it was only
+ * ever incomplete.
+ *
+ * `code` and `httpStatus` are not recovered by either route. They are
+ * diagnostics for a reader, were never part of the classification, and their
+ * absence changes no verdict.
  */
 export function stepErrorFromStoredChain(
   stageResults: unknown,
@@ -501,7 +508,10 @@ export function deriveIterationPayload(args: {
   // failed.
   const traceUsable = iteration.traceComplete !== false;
 
-  const recoveredStepError = stepErrorFromStoredChain(metadata.stageResults);
+  const recoveredStepError =
+    metadata.stageStepErrorSource === "model"
+      ? ({ source: "model" } as const)
+      : stepErrorFromStoredChain(metadata.stageResults);
 
   const stage = traceUsable
     ? buildStageMetadata({
@@ -510,8 +520,8 @@ export function deriveIterationPayload(args: {
         ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
         ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
         ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
-        // UVH-IN2: recovered from the stored chain, because `stepError` is
-        // transient runner state this pass never receives.
+        // UVH-IN2: read back from the marker the first pass persisted, because
+        // `stepError` is transient runner state this pass never receives.
         ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
         ...(iteration.toolSignals
           ? { toolSignals: iteration.toolSignals }
