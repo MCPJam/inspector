@@ -106,6 +106,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { useActorKey } from "./hooks/use-actor-key";
+import { useIsMemberActor } from "./hooks/use-is-member-actor";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,
@@ -1965,7 +1966,25 @@ export function SkillsRoute() {
   // it renders the same chrome as its peers. Anonymous guests are provisioned
   // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
   // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
+  //
+  // Chrome only, and deliberately the eager form: it guesses member for the
+  // commit before `users:getCurrentUser` answers, which for a member cold-load
+  // is the right guess and avoids flashing the bare view under them. Guessing
+  // wrong costs a guest one frame of peer tabs. The store's gate below cannot
+  // use it — see there.
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
+
+  // The actor Convex is holding, NOT `isSignedInMember`, for the store.
+  //
+  // `isGuestProjectActor` is `currentUser?.isAnonymous === true`, so while
+  // `users:getCurrentUser` is in flight `undefined?.isAnonymous === true`
+  // collapses to `false` — a guest reads as "not a guest" and
+  // `isSignedInMember` is true. `isAuthenticated` flips true almost at once for
+  // the pre-seeded guest bearer, so that window is real, and it is exactly the
+  // window this gate must fail closed on. `useIsMemberActor` answers
+  // `undefined` there rather than a wrong `true`, so `=== true` holds it shut
+  // until Convex has said who the socket is carrying.
+  const isMemberActor = useIsMemberActor();
 
   // The `skills-enabled` flag gates ONE HALF of this tab, not the tab.
   //
@@ -2005,14 +2024,14 @@ export function SkillsRoute() {
       // the flag resolves — content arriving is a better first paint than a
       // blank page for every user who only has the protocol half.
       //
-      // AND member-ness, because the flag is not a proxy for it: a PostHog
-      // rollout is evaluated per distinct-id and resolves for anonymous ones
-      // too, while the project store is a MEMBERSHIP resource whose every
-      // Convex function is signed-in-only. Guests reach this tab by design
-      // (see the bare-view branch below), so the flag alone offered them a
-      // store they could only be refused from — a listing that fails and an
+      // AND the Convex actor, because the flag is not a proxy for member-ness:
+      // a PostHog rollout is evaluated per distinct-id and resolves for
+      // anonymous ones too, while the project store is a MEMBERSHIP resource
+      // whose every Convex function is signed-in-only. Guests reach this tab by
+      // design (see the bare-view branch below), so the flag alone offered them
+      // a store they could only be refused from — a listing that fails and an
       // upload button whose mutation cannot land.
-      cloudSkillsEnabled={skillsEnabled === true && isSignedInMember}
+      cloudSkillsEnabled={skillsEnabled === true && isMemberActor === true}
     />
   );
 

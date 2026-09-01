@@ -1,10 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { hostedMode, skillsFlag, mockRouteContext, mockNavigate } = vi.hoisted(
-  () => ({
+const { hostedMode, skillsFlag, memberActor, mockRouteContext, mockNavigate } =
+  vi.hoisted(() => ({
     hostedMode: { value: false },
     skillsFlag: { value: true as boolean | undefined },
+    memberActor: { value: false as boolean | undefined },
     mockRouteContext: {
       convexProjectId: "project-1" as string | null,
       isAuthenticated: true,
@@ -12,8 +13,11 @@ const { hostedMode, skillsFlag, mockRouteContext, mockNavigate } = vi.hoisted(
       appState: { servers: {} },
     },
     mockNavigate: vi.fn(),
-  })
-);
+  }));
+
+vi.mock("../hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => memberActor.value,
+}));
 
 vi.mock("../hooks/useSkillsEnabled", () => ({
   SKILLS_FEATURE_FLAG: "skills-enabled",
@@ -109,6 +113,7 @@ beforeEach(() => {
   mockRouteContext.convexProjectId = "project-1";
   mockRouteContext.isAuthenticated = true;
   mockRouteContext.isGuestProjectActor = true;
+  memberActor.value = false;
 });
 
 afterEach(() => {
@@ -158,12 +163,18 @@ describe("SkillsRoute — local Connect chrome", () => {
  * behind the store is signed-in-only — so a flagged-in guest was offered a
  * listing that could only be refused (CONVEX-19R). Both terms are asserted
  * here, and separately, so a future edit cannot drop one and stay green.
+ *
+ * Member-ness is `useIsMemberActor` — the identity Convex is holding — and not
+ * the route context's `isGuestProjectActor`, which reads "not a guest" for the
+ * commit before `users:getCurrentUser` answers. The tri-state's `undefined`
+ * has its own case below.
  */
 describe("SkillsRoute — the project store's gate in local mode", () => {
   beforeEach(() => {
     // Default this block to a MEMBER, so each case isolates one term. The outer
     // `beforeEach` leaves a guest, which would mask the flag assertions.
     mockRouteContext.isGuestProjectActor = false;
+    memberActor.value = true;
   });
 
   it("passes the flag through rather than a local-mode tautology", () => {
@@ -202,6 +213,7 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
   it("keeps the store off for a guest actor even with the flag on", () => {
     skillsFlag.value = true;
     mockRouteContext.isGuestProjectActor = true;
+    memberActor.value = false;
 
     render(<SkillsRoute />);
 
@@ -215,6 +227,29 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
     skillsFlag.value = true;
     mockRouteContext.isAuthenticated = false;
     mockRouteContext.isGuestProjectActor = false;
+    memberActor.value = false;
+
+    render(<SkillsRoute />);
+
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
+  });
+
+  /**
+   * The transient the actor hook exists for: `isAuthenticated` is already true
+   * on the pre-seeded guest bearer while `users:getCurrentUser` is in flight,
+   * so `isGuestProjectActor` — `currentUser?.isAnonymous === true` — is `false`
+   * for a GUEST and the chrome's `isSignedInMember` is `true`. Gating the store
+   * on that term renders it enabled for a guest until the query lands. The
+   * hook answers `undefined` here, and the gate must read that as off.
+   */
+  it("keeps the store off while the actor is still unresolved", () => {
+    skillsFlag.value = true;
+    mockRouteContext.isAuthenticated = true;
+    mockRouteContext.isGuestProjectActor = false;
+    memberActor.value = undefined;
 
     render(<SkillsRoute />);
 
