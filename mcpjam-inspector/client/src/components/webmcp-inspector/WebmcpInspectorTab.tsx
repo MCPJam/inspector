@@ -505,7 +505,13 @@ function ViewportPane({
   fallbackScreenshot: string | undefined;
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
-  onInput: (events: WebMcpInputEvent[]) => void;
+  /**
+   * RETURNS the store's promise, and that return value is load-bearing: the
+   * forwarder uses it as its in-flight clock for wheel flushing. Wrapping this
+   * in `void` would leave every scroll looking instantaneous to the forwarder
+   * and put one request on the wire per wheel event.
+   */
+  onInput: (events: WebMcpInputEvent[]) => void | Promise<void>;
 }) {
   // The screenshot is a FALLBACK for a stream that is meant to be running, not
   // a still to leave up once it stops. With Live view off, holding it would

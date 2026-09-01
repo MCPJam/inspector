@@ -133,6 +133,100 @@ describe("createFrameThrottle", () => {
     expect(h.emitted).toEqual(["a", "fresh"]);
   });
 
+  it("raises the floor while boosted, and restores it when the boost expires", () => {
+    const h = harness(100);
+    h.throttle.boost(33, 1_500);
+
+    h.throttle.push("a");
+    h.advance(40);
+    h.throttle.push("b");
+    h.advance(40);
+    h.throttle.push("c");
+    // 40ms apart clears a 33ms floor but not a 100ms one: at the resting rate
+    // only "a" would have gone out, and the person driving the page would be
+    // watching their own scroll at 10fps.
+    expect(h.emitted).toEqual(["a", "b", "c"]);
+
+    // Past the window, arithmetically — no decay timer, nothing to leak.
+    h.advance(1_500);
+    h.throttle.push("d");
+    h.advance(40);
+    h.throttle.push("e");
+    expect(h.emitted).toEqual(["a", "b", "c", "d"]);
+    h.advance(100);
+    expect(h.emitted).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("extends the window on a repeat boost rather than stacking", () => {
+    const h = harness(100);
+    h.throttle.boost(33, 1_000);
+    h.throttle.push("a");
+    // A continuous gesture: each batch of input re-boosts, and the rate has to
+    // hold for as long as it lasts.
+    for (const label of ["b", "c", "d"]) {
+      h.advance(900);
+      h.throttle.boost(33, 1_000);
+      h.throttle.push(label);
+    }
+    expect(h.emitted).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("re-arms a pending trailing timer with the shorter delay", () => {
+    const h = harness(100);
+    h.throttle.push("a");
+    h.advance(5);
+    // Held behind the 100ms floor, with the timer already armed for ~95ms.
+    h.throttle.push("echo");
+    expect(h.emitted).toEqual(["a"]);
+
+    // THE input arrives. Without a re-arm, the frame that echoes it waits out
+    // the old window — so the first and most noticeable paint of a gesture is
+    // exactly the one the boost fails to speed up.
+    h.throttle.boost(33, 1_500);
+    h.advance(28);
+    expect(h.emitted).toEqual(["a", "echo"]);
+  });
+
+  it("flushes at once when the boost makes a held frame already due", () => {
+    const h = harness(100);
+    h.throttle.push("a");
+    h.advance(50);
+    h.throttle.push("echo");
+    // 50ms have passed, which is already past a 33ms floor. Re-arming for a
+    // negative delay is a timer that may never fire on some runtimes; the
+    // frame is due now, so it goes now.
+    h.throttle.boost(33, 1_500);
+    expect(h.emitted).toEqual(["a", "echo"]);
+    expect(h.pendingTimers()).toBe(0);
+  });
+
+  it("does nothing to a boost with no frame held", () => {
+    const h = harness(100);
+    h.throttle.push("a");
+    h.throttle.boost(33, 1_500);
+    // Nothing was waiting, so nothing is emitted early and no timer is armed
+    // for a frame that does not exist.
+    expect(h.emitted).toEqual(["a"]);
+    expect(h.pendingTimers()).toBe(0);
+    expect(h.armings()).toBe(0);
+  });
+
+  it("clears the boost on reset", () => {
+    const h = harness(100);
+    h.throttle.boost(33, 10_000);
+    h.throttle.push("a");
+    // The stream stopped, so whoever was driving it is not driving it any
+    // more — a boost surviving that would keep a restarted stream at 30fps
+    // for whatever was left of a ten-second window nobody asked to extend.
+    h.throttle.reset();
+    h.throttle.push("b");
+    h.advance(40);
+    h.throttle.push("c");
+    expect(h.emitted).toEqual(["a", "b"]);
+    h.advance(100);
+    expect(h.emitted).toEqual(["a", "b", "c"]);
+  });
+
   it("drops the held frame and clears its timer on reset", () => {
     const h = harness(100);
     h.throttle.push("a");

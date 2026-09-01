@@ -266,6 +266,69 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(pane).toHaveAttribute("tabindex", "0");
   });
 
+  it("hands the store's promise to the forwarder, as its in-flight clock", async () => {
+    let settle!: () => void;
+    const sendInput = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    // Seeded AFTER mount: the tab's `reconnect()` effect runs a full teardown
+    // for a session with no live stream, which clears the frame.
+    await act(async () => {
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("data:image/jpeg;base64,paint"),
+      });
+    });
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    // The geometry closure reads the <img>'s rect, which jsdom reports as
+    // zero-sized; give it a real one so the wheel maps into the frame.
+    const image = screen.getByAltText("Live view of the inspected page");
+    image.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+
+    await act(async () => {
+      pane.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: -100, bubbles: true }),
+      );
+    });
+    expect(sendInput).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pane.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: -50, bubbles: true }),
+      );
+      pane.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: -50, bubbles: true }),
+      );
+    });
+    // Held, because the first request has not settled. If the tab wrapped
+    // `sendInput` in `void`, the forwarder would see no in-flight work and put
+    // one request on the wire per wheel event.
+    expect(sendInput).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle();
+    });
+    expect(sendInput).toHaveBeenCalledTimes(2);
+    expect(sendInput.mock.calls[1]![0]).toEqual([
+      expect.objectContaining({ kind: "wheel", deltaY: -100 }),
+    ]);
+  });
+
   it("leaves a native-window session view-only", async () => {
     useWebmcpInspectorStore.setState({
       liveFrame: liveFrame("data:image/jpeg;base64,paint"),

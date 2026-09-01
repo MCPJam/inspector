@@ -6,7 +6,7 @@
  * it, neither of which is observable from outside the session — and both of
  * which fail in ways that look like "the pane is just stuck".
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import { PlaywrightWebMcpSession } from "../playwright-provider";
 import {
@@ -450,7 +450,9 @@ describe("PlaywrightWebMcpSession input", () => {
       'down({"button":"left","clickCount":2})',
       "move(10,20)",
       'up({"button":"left","clickCount":2})',
-      "move(10,20)",
+      // No move before the wheel: the pointer is already at (10,20). Every
+      // other event still moves unconditionally — only the wheel skips, and
+      // only when the coordinate is provably unchanged.
       "wheel(0,-120)",
       'key.down("Shift")',
       'key.up("Shift")',
@@ -585,5 +587,152 @@ describe("PlaywrightWebMcpSession embedded mode", () => {
     const h = await started();
     expect(h.cdp.methods()).not.toContain("Page.startScreencast");
     expect(h.session.viewportTransport()).toEqual({ kind: "headless" });
+  });
+});
+
+/**
+ * The rate boost, and the wheel's move-skip.
+ *
+ * Both exist for the same number: the gap between a person doing something and
+ * seeing it. The boost is observed through its EFFECT on the throttle rather
+ * than by reaching into it, which is also the only way to observe the ordering
+ * that matters — whether the boost was applied before or after the first
+ * awaited Playwright call.
+ */
+describe("PlaywrightWebMcpSession input rate", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Fake timers BEFORE the session is built, deliberately.
+   *
+   * `createFrameThrottle` captures `Date.now` at construction, so faking the
+   * clock afterwards would leave the throttle reading real time while its
+   * timers ran on the fake one — and every assertion below would be measuring
+   * whatever the machine happened to do.
+   */
+  async function startedWithFakeClock() {
+    vi.useFakeTimers();
+    return started();
+  }
+
+  it("raises the frame rate while input is arriving", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+
+    h.cdp.emit("Page.screencastFrame", screencastFrame("f0"));
+    await h.session.dispatchInput([{ kind: "key_down", key: "a" }]);
+
+    // 40ms apart: past the boosted floor, nowhere near the resting one. At the
+    // resting rate the person would watch their own typing at 10fps.
+    vi.advanceTimersByTime(40);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("f1"));
+    vi.advanceTimersByTime(40);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("f2"));
+
+    expect(h.frames.map((frame) => frame.data)).toEqual(["f0", "f1", "f2"]);
+  });
+
+  it("boosts BEFORE the batch's first Playwright call, not after", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+
+    h.cdp.emit("Page.screencastFrame", screencastFrame("f0"));
+    // 45ms on: past the boosted floor, short of the resting one. A frame
+    // arriving now is published immediately if the boost is already in force,
+    // and held if it is not.
+    vi.advanceTimersByTime(45);
+
+    let publishedDuringMove = -1;
+    (
+      h.page as unknown as {
+        mouse: { move: (x: number, y: number) => Promise<void> };
+      }
+    ).mouse.move = async () => {
+      // The paint the very first event of the batch causes, arriving while
+      // `dispatchInput` is still awaiting this call.
+      h.cdp.emit("Page.screencastFrame", screencastFrame("echo"));
+      publishedDuringMove = h.frames.length;
+    };
+
+    await h.session.dispatchInput([{ kind: "mouse_move", x: 10, y: 20 }]);
+
+    // Asserted INSIDE the call, not after the batch: a boost applied at the
+    // end would still rescue the held frame on its way out, so only the state
+    // at this instant can tell the two orderings apart. And the instant is
+    // what matters — the person is waiting on this paint.
+    expect(publishedDuringMove).toBe(2);
+  });
+
+  it("does not boost while nothing is streaming", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.dispatchInput([{ kind: "key_down", key: "a" }]);
+
+    // Frames are not flowing, so there is no rate to raise — and a boost left
+    // armed would silently apply to whatever the stream did next.
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("f0"));
+    vi.advanceTimersByTime(40);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("f1"));
+    expect(h.frames.map((frame) => frame.data)).toEqual(["f0"]);
+
+    vi.advanceTimersByTime(100);
+    expect(h.frames.map((frame) => frame.data)).toEqual(["f0", "f1"]);
+  });
+
+  it("skips the positioning move for a wheel at an unchanged coordinate", async () => {
+    const h = await started();
+    await h.session.dispatchInput([
+      { kind: "wheel", x: 40, y: 50, deltaX: 0, deltaY: -120 },
+      { kind: "wheel", x: 40, y: 50, deltaX: 0, deltaY: -120 },
+      { kind: "wheel", x: 40, y: 50, deltaX: 0, deltaY: -120 },
+    ]);
+
+    // A scroll is a run of wheels at one coordinate, and each wheel costs two
+    // awaited CDP round trips. Only the first has to place the pointer.
+    expect(h.driven).toEqual([
+      "move(40,50)",
+      "wheel(0,-120)",
+      "wheel(0,-120)",
+      "wheel(0,-120)",
+    ]);
+  });
+
+  it("moves again as soon as the wheel coordinate changes", async () => {
+    const h = await started();
+    await h.session.dispatchInput([
+      { kind: "wheel", x: 40, y: 50, deltaX: 0, deltaY: -120 },
+      { kind: "wheel", x: 41, y: 50, deltaX: 0, deltaY: -120 },
+    ]);
+    expect(h.driven).toEqual([
+      "move(40,50)",
+      "wheel(0,-120)",
+      "move(41,50)",
+      "wheel(0,-120)",
+    ]);
+  });
+
+  it("forgets the remembered coordinate when the page navigates", async () => {
+    const h = await started();
+    await h.session.dispatchInput([
+      { kind: "wheel", x: 40, y: 50, deltaX: 0, deltaY: -120 },
+    ]);
+    h.cdp.emit("Page.frameNavigated", {
+      frame: { id: "main", url: "https://example.test/two" },
+    });
+    await h.session.dispatchInput([
+      { kind: "wheel", x: 40, y: 50, deltaX: 0, deltaY: -120 },
+    ]);
+
+    // A new document has no hover state. Skipping the move into it would leave
+    // the page never told where the pointer is, so the wheel would scroll
+    // whatever the document scrolls by default instead of what is under it.
+    expect(h.driven).toEqual([
+      "move(40,50)",
+      "wheel(0,-120)",
+      "move(40,50)",
+      "wheel(0,-120)",
+    ]);
   });
 });

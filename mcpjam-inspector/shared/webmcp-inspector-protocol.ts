@@ -388,6 +388,27 @@ export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
 export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
 
 /**
+ * Floor while someone is actively driving the pane: ~30fps.
+ *
+ * The resting floor is deliberately slow — a page nobody is touching does not
+ * need 30 JPEGs a second, and most of what a screencast paints is a spinner.
+ * But the moment a person scrolls or types, the interesting frame is the one
+ * echoing what they just did, and a 100ms floor puts up to a tenth of a second
+ * between the two on its own. So the rate is raised by INPUT rather than
+ * configured: the cost is paid exactly while it buys something.
+ */
+export const WEBMCP_FRAME_BOOST_INTERVAL_MS = 33;
+
+/**
+ * How long a boost lasts after the input that caused it.
+ *
+ * Long enough to cover the settle of a gesture — a scroll's momentum, a page
+ * reflowing after a keystroke — and short enough that an idle pane is back to
+ * the resting floor about a second after the person stops.
+ */
+export const WEBMCP_FRAME_BOOST_WINDOW_MS = 1_500;
+
+/**
  * Size of the fixed header on a binary frame message. See
  * {@link encodeWebMcpBinaryFrame}.
  */
