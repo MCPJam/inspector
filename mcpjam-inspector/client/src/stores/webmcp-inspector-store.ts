@@ -280,6 +280,19 @@ let sessionGeneration = 0;
  */
 let commandTail: Promise<unknown> = Promise.resolve();
 
+/**
+ * Ordering for screenshot captures, which — unlike commands — are deliberately
+ * NOT serialized: the poll must keep its cadence rather than queue behind a
+ * slow capture.
+ *
+ * So they can overlap, and a capture that started earlier can answer later. The
+ * ticket says which picture is newer; without it a slow poll lands on top of a
+ * manual capture someone just asked for, and the pane shows the older page
+ * until the next tick.
+ */
+let captureIssued = 0;
+let captureApplied = 0;
+
 function inOrder<T>(run: () => Promise<T>): Promise<T> {
   const next = commandTail.then(run, run);
   commandTail = next.catch(() => {});
@@ -595,10 +608,18 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       },
 
       async captureScreenshot(options) {
+        const ticket = ++captureIssued;
+        /** True while this capture is still the newest one to have answered. */
+        const newest = () => {
+          if (ticket < captureApplied) return false;
+          captureApplied = ticket;
+          return true;
+        };
         if (!options?.silent) {
           const result = (await get().sendCommand({
             type: "capture_screenshot",
           })) as { screenshotBase64?: string } | undefined;
+          if (!newest()) return;
           set({ lastScreenshot: result?.screenshotBase64 });
           return;
         }
@@ -619,6 +640,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // this write after the session changed would hang the OLD page's paint
         // in the new session's pane, where nothing would ever correct it.
         if (get().session?.sessionId !== sessionId) return;
+        if (!newest()) return;
         if (result.ok) set({ lastScreenshot: result.data.screenshotBase64 });
       },
 

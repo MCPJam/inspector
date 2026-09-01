@@ -341,6 +341,45 @@ describe("WebmcpInspectorTab — viewport", () => {
     ]);
   });
 
+  it("withholds the paste key-up even when Ctrl came up first", async () => {
+    const sendInput = vi.fn<(events: WebMcpInputEvent[]) => Promise<void>>(
+      async () => {},
+    );
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    await act(async () => {
+      fireEvent.keyDown(pane, { key: "Control", ctrlKey: true });
+      fireEvent.keyDown(pane, { key: "v", ctrlKey: true });
+      // Ctrl released BEFORE V — an ordinary thing to do, and it makes the `v`
+      // key-up look like a plain keystroke to anything reading only this
+      // event's modifiers.
+      fireEvent.keyUp(pane, { key: "Control", ctrlKey: false });
+      fireEvent.keyUp(pane, { key: "v", ctrlKey: false });
+    });
+
+    const sent: Array<Record<string, unknown>> = sendInput.mock.calls.flatMap(
+      (call) => call[0],
+    );
+    // No `v` in either direction. A lone key-up would hand the page a release
+    // for a key it never saw pressed.
+    expect(sent.filter((event) => event.key === "v")).toEqual([]);
+    expect(sent.map((event) => `${event.kind}:${event.key}`)).toEqual([
+      "key_down:Control",
+      "key_up:Control",
+    ]);
+  });
+
   it("releases held input when the screen unmounts without a blur", async () => {
     const sendInput = vi.fn(async () => {});
     useWebmcpInspectorStore.setState({

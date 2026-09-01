@@ -630,6 +630,48 @@ describe("webmcp inspector store", () => {
     );
   });
 
+  it("does not let a slow older capture land on top of a newer one", async () => {
+    await openSession();
+    const releases: Array<(response: Response) => void> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+
+    // Two captures in flight at once — routine, because the poll keeps its
+    // once-a-second cadence rather than queueing behind a slow capture.
+    const first = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    const second = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+
+    // The NEWER one answers first…
+    releases[1](
+      new Response(JSON.stringify({ screenshotBase64: "newer" }), {
+        status: 200,
+      }),
+    );
+    await second;
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("newer");
+
+    // …and the older one answers after it.
+    releases[0](
+      new Response(JSON.stringify({ screenshotBase64: "older" }), {
+        status: 200,
+      }),
+    );
+    await first;
+    // Applying it would step the pane backwards a frame, and a manual capture
+    // someone just asked for is exactly what a slow poll would overwrite.
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("newer");
+  });
+
   it("abandons the rest of a split gesture when the session turns over", async () => {
     await openSession();
     const bodies: string[] = [];

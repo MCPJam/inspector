@@ -540,6 +540,18 @@ function ViewportPane({
 
   const frameSizeRef = useRef(surface);
   frameSizeRef.current = surface;
+  /**
+   * Keys whose key-DOWN was withheld, so the matching key-up can be withheld
+   * too. See the paste handling in `onKeyDown`.
+   *
+   * Remembered rather than recomputed, because the modifier snapshot on the
+   * key-up is not the one from the key-down: releasing Ctrl before V makes the
+   * `v` key-up look like an ordinary keystroke, and forwarding it hands the
+   * page a release for a key it never saw pressed. The mirror case — pressing
+   * V, then Ctrl, then releasing V — is the same bug the other way round, and
+   * a set gets both right where a predicate cannot.
+   */
+  const withheldKeys = useRef(new Set<string>());
 
   const forwarder = useMemo<InputForwarder>(
     () =>
@@ -641,7 +653,10 @@ function ViewportPane({
           // event, and a `v` key-down with ctrl held would make the remote page
           // run its own paste as well, from a clipboard that is not the one the
           // person copied into.
-          if (isPasteShortcut(event)) return;
+          if (isPasteShortcut(event)) {
+            withheldKeys.current.add(event.key.toLowerCase());
+            return;
+          }
           event.preventDefault();
           forwarder.keyDown(event.nativeEvent);
         },
@@ -650,7 +665,10 @@ function ViewportPane({
           // Matched to the keydown above: forwarding a lone key-up for a press
           // the page never saw would leave it releasing a key it never got.
           if (event.key === "Escape") return;
-          if (isPasteShortcut(event)) return;
+          // Paired with the key-down, not re-derived from this event's own
+          // modifiers: whether Ctrl is still held when V comes up says nothing
+          // about whether the V going down was forwarded.
+          if (withheldKeys.current.delete(event.key.toLowerCase())) return;
           event.preventDefault();
           forwarder.keyUp(event.nativeEvent);
         },
