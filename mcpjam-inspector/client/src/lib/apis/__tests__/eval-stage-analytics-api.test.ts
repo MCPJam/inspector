@@ -152,6 +152,32 @@ describe("fetchEvalSuiteStageAnalytics", () => {
       expect((error as EvalStageAnalyticsError).kind).toBe("notFound");
     });
 
+    it("maps a BARE 404 to routeUnavailable, not to notFound", async () => {
+      // The dark-ship case, and the one a discriminator on `code` could never
+      // make: `STATUS_FALLBACK_CODES` maps any bodiless 404 to `NOT_FOUND`,
+      // the same code an API sends when it means the resource is missing. A
+      // deployment that never shipped this function answers a bare 404 from
+      // its router, and reading that as "no such thing" makes the run detail
+      // claim a run was never measured instead of falling back to the legacy
+      // funnel.
+      //
+      // The enveloped-404 test directly above is the control: same status,
+      // opposite answer, and the only thing separating them is whether the
+      // server sent a code of its own.
+      authFetchMock.mockResolvedValue(
+        new Response("<html>404 Not Found</html>", {
+          status: 404,
+          headers: { "content-type": "text/html" },
+        }),
+      );
+      const error = await fetchEvalSuiteStageAnalytics({
+        projectId: "p1",
+        suiteId: SUITE_ID,
+      }).catch((caught: unknown) => caught);
+
+      expect((error as EvalStageAnalyticsError).kind).toBe("routeUnavailable");
+    });
+
     it("maps a 501 to routeUnavailable", async () => {
       authFetchMock.mockResolvedValue(
         jsonResponse({ code: "NOT_IMPLEMENTED", message: "nope" }, 501),

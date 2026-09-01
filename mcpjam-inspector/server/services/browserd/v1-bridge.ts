@@ -80,6 +80,19 @@ export function toBrowserAction(
     }
     case "capture_screenshot":
       return { ok: true, action: { kind: "observe", mode: "screenshot" } };
+    case "set_screencast":
+    case "input":
+      // LOCAL-ONLY, and refused rather than mapped. Both exist to serve the
+      // in-app pane, which is fed by a CDP screencast on the machine running
+      // the inspector. A hosted browser has its own viewport — the Browser
+      // panel's stream, with a take-control lease arbitrating who is driving —
+      // so translating these would mean streaming a desktop twice and driving
+      // it from two places with nothing between them.
+      return {
+        ok: false,
+        reason: "unsupported_command",
+        detail: `${command.type} drives the in-app viewport, which a hosted browser does not have; use the Browser panel`,
+      };
     default: {
       const exhaustive: never = command;
       return {
@@ -126,6 +139,17 @@ export function toWebMcpCommandResult(
       const screenshotBase64 = readString(result.output, "screenshot");
       return screenshotBase64 ? { ok: true, screenshotBase64 } : { ok: true };
     }
+    case "set_screencast":
+    case "input":
+      // Unreachable in practice: `toBrowserAction` refuses these, so no daemon
+      // result is ever produced for one. Named anyway rather than left to the
+      // `never` arm, so the exhaustive check keeps meaning "every command was
+      // considered" instead of "every command except the ones we forgot".
+      return {
+        ok: false,
+        reason: "unsupported_command",
+        detail: `${command.type} is never sent to a hosted browser`,
+      };
     default: {
       const exhaustive: never = command;
       return {

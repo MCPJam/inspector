@@ -592,6 +592,45 @@ describe("judgeEvidenceFromVerdict", () => {
     expect(line).toContain("0.6999 partial floor");
   });
 
+  test("admits the rounding rather than claiming two values are equal", () => {
+    // The cap's own blind spot. Precision stops growing at six decimals — past
+    // that a judge score is float noise — but it used to fall through to the
+    // six-decimal rendering ANYWAY, printing two different numbers identically.
+    // "scored 0.7 against a 0.7 threshold" for values that were never equal is
+    // the exact contradiction the whole function exists to prevent.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.70000001,
+        threshold: 0.70000002,
+      }) as { reasons: string[] }
+    ).reasons;
+
+    // Both are marked, because each is indistinguishable from the other...
+    expect(line).toBe(
+      "LLM judge scored \u22480.7 against a \u22480.7 threshold",
+    );
+    // ...and crucially the line no longer ASSERTS they are the same number.
+    expect(line).not.toBe("LLM judge scored 0.7 against a 0.7 threshold");
+  });
+
+  test("marks only the values that actually collide", () => {
+    // A blanket marker would make a number the reader CAN trust look uncertain.
+    // The floor here is distinguishable at six decimals; the other two are not.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.70000001,
+        threshold: 0.70000002,
+        partialFloor: 0.5,
+      }) as { reasons: string[] }
+    ).reasons;
+    expect(line).toContain("0.5 partial floor");
+    expect(line).not.toContain("\u22480.5");
+  });
+
   test("still reads equal when the score IS the threshold", () => {
     // The other half: growing precision must not manufacture a difference
     // where none exists. A score exactly on its threshold should say so.
@@ -1106,6 +1145,67 @@ describe("the second pass keeps its contract with the run and the first pass", (
     );
   });
 });
+
+describe("the marker carries what the chain cannot", () => {
+  // The case the chain-scan recovery could never see, and the reason the
+  // classification is now persisted rather than inferred.
+  //
+  // `categoryFor` returns `setup` for a model-call failure where NOTHING
+  // failed — "there was nothing to fail against". On that shape
+  // `applyProviderError` relabels no row, so a recovery that looks for a
+  // `providerError` row finds an empty chain and concludes the provider was
+  // fine. The category then vanishes on the second pass with no missing row to
+  // point at.
+  const reachedAndPassed = {
+    status: "completed",
+    traceComplete: true,
+    stageCase: {
+      mode: "model_driven",
+      expectsToolCall: false,
+      expectsWidgetRender: false,
+      assertionCount: 0,
+    },
+    spans: [{ id: "s1", name: "tools/call", category: "tool", status: "ok" }],
+  };
+
+  const derive = (metadata: Record<string, unknown>) =>
+    deriveIterationPayload({
+      iteration: { ...reachedAndPassed, metadata },
+      mode: "advisory",
+      judgeVerdict: { status: "scored", verdict: "pass", score: 0.9 },
+      attributionVerdict: undefined,
+    } as never).stage;
+
+  // Nothing failed, and nothing blamed on the provider — exactly what the
+  // first pass writes for this shape.
+  const CLEAN_CHAIN = [
+    { stage: "connection", state: "passed", reason: "observed" },
+  ];
+
+  it("keeps the setup category when NO row records providerError", () => {
+    const stage = derive({
+      stageResults: CLEAN_CHAIN,
+      stageStepErrorSource: "model",
+    });
+    expect(stage.failureCategory).toBe("setup");
+  });
+
+  it("and the chain alone cannot recover it — the reason the marker exists", () => {
+    // Same chain, marker absent. This is what the second pass saw before, and
+    // it is why the old recovery's "if and only if" premise was false.
+    expect(stepErrorFromStoredChain(CLEAN_CHAIN)).toBeUndefined();
+    const stage = derive({ stageResults: CLEAN_CHAIN });
+    expect(stage.failureCategory).toBeUndefined();
+  });
+
+  it("does not invent a provider failure from a marker saying otherwise", () => {
+    expect(
+      derive({ stageResults: CLEAN_CHAIN, stageStepErrorSource: "setup" })
+        .failureCategory,
+    ).toBeUndefined();
+  });
+});
+
 
 describe("stepErrorFromStoredChain", () => {
   // `stepError` is an INPUT to the first derivation and is never persisted, so

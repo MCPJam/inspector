@@ -117,7 +117,7 @@ const toolOpts = { projectId: "proj_1" };
 function execTool(
   builtTool: NonNullable<ReturnType<typeof buildMcpjamTool>>,
   input: Record<string, unknown>,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
 ) {
   return (builtTool as any).execute(input, {
     toolCallId: "call_1",
@@ -191,6 +191,11 @@ describe("workspace tool catalog", () => {
       "get_persona",
       "create_persona",
       "update_persona",
+      // Project secrets: the METADATA reads only. The three writes are in
+      // EXCLUDED_FROM_WORKSPACE — the two that carry a plaintext because the
+      // value would reach the transcript before any approval could run.
+      "list_secrets",
+      "get_secret",
       "list_journeys",
       "get_journey",
       "create_journey",
@@ -266,7 +271,7 @@ describe("workspace tool catalog", () => {
       for (const [name, reason] of Object.entries(EXCLUDED_FROM_WORKSPACE)) {
         expect(
           reason.length,
-          `${name} needs a substantive reason`
+          `${name} needs a substantive reason`,
         ).toBeGreaterThan(20);
       }
       // One sentence copy-pasted across every entry is a derived map wearing a
@@ -504,7 +509,7 @@ describe("live server operations", () => {
     const result = await execTool(
       builtTool,
       { server: "Linear", toolName: "ping" },
-      controller.signal
+      controller.signal,
     );
 
     expect(result).toEqual({

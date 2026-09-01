@@ -87,6 +87,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_persona: { command: "cloud personas update" },
   delete_persona: { command: "cloud personas delete" },
   generate_personas: { command: "cloud personas generate" },
+
+  // ── Project secrets ─────────────────────────────────────────────────────
+  // `set`/`update` take the value from --value-file, --value-env, or stdin.
+  // A positional value would be written to shell history and visible in `ps`
+  // for the life of the command, which is why the CLI does not offer one.
+  list_secrets: { command: "cloud secrets list" },
+  get_secret: { command: "cloud secrets show" },
+  create_secret: { command: "cloud secrets set" },
+  update_secret: { command: "cloud secrets update" },
+  delete_secret: { command: "cloud secrets rm" },
   list_swarms: { command: "cloud swarms list" },
   get_swarm: { command: "cloud swarms get" },
   create_swarm: { command: "cloud swarms create" },

@@ -38,6 +38,7 @@ import {
   type UserValueStage,
 } from "./chain.js";
 import { STAGE_REASONS, type StageReason } from "./stage-derivation.js";
+import type { EvalStageCoverageDetail } from "./stage-analytics.js";
 import {
   EVAL_VERDICT_DECISION_REASONS,
   type EvalVerdictDecisionReason,
@@ -57,6 +58,57 @@ export const USER_VALUE_STAGE_LABELS = Object.freeze({
   call: "Tool call",
   response: "Response",
   userValue: "User value",
+} satisfies Record<UserValueStage, string>);
+
+/**
+ * The question each stage answers, for a reader who is looking at one.
+ *
+ * Prose taken from the NORMATIVE stage descriptions in `chain.ts` — the array
+ * whose order is load-bearing — and turned into the question a reader is
+ * actually asking when they click a stage. Written as questions rather than
+ * as nouns because a stage card answers something: "Discovery" is a label, and
+ * "Did the client receive usable primitives and metadata?" is what the reader
+ * came to find out.
+ *
+ * None of these diagnoses. Each asks about the chain link and stops there;
+ * "why did it fail" is not a question this vocabulary can answer, and phrasing
+ * one here would put an invented cause in front of every failing stage.
+ */
+export const USER_VALUE_STAGE_QUESTIONS = Object.freeze({
+  connection: "Could the client reach the server and initialize a session?",
+  discovery: "Did the client receive usable primitives and metadata?",
+  selection: "Did the model choose the right tool for the request?",
+  call: "Was the call made with usable arguments?",
+  response: "Did the server return data the model could use?",
+  userValue: "Was the user's actual request satisfied?",
+} satisfies Record<UserValueStage, string>);
+
+/**
+ * What GOOD looks like at each stage, in the past tense.
+ *
+ * The outcome-oriented companion to {@link USER_VALUE_STAGE_QUESTIONS}: the
+ * same six links, said as the thing that happened when the link held. A row of
+ * stage chips reading "Session connected → Tools and resources discovered →
+ * Right tool selected" tells the delivery story; a row reading
+ * "passed → passed → passed"
+ * tells the reader only that six checks ran.
+ *
+ * ONLY for a stage measured as passed. These are claims about the chain
+ * holding, so putting one on an unmeasured stage would state as observed
+ * exactly the thing nobody observed — which is what the five-state vocabulary
+ * in `STAGE_STATES` exists to make impossible.
+ */
+export const USER_VALUE_STAGE_OUTCOMES = Object.freeze({
+  connection: "Session connected",
+  // "and resources", because the stage is not tools-only: `chain.ts` defines
+  // discovery as "its tools/resources were listed and readable", and the
+  // question map asks about "usable primitives and metadata". A resource-only
+  // server that discovered fine would have been told its tools were found.
+  discovery: "Tools and resources discovered",
+  selection: "Right tool selected",
+  call: "Valid call made",
+  response: "Usable response returned",
+  userValue: "Request satisfied",
 } satisfies Record<UserValueStage, string>);
 
 /**
@@ -235,6 +287,88 @@ export const DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION =
 export const DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION =
   "the recorded verdict disagrees with the measured chain; this run's chain was derived by an older analyzer that measures less than the current one — re-run the case before investigating further";
 
+/**
+ * One key of the fine-grained exclusion detail.
+ *
+ * Derived from the schema's inferred type rather than hand-listed, so the map
+ * below is total over what the CONTRACT declares. A hand list would let the
+ * schema gain a fifteenth key while this file still compiled, printing the new
+ * wire spelling raw at the one reader that renders it.
+ */
+export type EvalStageCoverageDetailKey = keyof EvalStageCoverageDetail;
+
+/**
+ * The FINE-GRAINED reason a trial was excluded from a run's analytics.
+ *
+ * The coarse six (`EvalStageExclusions`) answer "which denominator lost this
+ * trial"; these fourteen answer "and what actually happened to it", which is
+ * the difference between two operator actions. `chainUnverified` — a stored
+ * derivation that did not validate — and `chainVersionAhead` — a producer
+ * newer than this reader — both land in the coarse `integrity`/`version`
+ * buckets, and a reader who cannot tell them apart cannot tell a bug from a
+ * deploy window.
+ *
+ * Words, not the wire spelling, for the reason this whole module exists:
+ * `measurementsVersionAhead` is correct on the wire and unreadable in a
+ * disclosure line. The phrasing comes from the schema's own docblocks in
+ * `stage-analytics.ts` and states what was observed without naming a culprit —
+ * "produced by a newer analyzer than this reader knows" is a fact about the
+ * two versions, not an accusation about either.
+ */
+export const EXCLUDED_TRIAL_DETAIL_LABELS = Object.freeze({
+  // lifecycle — the trial never produced a comparable observation
+  notTerminal: "still running, so nothing final to compare",
+  skipped: "deliberately not run",
+  cancelled: "cancelled before it finished",
+  setupFailed: "its environment was never prepared, so the test never began",
+  timedOut: "timed out",
+  executionFailed: "failed to execute",
+  evaluatorError:
+    "the evaluator itself failed, so it says nothing about the server",
+  // chain integrity — the derivation could not be believed
+  chainMissing: "no stage chain was ever recorded",
+  chainUnverified: "its stage chain did not validate",
+  chainVersionAhead:
+    "its stage chain was produced by a newer analyzer than this reader knows",
+  // measurement integrity
+  measurementsMissing: "no stage measurements were recorded",
+  measurementsInvalid: "its stage measurements did not validate",
+  measurementsVersionAhead:
+    "its stage measurements were produced by a newer schema than this reader knows",
+  // the two halves disagree about which analyzer produced them
+  analyzerMismatch:
+    "its chain and its measurements were produced by different analyzers",
+} satisfies Record<EvalStageCoverageDetailKey, string>);
+
+/**
+ * The fine-grained exclusions, in words, omitting the ones that excluded
+ * nothing.
+ *
+ * Same omit-zero convention the coarse `describeExclusions` follows on the
+ * read side, and for the same contract reason: a class that excluded nothing
+ * is OMITTED from the payload rather than written as `0`, so an absent key and
+ * a `0` mean the same thing and neither is worth a line. Rendering "0 skipped"
+ * would invite a reader to look for a skipped trial that does not exist.
+ */
+export function describeExcludedTrialDetail(
+  detail: EvalStageCoverageDetail
+): { key: EvalStageCoverageDetailKey; label: string; count: number }[] {
+  const out: {
+    key: EvalStageCoverageDetailKey;
+    label: string;
+    count: number;
+  }[] = [];
+  for (const key of Object.keys(
+    EXCLUDED_TRIAL_DETAIL_LABELS
+  ) as EvalStageCoverageDetailKey[]) {
+    const count = detail[key];
+    if (count !== undefined && count > 0) {
+      out.push({ key, label: EXCLUDED_TRIAL_DETAIL_LABELS[key], count });
+    }
+  }
+  return out;
+}
+
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   stages: USER_VALUE_STAGES,
@@ -242,4 +376,9 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   failureCategories: FAILURE_CATEGORIES,
   stageReasons: STAGE_REASONS,
   verdictDecisionReasons: EVAL_VERDICT_DECISION_REASONS,
+  // NOT listed here: the fine-grained exclusion detail. Its vocabulary is a
+  // zod object's SHAPE rather than a `const` array, so its totality test reads
+  // `evalStageCoverageDetailSchema.shape` directly — a hand-copied list here
+  // would be a second declaration of the same thing, and the one that goes
+  // stale silently.
 });

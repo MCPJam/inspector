@@ -107,6 +107,8 @@ import type {
   PlatformJourneyRunCanceled,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformSecret,
+  PlatformSecretDeleted,
   PlatformRunScorecard,
   PlatformSessionSummary,
   PlatformSwarm,
@@ -7677,11 +7679,11 @@ async function resolveClient(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformClientDetail> {
   return client.getClient(
     { projectId: project.id, client: selector },
-    { signal },
+    { signal }
   );
 }
 
@@ -7716,7 +7718,7 @@ export const listClientsOperation: PlatformOperation<
     );
     const page = await client.listClients(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -7772,7 +7774,7 @@ const createClientInput = z
       .min(1)
       .optional()
       .describe(
-        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor).",
+        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor)."
       ),
     theme: z
       .enum(["light", "dark"])
@@ -7782,7 +7784,7 @@ const createClientInput = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`.",
+        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`."
       ),
   })
   // ONE `superRefine`, shaped exactly like the route's, because the route's 400
@@ -7868,7 +7870,7 @@ const clientFieldSet = z
       .min(1)
       .optional()
       .describe(
-        "Model the client pins. Value only — there is no null, and a blank string is refused.",
+        "Model the client pins. Value only — there is no null, and a blank string is refused."
       ),
     systemPrompt: z
       .string()
@@ -7894,7 +7896,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe(
-        "Whole-object replacement. null resets to the platform defaults.",
+        "Whole-object replacement. null resets to the platform defaults."
       ),
     respectToolVisibility: z
       .boolean()
@@ -7911,7 +7913,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe(
-        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does.",
+        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does."
       ),
     computer: z
       .object({
@@ -8001,12 +8003,12 @@ const updateClientInput = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between.",
+        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between."
       ),
     set: clientFieldSet
       .optional()
       .describe(
-        "Named fields to change, applied over the client's current config inside the write transaction.",
+        "Named fields to change, applied over the client's current config inside the write transaction."
       ),
   })
   // Mirrors the route's 400s exactly, so an agent is refused by the schema with
@@ -8075,7 +8077,7 @@ export const updateClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const body: Record<string, unknown> = {};
     if (input.name !== undefined) body.name = input.name;
@@ -8091,7 +8093,7 @@ export const updateClientOperation: PlatformOperation<
     if (input.set !== undefined) body.set = input.set;
     return client.updateClient(
       { projectId: project.id, client: input.client, body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8122,7 +8124,7 @@ export const deleteClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.deleteClient(
       {
@@ -8131,7 +8133,7 @@ export const deleteClientOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8177,7 +8179,7 @@ export const setClientServersOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.setClientServers(
       {
@@ -8190,7 +8192,7 @@ export const setClientServersOperation: PlatformOperation<
           ? { expectedImpact: input.expectedImpact }
           : {}),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8223,11 +8225,11 @@ export const duplicateClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.duplicateClient(
       { projectId: project.id, client: input.client, name: input.name },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8274,7 +8276,7 @@ export const listHostsOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const page = await client.listHosts({ projectId: project.id }, { signal });
     return {
@@ -8296,14 +8298,14 @@ async function resolveHost(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformHost> {
   const page = await client.listHosts({ projectId: project.id }, { signal });
   return resolveByIdOrName(
     page.items,
     selector,
     "Host",
-    `project "${project.name}"`,
+    `project "${project.name}"`
   );
 }
 
@@ -8336,12 +8338,12 @@ export const getHostOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.getHost(
       { projectId: project.id, hostId: host.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8452,7 +8454,7 @@ export const createHostOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const body: Record<string, unknown> = { name: input.name };
     if (input.template) {
@@ -8501,7 +8503,7 @@ export const deleteHostOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8595,7 +8597,6 @@ export const duplicateHostOperation: PlatformOperation<
     );
   },
 };
-
 
 // ── Project Environments ─────────────────────────────────────────────────────
 //
@@ -9634,7 +9635,7 @@ export const listProjectSkillsOperation: PlatformOperation<
   name: "list_project_skills",
   title: "List MCPJam project skills",
   description:
-    "List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: \"project\"` skills can be pinned; each row's `pinnability` says whether that skill is eligible and, if not, why.",
+    'List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: "project"` skills can be pinned; each row\'s `pinnability` says whether that skill is eligible and, if not, why.',
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -11109,6 +11110,347 @@ export const deletePersonaOperation: PlatformOperation<
       { signal }
     );
     return { project: toSelectedProjectInfo(project), persona };
+  },
+};
+
+// ── Project secrets ─────────────────────────────────────────────────────────
+//
+// WRITE-ONLY. No operation here returns a value, and none can: the DTO has no
+// such field and the backend has no code path that produces one.
+//
+// `create_secret` and `update_secret` are excluded from the MCP catalog and the
+// agent registry (see `platformTools.ts` and `agent-op-registry.ts`), because
+// their input CARRIES the value — it would transit model context and be written
+// into chat transcripts before any approval could run. They stay reachable over
+// HTTP, the SDK and the CLI, where the caller controls where the value comes
+// from.
+
+const secretSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  secret: z.string().trim().min(1).describe("Secret id."),
+});
+
+const SECRET_NAME_DESCRIPTION =
+  "Environment-variable name — uppercase letters, digits and underscores, not starting with a digit (STRIPE_API_KEY). This IS the secret's identity: it is what a materialized delivery exports and what a workflow references, and it is immutable (renaming means delete and recreate).";
+
+const SECRET_DELIVERY_DESCRIPTION =
+  "How the value reaches a run. 'brokered' (prefer this): the sandbox's egress proxy injects it as a request header OUTSIDE the VM, so the box never holds it and a prompt-injected agent has nothing to exfiltrate — but it prevents EXTRACTION, not USE (any process in the box can call the bound host while the policy is live), and it works for HTTPS APIs only. 'materialized': a real environment variable inside the box, which is the only thing a CLI can read — EXTRACTABLE BY DESIGN, `env` prints it.";
+
+const SECRET_SHARING_DESCRIPTION =
+  "'project' (default) — admin-managed, delivered to every member's sessions. 'user' — personal, delivered ONLY in sessions its owner starts and silently absent from anyone else's run of the same environment. Immutable.";
+
+const secretBrokerFields = {
+  brokerHosts: z
+    .array(z.string().trim().min(1).max(253))
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the exact hostnames the header is injected on (api.stripe.com). No scheme, no port, no wildcard — the proxy matches a host, and a URL would install a rule that silently never fires."
+    ),
+  brokerHeader: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the header name, e.g. Authorization."
+    ),
+  brokerTemplate: z
+    .string()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the header value, with {} where the secret goes — 'Bearer {}'. A template without {} is rejected: it would install a constant header that never carries the credential."
+    ),
+} as const;
+
+export type ListSecretsInput = z.infer<typeof listSecretsInput>;
+const listSecretsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+
+export type ListSecretsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformSecret[];
+};
+
+export const listSecretsOperation: PlatformOperation<
+  ListSecretsInput,
+  ListSecretsResult
+> = {
+  name: "list_secrets",
+  title: "List MCPJam project secrets",
+  description:
+    "The project's credentials, as METADATA ONLY — name, delivery mode, host binding, sharing, when each was last delivered. No value is ever returned by this or any other operation. Shows the project-shared secrets plus your own personal ones; another member's personal secret does not appear at all. Read this to find out what an environment can grant before selecting one.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "Secrets are managed inside the project settings surface as component state; there is no `secrets/:secretId` route."
+  ),
+  inputSchema: listSecretsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listSecrets(
+      { projectId: project.id },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetSecretInput = z.infer<typeof secretSelectorInput>;
+export type GetSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const getSecretOperation: PlatformOperation<
+  GetSecretInput,
+  GetSecretResult
+> = {
+  name: "get_secret",
+  title: "Get one MCPJam project secret",
+  description:
+    "One secret's metadata: delivery mode, host binding, sharing, and when it was last handed to a run. NEVER its value. Note that lastDeliveredAt means delivered, not used — brokered use is unobservable to us by construction, since the proxy injects the header and we never see the request.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "Secrets are managed inside the project settings surface as component state; there is no `secrets/:secretId` route."
+  ),
+  inputSchema: secretSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.getSecret(
+      { projectId: project.id, secretId: input.secret },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+const createSecretInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).max(64).describe(SECRET_NAME_DESCRIPTION),
+  value: z
+    .string()
+    .min(1)
+    .max(64 * 1024)
+    .describe(
+      "The credential itself. IT BECOMES VISIBLE TO WHATEVER SURFACE CARRIES THIS CALL — it travels in the request body, so it passes through that surface's process, logs, shell history and any transcript it keeps. Read it from a file, an environment variable or stdin rather than typing it into an argument. It is stored encrypted and no operation ever returns it."
+    ),
+  description: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      "What this credential is for, so a teammate does not have to guess."
+    ),
+  delivery: z
+    .enum(["brokered", "materialized"])
+    .describe(SECRET_DELIVERY_DESCRIPTION),
+  ...secretBrokerFields,
+  sharing: z
+    .enum(["user", "project"])
+    .optional()
+    .describe(SECRET_SHARING_DESCRIPTION),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. Pass one: a retried create without it fails as a name conflict with the row the first attempt already made, which is indistinguishable from a real collision."
+    ),
+});
+
+export type CreateSecretInput = z.infer<typeof createSecretInput>;
+export type CreateSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const createSecretOperation: PlatformOperation<
+  CreateSecretInput,
+  CreateSecretResult
+> = {
+  name: "create_secret",
+  title: "Create an MCPJam project secret",
+  description:
+    "Store a credential a workflow needs (a stripe CLI run, gh, psql) so environments can grant it to runs. THE VALUE TRAVELS IN THIS CALL and becomes visible to whatever surface makes it — its process, its logs, its transcript — so supply it from a file or an environment variable, not from something a human typed into a chat. Choose delivery deliberately: 'brokered' keeps the value outside the sandbox, 'materialized' puts it inside as an environment variable where a CLI can read it and anything in the box can print it. The response is metadata only.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: createSecretInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.createSecret(
+      {
+        projectId: project.id,
+        name: input.name,
+        value: input.value,
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        delivery: input.delivery,
+        ...(input.brokerHosts !== undefined
+          ? { brokerHosts: input.brokerHosts }
+          : {}),
+        ...(input.brokerHeader !== undefined
+          ? { brokerHeader: input.brokerHeader }
+          : {}),
+        ...(input.brokerTemplate !== undefined
+          ? { brokerTemplate: input.brokerTemplate }
+          : {}),
+        ...(input.sharing !== undefined ? { sharing: input.sharing } : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+const updateSecretInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  secret: z.string().trim().min(1).describe("Secret id."),
+  value: z
+    .string()
+    .min(1)
+    .max(64 * 1024)
+    .optional()
+    .describe(
+      "The new credential — a ROTATION. Same exposure as on create: it travels in this call and becomes visible to whatever surface makes it. Reaches NEW RUNS ONLY; a session already running holds the old value and cannot be reached mid-run."
+    ),
+  description: z
+    .string()
+    .max(500)
+    .nullable()
+    .optional()
+    .describe(
+      "Replacement description. `null` CLEARS it; omit to leave it unchanged. The tri-state matches the REST route and the SDK client, which have accepted `null` since this resource shipped — without it here, an operation caller could set a description and then never remove it."
+    ),
+  delivery: z
+    .enum(["brokered", "materialized"])
+    .optional()
+    .describe(
+      `${SECRET_DELIVERY_DESCRIPTION} Switching to 'brokered' requires supplying the host binding in the same call; switching to 'materialized' clears it.`
+    ),
+  ...secretBrokerFields,
+});
+
+export type UpdateSecretInput = z.infer<typeof updateSecretInput>;
+export type UpdateSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const updateSecretOperation: PlatformOperation<
+  UpdateSecretInput,
+  UpdateSecretResult
+> = {
+  name: "update_secret",
+  title: "Rotate or re-bind an MCPJam project secret",
+  description:
+    "Rotate a secret's value and/or change how it is delivered. THE NEW VALUE TRAVELS IN THIS CALL, with the same exposure as create. A rotation reaches NEW RUNS ONLY — a session already running holds the old value, in its box's environment or inside an egress policy that cannot be read back, and there is no safe way to replace it mid-run. `name` and `sharing` cannot be changed: renaming would break the workflows referencing the environment variable, and re-sharing would change who has already been handed the value. Delete and recreate for either.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: updateSecretInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.updateSecret(
+      {
+        projectId: project.id,
+        secretId: input.secret,
+        ...(input.value !== undefined ? { value: input.value } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+        ...(input.brokerHosts !== undefined
+          ? { brokerHosts: input.brokerHosts }
+          : {}),
+        ...(input.brokerHeader !== undefined
+          ? { brokerHeader: input.brokerHeader }
+          : {}),
+        ...(input.brokerTemplate !== undefined
+          ? { brokerTemplate: input.brokerTemplate }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+export type DeleteSecretInput = z.infer<typeof secretSelectorInput>;
+export type DeleteSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecretDeleted;
+};
+
+export const deleteSecretOperation: PlatformOperation<
+  DeleteSecretInput,
+  DeleteSecretResult
+> = {
+  name: "delete_secret",
+  title: "Delete an MCPJam project secret",
+  description:
+    "Delete a stored credential. HARD — the row and the encrypted value both go, and MCPJam stops resolving and delivering it. Deliberately NOT blocked when an environment still selects it: refusing would leave a leaked credential undeletable until someone edited every environment naming it, and deletion must never wait on cleanup. TWO LIMITS, both important when responding to a leak: runs already in flight keep the value they were handed, and this does NOT revoke the credential at the provider that issued it — the key stays valid until it is rotated or revoked there.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: secretSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.deleteSecret(
+      { projectId: project.id, secretId: input.secret },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
   },
 };
 
@@ -13791,6 +14133,16 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   createPersonaOperation,
   updatePersonaOperation,
   deletePersonaOperation,
+  // PROJECT SECRETS. Write-only end to end — no operation here returns a value.
+  // The two write ops carry one in their INPUT, which is why they are excluded
+  // from the MCP catalog and the agent registry (see `platformTools.ts` and
+  // `agent-op-registry.ts`) while staying reachable over HTTP, the SDK and the
+  // CLI.
+  listSecretsOperation,
+  getSecretOperation,
+  createSecretOperation,
+  updateSecretOperation,
+  deleteSecretOperation,
   generatePersonasOperation,
   getJourneyOperation,
   createJourneyOperation,

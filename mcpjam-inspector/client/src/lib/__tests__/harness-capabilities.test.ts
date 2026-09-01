@@ -51,20 +51,35 @@ describe("harnessControlState — tool visibility is DERIVED from delivery mode"
 });
 
 describe("harnessControlState — loop-owned controls", () => {
-  const LOOP_CONTROLS: HarnessGatedControl[] = [
+  // Loop-owned does NOT mean permanently unenforced — it means the harness's
+  // own loop decides, so the answer is per harness and can change when the
+  // runtime gains the capability. `requireToolApproval` is exactly that case:
+  // Claude Code pauses on all three tool surfaces now, so it is enforced there
+  // while Codex (which cannot pause at all) still is not.
+  const ALWAYS_UNENFORCED: HarnessGatedControl[] = [
     "temperature",
-    "requireToolApproval",
     "progressiveToolDiscovery",
   ];
 
   it("stay unenforced on both harnesses (the harness owns its own loop)", () => {
     for (const harness of HARNESSES) {
-      for (const control of LOOP_CONTROLS) {
+      for (const control of ALWAYS_UNENFORCED) {
         const state = harnessControlState(harness, control);
         expect(state.enforced, `${harness}.${control}`).toBe(false);
         expect(state.enforced === false && state.note.length).toBeGreaterThan(0);
       }
     }
+  });
+
+  it("enforces requireToolApproval on Claude Code and not on Codex", () => {
+    // The note is the thing users read when a control is grayed out, so an
+    // unenforced entry must still explain itself.
+    expect(harnessControlState("claude-code", "requireToolApproval")).toEqual({
+      enforced: true,
+    });
+    const codex = harnessControlState("codex", "requireToolApproval");
+    expect(codex.enforced).toBe(false);
+    expect(codex.enforced === false && codex.note.length).toBeGreaterThan(0);
   });
 });
 

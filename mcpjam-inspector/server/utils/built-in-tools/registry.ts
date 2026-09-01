@@ -165,6 +165,22 @@ export interface BuiltInToolContext {
    * no wire shape that can inject one.
    */
   sandboxBinding?: TrustedSandboxBinding;
+  /**
+   * MATERIALIZED project secrets for this turn, exported into every `bash`
+   * command's environment.
+   *
+   * Delivered ONLY alongside {@link sandboxBinding}, and the pairing is the
+   * policy rather than a coincidence of wiring: a sandbox is a disposable box
+   * the project provisioned, while the two other bash paths run somewhere a
+   * project's credential has no business being — `localBashRunner` on the
+   * user's own machine (behind an env allowlist), and `execViaRemoteDataPlane`
+   * through a request body to a plane that is not this box's. The gate below
+   * reads `secretEnv` only inside the `sandboxBinding` branch, so an
+   * accidentally-set value on another path is inert rather than dangerous.
+   */
+  secretEnv?: Record<string, string>;
+  /** Fired when `secretEnv` actually reaches a command. See `sandbox-bash`. */
+  onSecretEnvDelivered?: () => void;
   /** Host's approval policy — a root shell must honor it like MCP tools do. */
   requireToolApproval?: boolean;
   /**
@@ -244,7 +260,7 @@ export interface HostComputerResource {
  * registration — and worse, would point the tool at the caller's own machine.
  */
 export function narrowHostComputer(
-  value: unknown
+  value: unknown,
 ): HostComputerResource | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as { kind?: unknown; workdir?: unknown };
@@ -277,14 +293,14 @@ function normalizeAuthHeader(raw: string): string {
  */
 export function resolveHostTools(
   config: HostToolsConfig,
-  ctx: BuiltInToolContext | null
+  ctx: BuiltInToolContext | null,
 ): ToolSet | undefined {
   const ids = config.builtInToolIds ?? [];
   if (ids.length === 0) return undefined;
   if (!ctx) {
     logger.debug(
       "[built-in-tools] builtInToolIds requested without Convex auth context; omitting",
-      { ids: [...ids] }
+      { ids: [...ids] },
     );
     return undefined;
   }
@@ -326,6 +342,15 @@ export function resolveHostTools(
           ...(ctx.sandboxBinding.lifetime
             ? { lifetime: ctx.sandboxBinding.lifetime }
             : {}),
+          // Read INSIDE this branch on purpose — see `secretEnv`'s own comment.
+          // A project secret reaches a box the project provisioned, and nothing
+          // else.
+          ...(ctx.onSecretEnvDelivered
+            ? { onSecretEnvDelivered: ctx.onSecretEnvDelivered }
+            : {}),
+          ...(ctx.secretEnv && Object.keys(ctx.secretEnv).length > 0
+            ? { secretEnv: ctx.secretEnv }
+            : {}),
           requireToolApproval: ctx.requireToolApproval,
         });
         continue;
@@ -363,7 +388,7 @@ export function resolveHostTools(
       if (!computer) {
         logger.warn(
           "[built-in-tools] bash requested without a computer attached; skipping",
-          { projectId: ctx.projectId }
+          { projectId: ctx.projectId },
         );
         continue;
       }
@@ -376,7 +401,7 @@ export function resolveHostTools(
       if (ctx.isGuest && ctx.executionScope?.kind !== "swarm") {
         logger.debug(
           "[built-in-tools] bash not advertised to guest actor without a host-funded swarm scope; skipping",
-          { projectId: ctx.projectId }
+          { projectId: ctx.projectId },
         );
         continue;
       }
@@ -403,7 +428,7 @@ export function resolveHostTools(
             engine,
             isGuest: Boolean(ctx.isGuest),
             isScenarioSession: Boolean(ctx.isScenarioSession),
-          }
+          },
         );
       }
       out[BASH_TOOL_NAME] = buildBashTool({
@@ -514,14 +539,14 @@ export function resolveHostTools(
       if (ctx.isGuest || ctx.isScenarioSession) {
         logger.debug(
           "[built-in-tools] workspace tools not advertised to guest/scenario actors; skipping",
-          { id }
+          { id },
         );
         continue;
       }
       if (!ctx.mcpjamPlatformClient) {
         logger.debug(
           "[built-in-tools] workspace tool id without a platform client; skipping",
-          { id }
+          { id },
         );
         continue;
       }

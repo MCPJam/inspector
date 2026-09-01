@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -109,9 +109,9 @@
     "@ai-sdk/azure": "^3.0.26",
     "@ai-sdk/deepseek": "^2.0.17",
     "@ai-sdk/google": "^3.0.20",
-    "@ai-sdk/harness": "1.0.0-canary.13",
-    "@ai-sdk/harness-claude-code": "1.0.0-canary.9",
-    "@ai-sdk/harness-codex": "1.0.0-canary.9",
+    "@ai-sdk/harness": "^1.0.96",
+    "@ai-sdk/harness-claude-code": "^1.0.100",
+    "@ai-sdk/harness-codex": "^1.0.98",
     "@ai-sdk/mistral": "^3.0.18",
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.156",
@@ -135,7 +135,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.3.1",
+    "@mcpjam/sdk": "^8.4.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.0.2",

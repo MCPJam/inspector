@@ -238,6 +238,23 @@ export type RequestEventMap = {
     rpcMethod?: string;
     path: string;
   };
+  /**
+   * An environment's MATERIALIZED secrets were resolved for a turn that has no
+   * project-provisioned sandbox to receive them, so they were not delivered.
+   *
+   * Deliberate — a materialized value only ever lands in a box the project
+   * provisioned — but silent until this event: the operational question is "is
+   * anyone selecting materialized secrets on a path that cannot use them?", and
+   * it needs an answer that is queryable rather than grep-able.
+   *
+   * COUNT ONLY, never a name and never a value. This row is one scrubber miss
+   * away from being the leak the feature exists to prevent, and the count is
+   * the whole of what the question needs.
+   */
+  "chat.secrets.undelivered": {
+    secretCount: number;
+    isScenarioSession: boolean;
+  };
   "chat.session.persist.failed": {
     failureKind:
       | "timeout"

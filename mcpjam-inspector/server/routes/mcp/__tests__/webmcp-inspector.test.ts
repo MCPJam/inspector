@@ -212,6 +212,172 @@ describe("webmcp-inspector routes", () => {
     expect(body).toEqual({ ok: true, cancelled: false });
   });
 
+  it("starts and stops the viewport stream", async () => {
+    const started = await openSession(provider);
+    const session = provider.sessions[0];
+
+    expect(
+      await call(
+        `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+        json({ type: "set_screencast", enabled: true }),
+      ),
+    ).toEqual({ status: 200, body: { ok: true, streaming: true } });
+    expect(
+      await call(
+        `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+        json({ type: "set_screencast", enabled: false }),
+      ),
+    ).toEqual({ status: 200, body: { ok: true, streaming: false } });
+
+    expect(session.screencastCalls).toEqual([true, false]);
+  });
+
+  it("says 200 with streaming:false when the browser cannot screencast", async () => {
+    const started = await openSession(provider);
+    provider.sessions[0].screencastAvailable = false;
+
+    const { status, body } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "set_screencast", enabled: true }),
+    );
+    // The REQUEST was fine, so not an error — but the client has to be able to
+    // tell "streaming" from "understood", or it waits forever for frames that
+    // are never coming instead of falling back to polling.
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true, streaming: false });
+  });
+
+  it("rejects a set_screencast with no enabled flag", async () => {
+    const started = await openSession(provider);
+    // `enabled` is the whole command. Defaulting it either way would make a
+    // malformed client silently start or stop a stream it did not ask about.
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "set_screencast" }),
+    );
+    expect(status).toBe(400);
+  });
+
+  it("rejects a command this server does not know", async () => {
+    const started = await openSession(provider);
+    // The contract a NEWER client depends on: an unknown command is a 400, not
+    // a 500 and not a silent success. That is what lets the client tell "this
+    // server is older than me" from "something broke" and fall back to polling
+    // screenshots instead of showing an empty pane.
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "set_something_invented_later", enabled: true }),
+    );
+    expect(status).toBe(400);
+  });
+
+  it("forwards a batch of input in order", async () => {
+    const started = await openSession(provider);
+    const session = provider.sessions[0];
+
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({
+        type: "input",
+        events: [
+          { kind: "mouse_move", x: 10, y: 20 },
+          { kind: "mouse_down", x: 10, y: 20, button: "left" },
+          { kind: "mouse_up", x: 10, y: 20, button: "left" },
+        ],
+      }),
+    );
+
+    expect(status).toBe(200);
+    // Ordering within a batch is what makes this a click rather than three
+    // unrelated events.
+    expect(session.inputBatches).toHaveLength(1);
+    expect(session.inputBatches[0].map((event) => event.kind)).toEqual([
+      "mouse_move",
+      "mouse_down",
+      "mouse_up",
+    ]);
+  });
+
+  it("refuses an input batch beyond the cap", async () => {
+    const started = await openSession(provider);
+    const events = Array.from({ length: 65 }, () => ({
+      kind: "mouse_move",
+      x: 1,
+      y: 1,
+    }));
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "input", events }),
+    );
+    // One request can never carry an unbounded amount of browser work.
+    expect(status).toBe(400);
+    expect(provider.sessions[0].inputBatches).toHaveLength(0);
+  });
+
+  it("refuses an empty input batch", async () => {
+    const started = await openSession(provider);
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "input", events: [] }),
+    );
+    expect(status).toBe(400);
+  });
+
+  it.each([
+    ["negative", { kind: "mouse_move", x: -1, y: 10 }],
+    ["null (a NaN that survived JSON)", { kind: "mouse_move", x: null, y: 10 }],
+    ["unknown button", { kind: "mouse_down", x: 1, y: 1, button: "extra" }],
+    ["unknown kind", { kind: "teleport", x: 1, y: 1 }],
+    ["empty key", { kind: "key_down", key: "" }],
+  ])("refuses an input event with a %s coordinate or field", async (_l, event) => {
+    const started = await openSession(provider);
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "input", events: [event] }),
+    );
+    expect(status).toBe(400);
+    expect(provider.sessions[0].inputBatches).toHaveLength(0);
+  });
+
+  it("accepts a signed wheel delta", async () => {
+    const started = await openSession(provider);
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({
+        type: "input",
+        events: [{ kind: "wheel", x: 1, y: 1, deltaX: 0, deltaY: -120 }],
+      }),
+    );
+    // Scrolling up is a negative number, not an error.
+    expect(status).toBe(200);
+  });
+
+  it("rejects an in-app hosted session rather than downgrading it", async () => {
+    configState.hostedBrowser = true;
+    const { status, body } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({
+        url: "https://a.test/",
+        transport: "hosted",
+        projectId: "proj-1",
+        display: "in-app",
+      }),
+    );
+    // A hosted browser already has a viewport with its own take-control lease.
+    // Honouring `in-app` would drive one desktop from two places.
+    expect(status).toBe(400);
+    expect(body.code).toBe("in-app-hosted-unsupported");
+    configState.hostedBrowser = false;
+  });
+
+  it("rejects a display this server does not know", async () => {
+    const { status } = await call(
+      "/api/mcp/webmcp/sessions",
+      json({ url: "https://a.test/", display: "hologram" }),
+    );
+    expect(status).toBe(400);
+  });
+
   it("rejects a malformed command", async () => {
     const started = await openSession(provider);
     const { status } = await call(

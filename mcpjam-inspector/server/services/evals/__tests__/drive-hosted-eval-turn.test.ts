@@ -50,6 +50,7 @@ function baseParams(
     extractToolCalls: () => [],
     acc: {
       messageHistory: [],
+      traceMessageHistory: [],
       capturedSpans: [],
       accumulatedUsage: {},
       toolsCalledByPrompt: [],

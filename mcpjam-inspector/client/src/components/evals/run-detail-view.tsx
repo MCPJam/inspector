@@ -53,6 +53,11 @@ import {
   RunUserValueChainSlot,
   useRunUserValueChainChoice,
 } from "./run-user-value-chain-slot";
+import {
+  RunLevelFindingsLine,
+  StageFindingsCard,
+} from "@/components/evaluate/stage-findings-card";
+import { useStageFindings } from "@/components/evaluate/use-stage-findings";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -207,6 +212,29 @@ interface RunDetailViewProps {
    * keeps every non-Evaluate mount at exactly zero summary requests.
    */
   decisionSummarySlot?: React.ReactNode;
+  /**
+   * Join D9's per-trial diagnostics onto the canonical stage document.
+   *
+   * A BOOLEAN rather than a slot, unlike `decisionSummarySlot` above, because
+   * the evidence hangs off individual stage cards this view mounts — there is
+   * no single node a caller could hand in. The zero-request guarantee is kept
+   * the same way `RunDecisionSummarySection` keeps it: off by default, and a
+   * disabled read issues no request at all, so `/evals` and the CI commit
+   * detail stay at exactly zero.
+   */
+  stageFindingsEnabled?: boolean;
+  /**
+   * Focus one trial's evidence through the app's own routing.
+   *
+   * Same shape and same contract as the decision card's `onViewTrace`: called
+   * only with identities verified against the run on screen, and with the CASE
+   * the iteration belongs to, because that is what the viewer can open to.
+   */
+  onViewStageTrace?: (target: {
+    runId: string;
+    iterationId: string;
+    testCaseId: string;
+  }) => void;
   /**
    * The cohort the flow diagram would analyze, when this surface has one.
    *
@@ -438,6 +466,8 @@ export function RunDetailView({
   onExportTraces,
   onShare,
   decisionSummarySlot,
+  stageFindingsEnabled = false,
+  onViewStageTrace,
   flowScope = null,
 }: RunDetailViewProps) {
   const handleEditTestCase =
@@ -625,6 +655,23 @@ export function RunDetailView({
     // status lets the read happen again once it finishes, instead of the
     // too-early "no document" answer standing until this view remounts.
     runStatus: selectedRunDetails.status,
+  });
+
+  /**
+   * The trial evidence behind the canonical document's stage failures.
+   *
+   * Called unconditionally — hooks must be — but INERT unless the caller opted
+   * in: `enabled: false` makes the underlying decision-summary read issue no
+   * request, so the non-Evaluate mounts of this shared view stay at zero. When
+   * it is on, the read shares the LRU store with `RunDecisionSummarySection`'s
+   * identical target, so the two callers are one request.
+   */
+  const stageFindings = useStageFindings({
+    projectId: selectedRunDetails.projectId ?? null,
+    analytics: runChain.document,
+    run: selectedRunDetails,
+    enabled: stageFindingsEnabled,
+    canOpenTrial: Boolean(onViewStageTrace),
   });
 
   /**
@@ -844,6 +891,14 @@ export function RunDetailView({
       <RunUserValueChainSlot
         chain={runChain}
         className="m-3"
+        renderFindings={(stage) => (
+          <StageFindingsCard
+            state={stageFindings}
+            stage={stage}
+            {...(onViewStageTrace ? { onOpenTrial: onViewStageTrace } : {})}
+          />
+        )}
+        runLevelFindings={<RunLevelFindingsLine state={stageFindings} />}
         legacy={
           <SuiteRunStageFunnelPanel
             suiteRunId={selectedRunDetails._id}

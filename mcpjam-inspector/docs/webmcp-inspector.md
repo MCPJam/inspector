@@ -37,12 +37,131 @@ server/services/webmcp-inspector/         provider, runtime, registry, hub
 routes — is written against that interface and never imports Playwright, so the
 hosted stage can run the browser elsewhere without reaching into tool identity,
 queueing, activity or lifecycle. `playwright-provider.ts` is the only module in
-the repo that speaks CDP.
+the inspector that speaks CDP.
 
-`viewportTransport` on the session is the same seam for the viewer. V1 reports
-`native-window` (the browser opens on the developer's machine and they drive it)
-or `headless`; a remote provider will report an interactive URL, and the client
-renders whichever it is handed.
+The WebMCP state machine itself — the tool map, the pending invocations, the
+cancel-reason bookkeeping — lives in ONE place:
+`server/services/browserd/daemon/webmcp-bridge.ts`. It used to exist twice, once
+there and once inline in `playwright-provider.ts`, so every hard-won behaviour
+in it had to be fixed twice or drift. The bridge imports nothing at all, which
+is what lets Playwright's `CDPSession` satisfy its `CdpLike` structurally and
+makes the eventual move into a shared `webmcp-runtime/` package a file move
+rather than a refactor. Anyone doing that extraction should move the file rather
+than inverting the dependency in place.
+
+What stays in the provider is everything OUTSIDE the WebMCP domain — the
+screencast, input dispatch, navigation, screenshots, lifecycle — plus the
+translation between the bridge's vocabulary and this interface's:
+`WebMcpBridgeError{failure}` becomes `WebMcpToolGoneError` or
+`WebMcpInvocationCancelledError{reason}`, and `{invocationId, output}` loses an
+id the runtime already has its own handle for. Unsupported detection stays at
+the provider's `start()`, so a browser that cannot do WebMCP fails session
+creation with an explanation instead of succeeding into an empty tool list.
+
+TIMEOUT OWNERSHIP is the one part worth stating twice. The runtime owns the
+per-invocation deadline, so when it hands the bridge a signal the bridge does
+not arm its own, and it derives the cancel reason from `signal.reason`. Two
+deadlines on one invocation means whichever fires first names the failure — and
+the browser answers every cancel `Canceled` regardless of why, so a bridge that
+ignored the reason would record every timeout as a user cancellation.
+
+`viewportTransport` on the session is the same seam for the viewer. A local
+session reports `native-window` (the browser opens on the developer's machine
+and they drive it) or `headless`; the hosted provider reports an interactive
+URL; and a session whose picture comes from the CDP screencast reports
+`frame-stream`. The client renders whichever it is handed.
+
+## Watching the page inside the product
+
+The inspector's left pane shows the page as it paints, over the same session
+that carries tools and invocations:
+
+```text
+Page.screencastFrame → ack FIRST → oversize drop → 10fps throttle (with a
+mandatory trailing frame) → runtime publishFrame → hub's coalesced slot → SSE
+→ store liveFrame → the pane
+```
+
+Four properties hold this together, and each one is a bug if it is dropped:
+
+- **Ack before anything else.** Chromium sends the next frame only once the
+  current one is acknowledged. Acking after consumption lets a slow consumer
+  starve the stream into stillness.
+- **Frames never enter the replay ring.** They live in a single coalesced slot
+  beside the latest tool snapshot, so a page animating at 10fps cannot flush the
+  timeline the session exists to produce. A reconnecting client replays exactly
+  one frame: the current one.
+- **The throttle's trailing frame is mandatory.** The last paint of a burst is
+  the one that shows what the page ended up looking like; drop it and a settled
+  page leaves the pane stale forever.
+- **Frames do not tick the idle clock.** A CSS spinner paints forever, and a
+  session that could not be reaped while animating would hold a capacity slot
+  nobody is using. Asking for the stream *does* tick it — that is a person
+  opening the pane.
+
+Streaming is demand-driven through the `set_screencast` command, sent when the
+pane is visible and withdrawn when it is not. A server that predates the command
+answers 400, and the client silently falls back to a 1s screenshot poll — which
+is also the path for a hosted session, whose viewport lives in the Browser
+panel.
+
+Frames are TRANSIENT and deliberately distinct from the screenshots on
+invocation entries: those are persisted evidence at a 64 KiB budget, exported
+with the session; a frame is a 256 KiB picture that the next paint replaces and
+that nothing keeps. Never source one from the other.
+
+## Driving the page from the pane
+
+Two destinations, chosen per session:
+
+- **Chrome window** — a real window on this machine, which the developer drives
+  directly with their own devtools open. The pane streams a VIEW of it and is
+  read-only: forwarding pane input would drive the same page a second time, so
+  every click would land twice.
+- **In app** — no window at all. The browser runs headless, starts its
+  screencast without being asked (nothing else would ever turn it on), reports
+  `frame-stream`, and the pane is the only way to see or touch the page.
+
+On the wire, an omitted `display` still means `window`, so an older client and
+any programmatic caller are unchanged. The inspector's own UI sends `in-app`
+explicitly, because that is what someone opening the screen now expects. A
+hosted session refuses `in-app` outright rather than downgrading it: a hosted
+browser already has a viewport with its own take-control lease, and honouring
+`in-app` would drive one desktop from two places.
+
+Input is a BATCH (`{type:"input", events:[…]}`), capped at 64 events. Pointer
+movement is the flooding vector, and batching solves the rate at the transport
+rather than asking every caller to remember to. The client half lives in
+`client/src/lib/webmcp-inspector/input-forwarder.ts`:
+
+- **Scaling** happens on the client, against the dimensions of the frame
+  currently on screen — only the client knows its rendered rectangle and how
+  `object-contain` letterboxes the picture inside it. A click on a letterbox bar
+  is dropped rather than mapped to the nearest edge.
+- **Batching** coalesces moves to the latest and flushes on a ~50ms timer, but
+  button and key transitions flush IMMEDIATELY: a click that waits out a batch
+  window reads as a click that did not register.
+- **Held keys are released on blur.** The page never learns that focus left the
+  pane, so a modifier held at that moment would stay held for the rest of the
+  session and turn every later click into a ctrl-click.
+
+Server-side, `dispatchInput` goes through Playwright's `page.mouse` /
+`page.keyboard` rather than raw `Input.dispatchMouseEvent`: those primitives
+want a modifier bitmask, a `text`/`unmodifiedText` pair and a virtual key code
+per key and per layout, and Playwright already carries that table. Text uses
+`keyboard.insertText`, because paste and IME composition have no keystrokes to
+replay. Each event is applied under its own catch — one exotic key must not
+swallow the click behind it — and coordinates are clamped to the viewport.
+
+Input ticks the idle clock (a human driving the pane must not be reaped) and
+writes NO timeline entry, mirroring `capture_screenshot`. Its consequences
+already produce entries: a click that navigates writes `navigated`, one that
+fires a page tool writes `external_invocation`.
+
+SECURITY: forwarded input runs with whatever session the browser profile holds.
+That is identical to the native window it replaces — the human could always
+click — and no approval semantics change. The MODEL's path to the page remains
+the gated tool calls; this is the person's own hands, on their own page.
 
 ## Three gates
 
@@ -144,8 +263,17 @@ running two at once would interleave their effects.
 ## Running the tests
 
 ```bash
-npx vitest run --project server server/services/webmcp-inspector/
-npx vitest run --project client client/src/lib/webmcp-inspector/
+# The session service, the shared WebMCP state machine, and the routes.
+npx vitest run --project server \
+  server/services/webmcp-inspector/ \
+  server/services/browserd/daemon/__tests__/webmcp-bridge \
+  server/routes/mcp/__tests__/webmcp-inspector
+
+# The store, the surface, and the input forwarder.
+npx vitest run --project client \
+  client/src/lib/webmcp-inspector/ \
+  client/src/components/webmcp-inspector/ \
+  client/src/stores/__tests__/webmcp-inspector-store
 ```
 
 The CDP and provider suites need Chromium. They skip locally when it is missing

@@ -111,6 +111,9 @@ so results respect the caller's project access.
 | `create_persona` | Create a reusable synthetic character for Swarms to run as. | — |
 | `update_persona` | Edit a persona's name, role or notes. Finished runs keep the persona they ran as. | — |
 | `delete_persona` | Remove a persona from the roster. Soft: history keeps resolving it. | — |
+| `list_secrets` | List the project's credentials as metadata only — name, delivery mode, host binding, sharing. No value is ever returned. | — |
+| `get_secret` | One secret's metadata: how it is delivered, where it is bound, when it was last handed to a run. Never its value. | — |
+| `delete_secret` | Delete a stored credential. Hard: the row and the encrypted value both go, and delivery stops. Does not revoke the key at its provider. | — |
 | `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; spends. | — |
 | `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
 | `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |

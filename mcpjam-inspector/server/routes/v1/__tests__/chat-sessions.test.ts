@@ -57,6 +57,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 
 import chatSessions from "../chat-sessions.js";
+import { createSecretScrubber } from "../../../utils/secrets/secret-scrubber.js";
 import { v1OnError } from "../envelope.js";
 import { __testing } from "../chat-session-turn.js";
 import {
@@ -729,9 +730,9 @@ describe("skills capability on the agent turn", () => {
     // dispatch gate uses, rather than against a hand-written object: a
     // declaration the gate does not accept is not a declaration. `true` or a
     // misspelled id would satisfy a shape check and fail this.
-    expect(clientDeclaresSkillsExtension(withSkillsExtensionCapability({}))).toBe(
-      true,
-    );
+    expect(
+      clientDeclaresSkillsExtension(withSkillsExtensionCapability({})),
+    ).toBe(true);
   });
 
   it("MERGES with the SDK defaults instead of replacing them", () => {
@@ -977,6 +978,94 @@ describe("payload bounding", () => {
     expect(joined[0]!.output).toEqual({ temp: 12 });
     expect(joined[0]!.status).toBe("ok");
     expect(joined[1]!.status).toBe("error");
+  });
+
+  it("scrubs a credential that STRADDLES the truncation boundary", () => {
+    // Bounding used to run first, cutting the serialized payload at a fixed
+    // offset. A credential spanning that cut left a fragment in the retained
+    // prefix — no needle matches a fragment — and those bytes went out in a
+    // response that crosses the trust boundary. A partial credential is not
+    // safe; it is a shorter one.
+    //
+    // THE SHAPE HERE IS LOAD-BEARING and took two attempts to get right. The
+    // obvious payload (filler + secret) has no filler length that works: the
+    // window where the cut lands inside the value under the OLD ordering is
+    // exactly the window where the NEW ordering, having shrunk the value to
+    // `[secret:…]`, drops back under the cap and never truncates at all. The
+    // test then passes for the wrong reason, proving only the untruncated
+    // path. The trailing field is what fixes it — it keeps the payload over
+    // the cap after redaction, so BOTH orderings truncate and the only
+    // difference left is whether a fragment survives.
+    const value = `sk_live_${"a".repeat(64)}`;
+    const scrubber = createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!;
+    const input = {
+      filler: "x".repeat(15_940),
+      key: value,
+      tail: "y".repeat(200),
+    };
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input }],
+      [{ toolCallId: "t1", output: { type: "json", value: input } }],
+      scrubber,
+    );
+
+    // Truncation really happened — without this the assertions below could
+    // pass on a payload that was never cut.
+    expect(joined[0]!.truncated).toBe(true);
+
+    const serialized = JSON.stringify(joined);
+    // The FRAGMENT is the assertion that matters. The whole value never
+    // survives bounding under either ordering, so asserting only on it would
+    // pass while the bug was live.
+    expect(serialized).not.toContain(value.slice(0, 20));
+    expect(serialized).not.toContain(value);
+  });
+
+  it("survives a CYCLIC payload now that scrubbing runs first", () => {
+    // The regression the reordering could have introduced. `boundPayload`'s
+    // depth cap is what turns a cycle into a marker, and it used to run before
+    // the scrubber — so the scrubber never saw one. Scrubbing first removed
+    // that shield, and an unguarded recursive rebuild would blow the stack and
+    // turn a turn that used to succeed into a 500.
+    const value = "sk_live_cyclictest_value";
+    const cyclic: Record<string, unknown> = { key: value };
+    cyclic.self = cyclic;
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: cyclic }],
+      [{ toolCallId: "t1", output: { type: "json", value: cyclic } }],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+
+    expect(joined).toHaveLength(1);
+    expect(JSON.stringify(joined)).not.toContain(value);
+  });
+
+  it("survives a pathologically DEEP payload", () => {
+    // The other half of the same shield: depth, not just cycles.
+    const value = "sk_live_deeptest_value_here";
+    let deep: Record<string, unknown> = { key: value };
+    for (let i = 0; i < 2_000; i++) deep = { nested: deep };
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: deep }],
+      [],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+    expect(joined).toHaveLength(1);
+  });
+
+  it("still scrubs when nothing is truncated", () => {
+    // The guard on the guard: reordering must not break the ordinary path.
+    const value = "sk_live_shortbutlongenough";
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: { key: value } }],
+      [{ toolCallId: "t1", output: { type: "json", value: { key: value } } }],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+    expect(joined[0]!.input).toEqual({ key: "[secret:STRIPE_API_KEY]" });
+    expect(joined[0]!.output).toEqual({ key: "[secret:STRIPE_API_KEY]" });
   });
 
   it("keeps absolute message indices when projecting a page", () => {

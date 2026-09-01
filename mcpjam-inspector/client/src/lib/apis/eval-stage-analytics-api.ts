@@ -119,12 +119,28 @@ function client(): PlatformApiClient {
  * path shape but not this method. Everything else at 404 is the route's own
  * "Eval suite not found", which is a fact about the suite.
  */
-function isRouteUnavailable(status: number, code: string): boolean {
+function isRouteUnavailable(
+  status: number,
+  code: string,
+  codeSource?: "envelope" | "status",
+): boolean {
   return (
     code === "FEATURE_NOT_SUPPORTED" ||
     code === "NOT_IMPLEMENTED" ||
     status === 501 ||
-    status === 405
+    status === 405 ||
+    // A 404 the server did not put a code on. An API that MEANS "no such
+    // resource" answers `{ code: "NOT_FOUND" }`; a deployment that never
+    // shipped this function answers a bare 404 from its router, with no
+    // envelope at all. `STATUS_FALLBACK_CODES` maps both to `NOT_FOUND`, so
+    // `code` alone cannot separate them — which is why this reads
+    // `codeSource`, and why a discriminator built on the code was never
+    // going to work.
+    //
+    // Getting this wrong is not cosmetic during a dark ship: the run detail
+    // renders an undeployed route as "this run was never measured" instead of
+    // falling back to the legacy funnel it should still be showing.
+    (status === 404 && codeSource === "status")
   );
 }
 
@@ -161,7 +177,7 @@ export async function fetchEvalSuiteStageAnalytics(
     // said no".
     if (signal?.aborted) throw error;
     if (isPlatformApiError(error)) {
-      if (isRouteUnavailable(error.status, error.code)) {
+      if (isRouteUnavailable(error.status, error.code, error.codeSource)) {
         throw new EvalStageAnalyticsError(
           "routeUnavailable",
           "This deployment does not serve eval stage analytics.",
@@ -270,7 +286,7 @@ export async function fetchEvalRunStageAnalytics(
     // A caller's abort is the caller's, not a failure of the read.
     if (signal?.aborted) throw error;
     if (isPlatformApiError(error)) {
-      if (isRouteUnavailable(error.status, error.code)) {
+      if (isRouteUnavailable(error.status, error.code, error.codeSource)) {
         throw new EvalStageAnalyticsError(
           "routeUnavailable",
           "This deployment does not serve eval stage analytics.",

@@ -483,12 +483,17 @@ export {
   DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
   DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   EVAL_VERDICT_DECISION_REASON_LABELS,
+  EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGE_OUTCOMES,
+  USER_VALUE_STAGE_QUESTIONS,
+  describeExcludedTrialDetail,
 } from "./decision-labels.js";
+export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
 
 // ── the canonical run decision summary ───────────────────────────────────────
 export type {
