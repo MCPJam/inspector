@@ -462,23 +462,34 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       timeout: 15_000,
     });
 
-    // Long enough for the page's own paints to stop and for the quiet window
-    // to elapse. The LAST frame after that can only be the still: an unchanged
-    // repaint is dropped as redundant, which is what stops the capture's own
-    // induced frame from inducing another capture.
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    expect(frames.length, "a still after the paints").toBeGreaterThanOrEqual(2);
+    const streamedCount = frames.length;
+    const streamed = frames.at(-1)!;
 
-    const settled = frames.at(-1)!;
-    const streamed = frames.at(-2)!;
+    // Long enough for the page's own paints to stop and for the quiet window
+    // to elapse. What arrives after that is the still — plus, on a build that
+    // answers a capture with a repaint it does not deduplicate, possibly one
+    // more frame, which is why this takes the LARGEST rather than the last.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(frames.length, "a still after the paints").toBeGreaterThan(
+      streamedCount,
+    );
+
+    const sharpest = Math.max(
+      ...frames
+        .slice(streamedCount)
+        .map((frame) => Buffer.byteLength(frame.data, "base64")),
+    );
     // Same picture, more bytes: the still is encoded well above the streaming
     // baseline, which is the entire point of taking it.
-    expect(Buffer.byteLength(settled.data, "base64")).toBeGreaterThan(
+    expect(sharpest).toBeGreaterThan(
       Buffer.byteLength(streamed.data, "base64"),
     );
-    expect(Buffer.byteLength(settled.data, "base64")).toBeLessThanOrEqual(
-      WEBMCP_FRAME_MAX_BYTES,
-    );
+    expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
+    // And no capture loop: a still induces a repaint, and a repaint counted as
+    // activity would take another still, forever.
+    const after = frames.length;
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(frames.length - after, "no capture loop").toBeLessThan(2);
     await registry.disposeAll();
   }, 60_000);
 

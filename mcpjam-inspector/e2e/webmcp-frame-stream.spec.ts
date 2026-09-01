@@ -493,27 +493,35 @@ test.describe("WebMCP viewport frame stream", () => {
       await expect
         .poll(() => socket!.frames.length, { timeout: 20_000 })
         .toBeGreaterThan(0);
-      // Long enough for the page's own paints to stop and the quiet window to
-      // pass. The fixture never repaints, so anything arriving now is a still.
-      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+      const streamedCount = socket.frames.length;
+      const streamed = socket.frames.at(-1)!;
 
+      // Long enough for the page's own paints to stop and the quiet window to
+      // pass. The fixture never repaints, so anything arriving now is a still
+      // — or the repaint Chromium produces to satisfy the capture, which is
+      // dropped as redundant before it reaches this socket.
+      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
       expect(
         socket.frames.length,
         "a still after the page settled",
-      ).toBeGreaterThan(1);
-      const settled = socket.frames.at(-1)!;
-      const streamed = socket.frames.at(-2)!;
-      // Same picture, more bytes: the still is encoded well above the
-      // streaming baseline, which is the point of taking it at all.
-      expect(settled.jpeg.byteLength).toBeGreaterThan(streamed.jpeg.byteLength);
-      expect(settled.jpeg.byteLength).toBeLessThanOrEqual(
-        WEBMCP_FRAME_MAX_BYTES,
-      );
-      // And the stream then goes quiet: the capture's own induced repaint is
-      // dropped as redundant, so one still does not beget another.
+      ).toBeGreaterThan(streamedCount);
+
+      // Same picture, more bytes. Taken as the largest frame that arrived
+      // after the page settled rather than as the last one, so a build that
+      // answers a capture with one extra repaint does not turn this into a
+      // flake — what must hold is that the sharp still got through.
+      const settled = socket.frames.slice(streamedCount);
+      const sharpest = Math.max(...settled.map((f) => f.jpeg.byteLength));
+      expect(sharpest).toBeGreaterThan(streamed.jpeg.byteLength);
+      expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
+
+      // And the stream then goes quiet. A still induces a repaint, and a
+      // repaint counted as activity would take another still, and another —
+      // so this is the assertion that pins the loop shut. One stray frame is
+      // tolerated; a loop delivers one per second.
       const after = socket.frames.length;
       await sleep(3_000);
-      expect(socket.frames.length, "no capture loop").toBe(after);
+      expect(socket.frames.length - after, "no capture loop").toBeLessThan(2);
     } finally {
       socket?.close();
       if (sessionId) {

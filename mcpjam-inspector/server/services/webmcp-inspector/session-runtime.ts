@@ -616,6 +616,14 @@ export class WebMcpSessionRuntime {
    * NOT treated as activity: a struggling link is not somebody using the
    * session, and ticking the idle clock from it would keep an abandoned tab
    * alive for as long as its network stayed bad.
+   *
+   * Every viewer of a session reports into the same funnel, so the WORST
+   * transport governs the quality for all of them. That is the right default
+   * for the case this exists for — one person, one pane, on a link that cannot
+   * keep up — and the wrong one for a session watched from two places at once,
+   * where a slow viewer lowers the picture for a fast one. Accepted: the
+   * alternative is per-subscriber encoding, which is a second encoder per
+   * viewer.
    */
   noteFramePressure(): void {
     this.session?.noteFramePressure?.();
