@@ -209,6 +209,27 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await session.stop();
   });
 
+  it("settles a write whose stream never produces bytes when aborted", async () => {
+    // The stream comes from the adapter. One that never enqueues and never
+    // closes would leave `reader.read()` — and the write waiting on it —
+    // pending forever, so the abort signal has to interrupt the read itself,
+    // not merely be checked before it.
+    const sup = supervisor();
+    const { session } = await buildSession("abort-write", sup);
+    const controller = new AbortController();
+    const stalled = new ReadableStream<Uint8Array>({ start() {} });
+    const write = session.writeFile({
+      path: join(workspace, "never.bin"),
+      content: stalled,
+      abortSignal: controller.signal,
+    });
+    controller.abort(new Error("caller went away"));
+    await expect(write).rejects.toThrow(/caller went away/);
+    // ...and nothing was created for it.
+    await expect(readFile(join(workspace, "never.bin"))).rejects.toThrow();
+    await session.stop();
+  });
+
   it("refuses to read or write outside them, including through a symlink", async () => {
     const sup = supervisor();
     const { session } = await buildSession("confined", sup);

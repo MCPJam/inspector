@@ -130,18 +130,52 @@ async function collectStreamBytes(
 ): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
+  const abortError = (): Error =>
+    abortSignal?.reason instanceof Error
+      ? abortSignal.reason
+      : new Error("aborted");
+
+  // Set up ONCE, outside the loop — a listener per iteration would leak on a
+  // long stream. Checking the flag before each read is not enough on its own:
+  // the stream here comes from the adapter, and one that never enqueues and
+  // never closes leaves `reader.read()` pending forever, with the `writeFile`
+  // waiting on the bytes pending behind it, after the session was aborted.
+  let removeAbortListener = (): void => {};
+  let abortRace: Promise<never> | null = null;
+  if (abortSignal !== undefined) {
+    abortRace = new Promise<never>((_resolve, reject) => {
+      const onAbort = () => reject(abortError());
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () =>
+        abortSignal.removeEventListener("abort", onAbort);
+    });
+    // The race attaches a handler each iteration, but nothing listens once the
+    // loop ends; without this a later abort is an unhandled rejection.
+    abortRace.catch(() => {});
+  }
+
   try {
     for (;;) {
-      if (abortSignal?.aborted) {
-        throw abortSignal.reason instanceof Error
-          ? abortSignal.reason
-          : new Error("aborted");
-      }
-      const { done, value } = await reader.read();
+      if (abortSignal?.aborted) throw abortError();
+      const pending = reader.read();
+      // Same reason: when the race abandons this read, releasing the lock
+      // errors it, and nobody would be listening.
+      pending.catch(() => {});
+      const { done, value } =
+        abortRace === null
+          ? await pending
+          : await Promise.race([pending, abortRace]);
       if (done) break;
       if (value) chunks.push(value);
     }
+  } catch (error) {
+    // Let the source go rather than leaving it pumping into a reader nothing
+    // will read again. Not awaited: a source whose `cancel` hangs would just
+    // reintroduce the hang this is here to remove.
+    void reader.cancel(error).catch(() => {});
+    throw error;
   } finally {
+    removeAbortListener();
     reader.releaseLock();
   }
   const total = chunks.reduce((n, c) => n + c.byteLength, 0);
