@@ -73,9 +73,10 @@ describe("StageDetailCard", () => {
 
   it("shows NO latency line when there are no samples", () => {
     // Absent, never `0 ms`: a mean of no samples is not a fast server.
-    const stage = rowFor();
-    delete (stage as { latency?: unknown }).latency;
-    render(<StageDetailCard stage={{ ...stage, latency: null }} />);
+    // `latency: null` IS the no-samples case: `StageRowView.latency` is the
+    // already-formatted string, and `formatLatency` returns null rather than
+    // "0 ms" when the aggregate has no samples.
+    render(<StageDetailCard stage={{ ...rowFor(), latency: null }} />);
 
     expect(screen.getByTestId("stage-detail-card").textContent).not.toMatch(
       /\bms\b/,
@@ -100,7 +101,6 @@ describe("StageDetailCard", () => {
       reasons: [],
       excluded: { reachUnknown: 3 },
     });
-    delete (unmeasured as { latency?: unknown }).latency;
     render(<StageDetailCard stage={{ ...unmeasured, latency: null }} />);
 
     const card = screen.getByTestId("stage-detail-card");

@@ -155,9 +155,9 @@ export function deriveStageChip(tally: EvalStageTally): StageChip {
     return {
       kind: "passed",
       // The OUTCOME phrase, not the word "passed": a row reading
-      // "Session connected → Tools discovered → Usable response returned"
-      // tells the delivery story, where six "passed" chips tell a reader only
-      // that six checks ran.
+      // "Session connected → Tools and resources discovered → Usable response
+      // returned" tells the delivery story, where six "passed" chips tell a
+      // reader only that six checks ran.
       label: USER_VALUE_STAGE_OUTCOMES[tally.stage],
       toneClass: STAGE_CHIP_TONE_CLASS.passed,
     };
