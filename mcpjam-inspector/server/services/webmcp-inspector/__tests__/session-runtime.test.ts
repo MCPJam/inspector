@@ -531,3 +531,43 @@ describe("viewport frames", () => {
     await expect(runtime.setScreencast(true)).rejects.toThrow(/not ready/i);
   });
 });
+
+describe("input forwarding", () => {
+  it("hands the batch to the browser and ticks the idle clock", async () => {
+    const { runtime, session, onActivity } = makeRuntime();
+    onActivity.mockClear();
+
+    await runtime.dispatchInput([
+      { kind: "mouse_down", x: 5, y: 6, button: "left" },
+      { kind: "mouse_up", x: 5, y: 6, button: "left" },
+    ]);
+
+    expect(session.inputBatches[0].map((event) => event.kind)).toEqual([
+      "mouse_down",
+      "mouse_up",
+    ]);
+    // A human working the pane is the clearest possible signal that the session
+    // is in use; reaping it out from under them would be the worst version of
+    // this feature.
+    expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes no timeline entry for input", async () => {
+    const { runtime, activity } = makeRuntime();
+    const before = activity().length;
+    for (let i = 0; i < 20; i++) {
+      await runtime.dispatchInput([{ kind: "mouse_move", x: i, y: i }]);
+    }
+    // The timeline records protocol happenings. Input's CONSEQUENCES already
+    // produce entries — a click that navigates writes `navigated` — so logging
+    // the clicks themselves would bury those under a mouse trail.
+    expect(activity()).toHaveLength(before);
+  });
+
+  it("refuses input before a browser is attached", async () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/");
+    await expect(
+      runtime.dispatchInput([{ kind: "mouse_move", x: 1, y: 1 }]),
+    ).rejects.toThrow(/not ready/i);
+  });
+});

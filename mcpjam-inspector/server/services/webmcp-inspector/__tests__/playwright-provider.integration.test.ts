@@ -8,7 +8,15 @@
  * Runs headless. A user-facing session is headed, but headed needs a display
  * and would make this suite unrunnable in CI.
  */
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  vi,
+} from "vitest";
 import { chromium } from "playwright";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
@@ -19,7 +27,11 @@ import {
   type WebMcpActivityEntry,
   type WebMcpFrame,
 } from "@/shared/webmcp-inspector-protocol";
-import { startWebMcpFixtureServer, type WebMcpFixture } from "./fixture-page";
+import {
+  FIXTURE_INPUT_TARGETS,
+  startWebMcpFixtureServer,
+  type WebMcpFixture,
+} from "./fixture-page";
 import { buildWebMcpLaunchArgs } from "../launch-args";
 
 const CHROMIUM_AVAILABLE = await isChromiumInstalled();
@@ -79,13 +91,14 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await registry?.disposeAll();
   });
 
-  async function open() {
+  async function open(options: { viewportMode?: "window" | "embedded" } = {}) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
     const session = await startWebMcpSession({
       url: fixture.url,
       provider,
       registry,
       headless: true,
+      ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
@@ -312,6 +325,77 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       true,
     );
 
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("boots an embedded session that streams unprompted and takes input", async () => {
+    const { session, runtime, frames } = await open({
+      viewportMode: "embedded",
+    });
+
+    // No window, and the client is told so: `frame-stream` rather than
+    // `headless`, which would say there is nothing here to drive.
+    expect(session.viewportTransport).toEqual({
+      kind: "frame-stream",
+      width: 1280,
+      height: 800,
+    });
+    // Nobody asked for the stream. Nothing else would ever turn it on, and a
+    // headless browser with no stream is a session with no viewport at all.
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
+    const origin = new URL(fixture.url).origin;
+    const named = (name: string) =>
+      runtime.currentTools().some((tool) => tool.name === name);
+    expect(named(FIXTURE_INPUT_TARGETS.clickedTool)).toBe(false);
+
+    // A click, as the pane's forwarder would send it. Observed through the tool
+    // registry rather than by evaluating in the page: the registry is the
+    // channel the product actually uses, so a pass here cannot be a pass on a
+    // path nobody looks at.
+    const { x, y } = FIXTURE_INPUT_TARGETS.button;
+    await runtime.dispatchInput([
+      { kind: "mouse_move", x, y },
+      { kind: "mouse_down", x, y, button: "left" },
+      { kind: "mouse_up", x, y, button: "left" },
+    ]);
+    await vi.waitFor(
+      () => expect(named(FIXTURE_INPUT_TARGETS.clickedTool)).toBe(true),
+      { timeout: 10_000 },
+    );
+    expect(
+      runtime
+        .currentTools()
+        .find((tool) => tool.name === FIXTURE_INPUT_TARGETS.clickedTool)
+        ?.toolKey,
+    ).toBe(`${origin}::${FIXTURE_INPUT_TARGETS.clickedTool}`);
+
+    // Typed text lands in the focused field.
+    const field = FIXTURE_INPUT_TARGETS.field;
+    await runtime.dispatchInput([
+      { kind: "mouse_move", x: field.x, y: field.y },
+      { kind: "mouse_down", x: field.x, y: field.y, button: "left" },
+      { kind: "mouse_up", x: field.x, y: field.y, button: "left" },
+      { kind: "text", text: "hi" },
+    ]);
+    await vi.waitFor(
+      () => expect(named(FIXTURE_INPUT_TARGETS.typedTool)).toBe(true),
+      { timeout: 10_000 },
+    );
+
+    await registry.disposeAll();
+  }, 90_000);
+
+  it("keeps a window session reporting native-window", async () => {
+    // The headless flag drives this, not the viewport mode: an ordinary local
+    // session is unchanged by everything above.
+    const { session } = await open();
+    expect(session.viewportTransport).toEqual({ kind: "headless" });
     await registry.disposeAll();
   }, 60_000);
 });

@@ -14,6 +14,7 @@
  */
 import type {
   WebMcpFrame,
+  WebMcpInputEvent,
   WebMcpToolAnnotations,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
@@ -95,14 +96,45 @@ export interface WebMcpBrowserSession {
    * perfectly well through a different viewport.
    */
   setScreencast(enabled: boolean): Promise<void>;
+  /**
+   * Apply a batch of input to the page, in order.
+   *
+   * A batch rather than one event at a time because pointer movement floods:
+   * the transport above coalesces moves and flushes on a short interval, and
+   * ordering within a batch is what makes a down-move-up sequence a drag rather
+   * than three unrelated events.
+   *
+   * A provider that cannot be driven this way (the hosted one, whose viewport
+   * is driven through the Browser panel instead) logs and returns.
+   */
+  dispatchInput(events: WebMcpInputEvent[]): Promise<void>;
   /** Idempotent, and must not hang: teardown races a timeout internally. */
   dispose(): Promise<void>;
 }
+
+/**
+ * WHERE the person looks at, and drives, the page.
+ *
+ * `window` is the original behaviour: a real Chrome window on the developer's
+ * own machine, which they drive directly with their own devtools open. The
+ * inspector streams a view of it, but the window is the surface.
+ *
+ * `embedded` has no window at all. The browser runs headless and the streamed
+ * pane is the only way to see or touch the page, which is why an embedded
+ * session starts its screencast without being asked: a headless browser with no
+ * stream is a session with no viewport, and nothing would ever turn it on.
+ */
+export type WebMcpViewportMode = "window" | "embedded";
 
 export interface CreateWebMcpSessionOptions {
   url: string;
   /** False only in tests; a user-facing session always opens a real window. */
   headless?: boolean;
+  /**
+   * Defaults to `window`, so a caller that omits it gets exactly the V1
+   * behaviour. `embedded` implies headless regardless of the flag above.
+   */
+  viewportMode?: WebMcpViewportMode;
   callbacks: WebMcpSessionCallbacks;
 }
 

@@ -18,6 +18,7 @@ import {
   WEBMCP_INVOKE_TIMEOUT_MS,
   type WebMcpActivityEntry,
   type WebMcpFrame,
+  type WebMcpInputEvent,
   type WebMcpInvocationSource,
   type WebMcpInvocationState,
   type WebMcpSessionPublic,
@@ -319,6 +320,25 @@ export class WebMcpSessionRuntime {
    */
   async setScreencast(enabled: boolean): Promise<void> {
     await this.requireSession().setScreencast(enabled);
+    this.onActivity();
+  }
+
+  /**
+   * Drive the page from the pane.
+   *
+   * Ticks the idle clock — a human working the pane is the clearest possible
+   * signal that the session is in use, and reaping it out from under them would
+   * be the worst version of this feature.
+   *
+   * Writes NO timeline entry, mirroring `capture_screenshot`. The timeline
+   * records protocol happenings: tools registering, invocations starting and
+   * settling. Input's consequences already produce entries — a click that
+   * navigates writes `navigated`, one that fires a page tool writes
+   * `external_invocation` — so logging the clicks themselves would bury those
+   * under a mouse trail.
+   */
+  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
+    await this.requireSession().dispatchInput(events);
     this.onActivity();
   }
 

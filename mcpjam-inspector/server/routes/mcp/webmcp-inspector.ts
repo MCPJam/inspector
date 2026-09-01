@@ -21,6 +21,10 @@ import { WebMcpQueueFullError } from "../../services/webmcp-inspector/session-ru
 import { createBrowserdWebMcpProvider } from "../../services/webmcp-inspector/browserd-provider";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import {
+  WEBMCP_INPUT_BATCH_LIMIT,
+  WEBMCP_INPUT_TEXT_MAX_CHARS,
+} from "@/shared/webmcp-inspector-protocol";
 
 /**
  * webmcp-inspector.ts — a managed browser pointed at a page, so its WebMCP
@@ -84,7 +88,89 @@ const startSchema = z.object({
   transport: z.enum(["local", "hosted"]).optional(),
   /** Required for `hosted`: the project whose desktop computer is reserved. */
   projectId: z.string().min(1).optional(),
+  /**
+   * WHERE the person looks at and drives the page.
+   *
+   * OMITTED MEANS `window`, which is the V1 behaviour: a real Chrome window on
+   * this machine. That default is on the WIRE, so an older client and any
+   * programmatic caller keep exactly what they have. The inspector's own UI
+   * sends `in-app` explicitly, because in-app is what a person opening the
+   * screen now expects — but that is a choice the UI makes, not one this schema
+   * makes for everybody.
+   */
+  display: z.enum(["window", "in-app"]).optional(),
 });
+
+/**
+ * One input event, bounded at the HTTP boundary.
+ *
+ * `finite()` rather than a bare `number()` on every coordinate: JSON carries no
+ * NaN, but a client computing a scale factor from a zero-height pane produces
+ * one, and `JSON.stringify` turns it into `null` — which a permissive schema
+ * would coerce rather than refuse. Negative coordinates are refused for the
+ * same reason they are clamped downstream: they are never a thing a person did
+ * to the pane.
+ */
+const coordinate = z.number().finite().nonnegative();
+const modifiersSchema = z
+  .object({
+    alt: z.boolean().optional(),
+    ctrl: z.boolean().optional(),
+    meta: z.boolean().optional(),
+    shift: z.boolean().optional(),
+  })
+  .optional();
+const mouseButtonSchema = z.enum(["left", "middle", "right"]);
+/** Bounded so one event cannot ask the browser to hold a key name of any size. */
+const keyNameSchema = z.string().min(1).max(64);
+
+const inputEventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("mouse_move"),
+    x: coordinate,
+    y: coordinate,
+    modifiers: modifiersSchema,
+  }),
+  z.object({
+    kind: z.literal("mouse_down"),
+    x: coordinate,
+    y: coordinate,
+    button: mouseButtonSchema,
+    clickCount: z.number().int().min(1).max(3).optional(),
+    modifiers: modifiersSchema,
+  }),
+  z.object({
+    kind: z.literal("mouse_up"),
+    x: coordinate,
+    y: coordinate,
+    button: mouseButtonSchema,
+    clickCount: z.number().int().min(1).max(3).optional(),
+    modifiers: modifiersSchema,
+  }),
+  z.object({
+    kind: z.literal("wheel"),
+    x: coordinate,
+    y: coordinate,
+    // Deltas are signed — scrolling up is a negative number, not an error.
+    deltaX: z.number().finite(),
+    deltaY: z.number().finite(),
+    modifiers: modifiersSchema,
+  }),
+  z.object({
+    kind: z.literal("key_down"),
+    key: keyNameSchema,
+    modifiers: modifiersSchema,
+  }),
+  z.object({
+    kind: z.literal("key_up"),
+    key: keyNameSchema,
+    modifiers: modifiersSchema,
+  }),
+  z.object({
+    kind: z.literal("text"),
+    text: z.string().max(WEBMCP_INPUT_TEXT_MAX_CHARS),
+  }),
+]);
 
 const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("navigate"), url: httpUrlSchema }),
@@ -102,6 +188,10 @@ const commandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("capture_screenshot") }),
   z.object({ type: z.literal("set_screencast"), enabled: z.boolean() }),
+  z.object({
+    type: z.literal("input"),
+    events: z.array(inputEventSchema).min(1).max(WEBMCP_INPUT_BATCH_LIMIT),
+  }),
 ]);
 
 /**
@@ -169,7 +259,22 @@ webmcpInspector.post("/sessions", async (c) => {
       400,
     );
   }
-  const { url, transport, projectId } = parsed.data;
+  const { url, transport, projectId, display } = parsed.data;
+
+  if (display === "in-app" && transport === "hosted") {
+    // Refused rather than silently downgraded. A hosted browser already has a
+    // viewport — the Browser panel's stream, with its own take-control lease —
+    // and honouring `in-app` would mean driving one desktop from two places
+    // with nothing arbitrating between them.
+    return c.json(
+      {
+        error:
+          "A hosted browser is watched and driven from the Browser panel, not in this pane. Open it on this machine to use the in-app view.",
+        code: "in-app-hosted-unsupported",
+      },
+      400,
+    );
+  }
 
   let provider;
   if (transport === "hosted") {
@@ -227,6 +332,9 @@ webmcpInspector.post("/sessions", async (c) => {
     const session = await startWebMcpSession({
       url,
       ...(provider ? { provider } : {}),
+      // Omitted means `window`, so a caller that never heard of this field gets
+      // the behaviour it has always had.
+      ...(display === "in-app" ? { viewportMode: "embedded" as const } : {}),
     });
     return c.json(session, 201);
   } catch (error) {
@@ -375,6 +483,9 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
         });
       case "set_screencast":
         await runtime.setScreencast(command.enabled);
+        return c.json({ ok: true });
+      case "input":
+        await runtime.dispatchInput(command.events);
         return c.json({ ok: true });
     }
   } catch (error) {

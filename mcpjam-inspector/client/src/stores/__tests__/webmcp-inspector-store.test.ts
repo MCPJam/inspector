@@ -421,6 +421,56 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
   });
 
+  it("omits display entirely for a window session", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify(SESSION), { status: 201 }),
+      );
+    await useWebmcpInspectorStore.getState().startSession("https://shop.test/");
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    // Left OFF the request, not sent as "window": an older server that strips
+    // the unknown field lands on exactly the behaviour it would have chosen.
+    expect(body).toEqual({ url: "https://shop.test/" });
+  });
+
+  it("asks for an in-app session when the caller says so", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify(SESSION), { status: 201 }),
+      );
+    await useWebmcpInspectorStore
+      .getState()
+      .startSession("https://shop.test/", { display: "in-app" });
+
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
+      url: "https://shop.test/",
+      display: "in-app",
+    });
+  });
+
+  it("sends an input batch as one command, and nothing for an empty one", async () => {
+    await openSession();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
+    await useWebmcpInspectorStore.getState().sendInput([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await useWebmcpInspectorStore
+      .getState()
+      .sendInput([{ kind: "mouse_move", x: 1, y: 2 }]);
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
+      type: "input",
+      events: [{ kind: "mouse_move", x: 1, y: 2 }],
+    });
+  });
+
   it("does not ask for a screencast with no session open", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     expect(await useWebmcpInspectorStore.getState().setScreencast(true)).toBe(

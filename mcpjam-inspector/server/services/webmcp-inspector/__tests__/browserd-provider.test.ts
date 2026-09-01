@@ -41,6 +41,7 @@ function build(
     onExternalInvocation: () => {},
     onActivityObserved: () => {},
     onCrashed: () => {},
+    onFrame: () => {},
   };
   const provider = createBrowserdWebMcpProvider({
     ensureSession: async () => HANDLE,

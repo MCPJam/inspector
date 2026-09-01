@@ -180,4 +180,88 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(screen.queryByAltText("Live view of the inspected page")).toBeNull();
     expect(setScreencast).not.toHaveBeenCalled();
   });
+
+  it("drives the page only for a frame-stream session", async () => {
+    const sendInput = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+      liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    stubViewportActions({ screencastAccepted: true });
+
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    expect(pane).toHaveAttribute("tabindex", "0");
+  });
+
+  it("leaves a native-window session view-only", async () => {
+    useWebmcpInspectorStore.setState({
+      liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    stubViewportActions({ screencastAccepted: true });
+
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    // Forwarding here would drive the page a SECOND time: the person already
+    // has the real window in front of them, and every click would land twice.
+    expect(
+      screen.queryByLabelText("The inspected page — click to interact"),
+    ).toBeNull();
+    expect(
+      screen.getByText(/Interact with it in the browser window/),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no Live view switch for a session that IS the pane", async () => {
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+    });
+    stubViewportActions({ screencastAccepted: true });
+
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    // Turning it off would leave a browser nobody can see or touch, with no way
+    // back except closing the session.
+    expect(screen.queryByRole("button", { name: "Live view" })).toBeNull();
+  });
+
+  it("asks for an in-app session by default, and a window on request", async () => {
+    const startSession = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({ session: undefined, startSession });
+    stubViewportActions({ screencastAccepted: true });
+
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Open browser" }).click();
+    });
+    expect(startSession).toHaveBeenLastCalledWith(expect.any(String), {
+      display: "in-app",
+    });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "In app" }).click();
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "Open browser" }).click();
+    });
+    // A Chrome window is one click away, and is what someone wants when they
+    // need their own devtools open on the page.
+    expect(startSession).toHaveBeenLastCalledWith(
+      expect.any(String),
+      undefined,
+    );
+  });
 });

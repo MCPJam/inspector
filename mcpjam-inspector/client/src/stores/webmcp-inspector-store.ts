@@ -14,6 +14,7 @@ import type {
   WebMcpCommand,
   WebMcpEvent,
   WebMcpFrame,
+  WebMcpInputEvent,
   WebMcpSessionPublic,
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
@@ -50,6 +51,15 @@ export interface StartSessionOptions {
   transport?: "local" | "hosted";
   /** Required when `transport` is `"hosted"`. */
   projectId?: string;
+  /**
+   * WHERE the person watches and drives the page.
+   *
+   * `"in-app"` is what the inspector's own UI sends: no window, the page lives
+   * in the pane. `"window"` is the original behaviour, and is what a caller
+   * that omits this gets — the field is left off the request entirely, so an
+   * older server that has never heard of it behaves exactly as it does today.
+   */
+  display?: "window" | "in-app";
 }
 
 interface WebMcpInspectorState {
@@ -114,6 +124,8 @@ interface WebMcpInspectorState {
    * fall back to polling screenshots rather than showing an empty pane.
    */
   setScreencast(enabled: boolean): Promise<boolean>;
+  /** Drive the page from the pane. Batched by the caller, not here. */
+  sendInput(events: WebMcpInputEvent[]): Promise<void>;
   clearError(): void;
   /**
    * Re-attach the event stream to the session that is still running, e.g. after
@@ -416,6 +428,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             ...(options?.transport === "hosted"
               ? { transport: "hosted", projectId: options.projectId }
               : {}),
+            // Omitted for a window session, so an older server that strips the
+            // unknown field lands on exactly the same behaviour it would have
+            // chosen anyway.
+            ...(options?.display === "in-app" ? { display: "in-app" } : {}),
           }),
         });
         if (!result.ok) {
@@ -549,6 +565,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           type: "capture_screenshot",
         })) as { screenshotBase64?: string } | undefined;
         set({ lastScreenshot: result?.screenshotBase64 });
+      },
+
+      async sendInput(events) {
+        if (events.length === 0) return;
+        // Through `sendCommand`, unlike `set_screencast`: input that the server
+        // refuses is a person's click going nowhere, which they should be told
+        // about rather than left to wonder at.
+        await get().sendCommand({ type: "input", events });
       },
 
       async setScreencast(enabled) {

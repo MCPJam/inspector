@@ -40,7 +40,10 @@ import type {
   WebMcpBrowserSession,
   WebMcpInvokeRequest,
 } from "./provider";
-import type { WebMcpViewportTransport } from "@/shared/webmcp-inspector-protocol";
+import type {
+  WebMcpInputEvent,
+  WebMcpViewportTransport,
+} from "@/shared/webmcp-inspector-protocol";
 import type { BrowserSessionHandle } from "../browserd/browser-session";
 import type {
   BrowserAction,
@@ -187,6 +190,18 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   async setScreencast(enabled: boolean): Promise<void> {
     logger.debug("[webmcp] hosted sessions have no screencast to toggle", {
       enabled,
+    });
+  }
+
+  /**
+   * No-op: the hosted browser is driven through the Browser panel's own
+   * take-control path, which holds a lease. Replaying pane input here would
+   * drive the same desktop from a second direction with nothing arbitrating
+   * between them.
+   */
+  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
+    logger.debug("[webmcp] hosted sessions are driven through the panel", {
+      events: events.length,
     });
   }
 

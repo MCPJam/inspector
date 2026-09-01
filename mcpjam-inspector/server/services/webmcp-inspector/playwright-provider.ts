@@ -21,6 +21,7 @@ import {
   WEBMCP_FRAME_QUALITY,
   WEBMCP_VIEWPORT,
   type WebMcpFrame,
+  type WebMcpInputEvent,
   type WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
 import { createFrameThrottle, type FrameThrottle } from "./frame-throttle";
@@ -42,6 +43,7 @@ import {
   type WebMcpBrowserSession,
   type WebMcpInvokeRequest,
   type WebMcpSessionCallbacks,
+  type WebMcpViewportMode,
 } from "./provider";
 
 /** Cap on how long a browser teardown may block shutdown. */
@@ -156,6 +158,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     private readonly callbacks: WebMcpSessionCallbacks,
     startUrl: string,
     private readonly headless: boolean,
+    private readonly viewportMode: WebMcpViewportMode = "window",
   ) {
     this.url = startUrl;
     this.frameThrottle = createFrameThrottle<WebMcpFrame>({
@@ -177,6 +180,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     const supported = await this.page
       .evaluate(PAGE_API_PROBE)
       .catch(() => false);
+    // Before the unsupported check: an embedded session has no window, so the
+    // stream is the ONLY view of it. A page that turns out to have no WebMCP
+    // support still deserves to be visible while the person reads why.
+    if (this.viewportMode === "embedded") await this.setScreencast(true);
     if (!supported) {
       throw new WebMcpUnsupportedError(
         "This browser build does not expose the WebMCP page API " +
@@ -563,6 +570,90 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     return this.url;
   }
 
+  /**
+   * Apply a batch of input to the page, in order.
+   *
+   * Driven through Playwright's `page.mouse` / `page.keyboard` rather than raw
+   * `Input.dispatchMouseEvent` / `dispatchKeyEvent`. Those primitives take a
+   * modifier bitmask, a `text`/`unmodifiedText` pair, a `windowsVirtualKeyCode`
+   * and a `code`, all of which have to be derived per key and per layout —
+   * Playwright already carries that table, along with modifier state tracking
+   * and click counting. Reimplementing it here would be reimplementing it
+   * WRONGLY, quietly, for every key that is not a letter.
+   *
+   * Each event is applied under its own try/catch. One exotic key that
+   * Playwright refuses to map must not swallow the click queued behind it — a
+   * batch is a person's gesture, and losing the rest of it is far more visible
+   * than losing the one event that failed.
+   */
+  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
+    if (this.disposed) return;
+    for (const event of events) {
+      try {
+        await this.applyInput(event);
+      } catch (error) {
+        logger.debug("[webmcp] could not apply an input event", {
+          kind: event.kind,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private async applyInput(event: WebMcpInputEvent): Promise<void> {
+    switch (event.kind) {
+      case "mouse_move":
+        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        return;
+      case "mouse_down":
+        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        await this.page.mouse.down({
+          button: event.button,
+          ...(event.clickCount ? { clickCount: event.clickCount } : {}),
+        });
+        return;
+      case "mouse_up":
+        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        await this.page.mouse.up({
+          button: event.button,
+          ...(event.clickCount ? { clickCount: event.clickCount } : {}),
+        });
+        return;
+      case "wheel":
+        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        await this.page.mouse.wheel(event.deltaX, event.deltaY);
+        return;
+      case "key_down":
+        await this.page.keyboard.down(event.key);
+        return;
+      case "key_up":
+        await this.page.keyboard.up(event.key);
+        return;
+      case "text":
+        // `insertText`, not a synthesized key sequence. Paste and IME
+        // composition have no keystrokes to replay, and reconstructing them
+        // would be wrong in a different way on every keyboard layout.
+        await this.page.keyboard.insertText(event.text);
+        return;
+    }
+  }
+
+  /**
+   * Hold a pointer inside the viewport.
+   *
+   * The client scales against the frame it is looking at, so a coordinate
+   * arriving out of range means the two disagreed for a moment — a resize, or a
+   * frame that landed after the pane had already changed size. Clamping keeps
+   * that from dispatching at a negative coordinate, where Chromium's behaviour
+   * is its own business rather than anything the page would do.
+   */
+  private clamp(x: number, y: number): [number, number] {
+    return [
+      Math.min(Math.max(x, 0), WEBMCP_VIEWPORT.width - 1),
+      Math.min(Math.max(y, 0), WEBMCP_VIEWPORT.height - 1),
+    ];
+  }
+
   async setScreencast(enabled: boolean): Promise<void> {
     if (this.disposed || enabled === this.screencasting) return;
     this.screencasting = enabled;
@@ -596,11 +687,18 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   }
 
   viewportTransport(): WebMcpViewportTransport {
-    // V1 runs the browser on the developer's own machine, so the viewport IS
-    // the window in front of them — unless it was launched headless, where
-    // there is no window and the UI must not tell anyone to go look at one.
-    // A remote provider returns an interactive URL here instead, and the client
-    // renders that without further changes.
+    // An embedded session has no window by construction, so the streamed pane
+    // is the viewport — and it is interactive, which is what separates this
+    // from plain `headless`. Reporting `headless` here would tell the client
+    // there is nothing to drive.
+    if (this.viewportMode === "embedded") {
+      return { kind: "frame-stream", ...WEBMCP_VIEWPORT };
+    }
+    // Otherwise the browser runs on the developer's own machine, so the
+    // viewport IS the window in front of them — unless it was launched
+    // headless, where there is no window and the UI must not tell anyone to go
+    // look at one. A remote provider returns an interactive URL here instead,
+    // and the client renders that without further changes.
     return this.headless ? { kind: "headless" } : { kind: "native-window" };
   }
 
@@ -643,10 +741,20 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
 
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
+    const viewportMode = options.viewportMode ?? "window";
     // Headed for real sessions: the developer drives their own window. Tests
     // pass `headless` explicitly; `MCPJAM_WEBMCP_HEADLESS` is the escape hatch
     // for an inspector running where no display exists.
-    const headless = options.headless ?? webMcpHeadlessRequested();
+    //
+    // An embedded session is headless regardless of either, and not as a
+    // default someone can override: its whole proposition is that the page
+    // lives in the pane. A window would put a second, separately-driveable copy
+    // of the page on the developer's desktop, and the two would fight for the
+    // same clicks.
+    const headless =
+      viewportMode === "embedded"
+        ? true
+        : (options.headless ?? webMcpHeadlessRequested());
 
     try {
       // Chromium cannot start its sandbox as uid 0 (the pinned CI/browser
@@ -677,6 +785,7 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
         options.callbacks,
         options.url,
         headless,
+        viewportMode,
       );
       await session.start(options.url);
       return session;

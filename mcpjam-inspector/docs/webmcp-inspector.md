@@ -84,6 +84,59 @@ invocation entries: those are persisted evidence at a 64 KiB budget, exported
 with the session; a frame is a 256 KiB picture that the next paint replaces and
 that nothing keeps. Never source one from the other.
 
+## Driving the page from the pane
+
+Two destinations, chosen per session:
+
+- **Chrome window** — a real window on this machine, which the developer drives
+  directly with their own devtools open. The pane streams a VIEW of it and is
+  read-only: forwarding pane input would drive the same page a second time, so
+  every click would land twice.
+- **In app** — no window at all. The browser runs headless, starts its
+  screencast without being asked (nothing else would ever turn it on), reports
+  `frame-stream`, and the pane is the only way to see or touch the page.
+
+On the wire, an omitted `display` still means `window`, so an older client and
+any programmatic caller are unchanged. The inspector's own UI sends `in-app`
+explicitly, because that is what someone opening the screen now expects. A
+hosted session refuses `in-app` outright rather than downgrading it: a hosted
+browser already has a viewport with its own take-control lease, and honouring
+`in-app` would drive one desktop from two places.
+
+Input is a BATCH (`{type:"input", events:[…]}`), capped at 64 events. Pointer
+movement is the flooding vector, and batching solves the rate at the transport
+rather than asking every caller to remember to. `client/src/lib/webmcp-inspector/
+input-forwarder.ts` does the client half:
+
+- **Scaling** happens on the client, against the dimensions of the frame
+  currently on screen — only the client knows its rendered rectangle and how
+  `object-contain` letterboxes the picture inside it. A click on a letterbox bar
+  is dropped rather than mapped to the nearest edge.
+- **Batching** coalesces moves to the latest and flushes on a ~50ms timer, but
+  button and key transitions flush IMMEDIATELY: a click that waits out a batch
+  window reads as a click that did not register.
+- **Held keys are released on blur.** The page never learns that focus left the
+  pane, so a modifier held at that moment would stay held for the rest of the
+  session and turn every later click into a ctrl-click.
+
+Server-side, `dispatchInput` goes through Playwright's `page.mouse` /
+`page.keyboard` rather than raw `Input.dispatchMouseEvent`: those primitives
+want a modifier bitmask, a `text`/`unmodifiedText` pair and a virtual key code
+per key and per layout, and Playwright already carries that table. Text uses
+`keyboard.insertText`, because paste and IME composition have no keystrokes to
+replay. Each event is applied under its own catch — one exotic key must not
+swallow the click behind it — and coordinates are clamped to the viewport.
+
+Input ticks the idle clock (a human driving the pane must not be reaped) and
+writes NO timeline entry, mirroring `capture_screenshot`. Its consequences
+already produce entries: a click that navigates writes `navigated`, one that
+fires a page tool writes `external_invocation`.
+
+SECURITY: forwarded input runs with whatever session the browser profile holds.
+That is identical to the native window it replaces — the human could always
+click — and no approval semantics change. The MODEL's path to the page remains
+the gated tool calls; this is the person's own hands, on their own page.
+
 ## Three gates
 
 1. `/api/mcp/*` mounts only when `!HOSTED_MODE` — a hosted replica has no
