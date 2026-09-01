@@ -2,6 +2,7 @@ import { useState } from "react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -259,6 +260,21 @@ vi.mock("convex/react", () => ({
   useQuery: () => undefined,
 }));
 
+vi.mock("@/hooks/useOrgSharePolicy", () => ({
+  useOrgSharePolicy: () => ({
+    policy: {
+      maxShareMode: "anyone_with_link",
+      inviteAudience: "anyone",
+      updatedAt: null,
+    },
+    isLoading: false,
+    error: null,
+    isSaving: false,
+    setPolicy: vi.fn(),
+  }),
+  useEffectiveSharePolicy: () => ({ policy: undefined, isLoading: false }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
@@ -414,19 +430,356 @@ describe("OrganizationsTab billing", () => {
           updatedAt: 2,
         },
         finishSeatPayment,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("pending-seat-payment-notice")).toHaveTextContent(
-      "Finish payment to add new@example.com",
+      "Finish payment to add new@example.com"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
     await waitFor(() =>
-      expect(finishSeatPayment).toHaveBeenCalledWith(undefined),
+      expect(finishSeatPayment).toHaveBeenCalledWith(undefined)
     );
+  });
+
+  const failedSeatPaymentIntentFixture = () => ({
+    _id: "seat-payment-failed",
+    organizationId: "org-1",
+    userId: "user-new",
+    email: "stranded@example.com",
+    role: "member" as const,
+    source: "pending_invite_signup",
+    status: "failed" as const,
+    needsRetry: true,
+    targetSeatQuantity: null,
+    stripeInvoiceId: null,
+    createdAt: 1,
+    updatedAt: 2,
+  });
+
+  const pendingSeatPaymentIntentFixture = () => ({
+    _id: "seat-payment-pending",
+    organizationId: "org-1",
+    userId: "user-new",
+    email: "new@example.com",
+    role: "member" as const,
+    source: "pending_invite_signup",
+    status: "requires_action" as const,
+    targetSeatQuantity: 4,
+    stripeInvoiceId: "in_123",
+    createdAt: 1,
+    updatedAt: 2,
+  });
+
+  it("does not claim success when Stripe defers seat cancellation", async () => {
+    const cancelSeatPayment = vi.fn().mockResolvedValue({
+      voided: false,
+      outcome: "deferred",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: pendingSeatPaymentIntentFixture(),
+        cancelSeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        errorToastMessage(
+          "Stripe could not confirm cancellation yet. The payment is still pending; try again."
+        ),
+        { duration: 8000 }
+      )
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // A charge raised automatically when an invitee signs up fails with nobody
+  // watching. Before this, terminal charges were invisible to the owner and
+  // the invitee stayed stranded — the original bug with a nicer tooltip.
+  it("surfaces a failed seat charge with a working retry", async () => {
+    const retrySeatPayment = vi
+      .fn()
+      .mockResolvedValue({ status: "paid", seatQuantity: 4 });
+    const finishSeatPayment = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: {
+          _id: "seat-payment-failed",
+          organizationId: "org-1",
+          userId: "user-new",
+          email: "stranded@example.com",
+          role: "member",
+          source: "pending_invite_signup",
+          status: "failed",
+          needsRetry: true,
+          targetSeatQuantity: null,
+          stripeInvoiceId: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        finishSeatPayment,
+        retrySeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByTestId("failed-seat-payment-notice")).toHaveTextContent(
+      "stranded@example.com"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+    await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+    // Retry reopens the charge as a new attempt first; going straight to
+    // finish would be refused, since terminal charges are not revivable there.
+    expect(finishSeatPayment).not.toHaveBeenCalled();
+  });
+
+  it("disables Retry until declined-invoice cleanup is confirmed", () => {
+    const retrySeatPayment = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: {
+          ...failedSeatPaymentIntentFixture(),
+          status: "cleanup_pending",
+          stripeInvoiceId: "in_declined",
+        },
+        retrySeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByText(/Retry will unlock/)).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry payment" });
+    expect(retryButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove invite" })).toBeEnabled();
+    fireEvent.click(retryButton);
+    expect(retrySeatPayment).not.toHaveBeenCalled();
+  });
+
+  it("shows an error and no success toast when a retry is rejected", async () => {
+    const retrySeatPayment = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("Payment failed. The member was not added.")
+      );
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        retrySeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        errorToastMessage("Payment failed. The member was not added."),
+        { duration: 8000 }
+      )
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("shows an error when the charge can no longer be retried", async () => {
+    // retrySeatPayment resolves undefined when the cancel-version guard trips
+    // or the backend has nothing retryable left. Silence here would leave the
+    // owner thinking it worked.
+    const retrySeatPayment = vi.fn().mockResolvedValue(undefined);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        retrySeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+    await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("keeps Remove invite available while a retry is in flight", () => {
+    // Cancelling mid-retry stays possible on purpose — the owner may be stuck
+    // in a 3DS modal that never resolves and needs a way out. Safety comes
+    // from retrySeatPayment's cancel-version guard, which refuses to reopen
+    // payment on a charge that was cancelled underneath it, not from taking
+    // the escape hatch away.
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        isFinishingSeatPayment: true,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByRole("button", { name: "Remove invite" })).toBeEnabled();
+  });
+
+  it("Remove invite removes the invite instead of cancelling a dead charge", async () => {
+    // cancelSeatPayment returns immediately for anything not still active, so
+    // routing this path through it left everything untouched but claimed
+    // success.
+    const cancelSeatPayment = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        cancelSeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove invite" }));
+
+    await waitFor(() =>
+      expect(removeMemberMock).toHaveBeenCalledWith({
+        organizationId: "org-1",
+        email: "stranded@example.com",
+      })
+    );
+    expect(cancelSeatPayment).not.toHaveBeenCalled();
+  });
+
+  it("ignores repeated Remove invite clicks", async () => {
+    // Without a guard a second removeMember finds no row and reports "Member
+    // not found" on top of the first one's success. This covers the guard as a
+    // whole; it cannot tell the disabled button apart from the ref, since
+    // fireEvent flushes the state update between clicks.
+    let resolveRemoval: () => void = () => {};
+    removeMemberMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemoval = () => resolve();
+        })
+    );
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    const button = screen.getByRole("button", { name: "Remove invite" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await waitFor(() => expect(removeMemberMock).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      resolveRemoval();
+    });
+  });
+
+  it("surfaces an error when removing the invite fails", async () => {
+    removeMemberMock.mockRejectedValue(new Error("Member not found"));
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove invite" }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+
+    // The guard released, so a corrected retry is still possible.
+    removeMemberMock.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Remove invite" }));
+    await waitFor(() => expect(removeMemberMock).toHaveBeenCalledTimes(2));
   });
 
   it("billing view hides Manage plan for non-owners and shows owner-only copy", () => {
@@ -904,7 +1257,7 @@ describe("OrganizationsTab billing", () => {
     });
     expect(toast.error).toHaveBeenCalledWith(
       errorToastMessage(
-        "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+        "This organization has reached its member limit (3). Ask an organization owner to upgrade."
       ),
       { duration: 8000 }
     );

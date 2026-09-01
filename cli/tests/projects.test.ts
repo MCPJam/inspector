@@ -10,6 +10,21 @@ const telemetryDisabled = {
   },
 };
 
+/** Cloud audience lines share stderr with structured errors. Parse the JSON object. */
+function parseStderrJson(stderr: string): {
+  error: { code: string; message: string };
+} {
+  const line = stderr
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((entry) => entry.startsWith("{"));
+  if (!line) {
+    throw new Error(`no JSON object in stderr:\n${stderr}`);
+  }
+  return JSON.parse(line);
+}
+
 async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
   result: T;
   stdout: string;
@@ -291,6 +306,7 @@ function projectsArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "projects",
     ...args,
     "--api-key",
@@ -317,7 +333,7 @@ test("projects commands honor the global timeout option", async () => {
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "TIMEOUT");
     assert.match(payload.error.message, /20ms/);
   } finally {
@@ -368,7 +384,7 @@ test("command-level deadline spanning multiple requests still reports TIMEOUT", 
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "TIMEOUT");
   } finally {
     server.closeAllConnections?.();
@@ -422,14 +438,14 @@ test("projects list emits items as JSON and a table as human output", async () =
   }
 });
 
-test("projects list --organization-id sends the filter, and refuses a blank one", async () => {
+test("projects list --org sends the filter, and refuses a blank one", async () => {
   const fixture = await startPlatformFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
           ...projectsArgv(fixture.baseUrl, "list"),
-          "--organization-id",
+          "--org",
           "org-1",
           "--format",
           "json",
@@ -454,7 +470,7 @@ test("projects list --organization-id sends the filter, and refuses a blank one"
       main(
         [
           ...projectsArgv(fixture.baseUrl, "list"),
-          "--organization-id",
+          "--org",
           "   ",
           "--format",
           "json",
@@ -463,6 +479,7 @@ test("projects list --organization-id sends the filter, and refuses a blank one"
       ),
     );
     assert.notEqual(blankRun.result.exitCode, 0);
+    assert.match(blankRun.stderr, /--org/);
   } finally {
     await fixture.close();
   }
@@ -514,7 +531,7 @@ test("projects servers surfaces unknown projects as NOT_FOUND", async () => {
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "NOT_FOUND");
     assert.match(payload.error.message, /Available projects/);
   } finally {
@@ -615,13 +632,18 @@ async function startConnectionFixture(options: {
    * account that made it and the browser opening it may be signed into another
    * one. */
   me?: { email: string } | null;
+  /** Make the create refuse, so a test can assert what survives the trip from
+   * the backend's error envelope out to the CLI's own. */
+  createRefusal?: { status: number; body: unknown };
 }): Promise<{
   baseUrl: string;
   createBodies: unknown[];
+  cancelPaths: string[];
   polls: number;
   close: () => Promise<void>;
 }> {
   const createBodies: unknown[] = [];
+  const cancelPaths: string[] = [];
   const remaining = [...(options.statuses ?? [])];
   let polls = 0;
 
@@ -652,8 +674,21 @@ async function startConnectionFixture(options: {
     }
     if (url.pathname === "/api/v1/server-connections" && req.method === "POST") {
       createBodies.push(raw ? JSON.parse(raw) : null);
+      if (options.createRefusal) {
+        res.statusCode = options.createRefusal.status;
+        res.end(JSON.stringify(options.createRefusal.body));
+        return;
+      }
       res.statusCode = 201;
       res.end(JSON.stringify(options.created));
+      return;
+    }
+    if (
+      url.pathname.startsWith("/api/v1/server-connections/") &&
+      url.pathname.endsWith("/cancel")
+    ) {
+      cancelPaths.push(url.pathname);
+      res.end(JSON.stringify({ ...options.created, status: "cancelled" }));
       return;
     }
     if (url.pathname.startsWith("/api/v1/server-connections/")) {
@@ -677,6 +712,7 @@ async function startConnectionFixture(options: {
   return {
     baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
     createBodies,
+    cancelPaths,
     get polls() {
       return polls;
     },
@@ -697,7 +733,7 @@ test("server connect rejects a URL that is not http(s) at the keyboard", async (
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "file:///etc/passwd",
@@ -732,7 +768,7 @@ test("server connect prints the authorization link even with --no-browser", asyn
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -749,8 +785,10 @@ test("server connect prints the authorization link even with --no-browser", asyn
     // A browser that fails to launch, or launches on the wrong machine over
     // SSH, otherwise leaves the user with a request they cannot finish.
     assert.match(run.stderr, /connect\/server\/tok/);
-    // `--no-wait` hands back a request id, so it must also say how to follow it.
+    // `--no-wait` hands back a request id, so it must also say how to follow it
+    // — and how to stop it, because a request nobody finishes holds a slot.
     assert.match(run.stderr, /connect-status --request scr_1/);
+    assert.match(run.stderr, /connect-cancel --request scr_1/);
     assert.equal(run.result.exitCode, 0);
   } finally {
     await fixture.close();
@@ -772,7 +810,7 @@ test("server connect names the account and deployment the link belongs to", asyn
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -814,7 +852,7 @@ test("server connect still prints the link when the account lookup fails", async
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -831,7 +869,7 @@ test("server connect still prints the link when the account lookup fails", async
     // The connection request already succeeded. Failing the command because a
     // decorative lookup failed would trade a working result for none.
     assert.match(run.stderr, /connect\/server\/tok/);
-    assert.match(run.stderr, /mcpjam whoami/);
+    assert.match(run.stderr, /mcpjam cloud whoami/);
     assert.equal(run.result.exitCode, 0);
   } finally {
     await fixture.close();
@@ -848,7 +886,7 @@ test("server connect-status reads an existing request", async () => {
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect-status",
             "--request",
             "scr_1",
@@ -863,6 +901,96 @@ test("server connect-status reads an existing request", async () => {
     assert.equal(run.result.exitCode, 0);
     assert.equal(JSON.parse(run.stdout).status, "ready");
     assert.equal(fixture.polls, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect surfaces the ids blocking an ACTIVE_REQUEST_LIMIT", async () => {
+  // End-to-end over the wire, because the ids cross four layers to get here —
+  // the Convex error, the v1 route's `details`, the SDK's PlatformApiError, and
+  // the CLI's own envelope — and any one of them dropping the field turns the
+  // refusal back into the dead end it was.
+  const fixture = await startConnectionFixture({
+    created: { connectionRequestId: "scr_unused", status: "discovering" },
+    createRefusal: {
+      status: 409,
+      body: {
+        code: "CONFLICT",
+        message:
+          "You already have 5 server connections in progress. Finish or cancel one before starting another.",
+        details: {
+          code: "ACTIVE_REQUEST_LIMIT",
+          activeRequests: ["scr_1", "scr_2", "scr_3", "scr_4", "scr_5"],
+        },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "servers",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+            "--no-browser",
+            "--no-wait",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    const payload = parseStderrJson(run.stderr) as unknown as {
+      error: { details?: { activeRequests?: string[] } };
+    };
+    assert.deepEqual(payload.error.details?.activeRequests, [
+      "scr_1",
+      "scr_2",
+      "scr_3",
+      "scr_4",
+      "scr_5",
+    ]);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("server connect-cancel stops a pending request", async () => {
+  // Without this command the only way out of an abandoned request was to wait
+  // out its hour, and five of them locked the account out of connecting at all.
+  const fixture = await startConnectionFixture({
+    created: { connectionRequestId: "scr_1", status: "awaiting_authorization" },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "servers",
+            "connect-cancel",
+            "--request",
+            "scr_1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(JSON.parse(run.stdout).status, "cancelled");
+    assert.deepEqual(fixture.cancelPaths, [
+      "/api/v1/server-connections/scr_1/cancel",
+    ]);
   } finally {
     await fixture.close();
   }
@@ -886,7 +1014,7 @@ test("server connect stops watching once the request settles", async () => {
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -923,7 +1051,7 @@ test("server connect exits non-zero when it gave up rather than finished", async
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -941,6 +1069,7 @@ test("server connect exits non-zero when it gave up rather than finished", async
     assert.equal(run.result.exitCode, 1);
     assert.match(run.stderr, /Stopped waiting/);
     assert.match(run.stderr, /connect-status --request scr_1/);
+    assert.match(run.stderr, /connect-cancel --request scr_1/);
   } finally {
     process.exitCode = 0;
     await fixture.close();
@@ -1023,7 +1152,7 @@ test("server connect honors --project instead of silently ignoring it", async ()
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1070,7 +1199,7 @@ test("a failing command does not leave its exit code on the next main()", async 
         [
           ...projectsArgv(
             gaveUp.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1144,7 +1273,7 @@ test("Ctrl-C during an in-flight poll returns without waiting out the request", 
         [
           ...projectsArgv(
             `http://127.0.0.1:${port}/api/v1`,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",

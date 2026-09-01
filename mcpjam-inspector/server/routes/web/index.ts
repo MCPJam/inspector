@@ -26,7 +26,10 @@ import serverConnectionsWeb from "./server-connections.js";
 import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
+import conformanceShared from "./conformance-shared.js";
+import sharedResources from "./shared-resources.js";
 import score from "./score.js";
+import bench from "./bench.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
@@ -63,6 +66,7 @@ web.use(
 );
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/shared/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Conformance runs dial a caller-named third party, so they carry a per-IP
 // ceiling on top of the per-guest one — guest identities are free to mint, and
 // only the IP bounds how much of our egress a single actor can spend.
@@ -78,6 +82,19 @@ for (const startsWork of [
   "/conformance/oauth/start",
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
+}
+// Connector Bench. Listed path-by-path rather than as `/bench/*` because
+// `/bench/results/:secret` must stay reachable with no session at all — the
+// secret in the URL is the credential, exactly as on `/score`. The per-IP
+// ceiling on the two routes that START work lives inside the router, next to
+// the egress it bounds.
+for (const memberGated of [
+  "/bench/preflight",
+  "/bench/quotes",
+  "/bench/runs",
+  "/bench/runs/*",
+]) {
+  web.use(memberGated, bearerAuthMiddleware, guestRateLimitMiddleware);
 }
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Org-registry derivation carries a per-IP ceiling on top of the per-guest
@@ -157,6 +174,15 @@ web.route("/caniuse", caniuse);
 // secret token in the URL is the credential. Submission is per-IP rate
 // limited inside the router.
 web.route("/score", score);
+// Connector Bench relay for the same chrome-less site. Everything durable is
+// the backend's; this fronts `/internal/v1/bench/*` and degrades cleanly while
+// those routes are still behind `BENCHMARK_RUNS_ENABLED`.
+web.route("/bench", bench);
+// Shared conformance run (HMAC token in the path). Same no-session contract
+// as `/score`: the token is the credential, and the backend only returns the
+// redacted public artifact.
+web.route("/conformance-shared", conformanceShared);
+web.route("/shared", sharedResources);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are

@@ -58,6 +58,7 @@ import { z } from "zod";
 import { predicateSchema } from "../predicates/types.js";
 import { importMappingStatusSchema } from "./chain.js";
 import { opaqueIdSchema } from "./identity.js";
+import { caseIntentUpdateSchema } from "./stage-intent.js";
 import { stepsSchema } from "./steps.js";
 
 /** The only `schemaVersion` this validator accepts. */
@@ -94,6 +95,25 @@ export const MAX_SUITE_FILE_TITLE_CHARS = 200;
 export const MAX_CASE_ASSERTIONS = 50;
 /** Max repetitions per case (suite default or per-case override). */
 export const MAX_REPETITIONS = 100;
+/**
+ * Max characters in `import.sourceCaseKey` — the case's identity in the source
+ * system. Generous because a source key is a path-like string from somebody
+ * else's test runner (`tests/billing/refunds_test.py::test_partial[eu]`), and
+ * a cap that truncates lineage is worse than one that never binds.
+ *
+ * Mirrored by `MAX_IMPORT_SOURCE_CASE_KEY_CHARS` in the platform's own
+ * hand-written validator; the two must agree or a file that loads locally is
+ * rejected at ingest.
+ */
+export const MAX_IMPORT_SOURCE_CASE_KEY_CHARS = 512;
+/**
+ * Max characters in `import.note` — the cited mapping rule, or what was lost.
+ *
+ * A bound, not a budget: the note is prose a human reads while deciding whether
+ * a converted case still means what the source meant. The full mapping report
+ * lives in the author's Git repo, so nothing here is the only copy.
+ */
+export const MAX_IMPORT_NOTE_CHARS = 2000;
 
 /** A rate or a threshold: a real number in [0,1]. Never a percent. */
 const unitIntervalSchema = z.number().min(0).max(1);
@@ -152,13 +172,47 @@ export const evalSuiteFileServerSchema = z
   .strict();
 export type EvalSuiteFileServer = z.infer<typeof evalSuiteFileServerSchema>;
 
-export const evalSuiteFileTargetSchema = z
+/**
+ * One hosted client attachment.
+ *
+ * `id` wins over `name`, matching server references. `servers` is the closed
+ * server set attached to this host; an empty set is meaningful and preserved.
+ */
+export const evalSuiteFileHostSchema = z
   .object({
-    servers: z.array(evalSuiteFileServerSchema).min(1),
-    /** Named run environment; the loader resolves what it means. */
-    environment: z.string().min(1).optional(),
+    name: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
+    id: opaqueIdSchema.optional(),
+    servers: z.array(evalSuiteFileServerSchema).optional(),
   })
   .strict();
+export type EvalSuiteFileHost = z.infer<typeof evalSuiteFileHostSchema>;
+
+const targetHostFields = {
+  hosts: z.array(evalSuiteFileHostSchema).min(1).optional(),
+};
+
+/**
+ * A target always names at least one legacy server or one project environment.
+ * Host attachments augment that target; hosts alone are not a runnable target.
+ */
+export const evalSuiteFileTargetSchema = z.union([
+  z
+    .object({
+      servers: z.array(evalSuiteFileServerSchema).min(1),
+      /** Named run environment; the loader resolves what it means. */
+      environment: z.string().min(1).optional(),
+      ...targetHostFields,
+    })
+    .strict(),
+  z
+    .object({
+      servers: z.array(evalSuiteFileServerSchema).min(1).optional(),
+      /** Named run environment; the loader resolves what it means. */
+      environment: z.string().min(1),
+      ...targetHostFields,
+    })
+    .strict(),
+]);
 export type EvalSuiteFileTarget = z.infer<typeof evalSuiteFileTargetSchema>;
 
 // ── defaults ─────────────────────────────────────────────────────────────────
@@ -169,13 +223,23 @@ export type EvalSuiteFileTarget = z.infer<typeof evalSuiteFileTargetSchema>;
  * semantics are pinned so a loader is accountable to this file rather than to
  * memory:
  *
- *   - `minEligibleTrials`     — no default; absent means "no minimum".
+ *   - `minEligibleTrials`     — no numeric default, but ABSENT IS NOT "no
+ *     minimum". Omission selects the default coverage floor: every configured
+ *     trial must have been attempted, and the suite must have at least one
+ *     gradeable trial. An explicit `N` REPLACES that floor with
+ *     `eligibleTrials >= N`, which deliberately tolerates unattempted trials.
  *   - `minCompletionRate`     — defaults to **0.8**.
  *   - `maxEvaluatorErrorRate` — defaults to **0.1**.
  *
+ * The three are INDEPENDENT checks; the loader resolves the coverage rule into
+ * `ResolvedEvalSuiteFileValidity.coverage`, and
+ * `contract/verdict-policy.ts` is where a verdict is decided against it.
+ *
  * A run that misses any of these is INVALID, which is not the same as failed: a
  * suite whose judge errored on half its iterations has not measured the server,
- * and reporting that as a failure blames the server for the grader.
+ * and reporting that as a failure blames the server for the grader. Reading
+ * omission as "no minimum" is the same bug in a quieter form: it lets a suite
+ * that ran one trial out of thirty report a confident pass.
  */
 export const evalSuiteFileValiditySchema = z
   .object({
@@ -187,7 +251,19 @@ export const evalSuiteFileValiditySchema = z
 export type EvalSuiteFileValidity = z.infer<typeof evalSuiteFileValiditySchema>;
 
 /**
- * Which tools the agent may call.
+ * Which tools the agent is RESTRAINED from calling.
+ *
+ * `mode` does the restraining: `readOnly` permits only tools an annotation
+ * classifies read-only, `default` permits everything except tools annotated
+ * `destructiveHint`. `deny` removes a tool by name under either mode.
+ *
+ * `allow` is an OVERRIDE, not a whitelist — it exempts a named tool from the
+ * mode-derived rules (including `default` mode's destructive deny-by-default),
+ * and it never restricts anything on its own. `{ mode: "default", allow:
+ * ["read_file"] }` therefore restrains NOTHING; the tools an author wants
+ * stopped belong in `deny`, or the suite belongs in `readOnly` mode. Stated
+ * here because reading `allow` as "the only tools the agent may call" is the
+ * one misreading that silently produces an unrestricted run.
  *
  * `allow`/`deny` entries are non-empty tool names; the empty string is rejected
  * structurally (rather than in a refinement) so the generated JSON Schema
@@ -211,6 +287,10 @@ export const evalSuiteFileDefaultsSchema = z
     model: z.string().min(1),
     /** Optional provider hint when the model id alone is ambiguous. */
     provider: z.string().min(1).optional(),
+    /** Suite execution instructions. Omitted means use the platform default. */
+    systemPrompt: z.string().optional(),
+    /** Suite execution temperature. Omitted means use the platform default. */
+    temperature: z.number().optional(),
     /** Iterations per case unless the case overrides `repetitions`. */
     repetitions: repetitionsSchema,
     /** Fraction of iterations a case must pass to pass. Never a percent. */
@@ -278,15 +358,56 @@ export type EvalSuiteFileProvenance = z.infer<
  * because "no import block" and "imported, faithfulness unknown" are different
  * facts and a default would erase the difference.
  */
+/**
+ * Reject a string that is only whitespace, WITHOUT trimming it.
+ *
+ * `.min(1)` counts characters, so `"   "` satisfies it — and for an import
+ * claim that is not a cosmetic problem. `import.note` is the cited mapping rule
+ * that EARNS an `exact` claim, and a blank one would let a converter claim
+ * exact while citing nothing: the case would then run with no approval at all
+ * and count toward a gateable run, which is precisely the audit evidence the
+ * note exists to carry.
+ *
+ * Rejecting rather than trimming, deliberately, on both counts: the platform's
+ * own validator rejects a blank value (`assertValidCase` in the backend's
+ * `evalSuiteFile.ts` tests `value.trim().length === 0`), so trimming here would
+ * make a file load locally and fail at ingest — the worst direction for a
+ * divergence. And the stored value stays byte-identical to what the author
+ * wrote, which is what keeps the canonical round-trip stable.
+ */
+function nonBlank(schema: z.ZodString, field: string) {
+  return schema.refine((value) => value.trim().length > 0, {
+    message: `import.${field} must not be blank`,
+  });
+}
+
 export const evalSuiteFileCaseImportSchema = z
   .object({
     status: importMappingStatusSchema,
     /** The case's identity in the source system, when it had one. */
-    sourceCaseKey: z.string().min(1).optional(),
+    sourceCaseKey: nonBlank(
+      z.string().min(1).max(MAX_IMPORT_SOURCE_CASE_KEY_CHARS),
+      "sourceCaseKey"
+    ).optional(),
     /** Why the status is what it is — the rule cited, or what was lost. */
-    note: z.string().min(1).optional(),
+    note: nonBlank(
+      z.string().min(1).max(MAX_IMPORT_NOTE_CHARS),
+      "note"
+    ).optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.status !== "exact" || value.note !== undefined, {
+    // `exact` is the one status that asks a reader to stop looking. It is a
+    // CONVERTER CLAIM, never an MCPJam verification, so it has to cite the
+    // structural rule that earns it; a converter with no rule to cite
+    // records `approximated` and describes the difference instead.
+    message:
+      'import.note is required when status is "exact": an exact claim is ' +
+      "converter-asserted, not verified, so it must cite the mapping rule " +
+      'that earns it. Record "approximated" with a note describing the ' +
+      "difference when no rule can be cited.",
+    path: ["note"],
+  });
 export type EvalSuiteFileCaseImport = z.infer<
   typeof evalSuiteFileCaseImportSchema
 >;
@@ -305,6 +426,8 @@ export const evalSuiteFileCaseSchema = z
   .object({
     id: opaqueIdSchema,
     title: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
+    /** Optional analytics grouping label. `null` explicitly clears it. */
+    intent: caseIntentUpdateSchema.optional(),
     /**
      * The authored steps, reused VERBATIM from the canonical step union — this
      * is not a suite-file dialect of steps. Step `id`s are therefore required

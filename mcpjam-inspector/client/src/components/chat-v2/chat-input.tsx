@@ -506,6 +506,7 @@ export function ChatInput({
   const recordingCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const fileErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingDurationSecondsRef = useRef<number>(0);
   const transcriptionRunRef = useRef(0);
@@ -610,12 +611,19 @@ export function ChatInput({
     recordingCapTimerRef.current = null;
   }, []);
 
+  const clearFileErrorTimer = useCallback(() => {
+    if (!fileErrorTimerRef.current) return;
+    clearTimeout(fileErrorTimerRef.current);
+    fileErrorTimerRef.current = null;
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       clearStopFallbackTimer();
       clearRecordingCapTimer();
+      clearFileErrorTimer();
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();
       }
@@ -623,7 +631,12 @@ export function ChatInput({
       transcriptionAbortRef.current = null;
       stopAudioStream();
     };
-  }, [clearRecordingCapTimer, clearStopFallbackTimer, stopAudioStream]);
+  }, [
+    clearRecordingCapTimer,
+    clearStopFallbackTimer,
+    clearFileErrorTimer,
+    stopAudioStream,
+  ]);
 
   useLayoutEffect(() => {
     if (moveCaretToEndTrigger === undefined) return;
@@ -691,12 +704,16 @@ export function ChatInput({
       if (errors.length > 0) {
         setFileError(errors.join("\n"));
         // Clear error after 5 seconds
-        setTimeout(() => setFileError(null), 5000);
+        clearFileErrorTimer();
+        fileErrorTimerRef.current = setTimeout(() => {
+          fileErrorTimerRef.current = null;
+          setFileError(null);
+        }, 5000);
       }
 
       return true;
     },
-    [fileAttachments, onChangeFileAttachments]
+    [fileAttachments, onChangeFileAttachments, clearFileErrorTimer]
   );
 
   const handleFileInputChange = useCallback(

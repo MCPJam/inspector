@@ -390,6 +390,13 @@ export {
   registerClient,
   selectResourceURL,
   startAuthorization,
+  // The `refresh_token` grant, already used internally by `auth()`. Exported so
+  // a caller doing a non-interactive refresh reuses it — same client-
+  // authentication selection, same resource handling, and it already preserves
+  // the caller's refresh token when the authorization server omits one — rather
+  // than hand-rolling a provider and a second `fetchToken` call that have to
+  // re-derive all of it.
+  refreshAuthorization,
 } from "./oauth/browser-auth.js";
 export {
   canonicalizeResourceUrl,
@@ -470,6 +477,10 @@ export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 // instead of re-typing the message — it is the server under test violating
 // RFC 8414, which a host may want to treat differently from its own errors.
 export { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./oauth/state-machines/shared/required-metadata.js";
+// The debug proxy's own failures use a different error shape. This classifier
+// lets browser hosts keep a target server's authenticated-request rejection in
+// the debugger without sending it to their own exception tracker.
+export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
 // OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
 // client-name-free — per-client profiles live in the private backend.
 export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
@@ -519,6 +530,17 @@ export {
   type InsufficientScopeChallenge,
   type StepUpAuthMode,
   type StepUpAction,
+} from "./oauth/state-machines/shared/challenges.js";
+// The unauthenticated probe's acceptance gate. Exported so the debugger UI
+// decides "is this exchange an expected challenge?" from the same rule the flow
+// advances on, rather than re-testing `status === 401` and painting an accepted
+// 403 as a failure.
+export {
+  classifyUnauthenticatedProbe,
+  hasBearerChallenge,
+  isUnauthenticatedProbeChallenge,
+  UNAUTHENTICATED_PROBE_STEP,
+  type UnauthenticatedProbeOutcome,
 } from "./oauth/state-machines/shared/challenges.js";
 export type {
   OAuthAuthorizationRequestResult,
@@ -728,11 +750,37 @@ export {
   scoreFromProtocolResult,
   scoreFromTasksResult,
 } from "./conformance-score.js";
+export { toConformanceReport } from "./conformance-reporting.js";
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportGroup,
+} from "./conformance-reporting.js";
 export type {
   ConformanceAdvisoryTier,
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from. Pure data, so it
+// ships from the browser entry alongside the score itself.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
 // Redaction for reports that leave the machine that produced them (a stored,
 // shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
 // key sweep — see the module header for why both layers exist.
@@ -751,6 +799,18 @@ export {
   TASKS_CHECK_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
+
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
 
 // Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
 // resolver — DOM-free, React-free, Convex-free. Browser-safe by
@@ -965,3 +1025,4 @@ export type {
   SkillsExtListResult,
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
+export { modelRejectsTemperature } from "./model-sampling-support.js";

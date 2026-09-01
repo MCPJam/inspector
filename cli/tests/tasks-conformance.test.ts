@@ -60,6 +60,12 @@ test("buildTasksConformanceConfig maps the undeclared-capability checks to their
     "tasks-inline-result",
     "tasks-mcp-name-routing",
     "tasks-undeclared-capability-rejected",
+    "tasks-invalid-task-id-rejected",
+    "tasks-status-payload-shape",
+    "tasks-cancel-ack-shape",
+    "tasks-input-required-update-completes",
+    "tasks-ttl-integer-shape",
+    "tasks-undeclared-capability-names-requirements",
   ]);
 });
 
@@ -112,4 +118,39 @@ test("buildTasksConformanceConfig forwards the tool probe options", () => {
   assert.equal(config.toolName, "long_job");
   assert.deepEqual(config.toolArguments, { seconds: 1 });
   assert.equal(config.pollTimeoutMs, 5_000);
+});
+
+test("buildTasksConformanceConfig forwards --input-responses", () => {
+  // The gated Tasks checks are unreachable without this: an input-gated task
+  // parks forever, and the checks that depend on it report `could-not-run`. A
+  // flag that parsed but never reached the config would look exactly like a
+  // server that does not implement the seam.
+  const config = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+    inputResponses: '{"name":{"content":{"answer":"Luca"}}}',
+  });
+
+  assert.deepEqual(config.inputResponses, {
+    name: { content: { answer: "Luca" } },
+  });
+});
+
+test("buildTasksConformanceConfig omits inputResponses when the flag is absent", () => {
+  const config = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+  });
+
+  assert.equal("inputResponses" in config, false);
+});
+
+test("buildTasksConformanceConfig rejects a malformed --input-responses", () => {
+  assert.throws(
+    () =>
+      buildTasksConformanceConfig({
+        url: "https://example.com/mcp",
+        inputResponses: "not json",
+      }),
+    (error) =>
+      error instanceof CliError && error.message.includes("--input-responses")
+  );
 });

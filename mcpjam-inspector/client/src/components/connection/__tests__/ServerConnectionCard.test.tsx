@@ -14,12 +14,18 @@ vi.mock("@/lib/generate-agent-brief", () => ({
   generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
 }));
 
+const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
+
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: () => false,
+  // ServerConnectionCard gates "Add to org registry" on
+  // `registry-enabled`. Default off so existing tests keep the pre-flag
+  // menu; org-registry cases turn it on per-suite.
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 vi.mock("@/lib/analytics", () => ({
@@ -115,6 +121,8 @@ describe("ServerConnectionCard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseFeatureFlagEnabled.mockReset();
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
   });
 
   describe("rendering", () => {
@@ -168,7 +176,8 @@ describe("ServerConnectionCard", () => {
      * "Add to org registry" is the promote door. Its eligibility rules are
      * the interesting part: an org entry carries an ADDRESS and an auth
      * posture and nothing else, so a stdio server has nothing to share and a
-     * header-authed one has something that cannot be shared.
+     * header-authed one has something that cannot be shared. The
+     * `registry-enabled` flag is the rollout door on top of those rules.
      */
     describe("add to org registry", () => {
       const remoteServer = () =>
@@ -186,6 +195,12 @@ describe("ServerConnectionCard", () => {
         );
         return await screen.findByText("Add to org registry");
       };
+
+      beforeEach(() => {
+        mockUseFeatureFlagEnabled.mockImplementation(
+          (flag: unknown) => flag === "registry-enabled"
+        );
+      });
 
       it("offers a remote HTTP server to the organization", async () => {
         const onShareToOrgRegistry = vi.fn();
@@ -264,6 +279,27 @@ describe("ServerConnectionCard", () => {
       it("hides the action entirely when the caller cannot add", async () => {
         render(
           <ServerConnectionCard server={remoteServer()} {...defaultProps} />
+        );
+
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: "Open actions menu for remote-server",
+          }),
+          { button: 0, ctrlKey: false }
+        );
+
+        await screen.findByText("Configure");
+        expect(screen.queryByText("Add to org registry")).toBeNull();
+      });
+
+      it("hides the action when the registry flag is off, even if the caller can add", async () => {
+        mockUseFeatureFlagEnabled.mockReturnValue(false);
+        render(
+          <ServerConnectionCard
+            server={remoteServer()}
+            {...defaultProps}
+            onShareToOrgRegistry={vi.fn()}
+          />
         );
 
         fireEvent.pointerDown(

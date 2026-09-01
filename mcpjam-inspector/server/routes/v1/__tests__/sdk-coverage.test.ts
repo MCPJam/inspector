@@ -54,6 +54,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
 
+  // Registry (directory + curated cards)
+  "get /registry/directory-servers": "searchRegistryDirectory",
+  "get /registry/directory-servers/{idOrName}": "getRegistryDirectoryServer",
+  "get /registry/directory-sources": "listRegistryDirectorySources",
+  "get /projects/{projectId}/registry/servers": "listRegistryServers",
+  "get /projects/{projectId}/registry/connections": "listRegistryConnections",
+  "post /projects/{projectId}/registry/directory-installs":
+    "installRegistryDirectoryServer",
+  "post /projects/{projectId}/registry/installs": "installRegistryServer",
+  "delete /projects/{projectId}/registry/installs/{registryServerId}":
+    "uninstallRegistryServer",
+
   // Server connections
   "post /server-connections": "createServerConnection",
   "get /server-connections/{requestId}": "getServerConnection",
@@ -70,6 +82,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Project servers
   "get /projects/{projectId}/servers": "listProjectServers",
   "post /projects/{projectId}/servers": "createProjectServer",
+  "get /projects/{projectId}/server-groups": "listServerGroups",
+  "post /projects/{projectId}/server-groups": "createServerGroup",
   "get /projects/{projectId}/servers/{serverId}": "getProjectServer",
   "patch /projects/{projectId}/servers/{serverId}": "updateProjectServer",
   "delete /projects/{projectId}/servers/{serverId}": "deleteProjectServer",
@@ -87,6 +101,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listServerResources",
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
+  "post /projects/{projectId}/servers/{serverId}/skills": "listServerSkills",
+  "post /projects/{projectId}/servers/{serverId}/skills/get": "getServerSkill",
+  "post /projects/{projectId}/servers/{serverId}/skills/read-file":
+    "readServerSkillFile",
 
   // Directory readiness
   "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
@@ -100,14 +118,22 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/readiness-runs/{runId}/cancel":
     "cancelReadinessRun",
 
-  // Hosts
-  "get /projects/{projectId}/hosts": "listHosts",
-  "post /projects/{projectId}/hosts": "createHost",
-  "get /projects/{projectId}/hosts/{hostId}": "getHost",
-  "patch /projects/{projectId}/hosts/{hostId}": "updateHost",
-  "delete /projects/{projectId}/hosts/{hostId}": "deleteHost",
-  "post /projects/{projectId}/hosts/{hostId}/servers": "setHostServers",
-  "post /projects/{projectId}/hosts/{hostId}/duplicate": "duplicateHost",
+  // Persisted conformance runs
+  "post /projects/{projectId}/servers/{serverId}/conformance-runs":
+    "startConformanceRun",
+  "get /projects/{projectId}/conformance-runs": "listConformanceRuns",
+  "get /projects/{projectId}/conformance-runs/{runId}": "getConformanceRun",
+  "get /projects/{projectId}/conformance-runs/{runId}/report":
+    "getConformanceReport",
+
+  // Clients
+  "get /projects/{projectId}/clients": "listClients",
+  "post /projects/{projectId}/clients": "createClient",
+  "get /projects/{projectId}/clients/{client}": "getClient",
+  "patch /projects/{projectId}/clients/{client}": "updateClient",
+  "delete /projects/{projectId}/clients/{client}": "deleteClient",
+  "post /projects/{projectId}/clients/{client}/servers": "setClientServers",
+  "post /projects/{projectId}/clients/{client}/duplicate": "duplicateClient",
 
   // Project environments
   "get /projects/{projectId}/environments": "listEnvironments",
@@ -132,6 +158,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/plugins": "listProjectPlugins",
   "get /plugin-versions/{pluginVersionId}": "getPluginVersion",
 
+  // Cloud Skills (read-only)
+  "get /projects/{projectId}/skills": "listProjectSkills",
+  "get /projects/{projectId}/skills/{skillId}": "getProjectSkill",
+
   // Sandbox images
   "get /projects/{projectId}/images": "listImages",
   "post /projects/{projectId}/images": "createImage",
@@ -149,12 +179,19 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
+  "post /projects/{projectId}/eval-suites/from-file": "syncFileOwnedEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
+  "get /projects/{projectId}/eval-suites/{suiteId}/run-disclosure":
+    "getEvalRunDisclosure",
   "patch /projects/{projectId}/eval-suites/{suiteId}": "updateEvalSuite",
   "delete /projects/{projectId}/eval-suites/{suiteId}": "deleteEvalSuite",
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
     "setEvalSuiteSchedule",
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
+  "get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics":
+    "listEvalSuiteStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/stage-analytics":
+    "getEvalRunStageAnalytics",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":
@@ -174,8 +211,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/eval-suites/{suiteId}/environments":
     "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/decision-summary":
+    "getEvalRunDecisionSummary",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/gate-waivers":
+    "createGateWaiver",
+  "get /projects/{projectId}/eval-runs/{runId}/gate-waivers": "getGateWaiver",
+  "delete /projects/{projectId}/eval-runs/{runId}/gate-waivers/{waiverId}":
+    "revokeGateWaiver",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace":
@@ -207,6 +251,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/personas/{personaId}": "updatePersona",
   "delete /projects/{projectId}/personas/{personaId}": "deletePersona",
   "post /projects/{projectId}/personas/generate": "generatePersonas",
+
+  // Project secrets. Write-only end to end: the two reads return metadata and
+  // the three writes return metadata; no method on either side can produce a
+  // value.
+  "get /projects/{projectId}/secrets": "listSecrets",
+  "get /projects/{projectId}/secrets/{secretId}": "getSecret",
+  "post /projects/{projectId}/secrets": "createSecret",
+  "patch /projects/{projectId}/secrets/{secretId}": "updateSecret",
+  "delete /projects/{projectId}/secrets/{secretId}": "deleteSecret",
   "get /projects/{projectId}/swarms": "listSwarms",
   "get /projects/{projectId}/swarms/{swarmId}": "getSwarm",
   "post /projects/{projectId}/swarms": "createSwarm",
@@ -263,6 +316,12 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "setUserTestingGuestExecution",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link":
     "rotateUserTestingLink",
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "getShareSettings",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "setShareMode",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link":
+    "rotateShareLink",
   "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members":
     "upsertUserTestingMember",
   "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}":
@@ -276,21 +335,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "delete /projects/{projectId}/environments/{environmentId}/scenario":
     "unpublishScenario",
 
+  // MCP App widget render
+  "post /projects/{projectId}/servers/{serverId}/widgets/render":
+    "renderServerWidget",
+
+  // Agent Playground
+  "post /chat-sessions/messages": "sendChatMessage",
+  "get /chat-sessions/{sessionId}": "getChatSession",
+  "get /chat-sessions/{sessionId}/trace": "getChatSessionTrace",
+
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",
-
-  // Directory readiness
-  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
-    "startClaudeReadinessRun",
-  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
-    "startOpenAIReadinessRun",
-  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
-  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
-  "get /projects/{projectId}/readiness-runs/{runId}/report":
-    "getReadinessReport",
-  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
-    "cancelReadinessRun",
 };
 
 /**
@@ -301,6 +357,28 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
  * and it belongs in the map above with a method written for it.
  */
 const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
+  // The DEPRECATED `/hosts` aliases. Their canonical `/clients` twins are in
+  // the map above and are what the SDK's contract covers. The SDK does still
+  // reach these paths — `listHosts`…`duplicateHost` remain as executable
+  // compatibility delegates on their old DTOs — but those methods are not the
+  // client's coverage of a route, they are the client's memory of one. Mapping
+  // the alias here to the deprecated method would make the deprecated surface
+  // look like an equal second way in, which is the thing the rename is meant to
+  // end.
+  "get /projects/{projectId}/hosts":
+    "Deprecated alias of `GET /clients`; the SDK's `listHosts` is a compatibility delegate, not this route's contract.",
+  "post /projects/{projectId}/hosts":
+    "Deprecated alias of `POST /clients`; see `GET /projects/{projectId}/hosts`.",
+  "get /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `GET /clients/{client}`; see `GET /projects/{projectId}/hosts`.",
+  "patch /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `PATCH /clients/{client}`, and deliberately weaker: it keeps the pre-rename tokenless contract, so it cannot express the compare-and-set write the canonical route requires.",
+  "delete /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `DELETE /clients/{client}`; see `GET /projects/{projectId}/hosts`.",
+  "post /projects/{projectId}/hosts/{hostId}/servers":
+    "Deprecated alias of `POST /clients/{client}/servers`, without the required config token.",
+  "post /projects/{projectId}/hosts/{hostId}/duplicate":
+    "Deprecated alias of `POST /clients/{client}/duplicate`; see `GET /projects/{projectId}/hosts`.",
   "post /projects/{projectId}/agent":
     "The headless agent turn. Reachable only with a chat-surface service credential (Slack/Discord), and it spends hosted-model credits per call — an SDK method would advertise a capability an sk_ key does not have.",
   "get /agent-ops":
@@ -327,6 +405,20 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Incremental-ingestion transport; the reporter closes the run it opened.",
   "post /projects/{projectId}/eval-ingest/artifacts/upload-url":
     "Mints a short-lived artifact upload URL as part of the ingestion handshake. Useless outside it, and a standalone method would hand out signed URLs on request.",
+  "post /projects/{projectId}/conformance-ingest/report":
+    "SDK conformance-run INGESTION. Already covered by `reportConformanceRun`; a second, lower-level client method would let the two drift.",
+  "post /projects/{projectId}/conformance-ingest/runs/start":
+    "Incremental conformance ingestion, driven by the SDK reporter.",
+  "post /projects/{projectId}/conformance-ingest/runs/reports":
+    "Incremental conformance ingestion; one suite report per call.",
+  "post /projects/{projectId}/conformance-ingest/runs/heartbeat":
+    "Keeps a long-running uploaded conformance run from looking stale.",
+  "post /projects/{projectId}/conformance-ingest/runs/finalize":
+    "Closes the incremental conformance ingest the reporter opened.",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members":
+    "Share member upsert stays REST-only for now.",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":
+    "Share member removal stays REST-only for now.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {
@@ -341,16 +433,16 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       unmapped,
       `/api/v1 routes with no SDK client method — add one, or an EXCLUDED_FROM_SDK reason:\n  ${unmapped.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     const both = [...mapped].filter((route) => excluded.has(route)).sort();
     expect(
       both,
       `Routes claimed by BOTH maps — the partition must be disjoint:\n  ${both.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -361,8 +453,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       stale,
       `Map entries for routes that no longer exist (renamed? removed?):\n  ${stale.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -387,8 +479,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       missing,
       `ROUTE_TO_SDK names PlatformApiClient methods that do not exist:\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 

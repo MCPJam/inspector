@@ -4,6 +4,7 @@ import {
   MCPClientManager,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  withSkillsExtensionCapability,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import type {
@@ -58,7 +59,10 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
+import {
+  buildHostedOAuthUnauthorizedHandler,
+  refreshHostedOAuthAccessTokenWithLocalFallback,
+} from "../../utils/hosted-oauth-refresh.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -420,6 +424,13 @@ export type ConvexBatchAuthorizeSuccess = {
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  /**
+   * Why there is no `oauthAccessToken`, when the reason is actionable rather
+   * than "nothing stored". Mirrored by hand from the backend
+   * (`BatchAuthorizeSuccess.oauthUnavailableReason` in convex/http.ts); absent
+   * on older backends, which is why every read treats absence as "no idea".
+   */
+  oauthUnavailableReason?: "private_authorization_server";
   permissions: {
     chatOnly: boolean;
   };
@@ -1025,6 +1036,25 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
+    /**
+     * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
+     *
+     * Opt-in, and deliberately not the norm. Most hosted connections EMULATE a
+     * third-party host, and the debugger's promise is that the wire shows what
+     * that host would send — advertising skills on an emulated Cursor persona
+     * would be a lie about Cursor. Surfaces that emulate no persona (MCPJam's
+     * own agent turn) pass this, because they ship the fulfiller: the verified
+     * read path in `server-skills.ts`, merged into the toolset by
+     * `withServerSkills`.
+     *
+     * Set on DEFAULTS rather than per-server `clientCapabilities` on purpose.
+     * The latter is advertised VERBATIM (see `MCPClientManager`'s exact-set
+     * branch), so putting the extension there would replace a connection's
+     * whole declaration — silently dropping elicitation — and would also
+     * override a host config that pinned its own set. Defaults merge, and a
+     * pinned exact set still wins.
+     */
+    advertiseSkillsExtension?: boolean;
     scenarioId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
@@ -1202,6 +1232,14 @@ export async function createAuthorizedManager(
   // on each server's flow (a re-resolution could drift if the predicate ever
   // gains an input one pass forgets to thread).
   const effectiveAuthByServerId = new Map<string, EffectiveAuthMethod>();
+  // Servers whose authorization server only this machine can reach. Collected
+  // in PASS 1, refreshed in PASS 1b, consumed by PASS 2.
+  const privateAuthorizationServerRecoveries: Array<{
+    serverId: string;
+    displayServerName: string;
+    required: boolean;
+  }> = [];
+  const recoveredOAuthTokens: Record<string, string> = {};
   let confidentialCimdProviderForOrg: ReturnType<
     typeof getConfidentialCimdProviderForOrg
   > = undefined;
@@ -1318,6 +1356,27 @@ export async function createAuthorizedManager(
       }
     }
 
+    // A credential EXISTS but the backend cannot refresh it: its authorization
+    // server is on an address only this machine can reach. Not a verdict at
+    // all — in local mode it is recoverable, so it is deferred to the recovery
+    // pass below rather than decided here. Hosted, it is a real refusal, but
+    // "complete the OAuth flow first" is the wrong thing to say to someone who
+    // already did; the recovery pass raises the actionable message instead.
+    const privateAuthorizationServer =
+      auth.oauthUnavailableReason === "private_authorization_server" &&
+      !(auth.oauthAccessToken ?? oauthTokens?.[serverId]);
+    if (
+      privateAuthorizationServer &&
+      (effectiveAuth === "oauth" || effectiveAuth === "discover")
+    ) {
+      privateAuthorizationServerRecoveries.push({
+        serverId,
+        displayServerName,
+        required: effectiveAuth === "oauth",
+      });
+      continue;
+    }
+
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
@@ -1336,6 +1395,50 @@ export async function createAuthorizedManager(
           serverUrl: auth.serverConfig.url,
         }
       );
+    }
+  }
+
+  // PASS 1b — recover the credentials PASS 1 deferred, still before PASS 2
+  // does anything side-effecting, so "the batch fails before any server mints"
+  // continues to hold.
+  //
+  // This is the same pre-connect refresh `resolveLocalServerForConnect`
+  // performs for /api/mcp. Without it the local fallback only ever covered a
+  // mid-session 401, and the FIRST connect after expiry still failed on every
+  // surface routed through this builder.
+  //
+  // Sequential on purpose: the servers here share one force-refresh budget per
+  // subject, and each recovery is a network round trip to the user's own
+  // machine. There is rarely more than one.
+  for (const recovery of privateAuthorizationServerRecoveries) {
+    try {
+      recoveredOAuthTokens[recovery.serverId] =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          recovery.serverId,
+          {
+            accessScope: options?.accessScope,
+            scenarioId: options?.scenarioId,
+            accessVersion: options?.accessVersion,
+            serverName: recovery.displayServerName,
+          }
+        );
+    } catch (error) {
+      // A "discover" server was only ever going to try its luck: connecting
+      // unauthenticated is the documented fallback, and a live 401 escalates
+      // client-side from there. Only an explicit-OAuth server has to fail.
+      if (!recovery.required) {
+        logger.debug(
+          "[connect] private authorization server refresh unavailable; connecting unauthenticated",
+          {
+            serverId: recovery.serverId,
+            error: parseErrorMessage(error),
+          }
+        );
+        continue;
+      }
+      throw error;
     }
   }
 
@@ -1363,7 +1466,12 @@ export async function createAuthorizedManager(
         { ok: true }
       >;
 
-      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
+      // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
+      // by PASS 1b for a credential the backend could not refresh itself.
+      const oauthToken =
+        recoveredOAuthTokens[serverId] ??
+        auth.oauthAccessToken ??
+        oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
       // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
       // when configured or when the host policy forces it, "discover"
@@ -1488,7 +1596,8 @@ export async function createAuthorizedManager(
       const usesStoredTokenFlow =
         usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
       const onUnauthorized =
-        usesStoredTokenFlow && auth.oauthAccessToken
+        usesStoredTokenFlow &&
+        (auth.oauthAccessToken || recoveredOAuthTokens[serverId])
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -1498,6 +1607,14 @@ export async function createAuthorizedManager(
               shareToken: (options as { shareToken?: string })?.shareToken,
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
+              // Same reasoning as the local resolver's own handler: in local
+              // mode THIS process is the one that can reach a private
+              // authorization server. Without it every surface routed through
+              // here — chat-v2, evals, environments, swarm runs, harness-mcp —
+              // still dies at the first mid-session token expiry against a
+              // localhost OAuth server, while the Servers tab (which goes
+              // through /api/mcp) succeeds against the same server.
+              allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
             })
           : undefined;
 
@@ -1718,6 +1835,9 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    ...(options?.advertiseSkillsExtension
+      ? { defaultCapabilities: withSkillsExtensionCapability({}) }
+      : {}),
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
@@ -2012,6 +2132,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     mrtrInputCollectorForServer?: (
       serverId: string
     ) => MrtrInputCollector | undefined;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    advertiseSkillsExtension?: boolean;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -2102,6 +2224,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       accessScope,
       scenarioId,
       accessVersion,
+      ...(options?.advertiseSkillsExtension
+        ? { advertiseSkillsExtension: true }
+        : {}),
       rpcLogger: options?.rpcLogger,
       httpLogger: options?.httpLogger,
       serverNames,
@@ -2211,7 +2336,16 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
+    // helper dials the caller's OWN MCP server, and a connection-class failure
+    // left as `502 SERVER_UNREACHABLE` / `504 TIMEOUT` is exactly what the
+    // hosted edge replaces with its own error page — discarding the JSON
+    // envelope that carries the reason, so the browser was left with a bare
+    // "Request failed (502)" and no way to learn why (BB-48). The downgrade to
+    // 424 still requires the message to positively name an MCP server, so this
+    // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
+    // Convex deployment — keeps its 5xx and keeps paging us.
+    const routeError = mapTargetServerError(error);
     return webErrorFromRoute(
       c,
       routeError,

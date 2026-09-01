@@ -7,7 +7,7 @@ icon: "terminal"
 MCPJam supports two harness hosts that run a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
 
 - **Claude Code** — runs the real Claude Code agent with Anthropic models. Supports selected MCP servers and native tool approval.
-- **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills; does not support selected MCP servers.
+- **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills and selected MCP servers (through a host-executed relay — see the caveat below).
 
 <Note>
   The Claude Code and Codex hosts are available to organizations where the
@@ -20,7 +20,9 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 1. **Pre-flight check.** Before the stream opens, MCPJam verifies that the host can run: the model is supported by the selected harness, the Computer data plane is configured, and the host settings are ones the runtime can honor. Any failure returns a clear error before the turn starts — a turn never silently falls back to the emulated engine.
 2. **Computer wake.** The host's project Computer is reserved or woken (provisioned on first use). Both harness hosts **require** a Computer — there is no local fallback.
 3. **Credential delivery.** MCPJam installs a short-lived model credential into the sandbox's egress layer outside the VM. Neither the sandbox nor your browser ever holds a real model key. The agent runs pointed at MCPJam's model proxy, which verifies the credential and meters every generation. There is no raw-key fallback.
-4. **MCP delivery.** For Claude Code hosts, selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel — no upstream credentials enter the sandbox. Codex hosts do not support selected MCP servers.
+4. **MCP delivery.** The two harnesses deliver MCP servers differently:
+   - **Claude Code (native)** — selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel. The runtime's own MCP client connects to them and the model calls the tools through native function calling. No upstream credentials enter the sandbox.
+   - **Codex (host-executed)** — the Codex CLI does not make MCP server tools model-callable in the mode MCPJam drives ([openai/codex#19425](https://github.com/openai/codex/issues/19425)), so MCPJam instead enumerates each selected server's tools at turn start and hands them to the agent as *host-executed* tools. The bridge injects their descriptions into the prompt, the model invokes them through a CLI shim, and **MCPJam executes them on its own server** against the already-authorized connection. Nothing about your servers — no URL, no token — enters the sandbox.
 5. **The turn runs.** The agent's own loop executes; native tools run inside the sandbox; file changes land on the Computer's disk; the transcript and trace persist like any other chat.
 
 ## Host settings
@@ -31,7 +33,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model. Bring-your-own-key models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
-| Require tool approval | The toggle is disabled for Claude Code hosts. A host that already had approval enabled before switching to Claude Code will have approval honored for native tools: side-effecting built-ins (Bash, Write, etc.) pause the turn for your decision; read-only tools run freely. Approval cannot be combined with selected MCP servers — that combination is rejected at pre-flight. |
+| Require tool approval | Honored — the toggle is enabled for Claude Code hosts. When on, side-effecting built-ins (Bash, Write, etc.) and MCP server tools pause the turn for your decision; read-only tools run freely. Approval cannot be combined with selected MCP servers — that combination is rejected at pre-flight. |
 | Selected MCP servers | Honored — delivered via the session's MCP config through MCPJam's proxy. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Claude Code runtime owns its own sampling. These controls are grayed out in the UI. |
@@ -44,7 +46,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 | Model | Honored — must be an MCPJam-provided OpenAI gpt-5 family model. Other models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
 | Require tool approval | Not supported — the Codex runtime does not pause for tool approval. The toggle is disabled. |
-| Selected MCP servers | Not supported — Codex does not make MCP server tools model-callable. A Codex host with selected servers is rejected at pre-flight. |
+| Selected MCP servers | Honored, via a host-executed relay rather than a native MCP client. Tools are named identically to Claude Code (`mcp__<server>__<tool>`), so traces and eval assertions match across the two harnesses. See the fidelity caveat below. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Codex runtime owns its own sampling. These controls are grayed out in the UI. |
 | Progressive tool disclosure | Not applied — the real runtime owns tool discovery. |
@@ -54,6 +56,17 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
   for harness runs. Controls the runtime cannot honor are disabled in the UI
   rather than silently ignored.
 </Note>
+
+## Codex MCP fidelity caveat
+
+Codex's MCP support is **not** equivalent to Claude Code's, and the difference matters if you are using it to benchmark a connector:
+
+- The model does **not** call your tools through native function calling. The harness bridge injects each tool's name, description, and input schema into the prompt, and the model runs `node <shim> <toolName> '<json>'` through its built-in `bash` tool. Tool-selection behavior therefore reflects how well the model follows those shim instructions, not how a native MCP client would behave.
+- Tools execute **host-side**, in MCPJam's server process, not in the sandbox. For a remote HTTP connector the difference is small (the same outbound request, from a different origin). For a stdio/local server it is larger — the server runs where MCPJam runs, not next to the agent.
+- Tool schemas are enumerated **once, at turn start**. There is no `tools/list_changed` subscription, so a server that changes its tool list mid-turn is only picked up on the next turn.
+- Every projected tool's description is part of the prompt, so a server with many tools inflates each turn of the conversation.
+
+Claude Code hosts are unaffected by all of the above — they use the runtime's real MCP client.
 
 ## Requirements
 
@@ -77,7 +90,7 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 |---|---|
 | Enterprise-managed authorization policy on the host | Pre-flight error — the combination is rejected rather than silently bypassed. |
 | Require tool approval + selected MCP servers (Claude Code) | Pre-flight error — turn approval off or remove the MCP servers. |
-| Selected MCP servers on a Codex host | Pre-flight error — Codex does not support MCP server tool delivery. |
+| Require tool approval + selected MCP servers (Codex) | Pre-flight error — Codex runs the host's MCP tools on MCPJam's server and cannot pause them for approval. Turn approval off or remove the MCP servers. |
 | Computer data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not supported by the selected harness | Pre-flight error asking you to pick an eligible model. |
 | Computer at daily start cap | Start-limit dialog with upgrade option. |

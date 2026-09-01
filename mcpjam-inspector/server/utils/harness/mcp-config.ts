@@ -21,6 +21,19 @@ export const HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER =
   "X-MCPJam-Scope-Step-Up-Correlation";
 export const HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY =
   "mcpjam-scope-step-up-correlation";
+/**
+ * The harness TURN a proxied call belongs to.
+ *
+ * Non-secret, and its trust is bounded inside the token's VERIFIED iteration
+ * claim: it decides which turn of an already-authorized iteration a row is
+ * filed under, and nothing else. A turn retry or resume mints a fresh one, so
+ * a stale attempt's evidence stays addressable but out of the current turn.
+ *
+ * A header rather than a query parameter for the reason the correlation id
+ * above is both: proxy URLs end up in relay and access logs, and this one has
+ * no reason to be there.
+ */
+export const HARNESS_EVIDENCE_TURN_HEADER = "X-MCPJam-Harness-Turn";
 
 /** One server, resolved to its MCPJam proxy endpoint + per-turn token. */
 export interface HarnessProxyServerInput {
@@ -36,8 +49,24 @@ export interface HarnessProxyServerInput {
    * tunnel's `?k=` secret is the auth (`adapter-http` is validate-when-present).
    */
   proxyToken?: string;
+  /**
+   * Policy-sealed replacement for `proxyToken` (`mcpjps1.…`, see
+   * `harness-proxy-policy-seal.ts`): the Convex token ENCLOSED by the run's
+   * resolved tool policy. Sent under the same header, so the sandbox cannot
+   * drop the policy without dropping the credential. When present it REPLACES
+   * `proxyToken` — the bare token must never also reach the sandbox, or
+   * stripping the seal would restore unpoliced access.
+   */
+  sealedProxyToken?: string;
   /** Opaque live-turn id used only to route proxy-observed scope challenges. */
   scopeStepUpCorrelationId?: string;
+  /**
+   * The turn id evidence rows are filed under, sent as
+   * `X-MCPJam-Harness-Turn`. Present only when the run froze capture on and
+   * the mint returned an authorized eval scope; absent everywhere else, which
+   * is what makes a fully-off run byte-identical to a pre-evidence one.
+   */
+  evidenceTurnId?: string;
 }
 
 /** A single Claude Code `.mcp.json` server entry (http transport). */
@@ -106,17 +135,30 @@ export function buildHarnessProxyMcpJson(
             server.scopeStepUpCorrelationId,
           )
         : server.proxyUrl,
-      ...(server.proxyToken || server.scopeStepUpCorrelationId
+      ...(server.sealedProxyToken ||
+      server.proxyToken ||
+      server.scopeStepUpCorrelationId ||
+      server.evidenceTurnId
         ? {
             headers: {
-              ...(server.proxyToken
-                ? { "X-MCPJam-Proxy-Token": server.proxyToken }
-                : {}),
+              ...(server.sealedProxyToken
+                ? { "X-MCPJam-Proxy-Token": server.sealedProxyToken }
+                : server.proxyToken
+                  ? { "X-MCPJam-Proxy-Token": server.proxyToken }
+                  : {}),
               ...(server.scopeStepUpCorrelationId
                 ? {
                     [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]:
                       server.scopeStepUpCorrelationId,
                   }
+                : {}),
+              // Header only, deliberately unlike the correlation above: the
+              // turn id is not needed by any transport leg that drops headers,
+              // and a proxy URL carrying it would put it in access logs for no
+              // benefit. Absent when capture is off, so an off run's
+              // `.mcp.json` is byte-identical to a pre-evidence one.
+              ...(server.evidenceTurnId
+                ? { [HARNESS_EVIDENCE_TURN_HEADER]: server.evidenceTurnId }
                 : {}),
             },
           }

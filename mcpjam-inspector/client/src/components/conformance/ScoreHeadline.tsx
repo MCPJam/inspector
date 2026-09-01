@@ -7,7 +7,7 @@ import {
  * The one big number, with everything that makes it honest attached to it.
  *
  * Shared by the in-product Conformance panel and score.mcpjam.com so the two
- * cannot disagree about what a score means. Three rules are load-bearing:
+ * cannot disagree about what a score means. Four rules are load-bearing:
  *
  *   - No card at all when nothing was applicable. A "—/100" over a run with
  *     nothing to score is noise dressed as a number.
@@ -15,6 +15,9 @@ import {
  *     "100 of 11 applicable" and "100 of 38 applicable" are different servers.
  *   - `notApplicable` and an unscored OAuth suite are stated, never silently
  *     folded in. Not scored and scored zero are opposite claims.
+ *   - Checks the run's conformance profile does not score yet are stated too —
+ *     `describeConformanceScore` names them, so a reader can tell "asked 36,
+ *     scored 36" from "asked 39, scored 36" without opening the report.
  */
 export function ScoreHeadline({
   score,

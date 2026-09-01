@@ -10,7 +10,12 @@
  * tool surface throws that away at the last step: the model would ask for
  * `summarize` and get whichever row we happened to index first. Every tool here
  * — `loadSkill`, `listSkillFiles`, `readSkillFile` — resolves through the same
- * ref, so a duplicate declared name cannot cross a plugin boundary.
+ * ref, so a duplicate declared name cannot cross a plugin boundary. The
+ * discovery catalog is inlined in the system prompt (budgeted, with overflow
+ * notice); there is no `listSkills` tool. Zero skills → no tools, no stanza.
+ *
+ * Emulated `loadSkill` is an approximation: real Claude Code/Codex read an
+ * installed SKILL.md from the filesystem with no model-callable load tool.
  *
  * Bare names still work, and must: standalone project skills have no namespace,
  * and a model that read `summarize` in a prompt should be able to load it. A
@@ -37,19 +42,65 @@ import {
 import {
   allEffectiveSkills,
   type EffectiveCapabilitySet,
+  type RuntimeLocalSkill,
   type RuntimePluginSkill,
   type RuntimeServerSkill,
+  type RuntimeSkillFile,
   type RuntimeStandaloneSkill,
 } from "../../services/environments/effective-capabilities.js";
 import {
-  applySkillMetadataBudget,
+  formatSkillCatalogBody,
+  renderBudgetedSkillCatalog,
   skillMetadataBudgetChars,
 } from "./skill-metadata-budget.js";
 
 type EffectiveSkill =
   | RuntimePluginSkill
   | RuntimeStandaloneSkill
-  | RuntimeServerSkill;
+  | RuntimeServerSkill
+  | RuntimeLocalSkill;
+
+/**
+ * The body, whether it was carried inline or has to be fetched.
+ *
+ * A captured set holds the bytes; a live one holds a thunk, so a project with
+ * 200 skills costs one fetch for the skill the model actually loads rather than
+ * 200 for a catalog it mostly ignores.
+ */
+async function readContent(skill: EffectiveSkill): Promise<string> {
+  return typeof skill.content === "string"
+    ? skill.content
+    : await skill.content();
+}
+
+/**
+ * The supporting-file list, fetched at most ONCE per tool set if the origin is
+ * lazy.
+ *
+ * `listSkillFiles` then `readSkillFile` is the normal sequence, and an uncached
+ * loader fetches the same listing for both — including the empty case, where
+ * the second call buys nothing at all. The PROMISE is cached, not the result,
+ * so two concurrent calls share one fetch; a rejected one is evicted so a
+ * transient failure does not pin the skill file-less for the rest of the turn.
+ */
+function makeFileReader(): (
+  skill: EffectiveSkill
+) => Promise<RuntimeSkillFile[]> {
+  const listings = new Map<EffectiveSkill, Promise<RuntimeSkillFile[]>>();
+  return (skill) => {
+    if (skill.files.length > 0 || !skill.listFiles) {
+      return Promise.resolve(skill.files);
+    }
+    const cached = listings.get(skill);
+    if (cached) return cached;
+    const pending = skill.listFiles().catch((error: unknown) => {
+      listings.delete(skill);
+      throw error;
+    });
+    listings.set(skill, pending);
+    return pending;
+  };
+}
 
 /** Bare standalone name, or a `<plugin>/<skill>` namespaced plugin ref. */
 const REF_RE = /^[a-z0-9-]+(?:\/[a-z0-9-]+(?:~[a-f0-9]{8,64})?)?$/;
@@ -60,6 +111,10 @@ function pluginOf(skill: EffectiveSkill): RuntimePluginSkill["plugin"] {
 
 function serverOf(skill: EffectiveSkill): RuntimeServerSkill | undefined {
   return "serverId" in skill ? skill : undefined;
+}
+
+function localOf(skill: EffectiveSkill): RuntimeLocalSkill | undefined {
+  return "directory" in skill ? (skill as RuntimeLocalSkill) : undefined;
 }
 
 /**
@@ -75,6 +130,10 @@ function originLabel(
   isPlugin: boolean,
   isServer: boolean
 ): string {
+  const local = localOf(skill);
+  // Named with its directory, because "which code-review is this?" is exactly
+  // the question a merged catalog raises and the answer is where it lives.
+  if (local) return `local ${local.directory}`;
   if (isServer) {
     const server = serverOf(skill)!;
     return `MCP server ${server.serverLabel}@v${server.versionNumber}`;
@@ -143,17 +202,10 @@ function resolveRef(lookup: SkillLookup, raw: string): Resolution {
   return { ok: false, error: `Error: Skill "${raw}" not found.` };
 }
 
-function findFile(
-  skill: EffectiveSkill,
-  path: string
-): { path: string; size: number; url: string | null } | undefined {
-  return skill.files.find((file) => file.path === path);
-}
-
 /**
- * Build the discovery listing under the metadata budget, plus the refs that had
- * to be dropped. Computed ONCE at tool-construction time so every `listSkills`
- * call in a turn describes the same set (and so omissions are traced once).
+ * Build the inlined discovery listing under the metadata budget, plus the
+ * refs that had to be dropped. Computed ONCE at prompt-build time so the
+ * stanza and the overflow warn describe the same set.
  */
 function buildListing(
   skills: EffectiveSkill[],
@@ -161,11 +213,8 @@ function buildListing(
   serverRefs: Set<string>,
   modelContextTokens: number | undefined
 ): { text: string; omittedRefs: string[] } {
-  if (skills.length === 0) {
-    return { text: "No skills are available for this turn.", omittedRefs: [] };
-  }
   const budgetChars = skillMetadataBudgetChars(modelContextTokens);
-  const { entries, omittedRefs } = applySkillMetadataBudget(
+  const { lines, omittedRefs } = renderBudgetedSkillCatalog(
     skills.map((skill) => ({
       ref: skill.ref,
       description: skill.description,
@@ -177,22 +226,8 @@ function buildListing(
     })),
     budgetChars
   );
-
-  const lines = entries.map(
-    (entry) => `- **${entry.ref}** (${entry.origin}): ${entry.description}`
-  );
-  // Absence is semantic: say that skills were dropped rather than presenting a
-  // short list as if it were the whole set. This notice is deliberately emitted
-  // OUTSIDE the budget — it exists precisely to report that the budget bit, so
-  // suppressing it to fit would hide the omission it announces.
-  const notice =
-    omittedRefs.length > 0
-      ? `\n\n(${omittedRefs.length} more skill${
-          omittedRefs.length === 1 ? "" : "s"
-        } could not be listed within this model's skill-metadata budget.)`
-      : "";
   return {
-    text: `Available skills:\n\n${lines.join("\n")}${notice}`,
+    text: formatSkillCatalogBody(lines, omittedRefs),
     omittedRefs,
   };
 }
@@ -203,34 +238,12 @@ export function createEffectiveSkillTools(args: {
   pluginRefs: Set<string>;
   /** Refs captured from MCP servers, which always require approval to load. */
   serverRefs: Set<string>;
-  modelContextTokens?: number;
   signal?: AbortSignal;
 }) {
   const lookup = buildLookup(args.skills);
-  const listing = buildListing(
-    args.skills,
-    args.pluginRefs,
-    args.serverRefs,
-    args.modelContextTokens
-  );
-  if (listing.omittedRefs.length > 0) {
-    logger.warn(
-      "[effective-skills] skill metadata budget exceeded; skills omitted from discovery",
-      {
-        omitted: listing.omittedRefs,
-        total: args.skills.length,
-      }
-    );
-  }
+  const readFiles = makeFileReader();
 
   return {
-    listSkills: tool({
-      description:
-        "List the skills available to you for this turn. Returns each skill's reference, origin, and description. Call this first, then `loadSkill` with the reference.",
-      inputSchema: z.object({}),
-      execute: async () => listing.text,
-    }),
-
     loadSkill: {
       ...tool({
         description:
@@ -239,14 +252,20 @@ export function createEffectiveSkillTools(args: {
           name: z
             .string()
             .describe(
-              "The skill reference from `listSkills` — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
+              "The skill reference from the skills list above — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
             ),
         }),
         execute: async ({ name }) => {
           const resolved = resolveRef(lookup, name);
           if (!resolved.ok) return resolved.error;
           const { skill } = resolved;
-          return `# Skill: ${skill.ref}\n\n${skill.content}`;
+          try {
+            return `# Skill: ${skill.ref}\n\n${await readContent(skill)}`;
+          } catch (error) {
+            return `Error loading "${skill.ref}": ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`;
+          }
         },
       }),
       needsApproval: ({ name }: { name: string }) => {
@@ -265,12 +284,20 @@ export function createEffectiveSkillTools(args: {
         const resolved = resolveRef(lookup, name);
         if (!resolved.ok) return resolved.error;
         const { skill } = resolved;
-        if (skill.files.length === 0) {
+        let files: RuntimeSkillFile[];
+        try {
+          files = await readFiles(skill);
+        } catch (error) {
+          return `Error listing files for "${skill.ref}": ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`;
+        }
+        if (files.length === 0) {
           return `Skill "${skill.ref}" has no supporting files.`;
         }
         return (
           `Supporting files for "${skill.ref}":\n\n` +
-          skill.files.map((f) => `- ${f.path} (${f.size} bytes)`).join("\n") +
+          files.map((f) => `- ${f.path} (${f.size} bytes)`).join("\n") +
           `\n\nUse \`readSkillFile\` to read one.`
         );
       },
@@ -292,12 +319,17 @@ export function createEffectiveSkillTools(args: {
           const resolved = resolveRef(lookup, name);
           if (!resolved.ok) return resolved.error;
           const { skill } = resolved;
-          const file = findFile(skill, path);
+          let files: RuntimeSkillFile[];
+          try {
+            files = await readFiles(skill);
+          } catch (error) {
+            return `Error reading "${path}" from "${skill.ref}": ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`;
+          }
+          const file = files.find((entry) => entry.path === path);
           if (!file) {
             return `Error: "${path}" is not a supporting file of "${skill.ref}".`;
-          }
-          if (!file.url) {
-            return `Error: "${path}" could not be read (no download URL was issued for it).`;
           }
           // Guard on the SERVER-verified size before fetching, mirroring
           // `readCloudSkillFile` — a large blob must not be buffered to discover
@@ -306,15 +338,23 @@ export function createEffectiveSkillTools(args: {
             return `Error: "${path}" is too large to read (${file.size} bytes).`;
           }
           try {
-            const timeout = AbortSignal.timeout(30_000);
-            const signal = args.signal
-              ? AbortSignal.any([args.signal, timeout])
-              : timeout;
-            const res = await fetch(file.url, { signal });
-            if (!res.ok) {
-              return `Error reading "${path}" from "${skill.ref}" (${res.status}).`;
+            let bytes: Uint8Array;
+            if (file.read) {
+              // A local file has no URL to sign — it is on this machine's disk.
+              bytes = await file.read();
+            } else if (file.url) {
+              const timeout = AbortSignal.timeout(30_000);
+              const signal = args.signal
+                ? AbortSignal.any([args.signal, timeout])
+                : timeout;
+              const res = await fetch(file.url, { signal });
+              if (!res.ok) {
+                return `Error reading "${path}" from "${skill.ref}" (${res.status}).`;
+              }
+              bytes = new Uint8Array(await res.arrayBuffer());
+            } else {
+              return `Error: "${path}" could not be read (no download URL was issued for it).`;
             }
-            const bytes = new Uint8Array(await res.arrayBuffer());
             const mimeType = getMimeType(path);
             if (
               !isTextMimeType(mimeType) ||
@@ -338,46 +378,82 @@ export function createEffectiveSkillTools(args: {
   };
 }
 
-const EFFECTIVE_SKILLS_PROMPT_BASE =
-  `\n\n## Skills\n\n` +
-  `This turn has a fixed set of skills — reusable instruction packages for ` +
-  `specific tasks. Call the \`listSkills\` tool to see them, then \`loadSkill\` ` +
-  `with a skill's reference to load its full instructions when a task matches. ` +
-  `A reference is either a bare name or \`<plugin>/<skill>\` for a skill a ` +
-  `plugin provides; always pass the reference exactly as \`listSkills\` returned it.`;
+const EFFECTIVE_SKILLS_TRIGGER =
+  `You have access to the following skills. When the user names a skill ` +
+  `or a task clearly matches one's purpose, load it with \`loadSkill\` ` +
+  `before acting. A reference is either a bare name or \`<plugin>/<skill>\` ` +
+  `for a skill a plugin provides; always pass the reference exactly as ` +
+  `listed below.`;
 
 const EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE =
-  ` If a loaded skill references supporting files, use \`listSkillFiles\` and ` +
+  `If a loaded skill references supporting files, use \`listSkillFiles\` and ` +
   `\`readSkillFile\` with the same reference to access them.`;
 
 /**
  * Tools + prompt section for a turn driven by an `EffectiveCapabilitySet`.
  *
- * The file-tools sentence is advertised only when the set actually contains a
- * file-bearing skill: promising tools for files that do not exist invites the
- * model to go looking for them.
+ * Empty capability set → no tools, no stanza. The already-built listing
+ * (budgeted, with overflow notice) is inlined in the prompt. The file-tools
+ * sentence is advertised only when the set actually contains a file-bearing
+ * skill: promising tools for files that do not exist invites the model to go
+ * looking for them.
  */
 export function getEffectiveSkillToolsAndPrompt(
   capabilities: EffectiveCapabilitySet,
   options?: { modelContextTokens?: number; signal?: AbortSignal }
 ): {
-  tools: ReturnType<typeof createEffectiveSkillTools>;
+  tools: Partial<ReturnType<typeof createEffectiveSkillTools>>;
   systemPromptSection: string;
 } {
   const skills = allEffectiveSkills(capabilities);
-  const hasFiles = skills.some((skill) => skill.files.length > 0);
+  if (skills.length === 0) {
+    return { tools: {}, systemPromptSection: "" };
+  }
+  const pluginRefs = new Set(
+    capabilities.pluginSkills.map((skill) => skill.ref)
+  );
+  const serverRefs = new Set(
+    capabilities.serverSkills.map((skill) => skill.ref)
+  );
+  const listing = buildListing(
+    skills,
+    pluginRefs,
+    serverRefs,
+    options?.modelContextTokens
+  );
+  if (listing.omittedRefs.length > 0) {
+    logger.warn(
+      "[effective-skills] skill metadata budget exceeded; skills omitted from prompt catalog",
+      {
+        omitted: listing.omittedRefs,
+        total: skills.length,
+      }
+    );
+  }
+  // A lazy origin has not listed its files yet, so `files.length` cannot
+  // answer this. Advertising on the possibility is the right way round:
+  // withholding the tools would hide files that do exist, while offering
+  // them for a skill with none costs one refusal the model can read.
+  const hasFiles = skills.some(
+    (skill) => skill.files.length > 0 || skill.listFiles !== undefined
+  );
+  const parts = [
+    "## Skills",
+    "",
+    EFFECTIVE_SKILLS_TRIGGER,
+    "",
+    listing.text,
+  ];
+  if (hasFiles) {
+    parts.push("", EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE);
+  }
   return {
     tools: createEffectiveSkillTools({
       skills,
-      pluginRefs: new Set(capabilities.pluginSkills.map((skill) => skill.ref)),
-      serverRefs: new Set(capabilities.serverSkills.map((skill) => skill.ref)),
-      ...(options?.modelContextTokens !== undefined
-        ? { modelContextTokens: options.modelContextTokens }
-        : {}),
+      pluginRefs,
+      serverRefs,
       ...(options?.signal ? { signal: options.signal } : {}),
     }),
-    systemPromptSection:
-      EFFECTIVE_SKILLS_PROMPT_BASE +
-      (hasFiles ? EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE : ""),
+    systemPromptSection: `\n\n${parts.join("\n")}`,
   };
 }

@@ -12,6 +12,7 @@ import {
   type PersistReceiptData,
 } from "@/shared/persist-receipt";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { SecretScrubber } from "./secrets/secret-scrubber";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
@@ -52,11 +53,11 @@ export type PersistChatFailureKind =
  * user, client, or log — being told.
  */
 export type PersistChatOutcome =
-  | { outcome: "saved"; version: number }
+  | { outcome: "saved"; version: number; sessionDocId?: string }
   /** The backend recognized this exact turnId as already applied. As good as saved. */
-  | { outcome: "duplicate"; version: number }
+  | { outcome: "duplicate"; version: number; sessionDocId?: string }
   /** Legacy count-based replay skip (old backend, or a payload with no turnId). */
-  | { outcome: "skipped"; version?: number }
+  | { outcome: "skipped"; version?: number; sessionDocId?: string }
   | { outcome: "conflict"; currentVersion?: number }
   | {
       outcome: "failed";
@@ -82,7 +83,7 @@ const ENRICHMENT_HEADERS_TO_FORWARD = [
  * forwarded to the Convex `/ingest-chat` endpoint.
  */
 export function pickEnrichmentHeaders(
-  reqHeaders: { get(name: string): string | null | undefined } | Headers
+  reqHeaders: { get(name: string): string | null | undefined } | Headers,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const name of ENRICHMENT_HEADERS_TO_FORWARD) {
@@ -95,7 +96,7 @@ export function pickEnrichmentHeaders(
   return result;
 }
 
-interface ResumeConfig {
+export interface ResumeConfig {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
@@ -103,7 +104,37 @@ interface ResumeConfig {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
+  /**
+   * Agent-Playground FIRST-TURN PINS (`origin: "api"` sessions).
+   *
+   * Hand-mirrored from `chatResumeConfigValidator` in the backend. These four
+   * are the fields the ingest boundary protects with `preserveAgentResumePins`
+   * — first-write-wins, so a continuation cannot swap the model, the tool
+   * policy, or the target out from under a session that already pinned them.
+   * The route's own `CONFIG_ON_CONTINUATION` check is the friendly error; this
+   * is the guarantee.
+   *
+   * Adding a field here is NOT enough to make it persist: the backend's HTTP
+   * ingest projects `resumeConfig` through an explicit allowlist, so a new key
+   * that is not in `AGENT_RESUME_PIN_KEYS` (and its projection) validates,
+   * returns 200, and is silently dropped.
+   */
+  modelId?: string;
+  toolMode?: AgentTurnToolMode;
+  environmentId?: string;
+  serverIds?: string[];
 }
+
+/**
+ * Tool-effects policy for an agent Playground turn.
+ *
+ * `read_only` advertises only tools whose `annotations.readOnlyHint === true`;
+ * `auto` advertises everything the target exposes and may therefore cause
+ * external side effects through arbitrary third-party tools. The hint is
+ * SERVER-ASSERTED — a server is free to mislabel a mutating tool — so this is
+ * a policy the host applies, not a guarantee the host can verify.
+ */
+export type AgentTurnToolMode = "read_only" | "auto";
 
 /**
  * Direct-chat host configuration sent alongside the transcript so the backend
@@ -210,6 +241,26 @@ export interface PersistedTurnTrace {
   usage?: LiveChatTraceUsage;
   finishReason?: string;
   modelId: string;
+  /**
+   * Which skills and which environment this turn ran with, echoed from the
+   * backend's per-entry `provenance` rows (see
+   * `services/environments/runtime.ts` `turnSkillProvenance`).
+   *
+   * Carried INSIDE the turn trace, not beside it, for two reasons. The binding
+   * is per-TURN — a session live-follows Latest, so an edit changes what the
+   * NEXT turn runs. And `buildIngestBody` serializes `turnTrace` whole, so
+   * these fields reach the wire with NO change to the body builder: do not
+   * "fix" that by adding them to its spread.
+   *
+   * Ids are opaque strings here. The backend normalizes and tenancy-checks
+   * every one and strips what fails, so this side never needs to.
+   */
+  skillsAtTurn?: Array<Record<string, unknown>>;
+  environmentAtTurn?: {
+    environmentId: string;
+    name: string;
+    revision: number;
+  };
 }
 
 // Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
@@ -222,7 +273,10 @@ export type ChatOrigin =
   | "mcpjam_agent"
   | "scenario"
   | "eval"
-  | "swarm";
+  | "swarm"
+  // Agent Playground turn route. Validator ships with backend PR 4; this
+  // mirror must exist before anything emits `"api"`.
+  | "api";
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -239,6 +293,19 @@ interface PersistChatSessionOptions {
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
   messages?: unknown[];
+  /**
+   * The system prompt as SENT — turn-injected sections included.
+   *
+   * Evidence, not configuration. It is what the Raw view and
+   * `get_chat_session` show, so it has to be the string the model actually
+   * received: the host prompt plus whatever the turn added (the server-skill
+   * catalog, widget model context, the environment block, sandbox notices).
+   *
+   * NOT the same field as `resumeConfig.systemPrompt`, which is the RAW host
+   * prompt a resumed turn replays. Turn-injected content is true of the turn
+   * that happened and not of the next one, so the two must not be merged —
+   * see the comment at the hosted persist call.
+   */
   systemPrompt?: string;
   responseMessages?: unknown[];
   assistantText?: string;
@@ -253,6 +320,20 @@ interface PersistChatSessionOptions {
   expectedVersion?: number;
   rewind?: ChatRewind;
   turnTrace?: PersistedTurnTrace;
+  /**
+   * Materialized project secrets this turn delivered into the sandbox, so their
+   * values are replaced with `[secret:NAME]` before anything is persisted.
+   *
+   * Applied at the SERIALIZED body (see `buildIngestBody`) rather than field by
+   * field: this options object grows a new payload-bearing field every few
+   * releases, and a per-field scrub is a list somebody eventually forgets to
+   * extend. One pass over the bytes that actually leave the process cannot be
+   * partially applied.
+   *
+   * Absent on every caller that delivers no secrets, which is almost all of
+   * them — a session with nothing registered does no work here at all.
+   */
+  secretScrubber?: SecretScrubber;
   /**
    * §3: chat-backed harness resume-state commit. Applied ATOMICALLY with the
    * transcript inside the ingest mutation (a failed sidecar commit rolls back
@@ -357,14 +438,14 @@ export function stampSenderUserIdsOnSessionMessages(
   sourceMessages: unknown[],
   options?: {
     authenticatedUserId?: string | null;
-  }
+  },
 ): unknown[] {
   if (!Array.isArray(sessionMessages) || !Array.isArray(sourceMessages)) {
     return sessionMessages;
   }
 
   const authenticatedUserId = normalizeSenderUserId(
-    options?.authenticatedUserId
+    options?.authenticatedUserId,
   );
   const senderUserIdsByUserOrdinal = sourceMessages
     .filter((message) => isRecord(message) && message.role === "user")
@@ -408,12 +489,12 @@ function sanitizeDiagnosticText(text: string): string {
     .replace(
       /(\bauthorization\b\s*[:=]\s*)(bearer\s+)?([^"',\s}]+)/gi,
       (_match, prefix: string, scheme?: string) =>
-        `${prefix}${scheme ?? ""}[redacted-token]`
+        `${prefix}${scheme ?? ""}[redacted-token]`,
     )
     .replace(/\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi, "$1[redacted-token]")
     .replace(
       /(["']?(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)([^"',\s}]+)/gi,
-      "$1[redacted-secret]"
+      "$1[redacted-secret]",
     )
     .replace(/\bsk-[A-Za-z0-9]+\b/g, "[redacted-secret]");
 
@@ -434,7 +515,7 @@ async function readResponsePreview(response: Response): Promise<string> {
  * retry as the same turn.
  */
 function buildIngestBody(options: PersistChatSessionOptions): string {
-  return JSON.stringify({
+  const body = JSON.stringify({
     chatSessionId: options.chatSessionId,
     modelId: options.modelId,
     modelSource: options.modelSource,
@@ -496,6 +577,21 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     ...(options.hostId ? { hostId: options.hostId } : {}),
     ...(options.targetId ? { targetId: options.targetId } : {}),
   });
+  // AFTER serialization, on purpose. Every payload this body can carry —
+  // messages, tool inputs, tool outputs, the assistant's own text, a nested
+  // JSON string a tool returned — is inside these bytes by now, and the
+  // scrubber searches both the raw and the JSON-escaped form of each value, so
+  // a credential that was quoted or newline-bearing is found either way.
+  //
+  // Byte-identity across retries is preserved: the scrub is deterministic and
+  // runs once, outside the retry loop, exactly like the stringify it follows.
+  // `scrubSerializedJson`, not `scrubString`: this input is a JSON document, so
+  // only the ESCAPED form of a value can appear in real content. Searching the
+  // raw form here could match the document's own punctuation and produce
+  // invalid JSON out of a payload that never held the secret.
+  return options.secretScrubber
+    ? options.secretScrubber.scrubSerializedJson(body)
+    : body;
 }
 
 type IngestAttemptResult =
@@ -533,6 +629,7 @@ function classifySuccessBody(body: unknown): PersistChatOutcome {
         skipped?: boolean;
         duplicateTurn?: boolean;
         version?: number;
+        sessionId?: unknown;
       }
     | null
     | undefined;
@@ -540,23 +637,33 @@ function classifySuccessBody(body: unknown): PersistChatOutcome {
   if (!parsed || typeof parsed.version !== "number") {
     return { outcome: "failed", failureKind: "protocol_error", status: 200 };
   }
+  // The `chatSessions` DOCUMENT id, which every ingest branch returns and the
+  // route surfaces as the ONE public `sessionId`. Optional rather than
+  // required: the field is not part of the contract the older success-body
+  // fixtures assert, and a persist that saved but did not name the row is
+  // still a save — the caller reports the id it could not learn as absent
+  // rather than failing a committed turn.
+  const sessionDocId =
+    typeof parsed.sessionId === "string" && parsed.sessionId.length > 0
+      ? { sessionDocId: parsed.sessionId }
+      : {};
   if (parsed.skipped) {
     // `duplicateTurn` means the backend recognized this exact turn as already
     // applied — a success. A bare `skipped` is the legacy count heuristic
     // deciding the transcript looked like a replay, which may have discarded a
     // real turn; the caller must treat it as a possible loss, not a save.
     return parsed.duplicateTurn
-      ? { outcome: "duplicate", version: parsed.version }
-      : { outcome: "skipped", version: parsed.version };
+      ? { outcome: "duplicate", version: parsed.version, ...sessionDocId }
+      : { outcome: "skipped", version: parsed.version, ...sessionDocId };
   }
-  return { outcome: "saved", version: parsed.version };
+  return { outcome: "saved", version: parsed.version, ...sessionDocId };
 }
 
 async function attemptChatIngest(
   url: string,
   headers: Record<string, string>,
   body: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<IngestAttemptResult> {
   // A fresh controller per attempt. Reusing one across retries would poison
   // every later attempt: once aborted, an AbortSignal stays aborted, so retry 1
@@ -672,7 +779,7 @@ function sleep(ms: number): Promise<void> {
 
 export async function persistChatSessionToConvex(
   options: PersistChatSessionOptions,
-  c?: Context
+  c?: Context,
 ): Promise<PersistChatOutcome> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -712,7 +819,7 @@ export async function persistChatSessionToConvex(
           sourceType: options.sourceType,
           origin: options.origin,
         },
-        error ? { error } : undefined
+        error ? { error } : undefined,
       );
       return;
     }
@@ -726,7 +833,7 @@ export async function persistChatSessionToConvex(
     if (failureKind === "timeout") {
       logger.warn(
         "[chat-session-persistence] Timed out persisting chat session",
-        { timeoutMs: perAttemptTimeoutMs }
+        { timeoutMs: perAttemptTimeoutMs },
       );
       return;
     }
@@ -740,7 +847,7 @@ export async function persistChatSessionToConvex(
       `[chat-session-persistence] Failed to persist chat session${
         status !== undefined ? ` (${status})` : ""
       }${preview ? `: ${preview}` : ""}`,
-      { status, responsePreview: preview }
+      { status, responsePreview: preview },
     );
   };
 
@@ -761,7 +868,7 @@ export async function persistChatSessionToConvex(
       body,
       // Truncated rather than allowed to overrun: the caller may be holding a
       // stream open on this promise.
-      Math.min(perAttemptTimeoutMs, remainingMs)
+      Math.min(perAttemptTimeoutMs, remainingMs),
     );
 
     if (result.kind === "settled") {
@@ -789,11 +896,11 @@ export async function persistChatSessionToConvex(
               sourceType: options.sourceType,
               origin: options.origin,
               hasTurnId: Boolean(options.turnTrace?.turnId),
-            }
+            },
           );
         } else {
           logger.warn(
-            "[chat-session-persistence] Ingest reported the turn as a replay and skipped it"
+            "[chat-session-persistence] Ingest reported the turn as a replay and skipped it",
           );
         }
       }
@@ -844,7 +951,7 @@ type PersistReceiptWriter = { write: (chunk: UIMessageChunk) => void };
  */
 export function buildPersistReceiptData(
   outcome: PersistChatOutcome,
-  context: { chatSessionId: string; turnId?: string }
+  context: { chatSessionId: string; turnId?: string },
 ): PersistReceiptData | null {
   if (outcome.outcome === "not-attempted") {
     return null;
@@ -892,7 +999,7 @@ export function buildPersistReceiptData(
 export function writePersistReceipt(
   writer: PersistReceiptWriter | undefined,
   outcome: PersistChatOutcome,
-  context: { chatSessionId: string; turnId?: string }
+  context: { chatSessionId: string; turnId?: string },
 ): void {
   if (!writer) return;
   const data = buildPersistReceiptData(outcome, context);

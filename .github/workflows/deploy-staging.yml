@@ -36,10 +36,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Pinned to the same version every other workflow uses. A floating "24"
+      # meant this gate workflow — the one a release requires to be green —
+      # could silently run on a different minor than the release itself.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "24.14.0"
+          cache: npm
 
       - name: Install dependencies and format
         working-directory: mcpjam-inspector
@@ -65,7 +69,11 @@ jobs:
       # browser-parsed frame-ancestors directive, which DOES support `*`.
       # `ALLOWED_ORIGINS` (origin-validation middleware) supports the
       # wildcard via `matchesAllowedOrigin`, gated on
-      # `MCPJAM_NONPROD_LOCKDOWN=true` — staging satisfies that.
+      # `MCPJAM_ALLOW_WILDCARD_ORIGINS=true`, which is set below. That opt-in
+      # is set HERE rather than by hand on the service: it used to be implied
+      # by `MCPJAM_NONPROD_LOCKDOWN`, which was never actually set on the
+      # staging service, so `getAllowedOrigins()` silently stripped the
+      # wildcard on every boot and preview→staging calls were rejected.
       #
       # The two vars use different wildcard shapes intentionally:
       #   - ALLOWED_ORIGINS uses the tight mid-host pattern so only PR
@@ -91,6 +99,7 @@ jobs:
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             ALLOWED_ORIGINS="$STAGING_APP_URL,https://mcp-inspector-pr-*.up.railway.app" \
             WEB_ALLOWED_ORIGINS="$STAGING_APP_URL,https://*.up.railway.app" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_INSPECTOR_PUBLIC_URL="$STAGING_APP_URL"
 
       # Capture the most recent deployment id before we trigger a new one so
@@ -127,4 +136,7 @@ jobs:
 
   smoke:
     needs: deploy
-    uses: ./.github/workflows/post-deploy-staging.yml
+    uses: ./.github/workflows/post-deploy-smoke.yml
+    secrets:
+      CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}

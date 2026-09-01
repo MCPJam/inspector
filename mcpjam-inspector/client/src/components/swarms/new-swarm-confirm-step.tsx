@@ -8,13 +8,16 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown, Loader2, X } from "lucide-react";
+import { ChevronDown, Loader2, Trash2, X } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
+import { SectionLabel } from "@/components/shared/section-label";
 import { JudgesSection } from "@/components/evals/judges-section";
 import { areAllChecksValid } from "@/components/evals/checks-section";
 import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
@@ -38,15 +41,8 @@ import {
   mintCriterionId,
   type JourneyCriterion,
 } from "@/shared/journey-rubric";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-      {children}
-    </p>
-  );
-}
 
 /** A generated persona + journeys, still only in memory. */
 export type ProposedPersona = {
@@ -147,6 +143,57 @@ type ReusedResolved = {
   grading: { journeyId: string; rubric: JourneyCriterion[] }[];
 };
 
+/** Uncommitted edits to one EXISTING persona, held while its panel is open. */
+export type ReusedPersonaDraft = {
+  name: string;
+  role: string;
+  notes: string;
+  goals: Record<string, string>;
+};
+
+/**
+ * What a draft would actually write.
+ *
+ * One definition of "what moved", because two callers ask the same question for
+ * opposite reasons: Save sends exactly this, and closing the panel uses it to
+ * know whether anything is about to be thrown away. Deriving them separately is
+ * how a discard warning starts disagreeing with what a save would have done.
+ */
+export function diffReusedDraft(
+  draft: ReusedPersonaDraft | undefined,
+  persona: ReusedPersona,
+  goals: readonly ReusedGoal[]
+): {
+  patch: { name?: string; role?: string; notes?: string };
+  goalEdits: { journeyId: string; goal: string }[];
+  dirty: boolean;
+} {
+  const patch: { name?: string; role?: string; notes?: string } = {};
+  const goalEdits: { journeyId: string; goal: string }[] = [];
+  if (!draft) return { patch, goalEdits, dirty: false };
+
+  if (draft.name !== persona.name) patch.name = draft.name;
+  if (draft.role !== persona.role) patch.role = draft.role;
+  if (draft.notes !== (persona.notes ?? "")) patch.notes = draft.notes;
+
+  for (const goal of goals) {
+    const next = draft.goals[goal.journeyId];
+    // A journey needs a goal — the backend throws on an empty one, so an
+    // emptied field is dropped rather than sent and surfaced as an error the
+    // user cannot act on from here. It is not a pending edit either: there is
+    // nothing this panel could save, so closing loses nothing.
+    if (next === undefined || next.trim().length === 0) continue;
+    if (next === goal.label) continue;
+    goalEdits.push({ journeyId: goal.journeyId, goal: next });
+  }
+
+  return {
+    patch,
+    goalEdits,
+    dirty: Object.keys(patch).length > 0 || goalEdits.length > 0,
+  };
+}
+
 function journeyLabel(journey: { name?: string; goal: string }): string {
   const name = journey.name?.trim();
   if (name) return name;
@@ -158,16 +205,25 @@ function personaContext(notes?: string, role?: string): string {
   return notes?.trim() || role?.trim() || "No use cases or context yet.";
 }
 
+/**
+ * Collapsed persona card.
+ *
+ * `Edit` and `Remove` are always-visible buttons rather than a hover-only
+ * overflow menu (BB-122): the whole point of this step is that the slate is
+ * editable, and an affordance you have to hover to discover does not say so.
+ * The card body stays clickable as a second route into the same expand.
+ */
 function CompactPersonaCard({
   seed,
   name,
   role,
   description,
   meta,
-  selected,
+  muted,
   onSelect,
   onRemove,
   removeLabel,
+  editLabel,
   avatarShape,
   avatarPalette,
 }: {
@@ -176,77 +232,124 @@ function CompactPersonaCard({
   role: string;
   description: string;
   meta: string;
-  selected: boolean;
+  /** Another card is expanded — this one recedes rather than competing. */
+  muted?: boolean;
   onSelect: () => void;
   onRemove: () => void;
   removeLabel: string;
+  editLabel: string;
   avatarShape?: number;
   avatarPalette?: number;
 }) {
   return (
     <li>
+      {/* A plain div, not `role="button"`: it holds the real Edit and Remove
+          buttons, and a widget that contains other widgets is exactly the
+          nesting assistive tech cannot describe — the row announced itself as
+          one button whose content was two more. The click handler stays, so
+          clicking anywhere on the card still expands it for pointer users;
+          keyboard users reach the same thing through Edit, which is a real
+          focusable control and names its persona. */}
       <div
-        role="button"
-        tabIndex={0}
-        aria-pressed={selected}
         data-testid="new-swarm-persona-compact"
         onClick={onSelect}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onSelect();
-          }
-        }}
         className={cn(
-          "flex w-full cursor-pointer items-start gap-3 rounded-xl border bg-muted/15 px-3 py-3 text-left transition-colors",
-          selected
-            ? "border-primary/50 bg-muted/30 ring-1 ring-primary/25"
-            : "border-border/50 hover:bg-muted/25"
+          "flex w-full cursor-pointer items-start gap-4 rounded-xl border border-border/50 bg-muted/15 p-4 text-left transition-colors hover:bg-muted/25",
+          muted && "opacity-70"
         )}
       >
         <PersonaPixelAvatar
           seed={seed}
           shapeIndex={avatarShape}
           paletteIndex={avatarPalette}
-          size="md"
+          size="lg"
         />
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <p className="min-w-0 truncate text-sm font-semibold text-foreground">
-              {name}
-              {role ? (
-                <span className="font-normal text-muted-foreground">
-                  {" "}
-                  — {role}
-                </span>
-              ) : null}
-            </p>
-          </div>
-          <p className="line-clamp-2 text-sm leading-snug text-muted-foreground">
+          <p
+            className={cn(
+              "min-w-0 truncate text-sm font-semibold",
+              muted ? "text-muted-foreground" : "text-foreground"
+            )}
+          >
+            {name}
+            {role ? (
+              <span className="font-normal text-muted-foreground"> — {role}</span>
+            ) : null}
+          </p>
+          <p
+            className={cn(
+              "line-clamp-2 text-sm leading-snug",
+              muted ? "text-muted-foreground" : "text-foreground"
+            )}
+          >
             {description}
           </p>
-          <p className="font-mono text-[11px] leading-snug text-muted-foreground">
-            {meta}
-          </p>
+          <p className="text-xs leading-snug text-muted-foreground">{meta}</p>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 shrink-0 px-2 text-xs"
-          aria-label={removeLabel}
-          onClick={(event) => {
-            event.stopPropagation();
-            onRemove();
-          }}
-        >
-          Remove
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7.5 px-2.5 text-xs"
+            aria-label={editLabel}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
+          >
+            Edit
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7.5 bg-background px-2.5 text-xs"
+            aria-label={removeLabel}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove();
+            }}
+          >
+            Remove
+          </Button>
+        </div>
       </div>
     </li>
   );
 }
 
+/**
+ * Expanded persona card — every field editable in place.
+ *
+ * The header carries Save changes and nothing else: Remove belongs to the
+ * collapsed card, which is the list row, while this is the editor.
+ *
+ * That one button always shows and is always live — it means "done here" and
+ * always collapses the panel. A header with no button reads as broken, and a
+ * disabled one leaves the panel with no visible way out; Escape still works
+ * but nobody guesses it.
+ *
+ * Focus moves into the panel on mount, which is what makes Escape reachable at
+ * all: the Edit button that opened it unmounts on the same commit, so focus
+ * would otherwise fall to `<body>` and the keydown handler would never see it.
+ * The container takes focus rather than the first field — landing in a text
+ * input announces the field instead of the editor.
+ *
+ * What it does before collapsing differs, because the two kinds of persona are
+ * not the same thing.
+ * A proposed persona only exists in memory: its edits already landed as they
+ * were typed, so Save just closes. A reused persona is a database row shared
+ * with every other swarm that pulled it in, so its edits are held in a local
+ * draft and this is what commits them — mirroring keystrokes into a shared row
+ * would rewrite other people's swarms as you type. A failed save keeps the
+ * panel open with the draft intact.
+ *
+ * The two exits therefore mean two different things for a reused persona, and
+ * both are honest about it: Save commits and collapses, Escape discards and
+ * collapses. Neither leaves an edit that the collapsed card doesn't show and
+ * the launch wouldn't use.
+ */
 function PersonaDetailPanel({
   seed,
   name,
@@ -257,16 +360,15 @@ function PersonaDetailPanel({
   loadingGoals,
   draftEditable,
   onClose,
-  onRemove,
-  removeLabel,
   onRemoveGoal,
-  onEditGoal,
   onRemoveCheck,
   onChangeName,
   onChangeRole,
   onChangeContext,
   onChangeGoal,
   onAddGoal,
+  onSave,
+  saving,
   avatarShape,
   avatarPalette,
 }: {
@@ -277,141 +379,147 @@ function PersonaDetailPanel({
   goals: {
     key: string;
     label: string;
-    editable?: boolean;
     /** Suggested deterministic checks scoped to this goal's journey. */
     checks?: { id: string; label: string }[];
   }[];
   graded?: boolean;
   loadingGoals?: boolean;
-  /** Proposed personas are editable in-place; existing ones are not. */
+  /** In-memory row: edits apply immediately, no Save. */
   draftEditable?: boolean;
+  /**
+   * Leave the editor WITHOUT saving. Reached by Escape — the design shows no
+   * close button. For a persisted persona the caller discards the draft, so
+   * what the collapsed card shows is always what launches.
+   */
   onClose: () => void;
-  onRemove: () => void;
-  removeLabel: string;
   onRemoveGoal?: (goalKey: string) => void;
-  /** Opens the Personas tab to edit this goal's journey (existing only). */
-  onEditGoal?: (goalKey: string) => void;
   onRemoveCheck?: (goalKey: string, checkId: string) => void;
   onChangeName?: (name: string) => void;
   onChangeRole?: (role: string) => void;
   onChangeContext?: (notes: string) => void;
   onChangeGoal?: (goalKey: string, goal: string) => void;
   onAddGoal?: () => void;
+  /**
+   * "Done here". Always offered: it commits a persisted row's draft (a no-op
+   * for an unchanged one) and collapses the panel either way.
+   */
+  onSave: () => void;
+  saving?: boolean;
   avatarShape?: number;
   avatarPalette?: number;
 }) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // An `useEffect`, not an inline ref callback: an inline callback is a new
+  // function every render, so React would re-run it on each keystroke and yank
+  // focus out of the field being typed in.
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
+
   return (
     <div
-      className="rounded-xl border border-primary/50 bg-muted/30 ring-1 ring-primary/25"
+      ref={panelRef}
+      tabIndex={-1}
+      className="rounded-xl border border-primary/50 bg-muted/30 outline-none ring-1 ring-primary/25"
       data-testid="new-swarm-persona-detail"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        onClose();
+      }}
     >
-      <div className="flex items-start justify-between gap-3 px-4 pt-3">
+      <div className="flex items-start justify-between gap-3 px-4 pt-4">
         <PersonaPixelAvatar
           seed={seed}
           shapeIndex={avatarShape}
           paletteIndex={avatarPalette}
-          size="md"
+          size="lg"
         />
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
             size="sm"
             variant="outline"
-            className="h-7 px-2 text-xs"
-            aria-label={removeLabel}
-            onClick={onRemove}
+            className="h-8 bg-background px-3 text-[13px]"
+            disabled={saving}
+            data-testid="new-swarm-persona-save"
+            onClick={onSave}
           >
-            Remove
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="size-8 p-0 text-muted-foreground"
-            aria-label="Close persona detail"
-            onClick={onClose}
-          >
-            <X className="size-3.5" />
+            {saving ? (
+              <>
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save changes"
+            )}
           </Button>
         </div>
       </div>
 
-      <div className="space-y-4 px-4 py-4">
+      <div className="space-y-4 px-4 pb-4 pt-3">
         <div className="space-y-1.5">
           <SectionLabel>Persona</SectionLabel>
-          {draftEditable ? (
-            <div className="space-y-2 rounded-xl border border-border/50 bg-background p-3">
-              <Input
-                value={name}
-                onChange={(event) => onChangeName?.(event.target.value)}
-                placeholder="Name"
-                aria-label="Persona name"
-                className="h-8"
-              />
-              <Input
-                value={role}
-                onChange={(event) => onChangeRole?.(event.target.value)}
-                placeholder="Role"
-                aria-label="Persona role"
-                className="h-8"
-              />
-            </div>
-          ) : (
-            <div className="flex min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background px-3 py-1.5">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                {name}
-                {role ? (
-                  <span className="font-normal text-muted-foreground">
-                    {" "}
-                    — {role}
-                  </span>
-                ) : null}
-              </span>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <SectionLabel>Use cases & context</SectionLabel>
-          {draftEditable ? (
-            <textarea
-              value={context === "No use cases or context yet." ? "" : context}
-              onChange={(event) => onChangeContext?.(event.target.value)}
-              placeholder="Who they are and how they show up…"
-              aria-label="Use cases and context"
-              rows={4}
-              className="w-full resize-none rounded-xl border border-border/50 bg-background px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+          <div className="space-y-2">
+            <Input
+              value={name}
+              onChange={(event) => onChangeName?.(event.target.value)}
+              placeholder="Name"
+              aria-label="Persona name"
+              className="h-9 bg-background"
             />
-          ) : (
-            <div className="rounded-xl border border-border/50 bg-background px-3 py-2.5">
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {context}
-              </p>
-            </div>
-          )}
+            <Input
+              value={role}
+              onChange={(event) => onChangeRole?.(event.target.value)}
+              placeholder="Role"
+              aria-label="Persona role"
+              className="h-9 bg-background"
+            />
+          </div>
         </div>
 
         <div className="space-y-1.5">
-          <SectionLabel>Goals</SectionLabel>
+          <SectionLabel>Use cases &amp; context</SectionLabel>
+          <textarea
+            value={context}
+            onChange={(event) => onChangeContext?.(event.target.value)}
+            placeholder="Who they are and how they show up…"
+            aria-label="Use cases and context"
+            rows={4}
+            className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <SectionLabel>Goals</SectionLabel>
+            {onAddGoal ? (
+              <button
+                type="button"
+                onClick={onAddGoal}
+                data-testid="new-swarm-add-goal"
+                className="text-xs font-medium text-primary hover:text-primary/80"
+              >
+                + Add goal
+              </button>
+            ) : null}
+          </div>
           {loadingGoals ? (
             <p className="text-sm text-muted-foreground">Loading goals…</p>
-          ) : goals.length === 0 && !draftEditable ? (
-            <p className="rounded-xl border border-dashed border-border/60 px-3 py-2.5 text-sm text-muted-foreground">
+          ) : goals.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border/60 px-3 py-2.5 text-sm text-muted-foreground">
               No goals yet — this persona has nothing to run.
             </p>
           ) : (
             <ul className="space-y-1.5">
               {goals.map((goal) => (
-                <li
-                  key={goal.key}
-                  className="group rounded-xl border border-border/50 bg-background px-3 py-2"
-                >
-                  <div className="flex items-center gap-2.5">
+                <li key={goal.key}>
+                  <div className="flex items-center gap-2.5 rounded-lg border border-input bg-background px-3 py-2">
                     <span
-                      className="size-1.5 shrink-0 rounded-full bg-primary"
+                      className="size-2 shrink-0 rounded-full bg-primary"
                       aria-hidden
                     />
-                    {draftEditable && onChangeGoal ? (
+                    {onChangeGoal ? (
                       <Input
                         value={goal.label}
                         onChange={(event) =>
@@ -426,29 +534,16 @@ function PersonaDetailPanel({
                         {goal.label}
                       </span>
                     )}
-                    <span className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                      {goal.editable && onEditGoal ? (
-                        <button
-                          type="button"
-                          aria-label={`Edit goal ${goal.label}`}
-                          className="text-xs text-muted-foreground hover:text-foreground"
-                          data-testid="new-swarm-goal-edit"
-                          onClick={() => onEditGoal(goal.key)}
-                        >
-                          edit
-                        </button>
-                      ) : null}
-                      {onRemoveGoal ? (
-                        <button
-                          type="button"
-                          aria-label={`Remove goal ${goal.label}`}
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => onRemoveGoal(goal.key)}
-                        >
-                          <X className="size-3.5" />
-                        </button>
-                      ) : null}
-                    </span>
+                    {onRemoveGoal ? (
+                      <button
+                        type="button"
+                        aria-label={`Remove goal ${goal.label}`}
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => onRemoveGoal(goal.key)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    ) : null}
                   </div>
                   {/* Journey-scoped checks live with the journey they grade,
                       not in the swarm-level rubric below the persona list —
@@ -484,22 +579,18 @@ function PersonaDetailPanel({
               ))}
             </ul>
           )}
-          {draftEditable && onAddGoal ? (
-            <button
-              type="button"
-              onClick={onAddGoal}
-              data-testid="new-swarm-add-goal"
-              className="w-full rounded-xl border border-dashed border-border/60 px-3 py-2 text-left text-sm text-muted-foreground hover:border-border hover:text-foreground"
-            >
-              + Add a goal
-            </button>
-          ) : null}
           {graded ? (
             <p className="text-xs text-muted-foreground">
-              Has its own grading — swarm-level checks are merged in at
-              launch, never replacing it.
+              Has its own grading — swarm-level checks are merged in at launch,
+              never replacing it.
             </p>
           ) : null}
+          {draftEditable ? null : (
+            <p className="text-xs text-muted-foreground">
+              This persona is saved in your project. Edits here update it
+              everywhere it is reused.
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -586,13 +677,13 @@ function ReusedPersonaJourneyLoader({
  */
 function ReusedPersonaCard({
   persona,
-  selected,
+  muted,
   onSelect,
   onRemove,
   resolved,
 }: {
   persona: ReusedPersona;
-  selected: boolean;
+  muted?: boolean;
   onSelect: () => void;
   onRemove: () => void;
   resolved: ReusedResolved | undefined;
@@ -616,9 +707,10 @@ function ReusedPersonaCard({
       role={persona.role}
       description={personaContext(persona.notes, persona.role)}
       meta={meta}
-      selected={selected}
+      muted={muted}
       onSelect={onSelect}
       onRemove={onRemove}
+      editLabel={`Edit ${persona.name}`}
       removeLabel={`Remove ${persona.name} from this swarm`}
       avatarShape={persona.avatarShape}
       avatarPalette={persona.avatarPalette}
@@ -639,7 +731,11 @@ export function NewSwarmConfirmStep({
   errorMessage,
   onBack,
   onLaunch,
-  onEditExistingPersona,
+  header,
+  availablePersonas,
+  onAddReused,
+  onSaveReusedPersona,
+  onSaveReusedGoal,
 }: {
   projectId: string;
   proposed: ProposedPersona[];
@@ -655,7 +751,21 @@ export function NewSwarmConfirmStep({
   onBack: () => void;
   onLaunch: (payload: ConfirmLaunchPayload) => void;
   /** Leave the create flow and open Personas for an existing persona. */
-  onEditExistingPersona: (personaRefId: string) => void;
+  /** Back link + stepper, built by the flow so both steps show the same one. */
+  header?: ReactNode;
+  /** Every persona in the project, for "Add existing personas". */
+  availablePersonas: readonly ReusedPersona[];
+  onAddReused: (personaRefId: string) => void;
+  /**
+   * Persist an edit to an existing persona. Called from the explicit Save —
+   * the row is shared, so keystrokes must not reach it.
+   */
+  onSaveReusedPersona: (
+    personaRefId: string,
+    patch: { name?: string; role?: string; notes?: string }
+  ) => Promise<void>;
+  /** Persist an edit to an existing journey's goal text. */
+  onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
 }) {
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
     undefined
@@ -852,6 +962,133 @@ export function NewSwarmConfirmStep({
       ? reusedPersonas.find((persona) => persona._id === selected.id) ?? null
       : null;
 
+  /**
+   * Uncommitted edits to EXISTING personas, keyed by persona id.
+   *
+   * Held locally instead of written through because the row is shared: typing
+   * in this panel must not rewrite another swarm's persona until the user says
+   * so. Cleared on a successful save, so the panel falls back to the live query
+   * and cannot show a stale "saved" value.
+   */
+  const [reusedDrafts, setReusedDrafts] = useState<
+    Record<string, ReusedPersonaDraft>
+  >({});
+  const [savingReusedId, setSavingReusedId] = useState<string | null>(null);
+  const [addExistingOpen, setAddExistingOpen] = useState(false);
+
+  const patchReusedDraft = useCallback(
+    (
+      persona: ReusedPersona,
+      goals: ReusedGoal[],
+      patch: Partial<{ name: string; role: string; notes: string }> & {
+        goal?: { journeyId: string; text: string };
+      }
+    ) => {
+      setReusedDrafts((drafts) => {
+        const current =
+          drafts[persona._id] ??
+          {
+            name: persona.name,
+            role: persona.role,
+            notes: persona.notes ?? "",
+            goals: Object.fromEntries(
+              goals.map((goal) => [goal.journeyId, goal.label])
+            ),
+          };
+        const next = {
+          ...current,
+          ...(patch.name === undefined ? {} : { name: patch.name }),
+          ...(patch.role === undefined ? {} : { role: patch.role }),
+          ...(patch.notes === undefined ? {} : { notes: patch.notes }),
+          goals: patch.goal
+            ? { ...current.goals, [patch.goal.journeyId]: patch.goal.text }
+            : current.goals,
+        };
+        return { ...drafts, [persona._id]: next };
+      });
+    },
+    []
+  );
+
+  const saveReused = useCallback(
+    async (persona: ReusedPersona, goals: ReusedGoal[]) => {
+      const draft = reusedDrafts[persona._id];
+      // Nothing typed: Save still means "done", so just collapse.
+      if (!draft) {
+        setSelected(null);
+        return;
+      }
+      setSavingReusedId(persona._id);
+      try {
+        // Only what actually moved. A no-op patch would still bump the row's
+        // `updatedAt` for every other swarm reusing it.
+        const { patch, goalEdits } = diffReusedDraft(draft, persona, goals);
+        if (Object.keys(patch).length > 0) {
+          await onSaveReusedPersona(persona._id, patch);
+        }
+        for (const edit of goalEdits) {
+          await onSaveReusedGoal(edit.journeyId, edit.goal);
+        }
+        setReusedDrafts((drafts) => {
+          const { [persona._id]: _saved, ...rest } = drafts;
+          return rest;
+        });
+        // Only on the way out of a clean save — a throw leaves the panel open
+        // with the draft still in it, so the edit is not silently lost.
+        setSelected(null);
+      } catch (error) {
+        // The call site invokes this with `void`, so without this the rejection
+        // was an unhandled promise and the user saw nothing at all. The draft
+        // and the open panel are deliberately left alone: the edit is still on
+        // screen to retry, which is the whole reason it is held locally.
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Couldn't save this persona. Your changes are still here."
+        );
+      } finally {
+        setSavingReusedId(null);
+      }
+    },
+    [onSaveReusedGoal, onSaveReusedPersona, reusedDrafts]
+  );
+
+  /**
+   * Close WITHOUT saving — the Escape route out of a reused persona's editor.
+   *
+   * It discards, rather than keeping the draft around: this row is never
+   * launched from the draft, so a kept-but-uncommitted edit is one the collapsed
+   * card doesn't show and the launch doesn't use, and the user only finds out
+   * their typing did nothing after the swarm has run. Whatever the collapsed
+   * card shows is what launches, on both exits.
+   *
+   * A toast, and only when something was actually lost: silently dropping text
+   * somebody typed is the other half of the same problem.
+   */
+  const discardReused = useCallback(
+    (persona: ReusedPersona, goals: ReusedGoal[]) => {
+      const { dirty } = diffReusedDraft(reusedDrafts[persona._id], persona, goals);
+      if (dirty) {
+        setReusedDrafts((drafts) => {
+          const { [persona._id]: _discarded, ...rest } = drafts;
+          return rest;
+        });
+        toast.info(`Discarded unsaved changes to ${persona.name}.`);
+      }
+      setSelected(null);
+    },
+    [reusedDrafts]
+  );
+
+  const personasAvailableToAdd = useMemo(
+    () =>
+      availablePersonas.filter(
+        (persona) =>
+          !reusedPersonas.some((chosen) => chosen._id === persona._id)
+      ),
+    [availablePersonas, reusedPersonas]
+  );
+
   // Drop stale selection if the persona was removed elsewhere.
   useEffect(() => {
     if (selected?.kind === "proposed" && !selectedProposed) {
@@ -867,21 +1104,22 @@ export function NewSwarmConfirmStep({
       className="flex h-full min-h-0 flex-col overflow-y-auto"
       data-testid="new-swarm-confirm-step"
     >
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8 sm:px-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
+        {header}
         <div className="space-y-2">
           <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
-            Here&rsquo;s who we&rsquo;ll send in.
+            Review user personas and what they&rsquo;ll accomplish
           </h2>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            {personaCount} {personaCount === 1 ? "persona" : "personas"} ·{" "}
-            {journeyCount} {journeyCount === 1 ? "goal" : "goals"}
-            {sessionEstimate > 0
-              ? ` · ${sessionEstimate} new ${
-                  sessionEstimate === 1 ? "session" : "sessions"
-                }`
-              : ""}
-            . Select a persona for details, or remove anything that
-            doesn&rsquo;t fit.
+          <p className="text-sm leading-relaxed text-foreground">
+            {/* The session count is what this screen actually spends, so it
+                leads. Persona and goal counts stay because a slate you are
+                about to prune is easier to judge with its size on screen. */}
+            We&rsquo;ll run {sessionEstimate}{" "}
+            {sessionEstimate === 1 ? "session" : "sessions"} total in this
+            swarm, across {personaCount}{" "}
+            {personaCount === 1 ? "persona" : "personas"} and {journeyCount}{" "}
+            {journeyCount === 1 ? "goal" : "goals"}. Select a persona for
+            details, or remove anything that doesn&rsquo;t fit.
           </p>
           {environmentLabels.length > 0 && proposed.length > 0 ? (
             <p
@@ -928,8 +1166,6 @@ export function NewSwarmConfirmStep({
                       avatarShape={persona.avatarShape}
                       avatarPalette={persona.avatarPalette}
                       onClose={() => setSelected(null)}
-                      onRemove={() => removePersona(persona.key)}
-                      removeLabel={`Remove persona ${persona.name}`}
                       onRemoveGoal={(goalKey) =>
                         removeJourney(persona.key, goalKey)
                       }
@@ -965,6 +1201,9 @@ export function NewSwarmConfirmStep({
                         }))
                       }
                       onAddGoal={() => addGoal(persona.key)}
+                      // In-memory edits already landed as they were typed, so
+                      // this only collapses the editor.
+                      onSave={() => setSelected(null)}
                     />
                   </li>
                 );
@@ -980,11 +1219,12 @@ export function NewSwarmConfirmStep({
                   meta={`${goalCount} ${
                     goalCount === 1 ? "goal" : "goals"
                   } · new`}
-                  selected={false}
+                  muted={selected !== null}
                   onSelect={() =>
                     setSelected({ kind: "proposed", key: persona.key })
                   }
                   onRemove={() => removePersona(persona.key)}
+                  editLabel={`Edit persona ${persona.name}`}
                   removeLabel={`Remove persona ${persona.name}`}
                   avatarShape={persona.avatarShape}
                   avatarPalette={persona.avatarPalette}
@@ -1010,35 +1250,49 @@ export function NewSwarmConfirmStep({
                 if (isSelected) {
                   return (
                     <li key={persona._id}>
-                      <PersonaDetailPanel
-                        seed={persona._id}
-                        name={persona.name}
-                        role={persona.role}
-                        context={personaContext(
-                          persona.notes,
-                          persona.role
-                        )}
-                        goals={(reusedResolved[persona._id]?.goals ?? []).map(
-                          (goal) => ({
-                            key: goal.journeyId,
-                            label: goal.label,
-                            editable: true,
-                          })
-                        )}
-                        graded={reusedResolved[persona._id]?.graded}
-                        loadingGoals={
-                          (reusedResolved[persona._id]?.targets ?? null) ===
-                          null
-                        }
-                        avatarShape={persona.avatarShape}
-                        avatarPalette={persona.avatarPalette}
-                        onClose={() => setSelected(null)}
-                        onRemove={() => removeReused(persona._id)}
-                        removeLabel={`Remove ${persona.name} from this swarm`}
-                        onEditGoal={() =>
-                          onEditExistingPersona(persona._id)
-                        }
-                      />
+                      {(() => {
+                        const goals =
+                          reusedResolved[persona._id]?.goals ?? [];
+                        const draft = reusedDrafts[persona._id];
+                        const goalText = (goal: ReusedGoal) =>
+                          draft?.goals[goal.journeyId] ?? goal.label;
+                        return (
+                          <PersonaDetailPanel
+                            seed={persona._id}
+                            name={draft?.name ?? persona.name}
+                            role={draft?.role ?? persona.role}
+                            context={draft?.notes ?? persona.notes ?? ""}
+                            goals={goals.map((goal) => ({
+                              key: goal.journeyId,
+                              label: goalText(goal),
+                            }))}
+                            graded={reusedResolved[persona._id]?.graded}
+                            loadingGoals={
+                              (reusedResolved[persona._id]?.targets ??
+                                null) === null
+                            }
+                            avatarShape={persona.avatarShape}
+                            avatarPalette={persona.avatarPalette}
+                            onClose={() => discardReused(persona, goals)}
+                            onChangeName={(name) =>
+                              patchReusedDraft(persona, goals, { name })
+                            }
+                            onChangeRole={(role) =>
+                              patchReusedDraft(persona, goals, { role })
+                            }
+                            onChangeContext={(notes) =>
+                              patchReusedDraft(persona, goals, { notes })
+                            }
+                            onChangeGoal={(journeyId, text) =>
+                              patchReusedDraft(persona, goals, {
+                                goal: { journeyId, text },
+                              })
+                            }
+                            onSave={() => void saveReused(persona, goals)}
+                            saving={savingReusedId === persona._id}
+                          />
+                        );
+                      })()}
                     </li>
                   );
                 }
@@ -1046,7 +1300,7 @@ export function NewSwarmConfirmStep({
                   <ReusedPersonaCard
                     key={persona._id}
                     persona={persona}
-                    selected={false}
+                    muted={selected !== null}
                     onSelect={() =>
                       setSelected({ kind: "reused", id: persona._id })
                     }
@@ -1059,14 +1313,29 @@ export function NewSwarmConfirmStep({
           </>
         ) : null}
 
-        <button
-          type="button"
-          onClick={addPersona}
-          data-testid="new-swarm-add-persona"
-          className="self-start text-sm font-medium text-primary hover:text-primary/80"
-        >
-          + Add persona
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={addPersona}
+            data-testid="new-swarm-add-persona"
+            className="text-sm font-medium text-primary hover:text-primary/80"
+          >
+            + Add persona
+          </button>
+          {personasAvailableToAdd.length > 0 ? (
+            // Add-only: what is already attached is dropped from the list, and
+            // detaching is the card's own Remove.
+            <PersonaPickerPopover
+              personas={personasAvailableToAdd}
+              open={addExistingOpen}
+              onOpenChange={setAddExistingOpen}
+              groupLabel="Add existing personas"
+              triggerSize="sm"
+              triggerTestId="new-swarm-confirm-add-existing"
+              mode={{ kind: "add", onAdd: onAddReused }}
+            />
+          ) : null}
+        </div>
 
         {/* Scoring applies to EVERY journey this swarm launches: stamped
             onto created journeys, merged additively into reused ones (their
@@ -1157,7 +1426,15 @@ export function NewSwarmConfirmStep({
           </p>
         ) : null}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-end gap-5 pt-2">
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={launching}
+            onClick={onBack}
+          >
+            Back
+          </Button>
           <Button
             type="button"
             disabled={!canLaunch}
@@ -1181,19 +1458,11 @@ export function NewSwarmConfirmStep({
             {launching ? (
               <>
                 <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Creating &amp; launching…
+                Launching…
               </>
             ) : (
-              "Create & launch"
+              "Launch Swarm"
             )}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={launching}
-            onClick={onBack}
-          >
-            Back
           </Button>
         </div>
       </div>

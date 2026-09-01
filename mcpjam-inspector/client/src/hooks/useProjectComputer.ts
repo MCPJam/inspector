@@ -139,6 +139,18 @@ export function useMintTerminalToken(): (args: {
 }
 
 /**
+ * Mint a short-lived (~60s) BROWSER token authorizing the Browser Panel's
+ * data-plane calls. Separate from the terminal token on purpose: it resolves
+ * the desktop computer, and its `purpose` claim means a terminal token cannot
+ * be replayed to open a live view of someone's screen.
+ */
+export function useMintBrowserToken(): (args: {
+  projectId: string;
+}) => Promise<TerminalTokenResult> {
+  return useAction("projectComputers:mintBrowserToken" as never) as never;
+}
+
+/**
  * Which data plane serves this inspector (GET /api/web/computers/config):
  * itself (`localConfigured` — it holds the vendor key + secrets) or a
  * deployed one (`remoteDataPlaneUrl`). Neither ⇒ computers are unavailable

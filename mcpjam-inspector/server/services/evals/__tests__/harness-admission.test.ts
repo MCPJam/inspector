@@ -6,6 +6,7 @@ import {
   checkEvalHarnessStaticAdmission,
   executionEngineLabel,
   harnessOfHostConfig,
+  hasSelectedMcpServersForAdmission,
 } from "../harness-admission";
 
 /**
@@ -122,9 +123,12 @@ describe("checkEvalHarnessAdmission", () => {
     expect(verdict.reason).not.toContain("hosted case");
   });
 
+  // Codex, not Claude Code: Claude Code can pause on every surface now, so an
+  // approval host is admissible there. Codex cannot pause at all, which is the
+  // host-level refusal this test is about.
   it("reports a HOST-level refusal once, not per case", () => {
     const verdict = checkEvalHarnessAdmission({
-      hostConfig: harnessHost({ requireToolApproval: true }),
+      hostConfig: { harness: "codex", requireToolApproval: true },
       serverIds: ["s1"],
       cases: [
         { title: "one", ...HOSTED_MODEL },
@@ -171,18 +175,18 @@ describe("checkEvalHarnessAdmission", () => {
     expect(verdict.reason).toContain("broker");
   });
 
-  it("refuses a harness that cannot deliver the suite's MCP servers", () => {
-    // An eval suite ALWAYS has servers, so Codex (supportsSelectedMcpServers:
-    // false) can never run one — surfaced as the gate's reason, not as a
-    // half-configured run.
-    const verdict = checkEvalHarnessAdmission({
-      hostConfig: { harness: "codex" },
-      serverIds: ["s1"],
-      cases: [{ title: "a", model: "openai/gpt-5", provider: "openai" }],
-    });
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("MCP servers");
+  it("admits Codex for a suite with MCP servers (host-executed delivery)", () => {
+    // COMP-39 inverts this case. An eval suite ALWAYS has servers, so the old
+    // "Codex cannot deliver MCP servers" refusal meant Codex could never run
+    // ANY eval suite. It now delivers them as host-executed tools, so a Codex
+    // suite is admissible on the same terms as a Claude Code one.
+    expect(
+      checkEvalHarnessAdmission({
+        hostConfig: { harness: "codex" },
+        serverIds: ["s1"],
+        cases: [{ title: "a", model: "openai/gpt-5", provider: "openai" }],
+      })
+    ).toEqual({ ok: true, harness: "codex" });
   });
 });
 
@@ -208,8 +212,10 @@ describe("checkEvalHarnessStaticAdmission", () => {
       })
     ).toEqual({ ok: true });
 
+    // Codex: it cannot pause for approval on any surface. (An approval host on
+    // Claude Code is admitted now — asserted below.)
     const approvalHost = checkEvalHarnessStaticAdmission({
-      hostConfig: harnessHost({ requireToolApproval: true }),
+      hostConfig: { harness: "codex", requireToolApproval: true },
       serverIds: ["s1"],
     });
     expect(approvalHost.ok).toBe(false);
@@ -235,17 +241,55 @@ describe("checkEvalHarnessStaticAdmission", () => {
     expect(verdict.reason).toContain("MCPJam-provided models");
   });
 
-  it("counts PLUGIN-contributed servers toward the MCP gate", () => {
-    // A host whose servers come solely from a plugin would otherwise slip the
-    // rule the gate exists to enforce.
-    const verdict = checkEvalHarnessStaticAdmission({
-      hostConfig: { harness: "codex" },
-      serverIds: [],
-      pluginServerIds: ["plugin-server-1"],
-    });
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("MCP servers");
+  // The rule is asserted DIRECTLY rather than through a refusal, because no
+  // registered harness currently produces one on this arm: the gate reads
+  // `supportsMcpToolApproval` for native delivery (Claude Code — now true) and
+  // `supportsHostExecutedToolApproval` for host-executed (Codex — which never
+  // reaches that arm, since it fails the native-approval check first). Asserting
+  // it through whichever harness happened to refuse is what made this coverage
+  // disappear the moment a capability flipped.
+  it("counts PLUGIN-contributed servers toward the MCP-tool approval gate", () => {
+    // A host whose servers come solely from a plugin must still read as
+    // "has servers" — otherwise it slips the gate entirely.
+    expect(
+      hasSelectedMcpServersForAdmission({
+        serverIds: [],
+        pluginServerIds: ["plugin-server-1"],
+      })
+    ).toBe(true);
+    expect(
+      hasSelectedMcpServersForAdmission({ serverIds: ["s1"] })
+    ).toBe(true);
+    expect(
+      hasSelectedMcpServersForAdmission({ serverIds: [], pluginServerIds: [] })
+    ).toBe(false);
+    expect(hasSelectedMcpServersForAdmission({})).toBe(false);
+  });
+
+  // The end-to-end half that IS still observable: a plugin-only host reaches
+  // the gate and is admitted on a harness that can approve MCP tools. If
+  // plugin servers were dropped on the way in, this would pass for the wrong
+  // reason — so it is a companion to the direct assertion above, not a
+  // replacement for it.
+  it("admits a plugin-only approval host on a harness that can approve MCP tools", () => {
+    expect(
+      checkEvalHarnessStaticAdmission({
+        hostConfig: harnessHost({ requireToolApproval: true }),
+        serverIds: [],
+        pluginServerIds: ["plugin-server-1"],
+      })
+    ).toEqual({ ok: true, harness: "claude-code" });
+  });
+
+  it("an approval host with NO servers at all is not caught by that gate", () => {
+    // The control for the case above: without the plugin servers the same host
+    // passes, so the refusal really did come from counting them.
+    expect(
+      checkEvalHarnessStaticAdmission({
+        hostConfig: { harness: "claude-code", requireToolApproval: true },
+        serverIds: [],
+      })
+    ).toEqual({ ok: true, harness: "claude-code" });
   });
 });
 

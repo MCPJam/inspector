@@ -35,6 +35,7 @@ import {
   syncScenarioBootstrapHash,
   syncScenarioSessionHash,
 } from "@/lib/embedded-preview";
+import { clearScenarioChatTranscript } from "@/lib/scenario-chat-transcript";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/scenario-server-optional";
 import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
 import { useScenarioTurnRating } from "@/hooks/useScenarioTurnRating";
@@ -58,6 +59,7 @@ import {
   getScenarioHostLogo,
   getScenarioShellStyle,
 } from "@/lib/scenario-client-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
 
 interface ScenarioChatPageProps {
   pathToken?: string | null;
@@ -378,11 +380,22 @@ export function ScenarioChatPage({
     writeScenarioSession(nextSession);
   }, []);
 
-  const clearCurrentSession = useCallback(() => {
+  /**
+   * Drop the grant AND the tester's resumable transcript for it. Access loss is
+   * terminal here (`handleHostedAccessRevoked`, or a redeem that no longer
+   * resolves), so leaving the conversation in sessionStorage would offer a
+   * resume for a scenario this visitor can no longer reach. Takes the scenario
+   * id explicitly because the session it belongs to is being torn down in the
+   * same breath.
+   */
+  const clearCurrentSession = useCallback((scenarioId?: string | null) => {
     if (isEmbeddedPreview()) {
       return;
     }
 
+    if (scenarioId) {
+      clearScenarioChatTranscript(scenarioId);
+    }
     clearScenarioSession();
   }, []);
 
@@ -647,7 +660,7 @@ export function ScenarioChatPage({
         } catch (error) {
           if (cancelled) return;
           setSession(null);
-          clearCurrentSession();
+          clearCurrentSession(sessionRef.current?.scenarioId ?? null);
 
           const nextError = isScenarioRouteError(error)
             ? error
@@ -823,7 +836,7 @@ export function ScenarioChatPage({
   const handleHostedAccessRevoked = useCallback(
     (error: HostedAccessErrorDetail) => {
       setSession(null);
-      clearCurrentSession();
+      clearCurrentSession(sessionRef.current?.scenarioId ?? null);
       setRouteError(
         createScenarioRouteError(error.status, error.message, error.code)
       );
@@ -940,8 +953,23 @@ export function ScenarioChatPage({
     [markOAuthRequired]
   );
 
-  const hostStyle = session?.payload.hostStyle ?? "claude";
-  const chatUiOverride = session?.payload.chatUiOverride;
+  // Before the redeem resolves we don't know which host this scenario
+  // emulates. Seeding "claude" made every tester watch a Claude-branded shell
+  // load a Cursor scenario; DEFAULT_HOST_STYLE is MCPJam precisely so
+  // unresolved surfaces don't impersonate a vendor.
+  //
+  // A stored session is no proof of that either. sessionStorage outlives the
+  // page, so a tester who opens a second link redeems scenario B with scenario
+  // A's session still in hand, and the shell wears A's brand for the whole
+  // redemption — the same impersonation, sourced from the last visit instead of
+  // a seed. The session earns the shell only once its own share token is the
+  // one in the address bar; with no token there (the post-redeem strip removed
+  // it) the stored session is all there is, and it is this link's.
+  const sessionForCurrentLink =
+    tokenFromPath && session?.shareToken !== tokenFromPath ? null : session;
+  const hostStyle =
+    sessionForCurrentLink?.payload.hostStyle ?? DEFAULT_HOST_STYLE.id;
+  const chatUiOverride = sessionForCurrentLink?.payload.chatUiOverride;
   const shellStyle = getScenarioShellStyle(hostStyle, themeMode, chatUiOverride);
   const clientLabel = getScenarioHostLabel(hostStyle, chatUiOverride);
   const clientLogoSrc = getScenarioHostLogo(
@@ -1144,14 +1172,34 @@ export function ScenarioChatPage({
                             the scenario's internal name is the author's
                             label for it and means nothing to them. */}
                         <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <img
-                            src={clientLogoSrc}
-                            alt=""
-                            className="size-5 shrink-0 object-contain"
-                          />
-                          <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">
-                            {clientLabel}
-                          </h1>
+                          {sessionForCurrentLink ? (
+                            <>
+                              <img
+                                src={clientLogoSrc}
+                                alt=""
+                                className="size-5 shrink-0 object-contain"
+                              />
+                              <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">
+                                {clientLabel}
+                              </h1>
+                            </>
+                          ) : (
+                            <>
+                              {/* The skeleton is decorative, so the header
+                                  would have no heading at all while the
+                                  redeem is in flight. Name the shell for a
+                                  screen reader without naming a vendor. */}
+                              <h1 className="sr-only">Loading scenario</h1>
+                              {/* Placeholder rather than the default host's
+                                  mark: painting one brand and swapping to
+                                  another once the redeem lands reads as a
+                                  glitch. */}
+                              <div
+                                aria-hidden
+                                className="h-5 w-28 animate-pulse rounded bg-muted"
+                              />
+                            </>
+                          )}
                         </div>
                         <button
                           onClick={handleOpenMcpJam}

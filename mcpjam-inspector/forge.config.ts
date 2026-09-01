@@ -8,6 +8,8 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
+import { assertWsNativeFallback } from "./src/ws-native-fallback.assert";
+import { electronBuildSurface } from "./shared/sentry-config";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -196,7 +198,10 @@ const config: ForgeConfig = {
      * server) is handled by the workflow instead: it IS built by `npm run
      * build`, and uploading it there keeps this hook to the forge-only outputs.
      *
-     * Never throws. A Sentry outage must not fail a signed release.
+     * The sourcemap half never throws — a Sentry outage must not fail a signed
+     * release. `assertWsNativeFallback` deliberately DOES: it guards a
+     * defect that only exists after bundling, and a build that ships it is
+     * worse than a build that fails.
      */
     packageAfterCopy: async (_forgeConfig, buildPath) => {
       const { execFileSync } = await import("node:child_process");
@@ -204,8 +209,21 @@ const config: ForgeConfig = {
         await import("node:fs");
       const fsBits = { existsSync, rmSync, readdirSync, statSync };
 
+      // Before anything best-effort: refuse to pack a main bundle whose `ws`
+      // would reach for the empty optional-peer-dep stub. Runs on every
+      // package/make, costs a grep over already-built output.
+      assertWsNativeFallback(resolve(buildPath, ".vite/build"), {
+        existsSync,
+        readdirSync,
+        statSync,
+        readFileSync,
+      });
+
       // Release name must match what the SDKs init with: `app.getVersion()`
-      // in main, `__APP_VERSION__` in the renderer — both package.json.
+      // in main, `__APP_VERSION__` in the renderer — both package.json. Same
+      // for `--dist` below: `electronBuildSurface(process.platform)` is what
+      // main reports (src/main.ts) and what vite.renderer.config.mts stamps
+      // into the renderer, so all three agree by construction.
       const targets: Array<[string, string]> = [
         [resolve(buildPath, ".vite/build"), "inspector-electron"],
         [resolve(buildPath, ".vite/renderer"), "inspector-client"],
@@ -256,6 +274,7 @@ const config: ForgeConfig = {
             ...cli,
             "upload",
             `--release=${version}`,
+            `--dist=${electronBuildSurface(process.platform)}`,
             "--org=mcpjam-gh",
             `--project=${project}`,
             dir,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import {
   getHarnessAdapter,
@@ -17,10 +18,11 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex: no MCP servers (the CLI never makes an MCP tool model-callable in
-    // the mode the SDK drives), no native plugin install, can't pause for tool
-    // approval — but skills ARE delivered (INS-8), under its own root.
-    expect(a.supportsSelectedMcpServers).toBe(false);
+    // Codex: MCP servers arrive as HOST-EXECUTED tools (the CLI never makes an
+    // MCP tool model-callable in the mode the SDK drives), no native plugin
+    // install, can't pause for tool approval — and skills ARE delivered
+    // (INS-8), under its own root.
+    expect(a.mcpDelivery).toBe("host-executed");
     expect(a.supportsSkills).toBe(true);
     expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
@@ -35,8 +37,15 @@ describe("harness registry", () => {
     // CI, for every registered adapter, before a turn is ever attempted.
     for (const id of registeredHarnessIds()) {
       const adapter = getHarnessAdapter(id);
-      if (adapter.supportsSelectedMcpServers) {
+      // The two MCP delivery modes are mutually exclusive BY TYPE (the native
+      // arm requires `deliverMcpServers`, the host-executed arm forbids it), so
+      // this asserts the runtime shape matches the declared mode — the check
+      // the compiler makes for real adapters, made again for a hand-edited one.
+      if (adapter.mcpDelivery === "native") {
         expect(adapter.deliverMcpServers).toBeTypeOf("function");
+      } else {
+        expect(adapter.mcpDelivery).toBe("host-executed");
+        expect(adapter.deliverMcpServers).toBeUndefined();
       }
       if (adapter.supportsPluginBundles) {
         expect(adapter.deliverPluginBundles).toBeTypeOf("function");
@@ -122,6 +131,12 @@ describe("harness registry", () => {
   });
 
   it("patches the Claude Code bridge bootstrap compatibility gaps", async () => {
+    // The fixture quotes the CURRENT installed bridge's anchor sites VERBATIM
+    // (from @ai-sdk/harness-claude-code dist/bridge/index.mjs on the 1.0.x
+    // stable line): every needle the patcher matches must appear here exactly
+    // as it does in the real bundle, or this test passes while the real patch
+    // throws. The installed-package test below is the drift alarm; this one
+    // pins WHAT the patch does to a bridge shaped like today's.
     const harness = patchClaudeCodeHarnessBootstrap({
       getBootstrap: async () => ({
         harnessId: "claude-code",
@@ -129,48 +144,66 @@ describe("harness registry", () => {
         files: [
           {
             path: "/tmp/harness/claude-code/bridge.mjs",
-            content: `async function drive() {
+            content: `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
+function createEmitStreamEvent({
+  state,
+  emit,
+  emitTerminalError
+}) {
   let streamStarted = false;
-  const partialBlocks = new Map();
+  return (msg) => {
+    const type = msg.type;
+    if (msg.parent_tool_use_id != null) {
+      return;
+    }
+    if (type === "stream_event") {
+      handleStreamEvent({
+        event: msg.event,
+        state,
+        send: emit
+      });
+      return;
+    }
+    if (type === "assistant" && msg.message?.content) {
+      let opensStep = false;
+      for (const block of msg.message.content) {
+        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+          opensStep = true;
+          emit({ type: "tool-call" });
+        }
+      }
+      if (opensStep) {
+        state.stepOpen = true;
+      }
+      return;
+    }
+  };
+}
+async function drive() {
   const permissionOptions = createPermissionOptions({
     start,
     turn,
-    emit,
-    nativeToolCallNames,
-    approvalRequestedToolUseIds
+    emit
   });
   const q = claudeSdk.query({
     options: {
       ...start.model ? { model: start.model } : {},
       ...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},
+      ...permissionOptions,
+      mcpServers,
+      cwd: workdir,
+      abortSignal: abortCtl.signal
     }
   });
-  for await (const msg of q) {
-    const type = msg.type;
-    if (type === "stream_event") {
-        handleStreamEvent(msg.event, partialBlocks, emit);
-        continue;
-      }
-    if (type === "assistant" && msg.message?.content) {
-      for (const block of msg.message.content) {
-          if (block.type === "tool_use" && typeof block.id === "string") {
-          emit({ type: "tool-call" });
-        }
-      }
-    }
-    if (type === "result") {
-      const emptyResult = !msg.result?.trim?.();
-          if (emptyResult && observedTerminalError) {
-        emitTerminalError(observedTerminalError);
-      }
-    }
-  }
 }
-const toUserMessage = (text) => ({
+const toUserMessage = (options) => ({
   type: "user",
-    message: {
-      role: "user"
-    }
+  message: {
+    role: "user",
+    content: [{ type: "text", text: options.text }]
+  },
+  parent_tool_use_id: null,
+  uuid: options.messageId
 });`,
           },
         ],
@@ -182,15 +215,36 @@ const toUserMessage = (text) => ({
     const bridge = bootstrap?.files.find((file) =>
       file.path.endsWith("/bridge.mjs")
     );
+    // The adapter sets `parent_tool_use_id: null` on outbound user messages
+    // ITSELF since the stable line; the patcher no longer injects it, it
+    // VERIFIES the string is still present (a future adapter dropping it would
+    // silently stop filtering sub-agent streams, so the patcher throws).
     expect(bridge?.content).toContain("parent_tool_use_id: null");
     expect(bridge?.content).toContain("emitAssistantTextFallback");
     expect(bridge?.content).toContain("streamedAssistantText = true");
     expect(bridge?.content).toContain("emitAssistantTextFallback(block.text)");
     expect(bridge?.content).toContain("emitAssistantTextFallback(msg.result)");
-    expect(bridge?.content).toContain("gatewayModelOverrideSettings");
+    // The result fallback lives INSIDE createEmitStreamEvent now (stable's
+    // turn loop routes the terminal `result` message through it), gated on the
+    // success subtype so an error result never masquerades as assistant text.
+    expect(bridge?.content).toContain(
+      'type === "result" && msg.subtype === "success"'
+    );
+    // Fallback text must open a step (mirroring the adapter's own
+    // structured-output path) or the emitted parts are dropped, and its ids
+    // are namespaced so they can never collide with adapter-generated ids.
+    expect(bridge?.content).toContain("state.stepOpen = true;");
+    expect(bridge?.content).toContain("mcpjam-fallback-");
+    expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
     expect(bridge?.content).toContain("anthropic/claude-");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
+    // The overrides MERGE over `permissionOptions.settings` (the adapter's own
+    // settings, spread last into the query options): injecting a bare
+    // `settings` key earlier in the literal would be silently clobbered.
+    expect(bridge?.content).toContain(
+      "settings: { ...(permissionOptions.settings ?? {})"
+    );
     // Fallback dedup only suppresses an EXACT repeat of the immediately prior
     // fallback (e.g. msg.result echoing the last text block) — never a full
     // history Set, which would drop legitimate non-adjacent repeats, and
@@ -200,10 +254,37 @@ const toUserMessage = (text) => ({
     expect(bridge?.content).toContain("let lastEmittedFallbackText");
     expect(bridge?.content).toContain("normalized === lastEmittedFallbackText");
     expect(bridge?.content).not.toContain("emittedAssistantTextFallbacks");
-    // Gateway compat: the CLI must omit output_config.effort (the gateway's
-    // Anthropic-compat schema 400s on it).
-    expect(bridge?.content).toContain(
-      'process.env.CLAUDE_CODE_EFFORT_LEVEL ??= "unset"'
+    // Gateway compat for output_config.effort moved OUT of the bridge patch:
+    // stable's createClaudeCode takes a first-class `env`, so the registry
+    // passes CLAUDE_CODE_EFFORT_LEVEL as configuration (see createHarness)
+    // instead of rewriting bridge source. The patched bridge must NOT carry
+    // the old `??=` write — reintroducing it would shadow the configured env.
+    expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
+  });
+
+  it("throws loudly if the adapter stops setting parent_tool_use_id itself", async () => {
+    // The retired injection patch became an assertion: a bridge without the
+    // string means the sub-agent guard (and the adapter's own user-message
+    // stamping) changed shape, and shipping it unverified would let a
+    // sub-agent's stream merge into the parent transcript.
+    const harness = patchClaudeCodeHarnessBootstrap({
+      getBootstrap: async () => ({
+        harnessId: "claude-code",
+        bootstrapDir: "/tmp/harness/claude-code",
+        files: [
+          {
+            path: "/tmp/harness/claude-code/bridge.mjs",
+            // Already-patched markers so the group patches are skipped and
+            // only the verification runs — isolating the assertion under test.
+            content: `emitAssistantTextFallback; gatewayModelOverrideSettingsFor;`,
+          },
+        ],
+        commands: [],
+      }),
+    } as any);
+
+    await expect(harness.getBootstrap?.()).rejects.toThrow(
+      "Unable to verify Claude Code bridge bootstrap: user-message shape changed"
     );
   });
 
@@ -211,11 +292,10 @@ const toUserMessage = (text) => ({
     const harness = patchClaudeCodeHarnessBootstrap(
       createClaudeCode({
         model: "haiku",
+        // Stable's environment auth arm (the canary `gateway` object is gone).
         auth: {
-          gateway: {
-            apiKey: "test",
-            baseUrl: "https://ai-gateway.vercel.sh/v1",
-          },
+          AI_GATEWAY_API_KEY: "test",
+          AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
         },
       }) as any
     );
@@ -224,17 +304,110 @@ const toUserMessage = (text) => ({
     const bridge = bootstrap?.files.find((file) =>
       file.path.endsWith("/bridge.mjs")
     );
+    // The adapter's own user-message stamping (verified, no longer injected).
     expect(bridge?.content).toContain("parent_tool_use_id: null");
     expect(bridge?.content).toContain("emitAssistantTextFallback");
-    expect(bridge?.content).toContain("gatewayModelOverrideSettings");
+    expect(bridge?.content).toContain(
+      'type === "result" && msg.subtype === "success"'
+    );
+    expect(bridge?.content).toContain("mcpjam-fallback-");
+    expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     expect(bridge?.content).toContain(
-      'process.env.CLAUDE_CODE_EFFORT_LEVEL ??= "unset"'
+      "settings: { ...(permissionOptions.settings ?? {})"
     );
+    // The effort-level compat knob is createClaudeCode `env` configuration
+    // now, not a bridge-source rewrite (the installed bridge has no reference
+    // at all, so a reappearing one means the patch regressed to the old form).
+    expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
   });
 
-  it("Claude Code attributes mcp__ tool names; Codex passes them through", () => {
+  it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {
+    const harness = patchClaudeCodeHarnessBootstrap(
+      createClaudeCode({
+        model: "haiku",
+        auth: {
+          AI_GATEWAY_API_KEY: "test",
+          AI_GATEWAY_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+        },
+      }) as any
+    );
+
+    const bootstrap = await harness.getBootstrap?.();
+    const npmrc = bootstrap?.files.find((file) =>
+      file.path.endsWith("/.npmrc")
+    );
+    const workspaces = bootstrap?.files.filter((file) =>
+      file.path.endsWith("/pnpm-workspace.yaml")
+    );
+
+    // Without this, pnpm skips `@anthropic-ai/claude-code`'s postinstall and
+    // the CLI never exists — the bootstrap dies before a single turn.
+    //
+    // TWO layers, one file each, and neither is redundant: the stable adapter
+    // ships its OWN `pnpm-workspace.yaml` pinning the build by exact version
+    // (`allowBuilds`, the pnpm 11 spelling), and our `.npmrc` carries the
+    // pnpm 10 spelling — the computer template installs pnpm UNPINNED, so a
+    // not-yet-rebuilt box still resolves pnpm 10, which reads none of its
+    // settings from `pnpm-workspace.yaml`.
+    expect(npmrc?.path).toBe(`${bootstrap?.bootstrapDir}/.npmrc`);
+    expect(npmrc?.content).toContain("dangerously-allow-all-builds=true");
+    // Exactly ONE pnpm-workspace.yaml, and it is the ADAPTER's version-pinned
+    // allow-list — ours is only a fallback for an adapter that ships none, and
+    // appending a second entry for the same path would write the file twice
+    // with conflicting content.
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces?.[0]?.path).toBe(
+      `${bootstrap?.bootstrapDir}/pnpm-workspace.yaml`
+    );
+    expect(workspaces?.[0]?.content).toContain("allowBuilds:");
+    expect(workspaces?.[0]?.content).toMatch(
+      /'@anthropic-ai\/claude-code@[\d.]+': true/
+    );
+    expect(workspaces?.[0]?.content).not.toContain("dangerouslyAllowAllBuilds");
+
+    // The second, load-bearing layer for pnpm 10: even if the allow-list
+    // setting is renamed again, a skipped build must stay a WARNING so the
+    // install step exits zero and the version check below is what reports the
+    // broken CLI.
+    expect(npmrc?.content).toContain("strict-dep-builds=false");
+    // Recent adapter versions retain a conditional `install.cjs` rescue for
+    // older images while still verifying that the CLI materialized. If the
+    // rescue is present it must be guarded by the file check, so a missing
+    // optional postinstall cannot make the bootstrap fail before `--version`.
+    const installCommand = bootstrap?.commands.find((command) =>
+      command.command.includes("install.cjs")
+    );
+    if (installCommand) {
+      expect(installCommand.command).toContain(
+        "if [ -f node_modules/@anthropic-ai/claude-code/install.cjs ]; then"
+      );
+    }
+    expect(
+      bootstrap?.commands.some((command) =>
+        command.command.includes("claude --version")
+      )
+    ).toBe(true);
+
+    // It has to sit BESIDE the adapter's manifest, not inside it: the install
+    // runs `--frozen-lockfile`, so amending `package.json` to carry
+    // `onlyBuiltDependencies` would fail the lockfile check. Both halves of
+    // that reasoning are pinned here so a future edit cannot quietly break one.
+    const manifest = bootstrap?.files.find((file) =>
+      file.path.endsWith("/package.json")
+    );
+    if (manifest) {
+      expect(JSON.parse(manifest.content).pnpm).toBeUndefined();
+    }
+    expect(
+      bootstrap?.commands.some((command) =>
+        command.command.includes("--frozen-lockfile")
+      )
+    ).toBe(true);
+  });
+
+  it("Claude Code attributes mcp__ tool names", () => {
     const keyToServerId = { weather: "srv_123" };
     expect(
       getHarnessAdapter("claude-code").parseToolName(
@@ -242,13 +415,8 @@ const toUserMessage = (text) => ({
         keyToServerId
       )
     ).toEqual({ serverId: "srv_123", toolName: "forecast" });
-    // Codex has no MCP namespacing — names pass through as native tools.
-    expect(
-      getHarnessAdapter("codex").parseToolName(
-        "mcp__weather__forecast",
-        keyToServerId
-      )
-    ).toEqual({ toolName: "mcp__weather__forecast" });
+    // Codex used to pass these through verbatim (it had no MCP tools to name).
+    // It now uses the SAME scheme — see the parity block below.
   });
 
   it("isHarnessId narrows registered ids and rejects junk", () => {
@@ -291,9 +459,80 @@ const toUserMessage = (text) => ({
       expect(JSON.parse(writes[0]!.content)).toEqual(mcpJson);
     });
 
-    it("Codex declares no MCP delivery (no model-callable MCP tools)", () => {
-      expect(getHarnessAdapter("codex").deliverMcpServers).toBeUndefined();
-      expect(getHarnessAdapter("codex").supportsSelectedMcpServers).toBe(false);
+    it("Codex writes no sandbox MCP config — its servers are host-executed", () => {
+      // The COMP-39 spike proved `~/.codex/config.toml` `[mcp_servers]` merges
+      // cleanly and is still a silent no-op (the model never gets a callable
+      // tool). Writing it anyway would be the trap; the relay is the mechanism.
+      const codex = getHarnessAdapter("codex");
+      expect(codex.mcpDelivery).toBe("host-executed");
+      expect(codex.deliverMcpServers).toBeUndefined();
+    });
+
+    it("Claude Code's tools are NOT projected as host-executed (no double exposure)", () => {
+      // The mutual-exclusion invariant, from the consumer's side: the native
+      // adapter must stay on the `.mcp.json` path, so `runHarnessTurn` never
+      // adds MCP tools to its host-executed tool set and the model never sees
+      // the same tool twice.
+      expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("native");
+    });
+
+    it("every adapter's delivery mode IS the shared declaration the client reads", () => {
+      // `@/shared/harness-mcp-delivery` is the one declaration of which mode a
+      // harness uses, because the CLIENT has to derive Behavior-tab promises
+      // from it (a tool-construction-time knob like `respectToolVisibility`
+      // bites on host-executed delivery and cannot on native) and cannot import
+      // this server-only registry.
+      //
+      // This is the anti-drift guard for that split. If someone flips an
+      // adapter's `mcpDelivery` back to a literal — or changes the shared map
+      // without the adapters — the host editor would start disabling a control
+      // that works (or enabling one that doesn't) with no compile error. Fail
+      // here instead.
+      for (const id of registeredHarnessIds()) {
+        expect(getHarnessAdapter(id).mcpDelivery).toBe(
+          HARNESS_MCP_DELIVERY[id]
+        );
+      }
+      // …and the shared map covers exactly the SDK's harness ids, so a new
+      // harness cannot get an adapter without a delivery declaration.
+      expect(Object.keys(HARNESS_MCP_DELIVERY).sort()).toEqual(
+        [...HARNESS_IDS].sort()
+      );
+    });
+  });
+
+  describe("parseToolName (cross-harness attribution parity)", () => {
+    const keyToServerId = { weather: "srv-weather" };
+
+    it("both harnesses resolve mcp__<server>__<tool> to the same identity", () => {
+      // Eval assertions and trace spans key off `{ serverId, toolName }`. A
+      // Codex run must attribute a relayed call exactly as a Claude Code run
+      // attributes the native one, or the same suite scores differently per
+      // harness for reasons that have nothing to do with the server.
+      for (const id of registeredHarnessIds()) {
+        expect(
+          getHarnessAdapter(id).parseToolName(
+            "mcp__weather__get_forecast",
+            keyToServerId
+          )
+        ).toEqual({ serverId: "srv-weather", toolName: "get_forecast" });
+      }
+    });
+
+    it("a harness-native tool name keeps no server attribution", () => {
+      for (const id of registeredHarnessIds()) {
+        expect(
+          getHarnessAdapter(id).parseToolName("bash", keyToServerId)
+        ).toEqual({ toolName: "bash" });
+      }
+    });
+
+    it("an unknown server key is returned verbatim, never fabricated", () => {
+      for (const id of registeredHarnessIds()) {
+        expect(
+          getHarnessAdapter(id).parseToolName("mcp__ghost__do_thing", {})
+        ).toEqual({ toolName: "mcp__ghost__do_thing" });
+      }
     });
   });
 
@@ -343,24 +582,21 @@ const toUserMessage = (text) => ({
 });
 
 describe("bootstrap recipes are auth-independent", () => {
-  // Load-bearing for the prewarm ordering. A harness turn installs its runtime
-  // BEFORE the broker locks the box's egress, using a runtime built with a
-  // placeholder credential — the real one does not exist yet. The framework
-  // keys the "already installed" marker on a hash of the recipe's file
-  // contents, so if the recipe ever varied with auth, the prewarmed marker
-  // would not match the one the streaming turn looks for. The turn would then
-  // re-run the bootstrap under the egress lock, where it cannot reach the
-  // package registry — the original failure, silently restored.
+  // Load-bearing for the in-stream bootstrap. A harness turn installs its
+  // runtime inside the sandbox after the broker starts, using a runtime built
+  // with dummy broker creds. The framework keys the "already installed" marker
+  // on a hash of the recipe's file contents, so if the recipe ever varied with
+  // auth, a resume would re-run the bootstrap against a different hash. The
+  // recipe must stay auth-independent so the in-stream bootstrap is
+  // attributable to the adapter, not to whichever credential happened to be
+  // present when the files were hashed.
+  // The stable line's flat ENVIRONMENT auth arm — one env map serves both
+  // adapters (each reads only its own variables).
   const auth = (suffix: string) => ({
-    anthropic: {
-      apiKey: `anthropic-key-${suffix}`,
-      authToken: `anthropic-token-${suffix}`,
-      baseUrl: `https://${suffix}.invalid`,
-    },
-    openaiCompatible: {
-      apiKey: `openai-key-${suffix}`,
-      baseUrl: `https://${suffix}.invalid`,
-    },
+    ANTHROPIC_AUTH_TOKEN: `anthropic-token-${suffix}`,
+    ANTHROPIC_BASE_URL: `https://${suffix}.invalid`,
+    CODEX_API_KEY: `openai-key-${suffix}`,
+    OPENAI_BASE_URL: `https://${suffix}.invalid`,
   });
 
   for (const id of ["claude-code", "codex"] as const) {
@@ -390,7 +626,7 @@ describe("bootstrap recipes are auth-independent", () => {
 
   it("claude-code's patched bridge differs from the unpatched one", () => {
     // The other half of the same invariant: the registry rewrites the bridge
-    // asset, so prewarming a bare `createClaudeCode()` would compute a
+    // asset, so bootstrapping a bare `createClaudeCode()` would compute a
     // different hash than the turn does. This test is what makes that
     // divergence visible if anyone reaches for the bare constructor.
     // Dual-`ai` boundary cast, as everywhere else this constructor is used.

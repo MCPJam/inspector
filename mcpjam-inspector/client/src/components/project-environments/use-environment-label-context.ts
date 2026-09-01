@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import { useConvexAuth } from "convex/react";
+import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
+import { useAvailableModels } from "@/hooks/use-available-models";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
@@ -55,8 +57,17 @@ export function useEnvironmentLabelContext(
   const hasPinnedImage = (environments ?? []).some(
     (environment) => environment.computerEnvironmentId
   );
+  const hasModelOverride = (environments ?? []).some(
+    (environment) => environment.modelId
+  );
   const sandboxImages = useSandboxImages(
     computersEnabled && hasPinnedImage ? normalizedProjectId : null
+  );
+  // Query-budget: only pay for the catalog when a loaded row actually
+  // carries a model override. Passing no projectId still resolves the
+  // active-project catalog, so skip the hook's project scope unless needed.
+  const { availableModels } = useAvailableModels(
+    hasModelOverride ? { projectId: normalizedProjectId } : { projectId: null }
   );
 
   const hostNamesById = useMemo(
@@ -70,13 +81,25 @@ export function useEnvironmentLabelContext(
       ),
     [sandboxImages]
   );
+  const modelNamesById = useMemo(() => {
+    if (!hasModelOverride) return undefined;
+    return new Map(
+      availableModels.map((model) => [
+        String(model.id),
+        compactModelLabel(model.name) || String(model.id),
+      ])
+    );
+  }, [availableModels, hasModelOverride]);
 
   return useMemo(
     () => ({
       hostName: (hostId: string) => hostNamesById.get(hostId),
       imageName: (imageId: string) => imageNamesById.get(imageId),
       computersEnabled,
+      ...(modelNamesById
+        ? { modelName: (modelId: string) => modelNamesById.get(modelId) }
+        : {}),
     }),
-    [hostNamesById, imageNamesById, computersEnabled]
+    [hostNamesById, imageNamesById, computersEnabled, modelNamesById]
   );
 }

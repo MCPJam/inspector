@@ -268,40 +268,30 @@ describe("RegistryTab", () => {
   });
 
   describe("visibility without authentication", () => {
-    it("renders registry servers when not authenticated", () => {
-      const server = createMockServer();
-      mockHookReturn = {
-        catalogCards: [toCatalogCard([server])],
-        categories: ["Productivity"],
-        isLoading: false,
-        connect: mockConnect,
-        disconnect: mockDisconnect,
-        toggleStar: mockToggleStar,
-      };
+    it("renders directory servers when not authenticated", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer({ displayName: "Linear" })],
+      });
 
       render(<RegistryTab {...defaultProps} isAuthenticated={false} />);
 
       expect(screen.getByText("Registry")).toBeInTheDocument();
-      expect(screen.getByText("Test Server")).toBeInTheDocument();
-      expect(screen.getByText("TestCo")).toBeInTheDocument();
+      expect(screen.getByText("Linear")).toBeInTheDocument();
       expect(screen.getByText("Connect")).toBeInTheDocument();
     });
 
     it("shows header and description when not authenticated", () => {
-      mockHookReturn = {
-        catalogCards: [toCatalogCard([createMockServer()])],
-        categories: ["Productivity"],
-        isLoading: false,
-        connect: mockConnect,
-        disconnect: mockDisconnect,
-        toggleStar: mockToggleStar,
-      };
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
 
       render(<RegistryTab {...defaultProps} isAuthenticated={false} />);
 
       expect(screen.getByText("Registry")).toBeInTheDocument();
       expect(
-        screen.getByText("Pre-configured MCP servers you can connect quickly.")
+        screen.getByText(
+          "Servers your organization has shared, plus connector directories you can connect from."
+        )
       ).toBeInTheDocument();
     });
   });
@@ -388,15 +378,10 @@ describe("RegistryTab", () => {
   });
 
   describe("loading state", () => {
-    it("shows loading skeleton when data is loading", () => {
-      mockHookReturn = {
-        catalogCards: [],
-        categories: [],
-        isLoading: true,
-        connect: mockConnect,
-        disconnect: mockDisconnect,
-        toggleStar: mockToggleStar,
-      };
+    it("shows loading skeleton when the directory is loading", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        isLoadingFirstPage: true,
+      });
 
       const { container } = render(<RegistryTab {...defaultProps} />);
 
@@ -410,10 +395,15 @@ describe("RegistryTab", () => {
       render(<RegistryTab {...defaultProps} />);
 
       expect(screen.getByText("No servers available")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Share a server with your organization, or search a connector directory."
+        )
+      ).toBeInTheDocument();
     });
   });
 
-  describe("auth badges", () => {
+  describe.skip("auth badges (curated catalog retired)", () => {
     it("shows OAuth badge with key icon for OAuth servers", () => {
       mockHookReturn = {
         catalogCards: [
@@ -455,7 +445,7 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("server cards", () => {
+  describe.skip("server cards (curated catalog retired)", () => {
     it("renders server cards with correct information", () => {
       const server = createMockServer({
         displayName: "Linear",
@@ -686,7 +676,7 @@ describe("RegistryTab", () => {
       expect(mockSetQuery).toHaveBeenCalledWith("linear");
     });
 
-    it("hides nothing itself — overlap filtering is the hook's job", () => {
+    it("shows directory rows even when a leftover overlap flag is set", () => {
       // The hook hands back only non-overlapping rows; a card that reached the
       // component is a card that should render. Asserting that here keeps the
       // canonical-wins rule in ONE place instead of two that can disagree.
@@ -717,7 +707,7 @@ describe("RegistryTab", () => {
       expect(mockLoadMore).toHaveBeenCalled();
     });
 
-    it("an empty curated catalog does not blank the directory", () => {
+    it("an empty organization shelf does not blank the directory", () => {
       // The two halves have independent backends. A per-SCREEN early return
       // (what this used to be) meant one empty catalog hid a directory that
       // had loaded perfectly well.
@@ -1231,7 +1221,7 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("connect/disconnect actions", () => {
+  describe.skip("connect/disconnect actions (curated catalog retired)", () => {
     it("calls connect when Connect button is clicked", async () => {
       const server = createMockServer();
       mockHookReturn = {
@@ -1295,7 +1285,7 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("pending quick connect cleanup", () => {
+  describe.skip("pending quick connect cleanup (curated catalog retired)", () => {
     it("clears registry pending when server auth fails so the card leaves Connecting", async () => {
       const server = createMockServer({
         displayName: "PostHog",
@@ -1387,7 +1377,7 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("auto-redirect to Playground", () => {
+  describe.skip("auto-redirect to Playground (curated catalog retired)", () => {
     it("navigates to playground when a pending server becomes connected", async () => {
       const server = createMockServer({ displayName: "Asana" });
       mockHookReturn = {
@@ -1519,7 +1509,7 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("consolidated cards — dual-type servers", () => {
+  describe.skip("consolidated cards — dual-type servers (curated catalog retired)", () => {
     function createFullServer(
       overrides: Partial<EnrichedRegistryServer> & {
         _id: string;
@@ -1809,63 +1799,11 @@ describe("RegistryTab", () => {
       return response;
     }
 
-    it("connectRegistryServer drives the same handleConnect path the button uses", async () => {
-      renderWithCards([toCatalogCard([createMockServer()])]);
-
-      const response = await dispatch({
-        type: "connectRegistryServer",
-        payload: { serverName: "Test Server" },
+    it("connectRegistryServer rejects unknown names as unknown_server", async () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer({ isAuthless: true })],
       });
-
-      expect(response).toMatchObject({
-        status: "success",
-        result: { status: "connecting", serverName: "Test Server" },
-      });
-      expect(mockConnect).toHaveBeenCalledWith(
-        expect.objectContaining({ _id: "server_1" })
-      );
-      // Same side effects as a click: the quick-connect pending is written.
-      expect(readPendingQuickConnect()).toMatchObject({
-        serverName: "Test Server",
-        sourceTab: "registry",
-      });
-    });
-
-    it("connectRegistryServer reports authorization_required for OAuth servers instead of starting the flow", async () => {
-      renderWithCards([
-        toCatalogCard([
-          createMockServer({
-            transport: {
-              transportType: "http",
-              url: "https://mcp.test.com/sse",
-              useOAuth: true,
-            },
-          }),
-        ]),
-      ]);
-
-      const response = await dispatch({
-        type: "connectRegistryServer",
-        payload: { serverName: "Test Server" },
-      });
-
-      expect(response).toMatchObject({
-        status: "success",
-        result: { status: "authorization_required" },
-      });
-      // The redirect-triggering path must NOT run from an agent tool call.
-      expect(mockConnect).not.toHaveBeenCalled();
-      expect(readPendingQuickConnect()).toBeNull();
-    });
-
-    it("connectRegistryServer resolves registry names and rejects unknown ones as unknown_server", async () => {
-      renderWithCards([toCatalogCard([createMockServer()])]);
-
-      const byRegistryName = await dispatch({
-        type: "connectRegistryServer",
-        payload: { serverName: "com.test.server" },
-      });
-      expect(byRegistryName.status).toBe("success");
+      render(<RegistryTab {...defaultProps} />);
 
       const unknown = await dispatch({
         type: "connectRegistryServer",
@@ -1877,150 +1815,55 @@ describe("RegistryTab", () => {
       });
     });
 
-    it("connectRegistryServer forces an explicit variant on dual-type cards", async () => {
-      renderWithCards(dualTypeCards());
-
-      const ambiguous = await dispatch({
-        type: "connectRegistryServer",
-        payload: { serverName: "Asana" },
+    it("disconnectRegistryServer and toggleRegistryStar are retired with the curated catalog", async () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer({ isAuthless: true })],
       });
-      expect(ambiguous).toMatchObject({
+      render(<RegistryTab {...defaultProps} />);
+
+      const disconnect = await dispatch({
+        type: "disconnectRegistryServer",
+        payload: { serverName: "Linear" },
+      });
+      expect(disconnect).toMatchObject({
         status: "error",
-        error: { code: "invalid_request" },
-      });
-      expect(mockConnect).not.toHaveBeenCalled();
-
-      const explicit = await dispatch({
-        type: "connectRegistryServer",
-        payload: { serverName: "Asana", variant: "app" },
-      });
-      expect(explicit).toMatchObject({
-        status: "success",
-        result: { serverName: "Asana (App)", status: "connecting" },
-      });
-      expect(mockConnect).toHaveBeenCalledWith(
-        expect.objectContaining({ _id: "asana-app" })
-      );
-    });
-
-    it("connectRegistryServer is a no-op report when the server is already connected", async () => {
-      renderWithCards([
-        toCatalogCard([createMockServer({ connectionStatus: "connected" })]),
-      ]);
-
-      const response = await dispatch({
-        type: "connectRegistryServer",
-        payload: { serverName: "Test Server" },
+        error: { code: "unsupported_in_mode" },
       });
 
-      expect(response).toMatchObject({
-        status: "success",
-        result: { status: "already_connected" },
-      });
-      expect(mockConnect).not.toHaveBeenCalled();
-    });
-
-    it("disconnectRegistryServer disconnects the active variant via the button's path", async () => {
-      renderWithCards([
-        toCatalogCard([createMockServer({ connectionStatus: "connected" })]),
-      ]);
-
-      const response = await dispatch({
-        type: "disconnectRegistryServer",
-        payload: { serverName: "Test Server" },
-      });
-
-      expect(response).toMatchObject({
-        status: "success",
-        result: { status: "disconnected", serverName: "Test Server" },
-      });
-      expect(mockDisconnect).toHaveBeenCalledWith(
-        expect.objectContaining({ _id: "server_1" })
-      );
-    });
-
-    it("disconnectRegistryServer is idempotent: not-connected reports already_disconnected", async () => {
-      renderWithCards([toCatalogCard([createMockServer()])]);
-
-      const response = await dispatch({
-        type: "disconnectRegistryServer",
-        payload: { serverName: "Test Server" },
-      });
-
-      // idempotentHint: true — a retry after disconnect is the desired end
-      // state, not an error.
-      expect(response).toMatchObject({
-        status: "success",
-        result: { status: "already_disconnected" },
-      });
-      expect(mockDisconnect).not.toHaveBeenCalled();
-    });
-
-    it("toggleRegistryStar sets the target state through toggleStar, and no-ops when already there", async () => {
-      const card = toCatalogCard([createMockServer()]);
-      renderWithCards([card]);
-
-      const starred = await dispatch({
+      const star = await dispatch({
         type: "toggleRegistryStar",
-        payload: { serverName: "Test Server", starred: true },
+        payload: { serverName: "Linear", starred: true },
       });
-      expect(starred).toMatchObject({
-        status: "success",
-        // toggleStar swallows failures (rolls back), so the handler reports the
-        // action as REQUESTED, not confirmed — verify via snapshot.
-        result: { status: "star_requested", requestedStarred: true },
+      expect(star).toMatchObject({
+        status: "error",
+        error: { code: "unsupported_in_mode" },
       });
-      expect(mockToggleStar).toHaveBeenCalledWith(card.registryCardKey);
-
-      mockToggleStar.mockClear();
-      const unchanged = await dispatch({
-        type: "toggleRegistryStar",
-        payload: { serverName: "Test Server", starred: false },
-      });
-      expect(unchanged).toMatchObject({
-        status: "success",
-        result: { status: "unchanged", starred: false },
-      });
-      expect(mockToggleStar).not.toHaveBeenCalled();
     });
 
-    it("snapshot reports redacted state: names and statuses, never transport URLs", async () => {
-      renderWithCards([
-        toCatalogCard([
-          createMockServer({
-            transport: {
-              transportType: "http",
-              url: "https://mcp.test.com/sse",
-              useOAuth: true,
-            },
-          }),
-        ]),
-      ]);
+    it("snapshot reports redacted directory state, never transport URLs", async () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer({ isAuthless: true })],
+      });
+      render(<RegistryTab {...defaultProps} />);
 
       const snapshot = await readSurfaceSnapshot("registry");
       expect(snapshot).toMatchObject({
         ok: true,
         data: {
-          totalServers: 1,
-          servers: [
-            expect.objectContaining({
-              name: "Test Server",
-              registryName: "com.test.server",
-              requiresOAuth: true,
-              starred: false,
-              variants: [{ status: "not_connected" }],
-            }),
-          ],
+          directory: expect.objectContaining({
+            loadedCount: 1,
+            visible: [expect.objectContaining({ name: "Linear" })],
+          }),
         },
       });
       expect(JSON.stringify(snapshot)).not.toContain("https://");
     });
 
-    it("connectRegistryServer resolves a DIRECTORY entry when curated has no match", async () => {
+    it("connectRegistryServer resolves a DIRECTORY entry", async () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer({ isAuthless: true })],
       });
-      renderWithCards([toCatalogCard([createMockServer()])]);
+      render(<RegistryTab {...defaultProps} />);
 
       const response = await dispatch({
         type: "connectRegistryServer",
@@ -2032,23 +1875,6 @@ describe("RegistryTab", () => {
         result: { status: "connecting", serverName: "Linear" },
       });
       await waitFor(() => expect(mockDirectoryConnect).toHaveBeenCalled());
-    });
-
-    it("a curated card WINS over its directory twin", async () => {
-      // Canonical-wins is the whole de-duplication rule; resolving the other
-      // way round would install the mirrored copy of a server we curate.
-      mockDirectoryReturn = directoryHookReturn({
-        items: [createDirectoryServer({ displayName: "Test Server" })],
-      });
-      renderWithCards([toCatalogCard([createMockServer()])]);
-
-      await dispatch({
-        type: "connectRegistryServer",
-        payload: { serverName: "Test Server" },
-      });
-
-      expect(mockConnect).toHaveBeenCalled();
-      expect(mockDirectoryConnect).not.toHaveBeenCalled();
     });
 
     it("reports endpoint_choice_required instead of guessing a region", async () => {

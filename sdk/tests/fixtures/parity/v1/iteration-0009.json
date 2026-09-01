@@ -1,0 +1,80 @@
+{
+  "id": "hosted-0009",
+  "note": "executor reports no span channel",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "traceLacksSpanChannel": true,
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": true
+      }
+    ],
+    "predicateResults": [
+      {
+        "passed": true,
+        "reason": "contains expected token"
+      }
+    ]
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": true,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "notMeasured",
+        "reason": "executorEmitsNoSpans"
+      },
+      {
+        "stage": "response",
+        "state": "notMeasured",
+        "reason": "executorEmitsNoSpans"
+      },
+      {
+        "stage": "userValue",
+        "state": "passed",
+        "reason": "observed"
+      }
+    ],
+    "stageAnalyzerVersion": 8
+  }
+}

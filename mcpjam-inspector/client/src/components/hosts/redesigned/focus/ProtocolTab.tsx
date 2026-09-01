@@ -231,6 +231,16 @@ type ProtocolDoc = {
    */
   paginationTraversal?: PaginationTraversalMode;
   mrtrSupport?: MrtrSupport;
+  /**
+   * How the client handles `notifications/tools/list_changed`. `listens` is
+   * whether it opens the server→client channel at all; `refetches` is whether
+   * it acts on the notification once one arrives. Absent means conforming
+   * (both), so only an explicit `false` is ever written.
+   */
+  toolListChanged?: {
+    listens?: boolean;
+    refetches?: boolean;
+  };
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -301,6 +311,11 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   }
   if (draft.mcpProfile?.mrtrSupport !== undefined) {
     doc.mrtrSupport = draft.mcpProfile.mrtrSupport;
+  }
+
+  const toolListChanged = draft.mcpProfile?.toolListChanged;
+  if (toolListChanged && Object.keys(toolListChanged).length > 0) {
+    doc.toolListChanged = { ...toolListChanged };
   }
 
   if (
@@ -547,6 +562,16 @@ export function applyJsonToDraft(
   const mrtrSupport: MrtrSupport | undefined =
     rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
 
+  let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
+  if (isPlainObject(parsed.toolListChanged)) {
+    const incoming = parsed.toolListChanged;
+    const next: NonNullable<typeof toolListChangedParsed> = {};
+    for (const key of ["listens", "refetches"] as const) {
+      if (typeof incoming[key] === "boolean") next[key] = incoming[key];
+    }
+    if (Object.keys(next).length > 0) toolListChangedParsed = next;
+  }
+
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
   // clears clientCapabilities; explicit `{}` advertises nothing but keeps
@@ -618,7 +643,12 @@ export function applyJsonToDraft(
       toolParamHeaderMirroring,
       paginationTraversal,
       mrtrSupport,
+      toolListChanged: toolListChangedParsed,
       extensions: profileExtensions,
+      // `apps` is owned by the Apps tab (including the widget tool-result
+      // policy that used to be edited here); this view must pass it through
+      // untouched rather than rebuild it.
+      apps: base.apps,
     };
 
     return isMcpProfileEmpty(next) ? undefined : next;
@@ -680,14 +710,14 @@ export function ProtocolTab({
     draft.hostStyle === "mcpjam"
       ? undefined
       : initializeProtocolVersions === undefined ||
-          initializeProtocolVersions.length === 0
-        ? initializeProtocolVersions
-        : Array.from(
-            new Set([
-              ...initializeProtocolVersions,
-              ...(catalogProtocolVersions ?? []),
-            ])
-          );
+        initializeProtocolVersions.length === 0
+      ? initializeProtocolVersions
+      : Array.from(
+          new Set([
+            ...initializeProtocolVersions,
+            ...(catalogProtocolVersions ?? []),
+          ])
+        );
   const protocolOptions = visibleHostProtocolOptions(
     advertisedProtocolVersions,
     selectedDropdownValue
@@ -792,6 +822,33 @@ export function ProtocolTab({
         profileVersion: 1,
       };
       const updated: HostConfigMcpProfileV1 = { ...base, [key]: next };
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  const storedToolListChanged = draft.mcpProfile?.toolListChanged;
+  // Delete-on-default: absence IS the
+  // conforming answer, so a re-enabled switch must leave no trace behind.
+  const setToolListChangedPart = (
+    key: "listens" | "refetches",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const toolListChanged = { ...(base.toolListChanged ?? {}) };
+      if (enabled) delete toolListChanged[key];
+      else toolListChanged[key] = false;
+      const updated: HostConfigMcpProfileV1 = { ...base };
+      if (Object.keys(toolListChanged).length > 0) {
+        updated.toolListChanged = toolListChanged;
+      } else {
+        delete updated.toolListChanged;
+      }
       return {
         ...prev,
         mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
@@ -922,13 +979,26 @@ export function ProtocolTab({
         {/* Without this line a preset-backed client reads as a broken control:
             the missing revisions look arbitrary, and the list that removed them
             is invisible unless the JSON editor below is open. Name both. The
-            list constrains every concrete pin, including 2026. */}
+            list constrains every concrete pin, including 2026.
+
+            A client can advertise a revision MCPJam itself does not speak —
+            Copilot advertises 2024-11-05, which is not in MCP_PROTOCOL_VERSIONS
+            — and that version can never appear in the dropdown however the list
+            is edited. Say so inline rather than leaving the reader to edit the
+            JSON and find nothing changed. */}
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
             This client advertises{" "}
-            {(advertisedProtocolVersions ?? []).join(", ")}, so no other version
-            can be pinned. Edit <code>supportedProtocolVersions</code> in the
-            JSON below to offer more.
+            {(advertisedProtocolVersions ?? [])
+              .map((version) =>
+                (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(version)
+                  ? version
+                  : `${version} (which MCPJam doesn't support)`
+              )
+              .join(", ")}
+            , so no other version can be pinned. Edit{" "}
+            <code>supportedProtocolVersions</code> in the JSON below to offer
+            more.
           </p>
         )}
         {/* Fires independently of the option count above: force-keeping the
@@ -1045,11 +1115,59 @@ export function ProtocolTab({
             </SelectContent>
           </Select>
         </div>
+        <div className="mt-2.5 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Tool list changed notifications
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Whether this client opens the server-to-client notification
+              channel, and whether it acts on
+              <code className="mx-1 text-[10px]">
+                notifications/tools/list_changed
+              </code>
+              once one arrives.
+            </p>
+          </div>
+          <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">Opens notification channel</span>
+              <Switch
+                checked={storedToolListChanged?.listens !== false}
+                onCheckedChange={(checked) =>
+                  setToolListChangedPart("listens", checked)
+                }
+                disabled={readOnly}
+                aria-label="Opens notification channel"
+              />
+            </div>
+            {/* Disabled when the channel is closed: nothing can arrive, so
+                this answer is unobservable rather than merely unset. */}
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Re-fetches tools after the notification
+              </span>
+              <Switch
+                checked={storedToolListChanged?.refetches !== false}
+                onCheckedChange={(checked) =>
+                  setToolListChangedPart("refetches", checked)
+                }
+                // NOT gated on `listens`. The 2026-08-26 Copilot capture
+                // re-fetched without ever opening the channel: the server
+                // published `list_changed` on an open tools/call response
+                // stream, which reaches a client that never opened the
+                // standalone one. off + on is a real combination.
+                disabled={readOnly}
+                aria-label="Re-fetches tools after the notification"
+              />
+            </div>
+          </div>
+        </div>
         {showPolicyToggle && (
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">
               <span className="text-[12px] font-medium">
-                Enterprise-managed authorization
+                Default all project servers to enterprise managed auth
               </span>
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Route every HTTP server connection through your IdP (XAA) by
@@ -1069,7 +1187,7 @@ export function ProtocolTab({
               checked={policyOn}
               onCheckedChange={setPolicyOn}
               disabled={readOnly}
-              aria-label="Enterprise-managed authorization"
+              aria-label="Default all project servers to enterprise managed auth"
             />
           </div>
         )}

@@ -50,6 +50,7 @@ function baseParams(
     extractToolCalls: () => [],
     acc: {
       messageHistory: [],
+      traceMessageHistory: [],
       capturedSpans: [],
       accumulatedUsage: {},
       toolsCalledByPrompt: [],
@@ -220,9 +221,39 @@ describe("harness execution options reach the engine", () => {
     expect(options.runtimeSkillsOverride).toBeUndefined();
   });
 
+  it("forwards the host's MCP tool-CONSTRUCTION policies", async () => {
+    // `runHarnessTurn` REBUILDS this turn's MCP tools instead of consuming
+    // `tools`, and reads each of these off the handler options and nowhere
+    // else. Dropping one does not fall back to the host's intent — it falls
+    // back to the SDK's default, silently. Definedness, not truthiness:
+    // `respectToolVisibility: false` IS the SEP-1865 opt-out.
+    const modelVisibleMcpToolResults = { directContent: { image: false } };
+    const tasks = { mode: "await" };
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      modelVisibleMcpToolResults,
+      respectToolVisibility: false,
+      tasks,
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+
+    expect(options.modelVisibleMcpToolResults).toEqual(
+      modelVisibleMcpToolResults,
+    );
+    expect(options.respectToolVisibility).toBe(false);
+    expect(options.tasks).toEqual(tasks);
+  });
+
   it("keeps an EMULATED turn byte-identical — none of it leaks through", async () => {
     // Every harness option is gated on the selector, so a non-harness eval
     // sends exactly what it sent before.
+    //
+    // The three tool-construction policies matter most here. Two of them
+    // (`respectToolVisibility`, `tasks`) are read only by `runHarnessTurn`, so
+    // they could not change an emulated turn even ungated — but
+    // `modelVisibleMcpToolResults` IS read by the emulated loop's tool-result
+    // projection, and the emulated eval tool set was already built under it by
+    // `getEvalToolsForAiSdkOrThrow`. This gate is what keeps that path
+    // byte-identical, so a regression that ungated it must fail here.
     const options = await engineOptionsFor({
       harnessSandboxBinding: {
         sandboxRowId: "row-1",
@@ -231,6 +262,9 @@ describe("harness execution options reach the engine", () => {
       harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
       builtInTools: { web_search: {} },
       pinnedHarnessSkills: [],
+      modelVisibleMcpToolResults: { directContent: { image: false } },
+      respectToolVisibility: false,
+      tasks: { mode: "await" },
     } as unknown as Partial<DriveHostedEvalTurnParams>);
 
     expect(options.harness).toBeUndefined();
@@ -238,5 +272,28 @@ describe("harness execution options reach the engine", () => {
     expect(options.harnessMcpProxy).toBeUndefined();
     expect(options.builtInTools).toBeUndefined();
     expect(options.pinnedHarnessSkills).toBeUndefined();
+    expect(options.modelVisibleMcpToolResults).toBeUndefined();
+    expect(options.respectToolVisibility).toBeUndefined();
+    expect(options.tasks).toBeUndefined();
+  });
+
+  it("forwards extraHeaders BY REFERENCE, so a rotated credential reaches later steps", async () => {
+    // The bench worker's `x-mcpjam-benchmark-grant` carrier. The engine reads
+    // `extraHeaders` per step and the worker rotates the grant inside the
+    // object when the backend reissues one, so copying it here would pin an
+    // in-flight run to a grant that has since expired — and its remaining
+    // steps would be refused by `/stream` with the run half-run and paid for.
+    const extraHeaders = { "x-mcpjam-benchmark-grant": "grant-token" };
+    const options = await engineOptionsFor({
+      extraHeaders,
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+
+    expect(options.extraHeaders).toBe(extraHeaders);
+  });
+
+  it("sends no extraHeaders when the caller has none", async () => {
+    const options = await engineOptionsFor({});
+
+    expect(options.extraHeaders).toBeUndefined();
   });
 });

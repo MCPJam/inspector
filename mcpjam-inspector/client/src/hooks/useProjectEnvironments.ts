@@ -23,9 +23,42 @@ import {
  * the types below are hand-mirrored (no codegen).
  */
 
+/** One skill held at an EXACT revision, rather than tracking Latest. */
+export type ProjectEnvironmentSkillVersionPin = {
+  skillId: string;
+  versionId: string;
+};
+
+/**
+ * Which PROJECT SECRETS a run launched from this environment receives.
+ *
+ * Ids only — the view carries no name and certainly no value. The environment
+ * is the GRANT BOUNDARY: absent means no secrets, and there is no "all of them"
+ * mode.
+ *
+ * No version pins, unlike `skillSelection`: a secret has exactly one current
+ * value, and pinning "the previous value" is the opposite of what rotation is
+ * for. `[]` is rejected by the backend — clearing means `null`.
+ */
+export type ProjectEnvironmentSecretSelection = {
+  mode: "explicit";
+  secretIds: string[];
+};
+
 export type ProjectEnvironmentSkillSelection = {
   mode: "explicit";
   skillIds: string[];
+  /**
+   * Exact-version overlay on top of `skillIds`. At most one entry per selected
+   * skill; a selected skill with NO entry runs "Latest" — its current revision,
+   * resolved when the run starts, which is what every environment did before
+   * pins existed and what omitting this field still means.
+   *
+   * Absent rather than `[]` when nothing is pinned, matching how the backend
+   * stores it: an unpinned environment must serialize (and fingerprint)
+   * identically to one written before this feature.
+   */
+  versionPins?: ProjectEnvironmentSkillVersionPin[];
 };
 
 /**
@@ -72,8 +105,21 @@ export interface ProjectEnvironmentView {
   hostId: string;
   /** Standalone server group scope; absent ⇒ the host's own server picks. */
   serverAttachmentId?: string | null;
+  /**
+   * Stored model override. Absent ⇒ this environment inherits its client's
+   * model. Deliberately NOT the effective model: a list row that conflated
+   * the two could not tell "pinned to X" from "inheriting X".
+   */
+  modelId?: string;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
   /**
    * Pinned plugin VERSION ids. Read-only from the client today — the editor
    * has no plugin-version picker yet, so edits must leave this field ABSENT
@@ -120,7 +166,7 @@ export interface ProjectEnvironmentView {
  */
 export function useProjectEnvironments(
   projectId: string | null,
-  options?: { includeArchived?: boolean; includeAdhoc?: boolean }
+  options?: { includeArchived?: boolean; includeAdhoc?: boolean },
 ): ProjectEnvironmentView[] | undefined {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -139,7 +185,7 @@ export function useProjectEnvironments(
           ...(options?.includeArchived ? { includeArchived: true } : {}),
           ...(includeAdhoc ? { origin: "all" } : {}),
         } as any)
-      : "skip"
+      : "skip",
   ) as ProjectEnvironmentView[] | undefined;
   return useMemo(() => {
     if (rows === undefined) return undefined;
@@ -157,7 +203,7 @@ export function useProjectEnvironments(
  */
 export function useProjectEnvironment(
   projectId: string | null,
-  environmentId: string | null
+  environmentId: string | null,
 ): ProjectEnvironmentView | null | undefined {
   // Same gate as the list hook: without the auth/db-ready checks the query can
   // fire before the backend identity exists and fail rather than skip.
@@ -179,7 +225,7 @@ export function useProjectEnvironment(
           projectId: normalizedProjectId,
           environmentId: normalizedEnvironmentId,
         } as any)
-      : "skip"
+      : "skip",
   ) as ProjectEnvironmentView | null | undefined;
 }
 
@@ -190,6 +236,13 @@ export function useCreateProjectEnvironment(): (args: {
   hostId: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
   /**
    * Pinned plugin versions. No editor control ships this yet; the argument
    * exists so the client mirror matches the backend contract. An empty array
@@ -227,10 +280,19 @@ export function useEnsureAdhocEnvironment(): (args: {
   hostId: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
   computerEnvironmentId?: string;
+  /** Explicit model override. Omit to inherit the client's model. */
+  modelId?: string;
 }) => Promise<{ environment: ProjectEnvironmentView; created?: boolean }> {
   return useMutation(
-    "projectEnvironments:ensureAdhocEnvironment" as any
+    "projectEnvironments:ensureAdhocEnvironment" as any,
   ) as never;
 }
 
@@ -252,13 +314,22 @@ export function useEnsureAdhocEnvironments(): (args: {
     hostId: string;
     serverAttachmentId?: string | null;
     skillSelection?: ProjectEnvironmentSkillSelection | null;
+    /**
+     * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+     * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+     * to replace it. A form that does not render the picker must omit it —
+     * sending `null` would silently revoke a grant set through the API or CLI.
+     */
+    secretSelection?: ProjectEnvironmentSecretSelection | null;
     computerEnvironmentId?: string;
+    /** Explicit model override. Omit to inherit the client's model. */
+    modelId?: string;
   }>;
 }) => Promise<
   Array<{ environment: ProjectEnvironmentView; created?: boolean }>
 > {
   return useMutation(
-    "projectEnvironments:ensureAdhocEnvironments" as any
+    "projectEnvironments:ensureAdhocEnvironments" as any,
   ) as never;
 }
 
@@ -318,6 +389,13 @@ export function useUpdateProjectEnvironment(): (args: {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
+  /**
    * Tri-state, like the other clearable fields: OMIT to leave the pins
    * untouched, `null` to clear them. Since no editor can author pins yet,
    * every current caller must omit it — sending `null` from a form that simply
@@ -376,3 +454,5 @@ export function isRevisionConflictError(err: unknown): boolean {
     typeof data === "string" ? data : err instanceof Error ? err.message : "";
   return /revision/i.test(message) && /conflict|stale|changed/i.test(message);
 }
+
+export { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";

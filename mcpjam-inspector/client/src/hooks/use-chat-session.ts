@@ -77,10 +77,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers"
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import {
-  authFetch,
-  getAuthHeaders as getSessionAuthHeaders,
-} from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 import {
   classifyScenarioAccessResponse,
   patchBodyAccessVersion,
@@ -155,6 +152,11 @@ import {
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import {} from "@/state/oauth-orchestrator";
+import {
+  deferPageToolCallForApproval,
+  snapshotPageToolsForTurn,
+} from "@/lib/webmcp-inspector/chat-dispatch";
+import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -208,6 +210,12 @@ import * as AppStateContext from "@/state/app-state-context";
 import { findProjectByAnyId, type AppState } from "@/state/app-types";
 import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { isEmbeddedPreview } from "@/lib/embedded-preview";
+import {
+  clearScenarioChatTranscript,
+  readScenarioChatTranscript,
+  writeScenarioChatTranscript,
+} from "@/lib/scenario-chat-transcript";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -232,6 +240,10 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
     "This conversation is still running on the computer image it started with; a newer build is available and will be used by your next conversation.",
   sandbox_unavailable:
     "This conversation's bash runs in a disposable cloud sandbox, but this inspector can't execute disposable sandboxes. The conversation continues without bash.",
+  secrets_undelivered:
+    "This environment's materialized secrets weren't delivered: they are only set in a sandbox the project provisions, and this conversation doesn't have one. Commands that need them will fail.",
+  secrets_unavailable:
+    "This conversation's secrets couldn't be checked this turn, so bash is paused. Its sandbox may still hold credentials from an earlier turn and there is nothing to redact them with. Your sandbox is untouched — bash returns as soon as secrets can be read again.",
 };
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by
@@ -257,19 +269,19 @@ function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
 
 function isOrgManagedModel(
   orgConfig: OrgVisibleConfig | undefined,
-  model: ModelDefinition
+  model: ModelDefinition,
 ): boolean {
   if (isMCPJamProvidedModelMenuItem(model)) return false;
   const providerKey = getOrgProviderKeyForModel(model);
   if (!providerKey) return false;
   const provider = orgConfig?.providers.find(
-    (p) => p.providerKey === providerKey && p.enabled
+    (p) => p.providerKey === providerKey && p.enabled,
   );
   if (!provider) return false;
 
   if (provider.providerKey === "ollama") {
     return Boolean(
-      provider.baseUrl && provider.modelIds?.includes(String(model.id))
+      provider.baseUrl && provider.modelIds?.includes(String(model.id)),
     );
   }
 
@@ -373,6 +385,13 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Offer this turn the WebMCP tools of the page the inspector currently has
+   * open. Off unless the caller opts in: a chat that silently gained tools from
+   * a browser session opened in another tab would be a surprise, and page tools
+   * run code on a third-party site.
+   */
+  usePageTools?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -502,7 +521,7 @@ export interface UseChatSessionReturn {
   selectedModel: ModelDefinition;
   setSelectedModel: (
     model: ModelDefinition,
-    options?: SetSelectedModelOptions
+    options?: SetSelectedModelOptions,
   ) => void;
   /**
    * False while the persisted selection has not (yet) matched an entry in
@@ -572,7 +591,7 @@ export interface UseChatSessionReturn {
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
-    }
+    },
   ) => Promise<string>;
   /**
    * Fork the given transcript onto a fresh `chatSessionId` and confirm the fork
@@ -588,7 +607,7 @@ export interface UseChatSessionReturn {
     messages: UIMessage[],
     options?: {
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
-    }
+    },
   ) => Promise<{ chatSessionId: string } | null>;
   loadChatSession: (
     session: {
@@ -631,7 +650,7 @@ export interface UseChatSessionReturn {
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
       shouldApply?: () => boolean;
-    }
+    },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
   /**
@@ -806,7 +825,7 @@ async function resolveHydratedTurnTraces(
         spansBlobUrl?: string | null;
         modelId?: string;
       }>
-    | undefined
+    | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
   // Preserve the `undefined` sentinel so `queueSessionHydration` can tell
   // "caller didn't provide traces — leave existing state alone" apart from
@@ -847,7 +866,7 @@ async function resolveHydratedTurnTraces(
           // numbers in the trace viewer.
           console.warn(
             `[useChatSession] Failed to fetch spans for turn ${trace.turnId}:`,
-            err
+            err,
           );
         }
       }
@@ -861,13 +880,13 @@ async function resolveHydratedTurnTraces(
         spans,
         modelId: trace.modelId,
       };
-    })
+    }),
   );
   return results;
 }
 
 async function resolveHydratedWidgetSnapshots(
-  raw: PersistedWidgetSnapshot[] | undefined
+  raw: PersistedWidgetSnapshot[] | undefined,
 ): Promise<PersistedWidgetSnapshot[] | undefined> {
   if (raw === undefined) {
     return undefined;
@@ -895,23 +914,23 @@ async function resolveHydratedWidgetSnapshots(
       } catch (err) {
         console.warn(
           `[useChatSession] Failed to fetch tool output for snapshot ${snapshot.toolCallId}:`,
-          err
+          err,
         );
         return snapshot;
       }
-    })
+    }),
   );
 }
 
 function buildLiveTraceStateFromTurnTraces(
-  traces: HydratedTurnTrace[]
+  traces: HydratedTurnTrace[],
 ): LiveTraceAccumulatorState {
   if (traces.length === 0) {
     return createEmptyLiveTraceState();
   }
 
   const ordered = [...traces].sort(
-    (left, right) => left.promptIndex - right.promptIndex
+    (left, right) => left.promptIndex - right.promptIndex,
   );
   const turnOrder: string[] = [];
   const turns: Record<string, LiveTraceTurnState> = {};
@@ -943,7 +962,7 @@ function buildLiveTraceStateFromTurnTraces(
 }
 
 function isTraceEventDataPart(
-  value: unknown
+  value: unknown,
 ): value is { type: "data-trace-event"; data: LiveChatTraceEvent } {
   if (!value || typeof value !== "object") {
     return false;
@@ -955,13 +974,13 @@ function isTraceEventDataPart(
 
 function hasChatToolCall(
   chatMessages: UIMessage[],
-  toolCallId: string
+  toolCallId: string,
 ): boolean {
   return chatMessages.some((message) =>
     message.parts?.some((part) => {
       if (!part || typeof part !== "object") return false;
       return (part as { toolCallId?: unknown }).toolCallId === toolCallId;
-    })
+    }),
   );
 }
 
@@ -974,7 +993,7 @@ function hasChatToolCall(
  */
 export function shouldAutoSendCompletedClientToolCalls(
   options: Parameters<typeof lastAssistantMessageIsCompleteWithToolCalls>[0],
-  scopeStepUpResumeInFlight = false
+  scopeStepUpResumeInFlight = false,
 ): boolean {
   if (
     scopeStepUpResumeInFlight ||
@@ -987,13 +1006,13 @@ export function shouldAutoSendCompletedClientToolCalls(
   const lastStepStartIndex = message.parts.reduce(
     (lastIndex, part, index) =>
       part.type === "step-start" ? index : lastIndex,
-    -1
+    -1,
   );
   return message.parts
     .slice(lastStepStartIndex + 1)
     .some(
       (part) =>
-        isToolUIPart(part) && isClientFulfilledToolName(getToolName(part))
+        isToolUIPart(part) && isClientFulfilledToolName(getToolName(part)),
     );
 }
 
@@ -1050,7 +1069,7 @@ export function rpcToolCallOperation(message: unknown): string | undefined {
  */
 export function reconcileChatToolCallStepUp(
   pending: Map<string, Map<string | number, string>>,
-  log: { direction: string; serverId: string; message: unknown }
+  log: { direction: string; serverId: string; message: unknown },
 ): string | undefined {
   if (log.direction === "send") {
     // Track only tool invocations; ids from other methods never gate a reset,
@@ -1083,7 +1102,7 @@ export function reconcileChatToolCallStepUp(
 }
 
 function dedupeTraceToolCalls(
-  toolCalls: LiveChatTraceToolCall[] | null | undefined
+  toolCalls: LiveChatTraceToolCall[] | null | undefined,
 ): LiveChatTraceToolCall[] {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
     return [];
@@ -1115,12 +1134,12 @@ function dedupeTraceToolCalls(
 
 function upsertRequestPayloadEntry(
   entries: LiveChatTraceRequestPayloadEntry[],
-  nextEntry: LiveChatTraceRequestPayloadEntry
+  nextEntry: LiveChatTraceRequestPayloadEntry,
 ): LiveChatTraceRequestPayloadEntry[] {
   const existingIndex = entries.findIndex(
     (entry) =>
       entry.turnId === nextEntry.turnId &&
-      entry.stepIndex === nextEntry.stepIndex
+      entry.stepIndex === nextEntry.stepIndex,
   );
 
   if (existingIndex < 0) {
@@ -1128,7 +1147,7 @@ function upsertRequestPayloadEntry(
   }
 
   return entries.map((entry, index) =>
-    index === existingIndex ? nextEntry : entry
+    index === existingIndex ? nextEntry : entry,
   );
 }
 
@@ -1137,7 +1156,7 @@ function upsertRequestPayloadEntry(
 // Also applies a flat backstop cap to `requestPayloadHistory` in case a
 // single turn (still within the turn cap) accumulates many step entries.
 function trimLiveTraceTurns(
-  state: LiveTraceAccumulatorState
+  state: LiveTraceAccumulatorState,
 ): LiveTraceAccumulatorState {
   let turnOrder = state.turnOrder;
   let turns = state.turns;
@@ -1158,13 +1177,13 @@ function trimLiveTraceTurns(
     turns = nextTurns;
 
     requestPayloadHistory = requestPayloadHistory.filter(
-      (entry) => !droppedTurnIds.has(entry.turnId)
+      (entry) => !droppedTurnIds.has(entry.turnId),
     );
   }
 
   if (requestPayloadHistory.length > MAX_LIVE_TRACE_REQUEST_PAYLOADS) {
     requestPayloadHistory = requestPayloadHistory.slice(
-      -MAX_LIVE_TRACE_REQUEST_PAYLOADS
+      -MAX_LIVE_TRACE_REQUEST_PAYLOADS,
     );
   }
 
@@ -1185,7 +1204,7 @@ function trimLiveTraceTurns(
 
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
-  event: LiveChatTraceEvent
+  event: LiveChatTraceEvent,
 ): LiveTraceAccumulatorState {
   // Heartbeat events carry no state. Drop them before any allocation so a
   // long idle stream doesn't bloat the visible event list or trigger
@@ -1204,7 +1223,7 @@ function applyLiveTraceEvent(
 
   const ensureTurnState = (
     turnId: string,
-    promptIndex: number
+    promptIndex: number,
   ): LiveTraceTurnState =>
     baseState.turns[turnId] ?? {
       turnId,
@@ -1259,14 +1278,14 @@ function applyLiveTraceEvent(
             promptIndex: event.promptIndex,
             stepIndex: event.stepIndex,
             payload: event.payload,
-          }
+          },
         ),
       });
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
         event.turnId,
-        event.snapshot.promptIndex
+        event.snapshot.promptIndex,
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
       return trimLiveTraceTurns({
@@ -1284,7 +1303,7 @@ function applyLiveTraceEvent(
               : [],
             usage: event.snapshot.usage,
             actualToolCalls: dedupeTraceToolCalls(
-              event.snapshot.actualToolCalls
+              event.snapshot.actualToolCalls,
             ),
           },
         },
@@ -1332,7 +1351,7 @@ function applyLiveTraceEvent(
 }
 
 function buildLiveTraceEnvelope(
-  state: LiveTraceAccumulatorState
+  state: LiveTraceAccumulatorState,
 ): LiveChatTraceEnvelope | null {
   if (state.events.length === 0 && !state.anySnapshotSeen) {
     return null;
@@ -1416,7 +1435,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   envelope: LiveChatTraceEnvelope,
   state: LiveTraceAccumulatorState,
   previewWallElapsedMs: number | undefined,
-  transcriptFromUi: ModelMessage[] | null
+  transcriptFromUi: ModelMessage[] | null,
 ): LiveChatTraceEnvelope {
   if (!state.activeTurnId || state.activeTurnHasSnapshot) {
     return envelope;
@@ -1437,7 +1456,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   });
   const previewIndexed = applyPreviewSpansUserMessageIndices(
     preview,
-    transcript
+    transcript,
   );
 
   const existing = envelope.spans ?? [];
@@ -1474,7 +1493,7 @@ function isTransientMessage(message: UIMessage): boolean {
 
 function shouldForkChatSession(
   previousMessages: UIMessage[],
-  nextMessages: UIMessage[]
+  nextMessages: UIMessage[],
 ): boolean {
   const previousPersistentIds = previousMessages
     .filter((message) => !isTransientMessage(message))
@@ -1488,13 +1507,13 @@ function shouldForkChatSession(
   }
 
   return nextPersistentIds.every(
-    (messageId, index) => messageId === previousPersistentIds[index]
+    (messageId, index) => messageId === previousPersistentIds[index],
   );
 }
 
 function areAuthHeadersEqual(
   a: Record<string, string> | undefined,
-  b: Record<string, string> | undefined
+  b: Record<string, string> | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
@@ -1557,7 +1576,7 @@ export function hostedTargetKey(input: {
 // must fork rather than append target B's turns onto target A's.
 export function areHostedSessionScopesEqual(
   a: HostedSessionScope,
-  b: HostedSessionScope
+  b: HostedSessionScope,
 ): boolean {
   return a.projectId === b.projectId && a.targetKey === b.targetKey;
 }
@@ -1571,7 +1590,7 @@ function isAuthDeniedError(error: unknown): boolean {
 }
 
 export function useChatSession(
-  options: UseChatSessionOptions
+  options: UseChatSessionOptions,
 ): UseChatSessionReturn {
   const {
     selectedServers,
@@ -1656,7 +1675,7 @@ export function useChatSession(
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt = resolveSystemPrompt(
-    executionConfig?.systemPrompt
+    executionConfig?.systemPrompt,
   );
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
@@ -1707,7 +1726,43 @@ export function useChatSession(
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
   const [temperature, setTemperature] = useState(initialTemperature);
-  const [chatSessionId, setChatSessionId] = useState(generateId());
+  /**
+   * The scenario whose transcript this surface may resume across a refresh, or
+   * null for every other surface.
+   *
+   * The embedded Preview iframe is excluded for the same reason it is excluded
+   * from reading the scenario grant: it is same-origin with the dashboard and
+   * shares its sessionStorage, so writing there would leak a preview's
+   * conversation into the tester page (and back). A preview reloads by
+   * re-redeeming its token anyway.
+   */
+  const resumableScenarioId =
+    hostedScenarioId && !isEmbeddedPreview() ? hostedScenarioId : null;
+  /**
+   * Read ONCE, during the first render, before anything can overwrite the row:
+   * this is what a refresh has to work from, and both the initial
+   * `chatSessionId` below and the hydration effect further down consume it.
+   *
+   * A LAZY `useState` initializer, not `useRef(read(...))`: `useRef` evaluates
+   * its argument on every render and throws the result away after the first,
+   * so the ref form re-ran a `getItem` + `JSON.parse` on every render while
+   * only ever using the first value. This hook re-renders on every streaming
+   * chunk, and a transcript here is allowed to approach `MAX_SERIALIZED_LENGTH`
+   * (~2MB — one image attachment rides along as a `data:` URL, which is why
+   * the oldest-turn trimming exists), so that slip put a multi-megabyte
+   * synchronous parse on the streaming path. The value never changes after the
+   * first render, so state is the honest shape for it.
+   */
+  const [restoredScenarioTranscript] = useState(() =>
+    resumableScenarioId
+      ? readScenarioChatTranscript(resumableScenarioId)
+      : null,
+  );
+  // Restoring the stored id — rather than minting a fresh one and seeding it —
+  // is what keeps the resumed turns appending to the SAME server-side thread.
+  const [chatSessionId, setChatSessionId] = useState(
+    () => restoredScenarioTranscript?.chatSessionId ?? generateId(),
+  );
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
   /**
@@ -1762,7 +1817,7 @@ export function useChatSession(
   const mrtrResumeSenderRef = useRef<
     | ((
         round: HostedMrtrRound,
-        responses: Record<string, MrtrElicitationResponse>
+        responses: Record<string, MrtrElicitationResponse>,
       ) => Promise<void>)
     | null
   >(null);
@@ -1810,7 +1865,7 @@ export function useChatSession(
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    initialRequireToolApproval
+    initialRequireToolApproval,
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
@@ -1832,7 +1887,7 @@ export function useChatSession(
     options.progressiveToolDiscovery ??
     options.executionConfig?.progressiveToolDiscovery;
   const [respectToolVisibility, setRespectToolVisibility] = useState(
-    initialRespectToolVisibility
+    initialRespectToolVisibility,
   );
   const respectToolVisibilityRef = useRef<boolean>(respectToolVisibility);
   respectToolVisibilityRef.current =
@@ -1866,6 +1921,11 @@ export function useChatSession(
   const builtInToolIdsRef = useRef<string[] | undefined>(undefined);
   builtInToolIdsRef.current =
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
+  // Read through a ref for the same reason the ids above are: the transport's
+  // body builder is created once and must see the CURRENT value at POST time,
+  // not the one captured when the transport was memoized.
+  const usePageToolsRef = useRef(false);
+  usePageToolsRef.current = options.usePageTools === true;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -1873,30 +1933,30 @@ export function useChatSession(
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
-    undefined
+    undefined,
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
     targetKey: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
-    null
+    null,
   );
   const pendingLiveTraceStateRef = useRef<LiveTraceAccumulatorState | null>(
-    null
+    null,
   );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
-    [selectedServers]
+    [selectedServers],
   );
   const apiContextRevision = useSyncExternalStore(
     subscribeApiContext,
     getApiContextRevision,
-    getApiContextRevision
+    getApiContextRevision,
   );
   const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
-    [liveTraceState]
+    [liveTraceState],
   );
   const hasTraceSnapshot = liveTraceState.activeTurnId
     ? liveTraceState.activeTurnHasSnapshot
@@ -1938,7 +1998,7 @@ export function useChatSession(
         withdraw("client hosted-MRTR version mismatch");
         toast.error(
           `This tab is running an outdated build (hosted-MRTR v${HOSTED_MRTR_VERSION}; ` +
-            `this request needs v${event.version}). Refresh the page and try again.`
+            `this request needs v${event.version}). Refresh the page and try again.`,
         );
         return;
       }
@@ -1971,7 +2031,7 @@ export function useChatSession(
         cancel: () => withdraw("dismissed by user"),
       });
     },
-    []
+    [],
   );
 
   const handleStreamDataPart = useCallback(
@@ -2004,7 +2064,7 @@ export function useChatSession(
           const sessionId = chatSessionIdRef.current;
           if (!server || !sessionId) {
             toast.error(
-              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool."
+              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool.",
             );
             return;
           }
@@ -2019,7 +2079,7 @@ export function useChatSession(
               requiredScope: event.requiredScope,
               resourceMetadataUrl: event.resourceMetadataUrl,
             },
-            event.operation
+            event.operation,
           );
         } else if (isHostedElicitationDataPart(part)) {
           const event = part.data;
@@ -2029,14 +2089,14 @@ export function useChatSession(
             setPendingElicitations((queue) =>
               queue.some((e) => e.rendezvousId === event.rendezvousId)
                 ? queue
-                : [...queue, event]
+                : [...queue, event],
             );
           } else if (event.kind === "resolved") {
             // The server reached a terminal state on its own (TTL expiry, or
             // an answer that landed elsewhere) — close the dialog rather than
             // leave the user submitting into a dead rendezvous.
             setPendingElicitations((queue) =>
-              queue.filter((e) => e.rendezvousId !== event.rendezvousId)
+              queue.filter((e) => e.rendezvousId !== event.rendezvousId),
             );
           } else if (event.kind === "url_required") {
             setUrlElicitationRequired((current) => [...current, event]);
@@ -2091,11 +2151,11 @@ export function useChatSession(
               // Exactly-once: a side-effecting call may or may not have run, so
               // never auto-retry — say so and let the user decide.
               toast.error(
-                "That tool call was interrupted and may or may not have run. Check the server before retrying."
+                "That tool call was interrupted and may or may not have run. Check the server before retrying.",
               );
             } else if (event.outcome === "expired") {
               toast.info(
-                "That request timed out, so the operation was cancelled."
+                "That request timed out, so the operation was cancelled.",
               );
             }
             return;
@@ -2123,7 +2183,7 @@ export function useChatSession(
           // the only signal that clears this server's bounded step-up counter.
           const successfulOperation = reconcileChatToolCallStepUp(
             chatToolCallRequestIdsRef.current,
-            log
+            log,
           );
           if (successfulOperation) {
             const activeProject =
@@ -2182,7 +2242,7 @@ export function useChatSession(
             .setWorkdir(
               hostedProjectId ?? null,
               hostedHostId ?? hostedPresentationHostId ?? null,
-              part.data.workdir
+              part.data.workdir,
             );
         } else if (isSandboxNoticeDataPart(part)) {
           // One-time fact about the scenario's ephemeral sandbox. Exactly-once
@@ -2261,7 +2321,7 @@ export function useChatSession(
       hostedPresentationHostId,
       appState,
       handleMrtrInputRequired,
-    ]
+    ],
   );
 
   /**
@@ -2317,7 +2377,7 @@ export function useChatSession(
       restoredToolRenderOverridesRef.current = overrides;
       setRestoredToolRenderOverrides(overrides);
     },
-    []
+    [],
   );
   const clearPendingSessionHydration = useCallback(() => {
     // Drop any queued trace state so a subsequent resetChat / fork does not
@@ -2363,7 +2423,7 @@ export function useChatSession(
       hostedOrgModelConfig,
       outOfCredits,
       hostedCatalog,
-    ]
+    ],
   );
 
   // Model selection with persistence
@@ -2377,11 +2437,11 @@ export function useChatSession(
   } = usePersistedModel();
   const selectableModels = useMemo(
     () => availableModels.filter((model) => !model.disabled),
-    [availableModels]
+    [availableModels],
   );
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(
-      selectableModels.length > 0 ? selectableModels : availableModels
+      selectableModels.length > 0 ? selectableModels : availableModels,
     );
     const resolveAvailableModel = (modelId?: string | null) => {
       if (!modelId) {
@@ -2406,7 +2466,7 @@ export function useChatSession(
             // must not silently switch the user off it. Other locks (guest,
             // ollama-no-tools) stay unselectable.
             (!model.disabled ||
-              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON)
+              model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
         ) ?? null
       );
     };
@@ -2434,7 +2494,7 @@ export function useChatSession(
     if (initialModelId) return true;
     if (!selectedModelId) return true;
     return availableModels.some(
-      (model) => String(model.id) === selectedModelId
+      (model) => String(model.id) === selectedModelId,
     );
   }, [availableModels, initialModelId, selectedModelId]);
 
@@ -2467,7 +2527,7 @@ export function useChatSession(
       }
       setSelectedModelId(String(model.id));
     },
-    [initialModelId, setSelectedModelId]
+    [initialModelId, setSelectedModelId],
   );
 
   const setSelectedModelIds = useCallback(
@@ -2487,7 +2547,7 @@ export function useChatSession(
       }
       persistSelectedModelIds(modelIds);
     },
-    [initialModelId, persistSelectedModelIds]
+    [initialModelId, persistSelectedModelIds],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -2495,13 +2555,13 @@ export function useChatSession(
   }, [selectedModel]);
   const selectedModelUsesOrgRuntime = useMemo(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
-    [hostedOrgModelConfig, selectedModel]
+    [hostedOrgModelConfig, selectedModel],
   );
   const hasLocalOnlySelectedServer = useMemo(() => {
     if (!appState || selectedServers.length === 0) return false;
     const activeProject = findProjectByAnyId(
       appState.projects,
-      hostedProjectId ?? appState.activeProjectId
+      hostedProjectId ?? appState.activeProjectId,
     );
     return selectedServers.some((serverName) => {
       const server =
@@ -2520,6 +2580,10 @@ export function useChatSession(
     !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
     hasLocalOnlySelectedServer;
+  const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
+  const shouldUseOrgAwareChatApi =
+    isHostedTransport ||
+    (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -2540,13 +2604,10 @@ export function useChatSession(
       // belonging to a different request.
       lastChatResponseRef.current = null;
 
-      // authFetch owns auth resolution (WorkOS bearer / guest bearer via
-      // the scenario-installed apiContext) wherever the web engine is in
-      // play — hosted builds, and scenario runtime sessions on any platform.
-      const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
-      let response = useAuthedFetch
-        ? await authFetch(input, init)
-        : await fetch(input, init);
+      // Resolve the WorkOS / guest bearer at request time for every chat
+      // route. authFetch attaches it only to allowlisted Convex-backed paths,
+      // including both /api/web/chat-v2 and local /api/mcp/chat-v2.
+      let response = await authFetch(input, init);
 
       // Scenario access recovery. A scenario turn re-resolves its authoritative
       // config server-side on every send, so an open tab can lose access
@@ -2562,7 +2623,7 @@ export function useChatSession(
       // send — the replay's own verdict is final.
       if (
         !response.ok &&
-        useAuthedFetch &&
+        isHostedTransport &&
         hostedScenarioId &&
         typeof init?.body === "string" &&
         hostedRefreshAccessSession
@@ -2579,7 +2640,7 @@ export function useChatSession(
             });
             if (!response.ok) {
               const replayError = await classifyScenarioAccessResponse(
-                response
+                response,
               );
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
@@ -2609,7 +2670,7 @@ export function useChatSession(
 
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
-        if (useAuthedFetch) {
+        if (isHostedTransport) {
           await ingestHostedRpcLogsFromResponse(response);
         }
       }
@@ -2617,10 +2678,11 @@ export function useChatSession(
     },
     [
       hostedRequiresWebChatApi,
+      isHostedTransport,
       hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
-    ]
+    ],
   );
 
   const handleChatError = useCallback((chatError: Error) => {
@@ -2672,10 +2734,6 @@ export function useChatSession(
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
 
   const transport = useMemo(() => {
-    const shouldUseOrgAwareChatApi =
-      HOSTED_MODE ||
-      hostedRequiresWebChatApi ||
-      (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
     const shouldSendClientApiKey =
       !shouldUseOrgAwareChatApi && !selectedModelUsesOrgRuntime;
     let apiKey: string;
@@ -2690,12 +2748,16 @@ export function useChatSession(
       apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     }
 
-    // Merge session auth headers with workos auth headers
-    const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<
-      string,
-      string
-    >;
+    // NEITHER credential is snapshotted here. authFetch calls the very same
+    // `getAuthHeaders()` at request time, and `buildAuthFetchInit` merges
+    // `init.headers` LAST — so a copy taken when this memo ran would override
+    // the fresh one. That is not theoretical: the local dev server mints a new
+    // session token on every restart, and this memo (which no longer depends
+    // on `authHeaders`) can outlive several of them, so the stale copy won the
+    // merge and the route answered 401 "Invalid session token". authFetch's
+    // own 401 session-recovery could not rescue it either — its retry rebuilds
+    // from the same `init`, re-applying the same stale header.
+    const mergedHeaders = {} as Record<string, string>;
     // Consent capability for the local computer engine — a header, never the
     // body, so it can't land in a persisted transcript. Only on a direct
     // (non-scenario) turn whose resolved engine is local; the server re-checks
@@ -2717,14 +2779,10 @@ export function useChatSession(
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
-    // When authFetch carries the request (hosted builds, scenario runtime
-    // sessions), it owns the Authorization header — don't double-attach.
+    // Only the local-computer consent capability rides the transport, because
+    // it is not a credential authFetch knows how to resolve.
     const transportHeaders =
-      HOSTED_MODE || hostedRequiresWebChatApi
-        ? undefined
-        : Object.keys(mergedHeaders).length > 0
-        ? mergedHeaders
-        : undefined;
+      Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
     const chatApi = shouldUseOrgAwareChatApi
       ? "/api/web/chat-v2"
@@ -2961,6 +3019,15 @@ export function useChatSession(
           appTools: useAppToolsRegistry
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
+          // WebMCP page tools, when the caller opted this turn into the tools
+          // of an open inspector session. Drained fresh at POST time for the
+          // same reason as `appTools`: the page may have registered or dropped
+          // tools since the last turn. `setAdvertisedPageTools` records what
+          // this turn advertised so an alias in the response resolves back to
+          // the tool it stood for.
+          ...(usePageToolsRef.current
+            ? { pageTools: snapshotPageToolsForTurn() }
+            : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -2975,10 +3042,10 @@ export function useChatSession(
     getToken,
     getCustomProviderByName,
     customProviders,
-    authHeaders,
     selectedModelUsesOrgRuntime,
     localMcpRuntimeRequired,
     hostedRequiresWebChatApi,
+    shouldUseOrgAwareChatApi,
     temperature,
     systemPrompt,
     selectedServers,
@@ -3017,7 +3084,7 @@ export function useChatSession(
       reconnectToStream: (options) =>
         latestTransportRef.current.reconnectToStream(options),
     }),
-    []
+    [],
   );
 
   // Held until the entire userless resume request settles. AI SDK evaluates
@@ -3034,7 +3101,7 @@ export function useChatSession(
     status,
     error,
     setMessages: baseSetMessages,
-    addToolApprovalResponse,
+    addToolApprovalResponse: sdkAddToolApprovalResponse,
     addToolOutput,
   } = useChat({
     id: chatSessionId,
@@ -3052,10 +3119,26 @@ export function useChatSession(
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
     // `addToolOutput(...)`. Server-tool calls bypass this handler (they
-    // resolve via the server's `execute` function); only client-fulfilled
-    // app aliases land here.
+    // resolve via the server's `execute` function); client-fulfilled app and
+    // page aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
+
+      // WebMCP page tools: the model asked for a tool a real web page
+      // registered, and the browser session that owns that page lives in this
+      // app. Claim it synchronously and wait for the approval pill to fulfill
+      // it. AI SDK delivers tool-input-available before tool-approval-request,
+      // so invoking here would bypass the user's decision.
+      if (
+        deferPageToolCallForApproval({
+          toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          input: (toolCall as { input: unknown }).input,
+        })
+      ) {
+        return;
+      }
+
       const entry = useAppToolsRegistry
         .getState()
         .resolve(toolName, chatSessionIdRef.current);
@@ -3171,7 +3254,7 @@ export function useChatSession(
             input: tc.input,
             raw,
           },
-          useTrafficLogStore.getState().addLog
+          useTrafficLogStore.getState().addLog,
         );
         addToolOutput({
           tool: tc.toolName,
@@ -3208,7 +3291,7 @@ export function useChatSession(
       if (
         shouldAutoSendCompletedClientToolCalls(
           options,
-          scopeStepUpResumeInFlightRef.current
+          scopeStepUpResumeInFlightRef.current,
         )
       ) {
         return true;
@@ -3218,6 +3301,19 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // UI/page tools are client-fulfilled. Their approval response must be
+  // routed through the shared defer/fulfill handler; a raw AI SDK approval
+  // response would leave a no-execute page tool without a result.
+  const addToolApprovalResponse = useMemo(
+    () =>
+      createUiAwareApprovalResponseHandler({
+        getMessages: () => messagesRef.current,
+        addToolApprovalResponse: sdkAddToolApprovalResponse,
+        addToolOutput,
+      }),
+    [sdkAddToolApprovalResponse, addToolOutput],
+  );
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
@@ -3275,7 +3371,7 @@ export function useChatSession(
         toast.error(
           wasCancelled
             ? "Authorization was cancelled, but the suspended tool call could not be updated."
-            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually."
+            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually.",
         );
       })
       .finally(() => {
@@ -3298,11 +3394,11 @@ export function useChatSession(
   const submitMrtrResume = useCallback(
     async (
       round: HostedMrtrRound,
-      responses: Record<string, MrtrElicitationResponse>
+      responses: Record<string, MrtrElicitationResponse>,
     ) => {
       const toolCallId = findUnresolvedMrtrToolCallId(
         messagesRef.current,
-        round.operationLabel
+        round.operationLabel,
       );
       if (!toolCallId) {
         // Nothing to splice the driven result into (history was reset/forked
@@ -3313,7 +3409,7 @@ export function useChatSession(
           reason: "no unresolved tool call to resume",
         }).catch(() => {});
         toast.error(
-          "This chat no longer has the tool call that needed input, so the operation was cancelled."
+          "This chat no longer has the tool call that needed input, so the operation was cancelled.",
         );
         return;
       }
@@ -3333,7 +3429,7 @@ export function useChatSession(
         console.warn("[hosted-mrtr] resume turn failed", error);
       });
     },
-    [baseSendMessage]
+    [baseSendMessage],
   );
   mrtrResumeSenderRef.current = submitMrtrResume;
 
@@ -3377,7 +3473,7 @@ export function useChatSession(
             chatSessionId: sessionId,
             projectId: hostedProjectIdRef.current ?? undefined,
           },
-          { signal: controller.signal }
+          { signal: controller.signal },
         );
         const version = detail?.session?.version;
         // A brand-new chat is persisted the moment the row exists; a resumed
@@ -3415,7 +3511,7 @@ export function useChatSession(
         hold,
         statusRef.current === "error"
           ? undefined
-          : waitForTurnPersistedRef.current
+          : waitForTurnPersistedRef.current,
       );
     };
   }, [isTurnActive]);
@@ -3444,12 +3540,12 @@ export function useChatSession(
         // persisted IDs. Preserve matching live IDs so React updates widgets
         // in place instead of remounting iframes keyed by the parent message.
         baseSetMessages(
-          preserveHydratedMessageIds(messagesRef.current, hydration.messages)
+          preserveHydratedMessageIds(messagesRef.current, hydration.messages),
         );
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setPersistedSnapshotToolCallIds(
-          hydration.persistedSnapshotToolCallIds ?? []
+          hydration.persistedSnapshotToolCallIds ?? [],
         );
         if (hydratedTraceState !== null) {
           setLiveTraceState(hydratedTraceState);
@@ -3468,7 +3564,7 @@ export function useChatSession(
         setChatSessionId(hydration.sessionId);
       });
     },
-    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion]
+    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
   );
 
   const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
@@ -3477,7 +3573,7 @@ export function useChatSession(
 
   useEffect(() => {
     const persistent = messages.filter(
-      (message) => !isTransientMessage(message)
+      (message) => !isTransientMessage(message),
     );
     if (persistent.length === 0) {
       setTraceTranscriptFromUi(null);
@@ -3488,7 +3584,7 @@ export function useChatSession(
       persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
         typeof convertToModelMessages
       >[0],
-      { ignoreIncompleteToolCalls: true }
+      { ignoreIncompleteToolCalls: true },
     ).then((modelMessages) => {
       if (!cancelled) {
         setTraceTranscriptFromUi(modelMessages);
@@ -3510,7 +3606,7 @@ export function useChatSession(
     }
     const id = window.setInterval(
       () => setPreviewWallTick((previous) => previous + 1),
-      400
+      400,
     );
     return () => clearInterval(id);
   }, [
@@ -3545,7 +3641,7 @@ export function useChatSession(
       liveTraceEnvelopeBase,
       liveTraceState,
       previewWallElapsedMs,
-      traceTranscriptFromUi
+      traceTranscriptFromUi,
     );
     // Rehydrated sessions arrive with `state.messages = []` (see
     // buildLiveTraceStateFromTurnTraces), so the envelope's messages stay
@@ -3664,7 +3760,7 @@ export function useChatSession(
         return nextMessages;
       });
     },
-    [baseSetMessages]
+    [baseSetMessages],
   );
 
   useLayoutEffect(() => {
@@ -3679,7 +3775,7 @@ export function useChatSession(
     syncResumedVersion(pendingHydration.resumedVersion);
     syncRestoredToolRenderOverrides(pendingHydration.toolRenderOverrides ?? {});
     setPersistedSnapshotToolCallIds(
-      pendingHydration.persistedSnapshotToolCallIds ?? []
+      pendingHydration.persistedSnapshotToolCallIds ?? [],
     );
     // Force a React state update so that useSyncExternalStore re-reads the
     // messages snapshot that was just written to the Chat store above.
@@ -3739,10 +3835,7 @@ export function useChatSession(
         // name. Only on the web-engine path, and only when the surface provided
         // a resolver (Playground). On failure, fail the send CLOSED with a
         // visible toast (callers fire-and-forget, so don't reject).
-        const usesWebEngine =
-          HOSTED_MODE ||
-          selectedModelUsesOrgRuntime ||
-          hostedRequiresWebChatApi;
+        const usesWebEngine = shouldUseOrgAwareChatApi;
         // Snapshot the selection ONCE: the resolved ids must ride with the
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
@@ -3780,7 +3873,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
+                "The chat target changed while this message was being prepared. Send it again to run it against the current selection.",
               );
               return false;
             }
@@ -3792,7 +3885,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat changed while this message was being prepared. Send it again to run it in the current thread."
+                "The chat changed while this message was being prepared. Send it again to run it in the current thread.",
               );
               return false;
             }
@@ -3806,7 +3899,7 @@ export function useChatSession(
             toast.error(
               error instanceof Error
                 ? error.message
-                : "Couldn't prepare the selected servers for this run."
+                : "Couldn't prepare the selected servers for this run.",
             );
             return false; // fail closed — do not send with unresolved servers
           }
@@ -3831,9 +3924,8 @@ export function useChatSession(
       hostedEnsureServerIds,
       hostedEnvironmentId,
       selectedServers,
-      selectedModelUsesOrgRuntime,
-      hostedRequiresWebChatApi,
-    ]
+      shouldUseOrgAwareChatApi,
+    ],
   );
 
   // `sendMessage` is NOT a stable function, and callers that cross an `await`
@@ -3882,13 +3974,105 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
+  // ── Tester-surface transcript resume (BB-51) ──────────────────────────────
+  //
+  // Apply the row read during the first render. `queueSessionHydration` takes
+  // its same-session branch — `chatSessionId` was INITIALIZED from this very
+  // record — so the messages land without minting a second session, and the
+  // restored thread is the one the next turn appends to.
+  const hasAppliedRestoredTranscriptRef = useRef(false);
+  useEffect(() => {
+    if (hasAppliedRestoredTranscriptRef.current) return;
+    hasAppliedRestoredTranscriptRef.current = true;
+    const restored = restoredScenarioTranscript;
+    if (!restored) return;
+    void queueSessionHydration({
+      sessionId: restored.chatSessionId,
+      messages: restored.messages,
+      // Null, not a stored number: the tab that wrote those turns is gone, so
+      // there is no version this one can be optimistic about. The first ingest
+      // after a resume therefore carries no `expectedVersion` and cannot 409.
+      resumedVersion: null,
+      persistedSnapshotToolCallIds: [],
+    });
+  }, [queueSessionHydration, restoredScenarioTranscript]);
+
+  // The scenario the transcript on screen belongs to. A tester can open a
+  // SECOND tester link in the same tab: `session` is replaced in place, so
+  // `hostedContext.scenarioId` flips from A to B under a mounted chat that is
+  // still holding A's messages.
+  // True once this mount has HELD messages for the attached scenario, which is
+  // what separates "the tester reset the chat" from "the restore has not landed
+  // yet". Reset by the switch effect below, so a scenario change starts clean.
+  const hasHeldMessagesThisMountRef = useRef(false);
+  const attachedTranscriptScenarioRef = useRef(resumableScenarioId);
+  // Set while a scenario switch is settling. Persistence is OFF in that window,
+  // and it has to be: the messages on screen still belong to the PREVIOUS
+  // scenario, so a write would file one tester's conversation under another's
+  // key — and the empty pass that follows the reset would then delete the row
+  // the new scenario is supposed to resume from.
+  const awaitingScenarioTranscriptResetRef = useRef(false);
+  useEffect(() => {
+    if (attachedTranscriptScenarioRef.current === resumableScenarioId) return;
+    attachedTranscriptScenarioRef.current = resumableScenarioId;
+    hasHeldMessagesThisMountRef.current = false;
+    awaitingScenarioTranscriptResetRef.current = true;
+  }, [resumableScenarioId]);
+
+  // Save after every SETTLED turn, never mid-stream, so a resumed transcript
+  // only ever holds turns the tester watched finish — the same turns the owner
+  // sees persisted server-side.
+  useEffect(() => {
+    if (!resumableScenarioId) return;
+    if (status === "submitted" || status === "streaming") return;
+    // Mid-switch. The scope change also reaches the auth-bootstrap effect,
+    // whose reset empties the transcript; THAT is the signal the messages on
+    // screen are no longer the previous scenario's, and the point at which the
+    // new one may restore its own row and resume being saved.
+    if (awaitingScenarioTranscriptResetRef.current) {
+      if (messages.length > 0) return;
+      awaitingScenarioTranscriptResetRef.current = false;
+      const restored = readScenarioChatTranscript(resumableScenarioId);
+      if (restored) {
+        void queueSessionHydration({
+          sessionId: restored.chatSessionId,
+          messages: restored.messages,
+          resumedVersion: null,
+          persistedSnapshotToolCallIds: [],
+        });
+      }
+      return;
+    }
+    if (messages.length > 0) {
+      hasHeldMessagesThisMountRef.current = true;
+      writeScenarioChatTranscript(resumableScenarioId, {
+        chatSessionId,
+        messages,
+      });
+      return;
+    }
+    // An empty transcript is only news once this mount has HAD messages — the
+    // tester reset the chat. On the first render it means the restore has not
+    // been applied yet, and clearing there would delete the very row this
+    // mount is about to resume from.
+    if (hasHeldMessagesThisMountRef.current) {
+      clearScenarioChatTranscript(resumableScenarioId);
+    }
+  }, [
+    resumableScenarioId,
+    status,
+    messages,
+    chatSessionId,
+    queueSessionHydration,
+  ]);
+
   const startChatWithMessages = useCallback(
     (
       messages: UIMessage[],
       options?: {
         resetReason?: ChatSessionResetReason;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
-      }
+      },
     ) => {
       skipNextForkDetectionRef.current = true;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
@@ -3912,7 +4096,7 @@ export function useChatSession(
       onResetRef.current?.(options?.resetReason ?? "fork");
       return hydrationPromise.then(() => nextSessionId);
     },
-    [queueSessionHydration]
+    [queueSessionHydration],
   );
 
   /**
@@ -3998,7 +4182,7 @@ export function useChatSession(
       }
 
       const targetIndex = messagesRef.current.findIndex(
-        (message) => message.id === options.messageId
+        (message) => message.id === options.messageId,
       );
       if (targetIndex < 0) {
         return null;
@@ -4064,7 +4248,7 @@ export function useChatSession(
 
       return { previousChatSessionId };
     },
-    [startChatWithMessages]
+    [startChatWithMessages],
   );
 
   /**
@@ -4114,7 +4298,7 @@ export function useChatSession(
       messages: UIMessage[],
       options?: {
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
-      }
+      },
     ): Promise<{ chatSessionId: string } | null> => {
       const forkSessionId = await startChatWithMessages(messages, {
         resetReason: "fork",
@@ -4127,7 +4311,7 @@ export function useChatSession(
         ? { chatSessionId: forkSessionId }
         : null;
     },
-    [startChatWithMessages]
+    [startChatWithMessages],
   );
 
   const loadChatSession = useCallback(
@@ -4160,7 +4344,7 @@ export function useChatSession(
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
-      }
+      },
     ) => {
       let uiMessages: UIMessage[] = [];
 
@@ -4168,7 +4352,7 @@ export function useChatSession(
         // Goes through the dedup cache so a hover-prefetched blob is reused
         // by the click path. Throws on non-OK responses internally.
         const transcript = (await getCachedBlobJson(
-          session.messagesBlobUrl
+          session.messagesBlobUrl,
         )) as unknown[];
         uiMessages = transcriptToUIMessages(transcript);
       }
@@ -4176,13 +4360,13 @@ export function useChatSession(
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
       const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
-        session.widgetSnapshots
+        session.widgetSnapshots,
       );
       const persistedSnapshotToolCallIds =
         hydratedWidgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
       if (hydratedWidgetSnapshots && hydratedWidgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
-          hydratedWidgetSnapshots
+          hydratedWidgetSnapshots,
         );
         // In-flow session revisit: prefer the live MCP Apps fetch over the
         // cached snapshot HTML so the widget re-renders against the active
@@ -4194,7 +4378,7 @@ export function useChatSession(
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
-        session.turnTraces
+        session.turnTraces,
       );
 
       if (options?.shouldApply && !options.shouldApply()) {
@@ -4236,7 +4420,7 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration, setSystemPrompt]
+    [queueSessionHydration, setSystemPrompt],
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when
@@ -4348,8 +4532,23 @@ export function useChatSession(
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
+        // A scenario switch that beat the FIRST auth resolution (BB-51). The
+        // "no prior session to invalidate" reasoning above does not hold in
+        // that case: a restored tester transcript is applied by the hydration
+        // effect without waiting for auth, so scenario A's messages CAN be on
+        // screen while `hasResolvedBefore` is still false — the in-flight first
+        // pass was cancelled by the switch and never set the flag. Without this,
+        // no reset ever arrives, the persistence effect stays parked on its
+        // `awaiting` branch waiting for an empty transcript, and scenario B
+        // neither resumes nor saves for the rest of the tab's life.
+        const scenarioSwitchNeedsReset =
+          awaitingScenarioTranscriptResetRef.current;
 
-        if (authHeadersChanged || hostedScopeChanged) {
+        if (
+          authHeadersChanged ||
+          hostedScopeChanged ||
+          scenarioSwitchNeedsReset
+        ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
           clearPendingSessionHydration();
@@ -4407,22 +4606,22 @@ export function useChatSession(
       if (selectedServers.length === 0) {
         lastObservedTokenCountSelectionKeyRef.current = null;
         setToolsMetadata((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setToolServerMap((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setSerializedTools((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setMcpToolsTokenCount((previous) =>
-          previous !== null ? null : previous
+          previous !== null ? null : previous,
         );
         setMcpToolsTokenCountErrors((previous) =>
-          previous !== null ? null : previous
+          previous !== null ? null : previous,
         );
         setMcpToolsTokenCountLoading((previous) =>
-          previous ? false : previous
+          previous ? false : previous,
         );
         return;
       }
@@ -4461,19 +4660,19 @@ export function useChatSession(
           setMcpToolsTokenCount(
             tokenCounts && Object.keys(tokenCounts).length > 0
               ? tokenCounts
-              : null
+              : null,
           );
           setMcpToolsTokenCountErrors(
             tokenCountErrors && Object.keys(tokenCountErrors).length > 0
               ? tokenCountErrors
-              : null
+              : null,
           );
         }
       } catch (error) {
         if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
-            error
+            error,
           );
         }
         setToolsMetadata({});
@@ -4517,7 +4716,7 @@ export function useChatSession(
         if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
-            error
+            error,
           );
         }
         setSystemPromptTokenCount(null);
@@ -4645,13 +4844,13 @@ export function useChatSession(
         // the row is terminal either way, so keeping the dialog open would
         // only invite a second doomed submit.
         setPendingElicitations((queue) =>
-          queue.filter((e) => e.rendezvousId !== answer.rendezvousId)
+          queue.filter((e) => e.rendezvousId !== answer.rendezvousId),
         );
         if (!result.ok) {
           toast.info(
             result.reason === "expired"
               ? "That request timed out, so it was cancelled."
-              : "That request was already resolved."
+              : "That request was already resolved.",
           );
         }
       } catch (error) {
@@ -4661,12 +4860,12 @@ export function useChatSession(
         setElicitationResponding(false);
       }
     },
-    [convexClient]
+    [convexClient],
   );
 
   const dismissUrlElicitationRequired = useCallback((toolCallId?: string) => {
     setUrlElicitationRequired((current) =>
-      current.filter((e) => e.toolCallId !== toolCallId)
+      current.filter((e) => e.toolCallId !== toolCallId),
     );
   }, []);
 

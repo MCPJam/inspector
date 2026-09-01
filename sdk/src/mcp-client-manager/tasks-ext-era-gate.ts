@@ -57,7 +57,7 @@
  * .outboundEnvelope` (`:3800`) attaches the
  * `io.modelcontextprotocol/clientCapabilities` `_meta` envelope that the
  * extension's per-request eligibility declaration rides in — a codec swap
- * would silently strip the declaration and earn a `-32003` from every
+ * would silently strip the declaration and earn a `-32021` from every
  * conforming server.
  *
  * ## When it is installed, and why not at connect

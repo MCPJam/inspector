@@ -117,7 +117,7 @@ const toolOpts = { projectId: "proj_1" };
 function execTool(
   builtTool: NonNullable<ReturnType<typeof buildMcpjamTool>>,
   input: Record<string, unknown>,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
 ) {
   return (builtTool as any).execute(input, {
     toolCallId: "call_1",
@@ -137,6 +137,7 @@ describe("workspace tool catalog", () => {
       "delete_project_server",
       "connect_project_server",
       "get_project_server_connection_status",
+      "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -144,18 +145,32 @@ describe("workspace tool catalog", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "list_server_skills",
+      "get_server_skill",
+      "read_server_skill_file",
       "start_claude_readiness_run",
       "start_openai_readiness_run",
       "get_readiness_run",
       "list_readiness_runs",
       "cancel_readiness_run",
       "get_readiness_report",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
       "list_eval_suites",
       "list_eval_suite_runs",
+      "get_eval_run_disclosure",
       "run_eval_case",
       "run_eval_suite",
       "get_eval_run",
       "compare_eval_run",
+      // The gate-waiver trio. The READ is advertised alongside the writes on
+      // purpose: a waiver only its grantors can see is not a visible waiver,
+      // and visibility is half of what the workflow is for.
+      "waive_eval_gate",
+      "get_eval_gate_waiver",
+      "revoke_eval_gate_waiver",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",
@@ -176,6 +191,11 @@ describe("workspace tool catalog", () => {
       "get_persona",
       "create_persona",
       "update_persona",
+      // Project secrets: the METADATA reads only. The three writes are in
+      // EXCLUDED_FROM_WORKSPACE — the two that carry a plaintext because the
+      // value would reach the transcript before any approval could run.
+      "list_secrets",
+      "get_secret",
       "list_journeys",
       "get_journey",
       "create_journey",
@@ -203,6 +223,14 @@ describe("workspace tool catalog", () => {
       "get_user_testing_insights",
       "dismiss_user_testing_finding",
       "undismiss_user_testing_finding",
+      "search_registry_directory",
+      "get_registry_directory_server",
+      "list_registry_directory_sources",
+      "list_registry_servers",
+      "list_registry_connections",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);
@@ -243,7 +271,7 @@ describe("workspace tool catalog", () => {
       for (const [name, reason] of Object.entries(EXCLUDED_FROM_WORKSPACE)) {
         expect(
           reason.length,
-          `${name} needs a substantive reason`
+          `${name} needs a substantive reason`,
         ).toBeGreaterThan(20);
       }
       // One sentence copy-pasted across every entry is a derived map wearing a
@@ -481,7 +509,7 @@ describe("live server operations", () => {
     const result = await execTool(
       builtTool,
       { server: "Linear", toolName: "ping" },
-      controller.signal
+      controller.signal,
     );
 
     expect(result).toEqual({
@@ -528,5 +556,29 @@ describe("live server operations", () => {
     expect(approval("diagnose_server")).toBe(true);
     expect(approval("read_server_resource")).toBe(true);
     expect(approval("list_project_servers")).toBe(false);
+  });
+
+  it("requires approval for registry installs and uninstall", () => {
+    // install_registry_directory_server is create_project_server with
+    // different spelling — a caller-supplied endpointUrl that ends as a
+    // server row in the user's project — and uninstall is its
+    // delete_project_server sibling. Skipping the approval gate here would
+    // let a prompt-injected chat add or remove servers silently.
+    const { client } = makeClient({});
+    const approval = (id: string) =>
+      (
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        }) as { needsApproval?: boolean }
+      ).needsApproval;
+
+    expect(approval("install_registry_directory_server")).toBe(true);
+    expect(approval("install_registry_server")).toBe(true);
+    expect(approval("uninstall_registry_server")).toBe(true);
+    // The registry reads stay approval-free.
+    expect(approval("search_registry_directory")).toBe(false);
+    expect(approval("list_registry_connections")).toBe(false);
   });
 });

@@ -20,6 +20,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_SUITE_FILE_BYTES,
+  SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_VALIDITY_DEFAULTS,
   loadEvalSuiteFile,
   resolveEvalSuiteFile,
@@ -53,7 +54,7 @@ const MINIMAL = payload(findFixture(data.accept, "minimal")) as EvalSuiteFile;
 
 describe("the parity corpus, through the loader", () => {
   it("accepts every accept row", () => {
-    expect(data.accept).toHaveLength(3);
+    expect(data.accept).toHaveLength(6);
     for (const row of data.accept) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, `${row.__label}: ${JSON.stringify(result)}`).toBe(true);
@@ -61,7 +62,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("rejects every reject row as a CONTRACT failure, not a parse failure", () => {
-    expect(data.reject).toHaveLength(25);
+    expect(data.reject).toHaveLength(35);
     for (const row of data.reject) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, row.__label).toBe(false);
@@ -200,13 +201,34 @@ describe("defaults are resolved in memory and never written back", () => {
     const { authored, resolved } = loadOrThrow(asText(MINIMAL));
     expect(authored.defaults.validity).toEqual({});
     expect(resolved.defaults.validity).toEqual({
+      coverage: SUITE_FILE_DEFAULT_COVERAGE,
       minCompletionRate: SUITE_FILE_VALIDITY_DEFAULTS.minCompletionRate,
       maxEvaluatorErrorRate: SUITE_FILE_VALIDITY_DEFAULTS.maxEvaluatorErrorRate,
     });
-    // `minEligibleTrials` has NO default: absent means "no minimum", and a
-    // number here would be one nobody wrote.
-    expect(resolved.defaults.validity.minEligibleTrials).toBeUndefined();
+    // An omitted `minEligibleTrials` is not "no minimum": it selects the
+    // coverage RULE — every configured trial attempted, at least one gradeable
+    // — and the resolved value says so rather than leaving a reader to invent
+    // `?? 0`.
+    expect(resolved.defaults.validity.coverage).toEqual({
+      kind: "allConfiguredTrialsAttempted",
+      minGradeableTrials: 1,
+    });
     expect(resolved.defaults.captureLevel).toBe("full");
+  });
+
+  it("an explicit minEligibleTrials REPLACES the default coverage rule", () => {
+    const authored = {
+      ...MINIMAL,
+      defaults: { ...MINIMAL.defaults, validity: { minEligibleTrials: 3 } },
+    } as EvalSuiteFile;
+    const { resolved } = loadOrThrow(asText(authored));
+    expect(resolved.defaults.validity.coverage).toEqual({
+      kind: "minEligibleTrials",
+      minEligibleTrials: 3,
+    });
+    // The other two remain independent checks, still at their own defaults.
+    expect(resolved.defaults.validity.minCompletionRate).toBe(0.8);
+    expect(resolved.defaults.validity.maxEvaluatorErrorRate).toBe(0.1);
   });
 
   it("resolves suite defaults onto every case", () => {
@@ -273,6 +295,21 @@ describe("defaults are resolved in memory and never written back", () => {
     expect(text).not.toContain("captureLevel");
   });
 
+  it("preserves authored execution config without inventing absent fields", () => {
+    const configured = payload(
+      findFixture(data.accept, "environment-only target")
+    ) as EvalSuiteFile;
+    const loaded = loadOrThrow(asText(configured));
+    expect(loaded.resolved.defaults.systemPrompt).toBe(
+      "Use the billing tools and keep the answer concise."
+    );
+    expect(loaded.resolved.defaults.temperature).toBe(0.2);
+
+    const minimal = loadOrThrow(asText(MINIMAL));
+    expect("systemPrompt" in minimal.resolved.defaults).toBe(false);
+    expect("temperature" in minimal.resolved.defaults).toBe(false);
+  });
+
   it("resolves without re-reading text", () => {
     const { authored, resolved } = loadOrThrow(asText(MINIMAL));
     expect(resolveEvalSuiteFile(authored)).toEqual(resolved);
@@ -299,6 +336,34 @@ describe("identity survives a rename", () => {
     expect(after.authored.cases[0]?.title).not.toBe(
       before.authored.cases[0]?.title
     );
+  });
+});
+
+describe("case intent", () => {
+  it("preserves a label in the authored file and resolved runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, intent: "refund" } : entry
+      ),
+    };
+
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.intent).toBe("refund");
+    expect(loaded.resolved.cases[0]?.intent).toBe("refund");
+  });
+
+  it("treats an explicit null update as unlabelled in the runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, intent: null } : entry
+      ),
+    };
+
+    const loaded = loadOrThrow(asText(authored));
+    expect(loaded.authored.cases[0]?.intent).toBeNull();
+    expect(loaded.resolved.cases[0]?.intent).toBeUndefined();
   });
 });
 

@@ -8,7 +8,7 @@ import { operationalError } from "./output.js";
 const AUTH_STORE_VERSION = 1;
 
 /**
- * Stored MCPJam platform login (`mcpjam login`). Tokens are AuthKit-issued;
+ * Stored MCPJam platform login (`mcpjam cloud login`). Tokens are AuthKit-issued;
  * `tokenEndpoint`/`clientId` are kept so refresh works without re-fetching
  * the hosted auth config.
  */
@@ -25,6 +25,13 @@ export interface StoredPlatformAuth {
    * before this field existed.
    */
   apiUrl?: string;
+  /**
+   * Best-effort account identity from `GET /me` after login. Optional so
+   * files written before this field existed, and logins whose lookup failed,
+   * remain valid. Unknown keys are ignored; invalid types are dropped.
+   */
+  email?: string;
+  plan?: string;
   accessToken: string;
   refreshToken?: string;
   /** Access-token expiry, milliseconds since epoch. */
@@ -56,14 +63,14 @@ export function getAuthFilePath(options: AuthStorePathOptions = {}): string {
     return join(
       env.APPDATA || join(homeDirectory, "AppData", "Roaming"),
       "mcpjam",
-      "auth.json",
+      "auth.json"
     );
   }
 
   return join(
     env.XDG_CONFIG_HOME || join(homeDirectory, ".config"),
     "mcpjam",
-    "auth.json",
+    "auth.json"
   );
 }
 
@@ -113,18 +120,24 @@ export function readStoredAuth(filePath: string): StoredPlatformAuth | null {
     ...(typeof record.expiresAt === "number"
       ? { expiresAt: record.expiresAt }
       : {}),
+    ...(typeof record.email === "string" && record.email.trim()
+      ? { email: record.email.trim() }
+      : {}),
+    ...(typeof record.plan === "string" && record.plan.trim()
+      ? { plan: record.plan.trim() }
+      : {}),
   };
 }
 
 /** Atomic write (tmp + rename) with 0600, matching writeCredentialsFile. */
 export async function writeStoredAuth(
   contents: StoredPlatformAuth,
-  filePath: string,
+  filePath: string
 ): Promise<string> {
   const directory = dirname(filePath);
   const temporaryPath = join(
     directory,
-    `.${basename(filePath)}.${randomUUID()}.tmp`,
+    `.${basename(filePath)}.${randomUUID()}.tmp`
   );
 
   try {

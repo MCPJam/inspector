@@ -1,7 +1,14 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
+// MUST stay the first import: it sets WS_NO_BUFFER_UTIL, which `ws` reads at
+// module-eval time, and the bundled `ws` is otherwise handed an empty stub for
+// its optional `bufferutil` dep. See the file for the full story (#4208).
+import "./ws-native-fallback.js";
 import * as Sentry from "@sentry/electron/main";
-import { app, BrowserWindow, shell, Menu, dialog } from "electron";
-import { buildElectronSentryConfig } from "../shared/sentry-config.js";
+import { app, BrowserWindow, shell, Menu, dialog, session } from "electron";
+import {
+  buildElectronSentryConfig,
+  electronBuildSurface,
+} from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
   registerMainProcessCrashHandlers,
@@ -14,6 +21,10 @@ Sentry.init({
   ...buildElectronSentryConfig({
     environment: app.isPackaged ? "prod" : "dev",
     release: app.getVersion(),
+    // Matches the `--dist` forge uploads `.vite/build` under. mac and Windows
+    // publish separately compiled main bundles under the same release, so
+    // without this they share one artifact namespace.
+    dist: electronBuildSurface(process.platform),
     deployment: "self_hosted",
   }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
@@ -48,6 +59,10 @@ import {
   ELECTRON_HOSTED_AUTH_STATE_KEY,
   isElectronMcpCallbackUrl,
 } from "./oauth-callback-routing.js";
+// The one string the renderer's `<webview partition>`, this process's
+// `will-attach-webview` guard, and the server provider's ownership check all
+// have to agree on exactly. Three literals would drift; one constant cannot.
+import { WEBMCP_WEBVIEW_PARTITION } from "../shared/webmcp-inspector-protocol.js";
 
 // Configure logging
 log.transports.file.level = "info";
@@ -72,6 +87,26 @@ updateElectronApp({
 if (process.platform === "win32") {
   app.setAppUserModelId("com.mcpjam.inspector");
 }
+
+/**
+ * Make `document.modelContext` exist in this app's renderers.
+ *
+ * UNCONDITIONAL, and it has to be: command-line switches are frozen before
+ * `whenReady`, so there is no later moment at which a user opening the WebMCP
+ * tab could turn this on. The flag lives in the RENDERER — a page cannot
+ * register a WebMCP tool in a Chromium where the feature is off — so gating it
+ * on anything would mean the embedded surface silently discovers no tools.
+ *
+ * Inert in our own UI renderer. The switch only makes the page API EXIST; the
+ * only code we load there is first-party, and the CDP domain that reads the
+ * registry is reachable only through a debugger something deliberately
+ * attaches. Nothing here opens the app's own renderer to third-party content.
+ *
+ * `appendSwitch` REPLACES the value for a key rather than appending to it — a
+ * second `appendSwitch("enable-features", …)` anywhere in this file would drop
+ * WebMCP on the floor. A future feature must comma-join it into this one call.
+ */
+app.commandLine.appendSwitch("enable-features", "WebMCP");
 
 // Register custom protocol for OAuth callbacks
 if (!app.isDefaultProtocolClient("mcpjam")) {
@@ -220,6 +255,29 @@ function installSafeOAuthCallbackRouting(
       routeIfOAuthCallback(event, url, isMainFrame);
     }
   );
+}
+
+/**
+ * Deny every permission the embedded WebMCP surface can ask for.
+ *
+ * DENY-ALL in v1, deliberately. The guest renders a developer's own page, but
+ * "their own page" is not a security boundary — it navigates, it embeds
+ * third-party frames, and an inspector that granted the camera because the
+ * first page seemed trustworthy would grant it to whatever the page navigated
+ * to next. Loosening any single permission (clipboard read is the obvious
+ * candidate) is a deliberate follow-up with its own reasoning, not a default.
+ *
+ * Both handlers, because they answer different questions: `Request` is "the
+ * page is asking now", `Check` is "does the page already have it" — a page that
+ * only consults `navigator.permissions` would otherwise be told yes by the
+ * default handler and go on to use an API it never actually got.
+ */
+function lockDownWebviewPartition(): void {
+  const guestSession = session.fromPartition(WEBMCP_WEBVIEW_PARTITION);
+  guestSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+    callback(false)
+  );
+  guestSession.setPermissionCheckHandler(() => false);
 }
 
 function createSafeOAuthWindow(
@@ -384,6 +442,19 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       contextIsolation: true,
       // Vite plugin outputs main.js and preload.js into the same directory (.vite/build)
       preload: path.join(__dirname, "preload.js"),
+      // Lets the WebMCP tab mount a real Chromium surface for the page it is
+      // inspecting. Opt-in per window, and this is the only window that gets
+      // it; `will-attach-webview` below is what makes that permission narrow —
+      // only a guest on our own partition, with no preload and no node access,
+      // is allowed to attach at all.
+      webviewTag: true,
+      // Read from `process.argv` by the sandboxed preload, which cannot see
+      // `process.env` or call into the main process synchronously. The renderer
+      // needs to know it is PACKAGED, not merely in Electron: `isElectron` is
+      // true in dev too, and the two differ on whether a Playwright browser can
+      // be launched at all (forge packages `.vite` only, so `import("playwright")`
+      // always rejects in the shipped app).
+      additionalArguments: app.isPackaged ? ["--mcpjam-packaged"] : [],
     },
     show: false, // Don't show until ready
   });
@@ -771,6 +842,10 @@ app.whenReady().then(async () => {
       log.warn("pruneStaleCachesOnVersionChange threw; continuing:", err);
     }
 
+    // Before any guest can exist. The partition's session is created on first
+    // reference, so this both makes it and locks it down in one step.
+    lockDownWebviewPartition();
+
     // Start the embedded Hono server
     serverPort = await startHonoServer();
     const serverUrl = getServerUrl();
@@ -857,6 +932,44 @@ app.on("open-url", (event, url) => {
 
 // Security: Prevent new window creation, but allow OAuth popups
 app.on("web-contents-created", (_, contents) => {
+  /**
+   * The only `<webview>` this app will ever attach, on our terms rather than
+   * the DOM's.
+   *
+   * The attributes come from the renderer, so they are a REQUEST, not a fact:
+   * anything that can write into that document can ask for a guest with node
+   * integration and a preload of its choosing. This is the one place that can
+   * refuse, and it refuses by default — a guest that is not on the WebMCP
+   * partition does not attach at all.
+   *
+   * Every reset matters individually. A guest `preload` would run privileged
+   * code inside a page we do not control; `nodeIntegration` would hand that
+   * page `require`; `contextIsolation: false` would put our world and the
+   * page's in one place; `sandbox: true` is the backstop for all of it. And
+   * `webSecurity: false` — what the element's `disablewebsecurity` attribute
+   * asks for — would drop the same-origin policy inside the guest, so a page
+   * the provider navigates to could read this app's own local server
+   * cross-origin with no CORS to stop it.
+   */
+  contents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (params.partition !== WEBMCP_WEBVIEW_PARTITION) {
+      log.warn(
+        `Refusing a <webview> on partition ${String(params.partition)}`
+      );
+      event.preventDefault();
+      return;
+    }
+    // `preloadURL` is the legacy spelling and is still honoured; deleting only
+    // one of the pair leaves the other as the way in.
+    delete webPreferences.preload;
+    delete (webPreferences as { preloadURL?: string }).preloadURL;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+  });
+
   contents.setWindowOpenHandler(({ url, frameName }) => {
     try {
       // The OAuth debugger popup explicitly names its window with the

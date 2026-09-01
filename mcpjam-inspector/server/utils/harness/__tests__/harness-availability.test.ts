@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkHarnessRuntimeAvailable } from "../harness-availability";
-import type { HarnessId } from "../registry";
+import {
+  checkHarnessRuntimeAvailable,
+  harnessToolApprovalRefusalReason,
+} from "../harness-availability";
+import { getHarnessAdapter, type HarnessId } from "../registry";
 
 // The capability-driven preflight that lets the chat-v2 routes fail closed with a
 // clear message when a harness host (claude-code | codex) can't run on this server.
@@ -116,13 +119,25 @@ describe("checkHarnessRuntimeAvailable", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("still blocks an approval host WITH selected MCP servers (no MCP approval knob)", () => {
+  // Claude Code's own MCP tools take the NATIVE arm of the delivery split, and
+  // it declares no MCP-tool approval. `kind` is asserted alongside the copy on
+  // purpose: eval admission branches on the kind, so a copy edit must not be
+  // what decides whether this stays a refusal.
+  // Was a refusal: Claude Code was believed unable to pause on MCP-server
+  // tools. The adapter bridge's `canUseTool` gates them under "allow-reads",
+  // so the whole combination is admissible now. The gate that would still
+  // refuse a native harness without that capability is covered in
+  // `harnessToolApprovalRefusalReason` below.
+  it("admits an approval host WITH selected MCP servers on Claude Code", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ requireToolApproval: true, hasSelectedMcpServers: true })
+      args({
+        harnessId: "claude-code",
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      })
     );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/MCP-server tools/);
+    expect(r.ok).toBe(true);
   });
 
   it("still blocks an approval host on Codex (no native approval)", () => {
@@ -142,13 +157,38 @@ describe("checkHarnessRuntimeAvailable", () => {
     if (!r.ok) expect(r.reason).toMatch(/Codex harness/);
   });
 
-  it("blocks a Codex host that has selected MCP servers (v1: no MCP)", () => {
+  it("allows a Codex host with selected MCP servers (host-executed delivery)", () => {
+    // COMP-39: this used to be the `mcp-servers` refusal, which blocked every
+    // Codex host with a server attached — and therefore every Codex eval, since
+    // an eval suite always has servers. Codex now gets those servers as
+    // host-executed tools, so there is nothing left to refuse.
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          hasSelectedMcpServers: true,
+          model: { id: "openai/gpt-5-nano", provider: "openai" },
+        })
+      )
+    ).toEqual({ ok: true });
+  });
+
+  it("still blocks a Codex approval host with MCP servers (approval can't be honored)", () => {
+    // Advertise = enforce: Codex's MCP tools run on MCPJam's server as
+    // host-executed tools, and Codex declares no host-executed tool approval.
+    // Delivering the servers must NOT quietly turn approval into a no-op.
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", hasSelectedMcpServers: true })
+      args({
+        harnessId: "codex",
+        hasSelectedMcpServers: true,
+        requireToolApproval: true,
+        model: { id: "openai/gpt-5-nano", provider: "openai" },
+      })
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/doesn't support MCP servers/);
+    if (!r.ok) expect(r.kind).toBe("tool-approval");
   });
 
   it("allows a Claude Code host with selected MCP servers (it delivers them)", () => {
@@ -206,4 +246,132 @@ describe("checkHarnessRuntimeAvailable", () => {
       expect(checkHarnessRuntimeAvailable(args())).toEqual({ ok: true });
     }
   );
+});
+
+/**
+ * The approval rules as a standalone value, because `runHarnessTurn` re-asserts
+ * them for the eval / synthetic / unified paths, which never reach the
+ * pre-flight above. Two hand-copied conditions would drift; these assert the
+ * matrix ONE function answers for both.
+ */
+describe("harnessToolApprovalRefusalReason", () => {
+  const claudeCode = getHarnessAdapter("claude-code");
+  const codex = getHarnessAdapter("codex");
+
+  it.each([
+    ["claude-code", false],
+    ["claude-code", true],
+    ["codex", false],
+    ["codex", true],
+  ] as const)(
+    "%s with approval OFF is sound (servers attached: %s)",
+    (harnessId, hasSelectedMcpServers) => {
+      expect(
+        harnessToolApprovalRefusalReason({
+          adapter: getHarnessAdapter(harnessId),
+          requireToolApproval: false,
+          hasSelectedMcpServers,
+        })
+      ).toBeUndefined();
+    }
+  );
+
+  // The gap this closes: Codex's NATIVE tools can't pause either, and its
+  // built-in host-executed tools (web_search) are not approval-gated because
+  // `supportsHostExecutedToolApproval` is false. Conditioning the refusal on
+  // there being MCP servers would let a zero-server eval run them unapproved.
+  it("refuses Codex under approval even with NO servers selected", () => {
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: codex,
+        requireToolApproval: true,
+        hasSelectedMcpServers: false,
+      })
+    ).toMatch(/doesn't support interactive tool approval/);
+  });
+
+  it("refuses Codex under approval with servers selected", () => {
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: codex,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      })
+    ).toBeDefined();
+  });
+
+  // Claude Code pauses on its own native tools (WS3), so approval alone is
+  // fine.
+  it("allows Claude Code under approval with no servers", () => {
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: claudeCode,
+        requireToolApproval: true,
+        hasSelectedMcpServers: false,
+      })
+    ).toBeUndefined();
+  });
+
+  // It now pauses on its MCP tools too (the bridge's `canUseTool` under
+  // "allow-reads"), so attaching a server no longer makes the combination
+  // unsound. This used to be the refusal case.
+  it("allows Claude Code under approval once a server is attached", () => {
+    expect(claudeCode.mcpDelivery).toBe("native");
+    expect(claudeCode.supportsMcpToolApproval).toBe(true);
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: claudeCode,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      })
+    ).toBeUndefined();
+  });
+
+  // The gate itself must still bite. Claude Code satisfying it is a fact about
+  // the adapter, not a reason to stop checking: a NATIVE-delivery harness that
+  // cannot pause on MCP tools is still refused the moment a server is attached.
+  it("still refuses a native harness that can't approve its MCP tools", () => {
+    const noMcpApproval = {
+      ...claudeCode,
+      supportsMcpToolApproval: false,
+    } as typeof claudeCode;
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: noMcpApproval,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      })
+    ).toMatch(/MCP-server tools/);
+    // …and only once a server is actually attached.
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: noMcpApproval,
+        requireToolApproval: true,
+        hasSelectedMcpServers: false,
+      })
+    ).toBeUndefined();
+  });
+
+  // The bypass the delivery split exists to prevent: Codex's MCP tools are
+  // host-executed, so reading `supportsMcpToolApproval` (irrelevant here, and
+  // now TRUE on the other adapter) would have looked like the right check.
+  it("reads the capability for the surface each adapter's MCP tools run on", () => {
+    expect(codex.mcpDelivery).toBe("host-executed");
+    expect(codex.supportsHostExecutedToolApproval).toBe(false);
+    const stillApproves = {
+      ...codex,
+      supportsNativeToolApproval: true,
+      supportsHostExecutedToolApproval: true,
+      // Left false on purpose: under host-executed delivery this must not be
+      // what the gate consults.
+      supportsMcpToolApproval: false,
+    } as typeof codex;
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: stillApproves,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      })
+    ).toBeUndefined();
+  });
 });

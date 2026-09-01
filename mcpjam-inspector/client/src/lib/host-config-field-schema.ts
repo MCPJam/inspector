@@ -315,7 +315,86 @@ export const NOT_SUPPORTED = Symbol("not-supported");
 /** One variable's value in each theme; `same` when a single string answers both. */
 export type StyleVariableByTheme =
   | { same: string }
-  | { light?: string; dark?: string };
+  /**
+   * `raw` is set when the pair was decoded from a single `light-dark(…)`
+   * string rather than probed per theme — the split is for reading, and the
+   * literal the host actually sends stays available for anyone who needs it.
+   */
+  | { light?: string; dark?: string; raw?: string };
+
+/**
+ * Split a CSS `light-dark(a, b)` value into its two themes.
+ *
+ * Hosts encode the same fact two ways: Claude sends one `light-dark(…)`
+ * string, ChatGPT and Codex send a resolved literal per theme. Rendering
+ * those differently makes a row impossible to compare down the column, so
+ * the pair is normalized here. Returns null for anything else, including a
+ * malformed call — a value we can't split is shown verbatim rather than
+ * guessed at.
+ *
+ * Splits on the top-level comma: the arguments are themselves functions
+ * (`rgba(50, 102, 173, 1)`) whose commas must not end the first argument.
+ */
+function hasTopLevelComma(value: string): boolean {
+  let depth = 0;
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === "," && depth === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether every `(` in the value is closed, and none closes early. Guards the
+ * split in {@link parseLightDarkPair}: `endsWith(")")` says nothing about
+ * whether that paren belongs to the `light-dark(` we opened.
+ */
+function hasBalancedParens(value: string): boolean {
+  let depth = 0;
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
+}
+
+export function parseLightDarkPair(
+  value: string
+): { light: string; dark: string } | null {
+  const trimmed = value.trim();
+  const prefix = "light-dark(";
+  if (!trimmed.toLowerCase().startsWith(prefix) || !trimmed.endsWith(")")) {
+    return null;
+  }
+  const inner = trimmed.slice(prefix.length, -1);
+  // Balance first. Without it the scan below happily splits
+  // `light-dark(#fff, rgb(0,0,0)` — which ends in `)` and has a top-level
+  // comma — into a `dark` of `rgb(0,0,0`, an unclosed function we would then
+  // hand to a swatch. A balanced `inner` also guarantees both halves of the
+  // split are balanced, so neither side needs re-checking.
+  if (!hasBalancedParens(inner)) return null;
+  let depth = 0;
+  for (let i = 0; i < inner.length; i += 1) {
+    const char = inner[i];
+    if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === "," && depth === 0) {
+      const light = inner.slice(0, i).trim();
+      const dark = inner.slice(i + 1).trim();
+      if (!light || !dark) return null;
+      // `light-dark()` takes exactly two arguments. A third top-level comma
+      // means this is not a value we understand, and splitting on the first
+      // one would invent a `dark` of "#000, #333" — worse than not splitting.
+      if (hasTopLevelComma(dark)) return null;
+      return { light, dark };
+    }
+  }
+  return null;
+}
 
 function readStyleVariable(
   cfg: HostConfigDtoV2,
@@ -342,7 +421,18 @@ function readStyleVariable(
   // A single value answers both themes — either because it is theme-agnostic
   // (`light-dark(…)`) or because only one theme was ever captured. Both read
   // the same way here; the catalog's per-theme pair is what distinguishes them.
-  if (typeof value === "string") return { same: value };
+  if (typeof value === "string") {
+    // A `light-dark(…)` host and a per-theme-probed host state the same fact
+    // in different notations; normalize so the column compares.
+    const pair = parseLightDarkPair(value);
+    if (!pair) return { same: value };
+    // `light-dark(x, x)` states a theme-agnostic fact in a two-argument
+    // notation. Collapse it exactly as the per-theme branch above collapses
+    // an equal capture, or the same fact renders stacked here and bare there
+    // — the split-grammar problem this function exists to remove.
+    if (pair.light === pair.dark) return { same: pair.light };
+    return { ...pair, raw: value };
+  }
 
   // Only a probed host can be said not to support the variable: we connected,
   // read its host context, and it sent nothing here. For a vendor-doc or
@@ -354,11 +444,14 @@ function readStyleVariable(
 /**
  * Apps · Styles — one row per spec variable, showing the value each host sends.
  *
- * These are probed values, so the row shows them: `light-dark(rgba(255, 255,
- * 255, 1), ...)` against `#fff` is the comparison a widget author is here to
- * make, and collapsing it to a yes/no chip would discard the finding. A probed
- * host that sends nothing reads as an explicit "Not supported"; one nobody has
- * probed stays an em dash, so absence stays legible either way.
+ * These are probed values, so the row shows them: the value a widget actually
+ * receives is the comparison a widget author is here to make, and collapsing
+ * it to a yes/no chip would discard the finding. Hosts differ in notation —
+ * one `light-dark(…)` string vs a resolved literal per theme — so the pair is
+ * normalized (`parseLightDarkPair`) and every host reads down the column the
+ * same way. A probed host that sends nothing reads as an explicit "Not
+ * supported"; one nobody has probed stays an em dash, so absence stays
+ * legible either way.
  *
  * The trade is that value rows are not support-shaped: the only chip they ever
  * render is that `NOT_SUPPORTED` one, and they take no part in the coverage
@@ -535,6 +628,118 @@ const SANDBOX_PERMISSION_FIELDS: ReadonlyArray<HostConfigFieldDef> =
         Boolean(mcpProfile(cfg)?.apps?.sandbox?.permissions?.allow?.[key]),
     })
   );
+
+/** Tool Result parts relayed back only to a widget that called the tool. */
+const TOOL_RESULT_CONTENT_KINDS = [
+  ["text", "Text"],
+  ["image", "Image"],
+  ["audio", "Audio"],
+  ["resource", "Embedded resource"],
+  ["resourceLink", "Resource link"],
+] as const;
+const TOOL_RESULT_WIDGET_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    id: "toolResult.structuredContent",
+    section: "apps",
+    subsection: "Widget tool results",
+    label: "Structured content",
+    path: "mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent",
+    description:
+      "Whether the structuredContent half of a tool result reaches a widget that called the tool.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      mcpProfile(cfg)?.apps?.mcpAppsOverrides?.toolResult?.structuredContent,
+  },
+  ...TOOL_RESULT_CONTENT_KINDS.map(
+    ([key, label]): HostConfigFieldDef => ({
+      id: `toolResult.content.${key}`,
+      section: "apps",
+      subsection: "Widget tool results",
+      label,
+      path: `mcpProfile.apps.mcpAppsOverrides.toolResult.content.${key}`,
+      description: `Whether ${label.toLowerCase()} blocks in a tool result reach a widget that called the tool.`,
+      kind: { kind: "boolean" },
+      read: (cfg) =>
+        cfg.mcpProfile?.apps?.mcpAppsOverrides?.toolResult?.content?.[key],
+    })
+  ),
+];
+
+/** Browser APIs observed inside the sandboxed widget iframe. */
+const BROWSER_STORAGE_KEYS = [
+  "localStorage",
+  "sessionStorage",
+  "indexedDB",
+] as const;
+const BROWSER_STORAGE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  BROWSER_STORAGE_KEYS.map(
+    (key): HostConfigFieldDef => ({
+    id: `sandbox.browserStorage.${key}`,
+    section: "apps",
+    subsection: "Sandbox",
+    label: key === "indexedDB" ? "IndexedDB" : key,
+    path: `mcpProfile.apps.sandbox.browserStorage.${key}`,
+    description: `${key} works inside the sandboxed app iframe (probe-measured browser behavior, not MCP).`,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.browserStorage?.[key],
+    })
+  );
+
+/**
+ * How the client handles `notifications/tools/list_changed`. Two
+ * independently-measured facts: whether it opens the server→client channel at
+ * all, and whether it acts on the notification once one arrives.
+ */
+const TOOL_LIST_CHANGED_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
+  [
+    [
+      "listens",
+      "Opens notification channel",
+      "Client opens the server-to-client notification channel (legacy: standalone GET SSE stream; 2026-07-28: subscriptions/listen).",
+    ],
+    [
+      "refetches",
+      "Re-fetches after list_changed",
+      "Client acts on notifications/tools/list_changed instead of keeping its cached tool list. Independent of the channel: a server can publish the notification on an open tools/call response stream, which reaches a client that never opened one.",
+    ],
+  ] as const
+).map(
+  ([key, label, description]): HostConfigFieldDef => ({
+    id: `toolListChanged.${key}`,
+    section: "protocol",
+    subsection: "Tool list changed",
+    label,
+    path: `mcpProfile.toolListChanged.${key}`,
+    description,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.toolListChanged?.[key],
+  })
+);
+
+/**
+ * `mcpProfile.paginationTraversal` — whether the client walks `nextCursor`
+ * to the end of a paginated list, or stops at page one.
+ *
+ * Rendered as a support chip rather than the literal, because the question a
+ * reader has is binary: will this host see tools past the first page? An
+ * absent value maps to "unknown" through the shared fallback, so a host
+ * nobody probed is never published as failing.
+ */
+const PAGINATION_FIELD: HostConfigFieldDef = {
+  id: "paginationTraversal",
+  section: "protocol",
+  subsection: "Pagination",
+  label: "Follows nextCursor",
+  path: "mcpProfile.paginationTraversal",
+  description:
+    "Client requests further pages of a paginated list instead of treating page one as the whole result.",
+  kind: {
+    kind: "enum",
+    options: ["full", "firstPageOnly"],
+    support: { full: "supported", firstPageOnly: "unsupported" },
+  },
+  read: (cfg) => mcpProfile(cfg)?.paginationTraversal,
+};
 
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
@@ -761,6 +966,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
+
   // ============================================================
   // Protocol · Client capabilities supported
   // ============================================================
@@ -936,6 +1142,14 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.permissions?.mode,
   },
   ...SANDBOX_PERMISSION_FIELDS,
+  ...BROWSER_STORAGE_FIELDS,
+
+  // ============================================================
+  // Apps · Widget tool results
+  // ============================================================
+  ...TOOL_RESULT_WIDGET_FIELDS,
+  ...TOOL_LIST_CHANGED_FIELDS,
+  PAGINATION_FIELD,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",
@@ -1021,11 +1235,30 @@ export function fieldDiverges(
   hosts: ReadonlyArray<HostConfigDtoV2>
 ): boolean {
   if (hosts.length < 2) return false;
-  const first = stableStringify(field.read(hosts[0]));
+  const read = (cfg: HostConfigDtoV2) =>
+    stableStringify(comparable(field.read(cfg)));
+  const first = read(hosts[0]);
   for (let i = 1; i < hosts.length; i += 1) {
-    if (stableStringify(field.read(hosts[i])) !== first) return true;
+    if (read(hosts[i]) !== first) return true;
   }
   return false;
+}
+
+/**
+ * Strip read-only provenance off a value before comparing two hosts.
+ *
+ * `raw` records the `light-dark(…)` literal a host sent so the cell can show
+ * it on hover; it is not part of the fact being compared. Leaving it in makes
+ * a host that sends `light-dark(a, b)` diverge from one that sends the same
+ * two values per theme — two cells that now render identically, flagged as
+ * different, which is exactly backwards.
+ */
+function comparable(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || !("raw" in value)) {
+    return value;
+  }
+  const { raw: _raw, ...rest } = value as Record<string, unknown>;
+  return rest;
 }
 
 /** Convenience: an ordered { sectionId, subsection, fields[] } grouping. */

@@ -49,12 +49,17 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
+import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
+import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
+import { ShareDialog } from "@/components/sharing/ShareDialog";
+import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
+import { buildEvalSharePath } from "@/lib/app-navigation";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
 // page; hidden there in the judge-config rework (see comment at the
 // removed render site). Import kept dropped to avoid an unused-symbol
@@ -268,6 +273,8 @@ export function SuiteIterationsView({
   casesSidebarHidden,
   onShowCasesSidebar,
   omitSuiteHeader = false,
+  suiteDetailOverview = false,
+  evaluateDecisionSummary = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch,
@@ -337,6 +344,24 @@ export function SuiteIterationsView({
   onShowCasesSidebar?: () => void;
   /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
   omitSuiteHeader?: boolean;
+  /**
+   * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
+   * history, cases — instead of the unified dashboard on suite overview.
+   *
+   * OFF by default on purpose. This is a shared component: the shipped
+   * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
+   * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
+   */
+  suiteDetailOverview?: boolean;
+  /**
+   * Evaluate (New) only: read and render D9's canonical run decision summary
+   * on run detail and on the suite's run history.
+   *
+   * OFF by default, and the default is what keeps `/evals` byte-identical:
+   * with this false nothing here subscribes, so a non-Evaluate mount issues
+   * exactly zero decision-summary requests. Only `EvaluateTab` passes it.
+   */
+  evaluateDecisionSummary?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -452,6 +477,9 @@ export function SuiteIterationsView({
     cases: EvalExportCaseInput[];
   } | null>(null);
   const [tracesExportOpen, setTracesExportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const unifiedShareEvals =
+    useFeatureFlagEnabled("unified-share-evals") === true;
   // chatSessionIds for the currently-selected run (unified-trace iterations
   // only; legacy `blob`-only iterations have no chatSessions row to export).
   const runChatSessionIds = useMemo(
@@ -478,12 +506,22 @@ export function SuiteIterationsView({
   // control (header Run all, run-detail rerun/replay, per-case play buttons
   // in both dashboards), so deriving any lower down leaves some of them
   // ungated. Folded into the same disabled-reason channel billing uses.
-  const attachedEnvironments = useProjectEnvironments(
-    (suite.environmentIds?.length ?? 0) > 0 ? (projectId ?? null) : null
+  // Ad-hoc rows INCLUDED, and not gated on the suite having attachments —
+  // both because of what a model matrix is. Every cell it mints is an ad-hoc
+  // row, and a compose-and-run launches without attaching at all, so the
+  // narrower read returned a list with none of the environments the runs below
+  // actually reference: the matrix could not tell two models on one client
+  // apart, and the collision split never had two rows to compare.
+  //
+  // Widening is safe for `evalSuitePinsSandboxImage`, which looks up only the
+  // ids the suite itself lists — a superset cannot make it read true.
+  const projectEnvironments = useProjectEnvironments(
+    projectEnvironmentsEnabled ? (projectId ?? null) : null,
+    { includeAdhoc: true }
   );
   const suitePinsSandboxImage = evalSuitePinsSandboxImage(
     suite,
-    attachedEnvironments ?? undefined
+    projectEnvironments ?? undefined
   );
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
@@ -831,8 +869,25 @@ export function SuiteIterationsView({
     runsViewMode,
   ]);
 
+  // Evaluate (New) suite overview uses the checkout-flow identity + run
+  // history + cases layout. Run detail still folds into SuiteDashboard.
+  //
+  // `viewMode` falls through to "overview" for the suite-edit route, so edit
+  // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
+  // edit-mode chrome lives (the name editor and Done), and the only mount
+  // point for SuiteEnvironmentComposerBar. Suppressing it there would leave
+  // the settings sheet headerless and the suite's client/model/server
+  // composer unreachable from both routes.
+  const showEvaluateSuiteDetail =
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "overview";
+
   const showSuiteHeader =
-    !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
+    !showEvaluateSuiteDetail &&
+    (!omitSuiteHeader || viewMode !== "run-detail" || isEditMode);
 
   // The unified results split (run-group rail + scoped right pane) is the
   // default suite surface; the single-run detail folds into its right pane
@@ -886,6 +941,7 @@ export function SuiteIterationsView({
           );
         }}
         hostNamesById={hostNamesById}
+        environments={projectEnvironments}
       />
     ) : undefined;
 
@@ -941,6 +997,7 @@ export function SuiteIterationsView({
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
       hostNamesById={hostNamesById}
+      environments={projectEnvironments}
       {...extra}
     />
   );
@@ -950,6 +1007,15 @@ export function SuiteIterationsView({
       selectedRunDetails={selectedRunDetails}
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
       onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
+      onShare={
+        unifiedShareEvals &&
+        selectedRunDetails &&
+        (selectedRunDetails.status === "completed" ||
+          selectedRunDetails.status === "failed" ||
+          selectedRunDetails.status === "timed_out")
+          ? () => setShareOpen(true)
+          : undefined
+      }
       currentSuiteJudgeConfig={suite.judgeConfig ?? null}
       source={getRunMetricSource(selectedRunDetails, suite.source)}
       runDetailSortBy={effectiveRunDetailSortBy}
@@ -992,6 +1058,45 @@ export function SuiteIterationsView({
       onEditTestCase={onEditTestCase}
       alwaysShowEditIterationRows={alwaysShowEditIterationRows}
       runTrendData={runTrendData}
+      // The stage findings ride the SAME opt-in as the decision card beside
+      // them, and the same project gate: the read is per-project and the
+      // browser never resolves or guesses one. With this false the underlying
+      // read issues no request at all.
+      stageFindingsEnabled={Boolean(evaluateDecisionSummary && projectId)}
+      onViewStageTrace={({ iterationId, testCaseId }) =>
+        // Identical routing to the decision card's own trace link, and for the
+        // reason its comment gives: `tracePath` is an API path rather than an
+        // app route, and the CASE editor is the one path that actually
+        // consumes an iteration id.
+        navigation.toTestEdit(suite._id, testCaseId, {
+          iteration: iterationId,
+        })
+      }
+      decisionSummarySlot={
+        // Only Evaluate opts in, and only with a project id in hand: the read
+        // is per-project and the browser never resolves or guesses one.
+        evaluateDecisionSummary && projectId ? (
+          <RunDecisionSummarySection
+            projectId={projectId}
+            run={selectedRunDetails}
+            enabled
+            onViewTrace={({ iterationId, testCaseId }) =>
+              // `tracePath` is an API path, not an app route, so this goes
+              // through the app's own routing. It goes to the CASE editor
+              // rather than run detail because that is the one path that
+              // actually consumes an iteration id: the route's `iteration`
+              // becomes `openCompareIterationId` and the editor opens on it.
+              // Run detail takes a `selectedIterationId` that
+              // `RunIterationsSidebar` marks deprecated and never forwards, so
+              // sending the reader there would land them on the page they are
+              // already looking at with nothing opened.
+              navigation.toTestEdit(suite._id, testCaseId, {
+                iteration: iterationId,
+              })
+            }
+          />
+        ) : undefined
+      }
     />
   ) : null;
 
@@ -1148,6 +1253,46 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showEvaluateSuiteDetail ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+              >
+                <SuiteDetailOverview
+                  suite={suite}
+                  cases={cases}
+                  runs={runs}
+                  runsLoading={runsLoading}
+                  allIterations={allIterations}
+                  hostNamesById={hostNamesById}
+                  onRerun={onRerunWithOverride}
+                  onEditSuite={() => navigation.toSuiteEdit(suite._id)}
+                  onEditCases={onCreateTestCase}
+                  onGenerateTestCases={onGenerateTestCases}
+                  canGenerateTestCases={canGenerateTestCases}
+                  generateTestCasesDisabledReason={
+                    generateTestCasesDisabledReason
+                  }
+                  isGeneratingTestCases={isGeneratingTestCases}
+                  onRunClick={handleRunClick}
+                  onTestCaseClick={(testCaseId) =>
+                    navigation.toTestEdit(suite._id, testCaseId)
+                  }
+                  rerunningSuiteId={rerunningSuiteId}
+                  replayingRunId={replayingRunId}
+                  runningTestCaseId={runningTestCaseId}
+                  evalRunsDisabledReason={evalRunsDisabledReason}
+                  readOnlyConfig={readOnlyConfig}
+                  projectId={projectId}
+                  decisionSummaryEnabled={evaluateDecisionSummary}
+                />
+              </motion.div>
             ) : showFoldedUnifiedDashboard ? (
               <div
                 key="unified-results-split"
@@ -1325,6 +1470,7 @@ export function SuiteIterationsView({
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
                       hostNamesById={hostNamesById}
+                      environments={projectEnvironments}
                     />
                   )}
                 </motion.div>
@@ -1780,6 +1926,30 @@ export function SuiteIterationsView({
           projectId={projectId}
           runChatSessionIds={runChatSessionIds}
         />
+      ) : null}
+      {unifiedShareEvals && selectedRunDetails ? (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title="Share eval run"
+          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+        >
+          <ResourceSharePanel
+            resourceType="evalRun"
+            resourceId={selectedRunDetails._id}
+            footerSlot={
+              <p className="text-xs text-muted-foreground">
+                Transcripts, tool arguments, credentials, and full server URLs
+                are never included.
+              </p>
+            }
+            linkLabel="Share link"
+            buildShareUrl={(token) =>
+              `${window.location.origin}${buildEvalSharePath(token)}`
+            }
+            testIdPrefix="eval-share"
+          />
+        </ShareDialog>
       ) : null}
     </div>
   );

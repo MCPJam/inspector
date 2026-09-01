@@ -22,6 +22,16 @@ import {
   toRunScoreIntegrity,
   toScoreProjection,
 } from "./eval-score-projection.js";
+import { toStageProjection } from "./eval-stage-projection.js";
+import {
+  buildEvalRunDecisionSummaryResponse,
+  decisionSummaryPageIsComplete,
+  parseDecisionSummaryLimit,
+} from "./eval-decision-summary-projection.js";
+import {
+  toRunVerdictProjection,
+  toSuiteVerdictPolicyDto,
+} from "./eval-verdict-projection.js";
 import {
   toRunCompareDto,
   type RunCompareBaseline,
@@ -38,10 +48,21 @@ import {
   readAnyIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
-import { opaqueIdSchema } from "@mcpjam/sdk/contract";
+import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+  evalStageAnalyticsSchema,
+  evalSuiteFileCaseImportSchema,
+  IMPORT_MAPPING_STATUSES,
+  opaqueIdSchema,
+} from "@mcpjam/sdk/contract";
+import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
-import { TERMINAL_RUN_STATUSES } from "../../services/evals/run-status.js";
+import {
+  TERMINAL_ITERATION_STATUSES,
+  TERMINAL_RUN_STATUSES,
+} from "../../services/evals/run-status.js";
 import { shouldSkipExecution } from "../shared/evals.js";
 import {
   createEvalCasesInBatches,
@@ -92,11 +113,18 @@ import {
   type EvalStepReplay,
 } from "@/shared/eval-step-replay";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  measureTraceBytes,
+  recordEvalIterationRead,
+} from "../../services/eval-trace-access-audit.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
-import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import {
+  translateConvexWriteError as translateConvexError,
+  translateImportIneligibleError,
+} from "./convex-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
-import { readJsonObjectBody, synthesizeServerBody } from "./adapter.js";
+import { readJsonObjectBody } from "./adapter.js";
 import {
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
@@ -315,6 +343,9 @@ const publicInlineTestSchema = z.object({
   expectedOutput: z.string().optional(),
   isNegativeTest: z.boolean().optional(),
   scenario: z.string().optional(),
+  // Analytics-only label frozen into the authored case/run snapshot. `null`
+  // is not meaningful on an inline create, so this uses the stored form.
+  intent: caseIntentSchema.optional(),
   advancedConfig: z
     .object({
       system: z.string().optional(),
@@ -348,6 +379,7 @@ function publicInlineTestToRunTest(
       ? { isNegativeTest: test.isNegativeTest }
       : {}),
     ...(test.scenario !== undefined ? { scenario: test.scenario } : {}),
+    ...(test.intent !== undefined ? { intent: test.intent } : {}),
     ...(test.advancedConfig !== undefined
       ? { advancedConfig: test.advancedConfig }
       : {}),
@@ -388,6 +420,9 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
       .union([publicMatchOptionsSchema, matchOptionsSchema])
       .optional(),
   })
+  // STRICT on the object, before the refinements: ZodEffects has no `.strict()`.
+  // An unknown key is a 400, not a silently-dropped field on a spend route.
+  .strict()
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
   })
@@ -432,7 +467,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
 // suite-level defaults by `normalizeCreateTestsToRunTests` before the strict
 // run schema validates them. The case body is the public `steps` contract
 // (`TestStep[]`), projected to the internal case fields by that normalizer.
-const createEvalSuiteSchema = z.object({
+const createEvalSuiteSchema = z.strictObject({
   name: z.string().min(1),
   description: z.string().optional(),
   serverIds: z.array(z.string()).min(1),
@@ -457,6 +492,7 @@ const createEvalSuiteSchema = z.object({
         expectedOutput: z.string().optional(),
         isNegativeTest: z.boolean().optional(),
         scenario: z.string().optional(),
+        intent: caseIntentSchema.optional(),
         advancedConfig: z
           .object({
             system: z.string().optional(),
@@ -474,6 +510,96 @@ const createEvalSuiteSchema = z.object({
 });
 
 type CreateEvalSuiteBody = z.infer<typeof createEvalSuiteSchema>;
+
+const SOURCE_HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+const evalSuiteFileProvenanceWireSchema = z
+  .object({
+    sourceHash: z.string().min(1),
+    sourceFormat: z.string().min(1),
+    sourceFormatVersion: z.string().min(1).optional(),
+    converter: z.string().min(1).optional(),
+    converterVersion: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    discoverySnapshotHash: z.string().min(1).optional(),
+    reportHash: z.string().min(1),
+    importedAt: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * Body for `POST /eval-suites/from-file`: resolve or create a file-owned
+ * suite by declared id. The inspector parses the suite file; this is the
+ * declared identity + provenance + hosted settings, not the raw file.
+ */
+const syncFileOwnedSuiteSchema = z
+  .object({
+    declaredSuiteId: opaqueIdSchema,
+    name: z.string().trim().min(1).max(200),
+    description: z.string().optional(),
+    sourceHash: z
+      .string()
+      .regex(
+        SOURCE_HASH_PATTERN,
+        "sourceHash must be a 64-character lowercase SHA-256 hex digest",
+      ),
+    provenance: evalSuiteFileProvenanceWireSchema.optional(),
+    environment: z
+      .object({
+        servers: z.array(z.string()).optional(),
+        serverBindings: z
+          .array(
+            z.object({
+              serverName: z.string(),
+              projectServerId: z.string().optional(),
+            }),
+          )
+          .optional(),
+      })
+      .optional(),
+    defaultConfig: z
+      .object({
+        modelId: z.string(),
+        systemPrompt: z.string().optional(),
+        temperature: z.number().optional(),
+      })
+      .optional(),
+    verdictPolicyVersion: z.literal(2).optional(),
+    verdictPolicyDefaults: z
+      .object({
+        repetitions: z.number().int().min(1).max(100),
+        passThreshold: z.number().min(0).max(1),
+        validity: z
+          .object({
+            minEligibleTrials: z.number().int().min(0).optional(),
+            minCompletionRate: z.number().min(0).max(1).optional(),
+            maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    minIterations: z.number().int().min(1).max(10).optional(),
+    defaultPassCriteria: z
+      .object({
+        minimumPassRate: z.number(),
+      })
+      .optional(),
+  })
+  .strict()
+  .superRefine((body, ctx) => {
+    const hasVersion = body.verdictPolicyVersion !== undefined;
+    const hasDefaults = body.verdictPolicyDefaults !== undefined;
+    if (hasVersion !== hasDefaults) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [hasVersion ? "verdictPolicyDefaults" : "verdictPolicyVersion"],
+        message:
+          "verdictPolicyVersion and verdictPolicyDefaults must be supplied together.",
+      });
+    }
+  });
 
 /**
  * Expand the ergonomic authoring tests into the full
@@ -517,6 +643,7 @@ function normalizeCreateTestsToRunTests(
         ? { isNegativeTest: test.isNegativeTest }
         : {}),
       ...(test.scenario !== undefined ? { scenario: test.scenario } : {}),
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
       ...(test.advancedConfig !== undefined
         ? { advancedConfig: test.advancedConfig }
         : {}),
@@ -848,6 +975,44 @@ async function describeAttachedEnvironments(
  * a silent no-op: environment resolution wins outright in `startTestSuiteRun`,
  * so the override would be accepted and then ignored.
  */
+async function assertEphemeralEnvironmentLaunchable(
+  convexAuthToken: string,
+  projectId: string,
+  environmentId: string,
+): Promise<void> {
+  const convex = createConvexReadClient(convexAuthToken);
+  let row: {
+    environmentId?: string;
+    projectId?: string;
+    archivedAt?: number;
+    name?: string;
+  } | null;
+  try {
+    row = (await convex.query(
+      "projectEnvironments:getEnvironment" as any,
+      { projectId, environmentId } as any,
+    )) as typeof row;
+  } catch (error) {
+    throw translateConvexError(error);
+  }
+  if (!row) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      `Environment ${environmentId} was not found in this project.`,
+      { reason: "ENVIRONMENT_NOT_FOUND", environmentId },
+    );
+  }
+  if (row.archivedAt !== undefined) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Environment ${row.name ?? environmentId} is archived and cannot be launched.`,
+      { reason: "ENVIRONMENT_ARCHIVED", environmentId },
+    );
+  }
+}
+
 async function selectSuiteEnvironmentId(params: {
   convexAuthToken: string;
   projectId: string;
@@ -857,6 +1022,11 @@ async function selectSuiteEnvironmentId(params: {
   hasServerOverride: boolean;
   /** The request field that carries that override, for the 400 message. */
   serverField: string;
+  /**
+   * Compose-and-run: skip suite membership for a project-scoped, live env.
+   * Still requires an explicit `requestedEnvironmentId`.
+   */
+  ephemeralEnvironment?: boolean;
 }): Promise<string | undefined> {
   const {
     convexAuthToken,
@@ -865,6 +1035,7 @@ async function selectSuiteEnvironmentId(params: {
     requestedEnvironmentId,
     hasServerOverride,
     serverField,
+    ephemeralEnvironment,
   } = params;
   const attached = suiteEnvironmentIds(suite);
   const describe = () =>
@@ -883,6 +1054,14 @@ async function selectSuiteEnvironmentId(params: {
   }
 
   if (requestedEnvironmentId) {
+    if (ephemeralEnvironment === true) {
+      await assertEphemeralEnvironmentLaunchable(
+        convexAuthToken,
+        projectId,
+        requestedEnvironmentId,
+      );
+      return requestedEnvironmentId;
+    }
     if (!attached.includes(requestedEnvironmentId)) {
       throw new WebRouteError(
         400,
@@ -1091,6 +1270,15 @@ function toRunEnvironmentDto(run: RunDoc) {
  * `caseKey` keeps its persisted name. It is the stable AUTHORED-case identity,
  * not a Convex row id; calling it `caseId` at this boundary would invite
  * callers to join it against the case ids the case routes take.
+ *
+ * `iterationId` is what a caller joins on. Without it the only way to pair a
+ * judge case with the iteration it graded was POSITION — `caseKey` is a random
+ * `ui_*` storage key that matches nothing the case or iteration routes return,
+ * so every consumer had to assume the judge's array order equals the
+ * iterations' and hope. It is persisted on the judge case already (the save
+ * mutation patches the iteration through it), so this exposes an existing
+ * join key rather than inventing one. Optional in the DTO because rows written
+ * before it was persisted carry none.
  */
 function toRunJudgeDto(
   status: unknown,
@@ -1124,6 +1312,9 @@ function toRunJudgesDto(run: RunDoc) {
       run.goalCompletion,
       (row) => ({
         caseKey: String(row.caseKey ?? ""),
+        ...(typeof row.iterationId === "string" && row.iterationId.length > 0
+          ? { iterationId: row.iterationId }
+          : {}),
         score: typeof row.score === "number" ? row.score : null,
         passed: row.passed === true,
         reason: typeof row.reason === "string" ? row.reason : null,
@@ -1141,6 +1332,9 @@ function toRunJudgesDto(run: RunDoc) {
       // Projected off the persisted fields rather than forced into one shape.
       (row) => ({
         caseKey: String(row.caseKey ?? ""),
+        ...(typeof row.iterationId === "string" && row.iterationId.length > 0
+          ? { iterationId: row.iterationId }
+          : {}),
         score: typeof row.score === "number" ? row.score : null,
         passed: row.passed === true,
         reason: typeof row.reason === "string" ? row.reason : null,
@@ -1163,6 +1357,13 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    ...(typeof run.runGroupId === "string" ? { runGroupId: run.runGroupId } : {}),
+    ...(typeof run.effectiveModelId === "string"
+      ? { effectiveModelId: run.effectiveModelId }
+      : {}),
+    ...(run.modelSource === "client_default" || run.modelSource === "override"
+      ? { modelSource: run.modelSource }
+      : {}),
     // Which engine the run actually executed on: `"emulated"` (the inspector's
     // own turn loop) or `"harness:<id>"` (a real agent runtime). Read from the
     // run's IMMUTABLE snapshot, where the platform derives it from the run's
@@ -1181,8 +1382,156 @@ function toRunDto(run: RunDoc) {
     // evidence is not valid evidence. Omitted rather than nulled so the DTO is
     // unchanged for every run predating integrity checking.
     ...toRunScoreIntegrity(run.scoreIntegrity),
+    // The v2 verdict policy evidence: which policy decided this run, the
+    // decision itself (validity first, then the task verdict, with the
+    // denominators and reasons it was taken on), and the integrity error when
+    // the run's own evidence could not be decided under it. ALL THREE ARE
+    // ABSENT for a legacy percent-threshold run — see `toRunVerdictProjection`.
+    //
+    // A caller gating on `result` must read `verdictPolicyVersion` first: only
+    // under v2 can `result` be `"inconclusive"`, and only then does
+    // `verdictSummary` explain the decision.
+    ...toRunVerdictProjection(run),
+    // The waiver in force over this run's gate, or `null`.
+    //
+    // ON THE RUN, not behind a separate fetch, because `eval gate` already
+    // GETs this run and computes its verdict client-side: carrying the waiver
+    // here is what lets it fold one in and NAME it in every artifact it
+    // writes, instead of flipping an exit code with nothing explaining why.
+    //
+    // `null` rather than omitted so a caller can distinguish "no waiver" from
+    // "an older deployment that does not report one" — the same convention
+    // `insights` and `judges` use. The platform gates it on being able to VIEW
+    // the run rather than to grant a waiver; a waiver its readers cannot see
+    // is not a visible waiver.
+    gateWaiver: toGateWaiverDto(run.gateWaiver),
+    // Whether this run's imported cases carry evidence a gate may rely on.
+    //
+    // OMITTED, not defaulted, when the platform did not report one: absence
+    // says "this deployment has no opinion", and `{status: "legacy"}` says
+    // "there were no imported cases". A gate that read the second where the
+    // first was true would vouch for a run nobody had checked.
+    ...toImportEligibilityProjection(run.importEligibility),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
+  };
+}
+
+/**
+ * The eligibility projection, field by field, or nothing.
+ *
+ * Explicit rather than a spread of whatever the platform sent. This object
+ * decides whether a run may gate a deploy, so its shape is part of the public
+ * contract in a way a passthrough could not keep: an internal field added
+ * upstream would be published here without anyone deciding to, and a MALFORMED
+ * one would be republished as though it had been checked.
+ *
+ * A payload that fails these checks is dropped entirely rather than
+ * partially projected. A gate cannot tell a missing field from a satisfied
+ * one, so half a projection is worse than none — and none is already handled
+ * correctly downstream as "older deployment, behave as before".
+ */
+function toImportEligibilityProjection(
+  raw: unknown,
+): { importEligibility?: Record<string, unknown> } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const source = raw as Record<string, unknown>;
+  const status = source.status;
+  if (
+    status !== "legacy" &&
+    status !== "eligible" &&
+    status !== "incomplete"
+  ) {
+    return {};
+  }
+  if (typeof source.gateable !== "boolean") return {};
+  if (typeof source.importedCaseCount !== "number") return {};
+
+  // A required list is validated WHOLE, exactly like the scalars above.
+  //
+  // Coercing an absent or malformed list to `[]` would publish a projection
+  // that reads as complete: an `eligible` run whose frozen approval receipts
+  // silently became an empty array still says "imported cases ran with a
+  // recorded decision", while the audit that made them runnable is simply
+  // gone, and nothing on the wire distinguishes "approved by nobody" from
+  // "we could not read who approved". `undefined` is the ONLY way this
+  // function reports "no opinion", and a payload that is present but wrong
+  // must not borrow it.
+  const stringList = (value: unknown): string[] | undefined =>
+    Array.isArray(value) &&
+    value.every((entry): entry is string => typeof entry === "string")
+      ? (value as string[])
+      : undefined;
+
+  const claimedExactCaseIds = stringList(source.claimedExactCaseIds);
+  if (claimedExactCaseIds === undefined) return {};
+  const approvedApproximationCaseIds = stringList(
+    source.approvedApproximationCaseIds,
+  );
+  if (approvedApproximationCaseIds === undefined) return {};
+
+  if (!Array.isArray(source.approvedApproximationReceipts)) return {};
+  const receipts: Array<Record<string, unknown>> = [];
+  for (const entry of source.approvedApproximationReceipts) {
+    if (!entry || typeof entry !== "object") return {};
+    const receipt = entry as Record<string, unknown>;
+    // Every field of a receipt is load-bearing — who, when, why, and for which
+    // case. A receipt missing any of them is not a weaker receipt; it is one a
+    // reader would have to guess at. Dropping just that ENTRY would leave
+    // `approvedApproximationCaseIds` naming a case with no receipt to explain
+    // it, so the whole projection goes instead of a self-contradicting one.
+    if (
+      typeof receipt.testCaseId !== "string" ||
+      typeof receipt.approvedBy !== "string" ||
+      typeof receipt.approvedAt !== "number" ||
+      typeof receipt.reason !== "string"
+    ) {
+      return {};
+    }
+    receipts.push({
+      testCaseId: receipt.testCaseId,
+      ...(typeof receipt.caseKey === "string"
+        ? { caseKey: receipt.caseKey }
+        : {}),
+      ...(typeof receipt.sourceCaseKey === "string"
+        ? { sourceCaseKey: receipt.sourceCaseKey }
+        : {}),
+      approvedBy: receipt.approvedBy,
+      approvedAt: receipt.approvedAt,
+      reason: receipt.reason,
+    });
+  }
+
+  if (!Array.isArray(source.issues)) return {};
+  const issues: Array<Record<string, unknown>> = [];
+  for (const entry of source.issues) {
+    if (!entry || typeof entry !== "object") return {};
+    const issue = entry as Record<string, unknown>;
+    // `code` is what names the problem. An issue without one explains nothing,
+    // and a partial issue list understates how much is wrong with the run.
+    if (typeof issue.code !== "string") return {};
+    issues.push({
+      code: issue.code,
+      ...(typeof issue.testCaseId === "string"
+        ? { testCaseId: issue.testCaseId }
+        : {}),
+      ...(typeof issue.caseKey === "string" ? { caseKey: issue.caseKey } : {}),
+      ...(typeof issue.toolName === "string"
+        ? { toolName: issue.toolName }
+        : {}),
+    });
+  }
+
+  return {
+    importEligibility: {
+      status,
+      gateable: source.gateable,
+      importedCaseCount: source.importedCaseCount,
+      claimedExactCaseIds,
+      approvedApproximationCaseIds,
+      approvedApproximationReceipts: receipts,
+      issues,
+    },
   };
 }
 
@@ -1190,11 +1539,12 @@ function toIterationDto(iteration: IterationDoc) {
   const snapshot = iteration.testCaseSnapshot ?? {};
   const startedAt =
     typeof iteration.startedAt === "number" ? iteration.startedAt : null;
-  const isTerminal =
-    iteration.status === "completed" ||
-    iteration.status === "failed" ||
-    iteration.status === "cancelled" ||
-    iteration.status === "timed_out";
+  // Every lifecycle status that ENDS an iteration. `setup_failed` and
+  // `skipped` are terminal exactly like the other four: the harness is done
+  // with the trial, so its duration is measurable (a setup failure has a real
+  // elapsed time) and withholding it would report `durationMs: null` for the
+  // one class of failure an operator is trying to time.
+  const isTerminal = TERMINAL_ITERATION_STATUSES.has(iteration.status);
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -1202,6 +1552,19 @@ function toIterationDto(iteration: IterationDoc) {
   return {
     id: String(iteration._id),
     testCaseId: iteration.testCaseId ? String(iteration.testCaseId) : null,
+    // The case's SDK-DECLARED id, from the iteration's FROZEN snapshot — the
+    // identity the suite declared when the run started, which survives the case
+    // row being recreated. Kept beside `testCaseId` and never merged into it:
+    // one is the author's durable name for the case and the other is this
+    // deployment's row id, and a reader that cannot tell them apart cannot tell
+    // a re-created case from a renamed one.
+    //
+    // OMITTED, never nulled, when the snapshot has none — a UI-authored case
+    // declares no id, and every iteration predating declared ids has none — so
+    // this is additive for every existing row.
+    ...(typeof snapshot.caseId === "string" && snapshot.caseId.length > 0
+      ? { caseId: snapshot.caseId }
+      : {}),
     title: snapshot.title ?? null,
     iterationNumber: iteration.iterationNumber,
     status: iteration.status,
@@ -1216,6 +1579,7 @@ function toIterationDto(iteration: IterationDoc) {
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     error: iteration.error ?? null,
     ...toScoreProjection(iteration.metadata),
+    ...toStageProjection(iteration.metadata),
   };
 }
 
@@ -1366,7 +1730,45 @@ function internalCaseToSteps(testCase: CaseDoc): TestStep[] {
   return steps;
 }
 
+/**
+ * The three CLAIM fields of a stored import record, and nothing else.
+ *
+ * The persisted row is a superset: alongside the claim it can carry acceptance
+ * bookkeeping the platform wrote (`acceptedBy`, `acceptedAt`, and friends).
+ * Spreading the stored object would publish internal fields the public contract
+ * never promised and cannot take back, so this picks the three fields by name
+ * and validates the status against the closed vocabulary rather than trusting
+ * whatever the row happens to hold.
+ *
+ * Returns `undefined` for a native case and for a row whose status is not one
+ * we know — an unreadable claim is reported as no claim rather than as a claim
+ * whose meaning the caller has to guess.
+ */
+function toPublicCaseImportClaim(
+  raw: unknown,
+): { status: string; sourceCaseKey?: string; note?: string } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const status = record.status;
+  if (
+    typeof status !== "string" ||
+    !(IMPORT_MAPPING_STATUSES as readonly string[]).includes(status)
+  ) {
+    return undefined;
+  }
+  return {
+    status,
+    ...(typeof record.sourceCaseKey === "string" && record.sourceCaseKey
+      ? { sourceCaseKey: record.sourceCaseKey }
+      : {}),
+    ...(typeof record.note === "string" && record.note
+      ? { note: record.note }
+      : {}),
+  };
+}
+
 function toCaseDto(testCase: CaseDoc) {
+  const importClaim = toPublicCaseImportClaim(testCase.import);
   return {
     id: String(testCase._id),
     // The EFFECTIVE declared identity — what the case answers to in a suite
@@ -1386,6 +1788,21 @@ function toCaseDto(testCase: CaseDoc) {
       ? { expectedOutput: testCase.expectedOutput }
       : {}),
     iterations: typeof testCase.runs === "number" ? testCase.runs : 1,
+    // The v2 per-case OVERRIDES, projected under their canonical names and
+    // omitted when the case inherits the suite default.
+    //
+    // `repetitions` is not a second spelling of `iterations` above: that field
+    // is the legacy `runs` count, which a v2 case keeps as its
+    // legacy-compatible projection, and the legacy resolver reads it as a floor
+    // (`max(runs, minimumIterations)`). This one is "the case's value, else the
+    // suite's". `passThreshold` is a FRACTION in [0,1] and is never derived
+    // from `settings.minimumAccuracy`, which is a suite-wide percent.
+    ...(typeof testCase.repetitions === "number"
+      ? { repetitions: testCase.repetitions }
+      : {}),
+    ...(typeof testCase.passThreshold === "number"
+      ? { passThreshold: testCase.passThreshold }
+      : {}),
     isNegative: testCase.isNegativeTest === true,
     ...(testCase.scenario !== undefined ? { scenario: testCase.scenario } : {}),
     models: Array.isArray(testCase.models)
@@ -1405,6 +1822,8 @@ function toCaseDto(testCase: CaseDoc) {
           },
         }
       : {}),
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
+    ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
   };
@@ -1422,6 +1841,9 @@ function toSuiteDetailDto(
   const goal = suite.judgeConfig?.goalCompletion;
   return {
     id: String(suite._id),
+    ...(typeof suite.declaredSuiteId === "string"
+      ? { declaredId: suite.declaredSuiteId }
+      : {}),
     name: suite.name ?? null,
     description: suite.description ?? null,
     projectId: suite.projectId ? String(suite.projectId) : null,
@@ -1492,6 +1914,12 @@ function toSuiteDetailDto(
             ? goal.threshold
             : GOAL_COMPLETION_DEFAULTS.threshold,
       },
+      // The v2 verdict policy this suite's runs are decided under, with the
+      // defaults a case inherits. ABSENT for a legacy suite — its runs are
+      // decided by `minimumAccuracy` (a suite-wide percent) against
+      // `max(case.iterations, minimumIterations)`, which is a different
+      // resolver and not expressible here.
+      ...toSuiteVerdictPolicyDto(suite),
     },
     schedule: {
       enabled: suite.schedule?.enabled === true,
@@ -1651,8 +2079,15 @@ const publicCaseBodyShape = {
   steps: stepsSchema.min(1).optional(),
   expectedOutput: z.string().optional(),
   iterations: z.number().int().min(1).max(10).optional(),
+  repetitions: z.number().int().min(1).max(100).optional(),
+  passThreshold: z.number().min(0).max(1).optional(),
   isNegative: z.boolean().optional(),
   scenario: z.string().optional(),
+  /**
+   * Optional analytics label. Omitted preserves it on PATCH; `null` clears it.
+   * `createCaseSchema` narrows this to the stored (string-only) form below.
+   */
+  intent: caseIntentUpdateSchema.optional(),
   models: z
     .array(
       z.object({
@@ -1671,7 +2106,25 @@ const publicCaseBodyShape = {
     .optional(),
 } as const;
 
-const createCaseSchema = z.object({
+/**
+ * The per-case IMPORT CLAIM, as the public API accepts it.
+ *
+ * Reused verbatim from the suite-file contract rather than restated: a claim a
+ * converter can write into a YAML file is exactly a claim it can POST, and two
+ * spellings of the same object is how the file loader and the API end up
+ * disagreeing about whether a 512-character source key is legal.
+ *
+ * CLAIM-ONLY, and the closed object is the enforcement. `exact` here means
+ * CONVERTER-CLAIMED exact — MCPJam has verified nothing — so the acceptance
+ * side of the record (who approved, when, and why) is deliberately
+ * unrepresentable in a request body: approvals are per-run decisions the
+ * platform derives from the authenticated launcher, and a caller-supplied
+ * `approvedBy` would file one person's approval under another's name. A body
+ * that carries one is a 400, never a silently-stripped field.
+ */
+const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
+
+const createCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
   /**
    * The case's DECLARED identity. Callers mint it (`mintCaseId` from
@@ -1685,8 +2138,22 @@ const createCaseSchema = z.object({
    * same request.
    */
   id: opaqueIdSchema.optional(),
+  // A new case has nothing to clear: stored intent is a string or absent.
+  intent: caseIntentSchema.optional(),
+  /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
+  import: publicCaseImportSchema.optional(),
 });
-const updateCaseSchema = z.object(publicCaseBodyShape);
+const updateCaseSchema = z.strictObject({
+  ...publicCaseBodyShape,
+  /**
+   * The converter's CLAIM about this case, or `null` to remove one.
+   *
+   * Omitted means unchanged; `null` means the case no longer carries a claim.
+   * The two are different requests and a PATCH that conflated them would erase
+   * provenance on every unrelated edit.
+   */
+  import: z.union([publicCaseImportSchema, z.null()]).optional(),
+});
 
 /**
  * A case inside a `POST …/cases/batch` body. Same shape as a single create —
@@ -1694,7 +2161,7 @@ const updateCaseSchema = z.object(publicCaseBodyShape);
  */
 const batchCaseSchema = createCaseSchema;
 
-const createCasesBatchSchema = z.object({
+const createCasesBatchSchema = z.strictObject({
   cases: z
     .array(batchCaseSchema)
     .min(1, "cases must contain at least one case.")
@@ -1719,7 +2186,7 @@ const createCasesBatchSchema = z.object({
  * settings-sheet row the shared manifest marks `api:` is genuinely accepted
  * here. Nothing else should import it — the route is the only writer.
  */
-export const updateSuiteSchema = z.object({
+export const updateSuiteSchema = z.strictObject({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   // The LEGACY server bag (kept as rollback/compat data). Unrelated to
@@ -1817,7 +2284,7 @@ const requestRunJudgeSchema = z
   })
   .strict();
 
-const scheduleSchema = z.object({
+const scheduleSchema = z.strictObject({
   enabled: z.boolean(),
   intervalMinutes: z.number().int().min(5).max(10080).optional(),
   // A schedule fires exactly ONE run, so an environment-based suite must pin
@@ -1865,6 +2332,8 @@ const generateCasesSchema = z
     // could not do before.
     idempotencyKey: z.string().min(1).max(256).optional(),
   })
+  // STRICT on the object, before the refinement: ZodEffects has no `.strict()`.
+  .strict()
   // Same mutual exclusion the run-create schema enforces: an environment's
   // closed server set is the point, so a `servers` override alongside it would
   // have to be silently dropped.
@@ -1878,8 +2347,23 @@ const generateCasesSchema = z
  * body. `defaultModels` (resolved from the suite when the body omits models)
  * is only used for create — update leaves models untouched when omitted.
  */
+/**
+ * The case body either write path may hand to {@link buildCaseMutationArgs}.
+ *
+ * Create's `import` is a claim; PATCH's is a claim OR `null` (remove it), so
+ * the two schemas do not infer to one type. Widened here rather than casting at
+ * the PATCH call site, which would lose exactly the `null` this has to carry.
+ */
+type CaseMutationBody = Omit<
+  z.infer<typeof createCaseSchema>,
+  "import" | "intent"
+> & {
+  import?: z.infer<typeof publicCaseImportSchema> | null;
+  intent?: z.infer<typeof caseIntentUpdateSchema>;
+};
+
 function buildCaseMutationArgs(
-  body: z.infer<typeof createCaseSchema>,
+  body: CaseMutationBody,
   opts: {
     forCreate: boolean;
     defaultModels?: Array<{ model: string; provider: string }>;
@@ -1907,8 +2391,14 @@ function buildCaseMutationArgs(
   if ("id" in body && body.id !== undefined) args.caseId = body.id;
   if (body.title !== undefined) args.title = body.title;
   if (body.iterations !== undefined) args.runs = body.iterations;
+  if (body.repetitions !== undefined) args.repetitions = body.repetitions;
+  if (body.passThreshold !== undefined) args.passThreshold = body.passThreshold;
   if (body.isNegative !== undefined) args.isNegativeTest = body.isNegative;
   if (body.scenario !== undefined) args.scenario = body.scenario;
+  // Definedness is the three-way intent protocol: omit = preserve; null =
+  // clear; string = set. Never use a truthiness check here: it would collapse
+  // the explicit clear into omission before Convex can apply it.
+  if (body.intent !== undefined) args.intent = body.intent;
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
 
@@ -1977,6 +2467,18 @@ function buildCaseMutationArgs(
       body.checks === null
         ? null
         : { mode: body.checks.mode, list: body.checks.list };
+
+  // The import CLAIM, forwarded by name.
+  //
+  // Explicit rather than spread through, because `args` is built key by key
+  // from a strict schema: a field nobody names here never reaches Convex, and
+  // "the claim silently didn't persist" is indistinguishable from "the case was
+  // authored natively" once the write has landed.
+  //
+  // `null` is a real value on PATCH (remove the claim) and is unrepresentable
+  // on create, where `createCaseSchema` rejects it before this runs — so
+  // `undefined` is the only "leave it alone", exactly as the mutation reads it.
+  if (body.import !== undefined) args.import = body.import;
 
   return args;
 }
@@ -2150,12 +2652,12 @@ async function resolveHostAttachments(
     byName.set(key, [...(byName.get(key) ?? []), h]);
   }
   const bindingByName = new Map<string, string>();
+  const bindingIds = new Set<string>();
   for (const b of suite.environment?.serverBindings ?? []) {
     if (b?.projectServerId) {
-      bindingByName.set(
-        String(b.serverName).toLocaleLowerCase(),
-        String(b.projectServerId),
-      );
+      const id = String(b.projectServerId);
+      bindingIds.add(id);
+      bindingByName.set(String(b.serverName).toLocaleLowerCase(), id);
     }
   }
 
@@ -2184,16 +2686,16 @@ async function resolveHostAttachments(
       namedHostId: String(resolved.hostId),
     };
     if (servers !== undefined) {
-      attachment.selectedServerIds = servers.map((name) => {
-        const id = bindingByName.get(name.trim().toLocaleLowerCase());
-        if (!id) {
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            `Server "${name}" is not in the suite's environment; add it via environment.servers first.`,
-          );
-        }
-        return id;
+      attachment.selectedServerIds = servers.map((entry) => {
+        const trimmed = entry.trim();
+        const byName = bindingByName.get(trimmed.toLocaleLowerCase());
+        if (byName) return byName;
+        if (bindingIds.has(trimmed)) return trimmed;
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Server "${entry}" is not in the suite's environment by name (as bound) or id; add it via environment.servers first.`,
+        );
       });
     }
     return attachment;
@@ -2439,6 +2941,7 @@ async function resolveLaunchServers(params: {
   namedHostId: string | undefined;
   requestedServerIds: string[];
   requestedServerNames: string[] | undefined;
+  ephemeralEnvironment?: boolean;
 }): Promise<{
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
@@ -2463,6 +2966,9 @@ async function resolveLaunchServers(params: {
         requestedEnvironmentId: params.requestedEnvironmentId,
         hasServerOverride: params.requestedServerIds.length > 0,
         serverField: "serverIds",
+        ...(params.ephemeralEnvironment === true
+          ? { ephemeralEnvironment: true }
+          : {}),
       })
     : undefined;
 
@@ -2553,7 +3059,10 @@ function describeLaunchFailure(error: unknown): {
 // poll GET /eval-runs/:runId for progress.
 evals.post("/projects/:projectId/eval-runs", async (c) => {
   const projectId = c.req.param("projectId");
-  const rawBody = await synthesizeServerBody(c);
+  // Read WITHOUT injecting path params, so the strict schema sees only the
+  // caller's fields. `projectId` is a declared key and is merged back in —
+  // path wins over a body value, same as before.
+  const rawBody = await readJsonObjectBody(c);
   const headerIdempotencyKey = readIdempotencyKey(c);
   const body = parseWithSchema(createEvalRunSchema, {
     ...rawBody,
@@ -2595,6 +3104,9 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       namedHostId: body.namedHostId,
       requestedServerIds: body.serverIds ?? [],
       requestedServerNames: body.serverNames,
+      ...(body.ephemeralEnvironment === true
+        ? { ephemeralEnvironment: true }
+        : {}),
     });
 
   const slotKey = orgConcurrencyKey(c);
@@ -2662,7 +3174,9 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
     );
   } catch (error) {
     releaseSlotOnce();
-    throw error;
+    // An import refusal is actionable BY THE CALLER — approve the case for this
+    // run or exclude it — so it must not escape as a 500.
+    throw translateImportIneligibleError(error) ?? error;
   }
 });
 
@@ -2706,6 +3220,26 @@ const createEvalRunGroupSchema = z.object({
   notes: z.string().optional(),
   passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
   idempotencyKey: z.string().min(1).max(256).optional(),
+  ephemeralEnvironment: z.boolean().optional(),
+  /**
+   * Per-run approval of `approximated` imported cases, by hosted case id.
+   *
+   * The SAME approvals go to every target. A case's approximation is
+   * approximated the same way on each of them, so approving per target would
+   * make one human decision into N, and the caller who approved it once meant
+   * it once.
+   */
+  importApprovals: z
+    .array(
+      z
+        .object({
+          testCaseId: z.string().min(1),
+          reason: z.string().trim().min(1).max(500),
+        })
+        .strict(),
+    )
+    .min(1)
+    .optional(),
 })
   // STRICT, like every other v1 write body: the published contract says an
   // unknown key is invalid, and the two knobs this route deliberately omits
@@ -2807,7 +3341,13 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // VALIDATE EVERY TARGET BEFORE LAUNCHING ANY: a group that starts target
       // 1 and then rejects target 2 has already spent on a request that was
       // never satisfiable, and there is no refund for a started run.
-      if (!attachedEnvironmentIds.includes(target.environmentId)) {
+      if (body.ephemeralEnvironment === true) {
+        await assertEphemeralEnvironmentLaunchable(
+          convexAuthToken,
+          projectId,
+          target.environmentId,
+        );
+      } else if (!attachedEnvironmentIds.includes(target.environmentId)) {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
@@ -2865,6 +3405,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       namedHostId: target.namedHostId,
       requestedServerIds: [],
       requestedServerNames: undefined,
+      ...(body.ephemeralEnvironment === true
+        ? { ephemeralEnvironment: true }
+        : {}),
     });
     // The host config THIS target executes under. An environment pins its own
     // host, so an environment target must be judged on that host's config —
@@ -2950,6 +3493,12 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
           ...(target.namedHostId
             ? { namedHostId: target.namedHostId }
             : {}),
+          ...(body.ephemeralEnvironment === true
+            ? { ephemeralEnvironment: true }
+            : {}),
+          ...(body.importApprovals
+            ? { importApprovals: body.importApprovals }
+            : {}),
           // PER-TARGET run key derived from the group key. This is what makes a
           // replay after a crash mid-launch safe: each target dedupes at the
           // RUN level against the run the first attempt created, instead of
@@ -2995,7 +3544,13 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // will never run — decrement HERE or the group's slot outlives it.
       releaseRunGroupSlotRef(slot);
       failedCount += 1;
-      const failure = describeLaunchFailure(error);
+      // Same translation as the single route: `describeLaunchFailure` keeps a
+      // `WebRouteError`'s code and message and flattens everything else to
+      // `INTERNAL_ERROR`, so the refusal has to become one first or the entry
+      // reports a server fault for a decision the caller can make.
+      const failure = describeLaunchFailure(
+        translateImportIneligibleError(error) ?? error,
+      );
       logger.warn("[v1 evals] eval run group target failed to launch", {
         projectId,
         suiteId: body.suiteId,
@@ -3056,7 +3611,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
 // no recorder, no execution.
 evals.post("/projects/:projectId/eval-suites", async (c) => {
   const projectId = c.req.param("projectId");
-  const rawBody = await synthesizeServerBody(c);
+  const rawBody = await readJsonObjectBody(c);
   const body = parseWithSchema(createEvalSuiteSchema, rawBody);
   const idempotencyKey = readIdempotencyKey(c);
 
@@ -3137,6 +3692,71 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
   }
 });
 
+// POST /v1/projects/:projectId/eval-suites/from-file
+//
+// Resolve or create a FILE-OWNED suite by declared id. Lookup is by
+// `(projectId, declaredSuiteId)` and never by name. A UI-authored suite has
+// no declared id, so this cannot claim it. Must be registered before
+// `/:suiteId` so "from-file" is not captured as a suite id.
+evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
+  const projectId = c.req.param("projectId");
+  const body = parseWithSchema(
+    syncFileOwnedSuiteSchema,
+    await readJsonObjectBody(c),
+  );
+  const token = await getConvexBearerForRequest(c);
+  const { convexClient } = createConvexClients(token);
+  let result: { created: boolean; suite: SuiteDoc | null };
+  try {
+    result = (await convexClient.mutation(
+      "testSuites:resolveOrCreateFileOwnedSuite" as any,
+      {
+        projectId,
+        declaredSuiteId: body.declaredSuiteId,
+        name: body.name,
+        ...(body.description !== undefined
+          ? { description: body.description }
+          : {}),
+        sourceHash: body.sourceHash,
+        ...(body.provenance ? { provenance: body.provenance } : {}),
+        ...(body.environment ? { environment: body.environment } : {}),
+        ...(body.defaultConfig ? { defaultConfig: body.defaultConfig } : {}),
+        ...(body.verdictPolicyVersion !== undefined
+          ? { verdictPolicyVersion: body.verdictPolicyVersion }
+          : {}),
+        ...(body.verdictPolicyDefaults
+          ? { verdictPolicyDefaults: body.verdictPolicyDefaults }
+          : {}),
+        ...(body.minIterations !== undefined
+          ? { minIterations: body.minIterations }
+          : {}),
+        ...(body.defaultPassCriteria
+          ? { defaultPassCriteria: body.defaultPassCriteria }
+          : {}),
+      },
+    )) as { created: boolean; suite: SuiteDoc | null };
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  if (!result.suite) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "File-owned suite resolve returned no suite",
+    );
+  }
+  const detail = await readSuiteDetail(
+    token,
+    projectId,
+    String(result.suite._id),
+  );
+  return v1Resource(
+    c,
+    { created: result.created, suite: detail },
+    result.created ? 201 : 200,
+  );
+});
+
 // GET /v1/projects/:projectId/eval-runs/:runId
 // Run status + summary. Poll this until status is terminal
 // (completed | failed | cancelled).
@@ -3191,6 +3811,34 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const baseRunId = c.req.query("baseRunId");
+  // The backend's OWN argument name, not a synonym, so the wire, this route
+  // and the Convex call all read the same. Trimmed here because the backend
+  // refuses a blank-after-trim SHA with `EVAL_COMPARE_BASELINE_INVALID`, and
+  // a caller that interpolated an unset CI variable (`--baseline-sha
+  // "$SHA"`) deserves that answer without a round trip.
+  const rawBaseCommitSha = c.req.query("baseCommitSha");
+  const baseCommitSha =
+    rawBaseCommitSha === undefined ? undefined : rawBaseCommitSha.trim();
+
+  // Guarded HERE **in addition to** the backend's own guard, not instead of
+  // it. The backend guards because the Convex action is reachable directly;
+  // this route guards so an HTTP caller gets the usage error without paying
+  // for a round trip. Neither is allowed to win silently — they answer the
+  // same 400 with the same meaning.
+  if (baseRunId !== undefined && baseCommitSha !== undefined) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Pass either baseRunId or baseCommitSha, not both.",
+    );
+  }
+  if (baseCommitSha !== undefined && baseCommitSha === "") {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "baseCommitSha must not be blank.",
+    );
+  }
   // Forwarded, not dropped: the SDK client sends it, and a silently ignored
   // knob is worse than an absent one. Parsed defensively — the action clamps
   // the range, so this only has to refuse non-numbers.
@@ -3224,13 +3872,22 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     result = await convex.action("testSuites:compareTestSuiteRuns" as any, {
       compareRunId: runId,
       ...(baseRunId ? { baseRunId } : {}),
+      ...(baseCommitSha ? { baseCommitSha } : {}),
       ...(previewChars !== undefined ? { previewChars } : {}),
     });
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
     }
-    throw error;
+    // Translated rather than rethrown. The action refuses a malformed
+    // baseline selection with a structured `ConvexError` code, and a raw
+    // rethrow would land on the v1 error boundary as a 500 + INTERNAL_ERROR
+    // with the backend's message dropped — reporting the caller's usage error
+    // as our outage, and paging for it. The translator maps both baseline
+    // codes to 400 and keeps the message; anything it does not recognize
+    // still answers 500, which is the honest outcome for a code we do not
+    // know about.
+    throw translateConvexWriteError(error);
   }
 
   const envelope = (result ?? {}) as Record<string, unknown>;
@@ -3247,8 +3904,19 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       "NOT_FOUND",
       baseRunId
         ? "The requested baseline run was not found, is not completed, or belongs to another suite."
-        : "No earlier completed run in this suite to compare against.",
-      { reason: "BASELINE_NOT_FOUND", ...(baseRunId ? { baseRunId } : {}) },
+        : baseCommitSha
+          ? "No completed run in this suite was recorded against that commit SHA."
+          : "No earlier completed run in this suite to compare against.",
+      // A SHA that resolved to nothing is deliberately THIS, not one of the
+      // two 400 baseline codes: exit 3 must keep meaning "we looked and
+      // established nothing", distinct from "you asked for something
+      // impossible". The requested SHA rides along so an archived CI log says
+      // WHICH commit found no run.
+      {
+        reason: "BASELINE_NOT_FOUND",
+        ...(baseRunId ? { baseRunId } : {}),
+        ...(baseCommitSha ? { baseCommitSha } : {}),
+      },
     );
   }
 
@@ -3259,11 +3927,40 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     // chosen — so publishing an explicitly named run as `previous_completed`
     // (which a deploy-order skew could cause) is worse than saying nothing.
     policy:
-      baselineSource.policy === "run" ||
-      (baselineSource.policy === undefined && Boolean(baseRunId))
-        ? "run"
-        : "previous_completed",
+      baselineSource.policy === "commit_sha" ||
+      (baselineSource.policy === undefined && Boolean(baseCommitSha))
+        ? "commit_sha"
+        : baselineSource.policy === "run" ||
+            (baselineSource.policy === undefined && Boolean(baseRunId))
+          ? "run"
+          : baselineSource.policy === "previous_completed_same_environment"
+            ? "previous_completed_same_environment"
+            : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
+    // Echoed for `commit_sha` only. Read from the BACKEND's answer, falling
+    // back to what the request asked for, so a mixed-version deployment that
+    // resolved the SHA without echoing it still records which SHA was pinned
+    // — the pinned contract requires a gate to record the source SHA, and an
+    // audit trail that drops it on a version skew is not one.
+    ...(baseCommitSha
+      ? {
+          baseCommitSha: String(
+            baselineSource.baseCommitSha ?? baseCommitSha,
+          ),
+        }
+      : {}),
+    // `matchCount` is present ONLY when uniqueness could not be established;
+    // absent means unambiguous. `matchCountTruncated` says the count is a
+    // FLOOR rather than a total — including when it reads 1. They travel
+    // together or not at all: publishing a truncated count without its flag
+    // asserts a uniqueness nobody checked.
+    ...(typeof baselineSource.matchCount === "number"
+      ? { matchCount: baselineSource.matchCount }
+      : {}),
+    ...(typeof baselineSource.matchCount === "number" &&
+    baselineSource.matchCountTruncated === true
+      ? { matchCountTruncated: true }
+      : {}),
   };
 
   return v1Resource(c, toRunCompareDto(envelope.diff, baseline));
@@ -3446,6 +4143,324 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
   return v1Resource(c, toRunDto((updated ?? run)!));
 });
 
+// ── Gate waivers ────────────────────────────────────────────────────────────
+//
+// An audited, time-boxed override of a run's release gate. Three routes, and
+// the shape of each is decided by one rule from the Lane E charter: "no silent
+// or permanent waiver."
+//
+// NOTHING HERE TOUCHES `run.result`. The run keeps its honest verdict and the
+// waiver is a separate record, because two independent computations read that
+// verdict — the backend derives a GitHub Check Run conclusion from the
+// persisted run, and the CLI recomputes its own gate client-side from these
+// same public GETs. Flipping the persisted result would green both with no
+// trace of why, which is the definition of a silent waiver.
+//
+// AUTHORIZATION IS THE CONVEX MUTATION'S, not these handlers'. There is no
+// tier check in this file on purpose: a second copy of the rule here would be
+// a second thing to keep correct, and the one that matters is the one that
+// runs closest to the data.
+
+/**
+ * Body for `POST …/eval-runs/:runId/gate-waivers`.
+ *
+ * STRICT, like every other v1 write body: a non-strict object silently strips
+ * unknown keys and answers 200 for a request that did something other than
+ * what the caller wrote — a known bug class in this router, and a bad one on a
+ * route whose whole job is to be an auditable record.
+ *
+ * Deliberately NOT semantically validated beyond the types. A blank reason, a
+ * 501-character one, an expiry in the past, an expiry a year out — all five are
+ * refusals the platform raises with `gate_waiver_*` codes and customer-facing
+ * copy it wrote, and a zod rule firing first would replace that copy with a
+ * generic validation error on exactly the boundary cases where the specific
+ * message is the useful part. Type errors are still ours: `expiresAt` must be
+ * a finite number before it can mean an instant at all.
+ */
+const gateWaiverCreateSchema = z.strictObject({
+  reason: z.string(),
+  expiresAt: z.number().finite(),
+});
+
+/** The waiver DTO, projected field by field. */
+function toGateWaiverDto(waiver: Record<string, any> | null | undefined) {
+  if (!waiver) return null;
+  return {
+    id: String(waiver.id),
+    suiteId: String(waiver.suiteId),
+    runId: waiver.runId ? String(waiver.runId) : null,
+    reason: String(waiver.reason ?? ""),
+    expiresAt: waiver.expiresAt,
+    createdAt: waiver.createdAt,
+    createdBy: String(waiver.createdBy ?? ""),
+    // `null`, never absent: a deleted user must not make a waiver look
+    // authorless, and a caller reading "who waived this" needs to be able to
+    // tell "we could not resolve them" from "the field is missing".
+    createdByEmail:
+      typeof waiver.createdByEmail === "string" ? waiver.createdByEmail : null,
+    revokedAt: typeof waiver.revokedAt === "number" ? waiver.revokedAt : null,
+    revokedBy: waiver.revokedBy ? String(waiver.revokedBy) : null,
+    active: waiver.active === true,
+    policySnapshot:
+      waiver.policySnapshot &&
+      typeof waiver.policySnapshot.minimumPassRate === "number"
+        ? { minimumPassRate: waiver.policySnapshot.minimumPassRate }
+        : null,
+  };
+}
+
+/** The shared `{ status, republishedChecks, waiver }` write envelope. */
+function toGateWaiverWriteDto(result: Record<string, any>) {
+  return {
+    status: String(result.status),
+    republishedChecks:
+      typeof result.republishedChecks === "number"
+        ? result.republishedChecks
+        : 0,
+    waiver: toGateWaiverDto(result.waiver),
+  };
+}
+
+/**
+ * `notFoundMessage` names BOTH addressable things on purpose. The platform
+ * deliberately answers a missing waiver with the same string as a missing run,
+ * so these endpoints cannot become an existence oracle over waiver ids —
+ * naming only one of them here would undo that by telling a caller which of
+ * the two they got wrong.
+ */
+const GATE_WAIVER_TRANSLATE_OPTIONS = {
+  resource: "Gate waiver",
+  notFoundMessage: "Eval run or gate waiver not found",
+  fallbackMessage: "Gate waiver rejected by the platform",
+} as const;
+
+// POST /v1/projects/:projectId/eval-runs/:runId/gate-waivers
+// Grant a waiver. 201 on a new one; 409 when one is already in force.
+evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const body = parseWithSchema(
+    gateWaiverCreateSchema,
+    await readJsonObjectBody(c),
+  );
+  const token = await getConvexBearerForRequest(c);
+  const readClient = createConvexReadClient(token);
+
+  let run: RunDoc | null;
+  try {
+    run = await readClient.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let result: Record<string, any>;
+  try {
+    result = await createConvexClients(token).convexClient.mutation(
+      "gateWaivers:createGateWaiver" as any,
+      { runId, reason: body.reason, expiresAt: body.expiresAt },
+    );
+  } catch (error) {
+    throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+  }
+
+  const dto = toGateWaiverWriteDto(result);
+  // A CONFLICT, not a failure — the platform reports the EXISTING waiver
+  // rather than granting a second one, because two active waivers over one run
+  // would make "which reason is on the check" a race. 409 so a caller can tell
+  // "yours was recorded" from "someone else's already was", and the body
+  // carries the one in force so they can read whose it is.
+  if (dto.status === "conflict") {
+    return v1Resource(c, dto, 409);
+  }
+  return v1Resource(c, dto, 201);
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/gate-waivers
+// The waiver in force over this run, or null.
+//
+// `run.view`, not the manage tier: a waiver only its grantors can see is not a
+// visible waiver, and visibility is half of what the charter asks for.
+//
+// `eval gate` does NOT call this. The run projection already carries
+// `gateWaiver`, so the gating path folds a waiver in without a second round
+// trip; this is the explicit read, for asking the question on its own.
+evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let waiver: Record<string, any> | null;
+  try {
+    waiver = await convex.query("gateWaivers:getActiveWaiverForRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    // A tier denial here still has to keep its 403 rather than becoming a 500,
+    // and the write translator is the only thing that knows how to read the
+    // backend's `kind: 'forbidden'` shape. Nothing is written on this path;
+    // the name is about which error vocabulary it speaks, not about the verb.
+    throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+  }
+
+  return v1Resource(c, { waiver: toGateWaiverDto(waiver) });
+});
+
+// DELETE /v1/projects/:projectId/eval-runs/:runId/gate-waivers/:waiverId
+// Revoke a waiver, putting the gate back.
+//
+// IDEMPOTENT and 200 either way: `already_revoked` is the SUCCESS answer for a
+// second call, and it reports the original revocation rather than restamping
+// it — turning that into an error would push callers toward a retry loop that
+// can only ever overwrite the record of who actually ended the waiver.
+evals.delete(
+  "/projects/:projectId/eval-runs/:runId/gate-waivers/:waiverId",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const runId = c.req.param("runId");
+    const waiverId = c.req.param("waiverId");
+    const token = await getConvexBearerForRequest(c);
+    const readClient = createConvexReadClient(token);
+
+    let run: RunDoc | null;
+    try {
+      run = await readClient.query("testSuites:getTestSuiteRun" as any, {
+        runId,
+      });
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+      }
+      throw error;
+    }
+    requireProjectMatch(run, projectId, "Eval run");
+
+    // A PRE-WRITE consistency check, and only where it can be decided.
+    //
+    // The path names a run and a waiver, but the mutation authorizes against
+    // the WAIVER's suite — the run is scope context. So when the run's own
+    // active waiver is known and is a DIFFERENT one, the caller has addressed
+    // this waiver through the wrong run and the answer is a refusal.
+    //
+    // Deliberately before the write. The obvious shape — revoke, then notice
+    // the mismatch, then answer 404 — performs the destructive act it is
+    // refusing and reports it as not-found, which is worse than not checking
+    // at all.
+    //
+    // It is a partial check and that is stated rather than hidden: when the
+    // run carries no active waiver, the named one may be an expired or already
+    // revoked waiver of THIS run (both legitimate to revoke — the audit trail
+    // distinguishes "this was wrong" from "this ran out") or one belonging
+    // elsewhere, and nothing readable here separates the two. That case goes
+    // to the mutation, which is the component that owns the decision.
+    const activeWaiverId = run?.gateWaiver?.id
+      ? String(run.gateWaiver.id)
+      : null;
+    if (activeWaiverId !== null && activeWaiverId !== waiverId) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Gate waiver not found for this run",
+      );
+    }
+
+    let result: Record<string, any>;
+    try {
+      result = await createConvexClients(token).convexClient.mutation(
+        "gateWaivers:revokeGateWaiver" as any,
+        { waiverId },
+      );
+    } catch (error) {
+      throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+    }
+
+    return v1Resource(c, toGateWaiverWriteDto(result));
+  },
+);
+
+// GET /v1/projects/:projectId/eval-runs/:runId/decision-summary?cursor=&limit=
+//
+// THE FIRST THING TO READ ABOUT A FINISHED RUN. One versioned object: the
+// verdict, the population its counts are in, the run's own authoritative
+// `EvalVerdictDecision` when it has one, and one page of per-trial diagnostics
+// with the user-value chain, the first failed stage, the failure category and a
+// typed pointer at the evidence.
+//
+// ADDITIVE. Every existing run/iteration field is untouched — this composes the
+// same two reads a caller would otherwise make by hand, and the composing is
+// the point: doing it in three clients produced three readings of one run.
+//
+// The verdict is COPIED from the run, never recomputed here. Under policy v2
+// `verdictSummary` is the only authority for the verdict, the rates, the
+// validity phase and the per-case aggregation; the iterations below are
+// evidence UNDER that decision and are never counted as cases.
+evals.get("/projects/:projectId/eval-runs/:runId/decision-summary", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const limit = parseDecisionSummaryLimit(c.req.query("limit"));
+  // `null`, not `undefined`, and the difference is the completeness claim: a
+  // request that carried a cursor has already skipped rows, so whatever it gets
+  // back cannot be the run's complete failure list however short it is.
+  const cursor = c.req.query("cursor") ?? null;
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+    requireProjectMatch(run, projectId, "Eval run");
+    page = await convex.query("testSuites:listTestSuiteRunIterations" as any, {
+      runId,
+      paginationOpts: { numItems: limit, cursor },
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+
+  const complete = decisionSummaryPageIsComplete({
+    requestCursor: cursor,
+    isDone: page.isDone,
+  });
+  return v1Resource(
+    c,
+    buildEvalRunDecisionSummaryResponse({
+      projectId,
+      // The PUBLIC projections, not the documents: `toRunDto` has already
+      // refused a verdict decision that does not validate and `toIterationDto`
+      // has already quarantined an unverifiable stage chain. Assembling from
+      // the raw rows would route around both.
+      run: toRunDto(run!),
+      iterations: (page.page ?? []).map(toIterationDto),
+      page: {
+        complete,
+        ...(page.isDone ? {} : { nextCursor: page.continueCursor }),
+      },
+    }),
+  );
+});
+
 // GET /v1/projects/:projectId/eval-runs/:runId/iterations?cursor=&limit=
 // Per-iteration results: tool calls, structured token usage, latency.
 evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
@@ -3488,7 +4503,10 @@ evals.get(
     const projectId = c.req.param("projectId");
     const runId = c.req.param("runId");
     const iterationId = c.req.param("iterationId");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    // Held rather than inlined: the same bearer authorizes the read AND names
+    // the human in the audit row below (see services/eval-trace-access-audit).
+    const convexAuthToken = await getConvexBearerForRequest(c);
+    const convex = createConvexReadClient(convexAuthToken);
 
     let trace: unknown;
     try {
@@ -3528,6 +4546,20 @@ evals.get(
         { reason: "TRACE_NOT_AVAILABLE" },
       );
     }
+    // AFTER the read resolves and after the 404s, so a row means a transcript
+    // actually left the product.
+    //
+    // DETACHED, not awaited: bookkeeping must not sit on the critical path of
+    // a read that already succeeded, or a stalled audit backend shows up as a
+    // slow `/trace`. Safe to float because `recordEvalIterationRead` swallows
+    // its own failures — there is no rejection to go unhandled — and it bounds
+    // its own request.
+    void recordEvalIterationRead({
+      convexAuthToken,
+      iterationId,
+      mode: "trace",
+      traceBytes: measureTraceBytes(trace),
+    });
     return v1Resource(c, trace);
   },
 );
@@ -3544,7 +4576,8 @@ evals.get(
     const projectId = c.req.param("projectId");
     const runId = c.req.param("runId");
     const iterationId = c.req.param("iterationId");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convexAuthToken = await getConvexBearerForRequest(c);
+    const convex = createConvexReadClient(convexAuthToken);
 
     let iteration: IterationDoc | null;
     try {
@@ -3600,6 +4633,17 @@ evals.get(
         | undefined,
       envelope as Parameters<typeof assembleStepResults>[2],
     );
+    // Unlike `/trace`, a missing envelope is not a 404 here — verdicts still
+    // return — so `traceBytes` is present only when evidence was actually
+    // resolved, and its absence is how the row says "verdicts only".
+    // Detached for the same reason as the `/trace` site above.
+    void recordEvalIterationRead({
+      convexAuthToken,
+      iterationId,
+      mode: "steps",
+      stepCount: assembled.length,
+      traceBytes: measureTraceBytes(envelope),
+    });
     return v1PageJson(c, assembled.map(toStepResultDto));
   },
 );
@@ -3631,6 +4675,305 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
     throw error;
   }
   return v1PageJson(c, (runs ?? []).map(toRunDto));
+});
+
+// GET /v1/projects/:projectId/eval-suites/:suiteId/stage-analytics
+//     ?from=&to=&runGroupId=&cursor=&limit=
+//
+// One materialized `EvalStageAnalyticsV1` document per RUN, newest completion
+// first — where trials fell out of the user-value chain, and whether that
+// differs by intent, by model, or by host.
+//
+// Each item is one run's COMPLETE document, and that is the whole read model:
+// there is no cross-run merge here and none in the SDK, because averaging two
+// funnels is not a funnel. A caller compares by rendering runs side by side
+// under the contract's own parity rules, never by summing these rows.
+//
+// `from`/`to` are INCLUSIVE epoch milliseconds over the run's completion
+// stamp, matching the Convex boundary exactly rather than inventing an ISO
+// dialect this API has no other precedent for. Runs that never completed carry
+// no stamp, sort last, and are excluded by any `from` bound.
+//
+// NOT backfilled: a run that terminalized before the materializer shipped has
+// no row at all, and that absence is the honest "unmeasured" answer. It is
+// never reported as a funnel of zeros.
+const stageAnalyticsQuerySchema = z
+  .object({
+    // Coerced because query strings are strings; `.int()` after coercion is
+    // what rejects `1.5` and `abc` (which coerce to NaN) rather than letting
+    // Convex see a non-integer millisecond.
+    from: z.coerce.number().int().min(0).optional(),
+    to: z.coerce.number().int().min(0).optional(),
+    runGroupId: z.string().trim().min(1).optional(),
+    cursor: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+  })
+  .superRefine((query, ctx) => {
+    // Rejected HERE as well as in Convex. The backend throws on an inverted
+    // window rather than fail-softing to an empty page — an empty page would
+    // read as "this suite has no analytics" and send the reader looking in the
+    // wrong place — and a 400 at the edge names the bad parameter instead of
+    // surfacing a backend error string.
+    if (
+      query.from !== undefined &&
+      query.to !== undefined &&
+      query.from > query.to
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["from"],
+        message:
+          "from must be less than or equal to to (inclusive epoch ms over runCompletedAt)",
+      });
+    }
+  });
+
+evals.get(
+  "/projects/:projectId/eval-suites/:suiteId/stage-analytics",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const suiteId = c.req.param("suiteId");
+    // An EMPTY query value means "not supplied", not "supplied as empty".
+    // Without this, `?from=` coerces to `0` — a real lower bound, which
+    // excludes every run that never recorded a completion stamp — so a request
+    // that looks unfiltered would quietly narrow the population it reports on.
+    // That is the one failure this whole contract is built against, so the
+    // blank is dropped here rather than being given a meaning.
+    const optionalQuery = (name: string): string | undefined => {
+      const raw = c.req.query(name);
+      if (raw === undefined) return undefined;
+      return raw.trim() === "" ? undefined : raw;
+    };
+    const query = parseWithSchema(stageAnalyticsQuerySchema, {
+      ...(optionalQuery("from") !== undefined
+        ? { from: optionalQuery("from") }
+        : {}),
+      ...(optionalQuery("to") !== undefined ? { to: optionalQuery("to") } : {}),
+      ...(optionalQuery("runGroupId") !== undefined
+        ? { runGroupId: optionalQuery("runGroupId") }
+        : {}),
+      ...(optionalQuery("cursor") !== undefined
+        ? { cursor: optionalQuery("cursor") }
+        : {}),
+      ...(optionalQuery("limit") !== undefined
+        ? { limit: optionalQuery("limit") }
+        : {}),
+    });
+    const limit = query.limit ?? 25;
+    // `null`, never `undefined`: Convex pagination requires an explicit null
+    // first cursor, and `undefined` would be dropped from the args object.
+    const cursor = query.cursor ?? null;
+    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+    let page: {
+      page: unknown[];
+      isDone: boolean;
+      continueCursor: string;
+    };
+    try {
+      // The suite is read and project-matched FIRST so a valid suite id from
+      // another of the caller's projects reads as NOT_FOUND here, rather than
+      // relying on the backend's tenant-safe empty page — which is defense in
+      // depth, not the answer: an empty page is indistinguishable from "this
+      // suite has no analytics yet".
+      const suite = await convex.query("testSuites:getTestSuite" as any, {
+        suiteId,
+      });
+      requireProjectMatch(suite, projectId, "Eval suite");
+      page = await convex.query("testSuites:listEvalStageAnalytics" as any, {
+        projectId,
+        suiteId,
+        // Omitted rather than sent as `undefined`: the Convex validators are
+        // `v.optional`, and an explicit `undefined` is not the same as absent.
+        ...(query.from !== undefined ? { from: query.from } : {}),
+        ...(query.to !== undefined ? { to: query.to } : {}),
+        ...(query.runGroupId !== undefined
+          ? { runGroupId: query.runGroupId }
+          : {}),
+        paginationOpts: { numItems: limit, cursor },
+      });
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Eval suite not found",
+        );
+      }
+      // The backend's own inverted-window guard. Unreachable while the schema
+      // above holds, and mapped anyway so the contract cannot drift into
+      // answering a caller error with a 500.
+      const data = (error as { data?: unknown } | null)?.data;
+      if (
+        data &&
+        typeof data === "object" &&
+        !Array.isArray(data) &&
+        (data as { code?: unknown }).code === "INVALID_ARGUMENT"
+      ) {
+        const message = (data as { message?: unknown }).message;
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          typeof message === "string"
+            ? message
+            : "Invalid stage analytics window",
+        );
+      }
+      throw error;
+    }
+
+    // Validated at the boundary with the REFINED schema — the structural one
+    // would miss exactly the invariants a reader relies on (one overall slice,
+    // the overall slice agreeing with the row's own trial count). A payload
+    // that fails is an upstream fault: it is answered as a service error, never
+    // as a 200 with the bad row quietly dropped, because a silently shortened
+    // page is a denominator that changed without saying so.
+    const rows: EvalStageAnalyticsV1[] = [];
+    for (const row of page.page ?? []) {
+      const parsed = evalStageAnalyticsSchema.safeParse(row);
+      if (!parsed.success) {
+        logger.warn("[v1 evals] stage analytics row failed contract validation", {
+          projectId,
+          suiteId,
+          // The ISSUE, never the row: the payload can carry intent labels and
+          // host names, and a validation log is not the place for them.
+          issue: parsed.error.issues[0]?.message ?? "unknown",
+          path: parsed.error.issues[0]?.path?.join(".") ?? "",
+        });
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Stage analytics payload failed validation",
+        );
+      }
+      rows.push(parsed.data as EvalStageAnalyticsV1);
+    }
+
+    return v1PageJson(
+      c,
+      rows,
+      page.isDone ? undefined : page.continueCursor,
+    );
+  },
+);
+
+// GET /v1/projects/:projectId/eval-runs/:runId/stage-analytics
+//
+// ONE run's materialized `EvalStageAnalyticsV1` document, addressed by run
+// rather than reached by paging the suite.
+//
+// Not a convenience over the suite listing. That listing pages newest-first,
+// so reaching a specific run through it costs work proportional to how long
+// ago the run finished, and cannot answer at all once the run falls outside
+// the pages walked. A run detail page already knows its run.
+//
+// A 404 covers BOTH "not visible to this caller" and "this run has no
+// document", and the two are deliberately not distinguished: to a reader both
+// mean UNMEASURED, and separating them would tell a caller that a run exists
+// in a project they cannot see. The Convex reader fail-softs a visibility
+// failure to `null` for the same reason.
+//
+// NOT backfilled: a run that terminalized before the materializer shipped has
+// no row. That absence is the honest "unmeasured" answer and is never served
+// as a funnel of zeros.
+/**
+ * ONE message for both 404 facts, because the route promises not to tell them
+ * apart. `v1ErrorBody` returns this text to the caller, so distinct strings
+ * would have handed anyone holding a run id the exact bit that answering both
+ * with 404 was meant to hide.
+ */
+const RUN_ANALYTICS_NOT_FOUND = "Eval run stage analytics not found";
+
+evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let document: unknown;
+  let runSuiteId: string | undefined;
+  try {
+    // The run is read and project-matched FIRST, exactly as the suite route
+    // matches its suite: a valid run id from another of the caller's projects
+    // must read as NOT_FOUND here rather than relying on the backend's
+    // fail-soft null, which is defense in depth and not the answer.
+    const run = await convex.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+    requireProjectMatch(run, projectId, "Eval run");
+    // Kept for the identity check below — the run we authorized is the only
+    // thing that can say which suite this document is allowed to name.
+    const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
+    runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
+    document = await convex.query(
+      "testSuites:getEvalRunStageAnalytics" as any,
+      { runId },
+    );
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_ANALYTICS_NOT_FOUND);
+    }
+    throw error;
+  }
+
+  if (document === null || document === undefined) {
+    // The SAME body as the not-visible 404 above, deliberately. The route's
+    // whole non-enumeration promise is that "no document" and "not visible to
+    // you" are indistinguishable — and `v1ErrorBody` returns the message to
+    // the caller, so two different strings handed anyone holding a run id the
+    // exact bit the matching status codes were hiding.
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_ANALYTICS_NOT_FOUND);
+  }
+
+  // Validated with the REFINED schema, same as the listing: the structural one
+  // would admit a document with two `overall` slices or an overall slice that
+  // disagrees with the row's own trial count, and those are the invariants
+  // every number a reader draws rests on. A payload that fails is an upstream
+  // fault answered as a service error — never a 200 carrying the bad row.
+  const parsed = evalStageAnalyticsSchema.safeParse(document);
+  if (!parsed.success) {
+    logger.warn("[v1 evals] run stage analytics failed contract validation", {
+      projectId,
+      runId,
+      // The ISSUE, never the row: the payload carries intent labels and host
+      // names, and a validation log is not the place for them.
+      issue: parsed.error.issues[0]?.message ?? "unknown",
+      path: parsed.error.issues[0]?.path?.join(".") ?? "",
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Stage analytics payload failed validation",
+    );
+  }
+
+  // Shape is not identity. `runId` and `suiteId` are only `string().min(1)` to
+  // the schema, so a valid document for a DIFFERENT run parses perfectly and
+  // would then be served under this run's heading.
+  //
+  // BOTH halves are checked. An earlier revision checked only `runId` and left
+  // a comment saying the Convex reader cross-checks the suite — it does, but
+  // that is the other side of the wire making its own guarantee, and this route
+  // already holds the authorized run's `suiteId`. Asserting one half of an
+  // identity and delegating the other is how the delegated half stops being
+  // checked at all the day the reader is swapped, and `suiteId` is what the
+  // client links on. `runSuiteId` is only compared when the run actually
+  // carried one, so an older run shape cannot 502 a document that is fine.
+  const identityMismatch =
+    parsed.data.runId !== runId ||
+    (runSuiteId !== undefined && parsed.data.suiteId !== runSuiteId);
+  if (identityMismatch) {
+    logger.warn("[v1 evals] run stage analytics identity does not match", {
+      projectId,
+      runId,
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Stage analytics payload failed validation",
+    );
+  }
+
+  return v1Resource(c, parsed.data as EvalStageAnalyticsV1);
 });
 
 // ── Eval suite/case editing routes ───────────────────────────────────
@@ -3787,7 +5130,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const suiteId = c.req.param("suiteId");
   const body = parseWithSchema(
     updateSuiteSchema,
-    await synthesizeServerBody(c),
+    await readJsonObjectBody(c),
   );
   const token = await getConvexBearerForRequest(c);
   const { convexClient } = createConvexClients(token);
@@ -4077,7 +5420,7 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
 evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
-  const body = parseWithSchema(scheduleSchema, await synthesizeServerBody(c));
+  const body = parseWithSchema(scheduleSchema, await readJsonObjectBody(c));
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;
@@ -4209,7 +5552,7 @@ evals.get(
 evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
-  const body = parseWithSchema(createCaseSchema, await synthesizeServerBody(c));
+  const body = parseWithSchema(createCaseSchema, await readJsonObjectBody(c));
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
@@ -4281,7 +5624,7 @@ evals.post(
     const suiteId = c.req.param("suiteId");
     const body = parseWithSchema(
       createCasesBatchSchema,
-      await synthesizeServerBody(c),
+      await readJsonObjectBody(c),
     );
 
     // Every case is checked before the suite is even loaded: a batch with one
@@ -4416,7 +5759,7 @@ evals.patch(
     const caseId = c.req.param("caseId");
     const body = parseWithSchema(
       updateCaseSchema,
-      await synthesizeServerBody(c),
+      await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
     const existing = await loadCaseInScope(
@@ -4498,7 +5841,7 @@ evals.post(
     const suiteId = c.req.param("suiteId");
     const body = parseWithSchema(
       generateCasesSchema,
-      await synthesizeServerBody(c),
+      await readJsonObjectBody(c),
     );
     const mode = body.mode ?? "normal";
     const token = await getConvexBearerForRequest(c);
