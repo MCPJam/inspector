@@ -39,6 +39,11 @@ function session(
   };
 }
 
+/** A `liveFrame` in the store's normalized shape. */
+function liveFrame(src: string, seq = 1) {
+  return { src, deviceWidth: 1280, deviceHeight: 800, ts: 1, seq };
+}
+
 /** Spies for the two store actions the pane drives. */
 function stubViewportActions(options: { screencastAccepted: boolean }) {
   const setScreencast = vi.fn(async () => options.screencastAccepted);
@@ -186,17 +191,42 @@ describe("WebmcpInspectorTab — viewport", () => {
 
     await act(async () => {
       useWebmcpInspectorStore.setState({
-        liveFrame: {
-          data: "paint",
-          deviceWidth: 1280,
-          deviceHeight: 800,
-          ts: 1,
-        },
+        liveFrame: liveFrame("data:image/jpeg;base64,paint"),
       });
     });
     expect(
       screen.getByAltText("Live view of the inspected page"),
     ).toHaveAttribute("src", "data:image/jpeg;base64,paint");
+    view.unmount();
+  });
+
+  it("renders the frame's src verbatim, whatever transport minted it", async () => {
+    stubViewportActions({ screencastAccepted: true });
+    const view = render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    // A blob URL from the binary socket. The pane must not re-wrap it as a
+    // data URI, and must not know which transport produced it — that
+    // indifference is what lets the transport change without touching the
+    // letterbox and coordinate arithmetic below it.
+    await act(async () => {
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("blob:http://localhost/abc-123"),
+      });
+    });
+    expect(
+      screen.getByAltText("Live view of the inspected page"),
+    ).toHaveAttribute("src", "blob:http://localhost/abc-123");
+
+    // …and a data URI from SSE, through the same prop.
+    await act(async () => {
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("data:image/jpeg;base64,sse", 2),
+      });
+    });
+    expect(
+      screen.getByAltText("Live view of the inspected page"),
+    ).toHaveAttribute("src", "data:image/jpeg;base64,sse");
     view.unmount();
   });
 
@@ -223,7 +253,7 @@ describe("WebmcpInspectorTab — viewport", () => {
         viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
       }),
       sendInput,
-      liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+      liveFrame: liveFrame("data:image/jpeg;base64,paint"),
     });
     stubViewportActions({ screencastAccepted: true });
 
@@ -238,7 +268,7 @@ describe("WebmcpInspectorTab — viewport", () => {
 
   it("leaves a native-window session view-only", async () => {
     useWebmcpInspectorStore.setState({
-      liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+      liveFrame: liveFrame("data:image/jpeg;base64,paint"),
     });
     stubViewportActions({ screencastAccepted: true });
 

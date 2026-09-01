@@ -8,17 +8,31 @@
  * snapshot without reasoning about what it missed.
  */
 import { create } from "zustand";
-import { addTokenToUrl, getAuthHeaders } from "@/lib/session-token";
+import {
+  addTokenToUrl,
+  getAuthHeaders,
+  hasSessionToken,
+} from "@/lib/session-token";
 import { WEBMCP_INPUT_BATCH_LIMIT } from "@/shared/webmcp-inspector-protocol";
 import type {
   WebMcpActivityEntry,
+  WebMcpBinaryFrame,
   WebMcpCommand,
   WebMcpEvent,
-  WebMcpFrame,
   WebMcpInputEvent,
   WebMcpSessionPublic,
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
+import {
+  createFramePresenter,
+  type FramePresenter,
+} from "@/lib/webmcp-inspector/frame-presenter";
+import {
+  FRAME_WS_CLOSE,
+  openWebMcpFrameStream,
+  type FrameStreamConnection,
+} from "@/lib/webmcp-inspector/frame-stream-connection";
+import { noteInputSent } from "@/lib/webmcp-inspector/frame-stats";
 
 const BASE = "/api/mcp/webmcp";
 /** Timeline entries kept in memory. Older ones scroll out of usefulness. */
@@ -46,6 +60,26 @@ export interface PageToolInvocationResult {
 
 /** How long to wait for a settle event before giving up on the stream. */
 const INVOCATION_WAIT_TIMEOUT_MS = 90_000;
+
+/**
+ * The frame currently on screen, normalized across BOTH transports.
+ *
+ * `src` is whatever an `<img>` can render: a data URI for a frame that came
+ * over SSE, a blob URL for one that came over the WebSocket. The pane renders
+ * it verbatim, which is what lets the transport change underneath without the
+ * letterbox and coordinate arithmetic knowing.
+ *
+ * `seq` rides along because it is the session's single monotonic counter,
+ * shared by both transports — and therefore the only way to tell a straggling
+ * SSE frame from a newer WS one while the two overlap.
+ */
+export interface WebMcpLiveFrame {
+  src: string;
+  deviceWidth: number;
+  deviceHeight: number;
+  ts: number;
+  seq: number;
+}
 
 /** Where a session's browser runs. See `startSession`. */
 export interface StartSessionOptions {
@@ -80,7 +114,7 @@ interface WebMcpInspectorState {
    * one is the live picture, the other is a snapshot someone asked for — and
    * collapsing them would make the thumbnail flicker with every paint.
    */
-  liveFrame: WebMcpFrame | undefined;
+  liveFrame: WebMcpLiveFrame | undefined;
   lastScreenshot: string | undefined;
   /**
    * Whether chat turns may use this page's tools. Off by default and reset when
@@ -151,6 +185,64 @@ interface WebMcpInspectorState {
  */
 let source: EventSource | undefined;
 let sourceSessionId: string | undefined;
+/** Whether the CURRENT EventSource asked for frames to be suppressed. */
+let sourceFrames: "on" | "off" = "on";
+
+/**
+ * The binary frame socket, for `frame-stream` sessions only.
+ *
+ * A second transport rather than a replacement: SSE still carries the session,
+ * its tools and its timeline, which are small, ordered and worth replaying.
+ * Only the pixels move — they are the one thing big enough and frequent enough
+ * for the base64-in-JSON tax to be the difference between a live pane and a
+ * laggy one.
+ */
+let frameSocket: FrameStreamConnection | undefined;
+let frameRetryTimer: ReturnType<typeof setTimeout> | undefined;
+/** Attempts made for THIS session, initial included. */
+let frameAttempts = 0;
+/** Set once we stop trying: frames stay on SSE for the rest of the session. */
+let frameSocketLatched = false;
+
+/**
+ * Delays before the 2nd, 3rd and 4th attempt. FOUR TOTAL, then never again for
+ * this session.
+ *
+ * A bounded ladder rather than an endless backoff because the failure this is
+ * really for is structural — a server too old to serve the route answers 1006
+ * every time — and reconnecting forever against it would be a socket churning
+ * in the background of a pane that is already working fine on SSE.
+ */
+const FRAME_WS_RETRY_DELAYS_MS = [500, 1_000, 2_000];
+
+/**
+ * Bumped by every full teardown and every session change.
+ *
+ * Every WebSocket callback and every retry timer captures it at creation and
+ * no-ops when it no longer matches. That single check is what makes a late
+ * message, a close event racing our own `close()`, or an armed retry timer
+ * incapable of touching the session that replaced theirs — including opening a
+ * zombie socket against it.
+ */
+let connectionGeneration = 0;
+
+/**
+ * The newest frame seq applied, across BOTH transports.
+ *
+ * Both paths drop anything at or below it. The case this exists for is the
+ * transport switch: while the ladder flips SSE frames back on, a frame already
+ * in the SSE pipe can land after a newer one from the socket, and painting it
+ * would drag the pane backwards to an older picture.
+ */
+let lastAppliedFrameSeq = 0;
+
+/** Owns the blob URLs behind WS frames, and their delayed revocation. */
+let presenter: FramePresenter = createFramePresenter();
+
+/** Test seam: lets a suite inject fake URL plumbing. */
+export function setFramePresenterForTests(next: FramePresenter): void {
+  presenter = next;
+}
 
 async function request<T>(
   path: string,
@@ -323,7 +415,20 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         return;
       }
       if (event.type === "frame") {
-        set({ liveFrame: event.frame });
+        // The seq guard, on the SSE side. A frame that predates what is on
+        // screen is not news, and during a transport flip it is actively
+        // wrong: it would drag the pane back to an older picture.
+        if (event.seq <= lastAppliedFrameSeq) return;
+        lastAppliedFrameSeq = event.seq;
+        set({
+          liveFrame: {
+            src: `data:image/jpeg;base64,${event.frame.data}`,
+            deviceWidth: event.frame.deviceWidth,
+            deviceHeight: event.frame.deviceHeight,
+            ts: event.frame.ts,
+            seq: event.seq,
+          },
+        });
         return;
       }
       if (event.type !== "activity") return;
@@ -369,14 +474,47 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       }
     }
 
-    function connect(sessionId: string) {
-      if (source && sourceSessionId === sessionId) return;
-      disconnectStream();
+    /**
+     * Apply one frame that arrived over the binary socket.
+     *
+     * The blob URL is minted here rather than in the pane, because the
+     * presenter's whole job — revoking URL N−2 as URL N is created — needs one
+     * owner that sees every frame in order.
+     */
+    function applyBinaryFrame(frame: WebMcpBinaryFrame) {
+      if (frame.seq <= lastAppliedFrameSeq) return;
+      lastAppliedFrameSeq = frame.seq;
+      set({
+        liveFrame: {
+          src: presenter.present(frame.jpeg),
+          deviceWidth: frame.deviceWidth,
+          deviceHeight: frame.deviceHeight,
+          ts: frame.ts,
+          seq: frame.seq,
+        },
+      });
+    }
+
+    /**
+     * RESET #1 of three: replace the EventSource, and touch NOTHING else.
+     *
+     * Used when the ladder flips frames on or off. Deliberately not a clear:
+     * the pane is showing a perfectly good frame, and revoking the blob it is
+     * painted from — or resetting the seq guard that is protecting it — would
+     * make a transport change visible as a flicker or a backwards jump. The
+     * seq guard alone carries continuity across the flip.
+     */
+    function openEventSource(sessionId: string, frames: "on" | "off") {
+      source?.close();
       sourceSessionId = sessionId;
+      sourceFrames = frames;
+      // `frames=on` is never sent — the parameter is OMITTED — so a server
+      // that has never heard of it receives exactly today's URL.
+      const query = frames === "off" ? "?replay=200&frames=off" : "?replay=200";
       // The token rides in the query string because EventSource cannot send
       // headers, which is the same accommodation the traffic-log stream makes.
       source = new EventSource(
-        addTokenToUrl(`${BASE}/sessions/${sessionId}/events?replay=200`),
+        addTokenToUrl(`${BASE}/sessions/${sessionId}/events${query}`),
       );
       source.onmessage = (message) => {
         try {
@@ -417,10 +555,155 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       };
     }
 
+    /** Reset #1's other half: flip the SSE frame appetite, nothing more. */
+    function ensureSseFrames(sessionId: string, frames: "on" | "off") {
+      if (sourceFrames === frames) return;
+      openEventSource(sessionId, frames);
+    }
+
+    /**
+     * Open the binary frame socket, counting this as an attempt.
+     *
+     * Every callback captures the generation it was created under, so a
+     * message, a close, or a retry belonging to a session that has since been
+     * replaced can never touch the current one.
+     */
+    function openFrameSocket(sessionId: string, generation: number) {
+      if (frameSocketLatched) return;
+      frameAttempts += 1;
+      frameSocket = openWebMcpFrameStream({
+        sessionId,
+        onOpen: () => {
+          if (generation !== connectionGeneration) return;
+          // Frames are arriving here now, so stop paying for them twice. On
+          // the first attempt this is already the case and does nothing; after
+          // a successful retry it is what puts SSE back to carrying only the
+          // session, its tools and its timeline.
+          ensureSseFrames(sessionId, "off");
+        },
+        onFrame: (frame) => {
+          if (generation !== connectionGeneration) return;
+          applyBinaryFrame(frame);
+        },
+        onClose: (code) => {
+          if (generation !== connectionGeneration) return;
+          handleFrameSocketClose(sessionId, generation, code);
+        },
+      });
+    }
+
+    /**
+     * The fallback ladder.
+     *
+     * Three outcomes, and which one a close gets is decided entirely by its
+     * code — which is why the route's codes are part of its contract:
+     *
+     *   1000 / 4404  The session is over. Nothing to retry, and nothing to
+     *                flip: the SSE stream is carrying the reason.
+     *   4401 / 4503  Auth, or the feature is off. Retrying cannot fix either,
+     *                so fall back to SSE frames and stay there.
+     *   anything     A drop, or 1006 from a server too old to serve this
+     *                route. Put frames back on SSE IMMEDIATELY — the pane
+     *                stays live while we retry — then retry on the ladder, and
+     *                latch after the fourth attempt.
+     */
+    function handleFrameSocketClose(
+      sessionId: string,
+      generation: number,
+      code: number,
+    ) {
+      frameSocket = undefined;
+      if (code === FRAME_WS_CLOSE.NORMAL || code === FRAME_WS_CLOSE.GONE) {
+        frameSocketLatched = true;
+        return;
+      }
+      if (
+        code === FRAME_WS_CLOSE.UNAUTHORIZED ||
+        code === FRAME_WS_CLOSE.UNAVAILABLE
+      ) {
+        frameSocketLatched = true;
+        ensureSseFrames(sessionId, "on");
+        return;
+      }
+      // Before the retry, not after it: a pane that went blank for two and a
+      // half seconds while a ladder ran would be a worse regression than the
+      // lag this whole change is about.
+      ensureSseFrames(sessionId, "on");
+      const retryIndex = frameAttempts - 1;
+      if (retryIndex >= FRAME_WS_RETRY_DELAYS_MS.length) {
+        frameSocketLatched = true;
+        return;
+      }
+      frameRetryTimer = setTimeout(() => {
+        frameRetryTimer = undefined;
+        // The generation is the guarantee, not the clearTimeout below: a timer
+        // that somehow survives a teardown must not open a socket against
+        // whatever session replaced its own.
+        if (generation !== connectionGeneration) return;
+        openFrameSocket(sessionId, generation);
+      }, FRAME_WS_RETRY_DELAYS_MS[retryIndex]);
+    }
+
+    function connect(sessionId: string) {
+      if (source && sourceSessionId === sessionId) return;
+      disconnectStream();
+      // Only a `frame-stream` session has pixels to carry. A native-window
+      // session drives its own real browser and a hosted one paints in a
+      // datacenter; opening a socket for either would be a connection with
+      // nothing to say.
+      //
+      // The token check is not belt-and-braces: it IS the auth on that socket,
+      // so without one the handshake could only ever be refused, and SSE frames
+      // are the right answer from the start rather than after a ladder.
+      const binaryFrames =
+        get().session?.viewportTransport.kind === "frame-stream" &&
+        hasSessionToken();
+      openEventSource(sessionId, binaryFrames ? "off" : "on");
+      if (binaryFrames) openFrameSocket(sessionId, connectionGeneration);
+    }
+
+    /**
+     * RESET #2 of three: the picture is no longer current, but the session is
+     * still alive and its counter still runs.
+     *
+     * Order matters. `liveFrame` goes first so React has dropped the `src`,
+     * and only then does the presenter release the bytes behind it — on a
+     * later task, at that. Reversing the two yanks a blob out from under an
+     * element still painting it. The seq guard is deliberately NOT reset:
+     * the session's counter did not restart, so neither should ours.
+     */
+    function invalidateFrame() {
+      set({ liveFrame: undefined });
+      presenter.clear();
+    }
+
+    /**
+     * RESET #3 of three: full teardown. Everything about this session's
+     * transports goes, and the generation bump orphans anything still in
+     * flight — a message on the wire, a close event yet to fire, an armed
+     * retry.
+     *
+     * `liveFrame` is cleared here as well as by the callers that have their own
+     * `set`, because the blob URLs behind it are revoked below and an `<img>`
+     * left pointing at a revoked URL is a broken image.
+     */
     function disconnectStream() {
+      connectionGeneration += 1;
+      if (frameRetryTimer !== undefined) {
+        clearTimeout(frameRetryTimer);
+        frameRetryTimer = undefined;
+      }
+      frameSocket?.close();
+      frameSocket = undefined;
+      frameAttempts = 0;
+      frameSocketLatched = false;
+      lastAppliedFrameSeq = 0;
       source?.close();
       source = undefined;
       sourceSessionId = undefined;
+      sourceFrames = "on";
+      set({ liveFrame: undefined });
+      presenter.clear();
     }
 
     return {
@@ -453,6 +736,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // with it — otherwise it grows for the life of the tab.
         seenActivityIds = new Set();
         settledResults.clear();
+        // Full teardown BEFORE the request, not after it: a start that fails
+        // would otherwise leave the previous session's socket, retry ladder
+        // and stream running with nothing left in the UI that refers to them.
+        disconnectStream();
         set({
           starting: true,
           error: undefined,
@@ -653,6 +940,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
       async sendInput(events) {
         if (events.length === 0) return;
+        // Dark unless the stats flag is set. Recorded HERE rather than in the
+        // forwarder because this is where the seq currently on screen is
+        // known, and "the first paint newer than that" is the definition of a
+        // visible echo.
+        noteInputSent(lastAppliedFrameSeq);
         // Chunked to the route's cap rather than sent whole and refused. A
         // flush that happened to exceed it would otherwise drop the gesture
         // entirely — the one outcome worse than sending it as two requests.
@@ -715,7 +1007,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // the await: a session that changed under us owns its own frame, and
           // clearing that one would blank a pane that is streaming fine.
           if (!streaming && get().session?.sessionId === aimedAt) {
-            set({ liveFrame: undefined });
+            invalidateFrame();
           }
           return streaming;
         });

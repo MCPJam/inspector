@@ -21,11 +21,12 @@ import {
 } from "@/lib/webmcp-inspector/input-forwarder";
 import type {
   WebMcpActivityEntry,
-  WebMcpFrame,
   WebMcpInputEvent,
   WebMcpSessionStatus,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
+import type { WebMcpLiveFrame } from "@/stores/webmcp-inspector-store";
+import { notePainted } from "@/lib/webmcp-inspector/frame-stats";
 
 /**
  * Cadence of the FALLBACK screenshot poll.
@@ -500,7 +501,7 @@ function ViewportPane({
   transport,
   onInput,
 }: {
-  frame: WebMcpFrame | undefined;
+  frame: WebMcpLiveFrame | undefined;
   fallbackScreenshot: string | undefined;
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
@@ -510,7 +511,15 @@ function ViewportPane({
   // a still to leave up once it stops. With Live view off, holding it would
   // freeze the pane on an old picture still labelled "live" — and the "Live
   // view is off" placeholder would never appear, because a source was present.
-  const source = frame?.data ?? (streaming ? fallbackScreenshot : undefined);
+  // The frame carries a ready-to-render `src` — a data URI when it came over
+  // SSE, a blob URL when it came over the socket — so the pane is indifferent
+  // to which transport delivered it. The screenshot fallback is still bare
+  // base64 and is wrapped here.
+  const source =
+    frame?.src ??
+    (streaming && fallbackScreenshot
+      ? `data:image/jpeg;base64,${fallbackScreenshot}`
+      : undefined);
   /**
    * Whether this pane drives the page.
    *
@@ -732,10 +741,15 @@ function ViewportPane({
             // images described identically would give a screen reader no way
             // to tell the live view from a snapshot someone took.
             ref={imageRef}
-            src={`data:image/jpeg;base64,${source}`}
+            src={source}
             alt="Live view of the inspected page"
             className="pointer-events-none h-full w-full object-contain select-none"
             draggable={false}
+            // The one place a paint is observable. Dark unless the frame-stats
+            // flag is set; see lib/webmcp-inspector/frame-stats.
+            onLoad={() => {
+              if (frame) notePainted(frame);
+            }}
             // Frames arrive faster than a decode; letting the browser paint the
             // previous one until this decodes is what keeps the pane from
             // flashing black between frames.
