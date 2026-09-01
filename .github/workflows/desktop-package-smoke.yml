@@ -1,0 +1,89 @@
+name: Desktop Package Smoke
+
+# Closes a blind spot: `electron-forge package` is exercised nowhere before a
+# release. mac-release.yml / windows-release.yml are `workflow_call` targets
+# reached only through release.yml, which is `workflow_dispatch` and publishes
+# real artifacts — so until this job existed, a dependency bump could go green
+# on "Build and Test" + "Run Tests" and still break packaging, discovered only
+# at release time. Electron 37 → 43 (#4081) merged with exactly that gap open.
+#
+# Path-filtered and advisory for now: it is NOT in the required-checks ruleset.
+# Promoting it to required is what would let the Electron/native packaging
+# chain come off the auto-merge hold list in dependabot-auto-merge.yml.
+
+on:
+  pull_request:
+    paths:
+      - "package-lock.json"
+      - "mcpjam-inspector/package.json"
+      - "mcpjam-inspector/forge.config.ts"
+      - "mcpjam-inspector/src/main.ts"
+      - "mcpjam-inspector/src/preload.ts"
+      - "mcpjam-inspector/vite.main.config.ts"
+      - "mcpjam-inspector/vite.preload.config.ts"
+      - "mcpjam-inspector/vite.renderer.config.mts"
+      - ".github/workflows/desktop-package-smoke.yml"
+
+concurrency:
+  group: desktop-package-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  package:
+    name: Desktop Package Smoke
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      # forge's extraResource points at dist/client, .env.production and
+      # sdk/dist, so the app build has to precede packaging — same order
+      # mac-release.yml uses. NODE_OPTIONS is not optional: without it the
+      # main-process Vite bundle OOMs at node's ~4GB default heap.
+      - name: Build application
+        run: npm run build -w @mcpjam/inspector
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      # `package`, not `make`: this proves the .app assembles (vite main /
+      # preload / renderer builds, asar packing, the fuses plugin) without
+      # spending release-length time on DMG and installer makers.
+      #
+      # No signing secrets are needed. forge.config.ts degrades osxSign and
+      # osxNotarize to `undefined` when MAC_CODESIGN_IDENTITY is unset, so this
+      # produces an unsigned bundle instead of failing — which also means the
+      # job runs on PRs from forks.
+      - name: Package application
+        run: npm run electron:package -w @mcpjam/inspector
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      # A green step that produced nothing is the failure mode worth guarding:
+      # forge has exited 0 without writing out/ before.
+      - name: Assert the app bundle exists
+        working-directory: mcpjam-inspector
+        run: |
+          set -euo pipefail
+          app=$(find out -maxdepth 2 -name "*.app" -print -quit)
+          if [ -z "$app" ]; then
+            echo "::error title=No .app produced::electron-forge package exited 0 but wrote no bundle under mcpjam-inspector/out/."
+            ls -la out 2>/dev/null || echo "(out/ does not exist)"
+            exit 1
+          fi
+          echo "Packaged: $app"
+          du -sh "$app"

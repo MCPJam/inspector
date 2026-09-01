@@ -1,0 +1,172 @@
+name: Dependabot Auto-merge
+
+# Takes exactly ONE action on every Dependabot PR:
+#   - MERGE  -> approve + `gh pr merge --auto --squash`, so it lands only
+#              after the required checks ("Build and Test", "Run Tests") pass.
+#   - HOLD   -> leave it open for a human and say, in one line, why.
+#
+# Scope is deliberately narrow. Auto-merging dependency PRs ships code into
+# deployed services and the desktop app, so only two classes qualify:
+# security updates, and patch/minor bumps of DEVELOPMENT dependencies. Every
+# major, every runtime version bump, and anything touching the Electron /
+# native packaging chain is held for a person.
+
+on:
+  # `pull_request_target`, NOT `pull_request`. Workflows that Dependabot
+  # triggers via `pull_request` run with a read-only GITHUB_TOKEN regardless
+  # of the `permissions:` block below, so `gh pr merge` would 403 — and that
+  # failure is easy to miss. `pull_request_target` runs in base-branch context
+  # with a writable token.
+  #
+  # `pull_request_target` is dangerous when a job checks out and EXECUTES the
+  # PR's code, because that code would run with those write permissions. This
+  # job never does: there is no `actions/checkout` step anywhere below, and
+  # none may be added. It reads metadata through the API and nothing else.
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  decide:
+    # Gate on the PR author, not `github.actor`, which is spoofable and is the
+    # human rather than the bot on a reopen — same reasoning as
+    # mintlify-triage.yml.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # enable auto-merge
+      pull-requests: write # approve / comment
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Metadata reaches the shell through `env:`, never through `${{ }}`
+      # interpolated directly into the script, so a crafted dependency name
+      # cannot break out into the runner shell.
+      - name: Decide the outcome
+        id: decide
+        env:
+          NAMES: ${{ steps.meta.outputs.dependency-names }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEP_TYPE: ${{ steps.meta.outputs.dependency-type }}
+          GHSA: ${{ steps.meta.outputs.ghsa-id }}
+        run: |
+          set -euo pipefail
+
+          # The desktop packaging chain. `electron-forge package` is NOT
+          # exercised by any required check — desktop-package-smoke.yml is
+          # path-filtered and advisory — so a green PR proves the app still
+          # builds, never that it still packages. These stay manual until
+          # that smoke job is a required check.
+          hold_desktop=false
+          IFS=',' read -ra pkgs <<<"$NAMES"
+          for raw in "${pkgs[@]}"; do
+            pkg="$(echo "$raw" | tr -d '[:space:]')"
+            case "$pkg" in
+              electron | sharp | @electron/* | @electron-forge/*)
+                hold_desktop=true
+                ;;
+            esac
+          done
+
+          if [ "$hold_desktop" = true ]; then
+            action=hold
+            reason="touches the Electron/native packaging chain, which no required check exercises"
+          elif [ "$UPDATE_TYPE" = "version-update:semver-major" ]; then
+            action=hold
+            reason="major version update"
+          elif [ -n "$GHSA" ]; then
+            action=merge
+            reason="security update ($GHSA)"
+          elif [ "$DEP_TYPE" = "direct:development" ] && \
+               { [ "$UPDATE_TYPE" = "version-update:semver-patch" ] || \
+                 [ "$UPDATE_TYPE" = "version-update:semver-minor" ]; }; then
+            action=merge
+            reason="dev-dependency ${UPDATE_TYPE#version-update:semver-} update"
+          else
+            action=hold
+            reason="runtime dependency version update"
+          fi
+
+          echo "action=$action" >>"$GITHUB_OUTPUT"
+          echo "reason=$reason" >>"$GITHUB_OUTPUT"
+          echo "Decision: $action — $reason (names=$NAMES type=$DEP_TYPE update=$UPDATE_TYPE)"
+
+      # The approval is the second half of the MERGE decision, not a general
+      # bypass: the "Standard BC" ruleset on main requires 1 approving review,
+      # so without it an auto-merge queue never drains. It is posted by
+      # github-actions[bot], only in this workflow, only for the narrow classes
+      # decided above, and never by the PR author.
+      - name: Approve and queue for auto-merge
+        if: steps.decide.outputs.action == 'merge'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          set -euo pipefail
+          gh api -X POST "repos/$REPO/pulls/$PR/reviews" \
+            -f event=APPROVE \
+            -f body="Auto-approved: $REASON. Queued for auto-merge; it lands only once the required checks pass." >/dev/null
+          gh pr merge "$PR" --repo "$REPO" --auto --squash
+
+      - name: Explain the hold
+        # Only on the first look. `synchronize` fires on every Dependabot
+        # rebase, and re-commenting each time would bury the PR in noise.
+        if: steps.decide.outputs.action == 'hold' && github.event.action != 'synchronize'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR" --repo "$REPO" \
+            --body "Held for human review: $REASON. Auto-merge covers security updates and patch/minor dev-dependency bumps only."
+
+      # A run that reaches no outcome must be loud. mintlify-triage.yml learned
+      # this the hard way: a step that soft-skips exits 0 and reports a green
+      # check having done nothing, which is strictly worse than a red X because
+      # nobody can tell it apart from a real decision.
+      - name: Enforce an outcome
+        # Not success(): a soft-skip exits 0. Not always(): `cancel-in-progress`
+        # means a superseded run has legitimately reached no outcome.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          ACTION: ${{ steps.decide.outputs.action }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/pulls/$PR")
+          queued=$(jq -r '.auto_merge != null' <<<"$pr")
+          merged=$(jq -r '.merged' <<<"$pr")
+
+          case "$ACTION" in
+            merge)
+              if [ "$queued" = "true" ] || [ "$merged" = "true" ]; then
+                echo "Outcome: MERGE — auto-merge queued (or already landed)."
+              else
+                echo "::error title=Auto-merge never queued::PR #$PR was classified MERGE but has no auto-merge enabled. Check the approve/queue step — a silent 403 there is the likely cause, which would mean this workflow is running with a read-only token."
+                exit 1
+              fi
+              ;;
+            hold)
+              echo "Outcome: HOLD — left for human review."
+              ;;
+            *)
+              echo "::error title=No decision reached::The classify step produced no action for PR #$PR, so neither MERGE nor HOLD ran."
+              exit 1
+              ;;
+          esac
