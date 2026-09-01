@@ -554,6 +554,42 @@ describe("system install search paths", () => {
   });
 });
 
+describe("system installs on macOS", () => {
+  it("refuses outright, because the ancestor check is blind to darwin ACLs", async () => {
+    // NFSv4-style ACLs grant rights such as `delete_child` without appearing
+    // in `st_mode`, and Node cannot read them — so the ancestor-trust check is
+    // KNOWN to be blind there. A discovery that cannot make its own guarantee
+    // refuses rather than reporting a trust it did not establish. (Linux is
+    // fine: a POSIX ACL's mask lands in the group bits, so the same check
+    // does see those.)
+    const darwinManifest: LocalHarnessCompatibility = {
+      ...LOCAL_HARNESS_MANIFEST["claude-code"],
+      runtime: {
+        source: "system-install",
+        executableNames: ["claude"],
+        executableVersionRange: ">=1.0.0",
+        vendorIdentityPolicy: {
+          probeArgs: ["--version"],
+          stdoutPattern: "^claude \\d+\\.\\d+",
+          requirePlatformProvenance: false,
+        },
+      },
+    };
+    const result = await resolveSystemInstall({
+      manifest: darwinManifest,
+      platform: "darwin",
+      forbiddenRoots: [],
+      searchPaths: ["/usr/local/bin"],
+      probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      status: "system-runtime-untrusted-path",
+    });
+    expect((result as { message: string }).message).toMatch(/macOS/);
+  });
+});
+
 describe("system install discovery without a candidate", () => {
   // Runs as any user: an empty search path returns before `resolveSystemInstall`
   // looks at ownership at all, so this case needs none of the root-only setup.

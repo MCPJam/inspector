@@ -167,6 +167,18 @@ group- or world-writable without the sticky bit. Sticky is not a loophole: on a
 sticky directory only a file's owner may unlink or rename it, which is exactly
 the property being checked, and it is why `/tmp` is mode 1777.
 
+Mode bits are not blind to POSIX ACLs, which matters because the check would be
+much weaker if they were: the group bits carry the ACL **mask** once a directory
+has an ACL, so an entry granting another user write makes this fire. Verified
+rather than assumed — on a 0755 directory, adding `u:65534:rwx` moves `st_mode`
+to 0775.
+
+macOS is the case it cannot cover. NFSv4-style ACLs there grant rights such as
+`delete_child` without appearing in `st_mode` at all, and Node exposes no way to
+read them, so `system-install` is **refused outright on darwin** rather than
+checked with a test known to be blind. Managed bundles are unaffected: their
+whole tree is digest-verified.
+
 ### A dangling symlink is a link, not an absence
 
 `realpath` fails on a symlink whose target does not exist, so an ancestor walk

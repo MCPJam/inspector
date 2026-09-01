@@ -398,6 +398,19 @@ async function defaultProbe(
  * exemption every installation below it would be refused for a risk the sticky
  * bit already removes.
  *
+ * ── Mode bits are not blind to POSIX ACLs ────────────────────────────────
+ * The group bits carry the ACL MASK once a directory has a POSIX ACL, so an
+ * entry granting another user write makes this check fire. Verified rather
+ * than assumed: on a 0755 directory, adding `u:65534:rwx` (mask `rwx`) moves
+ * `st_mode` to 0775. That is why the group-writable test below covers more
+ * than plain group permissions, and why removing it would quietly widen this.
+ *
+ * It does NOT extend to macOS's NFSv4-style ACLs, which grant rights such as
+ * `delete_child` without appearing in `st_mode` at all and which Node cannot
+ * read. `system-install` is therefore refused outright on darwin — see
+ * `resolveSystemInstall` — rather than checked with a test known to be blind
+ * there.
+ *
  * A directory that cannot be `stat`ed is treated as untrusted: this answers a
  * security question, and "could not look" is not "safe".
  */
@@ -435,6 +448,24 @@ export async function resolveSystemInstall(
       ok: false,
       status: "system-runtime-not-installed",
       message: `${manifest.harnessId} is not configured for a system install`,
+    };
+  }
+  // Darwin's ACLs grant rights like `delete_child` without touching
+  // `st_mode`, and Node exposes no way to read them — so the ancestor-trust
+  // check below is KNOWN to be blind there, and a discovery that cannot make
+  // its own guarantee must refuse rather than report a trust it did not
+  // establish. (Linux is fine: a POSIX ACL's mask lands in the group bits, so
+  // the same check does see those.) This is an unsupported tuple, failing
+  // closed with a diagnostic, not a silent gap.
+  if (platform === "darwin") {
+    return {
+      ok: false,
+      status: "system-runtime-untrusted-path",
+      message:
+        `a system installation cannot be trusted on macOS by this Inspector: ` +
+        `directory ACLs there can grant replacement rights without appearing ` +
+        `in the file mode, and nothing here can read them. Use a managed ` +
+        `bundle, whose digest is verified in full.`,
     };
   }
   const policy = manifest.runtime;
