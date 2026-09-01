@@ -19,6 +19,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     canManageMembers: false,
     roleLoading: false,
+    authLoading: false,
     uploadSkillFolder: vi.fn(async () => ({
       name: "refunds",
       description: "Handle refunds",
@@ -33,7 +34,10 @@ vi.mock("@/lib/apis/mcp-skills-api", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvexAuth: () => ({
+    isAuthenticated: !mocks.authLoading,
+    isLoading: mocks.authLoading,
+  }),
 }));
 
 const useProjectMembers = vi.fn(() => ({
@@ -79,6 +83,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.canManageMembers = false;
   mocks.roleLoading = false;
+  mocks.authLoading = false;
 });
 
 describe("SkillUploadDialog — which tier an upload lands in", () => {
@@ -150,6 +155,24 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
     // submits inside this window would silently land a PERSONAL skill, which
     // contradicts the rule the dialog itself states two lines above the button.
     mocks.roleLoading = true;
+    render(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    expect(screen.getByText(/Checking your role in this project/i))
+      .toBeInTheDocument();
+
+    await pickSkillFolder();
+    expect(
+      screen.getByRole("button", { name: /add to library/i }),
+    ).toBeDisabled();
+    expect(mocks.uploadSkillFolder).not.toHaveBeenCalled();
+  });
+
+  it("holds the upload while Convex auth is still hydrating", async () => {
+    // The trap one layer up: while auth hydrates, `isAuthenticated` reads
+    // FALSE, so the members query is never enabled and `roleLoading` is false
+    // too. The role then looks settled at "not an admin" though nothing was
+    // asked — exactly the bug the resolving guard exists to close.
+    mocks.authLoading = true;
     render(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
 
     expect(screen.getByText(/Checking your role in this project/i))

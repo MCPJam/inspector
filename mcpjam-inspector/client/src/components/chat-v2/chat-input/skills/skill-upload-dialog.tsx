@@ -83,7 +83,7 @@ export function SkillUploadDialog({
    * (closed) by every chat input, and an ungated query would hold a standing
    * Convex subscription per mounted composer.
    */
-  const { isAuthenticated } = useConvexAuth();
+  const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   const { canManageMembers: canManageShared, isLoading: roleLoading } =
     useProjectMembers({
       isAuthenticated: isAuthenticated && open && isCloud,
@@ -99,10 +99,17 @@ export function SkillUploadDialog({
    * the hint says so rather than showing the non-admin copy as if it were
    * settled.
    *
-   * False whenever the query is not enabled (local mode, signed out, dialog
-   * closed), so nothing is ever held on a question that was never asked.
+   * `authLoading` is half of this, and the half that is easy to miss. While
+   * Convex auth hydrates, `isAuthenticated` reads FALSE — so the members query
+   * is not enabled, so `roleLoading` is false too, and the role looks settled
+   * at "not an admin" when nothing has been asked yet. Waiting on
+   * `roleLoading` alone would leave exactly the bug this guard exists to
+   * close, one layer up.
+   *
+   * False whenever the question does not arise (local mode, dialog closed),
+   * so nothing is ever held on something that was never asked.
    */
-  const roleResolving = isCloud && roleLoading;
+  const roleResolving = isCloud && (authLoading || roleLoading);
 
   const resetForm = () => {
     setFiles([]);

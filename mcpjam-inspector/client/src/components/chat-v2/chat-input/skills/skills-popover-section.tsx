@@ -5,7 +5,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/chat-utils";
 import { SquareSlash, Loader2 } from "lucide-react";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   listSkills,
   getSkill,
@@ -103,26 +103,33 @@ export function SkillsPopoverSection({
   projectId,
   onCountChange,
 }: SkillsPopoverSectionProps) {
-  const [skills, setSkills] = useState<SkillRow[]>([]);
+  // One slice per half, `null` while that half is still outstanding. Kept
+  // apart rather than merged into one array so each can land on its own — see
+  // the fetch effect — and so row ORDER stays local-then-library whichever
+  // arrives first.
+  const [localRows, setLocalRows] = useState<SkillRow[] | null>(null);
+  const [libraryRows, setLibraryRows] = useState<SkillRow[] | null>(null);
   const [serverSkills, setServerSkills] = useState<ServerSkillPickerItem[]>([]);
   const [loadingSkillName, setLoadingSkillName] = useState<string | null>(null);
   // Why a rendered field and not just a console line: the person who clicked
   // the row is the one who needs to know it was refused, and they are not
   // looking at the devtools console.
   const [serverSkillError, setServerSkillError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
 
   /**
-   * Both halves of the project catalog, in one list.
+   * Both halves of the project catalog, each rendering the moment it lands.
    *
    * The local half is always requested: `listSkills(undefined)` self-empties
    * in hosted mode (`runByMode`), where there is no filesystem to read, so the
    * caller needs no build-mode branch of its own. The library half is
    * requested only when there is a library to read.
    *
-   * `allSettled`, not `all`: an unreachable Convex must not take the user's
-   * local files off the menu, and a broken local route must not hide the
-   * project's skills. Each half fails on its own and logs; the other renders.
+   * Each half owns its own state slice and settles alone. Awaiting the PAIR —
+   * even with `allSettled` — buys independence from one half FAILING but none
+   * from one half being SLOW: a Convex request that hangs rather than rejects
+   * would hold back local files that were ready, behind a spinner, for as
+   * long as it took. A rejection logs and yields an empty half so the other
+   * still renders.
    *
    * NOT deduped by name. A local `refunds` and a library `refunds` are
    * different artifacts with different contents, and the person typing `/` is
@@ -131,43 +138,68 @@ export function SkillsPopoverSection({
    */
   useEffect(() => {
     let active = true;
-    (async () => {
-      setIsLoading(true);
-      const [localResult, libraryResult] = await Promise.allSettled([
-        listSkills(undefined),
-        skillsSource ? listSkills(skillsSource) : Promise.resolve([]),
-      ]);
-      if (!active) return;
-      const rows: SkillRow[] = [];
-      if (localResult.status === "fulfilled") {
-        for (const item of localResult.value) {
-          rows.push({ item, source: { kind: "local" }, label: "Local" });
-        }
-      } else {
+    setLocalRows(null);
+    setLibraryRows(null);
+    listSkills(undefined).then(
+      (items) => {
+        if (!active) return;
+        setLocalRows(
+          items.map((item) => ({
+            item,
+            source: { kind: "local" } as SkillsSource,
+            label: "Local" as const,
+          }))
+        );
+      },
+      (err) => {
+        if (!active) return;
         console.error(
           "[SkillsPopoverSection] Failed to fetch local skills",
-          localResult.reason
+          err
         );
+        setLocalRows([]);
       }
-      if (libraryResult.status === "fulfilled") {
-        if (skillsSource) {
-          for (const item of libraryResult.value) {
-            rows.push({ item, source: skillsSource, label: "Library" });
-          }
+    );
+    if (skillsSource) {
+      listSkills(skillsSource).then(
+        (items) => {
+          if (!active) return;
+          setLibraryRows(
+            items.map((item) => ({
+              item,
+              source: skillsSource,
+              label: "Library" as const,
+            }))
+          );
+        },
+        (err) => {
+          if (!active) return;
+          console.error(
+            "[SkillsPopoverSection] Failed to fetch library skills",
+            err
+          );
+          setLibraryRows([]);
         }
-      } else {
-        console.error(
-          "[SkillsPopoverSection] Failed to fetch library skills",
-          libraryResult.reason
-        );
-      }
-      setSkills(rows);
-      setIsLoading(false);
-    })();
+      );
+    }
     return () => {
       active = false;
     };
   }, [skillsSource]);
+
+  // Local first, so the badge order on screen matches the index order the
+  // Enter handler and the parent's arrow keys walk.
+  const skills = useMemo(
+    () => [...(localRows ?? []), ...(libraryRows ?? [])],
+    [localRows, libraryRows]
+  );
+  /** A half that was asked for and hasn't answered. */
+  const stillFetching =
+    localRows === null || (Boolean(skillsSource) && libraryRows === null);
+  // The spinner stands only while NOTHING has arrived. Once either half is in,
+  // it renders — a hung half must not hide a settled one.
+  const isLoading =
+    localRows === null && (skillsSource ? libraryRows === null : true);
 
   // Server-served skills (SEP-2640). Fetched per connected server, and only
   // for connections where the extension is mutually declared — the API answers
@@ -523,6 +555,7 @@ export function SkillsPopoverSection({
         {/* Empty state with upload button */}
         {skills.length === 0 &&
           serverSkills.length === 0 &&
+          !stillFetching &&
           onOpenUploadDialog && (
             <div className="px-2 py-2 text-xs text-muted-foreground">
               No skills found. Create your first skill!

@@ -197,6 +197,46 @@ describe("SkillsPopoverSection — local and library in one list", () => {
     expect(await screen.findByText("refunds")).toBeInTheDocument();
   });
 
+  it("renders the local half while the library half is still hanging", async () => {
+    // `allSettled` on the PAIR bought independence from one half FAILING but
+    // none from one half being SLOW: a Convex request that hangs rather than
+    // rejects would hold ready local files behind a spinner for as long as it
+    // took.
+    mockListSkills.mockImplementation(async (source?: { kind: string }) => {
+      if (source?.kind === "cloud") return new Promise(() => {}); // never settles
+      return [localItem("notes")];
+    });
+    renderPicker();
+
+    expect(await screen.findByText("notes")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading skills/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the library half while the local half is still hanging", async () => {
+    mockListSkills.mockImplementation(async (source?: { kind: string }) => {
+      if (source?.kind === "cloud") return [libraryItem("refunds")];
+      return new Promise(() => {});
+    });
+    renderPicker();
+
+    expect(await screen.findByText("refunds")).toBeInTheDocument();
+  });
+
+  it("withholds the empty state while a half is still outstanding", async () => {
+    // "No skills found" over a half that is still coming is a claim about a
+    // catalog nobody has read yet.
+    mockListSkills.mockImplementation(async (source?: { kind: string }) => {
+      if (source?.kind === "cloud") return new Promise(() => {});
+      return [];
+    });
+    renderPicker({ onOpenUploadDialog: vi.fn() });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Loading skills/i)).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/No skills found/i)).not.toBeInTheDocument();
+  });
+
   it("counts both halves for the parent's arrow-key range", async () => {
     halves({
       local: [localItem("notes")],
