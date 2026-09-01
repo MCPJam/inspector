@@ -1146,6 +1146,67 @@ describe("the second pass keeps its contract with the run and the first pass", (
   });
 });
 
+describe("the marker carries what the chain cannot", () => {
+  // The case the chain-scan recovery could never see, and the reason the
+  // classification is now persisted rather than inferred.
+  //
+  // `categoryFor` returns `setup` for a model-call failure where NOTHING
+  // failed — "there was nothing to fail against". On that shape
+  // `applyProviderError` relabels no row, so a recovery that looks for a
+  // `providerError` row finds an empty chain and concludes the provider was
+  // fine. The category then vanishes on the second pass with no missing row to
+  // point at.
+  const reachedAndPassed = {
+    status: "completed",
+    traceComplete: true,
+    stageCase: {
+      mode: "model_driven",
+      expectsToolCall: false,
+      expectsWidgetRender: false,
+      assertionCount: 0,
+    },
+    spans: [{ id: "s1", name: "tools/call", category: "tool", status: "ok" }],
+  };
+
+  const derive = (metadata: Record<string, unknown>) =>
+    deriveIterationPayload({
+      iteration: { ...reachedAndPassed, metadata },
+      mode: "advisory",
+      judgeVerdict: { status: "scored", verdict: "pass", score: 0.9 },
+      attributionVerdict: undefined,
+    } as never).stage;
+
+  // Nothing failed, and nothing blamed on the provider — exactly what the
+  // first pass writes for this shape.
+  const CLEAN_CHAIN = [
+    { stage: "connection", state: "passed", reason: "observed" },
+  ];
+
+  it("keeps the setup category when NO row records providerError", () => {
+    const stage = derive({
+      stageResults: CLEAN_CHAIN,
+      stageStepErrorSource: "model",
+    });
+    expect(stage.failureCategory).toBe("setup");
+  });
+
+  it("and the chain alone cannot recover it — the reason the marker exists", () => {
+    // Same chain, marker absent. This is what the second pass saw before, and
+    // it is why the old recovery's "if and only if" premise was false.
+    expect(stepErrorFromStoredChain(CLEAN_CHAIN)).toBeUndefined();
+    const stage = derive({ stageResults: CLEAN_CHAIN });
+    expect(stage.failureCategory).toBeUndefined();
+  });
+
+  it("does not invent a provider failure from a marker saying otherwise", () => {
+    expect(
+      derive({ stageResults: CLEAN_CHAIN, stageStepErrorSource: "setup" })
+        .failureCategory,
+    ).toBeUndefined();
+  });
+});
+
+
 describe("stepErrorFromStoredChain", () => {
   // `stepError` is an INPUT to the first derivation and is never persisted, so
   // the judge pass re-derived without it and dropped `providerError` and the
