@@ -302,6 +302,48 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
     ).toBeInTheDocument();
   });
 
+  it("stamps the created skill with the store it was written to", async () => {
+    // `SkillResultCard` falls back to the composer's ambient source for an
+    // unstamped result, and that source follows the ACTIVE project. Without
+    // this stamp, a skill uploaded into project A and expanded after switching
+    // to B would have its supporting files read out of B.
+    mocks.canManageMembers = true;
+    const onSkillCreated = vi.fn();
+    render(
+      <SkillUploadDialog
+        open
+        onOpenChange={vi.fn()}
+        source={CLOUD}
+        onSkillCreated={onSkillCreated}
+      />,
+    );
+
+    await pickSkillFolder();
+    fireEvent.click(screen.getByRole("button", { name: /add to library/i }));
+
+    await waitFor(() => expect(onSkillCreated).toHaveBeenCalled());
+    expect(onSkillCreated.mock.calls[0][0].source).toEqual(CLOUD);
+  });
+
+  it("leaves a local upload unstamped rather than inventing a source", async () => {
+    // There is no source to record for a filesystem write, and stamping a
+    // fabricated one would be worse than the existing fallback.
+    const onSkillCreated = vi.fn();
+    render(
+      <SkillUploadDialog
+        open
+        onOpenChange={vi.fn()}
+        onSkillCreated={onSkillCreated}
+      />,
+    );
+
+    await pickSkillFolder();
+    fireEvent.click(screen.getByRole("button", { name: /upload skill/i }));
+
+    await waitFor(() => expect(onSkillCreated).toHaveBeenCalled());
+    expect(onSkillCreated.mock.calls[0][0].source).toBeUndefined();
+  });
+
   it("asks nothing of Convex for a local upload", () => {
     render(<SkillUploadDialog open onOpenChange={vi.fn()} />);
 

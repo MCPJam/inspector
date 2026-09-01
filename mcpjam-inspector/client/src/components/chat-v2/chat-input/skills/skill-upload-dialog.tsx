@@ -304,7 +304,13 @@ export function SkillUploadDialog({
         file_count: files.length,
         sharing,
       });
-      onSkillCreated?.(skill);
+      // Stamped with the source it was WRITTEN to, for the same reason picker
+      // selections are: `SkillResultCard` falls back to the composer's ambient
+      // source for an unstamped result, and that source now follows the active
+      // project. A skill uploaded locally (or into project A) and expanded
+      // after the project syncs (or switches to B) would otherwise have its
+      // supporting files read out of the wrong store.
+      onSkillCreated?.({ ...skill, ...(source ? { source } : {}) });
       handleOpenChange(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

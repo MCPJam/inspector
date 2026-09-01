@@ -14,7 +14,7 @@
  * through the ambient source would return the other half's content.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockListSkills, mockGetSkill, mockTrack } = vi.hoisted(() => ({
   mockListSkills: vi.fn(),
@@ -96,6 +96,12 @@ beforeEach(() => {
     content: "# body",
     path: "SKILL.md",
   }));
+});
+
+afterEach(() => {
+  // The failure cases silence `console.error`; leaving the spy installed would
+  // swallow diagnostics in every test that ran after them.
+  vi.restoreAllMocks();
 });
 
 describe("SkillsPopoverSection — local and library in one list", () => {

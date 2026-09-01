@@ -149,8 +149,13 @@ export function SkillsTab({
    */
   const { isAuthenticated } = useConvexAuth();
   const { canManageMembers: canManageShared } = useProjectMembers({
-    isAuthenticated: isAuthenticated && isCloudMode,
-    projectId: isCloudMode && projectId ? projectId : null,
+    // Gated on the store being on this surface at all, not merely on cloud
+    // mode. With `cloudSkillsEnabled` off there is no library, no Publish
+    // button, and nothing this answer could change — and the same rule already
+    // keeps `listSkills` from firing. A standing project-members subscription
+    // for a tab showing only server skills is the same mistake in another API.
+    isAuthenticated: isAuthenticated && isCloudMode && !cloudUnavailable,
+    projectId: isCloudMode && !cloudUnavailable && projectId ? projectId : null,
   });
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
