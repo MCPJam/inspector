@@ -492,6 +492,44 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Cursor CLI host style.
+ *
+ * `cursor-agent` is a terminal agent with no chat chrome of its own, so it
+ * borrows Cursor's surface wholesale (platform, fonts, style variables,
+ * background) and differs only in identity: its own label and picker copy.
+ * Exactly the recipe CLAUDE_CODE_HOST_STYLE uses over Claude's, and
+ * CODEX_HOST_STYLE over ChatGPT's.
+ *
+ * What it does NOT borrow is the app-capability claim. `mcpAppsCapabilities`
+ * drops to the no-claims preset: the Cursor row above was captured from the IDE
+ * chat panel, which renders MCP Apps in a webview, and a CLI cannot. Reusing
+ * that matrix would advertise a widget surface that does not exist. (The
+ * template also sets `hostCapabilitiesOverride: {}`, so this preset is only the
+ * fallback if a host ever clears that override — which is exactly when getting
+ * it right matters.)
+ */
+export const CURSOR_CLI_HOST_STYLE: HostStyleDefinition = {
+  id: "cursor-cli",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CURSOR_PLATFORM,
+    fontCss: CURSOR_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getCursorStyleVariables,
+  },
+  chatUi: {
+    label: "Cursor CLI",
+    shortLabel: "Cursor CLI-style host",
+    pickerDescription: "Cursor coding CLI chrome",
+    logoSrc: cursorLogo,
+    // Same flat, dark, IDE-adjacent visual bucket as the Cursor panel.
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
+    loadingIndicator: CursorShineIndicator,
+  },
+};
+
+/**
  * Microsoft 365 Copilot host style. Reuses ChatGPT's MCP profile and most
  * of its chat chrome — Copilot routes widgets through the OpenAI Apps SDK
  * under the hood and its chat UI sits in the same flat-neutral visual
@@ -842,6 +880,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   GOOSE_HOST_STYLE,
   SLACK_HOST_STYLE,
   CURSOR_HOST_STYLE,
+  CURSOR_CLI_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,

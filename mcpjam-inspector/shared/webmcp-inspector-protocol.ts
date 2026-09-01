@@ -79,9 +79,13 @@ export type WebMcpSessionStatus =
   | "closed";
 
 /**
- * How the viewer sees (and drives) the browser. V1 ships `native-window` only;
- * the other two exist so adding them later is a provider change, not a protocol
- * change.
+ * How the viewer sees (and drives) the browser.
+ *
+ * Adding a kind here is a PROVIDER change, never a consumer change — which
+ * only holds if consumers branch exhaustively. The client does (see
+ * `viewportBehaviour` in `WebmcpInspectorTab.tsx`, whose `satisfies never`
+ * makes the next addition a compile error rather than a silent fall-through to
+ * "a browser window is open on this machine").
  */
 export type WebMcpViewportTransport =
   /** A real window on the viewer's own machine; they drive it directly. */
@@ -89,7 +93,45 @@ export type WebMcpViewportTransport =
   /** No viewport at all: the browser is headless, so tools only. */
   | { kind: "headless" }
   | { kind: "remote-interactive-url"; url: string }
-  | { kind: "frame-stream" };
+  /**
+   * The page is streamed here as frames, and driven from here as input.
+   *
+   * Carries the surface's dimensions so the client can lay out (and letterbox)
+   * its pane BEFORE the first frame arrives. Waiting for a frame to learn the
+   * aspect ratio means the pane resizes under the viewer a moment after it
+   * appears, and any click landing in that moment is scaled against the wrong
+   * box.
+   */
+  | { kind: "frame-stream"; width: number; height: number }
+  /**
+   * A REAL Chromium surface, embedded in the desktop app, that the CLIENT owns.
+   *
+   * The inversion is the whole point. Every other kind describes a browser the
+   * server started and the client observes; this one describes a browser the
+   * client mounted and the server merely ATTACHED to. So it carries no
+   * dimensions (the element is laid out by CSS and resizes with the window), it
+   * is never screencast (there is nothing to encode — the pixels are already
+   * on the viewer's screen), and it is never driven by forwarded input (the
+   * surface receives the viewer's real mouse and keyboard natively). A client
+   * that treated it like `frame-stream` would ask for an encoder nobody reads
+   * and deliver every click twice.
+   */
+  | { kind: "electron-webview" };
+
+/**
+ * The Electron session partition every embedded WebMCP surface runs in.
+ *
+ * Named here, in the file both halves already import, because it is enforced
+ * at THREE points that must agree exactly: the client's `<webview partition>`
+ * attribute, the main process's `will-attach-webview` guard, and the server
+ * provider's check that the `webContents` it was handed is really one of ours.
+ * Three string literals would drift; one constant cannot.
+ *
+ * `persist:` on purpose — the local inspector's stance everywhere else is a
+ * persistent profile, because a developer inspecting their own site should not
+ * have to sign in again on every session.
+ */
+export const WEBMCP_WEBVIEW_PARTITION = "persist:webmcp-inspector";
 
 export interface WebMcpSessionPublic {
   sessionId: string;
@@ -112,6 +154,79 @@ export const WEBMCP_INSPECTOR_PROTOCOL_VERSION = 1 as const;
 /** Where an invocation came from. Both share one queue and one timeline. */
 export type WebMcpInvocationSource = "manual" | "chat";
 
+/**
+ * A modifier's state at the moment an event was produced.
+ *
+ * Sent per event rather than tracked server-side: the pane can lose focus
+ * mid-gesture (an alt-tab between keydown and keyup), and a server holding its
+ * own idea of "shift is down" would then apply it to every later click with
+ * nothing to correct it.
+ */
+export interface WebMcpInputModifiers {
+  alt?: boolean;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+}
+
+/**
+ * One thing a person did to the pane, in the FRAME's device pixels.
+ *
+ * Coordinates are scaled on the client, because only the client knows the
+ * rendered size of its pane and how the picture is letterboxed inside it. It
+ * scales against the dimensions of the frame it is looking at, so the mapping
+ * is exact even mid-resize.
+ */
+export type WebMcpInputEvent =
+  | {
+      kind: "mouse_move";
+      x: number;
+      y: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | {
+      kind: "mouse_down";
+      x: number;
+      y: number;
+      button: WebMcpMouseButton;
+      clickCount?: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | {
+      kind: "mouse_up";
+      x: number;
+      y: number;
+      button: WebMcpMouseButton;
+      clickCount?: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | {
+      kind: "wheel";
+      x: number;
+      y: number;
+      deltaX: number;
+      deltaY: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | { kind: "key_down"; key: string; modifiers?: WebMcpInputModifiers }
+  | { kind: "key_up"; key: string; modifiers?: WebMcpInputModifiers }
+  /**
+   * Text as the person actually produced it, not a key sequence.
+   *
+   * Its own event because paste and IME composition have no keystrokes to
+   * replay: reconstructing "日本語" or a pasted paragraph as key events would
+   * be wrong in a different way on every keyboard layout.
+   */
+  | { kind: "text"; text: string };
+
+export type WebMcpMouseButton = "left" | "middle" | "right";
+
+/** Most events a single `input` command may carry. */
+export const WEBMCP_INPUT_BATCH_LIMIT = 64;
+
+/** Longest run of text one `text` event may carry. */
+export const WEBMCP_INPUT_TEXT_MAX_CHARS = 4 * 1024;
+
 export type WebMcpCommand =
   | { type: "navigate"; url: string }
   | { type: "reload" }
@@ -123,13 +238,31 @@ export type WebMcpCommand =
       source: WebMcpInvocationSource;
     }
   | { type: "cancel_invocation"; invokeId: string }
-  | { type: "capture_screenshot" };
+  | { type: "capture_screenshot" }
+  /**
+   * Turn the viewport stream on or off. DEMAND-DRIVEN on purpose: a page
+   * nobody is looking at should not be encoding JPEGs, so the client asks for
+   * frames when its pane is visible and stops asking when it is not.
+   */
+  | { type: "set_screencast"; enabled: boolean }
+  /**
+   * Drive the page from the pane.
+   *
+   * A BATCH, never a single event. Pointer movement is the flooding vector — a
+   * drag across the pane produces hundreds of events a second — and batching
+   * solves that at the transport rather than asking every caller to remember to
+   * rate-limit. The route bounds the array, so one request can never carry an
+   * unbounded amount of work.
+   */
+  | { type: "input"; events: WebMcpInputEvent[] };
 
 export type WebMcpCommandResult =
   | { ok: true }
   | { ok: true; invokeId: string }
   | { ok: true; cancelled: boolean }
-  | { ok: true; screenshotBase64?: string };
+  | { ok: true; screenshotBase64?: string }
+  /** `set_screencast`: whether frames are actually flowing now. */
+  | { ok: true; streaming: boolean };
 
 /** Terminal state of an invocation, ours rather than CDP's. */
 export type WebMcpInvocationState =
@@ -197,6 +330,33 @@ export type WebMcpActivityEntry =
   | { id: string; ts: number; kind: "session_error"; message: string }
   | { id: string; ts: number; kind: "unsupported"; message: string };
 
+/**
+ * One painted frame of the inspected page, for the `frame-stream` viewport.
+ *
+ * TRANSIENT, and deliberately not an activity entry. Frames never enter the
+ * replay ring, never appear in an export, and carry no history worth keeping:
+ * the only interesting frame is the current one. That is also why they are
+ * distinct from the `screenshotBase64` on an invocation entry, which is
+ * PERSISTED EVIDENCE at a much smaller budget — a frame may even predate the
+ * settle it appears beside, because coalescing keeps the last *paint* rather
+ * than the paint at any particular moment. Never source one from the other.
+ *
+ * The device dimensions ride on every frame rather than being read from
+ * {@link WEBMCP_VIEWPORT}: the client scales pointer coordinates against them,
+ * and a frame whose dimensions came from somewhere other than the frame itself
+ * would put clicks in the wrong place the moment the two disagreed.
+ */
+export interface WebMcpFrame {
+  /** Base64 JPEG, capped at {@link WEBMCP_FRAME_MAX_BYTES}. */
+  data: string;
+  /** Width of the captured surface, in device pixels. */
+  deviceWidth: number;
+  /** Height of the captured surface, in device pixels. */
+  deviceHeight: number;
+  /** Wall-clock capture time. */
+  ts: number;
+}
+
 export type WebMcpEvent =
   | { type: "session"; seq: number; session: WebMcpSessionPublic }
   /**
@@ -205,7 +365,14 @@ export type WebMcpEvent =
    * correct on arrival no matter what it missed.
    */
   | { type: "tools"; seq: number; tools: WebMcpToolDescriptor[] }
-  | { type: "activity"; seq: number; entry: WebMcpActivityEntry };
+  | { type: "activity"; seq: number; entry: WebMcpActivityEntry }
+  /**
+   * Coalesced, not queued: the hub keeps ONE of these per session and replaces
+   * it, so a page animating at 10fps cannot flush the activity ring. `seq` is
+   * still stamped from the session's own counter so a replayed frame sorts into
+   * place beside the events around it.
+   */
+  | { type: "frame"; seq: number; frame: WebMcpFrame };
 
 /**
  * Cap on a result, both for what we persist in the timeline and what a model
@@ -233,6 +400,164 @@ export const WEBMCP_TOOL_DESCRIPTION_MAX_CHARS = 512;
 export const WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8 * 1024;
 
 export const WEBMCP_VIEWPORT = { width: 1280, height: 800 } as const;
+
+/** JPEG quality for streamed frames. Legible text, roughly a tenth the bytes. */
+export const WEBMCP_FRAME_QUALITY = 50;
+
+/**
+ * Hard cap on one streamed frame.
+ *
+ * Four times the 64 KiB budget the timeline's screenshots live under, and
+ * deliberately so: a frame is TRANSIENT — it is replaced by the next paint and
+ * never persisted — so the cost of a big one is one SSE write, not a permanent
+ * entry in an export. An oversized frame is DROPPED rather than re-encoded in
+ * the hot path; the provider converges the pane by publishing one budgeted
+ * screenshot instead, so a page whose final paint never fits still stops being
+ * stale.
+ */
+export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
+
+/** Floor on the gap between published frames: 10fps. */
+export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
+
+/**
+ * Floor while someone is actively driving the pane: ~30fps.
+ *
+ * The resting floor is deliberately slow — a page nobody is touching does not
+ * need 30 JPEGs a second, and most of what a screencast paints is a spinner.
+ * But the moment a person scrolls or types, the interesting frame is the one
+ * echoing what they just did, and a 100ms floor puts up to a tenth of a second
+ * between the two on its own. So the rate is raised by INPUT rather than
+ * configured: the cost is paid exactly while it buys something.
+ */
+export const WEBMCP_FRAME_BOOST_INTERVAL_MS = 33;
+
+/**
+ * How long a boost lasts after the input that caused it.
+ *
+ * Long enough to cover the settle of a gesture — a scroll's momentum, a page
+ * reflowing after a keystroke — and short enough that an idle pane is back to
+ * the resting floor about a second after the person stops.
+ */
+export const WEBMCP_FRAME_BOOST_WINDOW_MS = 1_500;
+
+/**
+ * Size of the fixed header on a binary frame message. See
+ * {@link encodeWebMcpBinaryFrame}.
+ */
+export const WEBMCP_FRAME_WS_HEADER_BYTES = 24;
+
+/** Current version byte of the binary frame wire format. */
+const WEBMCP_FRAME_WIRE_VERSION = 1;
+/** Message kind: a painted JPEG frame. The only kind V1 defines. */
+const WEBMCP_FRAME_WIRE_KIND_JPEG = 1;
+
+/** A frame as it travels on the binary wire, and as `decode` hands it back. */
+export interface WebMcpBinaryFrame {
+  deviceWidth: number;
+  deviceHeight: number;
+  /** Wall-clock capture time, from the publishing server. */
+  ts: number;
+  /** The session's monotonic event counter, shared with the SSE stream. */
+  seq: number;
+  /** Raw JPEG bytes — NOT base64. */
+  jpeg: Uint8Array;
+}
+
+/**
+ * Pack one frame as a single binary message: a fixed 24-byte little-endian
+ * header followed by the JPEG bytes.
+ *
+ *   offset  type  field
+ *   0       u8    version (1)
+ *   1       u8    kind (1 = JPEG)
+ *   2       u16   deviceWidth
+ *   4       u16   deviceHeight
+ *   6       u16   reserved (0)
+ *   8       f64   ts
+ *   16      u32   seq
+ *   20      u32   jpegByteLength
+ *   24      …     JPEG bytes
+ *
+ * ONE message per frame rather than a meta/payload pair: a pair needs pairing
+ * state on the receiver — and a receiver that loses track of which half it is
+ * holding paints one frame's pixels with another frame's dimensions, which is
+ * exactly the bug that puts every click in the wrong place. One atomic message
+ * also halves the message count on a 30fps stream.
+ *
+ * `DataView` and `Uint8Array` only, no `Buffer`: this runs in the browser on
+ * the decode side, and one file compiled for both ends is the only way the two
+ * cannot drift.
+ */
+export function encodeWebMcpBinaryFrame(frame: WebMcpBinaryFrame): Uint8Array {
+  const out = new Uint8Array(WEBMCP_FRAME_WS_HEADER_BYTES + frame.jpeg.length);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  view.setUint8(0, WEBMCP_FRAME_WIRE_VERSION);
+  view.setUint8(1, WEBMCP_FRAME_WIRE_KIND_JPEG);
+  // Clamped rather than trusted: a surface reported larger than a u16 would
+  // wrap to a small number and letterbox every later click against a box the
+  // page never had.
+  view.setUint16(2, clampU16(frame.deviceWidth), true);
+  view.setUint16(4, clampU16(frame.deviceHeight), true);
+  view.setUint16(6, 0, true);
+  view.setFloat64(8, frame.ts, true);
+  view.setUint32(16, frame.seq >>> 0, true);
+  view.setUint32(20, frame.jpeg.length, true);
+  out.set(frame.jpeg, WEBMCP_FRAME_WS_HEADER_BYTES);
+  return out;
+}
+
+function clampU16(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(0xffff, Math.round(value)));
+}
+
+/**
+ * Unpack a binary frame message, or `undefined` if it is not one.
+ *
+ * NEVER THROWS on wire data. This decodes bytes that arrived over a socket,
+ * and the one thing worse than a dropped frame is a throw inside a `message`
+ * handler taking the whole stream down with it. An unknown version or kind
+ * reads as "not a frame I understand" rather than an error — which is what
+ * makes adding a second kind later a non-breaking change for THIS client.
+ */
+export function decodeWebMcpBinaryFrame(
+  buffer: ArrayBuffer | Uint8Array,
+): WebMcpBinaryFrame | undefined {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (bytes.byteLength < WEBMCP_FRAME_WS_HEADER_BYTES) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint8(0) !== WEBMCP_FRAME_WIRE_VERSION) return undefined;
+  if (view.getUint8(1) !== WEBMCP_FRAME_WIRE_KIND_JPEG) return undefined;
+  const jpegLength = view.getUint32(20, true);
+  // The declared length must match what actually arrived. A truncated message
+  // would otherwise hand an `<img>` half a JPEG, which decodes to nothing and
+  // leaves the pane blank with no way to tell why.
+  if (jpegLength !== bytes.byteLength - WEBMCP_FRAME_WS_HEADER_BYTES) {
+    return undefined;
+  }
+  // Zero pixels is not a frame. A bare header passes the check above — its
+  // declared length of nothing does match the nothing that arrived — and the
+  // presenter would then hand an `<img>` a 0-byte blob URL, which fails to
+  // decode and blanks the pane with exactly the silence the check above
+  // exists to prevent. Rejected HERE, at the one boundary where wire data is
+  // validated, rather than guarded again at every consumer.
+  if (jpegLength === 0) return undefined;
+  return {
+    deviceWidth: view.getUint16(2, true),
+    deviceHeight: view.getUint16(4, true),
+    ts: view.getFloat64(8, true),
+    seq: view.getUint32(16, true),
+    // A copy, not a view onto the socket's buffer: the caller holds this while
+    // it decodes, and some transports reuse the underlying allocation.
+    //
+    // `new Uint8Array(subarray)` rather than `.slice()`, because a Node
+    // `Buffer` IS a `Uint8Array` and overrides `slice` to return a VIEW — so
+    // the one input where aliasing actually bites (a `ws` receive buffer) is
+    // exactly the one `.slice()` fails to copy.
+    jpeg: new Uint8Array(bytes.subarray(WEBMCP_FRAME_WS_HEADER_BYTES)),
+  };
+}
 
 /** Marker appended to a truncated string result. */
 export function truncationMarker(totalBytes: number): string {

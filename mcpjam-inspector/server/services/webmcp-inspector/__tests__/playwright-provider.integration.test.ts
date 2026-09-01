@@ -8,14 +8,30 @@
  * Runs headless. A user-facing session is headed, but headed needs a display
  * and would make this suite unrunnable in CI.
  */
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  vi,
+} from "vitest";
 import { chromium } from "playwright";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpToolGoneError } from "../provider";
-import type { WebMcpActivityEntry } from "@/shared/webmcp-inspector-protocol";
-import { startWebMcpFixtureServer, type WebMcpFixture } from "./fixture-page";
+import {
+  WEBMCP_FRAME_MAX_BYTES,
+  type WebMcpActivityEntry,
+  type WebMcpFrame,
+} from "@/shared/webmcp-inspector-protocol";
+import {
+  FIXTURE_INPUT_TARGETS,
+  startWebMcpFixtureServer,
+  type WebMcpFixture,
+} from "./fixture-page";
 import { buildWebMcpLaunchArgs } from "../launch-args";
 
 const CHROMIUM_AVAILABLE = await isChromiumInstalled();
@@ -75,20 +91,23 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await registry?.disposeAll();
   });
 
-  async function open() {
+  async function open(options: { viewportMode?: "window" | "embedded" } = {}) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
     const session = await startWebMcpSession({
       url: fixture.url,
       provider,
       registry,
       headless: true,
+      ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
+    const frames: WebMcpFrame[] = [];
     runtime.hub.subscribe((event) => {
       if (event.type === "activity") activity.push(event.entry);
+      if (event.type === "frame") frames.push(event.frame);
     }, 0);
-    return { session, runtime, activity };
+    return { session, runtime, activity, frames };
   }
 
   it("discovers the page's tools with stable keys and provenance", async () => {
@@ -171,9 +190,35 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     );
     const origin = new URL(fixture.url).origin;
 
-    await expect(
-      runtime.invoke(`${origin}::slow`, {}, "manual").settled,
-    ).rejects.toThrow(/did not respond in time|cancel/i);
+    const activity: WebMcpActivityEntry[] = [];
+    runtime.hub.subscribe((event) => {
+      if (event.type === "activity") activity.push(event.entry);
+    }, 0);
+
+    // ONE invocation, and its rejection is consumed exactly once. Starting a
+    // second `slow` to read an id from would queue behind this one's full
+    // timeout and leave the first promise rejecting with nobody listening —
+    // which vitest reports as an unhandled rejection and fails the run.
+    const hung = runtime.invoke(`${origin}::slow`, {}, "manual");
+    await expect(hung.settled).rejects.toThrow(
+      /did not respond in time|cancel/i,
+    );
+
+    // END TO END, through the shared bridge: the RUNTIME owns the deadline, so
+    // the browser's `Canceled` — which says nothing about why — must still be
+    // recorded as a timeout and not as a user cancellation. That distinction is
+    // the whole reason the reason is carried, and it is the exact bug a naive
+    // adoption of the bridge introduces.
+    await vi.waitFor(() => {
+      const settled = activity.find(
+        (entry) =>
+          entry.kind === "invocation_settled" &&
+          entry.invokeId === hung.invokeId,
+      );
+      expect(settled && "state" in settled ? settled.state : undefined).toBe(
+        "timeout",
+      );
+    });
 
     // The session must survive a hung tool: the next call still works.
     const after = await runtime.invoke(
@@ -258,6 +303,175 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const shot = await runtime.screenshotNow();
     expect(typeof shot).toBe("string");
     expect((shot ?? "").length).toBeGreaterThan(100);
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("streams the page, keeps its ack loop turning, and stops on demand", async () => {
+    const { runtime, frames } = await open();
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
+
+    await runtime.setScreencast(true);
+    // A frame at all proves the whole chain: Playwright's new headless answers
+    // `Page.startScreencast`, the session's existing CDPSession carries the
+    // events, and the runtime publishes them.
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    const first = frames.at(-1)!;
+    expect(first.data.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(first.data, "base64")).toBeLessThanOrEqual(
+      WEBMCP_FRAME_MAX_BYTES,
+    );
+    expect(first.deviceWidth).toBeGreaterThan(0);
+    expect(first.deviceHeight).toBeGreaterThan(0);
+
+    // Chromium gates the next frame on our ack, so a wedged ack loop shows up
+    // as a stream that delivers one frame and then goes quiet forever. Repaint
+    // the page and require another frame to prove it is still turning.
+    const before = frames.length;
+    await runtime.navigateCommand({ type: "reload" });
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(before), {
+      timeout: 15_000,
+    });
+
+    // WHILE STREAMING: the replay buffer holds exactly ONE frame, however many
+    // hundreds were published into it — and every timeline entry is still
+    // there beside it. That is the whole point of the coalesced slot.
+    //
+    // Polled rather than read once: the reload above clears the retained frame
+    // (`onNavigated` → `hub.clearFrame()`), and a frame delivered just BEFORE
+    // that event leaves the slot empty for as long as it takes the page to
+    // paint again — which on a loaded runner is longer than the counter this
+    // waits on suggests. Polling keeps the claim exactly as strong (a slot
+    // that settled at two frames still fails) without racing the repaint.
+    await vi.waitFor(
+      () =>
+        expect(
+          runtime.hub.buffered().filter((event) => event.type === "frame"),
+        ).toHaveLength(1),
+      { timeout: 15_000 },
+    );
+    const streaming = runtime.hub.buffered();
+    const streamingActivity = streaming.filter(
+      (event) => event.type === "activity",
+    );
+    const streamingKinds = streamingActivity.map((event) => event.entry.kind);
+    // Identities, not kinds, for the prefix check below — see the comment there.
+    const streamingIds = streamingActivity.map((event) => event.entry.id);
+    expect(streamingKinds).toContain("session_started");
+    expect(streamingKinds).toContain("tools_added");
+    expect(streamingKinds).toContain("navigated");
+
+    await runtime.setScreencast(false);
+    // Let anything already in flight land, then require quiet.
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const afterStop = frames.length;
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(frames.length).toBe(afterStop);
+
+    // AFTER STOPPING: no frame at all. Replay promises a reconnecting client
+    // the CURRENT paint, and once the stream is withdrawn there is none — a
+    // retained one would be handed over as though it were live.
+    const stopped = runtime.hub.buffered();
+    expect(stopped.filter((event) => event.type === "frame")).toHaveLength(0);
+    // The timeline is untouched by any of it: every entry that was there
+    // before the stop is still there, in the same order.
+    //
+    // A PREFIX rather than an equality, and the difference is a real race
+    // rather than a nicety. `streamingIds` was sampled the moment a frame
+    // arrived after the reload — but the reloaded page re-registers its tools
+    // asynchronously, in however many batches Chromium happens to deliver, and
+    // the two 750ms sleeps above give it 1.5 seconds to add more. Demanding
+    // equality asserts that a live browser stopped doing anything at all,
+    // which is not a property this test is about and not one the code
+    // provides. What the stop must not do is LOSE or REORDER an entry, and
+    // that is what this checks.
+    //
+    // Compared by `id` rather than `kind`: a run of `tools_added` entries all
+    // carry the same kind, so a prefix of kinds would still match if the stop
+    // dropped one and the reloading page happened to add another. Identity is
+    // the only thing that says THESE entries survived.
+    const stoppedIds = stopped
+      .filter((event) => event.type === "activity")
+      .map((event) => event.entry.id);
+    expect(stoppedIds.slice(0, streamingIds.length)).toEqual(streamingIds);
+
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("boots an embedded session that streams unprompted and takes input", async () => {
+    const { session, runtime, frames } = await open({
+      viewportMode: "embedded",
+    });
+
+    // No window, and the client is told so: `frame-stream` rather than
+    // `headless`, which would say there is nothing here to drive.
+    expect(session.viewportTransport).toEqual({
+      kind: "frame-stream",
+      width: 1280,
+      height: 800,
+    });
+    // Nobody asked for the stream. Nothing else would ever turn it on, and a
+    // headless browser with no stream is a session with no viewport at all.
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
+    const origin = new URL(fixture.url).origin;
+    const named = (name: string) =>
+      runtime.currentTools().some((tool) => tool.name === name);
+    expect(named(FIXTURE_INPUT_TARGETS.clickedTool)).toBe(false);
+
+    // A click, as the pane's forwarder would send it. Observed through the tool
+    // registry rather than by evaluating in the page: the registry is the
+    // channel the product actually uses, so a pass here cannot be a pass on a
+    // path nobody looks at.
+    const { x, y } = FIXTURE_INPUT_TARGETS.button;
+    await runtime.dispatchInput([
+      { kind: "mouse_move", x, y },
+      { kind: "mouse_down", x, y, button: "left" },
+      { kind: "mouse_up", x, y, button: "left" },
+    ]);
+    await vi.waitFor(
+      () => expect(named(FIXTURE_INPUT_TARGETS.clickedTool)).toBe(true),
+      { timeout: 10_000 },
+    );
+    expect(
+      runtime
+        .currentTools()
+        .find((tool) => tool.name === FIXTURE_INPUT_TARGETS.clickedTool)
+        ?.toolKey,
+    ).toBe(`${origin}::${FIXTURE_INPUT_TARGETS.clickedTool}`);
+
+    // Typed text lands in the focused field.
+    const field = FIXTURE_INPUT_TARGETS.field;
+    await runtime.dispatchInput([
+      { kind: "mouse_move", x: field.x, y: field.y },
+      { kind: "mouse_down", x: field.x, y: field.y, button: "left" },
+      { kind: "mouse_up", x: field.x, y: field.y, button: "left" },
+      { kind: "text", text: "hi" },
+    ]);
+    await vi.waitFor(
+      () => expect(named(FIXTURE_INPUT_TARGETS.typedTool)).toBe(true),
+      { timeout: 10_000 },
+    );
+
+    await registry.disposeAll();
+  }, 90_000);
+
+  it("leaves a window session's transport to the headless flag", async () => {
+    // This whole suite runs headless (a headed session needs a display), so a
+    // WINDOW session here reports `headless` — which is the point: the viewport
+    // mode does not touch that path at all. A real window session on a machine
+    // with a display still reports `native-window`.
+    const { session } = await open();
+    expect(session.viewportTransport).toEqual({ kind: "headless" });
     await registry.disposeAll();
   }, 60_000);
 });

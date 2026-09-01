@@ -26,7 +26,6 @@ import type {
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
@@ -40,6 +39,7 @@ import {
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import { getHarnessAdapter } from "./harness/registry.js";
+import { harnessModelEligibleForRuntime } from "./harness/harness-availability.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { logger } from "./logger.js";
 
@@ -227,6 +227,14 @@ export interface RunAssistantTurnOptions {
    * unpoliced path.
    */
   harnessToolPolicy?: MCPJamHandlerOptions["harnessToolPolicy"];
+  /**
+   * The eval iteration this turn executes, when there is one. Threaded through
+   * to the harness turn, where it becomes the authorized claim on the proxy
+   * tokens that lets firsthand tool-call evidence be recorded.
+   */
+  evalIterationId?: MCPJamHandlerOptions["evalIterationId"];
+  /** Reports back what the run FROZE about evidence, as the mint saw it. */
+  onHarnessEvidenceDecision?: MCPJamHandlerOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
 
   /**
@@ -327,7 +335,7 @@ export interface RunAssistantTurnResult {
 }
 
 function extractAssistantMessages(
-  messages: ModelMessage[]
+  messages: ModelMessage[],
 ): AssistantModelMessage[] {
   const out: AssistantModelMessage[] = [];
   for (const msg of messages) {
@@ -339,7 +347,7 @@ function extractAssistantMessages(
 }
 
 function extractToolCalls(
-  messages: ModelMessage[]
+  messages: ModelMessage[],
 ): RunAssistantTurnResult["toolCalls"] {
   const out: RunAssistantTurnResult["toolCalls"] = [];
   for (const msg of messages) {
@@ -360,7 +368,7 @@ function extractToolCalls(
 }
 
 function extractToolResults(
-  messages: ModelMessage[]
+  messages: ModelMessage[],
 ): RunAssistantTurnResult["toolResults"] {
   const out: RunAssistantTurnResult["toolResults"] = [];
   for (const msg of messages) {
@@ -384,7 +392,7 @@ function extractToolResults(
  * with the scenario synthetic surface.)
  */
 function buildExtraBodyFields(
-  opts: RunAssistantTurnOptions
+  opts: RunAssistantTurnOptions,
 ): Record<string, unknown> | undefined {
   const base = { ...(opts.extraBodyFields ?? {}) };
   return Object.keys(base).length > 0 ? base : undefined;
@@ -402,8 +410,8 @@ function buildHandlerOptions(
   captureTranscript: (
     messages: ModelMessage[],
     turnTrace: PersistedTurnTrace,
-    harnessSessionCommit?: HarnessSessionCommitPayload
-  ) => void
+    harnessSessionCommit?: HarnessSessionCommitPayload,
+  ) => void,
 ): MCPJamHandlerOptions {
   const wrappedOnConversationComplete: MCPJamHandlerOptions["onConversationComplete"] =
     async (fullHistory, turnTrace, harnessSessionCommit) => {
@@ -425,7 +433,7 @@ function buildHandlerOptions(
         return await opts.onConversationComplete(
           fullHistory,
           turnTrace,
-          harnessSessionCommit
+          harnessSessionCommit,
         );
       }
       return undefined;
@@ -462,6 +470,10 @@ function buildHandlerOptions(
     // (runHarnessTurn REQUIRES harnessMcpProxy when servers are selected) and
     // (b) claim the correct owner lane (`swarm-chat` for swarm).
     ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
+    ...(opts.evalIterationId ? { evalIterationId: opts.evalIterationId } : {}),
+    ...(opts.onHarnessEvidenceDecision
+      ? { onHarnessEvidenceDecision: opts.onHarnessEvidenceDecision }
+      : {}),
     ...(opts.harnessToolPolicy
       ? { harnessToolPolicy: opts.harnessToolPolicy }
       : {}),
@@ -570,7 +582,7 @@ function buildHandlerOptions(
  *   `messageHistory` from the engine (NOT a fallback to the input).
  */
 export async function runAssistantTurn(
-  opts: RunAssistantTurnOptions
+  opts: RunAssistantTurnOptions,
 ): Promise<RunAssistantTurnResult> {
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
@@ -582,7 +594,7 @@ export async function runAssistantTurn(
       capturedMessages = fullHistory;
       capturedTrace = turnTrace;
       capturedHarnessCommit = harnessSessionCommit;
-    }
+    },
   );
 
   // A host with a `harness` selected (claude-code | codex) runs the real runtime
@@ -611,19 +623,23 @@ export async function runAssistantTurn(
   const harnessAdapter = harnessRequested
     ? getHarnessAdapter(opts.harness as string)
     : undefined;
-  // supportsModel needs the CANONICAL id (bare hosted ids like `gpt-5-nano` →
-  // `openai/gpt-5-nano`); isHostedCatalogModel canonicalizes internally, so a
-  // bare id would otherwise pass eligibility but fail supportsModel and wrongly
-  // fall back to emulated.
-  const canonicalHarnessModelId = getCanonicalModelId(
-    harnessModelId,
-    opts.modelDefinition.provider
-  );
-  const modelEligible =
-    isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
-    (harnessAdapter
-      ? harnessAdapter.supportsModel(canonicalHarnessModelId)
-      : true);
+  // Asked of the shared helper rather than spelled out here, because this
+  // decision has to match the pre-flight's exactly: a dispatch that says "not
+  // eligible" where the pre-flight said "available" does not error — it runs
+  // the EMULATED engine and reports the harness's name over it. That is a wrong
+  // answer attributed to the wrong runtime, which is worse than a failure.
+  //
+  // The helper also carries the external-account exemption: Cursor's host
+  // seeds a `cursor/auto` sentinel that is deliberately not an MCPJam-hosted
+  // model, so the hosted-model half would otherwise reject every Cursor turn
+  // here and silently fall back.
+  const modelEligible = harnessAdapter
+    ? harnessModelEligibleForRuntime({
+        adapter: harnessAdapter,
+        modelId: harnessModelId,
+        provider: opts.modelDefinition.provider,
+      })
+    : isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider);
   const useHarness = harnessRequested && modelEligible;
   if (harnessRequested && !modelEligible) {
     logger.warn(
@@ -635,7 +651,7 @@ export async function runAssistantTurn(
         modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
         sourceType: opts.sourceType,
-      }
+      },
     );
   }
   const engineResult = useHarness

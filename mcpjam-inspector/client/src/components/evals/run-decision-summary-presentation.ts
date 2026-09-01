@@ -294,6 +294,71 @@ export function truncateUntrusted(
 }
 
 /**
+ * Whether this diagnostic's evidence can actually be opened from this run.
+ *
+ * Extracted from `DiagnosticRow` so a second surface asking the same question
+ * gets the same answer. Three conditions, and the third is the one that keeps
+ * the control honest:
+ *
+ *   - a handler exists to call at all;
+ *   - the evidence names THIS run, and names the diagnostic's own iteration —
+ *     a locator pointing elsewhere would navigate somewhere the view on screen
+ *     cannot answer for;
+ *   - a case id is present, because the app focuses an iteration THROUGH its
+ *     case and that is the only path the viewer actually consumes.
+ *
+ * A button that lands on the page it is already on, having opened nothing,
+ * reads as broken. Not offering it is the honest answer.
+ */
+export function isDiagnosticTraceable(
+  diagnostic: EvalRunDecisionDiagnostic,
+  runId: string,
+  onViewTrace?: unknown,
+): boolean {
+  return (
+    Boolean(onViewTrace) &&
+    diagnostic.evidence.runId === runId &&
+    diagnostic.evidence.iterationId === diagnostic.iterationId &&
+    Boolean(diagnostic.testCaseId)
+  );
+}
+
+/**
+ * How complete the scanned set is, in words, WITHOUT the non-passing count.
+ *
+ * The tail half of {@link describeDiagnosticsScope}, split out so a surface
+ * that has its own numerator — a per-stage finding count, say — can state the
+ * same completeness fact without also restating "N non-passing of M". Two
+ * different numerators under one completeness claim is how a reader ends up
+ * reading a stage's finding count as the run's whole failure set.
+ *
+ * `serverComplete` is the SERVER's claim and is never widened here.
+ * `walkExhausted` is this client's separate fact and is said in different
+ * words, because finishing our own walk teaches us nothing about whether the
+ * server considered the set complete.
+ */
+export function describeScanScope(input: {
+  scannedIterations: number;
+  serverComplete: boolean;
+  walkExhausted: boolean;
+}): string {
+  const unit = measurementUnitLabel("trial", input.scannedIterations);
+  if (input.serverComplete) {
+    return `over all ${input.scannedIterations} scanned ${unit}`;
+  }
+  if (input.walkExhausted) {
+    return (
+      `over the ${input.scannedIterations} ${unit} scanned — every page ` +
+      `offered has been loaded, but the run did not report the set as complete`
+    );
+  }
+  return (
+    `over the first ${input.scannedIterations} ${unit} scanned — this is ` +
+    `not the complete set`
+  );
+}
+
+/**
  * How to describe the diagnostics page a reader is looking at.
  *
  * `serverComplete` is the SERVER's claim and is never widened here.

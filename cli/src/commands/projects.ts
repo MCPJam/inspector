@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import {
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   createProjectOperation,
   deleteProjectOperation,
   getCapabilitiesOperation,
@@ -473,7 +474,8 @@ export function registerProjectsCommands(program: Command): void {
       if (options.wait === false || isTerminalConnectionStatus(created.status)) {
         if (options.wait === false && !isTerminalConnectionStatus(created.status)) {
           process.stderr.write(
-            `Not waiting. Follow it with:\n  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
+            `Not waiting. Follow it with:\n  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n` +
+              `Or stop it with:\n  mcpjam cloud projects servers connect-cancel --request ${created.connectionRequestId}\n`
           );
         }
         writeResult(created, globalOptions.format);
@@ -495,7 +497,8 @@ export function registerProjectsCommands(program: Command): void {
         // watching". Returning the last poll silently made those identical.
         process.stderr.write(
           `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
-            `  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
+            `  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n` +
+            `  mcpjam cloud projects servers connect-cancel --request ${created.connectionRequestId}\n`
         );
         process.exitCode = 1;
       }
@@ -516,6 +519,29 @@ export function registerProjectsCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           getProjectServerConnectionStatusOperation.execute(input, {
+            client,
+            signal,
+          }),
+        { cloudScope: { kind: "account" }, quiet: globalOptions.quiet }
+      );
+      writeResult(payload, globalOptions.format);
+    }
+  );
+
+      servers
+      .command("connect-cancel")
+      .description("Cancel a pending connection request started by `server connect`")
+      .requiredOption("--request <id>", "Connection request id (scr_…)").action(
+    async (options: PlatformOptions & { request: string }, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = cancelProjectServerConnectionOperation.inputSchema.parse({
+        connectionRequestId: options.request,
+      });
+      const payload = await runPlatformCommand(
+        platformOptionsOf<PlatformOptions>(command),
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          cancelProjectServerConnectionOperation.execute(input, {
             client,
             signal,
           }),

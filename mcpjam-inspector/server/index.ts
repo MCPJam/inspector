@@ -12,6 +12,7 @@ import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -61,6 +62,10 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import {
+  createWebMcpFramesWsHandler,
+  shutdownWebMcpFrameSockets,
+} from "./routes/web/webmcp-frames.js";
 import { shutdownWebMcpSessions } from "./services/webmcp-inspector/session-registry";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
@@ -155,6 +160,7 @@ import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
@@ -515,6 +521,14 @@ if (process.env.COMPUTER_BROWSER_DEBUG_ENABLED === "1") {
   app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
 }
 app.route("/api/web", webRoutes);
+// Browser Panel data plane (W4): watch the browser an agent is driving, and
+// take control when a login or a challenge needs a person. Auth is the
+// Convex-minted browser token, so it is mounted like the other computer
+// routes rather than inside the web router's session auth. Dark until the
+// W7 exposure gate: the panel is only reachable once a desktop computer
+// exists, and nothing links to it yet. Mirror of the mount in server/app.ts.
+app.route("/api/web/computers/browser", computerBrowserPanel);
+
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;
 // auth is the Convex-minted terminal token (see routes/web/computer-terminal).
@@ -529,6 +543,16 @@ if (!HOSTED_MODE) {
   app.get(
     "/api/web/computers/local-terminal",
     createLocalComputerTerminalWsHandler(upgradeWebSocket),
+  );
+}
+// WebMCP Inspector frame stream WebSocket. Local only, for the same reason the
+// `/api/mcp/webmcp/*` routes are: a hosted replica runs no local browser to
+// stream. Auth is the ordinary session token on `Sec-WebSocket-Protocol` —
+// see routes/web/webmcp-frames.
+if (!HOSTED_MODE) {
+  app.get(
+    "/api/web/webmcp/sessions/:id/frames",
+    createWebMcpFramesWsHandler(upgradeWebSocket),
   );
 }
 // Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
@@ -569,9 +593,19 @@ app.route("/api/v1", v1Routes);
 app.route("/api/slack/link", slackLinkRoutes);
 app.route("/api/surface-link", surfaceLinkRoutes);
 
-if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
-  app.route("/user_management", workosAuthkitRoutes);
-}
+// Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
+// network call at all unless the page's own cookies carry `workos-has-session`
+// (see create-client.ts in @workos-inc/authkit-js) — and a client pointed
+// straight at `api.workos.com` can never have it, because WorkOS sets that
+// cookie on its own domain. Staging read as permanently signed out for exactly
+// that reason: sign-in succeeded, then the next page load fell back to guest.
+//
+// Proxying through this origin makes the cookie first-party, which is what
+// local dev has always relied on. Hosts that keep a same-site WorkOS domain
+// (prod's `auth.mcpjam.com`) never route here — the client only calls this
+// when its apiHostname resolves to its own origin. Mirror of the mount in
+// server/app.ts.
+app.route("/user_management", workosAuthkitRoutes);
 
 // In-process self-dispatch for the workspace built-in tools' platform
 // client (see utils/self-app.ts). Mirror of the registration in
@@ -697,7 +731,17 @@ if (process.env.NODE_ENV === "production") {
 
   // Serve all static files from client root (images, svgs, etc.)
   // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-  app.use("/*", serveStatic({ root: clientRoot }));
+  //
+  // Document requests must fall THROUGH to the injecting handler below —
+  // see isSpaDocumentRequest. Without this guard the catch-all answered `/`
+  // with the raw index.html and every injected script was silently dropped.
+  const clientStaticFiles = serveStatic({ root: clientRoot });
+  app.use("/*", async (c, next) => {
+    if (isSpaDocumentRequest(c.req.path)) {
+      return next();
+    }
+    return clientStaticFiles(c, next);
+  });
 
   // SPA fallback - serve index.html with token injection for non-API routes
   app.get("*", async (c) => {
@@ -975,6 +1019,9 @@ async function shutdown() {
     // does NOT tear down established sockets, so a live shell would otherwise
     // outlive the inspector.
     shutdownLocalComputerTerminals();
+    // Same reason, same moment: a frame socket is an established connection
+    // that `server.close()` would leave attached to an exiting process.
+    shutdownWebMcpFrameSockets();
     // Also before server.close(), and awaited: a WebMCP session owns a real
     // Chromium — a visible window when it is headed — and a fire-and-forget
     // teardown loses the race against the process.exit(0) below.
