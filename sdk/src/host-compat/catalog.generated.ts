@@ -2401,6 +2401,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "cursor-agent",
             title: "Cursor CLI",
+            version: "2026.08.31-4057e58",
+            description: "Cursor's agentic coding CLI",
             websiteUrl: "https://cursor.com/cli",
           },
         },

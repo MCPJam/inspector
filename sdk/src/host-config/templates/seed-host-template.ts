@@ -1840,15 +1840,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // than measured — kept in lockstep with the backend catalog row.
           supportedProtocolVersions: ["2025-11-25"],
           // TODO(cursor-cli probe): capture the real clientInfo the cursor-agent
-          // MCP client sends and replace these. `version` is deliberately
-          // ABSENT rather than guessed: the harness bootstrap installs via
+          // MCP client sends and replace these.
+          //
+          // `version` is REQUIRED by the canonicalizer (non-empty string), so
+          // it cannot be omitted to signal "unknown". It carries the build
+          // actually OBSERVED during the harness spike — real, not a guess —
+          // but it is NOT a pin: the bootstrap installs via
           // `curl https://cursor.com/install | bash`, which always fetches the
-          // CURRENT build, so any pinned version here would be wrong for most
-          // sessions. (The turn records the installed version per session; see
-          // `runtimeVersionCommand` in the server registry.)
+          // current build, so most sessions run something newer. That gap is
+          // why the turn records the installed `agent --version` per session
+          // (see `runtimeVersionCommand` in the server registry); do not read
+          // this field as what ran. Kept in lockstep with the backend catalog.
           clientInfo: {
             name: "cursor-agent",
             title: "Cursor CLI",
+            version: "2026.08.31-4057e58",
             description: "Cursor's agentic coding CLI",
             websiteUrl: "https://cursor.com/cli",
           },

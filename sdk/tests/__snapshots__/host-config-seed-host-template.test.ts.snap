@@ -1952,6 +1952,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Cursor's agentic coding CLI",
           "name": "cursor-agent",
           "title": "Cursor CLI",
+          "version": "2026.08.31-4057e58",
           "websiteUrl": "https://cursor.com/cli",
         },
         "supportedProtocolVersions": [
@@ -1994,6 +1995,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Cursor's agentic coding CLI",
           "name": "cursor-agent",
           "title": "Cursor CLI",
+          "version": "2026.08.31-4057e58",
           "websiteUrl": "https://cursor.com/cli",
         },
         "supportedProtocolVersions": [
