@@ -44,6 +44,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_project_server_connection_status: {
     command: "cloud projects servers connect-status",
   },
+  cancel_project_server_connection: {
+    command: "cloud projects servers connect-cancel",
+  },
   get_project_server: { command: "cloud projects servers get" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
@@ -84,6 +87,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_persona: { command: "cloud personas update" },
   delete_persona: { command: "cloud personas delete" },
   generate_personas: { command: "cloud personas generate" },
+
+  // ── Project secrets ─────────────────────────────────────────────────────
+  // `set`/`update` take the value from --value-file, --value-env, or stdin.
+  // A positional value would be written to shell history and visible in `ps`
+  // for the life of the command, which is why the CLI does not offer one.
+  list_secrets: { command: "cloud secrets list" },
+  get_secret: { command: "cloud secrets show" },
+  create_secret: { command: "cloud secrets set" },
+  update_secret: { command: "cloud secrets update" },
+  delete_secret: { command: "cloud secrets rm" },
   list_swarms: { command: "cloud swarms list" },
   get_swarm: { command: "cloud swarms get" },
   create_swarm: { command: "cloud swarms create" },
@@ -281,6 +294,18 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   read_server_resource: {
     excluded:
       "`resources read` connects to the server directly, so it works without a project or an API key.",
+  },
+  list_server_skills: {
+    excluded:
+      "`skills list` connects to the server directly, so it works without a project or an API key.",
+  },
+  get_server_skill: {
+    excluded:
+      "`skills get` connects to the server directly, so it works without a project or an API key.",
+  },
+  read_server_skill_file: {
+    excluded:
+      "`skills read` connects to the server directly, so it works without a project or an API key.",
   },
   diagnose_server: {
     excluded:

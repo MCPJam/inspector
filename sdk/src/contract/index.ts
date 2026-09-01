@@ -156,6 +156,7 @@ export type {
   StageSetupPhaseSignal,
   StageSetupSignals,
   StageSpanLike,
+  StageStepErrorLike,
   StageToolErrorLike,
 } from "./stage-derivation.js";
 export {
@@ -165,6 +166,8 @@ export {
   STAGE_METADATA_KEYS,
   STAGE_REASONS,
   deriveStageResults,
+  isPositiveToolCallPredicateKind,
+  isSelectionPredicateKind,
   stageDerivationSchema,
   stageDerivationToMetadata,
   stageReasonSchema,
@@ -173,20 +176,16 @@ export {
 
 // ── stage analytics (D5) ─────────────────────────────────────────────────────
 /**
- * CONTRACT ONLY, at this release.
+ * Contract and runtime wiring for the D5/B5 eval analytics fields.
  *
- * These schemas, types and pure helpers are frozen so the backend can mirror
- * them and the materializer can be written against them. NOTHING in the
- * runtime accepts, sends or persists `intent` or `StageMeasurementsV1` yet:
- * the suite-file validator, `EvalTest` authoring, the serializers, the
- * reporters and the Platform mappings are all unchanged, and they stay
- * unchanged until the backend that stores these fields is deployed.
+ * B5c now carries `intent` through authoring, suite-file sync, Platform
+ * mappings, and Inspector reporting, and derives `StageMeasurementsV1` while
+ * spans are still available. The backend storage/ingest deployment must be
+ * present before a released client publishes these fields to production.
  *
- * That staging is deliberate. The one thing a released CLI or SDK must never do
- * is ACCEPT a nonempty intent and silently drop it — a field that validates and
- * then disappears is worse than a field that does not exist, because the author
- * believes it was saved. Exporting the vocabulary creates no such window;
- * wiring it to a write path before the write path exists would.
+ * This sequencing is deliberate: a client must never accept a nonempty intent
+ * or measurement payload and silently drop it. The backend contract was frozen
+ * in B5a and deployed before enabling these runtime write paths.
  */
 export type {
   CaseIntent,
@@ -222,6 +221,7 @@ export {
   STAGE_MEASUREMENTS_METADATA_KEY,
   STAGE_MEASUREMENTS_SCHEMA_VERSION,
   STAGE_REACH_STATES,
+  attachStageMeasurements,
   deriveStageMeasurements,
   reachForStageState,
   reachIsConsistentWithState,
@@ -480,13 +480,20 @@ export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.genera
 export {
   DECISION_LABEL_VOCABULARIES,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   EVAL_VERDICT_DECISION_REASON_LABELS,
+  EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGE_OUTCOMES,
+  USER_VALUE_STAGE_QUESTIONS,
+  describeExcludedTrialDetail,
 } from "./decision-labels.js";
+export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
 
 // ── the canonical run decision summary ───────────────────────────────────────
 export type {

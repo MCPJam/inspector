@@ -161,6 +161,12 @@ interface MultiModelPlaygroundCardProps {
   executingToolName?: string | null;
   invokingMessage?: string | null;
   onSummaryChange: (summary: MultiModelCardSummary) => void;
+  /**
+   * Whether this compare column may use the tools of the page open in the
+   * WebMCP tab. Passed down rather than read from the store here so every
+   * column in a comparison sends the same turn as the single-model view.
+   */
+  usePageTools?: boolean;
   onHasMessagesChange?: (compareId: string, hasMessages: boolean) => void;
   /** When false, hides per-card model title and Latency/Tokens/Tools (single selected model in compare mode). */
   showComparisonChrome?: boolean;
@@ -241,6 +247,7 @@ export function MultiModelPlaygroundCard({
   executingToolName,
   invokingMessage,
   onSummaryChange,
+  usePageTools,
   onHasMessagesChange,
   showComparisonChrome = true,
   showIdentityHeader = false,
@@ -312,20 +319,20 @@ export function MultiModelPlaygroundCard({
     [
       hostCapsResolver?.modelVisibleMcpToolResults,
       executionConfig?.modelVisibleMcpToolResults,
-    ]
+    ],
   );
   const resolvedMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
         hostCapsResolver?.mcpToolResultImageRendering ??
           executionConfig?.mcpToolResultImageRendering,
-        resolvedModelVisibleMcpToolResults
+        resolvedModelVisibleMcpToolResults,
       ),
     [
       hostCapsResolver?.mcpToolResultImageRendering,
       executionConfig?.mcpToolResultImageRendering,
       resolvedModelVisibleMcpToolResults,
-    ]
+    ],
   );
 
   const {
@@ -348,6 +355,7 @@ export function MultiModelPlaygroundCard({
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
+    usePageTools,
     hostedContext,
     hostedOrgModelConfig,
     ...(personalComputerEngine ? { personalComputerEngine } : {}),
@@ -373,7 +381,7 @@ export function MultiModelPlaygroundCard({
   });
 
   const isThreadEmpty = !messages.some(
-    (message) => message.role === "user" || message.role === "assistant"
+    (message) => message.role === "user" || message.role === "assistant",
   );
   const { sendBlocked: fullscreenChatSendBlocked } =
     getChatComposerInteractivity({
@@ -417,12 +425,12 @@ export function MultiModelPlaygroundCard({
       buildPreludeTraceEnvelope(preludeTraceExecutions, {
         ...hostStyleSupportsModelVisibleMcpToolImages(hostStyle),
       }),
-    [hostStyle, preludeTraceExecutions]
+    [hostStyle, preludeTraceExecutions],
   );
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot || isStreaming
       ? liveTraceEnvelope
-      : preludeTraceEnvelope ?? liveTraceEnvelope;
+      : (preludeTraceEnvelope ?? liveTraceEnvelope);
   const showTraceTabs = traceViewsSupported && !isThreadEmpty;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceTabs
     ? traceViewMode
@@ -463,13 +471,13 @@ export function MultiModelPlaygroundCard({
       status: error
         ? "error"
         : isStreaming || isExecuting
-        ? "running"
-        : isThreadEmpty
-        ? "idle"
-        : "ready",
+          ? "running"
+          : isThreadEmpty
+            ? "idle"
+            : "ready",
       hasMessages: !isThreadEmpty,
     }),
-    [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn]
+    [compareId, error, isExecuting, isStreaming, isThreadEmpty, latestTurn],
   );
   const errorMessage = formatErrorMessage(error);
   // In host mode each column IS a different client, and `compareId` is that
@@ -486,7 +494,7 @@ export function MultiModelPlaygroundCard({
       ...injectedToolRenderOverrides,
       ...toolRenderOverrides,
     }),
-    [injectedToolRenderOverrides, toolRenderOverrides]
+    [injectedToolRenderOverrides, toolRenderOverrides],
   );
   const hostBackgroundColor =
     getScenarioChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
@@ -605,7 +613,7 @@ export function MultiModelPlaygroundCard({
       deterministicExecutionRequest.params,
       deterministicExecutionRequest.result,
       deterministicExecutionRequest.toolMeta,
-      deterministicOptions
+      deterministicOptions,
     );
 
     if (deterministicExecutionRequest.renderOverride) {
@@ -618,10 +626,10 @@ export function MultiModelPlaygroundCard({
 
     const upsertById = (
       currentMessages: typeof newMessages,
-      nextMessage: (typeof newMessages)[number]
+      nextMessage: (typeof newMessages)[number],
     ) => {
       const existingIndex = currentMessages.findIndex(
-        (message) => message.id === nextMessage.id
+        (message) => message.id === nextMessage.id,
       );
       if (existingIndex === -1) {
         return [...currentMessages, nextMessage];
@@ -640,7 +648,7 @@ export function MultiModelPlaygroundCard({
         for (const message of newMessages) {
           next = upsertById(
             next as typeof newMessages,
-            message
+            message,
           ) as typeof previous;
         }
         return next;
@@ -674,7 +682,7 @@ export function MultiModelPlaygroundCard({
         return previous.map((execution) =>
           execution.toolCallId === deterministicExecutionRequest.toolCallId
             ? nextExecution
-            : execution
+            : execution,
         );
       }
 
@@ -709,7 +717,7 @@ export function MultiModelPlaygroundCard({
         widgetModelContext: drainModelContextQueue(),
       });
     },
-    [drainModelContextQueue, sendMessage, outgoingSenderMetadata]
+    [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
   );
 
   const handleModelContextUpdate = useCallback(
@@ -718,13 +726,13 @@ export function MultiModelPlaygroundCard({
       context: {
         content?: ContentBlock[];
         structuredContent?: Record<string, unknown>;
-      }
+      },
     ) => {
       setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
       );
     },
-    []
+    [],
   );
 
   // Provider stack wraps the WHOLE card body — header + trace branch +
@@ -851,7 +859,7 @@ export function MultiModelPlaygroundCard({
             className={cn(
               "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
               shellHeightClass,
-              effectiveThreadTheme === "dark" && "dark"
+              effectiveThreadTheme === "dark" && "dark",
             )}
             data-host-style={hostStyle}
             data-thread-theme={effectiveThreadTheme}

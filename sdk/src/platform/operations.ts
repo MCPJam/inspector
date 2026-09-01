@@ -15,6 +15,10 @@ import {
   MAX_BATCH_CREATE_CASES,
   evalSuiteFileCaseImportSchema,
 } from "../contract/suite-file.js";
+import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+} from "../contract/stage-intent.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -88,6 +92,7 @@ import type {
   PlatformEvalRunGroupCreated,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
+  PlatformEnvironmentSkillSelection,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -102,6 +107,8 @@ import type {
   PlatformJourneyRunCanceled,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformSecret,
+  PlatformSecretDeleted,
   PlatformRunScorecard,
   PlatformSessionSummary,
   PlatformSwarm,
@@ -449,6 +456,15 @@ export interface PlatformOperation<TInput, TOutput> {
 
 const PROJECT_SELECTOR_DESCRIPTION =
   "Project name or ID. Defaults to the most recently updated accessible project.";
+
+/**
+ * Up here, not beside the compose resolvers it belongs to, for the same
+ * temporal-dead-zone reason `composeRunTargetInput` is declared above the run
+ * inputs: both compose schemas read this at module-init time, and the earlier
+ * of the two sits thousands of lines above those resolvers.
+ */
+const SERVERS_SELECTOR_DESCRIPTION =
+  "Server(s) (name or ID) the stack must run against. Resolves to a pinned standalone server group holding exactly these servers, so the stack keeps testing them even if the host's own server list is edited later. Mutually exclusive with `serverGroup`.";
 
 const listProjectsInput = z.object({
   organizationId: z
@@ -1115,7 +1131,10 @@ const PAGE_CURSOR_DESCRIPTION =
   "Opaque pagination cursor from a previous response.";
 
 const serverPagedInput = serverScopedInput.extend({
-  cursor: z.string().min(1).optional().describe(PAGE_CURSOR_DESCRIPTION),
+  // No `.min(1)`: `""` is a legitimate MCP cursor (2026-07-28
+  // `server/utilities/pagination`), and rejecting it would refuse to page a
+  // conforming server.
+  cursor: z.string().optional().describe(PAGE_CURSOR_DESCRIPTION),
 });
 
 export type ServerPagedInput = z.infer<typeof serverPagedInput>;
@@ -1144,13 +1163,17 @@ async function runServerListing(
   const server = await resolveLiveServer(client, project, input.server, signal);
   const page = await list(
     { projectId: project.id, serverId: server.id },
-    input.cursor ? { cursor: input.cursor } : {}
+    // Presence, not truthiness, in BOTH directions: this is a passthrough of
+    // the MCP server's cursor, and `""` is a valid one.
+    input.cursor !== undefined ? { cursor: input.cursor } : {}
   );
   return {
     project: toSelectedProjectInfo(project),
     server: toServerInfo(server),
     items: page.items,
-    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    ...(typeof page.nextCursor === "string"
+      ? { nextCursor: page.nextCursor }
+      : {}),
   };
 }
 
@@ -1515,6 +1538,185 @@ export const readServerResourceOperation: PlatformOperation<
   },
 };
 
+// ── Server-served Agent Skills (SEP-2640) ────────────────────────────
+//
+// Three operations rather than the resource family's two. Resources need
+// `list` + `read`; skills need `list` + `get` + `read file`, because
+// `skills/get` reaches a skill a partial listing never mentioned — a URI can
+// arrive from the server's own `instructions`, from another skill's body, or
+// from a user — and that is the reason the SEP has `skills/get` at all.
+//
+// Every one of these answers with EITHER content or a `refusal` naming the
+// integrity check that failed. The refusals are the product: a debugger's user
+// asking "why won't this skill load" is asking exactly which digest, which
+// field, which URI.
+
+export type ListServerSkillsResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const listServerSkillsOperation: PlatformOperation<
+  ServerScopedInput,
+  ListServerSkillsResult
+> = {
+  name: "list_server_skills",
+  title: "List MCPJam server skills",
+  description:
+    "List the Agent Skills a saved MCP server serves over the skills extension (SEP-2640). Includes skills the server advertises that MCPJam declines to load, each with the reason. Not paginated: the catalog is drained server-side because duplicate detection spans the whole listing.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [serverRef(result)]),
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.listServerSkills(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const getServerSkillInput = serverScopedInput.extend({
+  uri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Exact skill uri. Usually from list_server_skills, but any uri works — a skill absent from a partial listing may still be served."
+    ),
+});
+
+export type GetServerSkillInput = z.infer<typeof getServerSkillInput>;
+
+export type GetServerSkillResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const getServerSkillOperation: PlatformOperation<
+  GetServerSkillInput,
+  GetServerSkillResult
+> = {
+  name: "get_server_skill",
+  title: "Get MCPJam server skill",
+  description:
+    "Fetch one skill from a saved MCP server by uri, verified before any content is returned: the SKILL.md digest against the manifest, the fetched frontmatter against what the listing advertised, and the name against the uri. Answers with the skill, or with a refusal naming the check that failed.",
+  readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's skill content."
+  ),
+  inputSchema: getServerSkillInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.getServerSkill(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: { uri: input.uri },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const readServerSkillFileInput = serverScopedInput.extend({
+  skillUri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Uri of the skill that owns the file."),
+  resourceUri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Uri of the supporting file, which must appear in that skill's manifest — the manifest is the read allowlist."
+    ),
+});
+
+export type ReadServerSkillFileInput = z.infer<typeof readServerSkillFileInput>;
+
+export type ReadServerSkillFileResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const readServerSkillFileOperation: PlatformOperation<
+  ReadServerSkillFileInput,
+  ReadServerSkillFileResult
+> = {
+  name: "read_server_skill_file",
+  title: "Read MCPJam server skill file",
+  description:
+    "Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. Get both uris from list_server_skills or get_server_skill first.",
+  readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's skill file content."
+  ),
+  inputSchema: readServerSkillFileInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.readServerSkillFile(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: {
+          skillUri: input.skillUri,
+          resourceUri: input.resourceUri,
+        },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
 // ── Host compatibility ───────────────────────────────────────────────
 
 export type HostCompatibilityVerdict = {
@@ -1569,14 +1771,20 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     const rawTools: Array<Record<string, unknown>> = [];
     let cursor: string | undefined;
     let truncated = false;
+    // No repeated-cursor guard: comparing two cursors for equality is itself
+    // a determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page. The cap below is
+    // the bound, and it already flags the read as incomplete.
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
-        { ...scope, body: cursor ? { cursor } : {} },
+        // Presence, not truthiness: `""` is a valid MCP continuation cursor.
+        { ...scope, body: cursor !== undefined ? { cursor } : {} },
         { signal }
       );
       rawTools.push(...result.items);
-      cursor = result.nextCursor;
-      if (!cursor) break;
+      cursor =
+        typeof result.nextCursor === "string" ? result.nextCursor : undefined;
+      if (cursor === undefined) break;
       // Hit the cap with tools still pending — don't pretend the report is
       // complete (a later page could hold widgets that change a verdict).
       if (page === HOST_COMPAT_TOOLS_PAGE_CAP - 1) truncated = true;
@@ -2755,24 +2963,61 @@ async function composeRunEnvironment(
   stack: {
     host: string;
     serverGroup?: string;
+    server?: string;
+    servers?: string[];
+    hostServers?: boolean;
     model?: string;
     models?: string[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
     computer?: string;
-    skills?: { mode: "explicit"; skillIds: string[] };
+    skills?: PlatformEnvironmentSkillSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined,
   options: { attach: boolean } = { attach: true }
 ): Promise<ComposedRunEnvironment> {
-  const choices = expandComposeModelChoices(stack);
+  // Once, before the fan-out: every model cell shares one server group, and
+  // resolving inside the loop would re-list (and race to create) per cell.
+  const pinned = await materializeComposeServers(
+    client,
+    project,
+    stack,
+    signal
+  );
+  // Truthiness, not `!== undefined`, because that is what actually reaches the
+  // wire: `resolveComposeStack` drops a blank `serverGroup`, so a `""` checked
+  // for presence alone would clear this guard and then compose the exact
+  // unpinned environment it exists to refuse.
+  const pinnedGroup = pinned.serverGroup?.trim();
+  // Asking to follow the host AND to pin is a contradiction, and resolving it
+  // silently would drop one of the two things the caller said. The CLI rejects
+  // the pair too; repeated here because `execute` is reachable without it.
+  if (
+    stack.hostServers === true &&
+    (pinnedGroup || stack.server !== undefined || stack.servers !== undefined)
+  ) {
+    throw operationInputError(
+      "`hostServers` runs against the host's current list, so it cannot be combined with `server`/`servers`/`serverGroup`, which pin one."
+    );
+  }
+  // The server is the thing under test, so a composed RUN has to say which one.
+  // Without a pin the run reads the host's list at execution time, and editing
+  // that shared host silently repoints every eval composed against it — the
+  // failure this guard exists to stop. Following the host stays available, but
+  // only as something the caller asked for out loud.
+  if (!pinnedGroup && stack.hostServers !== true) {
+    throw operationInputError(
+      "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
+    );
+  }
+  const choices = expandComposeModelChoices(pinned);
   const cells: ComposedCell[] = [];
   for (const choice of choices) {
     const body = await resolveComposeStack(
       client,
       project,
-      { ...stack, model: choice.modelId },
+      { ...pinned, model: choice.modelId },
       signal
     );
     const ensured = await client.ensureAdhocEnvironment(
@@ -3151,6 +3396,73 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
  * until someone hits it.
  */
 /**
+ * The ONE skill-selection schema. Every surface that accepts a pinned skill
+ * selection — `create_project_environment`, `update_project_environment`,
+ * `ensure_adhoc_environment`, and the run ops' `compose` field — parses
+ * through this, so a selection means the same thing wherever it is written.
+ *
+ * `compose` used to declare its own narrower twin, which parsed `mode` and
+ * `skillIds` and dropped `versionPins` on the floor: composing a pinned stack
+ * silently ran Latest, which is precisely the arm the caller pinned away from.
+ *
+ * Declared HERE, above the run inputs, for the same temporal-dead-zone reason
+ * `composeRunTargetInput` is — the environment ops that also use it are far
+ * below.
+ */
+const skillSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    skillIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
+      ),
+    versionPins: z
+      .array(
+        z.object({
+          skillId: z.string().trim().min(1),
+          versionId: z.string().trim().min(1),
+        })
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+      ),
+  })
+  // The pins are only meaningful RELATIVE to the selection they ride on, so the
+  // relation is checked here rather than left to the API: a duplicate pin makes
+  // "which revision does this skill run?" ambiguous, and a pin for an
+  // unselected skill silently does nothing. Both are rejected server-side too —
+  // catching them in the SDK turns a round-trip error into an immediate one.
+  .superRefine((selection, ctx) => {
+    const pins = selection.versionPins ?? [];
+    const selected = new Set(selection.skillIds);
+    const seen = new Set<string>();
+    for (const pin of pins) {
+      if (seen.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
+        });
+      }
+      seen.add(pin.skillId);
+      if (!selected.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
+        });
+      }
+    }
+  })
+  .describe(
+    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
+  );
+
+/**
  * A COMPOSED run target: assemble a stack instead of naming a saved
  * environment. Declared here, above the run inputs, for the same
  * temporal-dead-zone reason `publicMatchOptionsSchema` is.
@@ -3176,8 +3488,25 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). Omit to use the host's own servers."
+        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required unless `hostServers` opts into the host's live list."
       ),
+    hostServers: z
+      .boolean()
+      .optional()
+      .describe(
+        "Run against the host's CURRENT server list instead of pinning one. The list is read at run time, so editing the host later changes what a rerun tests — opt in only when following the host is the point."
+      ),
+    server: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Singular alias for `servers`."),
+    servers: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(SERVERS_SELECTOR_DESCRIPTION),
     model: z
       .string()
       .trim()
@@ -3211,19 +3540,18 @@ const composeRunTargetInput = z
       .describe(
         "Sandbox image (name or ID) to pin, so the run boots a fresh computer from it. Must be project-shared."
       ),
-    skills: z
-      .object({
-        mode: z.literal("explicit"),
-        skillIds: z.array(z.string().trim().min(1)).min(1),
-      })
+    skills: skillSelectionInput
       .optional()
-      .describe("Explicit pinned skill selection for the composed stack."),
+      .describe(
+        "Explicit pinned skill selection for the composed stack, `versionPins` included — the same schema every other skill-selection surface uses."
+      ),
     pluginVersionIds: z
       .array(z.string().trim().min(1))
       .min(1)
       .optional()
       .describe("Plugin VERSION IDs to pin for the composed stack."),
   })
+  .superRefine(refineComposeServerSelectors)
   .describe(
     "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached."
   );
@@ -4257,6 +4585,11 @@ const stepInputSchema = z
 
 const evalCaseInput = z.object({
   title: z.string().trim().min(1).describe("Short label for the test case."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   runs: z
     .number()
     .int()
@@ -4463,6 +4796,11 @@ const caseModelSchema = z.object({
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
   // A `prompt` step is a model turn; a `toolCall` step is a deterministic
@@ -5398,6 +5736,14 @@ const updateEvalCaseInput = z.object({
     .optional()
     .describe(
       "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null to clear the stored claim; omit to leave it untouched."
+    ),
+  // UPDATE-only nullability: absent preserves the existing label, `null`
+  // clears it, and a string replaces it. This mirrors the file reconciliation
+  // boundary so neither can silently conflate unlabelled with untouched.
+  intent: caseIntentUpdateSchema
+    .optional()
+    .describe(
+      "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
     ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
@@ -7211,7 +7557,6 @@ export const searchSessionsOperation: PlatformOperation<
   description:
     "Search conversation sessions in a project across every surface (Playground, user testing, evals, swarms), ranked by relevance. " +
     "scope=titles (default) searches session titles and opening messages; scope=transcripts searches what was said inside the conversations. " +
-    "Older sessions (created before 2026-08-14) are EXCLUDED from transcript search — they cannot match at all; use scope=titles to find them. " +
     "Every result carries a link to open the session.",
   readOnly: true,
   permalink: responsePermalinks((result) =>
@@ -7333,11 +7678,11 @@ async function resolveClient(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformClientDetail> {
   return client.getClient(
     { projectId: project.id, client: selector },
-    { signal },
+    { signal }
   );
 }
 
@@ -7372,7 +7717,7 @@ export const listClientsOperation: PlatformOperation<
     );
     const page = await client.listClients(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -7428,7 +7773,7 @@ const createClientInput = z
       .min(1)
       .optional()
       .describe(
-        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor).",
+        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor)."
       ),
     theme: z
       .enum(["light", "dark"])
@@ -7438,7 +7783,7 @@ const createClientInput = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`.",
+        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`."
       ),
   })
   // ONE `superRefine`, shaped exactly like the route's, because the route's 400
@@ -7524,7 +7869,7 @@ const clientFieldSet = z
       .min(1)
       .optional()
       .describe(
-        "Model the client pins. Value only — there is no null, and a blank string is refused.",
+        "Model the client pins. Value only — there is no null, and a blank string is refused."
       ),
     systemPrompt: z
       .string()
@@ -7550,7 +7895,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe(
-        "Whole-object replacement. null resets to the platform defaults.",
+        "Whole-object replacement. null resets to the platform defaults."
       ),
     respectToolVisibility: z
       .boolean()
@@ -7567,7 +7912,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe(
-        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does.",
+        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does."
       ),
     computer: z
       .object({
@@ -7657,12 +8002,12 @@ const updateClientInput = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between.",
+        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between."
       ),
     set: clientFieldSet
       .optional()
       .describe(
-        "Named fields to change, applied over the client's current config inside the write transaction.",
+        "Named fields to change, applied over the client's current config inside the write transaction."
       ),
   })
   // Mirrors the route's 400s exactly, so an agent is refused by the schema with
@@ -7731,7 +8076,7 @@ export const updateClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const body: Record<string, unknown> = {};
     if (input.name !== undefined) body.name = input.name;
@@ -7747,7 +8092,7 @@ export const updateClientOperation: PlatformOperation<
     if (input.set !== undefined) body.set = input.set;
     return client.updateClient(
       { projectId: project.id, client: input.client, body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7778,7 +8123,7 @@ export const deleteClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.deleteClient(
       {
@@ -7787,7 +8132,7 @@ export const deleteClientOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7833,7 +8178,7 @@ export const setClientServersOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.setClientServers(
       {
@@ -7846,7 +8191,7 @@ export const setClientServersOperation: PlatformOperation<
           ? { expectedImpact: input.expectedImpact }
           : {}),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7879,11 +8224,11 @@ export const duplicateClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.duplicateClient(
       { projectId: project.id, client: input.client, name: input.name },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7930,7 +8275,7 @@ export const listHostsOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const page = await client.listHosts({ projectId: project.id }, { signal });
     return {
@@ -7952,14 +8297,14 @@ async function resolveHost(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformHost> {
   const page = await client.listHosts({ projectId: project.id }, { signal });
   return resolveByIdOrName(
     page.items,
     selector,
     "Host",
-    `project "${project.name}"`,
+    `project "${project.name}"`
   );
 }
 
@@ -7992,12 +8337,12 @@ export const getHostOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.getHost(
       { projectId: project.id, hostId: host.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8108,7 +8453,7 @@ export const createHostOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const body: Record<string, unknown> = { name: input.name };
     if (input.template) {
@@ -8157,7 +8502,7 @@ export const deleteHostOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8251,7 +8596,6 @@ export const duplicateHostOperation: PlatformOperation<
     );
   },
 };
-
 
 // ── Project Environments ─────────────────────────────────────────────────────
 //
@@ -8527,20 +8871,6 @@ export const resolveEnvironmentOperation: PlatformOperation<
   },
 };
 
-const skillSelectionInput = z
-  .object({
-    mode: z.literal("explicit"),
-    skillIds: z
-      .array(z.string().trim().min(1))
-      .min(1)
-      .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
-      ),
-  })
-  .describe(
-    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
-  );
-
 const pluginVersionIdsInput = z
   .array(z.string().trim().min(1))
   .min(1)
@@ -8677,6 +9007,17 @@ const composeStackFields = {
     .describe(
       "Standalone server group to pin (by ID). Omit to use the host's own servers."
     ),
+  server: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Singular alias for `servers`."),
+  servers: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(SERVERS_SELECTOR_DESCRIPTION),
   model: z
     .string()
     .trim()
@@ -8705,7 +9046,7 @@ const ensureAdhocEnvironmentInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   ...composeStackFields,
-});
+}).superRefine(refineComposeServerSelectors);
 export type EnsureAdhocEnvironmentInput = z.infer<
   typeof ensureAdhocEnvironmentInput
 >;
@@ -8716,6 +9057,183 @@ export type EnsureAdhocEnvironmentResult = {
   /** False when this stack had already been composed — see the op description. */
   created: boolean;
 };
+
+/** How many `name (n)` variants to try before giving up on a colliding name. */
+const SERVER_GROUP_NAME_ATTEMPTS = 5;
+
+/**
+ * `server`/`servers` are two spellings of one axis, and `serverGroup` is the
+ * already-resolved form of the same thing — so at most one may be set. Shared
+ * by both compose schemas (a function declaration, so it is in scope for the
+ * run-target schema declared far above `composeStackFields`).
+ */
+function refineComposeServerSelectors(
+  value: { server?: string; servers?: string[]; serverGroup?: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.server !== undefined && value.servers !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["servers"],
+      message: "Provide either `server` or `servers`, not both.",
+    });
+  }
+  if (
+    value.serverGroup !== undefined &&
+    (value.server !== undefined || value.servers !== undefined)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["serverGroup"],
+      message:
+        "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both.",
+    });
+  }
+}
+
+/** Order-independent set equality over two id lists. */
+function sameServerSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = new Set(a);
+  return left.size === new Set(b).size && b.every((id) => left.has(id));
+}
+
+/**
+ * A stable, human-readable name for a group minted from server selectors.
+ *
+ * Sorted so the name does not depend on the order the selectors were typed —
+ * `--compose-server A B` and `--compose-server B A` describe one group and
+ * should not mint two.
+ */
+function composeServerGroupName(servers: PlatformProjectServer[]): string {
+  return [...servers]
+    .map((server) => server.name)
+    .sort((a, b) => a.localeCompare(b))
+    .join(" + ");
+}
+
+/**
+ * Resolve server selectors to a pinned server group, creating one if no
+ * existing group already holds exactly that set.
+ *
+ * Reuse is matched on CONTENT, not name, because the environment fingerprint
+ * keys on the group's ID: two same-content groups mint two ad-hoc
+ * environments, and a group a live environment pins cannot be deleted. So
+ * minting one per run would accumulate undeletable near-duplicates and defeat
+ * the content-addressing that makes re-composing a stack free.
+ *
+ * A name collision means someone already has a DIFFERENT group under the name
+ * we derived. We re-list before suffixing because the likeliest cause is a
+ * concurrent identical compose that won the race — reusing its group is the
+ * whole point. Only when the name is genuinely taken by other content do we
+ * suffix.
+ */
+async function resolveComposeServerGroup(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selectors: string[],
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  // Reuses the run-server resolver: same name-or-id rules, same up-front
+  // refusal of stdio/URL-less servers the hosted runner could never connect.
+  const servers = await resolveRunServers(client, project, selectors, signal);
+  const wanted = servers.map((server) => server.id);
+
+  const findMatch = async () => {
+    let page;
+    try {
+      page = await client.listServerGroups(
+        { projectId: project.id },
+        { signal }
+      );
+    } catch (error) {
+      // A deployment that predates the server-group routes answers 404 for the
+      // ROUTE, which would otherwise surface as a bare "not found" naming
+      // nothing the caller can act on. `--compose-server-group` still works
+      // there, so say so rather than leaving them to guess.
+      if (error instanceof PlatformApiError && error.status === 404) {
+        throw resolutionError(
+          "This deployment does not support --compose-server yet. Create a server group in the app and pass it with --compose-server-group <id>.",
+        );
+      }
+      throw error;
+    }
+    return page.items.find((group) => sameServerSet(group.serverIds, wanted));
+  };
+
+  const existing = await findMatch();
+  if (existing) return existing.id;
+
+  const baseName = composeServerGroupName(servers);
+  for (let attempt = 1; attempt <= SERVER_GROUP_NAME_ATTEMPTS; attempt += 1) {
+    const name = attempt === 1 ? baseName : `${baseName} (${attempt})`;
+    try {
+      const created = await client.createServerGroup(
+        {
+          projectId: project.id,
+          body: { name, serverIds: wanted },
+        },
+        { signal },
+      );
+      return created.id;
+    } catch (error) {
+      if (!(error instanceof PlatformApiError) || error.status !== 409) {
+        throw error;
+      }
+      const raced = await findMatch();
+      if (raced) return raced.id;
+    }
+  }
+
+  throw resolutionError(
+    `Could not create a server group named "${baseName}": that name and ${
+      SERVER_GROUP_NAME_ATTEMPTS - 1
+    } numbered variants are already taken by groups holding different servers. Rename one, or pass an existing group with --compose-server-group.`,
+  );
+}
+
+/**
+ * Rewrite a stack's `server`/`servers` selectors into the `serverGroup` the
+ * rest of the pipeline already understands.
+ *
+ * Deliberately separate from `resolveComposeStack`, which run composition
+ * calls once PER MODEL CELL: doing the list-and-maybe-create in there would
+ * repeat it per cell and let a fan-out race itself into a name conflict.
+ * Callers run this once, up front.
+ */
+async function materializeComposeServers<
+  T extends { serverGroup?: string; server?: string; servers?: string[] },
+>(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  stack: T,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  // Both refinement rules are repeated below, not just the group one: the
+  // schemas only run for callers that PARSE their input, and a direct
+  // `execute()` caller passing both would otherwise have one selector
+  // silently dropped and spend a run against the wrong servers.
+  if (stack.server !== undefined && stack.servers !== undefined) {
+    throw operationInputError(
+      "Provide either `server` or `servers`, not both."
+    );
+  }
+  const selectors = stack.servers ?? (stack.server ? [stack.server] : []);
+  if (selectors.length === 0) return stack;
+  if (stack.serverGroup !== undefined) {
+    throw operationInputError(
+      "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both.",
+    );
+  }
+  const serverGroup = await resolveComposeServerGroup(
+    client,
+    project,
+    selectors,
+    signal
+  );
+  const { server: _server, servers: _servers, ...rest } = stack;
+  return { ...rest, serverGroup } as T;
+}
 
 /**
  * Resolve a composed stack's selectors to the ids the platform stores.
@@ -8732,7 +9250,7 @@ async function resolveComposeStack(
     serverGroup?: string;
     model?: string;
     computer?: string;
-    skills?: { mode: "explicit"; skillIds: string[] };
+    skills?: PlatformEnvironmentSkillSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined
@@ -8773,7 +9291,13 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const body = await resolveComposeStack(client, project, input, signal);
+    const stack = await materializeComposeServers(
+      client,
+      project,
+      input,
+      signal
+    );
+    const body = await resolveComposeStack(client, project, stack, signal);
     const ensured = await client.ensureAdhocEnvironment(
       { projectId: project.id, body },
       { signal }
@@ -9110,7 +9634,7 @@ export const listProjectSkillsOperation: PlatformOperation<
   name: "list_project_skills",
   title: "List MCPJam project skills",
   description:
-    "List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: \"project\"` skills can be pinned; each row's `pinnability` says whether that skill is eligible and, if not, why.",
+    'List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: "project"` skills can be pinned; each row\'s `pinnability` says whether that skill is eligible and, if not, why.',
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -10585,6 +11109,347 @@ export const deletePersonaOperation: PlatformOperation<
       { signal }
     );
     return { project: toSelectedProjectInfo(project), persona };
+  },
+};
+
+// ── Project secrets ─────────────────────────────────────────────────────────
+//
+// WRITE-ONLY. No operation here returns a value, and none can: the DTO has no
+// such field and the backend has no code path that produces one.
+//
+// `create_secret` and `update_secret` are excluded from the MCP catalog and the
+// agent registry (see `platformTools.ts` and `agent-op-registry.ts`), because
+// their input CARRIES the value — it would transit model context and be written
+// into chat transcripts before any approval could run. They stay reachable over
+// HTTP, the SDK and the CLI, where the caller controls where the value comes
+// from.
+
+const secretSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  secret: z.string().trim().min(1).describe("Secret id."),
+});
+
+const SECRET_NAME_DESCRIPTION =
+  "Environment-variable name — uppercase letters, digits and underscores, not starting with a digit (STRIPE_API_KEY). This IS the secret's identity: it is what a materialized delivery exports and what a workflow references, and it is immutable (renaming means delete and recreate).";
+
+const SECRET_DELIVERY_DESCRIPTION =
+  "How the value reaches a run. 'brokered' (prefer this): the sandbox's egress proxy injects it as a request header OUTSIDE the VM, so the box never holds it and a prompt-injected agent has nothing to exfiltrate — but it prevents EXTRACTION, not USE (any process in the box can call the bound host while the policy is live), and it works for HTTPS APIs only. 'materialized': a real environment variable inside the box, which is the only thing a CLI can read — EXTRACTABLE BY DESIGN, `env` prints it.";
+
+const SECRET_SHARING_DESCRIPTION =
+  "'project' (default) — admin-managed, delivered to every member's sessions. 'user' — personal, delivered ONLY in sessions its owner starts and silently absent from anyone else's run of the same environment. Immutable.";
+
+const secretBrokerFields = {
+  brokerHosts: z
+    .array(z.string().trim().min(1).max(253))
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the exact hostnames the header is injected on (api.stripe.com). No scheme, no port, no wildcard — the proxy matches a host, and a URL would install a rule that silently never fires."
+    ),
+  brokerHeader: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the header name, e.g. Authorization."
+    ),
+  brokerTemplate: z
+    .string()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the header value, with {} where the secret goes — 'Bearer {}'. A template without {} is rejected: it would install a constant header that never carries the credential."
+    ),
+} as const;
+
+export type ListSecretsInput = z.infer<typeof listSecretsInput>;
+const listSecretsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+
+export type ListSecretsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformSecret[];
+};
+
+export const listSecretsOperation: PlatformOperation<
+  ListSecretsInput,
+  ListSecretsResult
+> = {
+  name: "list_secrets",
+  title: "List MCPJam project secrets",
+  description:
+    "The project's credentials, as METADATA ONLY — name, delivery mode, host binding, sharing, when each was last delivered. No value is ever returned by this or any other operation. Shows the project-shared secrets plus your own personal ones; another member's personal secret does not appear at all. Read this to find out what an environment can grant before selecting one.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "Secrets are managed inside the project settings surface as component state; there is no `secrets/:secretId` route."
+  ),
+  inputSchema: listSecretsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listSecrets(
+      { projectId: project.id },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetSecretInput = z.infer<typeof secretSelectorInput>;
+export type GetSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const getSecretOperation: PlatformOperation<
+  GetSecretInput,
+  GetSecretResult
+> = {
+  name: "get_secret",
+  title: "Get one MCPJam project secret",
+  description:
+    "One secret's metadata: delivery mode, host binding, sharing, and when it was last handed to a run. NEVER its value. Note that lastDeliveredAt means delivered, not used — brokered use is unobservable to us by construction, since the proxy injects the header and we never see the request.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "Secrets are managed inside the project settings surface as component state; there is no `secrets/:secretId` route."
+  ),
+  inputSchema: secretSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.getSecret(
+      { projectId: project.id, secretId: input.secret },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+const createSecretInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).max(64).describe(SECRET_NAME_DESCRIPTION),
+  value: z
+    .string()
+    .min(1)
+    .max(64 * 1024)
+    .describe(
+      "The credential itself. IT BECOMES VISIBLE TO WHATEVER SURFACE CARRIES THIS CALL — it travels in the request body, so it passes through that surface's process, logs, shell history and any transcript it keeps. Read it from a file, an environment variable or stdin rather than typing it into an argument. It is stored encrypted and no operation ever returns it."
+    ),
+  description: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      "What this credential is for, so a teammate does not have to guess."
+    ),
+  delivery: z
+    .enum(["brokered", "materialized"])
+    .describe(SECRET_DELIVERY_DESCRIPTION),
+  ...secretBrokerFields,
+  sharing: z
+    .enum(["user", "project"])
+    .optional()
+    .describe(SECRET_SHARING_DESCRIPTION),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. Pass one: a retried create without it fails as a name conflict with the row the first attempt already made, which is indistinguishable from a real collision."
+    ),
+});
+
+export type CreateSecretInput = z.infer<typeof createSecretInput>;
+export type CreateSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const createSecretOperation: PlatformOperation<
+  CreateSecretInput,
+  CreateSecretResult
+> = {
+  name: "create_secret",
+  title: "Create an MCPJam project secret",
+  description:
+    "Store a credential a workflow needs (a stripe CLI run, gh, psql) so environments can grant it to runs. THE VALUE TRAVELS IN THIS CALL and becomes visible to whatever surface makes it — its process, its logs, its transcript — so supply it from a file or an environment variable, not from something a human typed into a chat. Choose delivery deliberately: 'brokered' keeps the value outside the sandbox, 'materialized' puts it inside as an environment variable where a CLI can read it and anything in the box can print it. The response is metadata only.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: createSecretInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.createSecret(
+      {
+        projectId: project.id,
+        name: input.name,
+        value: input.value,
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        delivery: input.delivery,
+        ...(input.brokerHosts !== undefined
+          ? { brokerHosts: input.brokerHosts }
+          : {}),
+        ...(input.brokerHeader !== undefined
+          ? { brokerHeader: input.brokerHeader }
+          : {}),
+        ...(input.brokerTemplate !== undefined
+          ? { brokerTemplate: input.brokerTemplate }
+          : {}),
+        ...(input.sharing !== undefined ? { sharing: input.sharing } : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+const updateSecretInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  secret: z.string().trim().min(1).describe("Secret id."),
+  value: z
+    .string()
+    .min(1)
+    .max(64 * 1024)
+    .optional()
+    .describe(
+      "The new credential — a ROTATION. Same exposure as on create: it travels in this call and becomes visible to whatever surface makes it. Reaches NEW RUNS ONLY; a session already running holds the old value and cannot be reached mid-run."
+    ),
+  description: z
+    .string()
+    .max(500)
+    .nullable()
+    .optional()
+    .describe(
+      "Replacement description. `null` CLEARS it; omit to leave it unchanged. The tri-state matches the REST route and the SDK client, which have accepted `null` since this resource shipped — without it here, an operation caller could set a description and then never remove it."
+    ),
+  delivery: z
+    .enum(["brokered", "materialized"])
+    .optional()
+    .describe(
+      `${SECRET_DELIVERY_DESCRIPTION} Switching to 'brokered' requires supplying the host binding in the same call; switching to 'materialized' clears it.`
+    ),
+  ...secretBrokerFields,
+});
+
+export type UpdateSecretInput = z.infer<typeof updateSecretInput>;
+export type UpdateSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const updateSecretOperation: PlatformOperation<
+  UpdateSecretInput,
+  UpdateSecretResult
+> = {
+  name: "update_secret",
+  title: "Rotate or re-bind an MCPJam project secret",
+  description:
+    "Rotate a secret's value and/or change how it is delivered. THE NEW VALUE TRAVELS IN THIS CALL, with the same exposure as create. A rotation reaches NEW RUNS ONLY — a session already running holds the old value, in its box's environment or inside an egress policy that cannot be read back, and there is no safe way to replace it mid-run. `name` and `sharing` cannot be changed: renaming would break the workflows referencing the environment variable, and re-sharing would change who has already been handed the value. Delete and recreate for either.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: updateSecretInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.updateSecret(
+      {
+        projectId: project.id,
+        secretId: input.secret,
+        ...(input.value !== undefined ? { value: input.value } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+        ...(input.brokerHosts !== undefined
+          ? { brokerHosts: input.brokerHosts }
+          : {}),
+        ...(input.brokerHeader !== undefined
+          ? { brokerHeader: input.brokerHeader }
+          : {}),
+        ...(input.brokerTemplate !== undefined
+          ? { brokerTemplate: input.brokerTemplate }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+export type DeleteSecretInput = z.infer<typeof secretSelectorInput>;
+export type DeleteSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecretDeleted;
+};
+
+export const deleteSecretOperation: PlatformOperation<
+  DeleteSecretInput,
+  DeleteSecretResult
+> = {
+  name: "delete_secret",
+  title: "Delete an MCPJam project secret",
+  description:
+    "Delete a stored credential. HARD — the row and the encrypted value both go, and MCPJam stops resolving and delivering it. Deliberately NOT blocked when an environment still selects it: refusing would leave a leaked credential undeletable until someone edited every environment naming it, and deletion must never wait on cleanup. TWO LIMITS, both important when responding to a leak: runs already in flight keep the value they were handed, and this does NOT revoke the credential at the provider that issued it — the key stays valid until it is rotated or revoked there.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: secretSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.deleteSecret(
+      { projectId: project.id, secretId: input.secret },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
   },
 };
 
@@ -12523,6 +13388,49 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   },
 };
 
+/**
+ * Stop one connection request.
+ *
+ * The counterpart the flow was missing. A request holds one of the owner's
+ * concurrent-connection slots for its full hour, so an attempt the user has
+ * abandoned — a link opened in the wrong browser, a consent screen they closed
+ * — is not merely untidy: enough of them and the owner cannot start the next
+ * one. Cancelling is idempotent, so a caller that is unsure may simply call it.
+ */
+export const cancelProjectServerConnectionOperation: PlatformOperation<
+  GetProjectServerConnectionStatusInput,
+  PlatformServerConnection
+> = {
+  name: "cancel_project_server_connection",
+  title: "Cancel a server connection",
+  description:
+    "Cancel a pending server connection request started by connect_project_server, releasing the concurrent-connection slot it holds. Already-finished requests are left as they are. Use this when an authorization was abandoned and the user wants to start over.",
+  // Same reading as `cancel_readiness_run`: a write, so it declares its risk,
+  // but one that STOPS work. It spends nothing and destroys no record — the
+  // request it ends is an authorization nobody completed.
+  readOnly: false,
+  risk: "none",
+  permalink: derivePermalinks((result) =>
+    result.server
+      ? [
+          {
+            type: "project_server" as const,
+            id: result.server.id,
+            ...(result.projectId ? { projectId: result.projectId } : {}),
+            label: `Open ${result.server.name}`,
+          },
+        ]
+      : []
+  ),
+  inputSchema: getProjectServerConnectionStatusInput,
+  async execute(input, { client, signal }) {
+    return await client.cancelServerConnection(
+      { connectionRequestId: input.connectionRequestId },
+      { signal }
+    );
+  },
+};
+
 const shareResourceSelectorInput = z.object({
   project: z
     .string()
@@ -13104,6 +14012,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   showServersOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
@@ -13114,6 +14023,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   renderServerWidgetOperation,
   getServerPromptOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
@@ -13220,6 +14132,16 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   createPersonaOperation,
   updatePersonaOperation,
   deletePersonaOperation,
+  // PROJECT SECRETS. Write-only end to end — no operation here returns a value.
+  // The two write ops carry one in their INPUT, which is why they are excluded
+  // from the MCP catalog and the agent registry (see `platformTools.ts` and
+  // `agent-op-registry.ts`) while staying reachable over HTTP, the SDK and the
+  // CLI.
+  listSecretsOperation,
+  getSecretOperation,
+  createSecretOperation,
+  updateSecretOperation,
+  deleteSecretOperation,
   generatePersonasOperation,
   getJourneyOperation,
   createJourneyOperation,

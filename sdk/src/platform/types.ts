@@ -15,6 +15,7 @@ import type {
 } from "../contract/types.js";
 import type {
   EvalRunDecisionSummary,
+  EvalStageAnalyticsV1,
   EvalSuiteFileCaseImport,
   EvalVerdictDecision,
   FailureCategory,
@@ -34,6 +35,23 @@ import type {
  * recreate exactly the drift this lane removed.
  */
 export type PlatformEvalRunDecisionSummary = EvalRunDecisionSummary;
+
+/**
+ * One item of
+ * `GET /projects/{p}/eval-suites/{suiteId}/stage-analytics` — one RUN's
+ * complete materialized stage-analytics document.
+ *
+ * An ALIAS, for the same reason the decision summary is one: the shape is owned
+ * by `@mcpjam/sdk/contract` (`evalStageAnalyticsSchema`), and re-declaring it
+ * here would produce two hand-mirrored descriptions of one contract that drift
+ * the first time a field is added.
+ *
+ * Rates are NOT on this object. It carries counts, and every rate is derived by
+ * the contract's own helpers (`measuredPassRate`, `measurementCoverageRate`,
+ * `reachRate`, `latencyMeanMs`) so a zero denominator stays `notMeasured`
+ * instead of becoming a `0%` nobody can act on.
+ */
+export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -216,6 +234,22 @@ export interface PlatformProjectServer {
   useOAuth: boolean;
   hasClientSecret: boolean;
   oauthScopes?: string[];
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+/**
+ * An immutable snapshot of a set of saved servers (the backend's standalone
+ * `serverAttachment`). Pinning one on an environment is what keeps a run off
+ * its host's live server list.
+ */
+export interface PlatformServerGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  serverIds: string[];
+  /** Display names hydrated by the backend; ids stay authoritative. */
+  serverNames: string[];
   createdAt: number | null;
   updatedAt: number | null;
 }
@@ -801,6 +835,16 @@ export interface PlatformEvalRunJudgeCase {
    * not join it against the ids the per-case routes take.
    */
   caseKey: string;
+  /**
+   * The iteration this case graded — the join key between a judge case and
+   * the iterations the run returns, since `caseKey` is a storage key and
+   * joins to nothing.
+   *
+   * Optional because judge results written before it was persisted carry
+   * none: a caller must be able to tell "this run predates the join key"
+   * from a value it could act on.
+   */
+  iterationId?: string;
   score: number | null;
   passed: boolean;
   reason: string | null;
@@ -1415,6 +1459,8 @@ export interface PlatformEvalCase {
    */
   declaredId?: string;
   title: string;
+  /** Optional authored analytics grouping label; absent is unlabelled. */
+  intent?: string;
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;
@@ -1751,7 +1797,66 @@ export interface PlatformRunCompare {
     estimatedCostUsd: PlatformNumericDiff;
   };
   scoreContract: PlatformScoreContractDiff;
+  /**
+   * Which skills changed between the two runs — the configuration attribution
+   * that usually explains the case-level differences beside it.
+   *
+   * Three states, and they mean different things:
+   *   - a section — these skills changed (or none did, with a count);
+   *   - `null` — NEITHER run recorded pinned skills, so there is nothing to
+   *     say; an empty section would claim no skills were involved;
+   *   - ABSENT — the deployment answering predates skill attribution entirely.
+   *     Optional for that reason: a client cannot assume every backend it talks
+   *     to has this, and a required field would make old responses unusable.
+   */
+  skills?: PlatformRunCompareSkills | null;
   cases: PlatformRunCompareCase[];
+}
+
+/** Delivery channel a pinned skill reached a run through. */
+export type PlatformRunCompareSkillChannel =
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
+
+/** One skill's identity + content fingerprint on one side of a comparison. */
+export interface PlatformRunCompareSkillSide {
+  contentHash: string;
+  /** Complete-artifact hash; present only when supporting files diverge it. */
+  aggregateHash?: string;
+  /** Authored-skill revision, when the run recorded one. */
+  versionNumber?: number;
+  /** MCP-captured revision, when the run recorded one. */
+  serverSkillVersionNumber?: number;
+}
+
+export interface PlatformRunCompareSkillChange {
+  /** Stable match key; opaque, safe for list keys and dedupe. */
+  key: string;
+  name: string;
+  /** Namespaced runtime address for a plugin-channel skill. */
+  modelRef?: string;
+  channels: PlatformRunCompareSkillChannel[];
+  kind: "added" | "removed" | "changed";
+  /** Renamed between the runs — matched as ONE skill by its logical id. */
+  renamedFrom?: string;
+  base?: PlatformRunCompareSkillSide;
+  compare?: PlatformRunCompareSkillSide;
+  /**
+   * `v3 → v4`, present only when BOTH sides recorded a revision number. A
+   * change with no delta is a real content change whose revisions are unknown
+   * (one side predates versioning) — not a smaller change.
+   */
+  versionDelta?: string;
+}
+
+export interface PlatformRunCompareSkills {
+  base: { excluded: boolean; count: number };
+  compare: { excluded: boolean; count: number };
+  /** Added / removed / changed only, changed first. Unchanged are counted. */
+  changes: PlatformRunCompareSkillChange[];
+  unchangedCount: number;
 }
 
 export interface PlatformEvalSuiteDeleted {
@@ -1885,6 +1990,21 @@ export interface PlatformHostDeleted {
 export interface PlatformEnvironmentSkillSelection {
   mode: "explicit";
   skillIds: string[];
+  /**
+   * EXACT-version overlay. At most one entry per selected skill; a selected
+   * skill with no entry resolves "Latest" — its current revision, read when the
+   * run starts, which is what every environment did before pins existed and
+   * what omitting this field still means.
+   *
+   * Pin a version to hold an environment at a known revision — the way two
+   * environments run two revisions of one skill side by side for a comparison.
+   */
+  versionPins?: PlatformEnvironmentSkillVersionPin[];
+}
+
+export interface PlatformEnvironmentSkillVersionPin {
+  skillId: string;
+  versionId: string;
 }
 
 export interface PlatformEnvironment {
@@ -1904,6 +2024,7 @@ export interface PlatformEnvironment {
    */
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   /**
    * Pinned plugin VERSIONS. Narrow by design: a version is pinnable only when
    * its plugin is installed and enabled, the version is `ready`, at most one
@@ -1948,6 +2069,7 @@ export interface PlatformAdhocEnvironment {
   /** See `PlatformEnvironment.modelId` — absent means "inherit the host's". */
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
   sandboxImageId?: string;
   /** Pass back as `expectedRevision` when promoting it with a name. */
@@ -1981,6 +2103,7 @@ export interface PlatformAdhocEnvironmentBody {
   serverAttachmentId?: string;
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
   sandboxImageId?: string;
 }
@@ -2014,6 +2137,7 @@ export interface PlatformEnvironmentCreateBody {
   /** Model to run instead of the host's; omit to inherit the host's. */
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
   /** Project-shared `PlatformImage` id to pin; omit for the default image. */
   sandboxImageId?: string;
@@ -2039,6 +2163,12 @@ export interface PlatformEnvironmentUpdateBody {
    */
   modelId?: string | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
+  /**
+   * New credential grant, or `null` to REVOKE it entirely. Omit to leave
+   * unchanged. `[]` is rejected: an accidental empty array that read as "remove
+   * every credential" would break a workflow with no error to look at.
+   */
+  secretSelection?: PlatformEnvironmentSecretSelection | null;
   pluginVersionIds?: string[] | null;
   /** New sandbox-image pin, or null to clear it. Omit to leave unchanged. */
   sandboxImageId?: string | null;
@@ -2063,6 +2193,14 @@ export interface PlatformEnvironmentCapabilities {
    * env may launch without suite membership. Absent/false on older backends.
    */
   ephemeralEnvironmentLaunch?: boolean;
+  /**
+   * `skillSelection.versionPins` / `serverSkillSelection.versionPins` are
+   * accepted, and a pinned revision survives into run snapshots. Absent/false
+   * on older backends, which reject the unknown field outright — so probe this
+   * before offering a version picker. Optional, so an older backend's response
+   * still parses.
+   */
+  skillVersionPins?: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
@@ -2125,6 +2263,28 @@ export interface PlatformEnvironmentResolved {
 // so the id is the load-bearing value — and this READ-ONLY surface is the only
 // programmatic way to obtain one. Authoring stays on the app's `/api/web`
 // surface behind the `skills-enabled` beta gate.
+
+/**
+ * Which PROJECT SECRETS a run launched from this environment receives.
+ *
+ * Ids only. The environment is the GRANT BOUNDARY: no selection means no
+ * secrets, and there is no "all of them" mode — a credential is granted
+ * deliberately, per environment.
+ *
+ * Deliberately simpler than `PlatformEnvironmentSkillSelection`: no version
+ * pins, because a secret has exactly one current value and "pin the previous
+ * value" is the opposite of what rotation is for.
+ *
+ * Membership is not the same as delivery. A `sharing: "user"` secret selected
+ * here reaches ONLY sessions its owner started; every other member's run of
+ * this environment silently does not receive it. That rule is checked live at
+ * launch, so revoking someone's access does not require editing every
+ * environment that names their secret.
+ */
+export interface PlatformEnvironmentSecretSelection {
+  mode: "explicit";
+  secretIds: string[];
+}
 
 /** Why a skill cannot be pinned into an environment's `skillSelection`. */
 export type PlatformSkillPinnability =
@@ -2754,6 +2914,79 @@ export interface PlatformPersona {
   avatar: { shape: number | null; palette: number | null };
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * A PROJECT SECRET — metadata only, always.
+ *
+ * There is no `value` field on this type, and there is no route, operation, or
+ * tool that returns one. A secret is written and delivered; it is never read
+ * back. That is the contract, not a default: the only code that decrypts writes
+ * into a sandbox's environment or an egress policy and returns nothing.
+ */
+export interface PlatformSecret {
+  id: string;
+  projectId: string;
+  /**
+   * The environment-variable name (`^[A-Z_][A-Z0-9_]*$`). This IS the secret's
+   * identity: it is what a materialized delivery exports, what a workflow
+   * references, and what stays stable across a rotation. Immutable — renaming
+   * is delete-and-recreate.
+   */
+  name: string;
+  description: string | null;
+  /**
+   * How the value reaches a run.
+   *
+   *  - `"brokered"` — injected as a request header by the sandbox's egress
+   *    proxy, OUTSIDE the VM. The box never holds it, so a prompt-injected
+   *    agent has nothing to exfiltrate. Prevents EXTRACTION, not USE: any
+   *    process in the box can call the bound host while the policy is live.
+   *    HTTPS APIs only (the proxy binds domain rules on ports 80/443).
+   *  - `"materialized"` — a real environment variable inside the box, because a
+   *    CLI cannot read a header the proxy adds. EXTRACTABLE BY DESIGN: `env`
+   *    prints it.
+   */
+  delivery: "brokered" | "materialized";
+  /** Brokered only: the exact hostnames the header is injected on. */
+  brokerHosts?: string[];
+  /** Brokered only: the header name, e.g. `Authorization`. */
+  brokerHeader?: string;
+  /** Brokered only: the header value template; `{}` is where the value goes. */
+  brokerTemplate?: string;
+  /**
+   * `"project"` — admin-managed, delivered to every member's sessions.
+   * `"user"` — personal; delivered ONLY in sessions its owner starts, and
+   * silently absent from another member's run of the same environment.
+   * Immutable — re-sharing is delete-and-recreate.
+   */
+  sharing: "user" | "project";
+  /** Personal secrets only. Project-shared rows have no owner. */
+  ownerUserId?: string;
+  /**
+   * When this secret was last HANDED TO a run — not when it was last used.
+   * Brokered use is unobservable by construction (the proxy injects the header;
+   * we never see the request), so "used" would be a number nobody can honestly
+   * produce. `null` means nothing has been recorded, which is not the same as
+   * "never delivered".
+   */
+  lastDeliveredAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  createdByUserId: string;
+  updatedByUserId: string;
+}
+
+/**
+ * Result of deleting a secret. A HARD delete — the row and the ciphertext both
+ * go. This is the revoke button, so it must not be soft.
+ */
+export interface PlatformSecretDeleted {
+  id: string;
+  projectId: string;
+  /** Echoed so a caller logging the revoke does not need a prior read. */
+  name: string;
+  deleted: true;
 }
 
 /** Result of deleting a persona. The delete is SOFT: history still resolves it. */

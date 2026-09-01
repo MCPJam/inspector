@@ -30,7 +30,58 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 export const LOCAL_COMPUTER_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
 
-export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
+/**
+ * Local AI SDK harness execution (an official vendor harness running as a
+ * supervised process on the machine that runs this inspector) — server-side
+ * kill switch, enforced independently of any client flag.
+ *
+ * Default OFF, unlike `LOCAL_COMPUTER_ENABLED`. The difference is deliberate:
+ * a local bash command is discrete and separately approved, while a local
+ * harness is a long-lived agent process. It stays off until an operator turns
+ * it on for an attended user AND the compatibility manifest carries
+ * conformance evidence for that harness/runtime/platform/mode tuple — the flag
+ * enables the feature, it does not certify it.
+ *
+ * FORCED off in hosted mode regardless of env: a hosted server must never
+ * start a vendor harness on itself.
+ */
+export const LOCAL_HARNESS_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+
+/**
+ * WebMCP Inspector (a managed Chromium the user points at a page, so its
+ * WebMCP tools can be listed and invoked) — server-side kill switch. FORCED
+ * off in hosted mode: the browser runs on the machine running this inspector,
+ * and a hosted replica must never open one. `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false`
+ * is the emergency/managed-install off switch; default is on for local
+ * inspectors. The routes live under `/api/mcp/*`, which is itself mounted only
+ * when `!HOSTED_MODE`, so this is the second of two independent gates; the
+ * client-side gate is the `webmcp-inspector-enabled` PostHog flag.
+ */
+export const WEBMCP_INSPECTOR_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
+
+/**
+ * Is the hosted browser (E2B Desktop + browserd) reachable at all?
+ *
+ * The dark switch the hosted runtime ships behind until the durable backend
+ * exposure gate opens (W7). READ AT CALL TIME, not captured at import: this is
+ * flipped per-process in staging and per-test, and a module constant would
+ * freeze whatever the environment happened to say when the module first
+ * loaded.
+ *
+ * Two callers must agree on it — the built-in tool registry, which decides
+ * whether the MODEL gets browser tools, and the WebMCP Inspector route, which
+ * decides whether a person may run their inspector session on a hosted
+ * browser. Both reserve a desktop computer and both bill for it, so a second
+ * copy of this literal is how one of them stays reachable after the other is
+ * turned off.
+ */
+export function hostedBrowserEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.HOSTED_BROWSER_TOOLS_ENABLED === "1";
+}
 
 /**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
@@ -43,30 +94,6 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  */
 export const EVAL_WIDGET_MODEL_CONTEXT =
   process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
-
-export const EMPLOYEE_EMAIL_DOMAINS = (
-  process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
-)
-  .split(",")
-  .map((domain) => domain.trim().toLowerCase())
-  .filter((domain) => domain.length > 0);
-
-export function isAllowedEmployeeEmail(
-  email: string | null | undefined
-): boolean {
-  if (!email || EMPLOYEE_EMAIL_DOMAINS.length === 0) {
-    return false;
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const atIndex = normalizedEmail.lastIndexOf("@");
-  if (atIndex === -1) {
-    return false;
-  }
-
-  const emailDomain = normalizedEmail.slice(atIndex + 1);
-  return EMPLOYEE_EMAIL_DOMAINS.includes(emailDomain);
-}
 
 // Exact origins allowed for hosted web routes and CORS
 export const WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "")

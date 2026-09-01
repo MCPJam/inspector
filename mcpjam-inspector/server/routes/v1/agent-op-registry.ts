@@ -86,6 +86,7 @@ import {
   updateClientOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -98,10 +99,15 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
   listPersonasOperation,
+  listSecretsOperation,
+  getSecretOperation,
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
@@ -412,17 +418,15 @@ function describeComposeEvalSuiteRun(
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-        ? "ephemeral when supported; otherwise attached"
-        : "without attaching them to the suite";
+      ? "ephemeral when supported; otherwise attached"
+      : "without attaching them to the suite";
   if (n <= 1) {
     return (
       `Run eval suite ${suite} on a composed setup${hostNote}` +
       ` — one paid run, ${attach}`
     );
   }
-  return (
-    `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`
-  );
+  return `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`;
 }
 
 /**
@@ -560,8 +564,12 @@ async function freezeEvalRunTargets(
  * "name or ID" and resolved by name at execute time, so an image renamed or
  * replaced between the proposal and the click repoints which sandbox the
  * approved run boots — the pointer problem this function exists to close, one
- * slot over. `serverGroup`, `skills.skillIds` and `pluginVersionIds` are
- * ID-only by contract and so are not pointers to freeze.
+ * slot over. `server`/`servers` are pointers for the same reason and frozen
+ * the same way: to SERVER ids, not to a group id. The group is minted at
+ * execute time and is content-determined by those ids, so freezing the ids
+ * closes the pointer without doing a write inside what must stay a read.
+ * `serverGroup`, `skills.skillIds` and `pluginVersionIds` are ID-only by
+ * contract and so are not pointers to freeze.
  *
  * `includeClientDefault` and `saveTargets` stay as written — they are
  * closed choices, not pointers. Compose itself is kept: dropping it would
@@ -611,6 +619,36 @@ async function freezeComposeRunTarget(
             computerSelector.toLocaleLowerCase(),
         );
       if (match) nextCompose.computer = match.id;
+    } catch {
+      // Same posture as the host lookup: a platform that cannot answer must
+      // not cost the caller the proposal. Execute still resolves the selector.
+    }
+  }
+
+  const serverSelectors = [
+    ...new Set([
+      ...readStringList(compose, "servers"),
+      ...(named(compose, "server") ? [named(compose, "server")!] : []),
+    ]),
+  ];
+  if (serverSelectors.length > 0) {
+    try {
+      const page = await client.listProjectServers({ projectId });
+      // All-or-nothing: a partially frozen list would pair resolved ids with
+      // a name still free to repoint, which is worse than freezing none —
+      // execute resolves the whole list under one set of rules either way.
+      const matches = serverSelectors.map(
+        (selector) =>
+          page.items.find((server) => server.id === selector) ??
+          page.items.find(
+            (server) =>
+              server.name.toLocaleLowerCase() === selector.toLocaleLowerCase(),
+          ),
+      );
+      if (matches.every((match) => match !== undefined)) {
+        nextCompose.servers = matches.map((match) => match!.id);
+        delete nextCompose.server;
+      }
     } catch {
       // Same posture as the host lookup: a platform that cannot answer must
       // not cost the caller the proposal. Execute still resolves the selector.
@@ -772,7 +810,9 @@ function readOptionalNumber(
   key: string,
 ): number | undefined {
   const value = input[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 /**
@@ -896,8 +936,7 @@ export async function freezeDirectoryInstallArgs(
   const row = await context.client.getRegistryDirectoryServer({
     catalogServerId,
   });
-  const endpointUrl =
-    readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
+  const endpointUrl = readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
   const expectedContentHash =
     readOptionalString(input, "expectedContentHash") ?? row.latestContentHash;
   if (!endpointUrl || !expectedContentHash) {
@@ -1297,6 +1336,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getProjectServerConnectionStatusOperation, tier: "direct" },
+  {
+    operation: cancelProjectServerConnectionOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Cancelling a connection request stops an authorization nobody completed, so it needs no approval. Each pending request holds one of the owner's five concurrent-connection slots for an hour — when `connect_project_server` reports ACTIVE_REQUEST_LIMIT, cancelling the abandoned requests is the fix.",
+    ],
+  },
   // Registry directory + cards. Agent ops self-dispatch with the delegated
   // user JWT, not the slk_/dsc_ service token, so there is no
   // surface-allowed-paths.ts delta — the base /agent + proposal-execute
@@ -1408,7 +1454,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
       "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
       "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
-      "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
+      '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
     ],
   },
   {
@@ -1442,9 +1488,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Run conformance suites on ${
-          named(input, "server") ?? "a server"
-        }`,
+        `Run conformance suites on ${named(input, "server") ?? "a server"}`,
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: () => "none",
@@ -1486,6 +1530,20 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "direct",
     promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
   },
+  { operation: listServerSkillsOperation, tier: "direct" },
+  {
+    // A skill body is instructions written by a third party, aimed at a model.
+    // That is the same untrusted-content problem as a resource or a prompt, and
+    // more pointed: the content's whole purpose is to be acted on.
+    operation: getServerSkillOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: readServerSkillFileOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
   { operation: listEvalSuitesOperation, tier: "direct" },
   { operation: getEvalSuiteOperation, tier: "direct" },
   {
@@ -1503,7 +1561,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "direct",
     promptNotes: [
       "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
-      "- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately \"3\" or \"15\" and a count without its unit is not a fact. And `verdict: \"notEstablished\"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.",
+      '- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
       "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
     ],
   },
@@ -1867,6 +1925,26 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getPersonaOperation, tier: "direct" },
   { operation: createPersonaOperation, tier: "direct" },
   { operation: updatePersonaOperation, tier: "direct" },
+  // ── PROJECT SECRETS (reads only) ──────────────────────────────────────
+  //
+  // Metadata only, and structurally incapable of returning a value — which is
+  // what makes them ordinary `direct` reads despite naming credentials. An
+  // agent needs them to answer "does this project already have a STRIPE_API_KEY,
+  // and is it brokered?" before proposing an environment change.
+  //
+  // The three WRITES are excluded (see EXCLUDED_FROM_AGENT), and for
+  // create/update the reason is not risk appetite: their input CARRIES the
+  // plaintext, so it would reach model context and the transcript before any
+  // approval card could render.
+  {
+    operation: listSecretsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `list_secrets` and `get_secret` return METADATA ONLY — a secret's value is not readable by you or by anyone, through any surface. If a task needs a credential's value, the answer is that you cannot have it; say so rather than looking for another route to it.",
+      "- Delivery mode matters when you reason about a workflow: a `brokered` secret is injected by the sandbox's egress proxy and is NOT an environment variable in the box (so `echo $NAME` will be empty and a CLI that reads env vars will not see it), while a `materialized` one is.",
+    ],
+  },
+  { operation: getSecretOperation, tier: "direct" },
   { operation: listJourneysOperation, tier: "direct" },
   {
     operation: getJourneyOperation,
@@ -2254,6 +2332,20 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // deliberate, it does not make a removal recoverable.
   delete_persona:
     "Removes a persona from the roster; the agent proposes authoring, never destruction.",
+  // PROJECT SECRET WRITES. The first two are excluded for a reason that is not
+  // about risk appetite at all: their INPUT carries the plaintext credential,
+  // so it would transit model context and be written into this turn's
+  // transcript before any approval card could render. An approval that fires
+  // after the value is already logged is not an approval, and no tier fixes
+  // that — only keeping the operation off the surface does. They stay
+  // available on REST, the SDK and the CLI, where the caller decides where the
+  // value comes from (a file, an env var, stdin) and nothing transcribes it.
+  create_secret:
+    "The plaintext value is an argument, so it would reach model context and the turn transcript before any approval could run. Available on REST/SDK/CLI, where the caller controls where the value comes from.",
+  update_secret:
+    "Same as create_secret: a rotation carries the new plaintext as an argument. Available on REST/SDK/CLI.",
+  delete_secret:
+    "Hard-revokes a credential — the row and the encrypted value both go, and nothing here can put it back; the agent proposes authoring, never destruction.",
   archive_journey:
     "Removes a journey from the roster; the agent proposes authoring, never destruction.",
   archive_swarm:

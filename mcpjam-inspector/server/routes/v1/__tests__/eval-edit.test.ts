@@ -2763,6 +2763,89 @@ describe("v1 eval-edit routes", () => {
   });
 
   /**
+   * The per-case INTENT label, across every public write shape.
+   *
+   * Asserted at the TRANSPORT boundary — the exact Convex mutation argument —
+   * rather than by "the request succeeded". A route that dropped the label
+   * would still return 201/200 and look right, so the only thing that catches
+   * it is reading what actually crossed each edge, including the omitted/null
+   * PATCH distinction and validation-before-mutation guarantee.
+   */
+  describe("per-case intent", () => {
+    const PROMPT_STEP = { id: "s1", kind: "prompt", prompt: "hi" };
+    const CASES_PATH = "/api/v1/projects/p1/eval-suites/suite_1/cases";
+    const CASE_PATH = `${CASES_PATH}/case_1`;
+
+    it("forwards a valid intent on create", async () => {
+      const res = await request("POST", CASES_PATH, {
+        title: "Refund flow",
+        steps: [PROMPT_STEP],
+        intent: "refund",
+      });
+
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().intent).toBe("refund");
+    });
+
+    it("forwards a valid intent on PATCH", async () => {
+      const res = await request("PATCH", CASE_PATH, { intent: "refund" });
+
+      expect(res.status).toBe(200);
+      expect(updateArgs().intent).toBe("refund");
+    });
+
+    it("omits intent on PATCH when the caller leaves it untouched", async () => {
+      const res = await request("PATCH", CASE_PATH, { title: "Renamed" });
+
+      expect(res.status).toBe(200);
+      expect("intent" in updateArgs()).toBe(false);
+    });
+
+    it("forwards null on PATCH to clear intent", async () => {
+      const res = await request("PATCH", CASE_PATH, { intent: null });
+
+      expect(res.status).toBe(200);
+      expect(updateArgs().intent).toBeNull();
+    });
+
+    it.each(["", "   ", "\n\t", "x".repeat(65)])(
+      "rejects invalid intent %j on create before mutation",
+      async (intent) => {
+        const res = await request("POST", CASES_PATH, {
+          title: "Invalid intent",
+          steps: [PROMPT_STEP],
+          intent,
+        });
+
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["", "   ", "\n\t", "x".repeat(65)])(
+      "rejects invalid intent %j on PATCH before mutation",
+      async (intent) => {
+        const res = await request("PATCH", CASE_PATH, { intent });
+
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("surfaces a Convex mutation failure", async () => {
+      convexMutationMock.mockImplementation((name: string, args?: any) =>
+        name === "testSuites:updateTestCase"
+          ? Promise.reject(new Error("convex down"))
+          : defaultMutationImpl(name, args),
+      );
+
+      const res = await request("PATCH", CASE_PATH, { intent: "refund" });
+
+      expect(res.status).toBe(500);
+    });
+  });
+
+  /**
    * The per-case IMPORT CLAIM, across every public write and read.
    *
    * Asserted at the TRANSPORT boundary — the exact Convex mutation argument and

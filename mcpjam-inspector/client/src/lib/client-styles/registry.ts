@@ -75,7 +75,8 @@ export function findHostStyle(
   return registry.get(id);
 }
 
-/** Lookup with claude fallback. Use at boundaries where missing data is normal. */
+/** Lookup with {@link DEFAULT_HOST_STYLE} fallback. Use at boundaries where
+ * missing data is normal. */
 export function getHostStyleOrDefault(
   id: HostStyleId | null | undefined
 ): HostStyleDefinition {

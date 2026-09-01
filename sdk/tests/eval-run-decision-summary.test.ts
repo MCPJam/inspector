@@ -13,6 +13,8 @@ import { describe, expect, it } from "vitest";
 import {
   assembleEvalRunDecisionSummary,
   DECISION_LABEL_VOCABULARIES,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
   EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
   EVAL_RUN_DECISION_UNDECIDED_REASONS,
@@ -24,10 +26,15 @@ import {
   EVAL_RUN_MEASUREMENT_UNITS,
   EVAL_VERDICT_DECISION_REASON_LABELS,
   evalRunDecisionSummarySchema,
+  evalStageCoverageDetailSchema,
+  EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
+  STAGE_ANALYZER_VERSION,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGE_OUTCOMES,
+  USER_VALUE_STAGE_QUESTIONS,
   type EvalRunDecisionAssemblyInput,
   type EvalRunDecisionSummary,
 } from "../src/contract/index.js";
@@ -245,12 +252,212 @@ describe("evidence is attached to the claim it supports", () => {
     // Version-ahead is FLAGGED, not rejected.
     expect(ahead!.chain.status).toBe("verified");
     if (ahead!.chain.status === "verified") {
+      // `known` is whatever analyzer THIS build ships, asserted by meaning
+      // rather than by a literal: pinning both numbers here duplicated the
+      // fixture comparison above and turned every analyzer bump into an edit
+      // in two places. `reported` stays a far-future constant so the case keeps
+      // exercising version-ahead as the analyzer advances.
       expect(ahead!.chain.analyzerVersionAhead).toEqual({
-        reported: 6,
-        known: 5,
+        reported: 99,
+        known: STAGE_ANALYZER_VERSION,
       });
       expect(ahead!.chain.firstFailedStage).toBe("call");
     }
+  });
+
+  // ── UVH-IN3: naming a verdict/chain disagreement ──────────────────────────
+  //
+  // Built by cloning a real fixture input and overriding only the iteration's
+  // chain, so the surrounding envelope stays exactly what the assembler is
+  // fed in production rather than a hand-rolled approximation of it.
+
+  const disagreementInput = (opts: {
+    analyzerVersion: number;
+    /** `null` is a trial that recorded no verdict at all. */
+    result?: string | null;
+    failSelection?: boolean;
+    /** Selection reached but unreadable — an evidence gap, not a clean chain. */
+    unmeasureSelection?: boolean;
+    /** Selection out of scope for this case — not a gap at all. */
+    selectionNotApplicable?: boolean;
+    /**
+     * Keep `firstFailedStage` (the schema requires it to name the failed row)
+     * but record NO category. `failureCategory` is read from the stored row
+     * and the schema does not couple it to the states, so the two can be out
+     * of step on a row the analyzer did not write whole.
+     */
+    withoutCategory?: boolean;
+  }): EvalRunDecisionAssemblyInput => {
+    const base = structuredClone(
+      byName("policy-block-is-not-a-failure").input
+    ) as EvalRunDecisionAssemblyInput & {
+      iterations: Array<Record<string, unknown>>;
+    };
+    const iteration = base.iterations[0]!;
+    iteration.result = opts.result === undefined ? "failed" : opts.result;
+    iteration.stageAnalyzerVersion = opts.analyzerVersion;
+    // Everything the chain could measure came back ok — the shape that used
+    // to read as "no failure category was recorded".
+    iteration.stageResults = [
+      { stage: "connection", state: "passed", reason: "observed" },
+      { stage: "discovery", state: "passed", reason: "observed" },
+      {
+        stage: "selection",
+        ...(opts.failSelection
+          ? { state: "failed", reason: "missingToolCall" }
+          : opts.unmeasureSelection
+            ? { state: "notMeasured", reason: "noEvidenceCaptured" }
+            : opts.selectionNotApplicable
+              ? { state: "notApplicable", reason: "notAuthored" }
+              : { state: "passed", reason: "observed" }),
+      },
+      { stage: "call", state: "passed", reason: "observed" },
+      { stage: "response", state: "passed", reason: "observed" },
+      { stage: "userValue", state: "passed", reason: "observed" },
+    ];
+    if (opts.failSelection) {
+      iteration.firstFailedStage = "selection";
+      if (!opts.withoutCategory) iteration.failureCategory = "selection";
+    }
+    return base;
+  };
+
+  it("names the disagreement when the chain measured everything and found it ok", () => {
+    // "No failure category was recorded" is true of this run but describes it
+    // as MISSING information, when in fact two things we hold are in
+    // conflict — a different investigation entirely.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({ analyzerVersion: STAGE_ANALYZER_VERSION })
+    );
+    expect(summary.diagnostics.items[0]!.nextAction).toBe(
+      DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION
+    );
+  });
+
+  it("tells a pre-7 chain to re-run, without naming a cause", () => {
+    // The version proves the analyzer measured LESS than the current one. It
+    // does not prove what went wrong. An earlier draft named the errored tool
+    // call as the cause, which would have sent a reader after one specific
+    // finding on every legacy row whatever actually happened.
+    const action = assembleEvalRunDecisionSummary(
+      disagreementInput({ analyzerVersion: 6 })
+    ).diagnostics.items[0]!.nextAction;
+
+    // Asserted against the exported constant, so a copy edit moves both at
+    // once — and so the export itself is load-bearing: these two strings are
+    // what the diagnostics RETURN, and a published consumer that cannot import
+    // them has to hard-code our prose to recognise them.
+    expect(action).toBe(
+      DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION
+    );
+    expect(action).toContain("older analyzer that measures less");
+    expect(action).toContain("re-run");
+    // The claim it must NOT make.
+    expect(action).not.toContain("tool");
+  });
+
+  it("does NOT claim a disagreement when a stage was never measured", () => {
+    // The gap the first predicate left. Connection and discovery passed and
+    // nothing failed, so "something measured, nothing wrong" was satisfied —
+    // but the verdict may be failing on exactly the stage the chain could not
+    // read. That is a measurement gap, and calling it a conflict sends someone
+    // looking for a contradiction that is not there.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        unmeasureSelection: true,
+      })
+    );
+    expect(summary.diagnostics.items[0]!.nextAction).toBe(
+      "inspect the case trace; no failure category was recorded"
+    );
+  });
+
+  it("still claims a disagreement when a stage is notApplicable", () => {
+    // The other side of that line. A stage the case never exercises is out of
+    // scope, not missing evidence — requiring it to pass would make the claim
+    // unreachable for every case that does not use all six stages.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        selectionNotApplicable: true,
+      })
+    );
+    expect(summary.diagnostics.items[0]!.nextAction).toBe(
+      DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION
+    );
+  });
+
+  it("does NOT claim a disagreement when a stage actually failed", () => {
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        failSelection: true,
+      })
+    );
+    // A failed stage yields a category, so the fallback is never reached.
+    expect(summary.diagnostics.items[0]!.nextAction).not.toContain("disagrees");
+  });
+
+  it("does NOT claim a disagreement over a failed stage with no category", () => {
+    // `failureCategory` is read off the stored row rather than derived from
+    // the stage states, and the derivation schema pins only `firstFailedStage`
+    // to the failed row — never the category. So a row can validate carrying a
+    // `failed` stage and no category, and that row lands in this fallback. "The chain found nothing wrong" is
+    // then flatly contradicted by the row itself: the states are the evidence,
+    // and a stage marked failed is the finding to go and read.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        failSelection: true,
+        withoutCategory: true,
+      })
+    );
+    const [item] = summary.diagnostics.items;
+    expect(item!.chain.status).toBe("verified");
+    if (item!.chain.status === "verified") {
+      expect(item!.chain.failureCategory).toBeUndefined();
+      expect(item!.chain.stages).toContainEqual({
+        stage: "selection",
+        state: "failed",
+        reason: "missingToolCall",
+      });
+    }
+    expect(item!.nextAction).toBe(
+      "inspect the case trace; no failure category was recorded"
+    );
+  });
+
+  it("does NOT claim a disagreement when there is no verdict to disagree WITH", () => {
+    // A trial that recorded no verdict is still diagnosed — only `passed` is
+    // filtered out — and its chain can perfectly well be all-`passed`. That is
+    // the shape the claim must refuse: nothing was decided, so nothing is in
+    // conflict, and calling it a disagreement would invent the other half.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        result: null,
+      })
+    );
+    expect(summary.diagnostics.items[0]!.nextAction).toBe(
+      "inspect the case trace; no failure category was recorded"
+    );
+  });
+
+  it("never diagnoses a passing trial at all, so it cannot make the claim", () => {
+    // Why the case above uses a missing verdict rather than a passing one:
+    // diagnostics are drawn from the iterations that did NOT pass, so a passed
+    // trial has no diagnostic to carry any nextAction. Pinned here because it
+    // is the reason the disagreement wording can only ever appear on a run
+    // someone is already investigating.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        result: "passed",
+      })
+    );
+    expect(summary.diagnostics.items).toEqual([]);
+    expect(summary.diagnostics.scannedIterations).toBe(1);
   });
 
   it("claims no failure category for a policy block", () => {
@@ -404,6 +611,11 @@ describe("labels are total over the vocabularies they render", () => {
 
   it("covers every stage, state, category, stage reason and verdict reason", () => {
     total(USER_VALUE_STAGE_LABELS, DECISION_LABEL_VOCABULARIES.stages);
+    // The two stage maps the chain cards read from. A stage added to the
+    // contract without words here would render a card with a wire spelling
+    // where its question and its outcome belong.
+    total(USER_VALUE_STAGE_QUESTIONS, DECISION_LABEL_VOCABULARIES.stages);
+    total(USER_VALUE_STAGE_OUTCOMES, DECISION_LABEL_VOCABULARIES.stages);
     total(STAGE_STATE_LABELS, DECISION_LABEL_VOCABULARIES.stageStates);
     total(
       FAILURE_CATEGORY_LABELS,
@@ -431,6 +643,63 @@ describe("labels are total over the vocabularies they render", () => {
 
   it("spells the chain's last stage as words", () => {
     expect(USER_VALUE_STAGE_LABELS.userValue).toBe("User value");
+  });
+
+  it("covers the fine-grained exclusion detail against the SCHEMA, not a list", () => {
+    // Read off `evalStageCoverageDetailSchema.shape` rather than a hand list:
+    // a hand list is a second declaration of the vocabulary, and the one that
+    // goes stale silently the day the schema gains a fifteenth key.
+    total(
+      EXCLUDED_TRIAL_DETAIL_LABELS,
+      Object.keys(evalStageCoverageDetailSchema.shape)
+    );
+  });
+
+  it("keeps the questions interrogative and the outcomes declarative", () => {
+    // Named for what it actually pins. An earlier name promised "past tense",
+    // which nothing below checks and nothing here could check cheaply — the
+    // outcomes are past participles, and "made" and "satisfied" do not share a
+    // suffix to match on. What IS mechanically checkable is that the two maps
+    // stay in different moods: a question mark on one side and none on the
+    // other. The wording itself is pinned by the two examples below.
+    for (const question of Object.values(USER_VALUE_STAGE_QUESTIONS)) {
+      expect(question.endsWith("?")).toBe(true);
+    }
+    for (const outcome of Object.values(USER_VALUE_STAGE_OUTCOMES)) {
+      expect(outcome.endsWith("?")).toBe(false);
+    }
+    // The mock's own wording for the stage the chain is most often read at.
+    expect(USER_VALUE_STAGE_OUTCOMES.response).toBe("Usable response returned");
+    expect(USER_VALUE_STAGE_QUESTIONS.response).toBe(
+      "Did the server return data the model could use?"
+    );
+  });
+
+  it("never prints a wire spelling in the exclusion detail's words", () => {
+    for (const [key, label] of Object.entries(EXCLUDED_TRIAL_DETAIL_LABELS)) {
+      // `measurementsVersionAhead` is correct on the wire and unreadable in a
+      // disclosure line; the map exists so the second never happens.
+      //
+      // CAMEL CASE is the test, not "does not contain the key": `cancelled` is
+      // both a wire spelling and an ordinary English word, and a label that
+      // refused to use it would be worse prose for no honesty gained. What
+      // must never appear is an identifier a human did not write.
+      expect(label, key).not.toMatch(/[a-z][A-Z]/);
+      expect(label, key).not.toBe(key);
+    }
+  });
+
+  it("describes the partial band inclusively at the floor", () => {
+    // The band is `>= partialFloor` and `< threshold`, so a score exactly ON
+    // the floor is partial. The label said "above the floor", which puts the
+    // boundary score outside a band it is inside — and these strings are the
+    // one place all four renderers read from, so the error would have been
+    // shown everywhere and stated nowhere else.
+    expect(STAGE_REASON_LABELS.judgePartial).toContain("at or above the floor");
+    expect(STAGE_REASON_LABELS.judgePartial).toContain("below the threshold");
+    // The sibling it has to stay consistent with: the threshold is inclusive
+    // on the pass side for the same reason.
+    expect(STAGE_REASON_LABELS.judgeObserved).toContain("at or above");
   });
 });
 

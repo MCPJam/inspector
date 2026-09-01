@@ -2,7 +2,12 @@ import { useMemo } from "react";
 import { compactModelIdTail } from "@/lib/environment-label";
 import { formatRunId, runEnvironmentRef } from "../helpers";
 import { computeIterationResult } from "../pass-criteria";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../types";
 
 export const CLIENT_DEFAULT_MODEL_KEY = "client-default";
 
@@ -11,7 +16,15 @@ export type CrossHostEnvironment = {
   hostId: string;
   modelId?: string;
   serverAttachmentId?: string | null;
-  skillSelection?: { skillIds: string[] } | null;
+  skillSelection?: {
+    skillIds: string[];
+    /**
+     * Exact-version pins. Carried because two environments can differ ONLY in
+     * which revision they hold a skill at — that is the side-by-side comparison
+     * the feature exists for, and it must not collapse into one cell.
+     */
+    versionPins?: { skillId: string; versionId: string }[];
+  } | null;
   computerEnvironmentId?: string | null;
   pluginVersionIds?: string[];
 };
@@ -243,8 +256,7 @@ export function buildCellTrendSeries(
       latencyP95Ms: percentile(latencySamples, 95),
       tokens:
         totalCount > 0 && totalTokens > 0 ? totalTokens / totalCount : null,
-      toolCalls:
-        totalCount > 0 ? totalToolCalls / totalCount : null,
+      toolCalls: totalCount > 0 ? totalToolCalls / totalCount : null,
     };
   });
 }
@@ -290,7 +302,7 @@ function buildCellData(iterations: EvalIteration[]): CellData {
 }
 
 function slotFingerprint(env: CrossHostEnvironment): string {
-  const skills = [...(env.skillSelection?.skillIds ?? [])].sort().join(",");
+  const skills = skillSlotKey(env);
   const plugins = [...(env.pluginVersionIds ?? [])].sort().join(",");
   return [
     env.serverAttachmentId ?? "",
@@ -310,7 +322,7 @@ function differingSlot(envs: CrossHostEnvironment[]): DifferingSlot | null {
     envs.some((env) => read(env) !== read(first));
 
   if (differsOn((env) => env.serverAttachmentId ?? "")) return "servers";
-  if (differsOn((env) => sortedIds(env.skillSelection?.skillIds))) {
+  if (differsOn(skillSlotKey)) {
     return "skills";
   }
   if (differsOn((env) => env.computerEnvironmentId ?? "")) return "sandbox";
@@ -320,6 +332,24 @@ function differingSlot(envs: CrossHostEnvironment[]): DifferingSlot | null {
 
 function sortedIds(ids: readonly string[] | undefined): string {
   return [...(ids ?? [])].sort().join(",");
+}
+
+/**
+ * The skill slot's identity: WHICH skills, and at which revision each is held.
+ *
+ * The revision half is load-bearing. Two environments selecting the same skill
+ * ids at different pinned revisions are two different executions — comparing
+ * them is the whole point — so a key built from ids alone would report them as
+ * one slot, merge their runs into a single cell, and average away the very
+ * difference under test.
+ */
+function skillSlotKey(env: CrossHostEnvironment): string {
+  const ids = sortedIds(env.skillSelection?.skillIds);
+  const pins = [...(env.skillSelection?.versionPins ?? [])]
+    .map((pin) => `${pin.skillId}@${pin.versionId}`)
+    .sort()
+    .join(",");
+  return pins ? `${ids}#${pins}` : ids;
 }
 
 /**
@@ -333,7 +363,7 @@ function sortedIds(ids: readonly string[] | undefined): string {
  */
 function splitLabelFor(
   env: CrossHostEnvironment,
-  slot: DifferingSlot | null
+  slot: DifferingSlot | null,
 ): string | null {
   switch (slot) {
     case "servers":
@@ -341,8 +371,24 @@ function splitLabelFor(
         ? `servers-${env.serverAttachmentId.slice(-4)}`
         : "no servers";
     case "skills": {
+      // A COUNT cannot tell these columns apart. That is true of a skill count
+      // when the split is by revision — every column reads "1 skill" — and just
+      // as true of a pin COUNT, since two environments each pinning one skill
+      // to a different revision both read "pinned 1 version". Name the
+      // revisions themselves, by the same id-suffix convention the servers and
+      // sandbox arms use. Sorted so the label is stable across pin order.
+      const pins = env.skillSelection?.versionPins ?? [];
+      if (pins.length > 0) {
+        const revisions = pins
+          .map((pin) => pin.versionId.slice(-4))
+          .sort()
+          .join(",");
+        return `pinned ${revisions}`;
+      }
       const count = env.skillSelection?.skillIds.length ?? 0;
-      return count === 0 ? "no skills" : `${count} skill${count === 1 ? "" : "s"}`;
+      return count === 0
+        ? "no skills"
+        : `${count} skill${count === 1 ? "" : "s"}`;
     }
     case "sandbox":
       return env.computerEnvironmentId
@@ -350,7 +396,9 @@ function splitLabelFor(
         : "no sandbox";
     case "plugins": {
       const count = env.pluginVersionIds?.length ?? 0;
-      return count === 0 ? "no plugins" : `${count} plugin${count === 1 ? "" : "s"}`;
+      return count === 0
+        ? "no plugins"
+        : `${count} plugin${count === 1 ? "" : "s"}`;
     }
     default:
       return null;
@@ -359,7 +407,7 @@ function splitLabelFor(
 
 export function modelKeyForRun(
   run: EvalSuiteRun,
-  envById: Map<string, CrossHostEnvironment>
+  envById: Map<string, CrossHostEnvironment>,
 ): string {
   // Persisted attribution is the run's frozen column. A later edit to the
   // named environment must not move historical runs into a new model cell
@@ -395,7 +443,7 @@ export function useCrossHostData(
     const attachments = suite.hostAttachments ?? [];
     const hasHostAttachments = attachments.length > 0;
     const envById = new Map(
-      (environments ?? []).map((env) => [env.environmentId, env])
+      (environments ?? []).map((env) => [env.environmentId, env]),
     );
 
     const activeRunIds = new Set(runs.map((r) => r._id));
@@ -414,7 +462,7 @@ export function useCrossHostData(
     const touch = (
       hostId: string,
       modelKey: string,
-      opts: { envId?: string; historical: boolean }
+      opts: { envId?: string; historical: boolean },
     ) => {
       const key = groupKey(hostId, modelKey);
       const existing = pending.get(key);
@@ -441,8 +489,7 @@ export function useCrossHostData(
       if (!run.namedHostId) continue;
       const modelKey = modelKeyForRun(run, envById);
       const ref = runEnvironmentRef(run);
-      const historical =
-        !attachedHostIds.has(run.namedHostId) && ref === null;
+      const historical = !attachedHostIds.has(run.namedHostId) && ref === null;
       touch(run.namedHostId, modelKey, {
         envId: ref?.environmentId,
         historical,
@@ -482,7 +529,7 @@ export function useCrossHostData(
       if (!run.namedHostId) continue;
       if (runEnvironmentRef(run)) continue;
       groupsNeedingResidual.add(
-        groupKey(run.namedHostId, modelKeyForRun(run, envById))
+        groupKey(run.namedHostId, modelKeyForRun(run, envById)),
       );
     }
 
@@ -506,7 +553,9 @@ export function useCrossHostData(
             splitLabel: splitLabelFor(env, slot),
           });
         }
-        if (!groupsNeedingResidual.has(groupKey(group.hostId, group.modelKey))) {
+        if (
+          !groupsNeedingResidual.has(groupKey(group.hostId, group.modelKey))
+        ) {
           continue;
         }
       }
@@ -532,11 +581,11 @@ export function useCrossHostData(
           col.modelKey === modelKey &&
           col.splitLabel &&
           ref &&
-          col.columnKey?.endsWith(`::${ref.environmentId}`)
+          col.columnKey?.endsWith(`::${ref.environmentId}`),
       );
       runHostMap.set(
         run._id,
-        splitCol?.columnKey ?? groupKey(run.namedHostId, modelKey)
+        splitCol?.columnKey ?? groupKey(run.namedHostId, modelKey),
       );
     }
 
@@ -585,7 +634,8 @@ export function useCrossHostData(
       if (!hostId) continue;
       const caseId = iter.testCaseId ?? `__no_case_${iter._id}`;
 
-      if (winningRunByCell.get(caseId)?.get(hostId) !== iter.suiteRunId) continue;
+      if (winningRunByCell.get(caseId)?.get(hostId) !== iter.suiteRunId)
+        continue;
 
       let byHost = rawMatrix.get(caseId);
       if (!byHost) {

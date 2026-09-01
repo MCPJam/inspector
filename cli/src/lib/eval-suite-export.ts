@@ -797,6 +797,7 @@ export function buildSuiteFileFromPlatform(
     cases: cases.map((evalCase, index) => ({
       id: caseIds[index],
       title: evalCase.title,
+      ...(evalCase.intent === undefined ? {} : { intent: evalCase.intent }),
       ...(evalCase.iterations === repetitions
         ? {}
         : { repetitions: evalCase.iterations }),

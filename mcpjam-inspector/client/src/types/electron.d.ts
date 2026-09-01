@@ -57,6 +57,12 @@ declare global {
   interface Window {
     electronAPI?: ElectronAPI;
     isElectron?: boolean;
+    /**
+     * True only in the SHIPPED desktop app, never in a dev run — which
+     * `isElectron` cannot distinguish. Set from `--mcpjam-packaged` in
+     * `process.argv` by the preload.
+     */
+    isElectronPackaged?: boolean;
   }
 }
 

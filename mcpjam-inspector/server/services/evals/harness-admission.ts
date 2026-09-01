@@ -186,6 +186,27 @@ function harnessCannotObserveWidgetsReason(
  * before target 2 has passed the checks that do not need a run row. The
  * per-case model rules stay in the full check, which runs at prepare time.
  */
+/**
+ * Whether a run reaches ANY MCP server — the input the approval gate keys off.
+ *
+ * Its own function, and exported, because it is the rule rather than an
+ * expression: PLUGIN-contributed servers count, so a host whose servers come
+ * solely from a pinned plugin version cannot slip a gate that only looked at
+ * the explicitly-selected set. Both admission paths call this so the two can't
+ * drift, and it stays directly testable no matter which harnesses happen to
+ * refuse on the surface today — a caller inlining the `serverIds`-only half is
+ * the bug this exists to prevent.
+ */
+export function hasSelectedMcpServersForAdmission(args: {
+  serverIds?: readonly string[];
+  pluginServerIds?: readonly string[];
+}): boolean {
+  return (
+    (args.serverIds?.length ?? 0) > 0 ||
+    (args.pluginServerIds?.length ?? 0) > 0
+  );
+}
+
 export function checkEvalHarnessStaticAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
   /** The run's resolved server set (the manager connects exactly this). */
@@ -199,9 +220,7 @@ export function checkEvalHarnessStaticAdmission(args: {
   if (!harness) return { ok: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
 
-  const hasSelectedMcpServers =
-    (args.serverIds?.length ?? 0) > 0 ||
-    (args.pluginServerIds?.length ?? 0) > 0;
+  const hasSelectedMcpServers = hasSelectedMcpServersForAdmission(args);
 
   // A model is required by the shared gate's signature, but the per-case
   // models are not known yet on this path. Probe with the host's own pinned
@@ -276,9 +295,7 @@ export function checkEvalHarnessAdmission(args: {
   if (!harness) return { ok: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
 
-  const hasSelectedMcpServers =
-    (args.serverIds?.length ?? 0) > 0 ||
-    (args.pluginServerIds?.length ?? 0) > 0;
+  const hasSelectedMcpServers = hasSelectedMcpServersForAdmission(args);
   const xaaEnterprisePolicyOn =
     readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off";
   const requireToolApproval = hostConfig.requireToolApproval === true;

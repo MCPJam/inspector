@@ -339,6 +339,34 @@ describe("identity survives a rename", () => {
   });
 });
 
+describe("case intent", () => {
+  it("preserves a label in the authored file and resolved runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, intent: "refund" } : entry
+      ),
+    };
+
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.intent).toBe("refund");
+    expect(loaded.resolved.cases[0]?.intent).toBe("refund");
+  });
+
+  it("treats an explicit null update as unlabelled in the runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, intent: null } : entry
+      ),
+    };
+
+    const loaded = loadOrThrow(asText(authored));
+    expect(loaded.authored.cases[0]?.intent).toBeNull();
+    expect(loaded.resolved.cases[0]?.intent).toBeUndefined();
+  });
+});
+
 describe("findings", () => {
   const duplicateCaseIds = asText(
     payload(findFixture(data.reject, "duplicate case ids"))

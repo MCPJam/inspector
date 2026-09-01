@@ -459,6 +459,9 @@ export function evalTestFromPlatformCase(
     ...(evalCase.expectedOutput !== undefined
       ? { expectedOutput: evalCase.expectedOutput }
       : {}),
+    // Intent is analytics metadata, not semantic case content, but the local
+    // EvalTest must still carry the hosted label onto its reported iterations.
+    ...(evalCase.intent !== undefined ? { intent: evalCase.intent } : {}),
     // Identity ALWAYS rides here, never on the display name.
     externalCaseId: evalCase.id,
   };
