@@ -14,7 +14,11 @@ version: 2
 updates:
   # --------------------------------------------------------------- workspace
   - package-ecosystem: npm
-    directory: "/"
+    directories:
+      - "/"
+      # Standalone: has its own committed manifest + lockfile and is NOT a root
+      # npm workspace, so the workspace entry above does not cover it.
+      - "/mcpjam-inspector/test-servers/mcp-check-fixture"
     schedule:
       interval: weekly
     open-pull-requests-limit: 10

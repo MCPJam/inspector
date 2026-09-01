@@ -22,6 +22,12 @@ on:
       - "mcpjam-inspector/vite.main.config.ts"
       - "mcpjam-inspector/vite.preload.config.ts"
       - "mcpjam-inspector/vite.renderer.config.mts"
+      # Packaging inputs forge reads directly: extraResource (.env.production),
+      # the icons and entitlements under assets/, and the module forge.config
+      # imports for the Sentry build surface.
+      - "mcpjam-inspector/.env.production"
+      - "mcpjam-inspector/assets/**"
+      - "mcpjam-inspector/shared/sentry-config.ts"
       - ".github/workflows/desktop-package-smoke.yml"
 
 concurrency:
@@ -79,7 +85,10 @@ jobs:
         working-directory: mcpjam-inspector
         run: |
           set -euo pipefail
-          app=$(find out -maxdepth 2 -name "*.app" -print -quit)
+          # `|| true`: with `set -e` a failing find (no out/ at all — exactly
+          # the case this step exists to report) would abort the step before
+          # the diagnostic below ever printed.
+          app=$(find out -maxdepth 2 -name "*.app" -print -quit 2>/dev/null || true)
           if [ -z "$app" ]; then
             echo "::error title=No .app produced::electron-forge package exited 0 but wrote no bundle under mcpjam-inspector/out/."
             ls -la out 2>/dev/null || echo "(out/ does not exist)"

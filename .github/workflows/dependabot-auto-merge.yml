@@ -43,11 +43,23 @@ jobs:
       pull-requests: write # approve / comment
 
     steps:
+      # Pinned to a full commit SHA, not a moving tag: this job holds
+      # `contents: write` and can approve PRs, so a compromised tag would
+      # inherit both. Update the pin deliberately.
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # `ghsa-id` is populated ONLY when `alert-lookup` is on, and the
+          # lookup needs a PAT or App token — GITHUB_TOKEN cannot read
+          # Dependabot alerts. So this is wired to an optional secret: without
+          # it the workflow still runs and security PRs simply fall through to
+          # the runtime-update hold (a human reads them, nothing is lost); add
+          # DEPENDABOT_ALERTS_TOKEN and security auto-merge lights up with no
+          # further edit. Without this wiring the security branch below would
+          # be dead code that silently never fires.
+          alert-lookup: ${{ secrets.DEPENDABOT_ALERTS_TOKEN != '' }}
+          github-token: ${{ secrets.DEPENDABOT_ALERTS_TOKEN || secrets.GITHUB_TOKEN }}
 
       # Metadata reaches the shell through `env:`, never through `${{ }}`
       # interpolated directly into the script, so a crafted dependency name
@@ -59,6 +71,7 @@ jobs:
           UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
           DEP_TYPE: ${{ steps.meta.outputs.dependency-type }}
           GHSA: ${{ steps.meta.outputs.ghsa-id }}
+          ALERT_LOOKUP: ${{ secrets.DEPENDABOT_ALERTS_TOKEN != '' }}
         run: |
           set -euo pipefail
 
@@ -95,6 +108,11 @@ jobs:
           else
             action=hold
             reason="runtime dependency version update"
+            if [ "$ALERT_LOOKUP" != "true" ]; then
+              # Be explicit rather than letting a security PR look like a
+              # routine bump: without the token we cannot tell them apart.
+              reason="$reason (security detection off — no DEPENDABOT_ALERTS_TOKEN)"
+            fi
           fi
 
           echo "action=$action" >>"$GITHUB_OUTPUT"
@@ -120,19 +138,32 @@ jobs:
             -f body="Auto-approved: $REASON. Queued for auto-merge; it lands only once the required checks pass." >/dev/null
           gh pr merge "$PR" --repo "$REPO" --auto --squash
 
-      - name: Explain the hold
-        # Only on the first look. `synchronize` fires on every Dependabot
-        # rebase, and re-commenting each time would bury the PR in noise.
-        if: steps.decide.outputs.action == 'hold' && github.event.action != 'synchronize'
+      - name: Hold for human review
+        if: steps.decide.outputs.action == 'hold'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           REASON: ${{ steps.decide.outputs.reason }}
+          EVENT: ${{ github.event.action }}
         run: |
           set -euo pipefail
-          gh pr comment "$PR" --repo "$REPO" \
-            --body "Held for human review: $REASON. Auto-merge covers security updates and patch/minor dev-dependency bumps only."
+
+          # Dependabot rewrites an existing PR in place when a newer version
+          # lands, so a PR queued as a patch on `opened` can come back as a
+          # major on `synchronize`. Without this, the earlier queue survives
+          # the reclassification and merges the thing we just decided to hold.
+          if [ "$(gh api "repos/$REPO/pulls/$PR" --jq '.auto_merge != null')" = "true" ]; then
+            gh pr merge "$PR" --repo "$REPO" --disable-auto
+            echo "Disabled a previously queued auto-merge after reclassification."
+          fi
+
+          # Comment only on the first look: `synchronize` fires on every
+          # Dependabot rebase and re-commenting would bury the PR in noise.
+          if [ "$EVENT" != "synchronize" ]; then
+            gh pr comment "$PR" --repo "$REPO" \
+              --body "Held for human review: $REASON. Auto-merge covers security updates and patch/minor dev-dependency bumps only."
+          fi
 
       # A run that reaches no outcome must be loud. mintlify-triage.yml learned
       # this the hard way: a step that soft-skips exits 0 and reports a green
@@ -163,6 +194,10 @@ jobs:
               fi
               ;;
             hold)
+              if [ "$queued" = "true" ]; then
+                echo "::error title=Held PR still queued::PR #$PR was classified HOLD but auto-merge is still enabled, so it will merge without review. The disable step above did not take effect."
+                exit 1
+              fi
               echo "Outcome: HOLD — left for human review."
               ;;
             *)
