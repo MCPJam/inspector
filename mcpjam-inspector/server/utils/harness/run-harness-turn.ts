@@ -111,6 +111,10 @@ import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import { selectHarnessSkillSource } from "./skill-delivery.js";
 import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
+  handOffLegacySkillDirs,
+  preseedAdapterSkills,
+} from "./preseed-adapter-skills.js";
+import {
   reconcileSkillDirs,
   appendManagedSkills,
 } from "./reconcile-skill-dirs.js";
@@ -1749,6 +1753,35 @@ export async function runHarnessTurn(
               skillsBase: harnessAdapter.skillsBaseDir,
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
+            // OWNERSHIP PRE-SEED (stable adapter line). The adapter re-writes
+            // its skills at the start of EVERY prompt turn via `writeSkills`,
+            // which refuses any pre-existing dir absent from its own
+            // `.ai-sdk-harness-skills.json` — and the materialize passes below
+            // create exactly those dirs. Running the SAME write here first
+            // (same payload, same options ⇒ same content hash) makes the
+            // adapter's turn-time call a hash-unchanged no-op: dirs become
+            // adapter-owned BEFORE supporting files/frontmatter land in them,
+            // and stay untouched after. Legacy dirs MCPJam managed before the
+            // adapter manifest existed are handed off (removed) first; the
+            // pre-seed re-writes them in the same breath. A genuinely foreign
+            // colliding dir still throws the adapter's own "not owned" error —
+            // just here, before any MCPJam pass has touched the box.
+            if (preparedSkills && preparedSkills.payload.length > 0) {
+              await handOffLegacySkillDirs({
+                session,
+                skillsBase: harnessAdapter.skillsBaseDir,
+                deliveredNames: deliveredSkills.map((s) => s.name),
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              });
+              await preseedAdapterSkills({
+                session,
+                skillsBase: harnessAdapter.skillsBaseDir,
+                payload: preparedSkills.payload,
+                trailingNewline:
+                  harnessAdapter.skillsWriteOptions.trailingNewline,
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              });
+            }
             // PINNED MODE: supporting files ride INLINE on the pinned
             // artifacts (P0.2 host-channel plugin skills) — never the live
             // file query. Env-channel entries are SKILL.md-only under P0.3.
@@ -1764,8 +1797,10 @@ export async function runHarnessTurn(
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
             }
-            // Materialize supporting files AFTER reconcile (the adapter wrote each
-            // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
+            // Materialize supporting files AFTER the pre-seed (each SKILL.md is
+            // written and adapter-owned; reconcile removed stale managed dirs),
+            // so the files land in dirs the adapter's turn-time write will not
+            // refuse or clobber. Fetched here rather
             // than at turn start to keep the zero-file fast path free. Fully
             // fail-soft; guest/swarm scope uses the execution-scoped file query.
             //
@@ -1959,10 +1994,11 @@ export async function runHarnessTurn(
 
       // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
       // license / …) for skills that carry it. The adapter's `skills` param
-      // structurally can't deliver those fields, and the adapter writes its
-      // own (extras-less) SKILL.md during createSession — AFTER
-      // `onSandboxSession` — so this must run here, post-createSession, or a
-      // fresh start (exactly when the adapter writes) would clobber it.
+      // structurally can't deliver those fields. The `onSandboxSession`
+      // pre-seed wrote each (extras-less) SKILL.md and made the adapter's own
+      // per-prompt write a hash-unchanged no-op, so this rewrite survives the
+      // turn; it runs post-createSession only to keep it off the session-start
+      // critical path.
       // Fail-soft (never fails the turn); zero session calls when no skill
       // has extras; same gating as the onSandboxSession skill passes.
       if (deliveredSkills.length > 0 && sandboxFileSession) {
