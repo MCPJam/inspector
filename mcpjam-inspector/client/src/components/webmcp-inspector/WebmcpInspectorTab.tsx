@@ -382,10 +382,22 @@ export function WebmcpInspectorTab() {
         clearInterval(poll);
         noteScreenshotPolling(false);
       }
-      // Asked for unconditionally, including when the stream was never running:
-      // it is idempotent on the server, and a session left encoding frames for
-      // a pane nobody is looking at is exactly what demand-driving avoids.
-      if (!pollsScreenshots) void setScreencast(false);
+      // Asked for whenever this session is still the current one, including
+      // when the stream was never running: it is idempotent on the server, and
+      // a session left encoding frames for a pane nobody is looking at is
+      // exactly what demand-driving avoids.
+      //
+      // But ONLY while it is still the current one. `setScreencast` aims at
+      // whatever session the store holds now, so a stop sent from a cleanup
+      // that a session CHANGE triggered would stop the replacement's stream
+      // rather than this one's — undone a moment later by the re-run below,
+      // and only because the command queue happens to preserve that order.
+      // The session this stream belonged to is gone, and its browser with it;
+      // there is nothing left here to stop.
+      const current = useWebmcpInspectorStore.getState().session?.sessionId;
+      if (!pollsScreenshots && current === pollSessionId) {
+        void setScreencast(false);
+      }
     };
   }, [
     streaming,

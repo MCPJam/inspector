@@ -607,6 +607,37 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(captureScreenshot.mock.calls.length).toBe(polledForFirstSession);
   });
 
+  it("does not stop the replacement session's stream on the way out", async () => {
+    // Both sessions stream fine. What is under test is the CLEANUP a session
+    // change triggers, which runs while the store already holds the new
+    // session — so an unconditional stop there is aimed at the replacement.
+    const captureScreenshot = vi.fn(async () => {});
+    const setScreencast = vi.fn(async () => true);
+    const streamKind = {
+      kind: "frame-stream" as const,
+      width: 1280,
+      height: 800,
+    };
+    useWebmcpInspectorStore.setState({
+      setScreencast,
+      captureScreenshot,
+      session: session({ sessionId: "session-a", viewportTransport: streamKind }),
+    });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    expect(setScreencast.mock.calls).toEqual([[true]]);
+
+    useWebmcpInspectorStore.setState({
+      session: session({ sessionId: "session-b", viewportTransport: streamKind }),
+    });
+    await act(async () => {});
+
+    // No `false` in between. It would be undone by the enable that follows it
+    // — but only because the store's command queue preserves that order, and a
+    // pane going dark is not a thing to leave resting on a coincidence.
+    expect(setScreencast.mock.calls).toEqual([[true], [true]]);
+  });
+
   it("leaves a native-window session view-only", async () => {
     useWebmcpInspectorStore.setState({
       liveFrame: liveFrame("data:image/jpeg;base64,paint"),
