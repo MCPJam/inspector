@@ -34,7 +34,7 @@
  * survive into product copy.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, stat, symlink } from "node:fs/promises";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
@@ -367,6 +367,19 @@ export function createSupervisedLocalHarnessProvider(
   // ours lives in disposable session state instead of the user's checkout, so
   // a local session leaves no adapter scaffolding behind.
   const bootstrapOverlay = join(opts.sessionStateDir, "bootstrap");
+  // SPIKE (work-dir layout): the framework insists that the agent works in a
+  // proper SUBDIRECTORY of the session's default working directory, and it puts
+  // its own `.agent-runs/<session>` and `.harness-bootstrap` references under
+  // that directory too. Making the granted workspace the default working
+  // directory therefore (a) ran Claude Code in `<workspace>/claude-code-<id>`
+  // instead of the user's checkout, and (b) wrote bridge state — including the
+  // session's model capability in start-config.json, mode 0644 — into the
+  // checkout. So the default working directory is now session-owned state,
+  // and the workspace is reached through the relative work dir "project",
+  // a symlink to the granted path. Every operand is still confined: the link
+  // resolves INTO the workspace root, which is one of the two allowed roots.
+  const workRoot = join(opts.sessionStateDir, "work");
+  const WORKSPACE_LINK_NAME = "project";
 
   const buildSession = async (
     sessionId: string,
@@ -379,6 +392,17 @@ export function createSupervisedLocalHarnessProvider(
       await mkdir(dir, { recursive: true, mode: 0o700 });
     }
     await mkdir(bootstrapOverlay, { recursive: true, mode: 0o700 });
+    await mkdir(workRoot, { recursive: true, mode: 0o700 });
+    const workspaceLink = join(workRoot, WORKSPACE_LINK_NAME);
+    try {
+      const existing = await lstat(workspaceLink);
+      if (!existing.isSymbolicLink()) {
+        throw new Error(`${workspaceLink} exists and is not the workspace link`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await symlink(opts.workspacePath, workspaceLink);
+    }
 
     // The two roots the Inspector file API will touch, and nothing else.
     //
@@ -406,14 +430,18 @@ export function createSupervisedLocalHarnessProvider(
       // default working directory — so the translator matches the string the
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        opts.workspacePath,
+        workRoot,
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
       adapterBootstrapFiles: opts.manifest.adapterBootstrapFiles,
       bootstrapOverlayDir: bootstrapOverlay,
       nodeExecutable: opts.launcher.executable,
-      sessionRoot: opts.workspacePath,
+      // SPIKE: run the manifest launcher (loopback wrapper) instead of the
+      // remapped bridge.mjs, which stays byte-identical for the recipe compare.
+      bridgeLauncherPath: opts.runtime.launcherPath,
+      // The framework's default working directory (and the bridge's cwd).
+      sessionRoot: workRoot,
       syntheticHome,
       // The same symlink-aware check the file API uses. The translator awaits
       // it for every session-scoped operand, including the bridge's own
@@ -546,7 +574,33 @@ export function createSupervisedLocalHarnessProvider(
     ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
       switch (translated.kind) {
         case "reply":
-          return { exitCode: 0, stdout: translated.stdout, stderr: "" };
+          return {
+            exitCode: translated.exitCode ?? 0,
+            stdout: translated.stdout,
+            stderr: "",
+          };
+        // SPIKE: the framework's skills writer, executed with node:fs, no shell.
+        case "rename": {
+          await rename(translated.from, translated.to);
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        case "remove": {
+          for (const path of translated.paths) {
+            await rm(path, { recursive: true, force: true });
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        case "probe-absent": {
+          try {
+            await stat(translated.path);
+            return { exitCode: 1, stdout: "", stderr: "" };
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+              return { exitCode: 0, stdout: "", stderr: "" };
+            }
+            throw error;
+          }
+        }
         case "noop":
           logger.debug("[local-harness] adapter command satisfied by bundle", {
             reason: translated.reason,
@@ -594,7 +648,7 @@ export function createSupervisedLocalHarnessProvider(
       // session's artefacts stay identifiable inside the user's own checkout.
       // Staged materialization with diff-based apply-back is a separate step
       // and is not pretended here.
-      defaultWorkingDirectory: opts.workspacePath,
+      defaultWorkingDirectory: workRoot,
       description:
         `Supervised local ${opts.harnessId} process on this machine. ` +
         `Working directory ${opts.workspacePath}. Bridge on loopback port ` +
@@ -815,7 +869,9 @@ export function createSupervisedLocalHarnessProvider(
       // implementation would be strictly worse than its absence.
 
       stop: async () => {
+        console.log(`[spike-trace] provider.stop() called t=${Date.now() % 100000} live=${opts.supervisor.liveProcessCount(sessionId)}`);
         const result = await opts.supervisor.stopSession(sessionId);
+        console.log(`[spike-trace] provider.stop() result=${JSON.stringify(result)} t=${Date.now() % 100000}`);
         if (!result.stopped) {
           throw new Error(
             `${result.escaped} supervised process tree(s) survived termination ` +
@@ -824,7 +880,9 @@ export function createSupervisedLocalHarnessProvider(
         }
       },
       destroy: async () => {
+        console.log(`[spike-trace] provider.destroy() called t=${Date.now() % 100000} live=${opts.supervisor.liveProcessCount(sessionId)}`);
         const result = await opts.supervisor.stopSession(sessionId);
+        console.log(`[spike-trace] provider.destroy() result=${JSON.stringify(result)} t=${Date.now() % 100000}`);
         if (!result.stopped) {
           throw new Error(
             `${result.escaped} supervised process tree(s) survived termination ` +

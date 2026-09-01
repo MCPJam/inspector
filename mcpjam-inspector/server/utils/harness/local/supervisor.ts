@@ -31,8 +31,11 @@ import { isAbsolute } from "node:path";
 import { logger } from "../../logger.js";
 import { assertArgvAllowed } from "./argv-policy.js";
 import {
+  listGroupMembers,
+  probeProcessGroup,
   readProcessBirthIdentity,
   supportsOwnershipProof,
+  terminateOwnedProcess,
   terminateOwnedProcessGroup,
   type ProcessBirthIdentity,
 } from "./process-identity.js";
@@ -107,6 +110,14 @@ interface LiveProcess {
    * `stopSession` proves the whole group empty.
    */
   exited: boolean;
+  /**
+   * SPIKE: members of the root's process group, enumerated with their birth
+   * identities at the instant the root exited — the one moment the group id
+   * provably still belongs to this tree. A later stop verifies and signals
+   * each of them individually, so a bridge that exits on its own no longer
+   * strands the vendor CLI it spawned.
+   */
+  orphanSnapshot: Promise<Array<{ pid: number; identity: string }> | null> | null;
 }
 
 function bufferedStream(maxBytes: number): {
@@ -410,7 +421,14 @@ export class LocalHarnessSupervisor {
       });
       recordExit(-1);
     });
+    child.on("exit", () => {
+      // SPIKE: snapshot the group the instant the root leaves it.
+      if (request.role === "root" && entry !== undefined && entry.orphanSnapshot === null) {
+        entry.orphanSnapshot = listGroupMembers(entry.pid, this.platform).catch(() => null);
+      }
+    });
     child.on("close", (code, signal) => {
+      console.log(`[spike-trace] child close pid=${pid} role=${request.role} code=${code} signal=${signal} t=${Date.now() % 100000}`);
       // A signalled exit reports 124 — the conventional timeout code — so a
       // caller reading only the exit code still sees a failure, not a clean 0.
       recordExit(code ?? (signal ? 124 : 1));
@@ -433,6 +451,7 @@ export class LocalHarnessSupervisor {
       role: request.role,
       killed: false,
       exited: exitResult !== null,
+      orphanSnapshot: null,
     };
     bucket.add(entry);
     // Registered: it is counted by `bucket.size` from here, so the pending
@@ -686,7 +705,21 @@ export class LocalHarnessSupervisor {
       // `unknown`, `escaped`, and `not-owned` all retain their entry so an
       // operator or a later retry still has the handle; none authorizes a
       // successful stop.
-      for (const { entry, result } of outcomes) {
+      for (const { entry, result: initialResult } of outcomes) {
+        let result = initialResult;
+        console.log(`[spike-trace] stopSession(${sessionId}) pid=${entry.pid} role=${entry.role} exited=${entry.exited} outcome=${JSON.stringify(result)} t=${Date.now() % 100000}`);
+        // SPIKE: an unanchored live group is settled member by member from the
+        // snapshot taken when the root exited.
+        if (result.outcome === "unknown" && entry.orphanSnapshot !== null) {
+          const members = (await entry.orphanSnapshot) ?? [];
+          const settled: string[] = [];
+          for (const m of members) {
+            settled.push(`${m.pid}:${await terminateOwnedProcess({ pid: m.pid, identity: m.identity, graceMs: this.limits.terminationGraceMs, platform: this.platform })}`);
+          }
+          const after = await probeProcessGroup(entry.pid, this.platform);
+          console.log(`[spike-trace] orphan settle members=${JSON.stringify(settled)} groupAfter=${after}`);
+          if (after === "empty") result = { outcome: "forced" };
+        }
         if (
           result.outcome === "already-gone" ||
           result.outcome === "graceful" ||

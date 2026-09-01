@@ -255,6 +255,105 @@ export function supportsOwnershipProof(
  * Answers false — never "probably" — when the platform cannot prove it. Every
  * caller treats false as "do not touch this pid".
  */
+/**
+ * SPIKE FINDING + FIX: on macOS a process that is exiting (argv memory already
+ * torn down, not yet a zombie) is reported by ps with its command as "(comm)".
+ * The recorded identity carries the full argv, so a byte compare answered
+ * "not-owned" for our own bridge the moment the adapter told it to exit — and
+ * every clean stop was then reported as an escape. The start time is still
+ * exact in that state, so an identity whose lstart matches and whose current
+ * command is the parenthesised form is accepted as the same process.
+ */
+export function sameBirthIdentity(
+  recorded: ProcessBirthIdentity,
+  current: ProcessBirthIdentity,
+): boolean {
+  if (recorded === current) return true;
+  const r = /^darwin:([^|]+)\|([\s\S]*)$/.exec(recorded);
+  const c = /^darwin:([^|]+)\|([\s\S]*)$/.exec(current);
+  if (r === null || c === null) return false;
+  return r[1] === c[1] && /^\([^()]+\)$/.test(c[2]!);
+}
+
+/**
+ * SPIKE: enumerate the live members of a process group with their birth
+ * identities. Called at the instant the ROOT exits, while the group id
+ * provably still belongs to this tree, so a later stop can verify and signal
+ * each member individually instead of refusing to touch an unanchored group.
+ */
+export async function listGroupMembers(
+  pgid: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<Array<{ pid: number; identity: ProcessBirthIdentity }> | null> {
+  let pids: number[] = [];
+  if (platform === "darwin") {
+    const out = await new Promise<string | null>((resolve) => {
+      execFile(
+        "/bin/ps",
+        ["-o", "pid=,state=", "-g", String(pgid)],
+        { timeout: PS_TIMEOUT_MS, maxBuffer: 64 * 1024, encoding: "utf8", env: {} },
+        (error, stdout) => resolve(error ? (error as { code?: number }).code === 1 ? "" : null : String(stdout)),
+      );
+    });
+    if (out === null) return null;
+    pids = out
+      .split("\n")
+      .map((l) => l.trim().split(/\s+/))
+      .filter((f) => f.length >= 2 && /^\d+$/.test(f[0]!) && !isDeadState(f[1]!.charAt(0)))
+      .map((f) => Number(f[0]));
+  } else if (platform === "linux") {
+    let entries: string[];
+    try { entries = await readdir("/proc"); } catch { return null; }
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      let raw: string;
+      try { raw = await readFile(`/proc/${entry}/stat`, "utf8"); } catch { continue; }
+      const parsed = parseProcStatGroup(raw);
+      if (parsed !== null && parsed.pgrp === pgid && !isDeadState(parsed.state.charAt(0))) pids.push(Number(entry));
+    }
+  } else {
+    return null;
+  }
+  const members: Array<{ pid: number; identity: ProcessBirthIdentity }> = [];
+  for (const pid of pids) {
+    if (pid === pgid) continue;
+    const identity = await readProcessBirthIdentity(pid, platform);
+    if (identity !== null) members.push({ pid, identity });
+  }
+  return members;
+}
+
+/** SPIKE: terminate ONE process whose birth identity is known: verify, then
+ *  SIGTERM, wait, SIGKILL. Never signals a pid whose identity changed. */
+export async function terminateOwnedProcess(args: {
+  pid: number;
+  identity: ProcessBirthIdentity;
+  graceMs: number;
+  platform?: NodeJS.Platform;
+}): Promise<"already-gone" | "not-owned" | "graceful" | "forced" | "escaped" | "unknown"> {
+  const platform = args.platform ?? process.platform;
+  const initial = await probeProcess(args.pid, platform);
+  if (initial.state === "gone") return "already-gone";
+  if (initial.state === "unknown") return "unknown";
+  if (!sameBirthIdentity(args.identity, initial.identity)) return "not-owned";
+  const waitGone = async (ms: number): Promise<boolean> => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      const p = await probeProcess(args.pid, platform);
+      if (p.state === "gone") return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  };
+  try { process.kill(args.pid, "SIGTERM"); } catch { return "already-gone"; }
+  if (await waitGone(args.graceMs)) return "graceful";
+  const again = await probeProcess(args.pid, platform);
+  if (again.state === "gone") return "graceful";
+  if (again.state === "alive" && !sameBirthIdentity(args.identity, again.identity)) return "not-owned";
+  try { process.kill(args.pid, "SIGKILL"); } catch { return "graceful"; }
+  return (await waitGone(500)) ? "forced" : "escaped";
+}
+
 export async function isSameProcess(
   pid: number,
   expected: ProcessBirthIdentity,
@@ -591,7 +690,7 @@ export async function terminateOwnedProcessGroup(args: {
     // announce a stopped session over a tree that may still be running.
     return { outcome: "unknown", reason: initial.reason };
   }
-  if (initial.identity !== args.birthIdentity) {
+  if (!sameBirthIdentity(args.birthIdentity, initial.identity)) {
     // Pid reuse: this is somebody else's process now. Emphatically do not
     // signal it.
     return { outcome: "not-owned" };
