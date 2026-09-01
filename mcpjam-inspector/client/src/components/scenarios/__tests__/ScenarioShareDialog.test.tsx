@@ -92,6 +92,38 @@ describe("ScenarioShareDialog", () => {
     expect(screen.queryByTestId("scenario-share-link-menu")).toBeNull();
   });
 
+  it("withholds the Invited roster as well, not just Has access", () => {
+    // showMembers guards two separate blocks in ShareSection. With no members
+    // in the fixture the second one never renders either way, so it needs a
+    // pending invitee to mean anything.
+    render(
+      <ScenarioShareDialog
+        scenario={
+          {
+            ...scenario,
+            members: [
+              {
+                _id: "m1",
+                scenarioId: "cb-1",
+                projectId: "ws-1",
+                email: "pending@example.com",
+                role: "chat",
+                invitedBy: "u1",
+                invitedAt: 1,
+                user: null,
+              },
+            ],
+          } as unknown as ScenarioSettings
+        }
+        open
+        onOpenChange={() => undefined}
+      />,
+    );
+
+    expect(screen.queryByText("Invited")).not.toBeInTheDocument();
+    expect(screen.queryByText("pending@example.com")).not.toBeInTheDocument();
+  });
+
   it("renders nothing while closed", () => {
     render(
       <ScenarioShareDialog

@@ -38,7 +38,7 @@ export function ScenarioShareDialog({
         {/* Only the body scrolls. The dialog's close button is absolutely
             positioned inside DialogContent, so scrolling that carries the X
             off screen and leaves Esc as the only way out. */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <ScenarioShareSection
             scenario={scenario}
             showMembers={false}
