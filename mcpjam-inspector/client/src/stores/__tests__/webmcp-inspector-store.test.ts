@@ -1225,6 +1225,25 @@ describe("webmcp inspector store — frame transport", () => {
     });
   });
 
+  it("tags an SSE frame as SSE even while a screenshot poll runs", async () => {
+    const { sse, ws } = await openFrameSession();
+    ws.open();
+    // An older server produces both at once: a socket that will not open and a
+    // refused `set_screencast`. A frame that arrived on the event stream did
+    // not arrive on the poll, whatever else is running.
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
+    sse.emit({
+      type: "frame",
+      seq: 9,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+
+    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe(
+      "sse-frames",
+    );
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
+  });
+
   it("reads a missing or nonsense scale as 1", async () => {
     const { sse, ws } = await openFrameSession();
     ws.open();

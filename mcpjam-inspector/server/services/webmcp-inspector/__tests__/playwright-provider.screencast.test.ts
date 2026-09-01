@@ -328,14 +328,14 @@ describe("PlaywrightWebMcpSession screencast", () => {
     const h = await started();
     await h.session.setScreencast(true);
     h.cdp.emit("Page.screencastFrame", {
-      data: "paint",
+      data: jpegBase64(1280, 800),
       sessionId: 1,
-      metadata: { deviceWidth: 900, deviceHeight: 500 },
+      metadata: { deviceWidth: 1280, deviceHeight: 800 },
     });
     expect(h.frames[0]).toMatchObject({
-      data: "paint",
-      deviceWidth: 900,
-      deviceHeight: 500,
+      deviceWidth: 1280,
+      deviceHeight: 800,
+      scale: 1,
     });
   });
 
@@ -452,6 +452,49 @@ describe("PlaywrightWebMcpSession screencast", () => {
         expect(h.frames.map((frame) => frame.data)).toEqual(["first", "newer"]),
       { timeout: 2_000 },
     );
+  });
+
+  it("drops a still whose page navigated while it was in flight", async () => {
+    const late = heldStill("stale-page");
+    const h = await started({ still: late.still });
+    await h.session.setScreencast(true);
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
+    );
+    await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(1));
+
+    // The person navigates while the capture is out. A frame count cannot see
+    // this — a navigation produces no frame of its own — so the capture would
+    // otherwise land and repaint the pane with the page they just left, while
+    // their clicks go to the new one.
+    h.cdp.emit("Page.frameNavigated", {
+      frame: { id: "main", url: "https://example.test/next" },
+    });
+    late.release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(h.frames).toHaveLength(0);
+  });
+
+  it("drops a still whose stream was stopped while it was in flight", async () => {
+    const late = heldStill("stale-stream");
+    const h = await started({ still: late.still });
+    await h.session.setScreencast(true);
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
+    );
+    await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(1));
+
+    await h.session.setScreencast(false);
+    await h.session.setScreencast(true);
+    late.release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // A capture from the previous stream describes a picture this one has not
+    // sent yet — and the client cleared its pane when the stream stopped.
+    expect(h.frames).toHaveLength(0);
   });
 
   it("re-captures at most once after a burst of oversized frames", async () => {
@@ -1256,12 +1299,11 @@ describe("PlaywrightWebMcpSession frame geometry", () => {
     const h = await started({ devicePixelRatio: 2 });
     await h.session.setScreencast(true);
     h.cdp.emit("Page.screencastFrame", {
-      // A capture that came out at two device pixels per CSS pixel…
+      // A capture that came out at two device pixels per CSS pixel. Publishing
+      // the metadata's numbers instead would describe this 2560-wide picture
+      // as 1280 wide and double every coordinate the client sent back.
       data: jpegBase64(2560, 1600),
       sessionId: 1,
-      // …while CDP's metadata reports the surface in CSS pixels, as it always
-      // does. Publishing the metadata's numbers would describe a 2560-wide
-      // picture as 1280 wide and halve every coordinate the client sent back.
       metadata: { deviceWidth: 1280, deviceHeight: 800 },
     });
 
@@ -1272,21 +1314,43 @@ describe("PlaywrightWebMcpSession frame geometry", () => {
     });
   });
 
-  it("falls back to the metadata when the bytes cannot be read", async () => {
+  it("ignores the screencast metadata, whose units are not portable", async () => {
+    const h = await started({ devicePixelRatio: 2 });
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", {
+      data: jpegBase64(1280, 800),
+      sessionId: 1,
+      // CDP calls this DIP; Chromium 141 headless reports 1280 for a 2x
+      // session and the build CI runs reports 2560 for the same one. Dividing
+      // the picture's width by it gave a scale of 0.5 there — which would have
+      // the client compute a 2560-wide CSS surface and halve every click. The
+      // CSS side of the ratio is the viewport this session was CREATED at,
+      // which is ours and cannot drift.
+      metadata: { deviceWidth: 2560, deviceHeight: 1600 },
+    });
+
+    expect(h.frames[0]).toMatchObject({
+      deviceWidth: 1280,
+      deviceHeight: 800,
+      scale: 1,
+    });
+  });
+
+  it("falls back to the session's own viewport when the bytes cannot be read", async () => {
     const h = await started({ devicePixelRatio: 2 });
     await h.session.setScreencast(true);
     h.cdp.emit("Page.screencastFrame", {
       data: Buffer.from("not-a-jpeg").toString("base64"),
       sessionId: 1,
-      metadata: { deviceWidth: 900, deviceHeight: 500 },
+      metadata: { deviceWidth: 2560, deviceHeight: 1600 },
     });
 
     // Chromium clamps a screencast to the CSS size of the surface, so the
     // stream's fallback scale is 1 even on a 2x session — and the fallback's
     // job is to stay self-consistent, which is the property clicks depend on.
     expect(h.frames[0]).toMatchObject({
-      deviceWidth: 900,
-      deviceHeight: 500,
+      deviceWidth: WEBMCP_VIEWPORT.width,
+      deviceHeight: WEBMCP_VIEWPORT.height,
       scale: 1,
     });
   });

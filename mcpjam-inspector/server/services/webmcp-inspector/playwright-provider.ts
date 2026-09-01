@@ -186,6 +186,17 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   /** Drives the settle window. Armed with the stream, cleared with it. */
   private housekeeping?: ReturnType<typeof setInterval>;
   /**
+   * Bumped whenever the picture a capture would describe stops being the
+   * picture the pane is showing: a main-frame navigation, or the stream being
+   * stopped and started.
+   *
+   * `framesReceived` cannot cover those. A navigation clears the runtime's
+   * retained frame without producing one, so a still that began on the old
+   * document would pass a frame-count check and repaint the pane with a page
+   * the person has already left — while their clicks go to the new one.
+   */
+  private captureGeneration = 0;
+  /**
    * The bytes of the last screencast frame, for the redundancy check in
    * `wireScreencast`.
    *
@@ -365,6 +376,8 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // the move that first tells the new page where the pointer is.
       this.pointerAt = undefined;
       this.pointerGeneration += 1;
+      // A capture already in flight describes the document being left.
+      this.captureGeneration += 1;
       // The redundancy check compares bytes, and bytes do not know they belong
       // to a different document. A reload of a static page paints identically,
       // so its first frame would be dropped as a duplicate — while the runtime
@@ -442,16 +455,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       this.framesReceived += 1;
       this.frameThrottle.push({
         data: frame.data,
-        // The metadata's dimensions are the surface in CSS pixels; the frame's
-        // own header says how many device pixels that came out as.
-        ...this.frameGeometry(
-          frame.data,
-          {
-            width: frame.metadata?.deviceWidth ?? WEBMCP_VIEWPORT.width,
-            height: frame.metadata?.deviceHeight ?? WEBMCP_VIEWPORT.height,
-          },
-          this.streamScale(),
-        ),
+        // The frame's own header, against the CSS viewport this session was
+        // created at. The screencast metadata is deliberately not consulted —
+        // see `frameGeometry`.
+        ...this.frameGeometry(frame.data, this.streamScale()),
         ts: Date.now(),
       });
     });
@@ -468,31 +475,38 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * client scales pointer coordinates against what a frame reports, so a frame
    * that misdescribes itself puts every click in the wrong place.
    *
-   * `dip` is the surface in CSS pixels; `expectedScale` is what this capture
-   * path would produce if the bytes cannot be read. The fallback keeps the
-   * geometry self-consistent rather than exact — which is the property clicks
-   * actually depend on.
+   * The CSS side of the ratio is {@link WEBMCP_VIEWPORT} — the size this
+   * session's context was created at — and NOT the screencast metadata's
+   * `deviceWidth`. That field's units are not portable: the CDP definition
+   * calls it DIP, Chromium 141 headless reports 1280 for a 2x session, and the
+   * build CI runs reports 2560 for the same session. Dividing by it produced a
+   * scale of 0.5 there, which would have had the client compute a 2560-wide
+   * CSS surface and send every click at half its true coordinate. The viewport
+   * is ours and cannot drift.
+   *
+   * `expectedScale` is what this capture path would produce if the bytes
+   * cannot be read. The fallback keeps the geometry self-consistent rather
+   * than exact — which is the property clicks actually depend on.
    */
   private frameGeometry(
     data: string,
-    dip: { width: number; height: number },
     expectedScale: number,
   ): { deviceWidth: number; deviceHeight: number; scale: number } {
     const sof = readJpegDimensions(
       Buffer.from(data.slice(0, JPEG_PROBE_BASE64_CHARS), "base64"),
     );
-    if (sof && dip.width > 0) {
+    if (sof && sof.width > 0) {
       return {
         deviceWidth: sof.width,
         deviceHeight: sof.height,
         // Three decimals: enough for the ratios a real display reports
         // (1.25, 1.5, 1.75, 2) and for the wire's fixed-point field.
-        scale: Math.round((sof.width / dip.width) * 1_000) / 1_000,
+        scale: Math.round((sof.width / WEBMCP_VIEWPORT.width) * 1_000) / 1_000,
       };
     }
     return {
-      deviceWidth: Math.round(dip.width * expectedScale),
-      deviceHeight: Math.round(dip.height * expectedScale),
+      deviceWidth: Math.round(WEBMCP_VIEWPORT.width * expectedScale),
+      deviceHeight: Math.round(WEBMCP_VIEWPORT.height * expectedScale),
       scale: expectedScale,
     };
   }
@@ -579,14 +593,18 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       return;
     }
     this.stillInFlight = true;
-    const generation = this.framesReceived;
+    const frames = this.framesReceived;
+    const generation = this.captureGeneration;
     try {
       for (const quality of qualities) {
         const data = await this.captureStill(quality);
         // Re-checked after EVERY await: a still that lands behind a real frame
-        // would drag the pane backwards to an older picture.
+        // would drag the pane backwards to an older picture, and one that
+        // lands after a navigation or a stream restart would repaint it with a
+        // page the person has already left.
         if (this.disposed || !this.screencasting) return;
-        if (this.framesReceived !== generation) return;
+        if (this.framesReceived !== frames) return;
+        if (this.captureGeneration !== generation) return;
         if (data === undefined) return;
         if (Buffer.byteLength(data, "base64") > WEBMCP_FRAME_MAX_BYTES) {
           continue;
@@ -599,7 +617,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           // CSS resolution here too, and either way the bytes decide. The
           // fallback only has to keep the geometry self-consistent, which is
           // what the client divides by.
-          ...this.frameGeometry(data, WEBMCP_VIEWPORT, this.dpr),
+          ...this.frameGeometry(data, this.dpr),
           ts: Date.now(),
         });
         return;
@@ -1171,6 +1189,9 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // The retry belonged to the stream that was refused, and that stream is
       // over.
       this.restartPending = false;
+      // A capture from the previous stream describes a picture this one has
+      // not sent yet.
+      this.captureGeneration += 1;
       // A fresh audience, and the replay burst that comes with it, is not
       // evidence about the link: the drops that pressured the PREVIOUS stream
       // are stale, and the hold keeps the first seconds of this one from being
@@ -1188,6 +1209,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     // The retry belonged to the stream being stopped; carrying it forward
     // would stop and start the NEXT one for no reason.
     this.restartPending = false;
+    this.captureGeneration += 1;
     this.frameThrottle.reset();
     // The next stream is a fresh picture. Keeping the old bytes would let the
     // first frame of a restarted cast be dropped as a duplicate of the last

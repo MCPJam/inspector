@@ -595,9 +595,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             `data:image/jpeg;base64,${event.frame.data}`,
             event.frame,
             event.seq,
-            // Whatever is carrying pixels right now — for an SSE frame that is
-            // this stream, however the socket ladder happens to be doing.
-            polling ? "poll" : "sse-frames",
+            // This frame came in on the event stream, whatever else is
+            // running: a screenshot poll alongside it does not change how THIS
+            // picture arrived, and tagging it `poll` would file its latency
+            // under a transport that did not carry it.
+            "sse-frames",
           ),
         });
         return;
