@@ -473,6 +473,35 @@ describe("webmcp inspector store", () => {
     });
   });
 
+  it("carries a mounted surface's id, and omits the field without one", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify(SESSION), { status: 201 }),
+      );
+    await useWebmcpInspectorStore
+      .getState()
+      .startSession("https://shop.test/", {
+        display: "in-app",
+        webContentsId: 7,
+      });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
+      url: "https://shop.test/",
+      display: "in-app",
+      webContentsId: 7,
+    });
+
+    await useWebmcpInspectorStore
+      .getState()
+      .startSession("https://shop.test/", { display: "in-app" });
+    // Omitted, not sent as null or 0: an older server strips the unknown field
+    // and starts an ordinary in-app session, which is the graceful degrade.
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
+      url: "https://shop.test/",
+      display: "in-app",
+    });
+  });
+
   it("sends an input batch as one command, and nothing for an empty one", async () => {
     await openSession();
     const fetchSpy = vi
