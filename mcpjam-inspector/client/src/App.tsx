@@ -1269,8 +1269,24 @@ export function ComputerRoute() {
 
   // A personal computer is account-scoped. Anonymous guests are provisioned
   // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
-  // is what gates the feature vs. the guest sign-in affordance.
+  // decides whether there are peer tabs to switch to.
+  //
+  // Chrome only, and deliberately the eager form — same split as SkillsRoute:
+  // it guesses member for the commit before `users:getCurrentUser` answers,
+  // which for a member cold-load is the right guess.
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
+
+  // The computer itself gets the ACTOR, tri-state and unflattened.
+  //
+  // `isGuestProjectActor` is `currentUser?.isAnonymous === true`, so it reads
+  // `false` — "not a guest" — for the whole time that query is in flight. That
+  // boolean is the skip argument for `projectComputers:getComputerStatus` two
+  // components down (`ComputerView`'s `effectiveProjectId`), so passing it here
+  // fires a member-only query as a guest and paints the member pane for them.
+  // Flattening to `=== true` at this call site instead would fail closed on the
+  // query and then tell a signed-in member to sign in, so the third state has
+  // to survive the trip.
+  const isMemberActor = useIsMemberActor();
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -1286,7 +1302,7 @@ export function ComputerRoute() {
   const computerView = (
     <ComputerTabView
       projectId={convexProjectId}
-      isSignedInMember={isSignedInMember}
+      isSignedInMember={isMemberActor}
     />
   );
 

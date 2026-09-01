@@ -52,15 +52,25 @@ export function ComputerView({
 }: {
   projectId: string | null;
   /**
-   * True only for a signed-in member — NOT merely "has a Convex identity".
+   * Tri-state, and every branch below tests it explicitly.
+   *
+   * `true` only for a signed-in member — NOT merely "has a Convex identity".
    * Anonymous guests are `useConvexAuth().isAuthenticated === true` (they're
    * provisioned as anonymous actors), so gating the personal computer on raw
-   * auth would let guests through; the caller must pass member-ness
-   * (`!currentUser.isAnonymous`) so the guest sign-in affordance below fires.
+   * auth would let guests through.
+   *
+   * `undefined` is "Convex has not said yet", and the caller must be able to
+   * say so: a boolean derived from `currentUser?.isAnonymous === true` reads
+   * `false` — "not a guest" — for the whole time `users:getCurrentUser` is in
+   * flight, which would fire the member-only status query as a guest and offer
+   * them a computer the backend refuses. Pass `useIsMemberActor()` straight
+   * through.
    */
-  isSignedInMember: boolean;
+  isSignedInMember: boolean | undefined;
 }) {
-  const effectiveProjectId = isSignedInMember ? projectId : null;
+  // `=== true`, so the unresolved window skips the query rather than asking as
+  // whoever the socket is currently carrying.
+  const effectiveProjectId = isSignedInMember === true ? projectId : null;
   const status = useComputerStatus(effectiveProjectId);
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
@@ -379,6 +389,21 @@ export function ComputerView({
     },
   });
 
+  if (isSignedInMember === undefined) {
+    // Convex has not yet said who the socket is carrying, and both faces are
+    // wrong until it does: the member pane offers a guest a computer that
+    // `projectComputers:*` will refuse, and the sign-in prompt below tells a
+    // member to sign in when they already are. Hold the pane for the round
+    // trip instead of guessing.
+    return (
+      <PaneMessage>
+        <span className="inline-flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Checking your account…
+        </span>
+      </PaneMessage>
+    );
+  }
   if (!isSignedInMember) {
     // Guest actor (anonymous or not signed in): the personal computer (and the
     // Claude Code harness that runs inside it) is account-scoped, so the
