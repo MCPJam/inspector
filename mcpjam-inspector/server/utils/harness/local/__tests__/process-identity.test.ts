@@ -5,6 +5,7 @@ import {
   parseLinuxProcStat,
   readProcessBirthIdentity,
   parseProcStatGroup,
+  probeProcess,
   probeProcessGroup,
   supportsOwnershipProof,
   terminateOwnedProcessGroup,
@@ -219,6 +220,51 @@ describe("terminating a tree we own", () => {
         pollMs: 10,
       });
       expect(outcome.outcome).toBe("not-owned");
+    },
+  );
+});
+
+describe("escalating when the group cannot be read", () => {
+  it.skipIf(!supportsOwnershipProof())(
+    "still SIGKILLs a group it could not enumerate",
+    async () => {
+      // The regression: `settleGroup` returned `unknown` BEFORE the escalation,
+      // so a descendant that ignored SIGTERM survived with no SIGKILL ever
+      // sent whenever the group probe could not enumerate. Not knowing whether
+      // a survivor exists is a reason to make sure, not to walk away.
+      const { spawn } = await import("node:child_process");
+      const child = spawn(
+        process.execPath,
+        ["-e", "process.on('SIGTERM',function(){});setInterval(()=>{},1000)"],
+        { detached: true, stdio: "ignore" },
+      );
+      const pid = child.pid!;
+      try {
+        const identity = await readProcessBirthIdentity(pid);
+        const outcome = await terminateOwnedProcessGroup({
+          pid,
+          birthIdentity: identity!,
+          graceMs: 200,
+          pollMs: 25,
+          // Always unprovable, as an unreadable /proc would be.
+          probeGroup: async () => "unknown",
+        });
+        expect(outcome.outcome).toBe("unknown");
+        // ...and the tree is gone anyway, because the kill still happened.
+        const deadline = Date.now() + 4_000;
+        let probe = await probeProcess(pid);
+        while (probe.state !== "gone" && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 25));
+          probe = await probeProcess(pid);
+        }
+        expect(probe.state).toBe("gone");
+      } finally {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
     },
   );
 });

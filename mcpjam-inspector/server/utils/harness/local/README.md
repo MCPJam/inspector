@@ -237,8 +237,12 @@ then reports the tree gone while it is running.
 
 The trade is a fail-OPEN safety hole against a fail-CLOSED functional one. On a
 `hidepid` mount the probe will answer `unknown` often, so stops report unproven
-and the janitor retains records — noisy, but the kill still happens either way;
-only the reporting and the record retention change. Given that this file exists
+and the janitor retains records — noisy, but the termination itself is
+unaffected: an unprovable group escalates to `SIGKILL` exactly as a live one
+does, and only the reporting and the record retention change. That last part was
+briefly untrue — the `unknown` branch returned _above_ the escalation, so a
+child ignoring `SIGTERM` was never force-killed — which is why it is now pinned
+by a test rather than asserted in a comment. Given that this file exists
 because the same trade kept being made the wrong way round, it is made the other
 way here.
 

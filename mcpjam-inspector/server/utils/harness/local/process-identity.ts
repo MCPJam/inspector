@@ -357,8 +357,9 @@ async function probeLinuxGroup(pgid: number): Promise<GroupProbe> {
       // against a fail-CLOSED functional one (on a hidepid mount the probe
       // answers `unknown` a lot, so stops report unproven and the janitor
       // retains records) — and this file exists because that trade keeps being
-      // made the wrong way round. The kill still happens either way; only the
-      // reporting and record retention change.
+      // made the wrong way round. The termination itself is unaffected:
+      // `settleGroup` escalates to SIGKILL on `unknown` exactly as it does on
+      // `live`, so only the reporting and the record retention change.
       if (code !== "ENOENT" && code !== "ESRCH") blind = true;
       continue;
     }
@@ -457,6 +458,15 @@ export async function terminateOwnedProcessGroup(args: {
   platform?: NodeJS.Platform;
   /** Test seam: how long to wait between liveness polls. */
   pollMs?: number;
+  /**
+   * Test seam: the process-GROUP probe.
+   *
+   * Narrow on purpose — it replaces only the QUESTION, never the signalling.
+   * A test cannot otherwise produce an `unknown` group answer (that needs an
+   * unreadable `/proc`), and `unknown` is the branch that most recently
+   * returned without escalating at all.
+   */
+  probeGroup?: (pid: number, platform: NodeJS.Platform) => Promise<GroupProbe>;
 }): Promise<
   | { outcome: "already-gone" }
   | { outcome: "not-owned" }
@@ -488,19 +498,20 @@ export async function terminateOwnedProcessGroup(args: {
     | { outcome: "escaped" }
     | { outcome: "unknown"; reason: string }
   > => {
-    const before = await probeProcessGroup(args.pid, platform);
+    const probeGroup = args.probeGroup ?? probeProcessGroup;
+    const before = await probeGroup(args.pid, platform);
     if (before === "empty") return { outcome: goneOutcome };
-    if (before === "unknown") {
-      return {
-        outcome: "unknown",
-        reason:
-          "the process group could not be enumerated, so survivors " +
-          "could be neither ruled out nor cleaned up",
-      };
-    }
+    // `live` AND `unknown` both escalate. Not knowing whether a descendant is
+    // still down there is a reason to MAKE SURE, not a reason to walk away:
+    // returning early on `unknown` left a child that ignored SIGTERM running
+    // with no SIGKILL ever sent, because the only escalation sat below this
+    // point. The signal is ownership-safe in both cases by the rule the
+    // janitor also relies on — a pid still serving as a process-GROUP id is
+    // not handed out as a new process's pid while that group has members, so
+    // it can only reach the group whose root we proved was ours.
     signalProcessGroup(args.pid, "SIGKILL", platform);
     await new Promise((r) => setTimeout(r, Math.min(args.graceMs, 500)));
-    const after = await probeProcessGroup(args.pid, platform);
+    const after = await probeGroup(args.pid, platform);
     if (after === "empty") return { outcome: "forced" };
     if (after === "unknown") {
       return {
