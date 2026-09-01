@@ -316,6 +316,7 @@ export function ProjectSettingsTab({
             option inside the form. */}
         {isAuthenticated && convexProjectId && (
           <ProjectSecretsSection
+            key={convexProjectId ?? activeProjectId ?? "no-project"}
             projectId={convexProjectId}
             canManageShared={canManageMembers}
           />

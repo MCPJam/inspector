@@ -179,6 +179,28 @@ describe("scrubDeep", () => {
     expect(JSON.parse(scrubbed)).toEqual({ a: "", foo: "x" });
   });
 
+  it("preserves envelope keys that happen to equal a secret value", () => {
+    // Control metadata is part of the persisted contract. A global textual
+    // replacement would turn the required `chatSessionId` field into a marker
+    // when a credential's value happened to be that same string.
+    const scrubber = createSecretScrubber([
+      { name: "ODD_KEY", value: "chatSessionId" },
+    ])!;
+    const body = JSON.stringify({
+      chatSessionId: "chatSessionId",
+      payload: { echoed: "chatSessionId" },
+    });
+
+    const scrubbed = JSON.parse(scrubber.scrubSerializedJson(body));
+    expect(scrubbed).toEqual({
+      chatSessionId: "[secret:ODD_KEY]",
+      payload: { echoed: "[secret:ODD_KEY]" },
+    });
+    expect(Object.prototype.hasOwnProperty.call(scrubbed, "chatSessionId")).toBe(
+      true,
+    );
+  });
+
   it("still redacts a real value inside serialized JSON", () => {
     // The guard on the guard: refusing the raw form must not stop it finding
     // the value where it genuinely occurs, in escaped form.

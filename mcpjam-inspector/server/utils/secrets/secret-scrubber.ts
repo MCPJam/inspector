@@ -184,7 +184,32 @@ export function createSecretScrubber(
   }
 
   function scrubSerializedJson(input: string): string {
-    return applyNeedles(input, jsonNeedles);
+    // Keep the JSON envelope's own field names intact. A secret can legally be
+    // named/valued `chatSessionId`, `projectId`, or another control key; a raw
+    // global replacement would delete that metadata and make the persisted
+    // ingest body unusable. Parse valid JSON and scrub its values (and nested
+    // keys) while preserving only the top-level envelope keys. Bounded prefixes
+    // are intentionally not valid JSON, so retain the escaped-needle fallback
+    // for those fragments.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      return applyNeedles(input, jsonNeedles);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return applyNeedles(input, jsonNeedles);
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      Object.defineProperty(out, key, {
+        value: scrubDeep(value),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return JSON.stringify(out);
   }
 
   /**

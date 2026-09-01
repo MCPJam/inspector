@@ -183,6 +183,30 @@ describe("abort plumbing", () => {
       }).createSession();
       await expect(session.run({ command: "echo hi" })).resolves.toBeDefined();
     });
+
+    it("does NOT fire when E2B rejects before accepting the command", async () => {
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      sandboxState.run.mockRejectedValueOnce(new Error("socket hang up"));
+
+      await expect(session.run({ command: "echo hi" })).rejects.toThrow(
+        "socket hang up",
+      );
+      expect(stamped).not.toHaveBeenCalled();
+    });
+
+    it("fires for a command that ran and exited non-zero", async () => {
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      sandboxState.run.mockRejectedValueOnce(
+        new FakeCommandExitError(2, "", "bad command"),
+      );
+
+      await expect(session.run({ command: "false" })).resolves.toMatchObject({
+        exitCode: 2,
+      });
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("honors a per-command signal on exec", async () => {

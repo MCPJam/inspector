@@ -196,20 +196,21 @@ export function createE2BHarnessSandboxProvider(
   // the question the stamp answers ("did anything receive this?") is answered
   // by the first one.
   let sessionEnvUsed = false;
+  const markSessionEnvUsed = (): void => {
+    if (!sessionEnv || sessionEnvUsed) return;
+    sessionEnvUsed = true;
+    // Best-effort by contract: failing to RECORD a delivery must never fail
+    // the delivery itself, and this sits directly in the command path.
+    try {
+      opts.onSessionEnvUsed?.();
+    } catch {
+      // ignore
+    }
+  };
   const mergeEnv = (
     env: Record<string, string> | undefined,
   ): Record<string, string> | undefined => {
     if (!sessionEnv) return env;
-    if (!sessionEnvUsed) {
-      sessionEnvUsed = true;
-      // Best-effort by contract: failing to RECORD a delivery must never fail
-      // the delivery itself, and this sits directly in the command path.
-      try {
-        opts.onSessionEnvUsed?.();
-      } catch {
-        // ignore
-      }
-    }
     return { ...sessionEnv, ...(env ?? {}) };
   };
 
@@ -336,6 +337,10 @@ export function createE2BHarnessSandboxProvider(
             timeoutMs: commandTimeoutMs,
             ...signalOpt(abortSignal),
           });
+          // E2B accepted and completed the command, so the session env was
+          // actually handed to the box. A transport rejection before
+          // acceptance must not mark delivery.
+          markSessionEnvUsed();
           return {
             exitCode: res.exitCode,
             stdout: res.stdout,
@@ -345,6 +350,8 @@ export function createE2BHarnessSandboxProvider(
           // E2B throws on non-zero exit; the contract wants the result
           // (exitCode + streams) surfaced, not a rejection.
           if (err instanceof CommandExitError) {
+            // A CommandExitError means the command was accepted and ran.
+            markSessionEnvUsed();
             return {
               exitCode: err.exitCode,
               stdout: err.stdout,
@@ -393,6 +400,8 @@ export function createE2BHarnessSandboxProvider(
             if (!streamsClosed) errCtl.enqueue(enc.encode(d));
           },
         });
+        // A background handle is returned only after E2B accepted the process.
+        markSessionEnvUsed();
         // Observe exit exactly once; normalize E2B's throw-on-nonzero into an
         // exit code so wait() resolves (contract) instead of rejecting.
         const exitPromise: Promise<{ exitCode: number }> = handle
