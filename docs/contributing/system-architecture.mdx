@@ -128,7 +128,7 @@ flowchart TD
     - API-only server (no static file serving)
 
     **Key Files:**
-    - `server/app.ts:135-142` - Development mode routing
+    - `server/app.ts` (`createHonoApp`, the dev branch) - Development mode routing
     - `client/vite.config.ts` - Vite configuration
 
   </Accordion>
@@ -144,7 +144,7 @@ flowchart TD
     - No CORS (same-origin)
 
     **Key Files:**
-    - `server/app.ts:119-126` - Production static serving
+    - `server/app.ts` (`createHonoApp`, the `serveStatic` mounts) - Production static serving
     - `server/index.ts` - Standalone server entry point
 
   </Accordion>
@@ -160,8 +160,8 @@ flowchart TD
     - Auto-reload on changes
 
     **Key Files:**
-    - `src/main.ts:62-92` - Server startup
-    - `src/main.ts:112` - Vite dev server URL loading
+    - `src/main.ts` (`startHonoServer`) - Server startup
+    - `src/main.ts` (`createMainWindow`'s `loadURL`) - Vite dev server URL loading
 
   </Accordion>
 
@@ -176,8 +176,8 @@ flowchart TD
     - Single .app/.exe bundle
 
     **Key Files:**
-    - `src/main.ts:68-73` - Environment setup
-    - `server/app.ts:119-124` - Packaged static serving
+    - `src/main.ts` (`startHonoServer`, the `process.env` assignments) - Environment setup
+    - `server/app.ts` (`createHonoApp`, the `serveStatic` mounts) - Packaged static serving
 
   </Accordion>
 </AccordionGroup>
@@ -217,12 +217,12 @@ flowchart LR
     style App fill:#90EE90
 ```
 
-**Key Implementation:** `server/app.ts:20-146`
+**Key Implementation:** `server/app.ts` (`createHonoApp`)
 
 The factory function `createHonoApp()` is called from:
 
 - `server/index.ts` - Standalone web server
-- `src/main.ts:75` - Electron embedded server
+- `src/main.ts` (`startHonoServer`'s dynamic `import("../server/app.js")`) - Electron embedded server
 
 ### Request Lifecycle
 
@@ -377,21 +377,52 @@ sequenceDiagram
 
 <Steps>
   <Step title="Environment Setup" icon="settings">
-    `src/main.ts:66-73` sets critical environment variables that tell the server it's running in Electron
+    `startHonoServer` in `src/main.ts` sets critical environment variables that tell the server it's running in Electron
   </Step>
 
 <Step title="Server Start" icon="server">
-  `src/main.ts:62-92` starts the embedded Hono server on port 6274
+  `startHonoServer` in `src/main.ts` starts the embedded Hono server on port 6274
 </Step>
 
 <Step title="Window Creation" icon="app-window">
-  `src/main.ts:94-133` creates the main BrowserWindow with security settings
+  `createMainWindow` in `src/main.ts` creates the main BrowserWindow with security settings
 </Step>
 
   <Step title="IPC Setup" icon="zap">
     `src/ipc/listeners-register.ts` registers all IPC event handlers
   </Step>
 </Steps>
+
+### The embedded WebMCP browser surface
+
+One feature reaches across the process boundary in the opposite direction from
+everything else here, and it is worth knowing about before reading either half.
+
+The WebMCP Inspector normally starts a browser: the server launches Chromium
+through Playwright and the client watches it. In the desktop app it does the
+reverse. The renderer mounts a real `<webview>`, and the server — which runs in
+the SAME process, because `startHonoServer` serves the Hono app from the Electron
+main process — reaches the guest directly through `webContents.fromId` and
+attaches a CDP debugger to it. No IPC bridge, no remote debugging port, no
+frame stream: the pixels are already on the viewer's screen and the surface takes
+their real mouse and keyboard.
+
+Two consequences shape the code:
+
+- **The server never owns the surface.** `dispose()` detaches and leaves the
+  `webContents` alive, because React owns the element. Destroying it would tear
+  a live DOM node out from under the renderer.
+- **A `webContentsId` is a capability, so it is checked like one.**
+  `webContents.fromId` will happily return the app's own UI renderer. Before
+  attaching, the provider proves the id names a live `webview`, on the
+  `WEBMCP_WEBVIEW_PARTITION` partition, hosted by one of our own windows.
+
+The main process's part of this is small and all in `src/main.ts`: the
+`enable-features=WebMCP` switch (appended before `whenReady`, because switches
+freeze there), `webviewTag` on the main window, a `will-attach-webview` guard
+that refuses any guest not on that partition and strips preload/node/isolation
+from the ones it allows, and deny-all permission handlers on the partition's
+session. `docs/webmcp-inspector.md` has the rest.
 
 ### OAuth Deep Linking
 
@@ -429,8 +460,8 @@ sequenceDiagram
 
 **Key Files:**
 
-- `src/main.ts:31-33` - Protocol registration
-- `src/main.ts:273-313` - Deep link handler
+- `src/main.ts` (`setAsDefaultProtocolClient`) - Protocol registration
+- `src/main.ts` (`handleOAuthCallbackUrl`) - Deep link handler
 - `client/src/hooks/useElectronOAuth.ts` - React OAuth hook
 
 ## MCP Client Management
@@ -648,7 +679,7 @@ graph TB
 **Key Files:**
 
 - `server/services/rpc-log-bus.ts` - Event bus implementation
-- `server/app.ts:67-79` - RPC logger setup
+- `server/app.ts` (`createHonoApp`'s `rpcLogger`) - RPC logger setup
 - `client/src/hooks/useRPCLogs.ts` - Frontend subscription
 
 ## Environment Configuration
