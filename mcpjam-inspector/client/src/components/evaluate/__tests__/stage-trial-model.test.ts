@@ -24,6 +24,7 @@ import {
   UNRECOGNIZED_STATE_LABEL,
   defaultSelectedTrialStage,
   deriveTrialStageChip,
+  summarizeTrialChain,
   toTrialCardViews,
 } from "../stage-trial-model";
 
@@ -163,6 +164,44 @@ describe("the trial card row", () => {
     expect(cards.map((card) => card.chip.label)).toEqual(
       USER_VALUE_STAGES.map((stage) => USER_VALUE_STAGE_OUTCOMES[stage]),
     );
+  });
+});
+
+describe("summarizeTrialChain", () => {
+  it("names the stage a trial broke at", () => {
+    const summary = summarizeTrialChain(
+      verifiedChain(chainOf({ response: "failed" }), "response"),
+    );
+    expect(summary?.label).toContain(USER_VALUE_STAGE_LABELS.response);
+    expect(summary?.toneClass).toContain("destructive");
+  });
+
+  it("says the request was satisfied only when user value actually passed", () => {
+    expect(summarizeTrialChain(verifiedChain(chainOf()))?.label).toBe(
+      USER_VALUE_STAGE_OUTCOMES.userValue,
+    );
+
+    // No failed stage, but nothing measured the last link either. "Satisfied"
+    // here would claim an outcome from an absence of evidence.
+    const unmeasured = USER_VALUE_STAGES.map((stage) =>
+      row({ stage, state: "notMeasured", reason: "blockedByPolicy" }),
+    );
+    const summary = summarizeTrialChain(verifiedChain(unmeasured));
+    expect(summary?.label).toBe(STAGE_STATE_LABELS.notMeasured);
+    expect(summary?.toneClass).not.toContain("success");
+  });
+
+  it("says a withheld chain is withheld, and an absent one nothing at all", () => {
+    expect(
+      summarizeTrialChain({
+        status: "unverified",
+        analyzerVersion: 8,
+      } as EvalRunDecisionChain)?.label,
+    ).toBe("chain withheld");
+    // Nothing to say beats a placeholder that reads as a finding.
+    expect(
+      summarizeTrialChain({ status: "absent" } as EvalRunDecisionChain),
+    ).toBeNull();
   });
 });
 

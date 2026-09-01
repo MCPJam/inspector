@@ -159,5 +159,51 @@ export function defaultSelectedTrialStage(
   return explained?.stage ?? null;
 }
 
+/**
+ * One trial's chain in ONE LINE, for a list row that has no space for six.
+ *
+ * The row-level counterpart of the card row: same facts, same words, chosen
+ * so a reader scanning a table sees where each trial stopped without opening
+ * anything. `null` when there is nothing to say — the caller renders nothing
+ * rather than a placeholder, because a row whose chain has not loaded and a
+ * row whose trial delivered are different things and neither is a dash.
+ *
+ * NO REASON HERE either, for the reason the chip gives: reasons are sentences
+ * and this is a table cell.
+ */
+export function summarizeTrialChain(
+  chain: EvalRunDecisionChain,
+): { label: string; toneClass: string } | null {
+  if (chain.status === "unverified") {
+    return {
+      label: "chain withheld",
+      toneClass: STAGE_CHIP_TONE_CLASS.unmeasured,
+    };
+  }
+  if (chain.status === "absent") return null;
+  if (chain.firstFailedStage) {
+    return {
+      label: `broke at ${USER_VALUE_STAGE_LABELS[chain.firstFailedStage]}`,
+      toneClass: STAGE_CHIP_TONE_CLASS.failed,
+    };
+  }
+  // No failed stage. Say so only when the chain actually ran the distance —
+  // a trial whose stages were never measured has not "satisfied" anything.
+  const userValue = chain.stages.find((row) => row.stage === "userValue");
+  if (userValue?.state === "passed") {
+    return {
+      label: USER_VALUE_STAGE_OUTCOMES.userValue,
+      toneClass: STAGE_CHIP_TONE_CLASS.passed,
+    };
+  }
+  const measured = chain.stages.find((row) => row.state !== "notApplicable");
+  return measured
+    ? {
+        label: STAGE_STATE_LABELS.notMeasured,
+        toneClass: STAGE_CHIP_TONE_CLASS.unmeasured,
+      }
+    : null;
+}
+
 /** The chain's stages, re-exported so a renderer need not reach past this. */
 export { USER_VALUE_STAGES };

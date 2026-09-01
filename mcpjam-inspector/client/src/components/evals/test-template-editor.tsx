@@ -1235,10 +1235,13 @@ export function TestTemplateEditor({
   const openTrialRun = useMemo(() => {
     const runId =
       replayIteration?.suiteRunId ??
-      [routeCompareAnchorIteration, ...recentIterations, lastSavedIteration]
-        .find(
-          (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
-        )?.suiteRunId;
+      [
+        routeCompareAnchorIteration,
+        ...recentIterations,
+        lastSavedIteration,
+      ].find(
+        (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
+      )?.suiteRunId;
     if (!runId) return null;
     return suiteRuns.find((run) => run._id === runId) ?? null;
   }, [
@@ -1277,7 +1280,6 @@ export function TestTemplateEditor({
     if (!runId) return undefined;
     return suiteRuns.find((run) => run._id === runId)?.namedHostId;
   }, [replayIteration, suiteRuns]);
-
 
   // When viewing a past iteration, point Quick Run at the host THAT iteration
   // ran on, so a Retry / Quick Run targets the same host (e.g. the ChatGPT
