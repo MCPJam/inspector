@@ -167,6 +167,54 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
     expect(mocks.uploadSkillFolder).not.toHaveBeenCalled();
   });
 
+  it("keeps a resolved role through a reconnect instead of re-asking", async () => {
+    // Convex throws its whole remote query set away on every websocket
+    // reconnect, so `useQuery` goes back to `undefined`. Without a latch, a
+    // reconnect while the dialog is open — role long since resolved, files
+    // already picked — would re-disable the button and flip the hint back to
+    // "Checking your role…", freezing a submit over an answered question.
+    mocks.canManageMembers = true;
+    const { rerender } = render(
+      <SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />,
+    );
+    await pickSkillFolder();
+    expect(
+      screen.getByText(/will be added to the project library/i),
+    ).toBeInTheDocument();
+
+    // The socket drops: the query replays "not decided yet".
+    mocks.roleLoading = true;
+    rerender(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    expect(
+      screen.getByRole("button", { name: /add to library/i }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByText(/will be added to the project library/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /add to library/i }));
+    await waitFor(() => expect(mocks.uploadSkillFolder).toHaveBeenCalled());
+    expect(mocks.uploadSkillFolder.mock.calls[0][3]).toBe("project");
+  });
+
+  it("refuses to reuse a 'decision' taken while the dialog was closed", async () => {
+    // The query is SKIPPED when the dialog is closed, so `canManageMembers`
+    // reads false and `isLoading` reads false — a non-answer that looks
+    // settled. Latching it would restore the very bug the guard closes.
+    mocks.canManageMembers = false;
+    const { rerender } = render(
+      <SkillUploadDialog open={false} onOpenChange={vi.fn()} source={CLOUD} />,
+    );
+
+    mocks.roleLoading = true;
+    rerender(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    expect(
+      screen.getByText(/Checking your role in this project/i),
+    ).toBeInTheDocument();
+  });
+
   it("holds the upload while Convex auth is still hydrating", async () => {
     // The trap one layer up: while auth hydrates, `isAuthenticated` reads
     // FALSE, so the members query is never enabled and `roleLoading` is false
@@ -197,6 +245,61 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
 
     await waitFor(() => expect(mocks.uploadSkillFolder).toHaveBeenCalled());
     expect(mocks.uploadSkillFolder.mock.calls[0][3]).toBe("user");
+  });
+
+  it("refuses a folder with no SKILL.md, and uploads nothing", async () => {
+    render(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const stray = new File(["nope"], "README.md", { type: "text/markdown" });
+    Object.defineProperty(stray, "text", { value: async () => "nope" });
+    Object.defineProperty(input, "files", { value: [stray] });
+    fireEvent.change(input);
+
+    expect(
+      await screen.findByText(/No SKILL.md file found/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /add to library/i }),
+    ).toBeDisabled();
+    expect(mocks.uploadSkillFolder).not.toHaveBeenCalled();
+  });
+
+  it("refuses a SKILL.md whose name the backend would reject", async () => {
+    render(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    const body = "---\nname: Not A Valid Name\ndescription: d\n---\n";
+    const file = new File([body], "SKILL.md", { type: "text/markdown" });
+    Object.defineProperty(file, "text", { value: async () => body });
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file] });
+    fireEvent.change(input);
+
+    expect(await screen.findByText(/Invalid skill name/i)).toBeInTheDocument();
+    expect(mocks.uploadSkillFolder).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's message when the upload itself is rejected", async () => {
+    mocks.canManageMembers = true;
+    mocks.uploadSkillFolder.mockRejectedValueOnce(
+      new Error("A skill named refunds already exists"),
+    );
+    render(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    await pickSkillFolder();
+    fireEvent.click(screen.getByRole("button", { name: /add to library/i }));
+
+    expect(
+      await screen.findByText(/A skill named refunds already exists/i),
+    ).toBeInTheDocument();
+    // The dialog stays open so the failure is reachable, not dismissed.
+    expect(
+      screen.getByRole("button", { name: /add to library/i }),
+    ).toBeInTheDocument();
   });
 
   it("asks nothing of Convex for a local upload", () => {

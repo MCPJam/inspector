@@ -75,7 +75,11 @@ describe("ProjectEnvironmentSkillsPicker — personal skills", () => {
     expect(await screen.findByLabelText("scratchpad")).toBeInTheDocument();
   });
 
-  it("disables it and says why, in words rather than in an enum", async () => {
+  it("disables it and says why on the row, in words rather than in an enum", async () => {
+    // The reason used to live only in a tooltip whose trigger wrapped a row
+    // with nothing focusable in it (the checkbox is disabled), so a keyboard
+    // or screen-reader user met a greyed-out row with no stated cause. It is
+    // rendered on the row now, so no hover is needed to read it.
     render(
       <ProjectEnvironmentSkillsPicker
         projectId="proj-1"
@@ -85,15 +89,51 @@ describe("ProjectEnvironmentSkillsPicker — personal skills", () => {
     );
 
     expect(await screen.findByLabelText("scratchpad")).toBeDisabled();
-    fireEvent.focus(screen.getByLabelText("scratchpad"));
-    // Radix mirrors tooltip content into an aria-live node, so this matches
-    // more than once.
     expect(
-      (await screen.findAllByText(/only skills in the project library can run/i))
-        .length,
-    ).toBeGreaterThan(0);
+      screen.getByText(/only skills in the project library can run/i),
+    ).toBeInTheDocument();
     // The backend's identifier must never reach the reader.
     expect(screen.queryByText("not_shared")).not.toBeInTheDocument();
+  });
+
+  it("shows the reason in place of the description, not beside it", async () => {
+    // A reader scanning a disabled row wants the restriction, not the blurb.
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={null}
+        onChange={vi.fn()}
+      />,
+    );
+
+    await screen.findByLabelText("scratchpad");
+    expect(screen.queryByText("My notes")).not.toBeInTheDocument();
+    // An eligible row still shows its description.
+    expect(screen.getByText("Handle refunds")).toBeInTheDocument();
+  });
+
+  it("falls back to a generic line for a reason it doesn't know", async () => {
+    // The backend's reason list grows; an older client must say something true
+    // rather than leak an identifier it has no copy for.
+    mockListSkills.mockResolvedValue([
+      {
+        ...LIBRARY_SKILL,
+        pinnability: { ok: false as const, reason: "some_future_reason" },
+      },
+    ]);
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={null}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByLabelText("refunds")).toBeDisabled();
+    expect(
+      screen.getByText(/can't be pinned to an environment/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("some_future_reason")).not.toBeInTheDocument();
   });
 
   it("refuses to select it, so the save can't be built to fail", async () => {
@@ -201,10 +241,7 @@ describe("ProjectEnvironmentSkillsPicker — personal skills", () => {
     );
 
     expect(await screen.findByLabelText("refunds")).toBeDisabled();
-    fireEvent.focus(screen.getByLabelText("refunds"));
-    expect(
-      (await screen.findAllByText(/Delivered by its plugin/i)).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getByText(/Delivered by its plugin/i)).toBeInTheDocument();
   });
 
   it("shows the empty state only when the project has no skills at all", async () => {

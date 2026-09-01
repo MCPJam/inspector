@@ -109,7 +109,42 @@ export function SkillUploadDialog({
    * False whenever the question does not arise (local mode, dialog closed),
    * so nothing is ever held on something that was never asked.
    */
-  const roleResolving = isCloud && (authLoading || roleLoading);
+  const rolePending = isCloud && (authLoading || roleLoading);
+  /**
+   * The last DECIDED role for this project, so a reconnect doesn't re-ask.
+   *
+   * The members list does not load only once: the Convex client throws its
+   * whole remote query set away on every websocket reconnect, so `useQuery`
+   * goes back to `undefined` until the first transition lands. Without a latch
+   * a reconnect while the dialog is OPEN — role long since resolved, files
+   * already picked — would re-disable the button and flip the hint back to
+   * "Checking your role…", freezing a submit mid-flow over a question that was
+   * answered minutes ago. Same reasoning, and the same shape, as
+   * `useViewerProjectRole`.
+   *
+   * Written only while the query is genuinely ENABLED. A decision recorded
+   * while the dialog was closed would be `false` by default — the query is
+   * skipped then — and reusing it on open would restore exactly the bug the
+   * guard exists to close.
+   *
+   * Keyed on the project, and every later resolution overwrites it, so a
+   * revoked role takes effect as soon as the list says so.
+   */
+  const roleQueryActive = isAuthenticated && open && isCloud;
+  const roleKey = source?.kind === "cloud" ? source.projectId : "";
+  const decidedRoleRef = useRef<{ key: string; canManage: boolean } | null>(
+    null,
+  );
+  if (roleQueryActive && !rolePending) {
+    decidedRoleRef.current = { key: roleKey, canManage: canManageShared };
+  }
+  const decidedRole = decidedRoleRef.current;
+  const usingDecidedRole = rolePending && decidedRole?.key === roleKey;
+  const roleResolving = rolePending && !usingDecidedRole;
+  /** What the dialog acts on: the live answer, or the latched one mid-reconnect. */
+  const resolvedCanManage = usingDecidedRole
+    ? decidedRole!.canManage
+    : canManageShared;
 
   const resetForm = () => {
     setFiles([]);
@@ -256,7 +291,7 @@ export function SkillUploadDialog({
 
     try {
       // Resolved from the member's role, never from a form control.
-      const sharing = isCloud && canManageShared ? "project" : "user";
+      const sharing = isCloud && resolvedCanManage ? "project" : "user";
       const skill = await uploadSkillFolder(
         files,
         skillInfo.name,
@@ -455,7 +490,7 @@ export function SkillUploadDialog({
             <p className="text-xs text-muted-foreground">
               {roleResolving
                 ? "Checking your role in this project…"
-                : canManageShared
+                : resolvedCanManage
                   ? "This skill will be added to the project library. Every member can see and use it."
                   : "This will be added as a personal skill — only you can use it. A project admin can publish it to the project library."}
             </p>

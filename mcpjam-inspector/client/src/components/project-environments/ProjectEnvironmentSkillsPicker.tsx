@@ -2,11 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2, SquareSlash } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import {
   listSkills,
@@ -261,7 +256,18 @@ export function ProjectEnvironmentSkillsPicker({
               <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-col">
                 <span className="truncate font-normal">{skill.name}</span>
-                {skill.description ? (
+                {/* An ineligible row shows WHY, in place of its description.
+                    The reason used to live only in a tooltip, and a tooltip is
+                    not reachable here: the trigger wraps a row whose only
+                    focusable control is a DISABLED checkbox, so a keyboard or
+                    screen-reader user met a greyed-out row with no stated
+                    cause. It is also the more useful line — a reader scanning
+                    a disabled row wants the restriction, not the blurb. */}
+                {ineligible ? (
+                  <span className="text-[11px] leading-snug text-muted-foreground">
+                    {ineligibleReason(rejection ?? undefined)}
+                  </span>
+                ) : skill.description ? (
                   <span className="truncate text-[11px] text-muted-foreground">
                     {skill.description}
                   </span>
@@ -283,20 +289,7 @@ export function ProjectEnvironmentSkillsPicker({
               ) : null}
             </Label>
           );
-          if (!ineligible) return row;
-          return (
-            <Tooltip key={skillId}>
-              <TooltipTrigger asChild>
-                {/* span keeps the tooltip alive over the disabled row */}
-                <span>{row}</span>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="max-w-[260px]">
-                <p className="text-xs leading-snug">
-                  {ineligibleReason(rejection ?? undefined)}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          );
+          return row;
         })}
         {orphanSelectedIds.map((skillId) => (
           <Label

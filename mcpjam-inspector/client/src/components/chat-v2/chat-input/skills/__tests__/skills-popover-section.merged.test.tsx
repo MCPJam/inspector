@@ -237,6 +237,32 @@ describe("SkillsPopoverSection — local and library in one list", () => {
     expect(screen.queryByText(/No skills found/i)).not.toBeInTheDocument();
   });
 
+  it("says so plainly when both halves come back empty", async () => {
+    halves({});
+    renderPicker({ onOpenUploadDialog: vi.fn() });
+
+    expect(await screen.findByText(/No skills found/i)).toBeInTheDocument();
+  });
+
+  it("stops the row spinning when loading the chosen skill fails", async () => {
+    // Otherwise the row spins forever and the picker looks hung on a click
+    // that has already failed.
+    halves({ library: [libraryItem("refunds")] });
+    mockGetSkill.mockRejectedValueOnce(new Error("skill was deleted"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const onSkillSelected = vi.fn();
+    renderPicker({ onSkillSelected });
+
+    fireEvent.click(await screen.findByText("refunds"));
+
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Loading")).not.toBeInTheDocument(),
+    );
+    expect(onSkillSelected).not.toHaveBeenCalled();
+    // The row is still there to try again.
+    expect(screen.getByText("refunds")).toBeInTheDocument();
+  });
+
   it("counts both halves for the parent's arrow-key range", async () => {
     halves({
       local: [localItem("notes")],
