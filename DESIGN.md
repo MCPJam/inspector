@@ -243,16 +243,16 @@ solid fill.
 
 | Pair (`X` / `X-foreground`) | Light | Dark |
 | --- | --- | --- |
-| `warning` | 7.96 — AA, any text | 2.00 — **Fails 3:1** |
-| `pending` | 7.96 — AA, any text | 2.00 — **Fails 3:1** |
-| `success` | 2.53 — **Fails 3:1** | 3.05 — Large text & UI only |
-| `primary` | 3.00 — Large text & UI only | 3.12 — Large text & UI only |
-| `muted` | 3.17 — Large text & UI only | 8.38 — AA, any text |
-| `diagram-sandbox` | 3.19 — Large text & UI only | 10.27 — AA, any text |
-| `diagram-server` | 3.39 — Large text & UI only | 9.99 — AA, any text |
-| `info` | 3.75 — Large text & UI only | 3.75 — Large text & UI only |
-| `destructive` | 3.92 — Large text & UI only | 3.76 — Large text & UI only |
-| `diagram-view` | 3.94 — Large text & UI only | 9.55 — AA, any text |
+| `warning` | 7.96 — AA, any text | 2.00 — **Below 3:1 — no text** |
+| `pending` | 7.96 — AA, any text | 2.00 — **Below 3:1 — no text** |
+| `success` | 2.53 — **Below 3:1 — no text** | 3.05 — Large text only |
+| `primary` | 3.00 — Large text only | 3.12 — Large text only |
+| `muted` | 3.17 — Large text only | 8.38 — AA, any text |
+| `diagram-sandbox` | 3.19 — Large text only | 10.27 — AA, any text |
+| `diagram-server` | 3.39 — Large text only | 9.99 — AA, any text |
+| `info` | 3.75 — Large text only | 3.75 — Large text only |
+| `destructive` | 3.92 — Large text only | 3.76 — Large text only |
+| `diagram-view` | 3.94 — Large text only | 9.55 — AA, any text |
 | `secondary` | 6.39 — AA, any text | 12.55 — AA, any text |
 | `background` | 10.98 — AA, any text | 8.33 — AA, any text |
 | `popover` | 15.18 — AA, any text | 10.48 — AA, any text |
@@ -261,10 +261,16 @@ solid fill.
 
 <!-- END GENERATED: contrast -->
 
-Ratios are computed from the canonical tokens; 3:1 is a genuine pass for large
-text (≥24px, or ≥18.66px bold) and for UI component boundaries under WCAG
-1.4.11, but not for body copy. A pair marked **Fails 3:1** should not carry text
-at any size — treat those as known debt, not as license.
+Ratios are computed from the canonical tokens and describe **text on its own
+fill** (WCAG 1.4.3): 3:1 is a genuine pass for large text (≥24px, or ≥18.66px
+bold) but not for body copy, and a pair marked **Below 3:1** should not carry
+text at any size. Treat those as known debt, not as license.
+
+The table says nothing about **1.4.11 non-text contrast** — a component's
+boundary against the surface *around* it is a different pair of colors, and it
+can be worse: `primary` clears 3:1 against its own label but sits below it
+against the page. If a control needs a visible edge, give it a `border` token
+rather than relying on the fill to separate itself from the background.
 
 Every token has exactly one `-dark` twin holding its dark-mode value. A `-dark`
 token is not a shade variant or a darker version of its sibling; it is the same

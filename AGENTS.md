@@ -16,4 +16,6 @@ agents working outside this repository.
   `docs/docs.json`. Never hand-edit a generated region.
 - Change a color by editing `tokens.css`, then run `npm run design:sync`.
 - `npm run design:check` (drift) and `npm run design:lint` (spec) both gate CI.
-- Never write a literal hex or `oklch()` value into a component or stylesheet.
+- Never write a literal hex or `oklch()` value into a component, or into any
+  stylesheet other than `design-system/src/tokens.css` itself — that file is
+  where the values are *supposed* to live.

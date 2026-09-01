@@ -158,51 +158,98 @@ function nextStyleCss(styleCss, modes) {
 }
 
 /**
- * Locate the `{ … }` value of `"key"` inside a region of raw JSON text.
+ * Index of the closing quote of the JSON string starting at `i`.
  *
- * Brace-counting with string skipping, because the point of this whole
- * exercise is to touch five values and nothing else: re-serializing the
- * document would reflow every hand-formatted array in docs.json and bury the
- * palette change in hundreds of lines of unrelated churn.
+ * Escape handling is by SKIPPING the escaped character rather than by looking
+ * back one byte: `"a\\\\"` ends at a quote whose predecessor is a backslash, and a
+ * look-back test reads that valid terminator as escaped and runs off the end of
+ * the value.
  */
-function findObjectRegion(raw, key, region) {
-  const keyRe = new RegExp(`"${key}"\\s*:\\s*\\{`, "g");
-  keyRe.lastIndex = region.start;
-  const m = keyRe.exec(raw);
-  if (!m || m.index >= region.end) return null;
+function endOfString(raw, i) {
+  for (let j = i + 1; j < raw.length; j++) {
+    if (raw[j] === "\\") {
+      j++;
+      continue;
+    }
+    if (raw[j] === '"') return j;
+  }
+  throw new Error("Unterminated string in docs.json");
+}
 
+/** Body span (inside the braces) of the object literal starting at `at`. */
+function objectBodyAt(raw, at) {
+  if (raw[at] !== "{") return null;
   let depth = 0;
-  for (let i = m.index + m[0].length - 1; i < region.end; i++) {
+  for (let i = at; i < raw.length; i++) {
     const ch = raw[i];
     if (ch === '"') {
-      i++;
-      while (i < region.end && !(raw[i] === '"' && raw[i - 1] !== "\\")) i++;
+      i = endOfString(raw, i);
       continue;
     }
     if (ch === "{") depth++;
-    else if (ch === "}" && --depth === 0) return { start: m.index, end: i + 1 };
+    else if (ch === "}" && --depth === 0) return { start: at + 1, end: i };
+  }
+  throw new Error("Unterminated object in docs.json");
+}
+
+/**
+ * Find `key` among the DIRECT children of the object body `body`.
+ *
+ * Depth tracking is the point. A regex scan for `"colors"\s*:\s*\{` matches the
+ * FIRST such text in range, which may belong to a nested object — and then the
+ * edit lands on the wrong field while `JSON.parse` still succeeds, so nothing
+ * downstream notices. Only a direct child may match.
+ *
+ * The `:` check is what separates a key from a string value that happens to
+ * read like one.
+ */
+function findChild(raw, body, key) {
+  let depth = 0;
+  for (let i = body.start; i < body.end; i++) {
+    const ch = raw[i];
+    if (ch === '"') {
+      const close = endOfString(raw, i);
+      if (depth === 0 && raw.slice(i + 1, close) === key) {
+        let j = close + 1;
+        while (j < body.end && /\s/.test(raw[j])) j++;
+        if (raw[j] === ":") {
+          j++;
+          while (j < body.end && /\s/.test(raw[j])) j++;
+          return { valueStart: j };
+        }
+      }
+      i = close;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
   }
   return null;
 }
 
-/** Replace one `"key": "value"` string field inside a region, in place. */
+/** Replace one `"key": "value"` string field, leaving all other bytes alone. */
 function setStringField(raw, path, value) {
-  let region = { start: 0, end: raw.length };
+  let body = objectBodyAt(raw, raw.indexOf("{"));
+  if (!body) throw new Error("docs.json does not open with a JSON object.");
+
   for (const key of path.slice(0, -1)) {
-    region = findObjectRegion(raw, key, region);
-    if (!region) {
+    const child = findChild(raw, body, key);
+    if (!child) {
       throw new Error(`docs.json has no "${key}" object (deriving ${path.join(".")})`);
+    }
+    body = objectBodyAt(raw, child.valueStart);
+    if (!body) {
+      throw new Error(`docs.json field "${key}" is not an object (deriving ${path.join(".")})`);
     }
   }
 
-  const leaf = path.at(-1);
-  const leafRe = new RegExp(`("${leaf}"\\s*:\\s*)"[^"]*"`);
-  const slice = raw.slice(region.start, region.end);
-  if (!leafRe.test(slice)) {
+  const leaf = findChild(raw, body, path.at(-1));
+  if (!leaf || raw[leaf.valueStart] !== '"') {
     throw new Error(`docs.json has no "${path.join(".")}" string field to derive.`);
   }
 
-  return raw.slice(0, region.start) + slice.replace(leafRe, `$1"${value}"`) + raw.slice(region.end);
+  const close = endOfString(raw, leaf.valueStart);
+  return raw.slice(0, leaf.valueStart) + JSON.stringify(value) + raw.slice(close + 1);
 }
 
 /**
@@ -221,6 +268,34 @@ function nextDocsJson(docsJsonRaw, modes) {
   // The edits are textual; parsing the result is what proves they were not.
   JSON.parse(next);
   return next;
+}
+
+/*
+ * Import-time self-check for the two properties that make the edit safe.
+ *
+ * Both were wrong in the first version of this script and neither was caught
+ * by `JSON.parse`: a regex scan matched a nested object's key and edited the
+ * wrong field, and a look-back escape test mis-read a value ending in a
+ * backslash. Silent corruption of the right-looking shape is exactly what a
+ * downstream parse cannot detect, so the invariants are asserted here.
+ */
+for (const [label, raw, path, expect] of [
+  [
+    "direct children only",
+    '{"outer":{"colors":{"primary":"nested"}},"colors":{"primary":"target"}}',
+    ["colors", "primary"],
+    (doc) => doc.outer.colors.primary === "nested" && doc.colors.primary === "X",
+  ],
+  [
+    "backslash-terminated values",
+    '{"colors":{"a":"t\\\\","primary":"target"}}',
+    ["colors", "primary"],
+    (doc) => doc.colors.a === "t\\" && doc.colors.primary === "X",
+  ],
+]) {
+  if (!expect(JSON.parse(setStringField(raw, path, "X")))) {
+    throw new Error(`sync-docs-tokens.mjs JSON walker is wrong: ${label}`);
+  }
 }
 
 function main() {

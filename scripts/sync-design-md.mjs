@@ -276,16 +276,18 @@ function foregroundPairs(lightVars) {
 }
 
 /**
- * WCAG verdict for a ratio.
+ * WCAG verdict for a ratio, for TEXT ON ITS OWN FILL (SC 1.4.3) only.
  *
- * Three bands, because 3:1 is a real pass for large text (>=24px, or >=18.66px
- * bold) and for UI component boundaries under SC 1.4.11 — but not for the body
- * copy an agent is most likely to write.
+ * The middle band deliberately does NOT mention UI-component contrast. SC
+ * 1.4.11 is about a component's boundary against the surface AROUND it, which
+ * is a different pair of colors: light `primary` clears 3:1 against its own
+ * label but sits at 2.85:1 against the page, so a combined "large text & UI"
+ * label would tell an agent a boundary passes when it fails.
  */
 function verdict(ratio) {
   if (ratio >= 4.5) return "AA, any text";
-  if (ratio >= 3) return "Large text & UI only";
-  return "**Fails 3:1**";
+  if (ratio >= 3) return "Large text only";
+  return "**Below 3:1 — no text**";
 }
 
 /** The generated contrast table, both modes, worst pairs first. */
