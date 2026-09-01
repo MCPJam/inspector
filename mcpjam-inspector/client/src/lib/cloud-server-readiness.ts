@@ -61,13 +61,40 @@ export type CloudServerReadiness =
   | { status: "ok" }
   /** At least one target resolves to zero servers — the `ENV_NO_SERVERS` shape. */
   | { status: "no_servers"; labels: string[] }
-  /** Every server a target resolves to is unreachable from the cloud. */
-  | { status: "local_only"; labels: string[]; serverNames: string[] };
+  /** A target carries a server the run refuses: one stdio member, or a set
+   * that is unreachable end to end. `serverNames` lists only the offenders. */
+  | { status: "unrunnable_servers"; labels: string[]; serverNames: string[] };
 
-function classifyLocalOnly(
-  servers: readonly CloudServerCatalogEntry[]
+/**
+ * The servers in this set that would sink the run, or none.
+ *
+ * One stdio server is enough: the runner refuses it whatever else the target
+ * resolves to. Locality short of that only counts for the set as a whole — a
+ * loopback URL beside a reachable server has not been observed to fail, and
+ * blocking on it would be a guess.
+ */
+export function unrunnableServers(
+  servers: readonly CloudServerCatalogEntry[],
+): CloudServerCatalogEntry[] {
+  const unreachable = servers.filter((server) =>
+    isLocalOnlyMcpServerConfig(server),
+  );
+  if (unreachable.length === 0) return [];
+  // Nothing here can run: name them all, or the user fixes one and fails again.
+  if (unreachable.length === servers.length) return unreachable;
+  // Otherwise only a stdio member sinks an otherwise-fine set.
+  return unreachable.filter((server) => typeof server.command === "string");
+}
+
+/**
+ * Whether a cloud run against exactly these servers can start. An empty set
+ * cannot: it resolves to zero servers, even though there is nothing
+ * unreachable to name.
+ */
+export function serversAreRunnable(
+  servers: readonly CloudServerCatalogEntry[],
 ): boolean {
-  return servers.every((server) => isLocalOnlyMcpServerConfig(server));
+  return servers.length > 0 && unrunnableServers(servers).length === 0;
 }
 
 /**
@@ -77,7 +104,7 @@ function classifyLocalOnly(
  * because a false block would wall a user off from a setup that runs fine. The
  * resolver's own `ENV_NO_SERVERS` remains the backstop for anything we skip.
  *
- * `no_servers` outranks `local_only`: it needs a different fix (connect or
+ * `no_servers` outranks `unrunnable_servers`: it needs a different fix (connect or
  * enroll a server, versus make an existing one reachable), and reporting the
  * emptier problem first keeps the copy to one instruction.
  */
@@ -88,8 +115,8 @@ export function assessCloudServerReadiness(args: {
 }): CloudServerReadiness {
   const byId = new Map(args.servers.map((server) => [server._id, server]));
   const emptyLabels: string[] = [];
-  const localOnlyLabels: string[] = [];
-  const localOnlyServerNames = new Set<string>();
+  const unrunnableLabels: string[] = [];
+  const unrunnableServerNames = new Set<string>();
 
   for (const target of args.targets) {
     if (target.opaque) continue;
@@ -118,25 +145,27 @@ export function assessCloudServerReadiness(args: {
     }
 
     if (candidates.length === 0) continue;
-    if (!classifyLocalOnly(candidates)) continue;
-    localOnlyLabels.push(target.label);
-    for (const server of candidates) localOnlyServerNames.add(server.name);
+    const unrunnable = unrunnableServers(candidates);
+    if (unrunnable.length === 0) continue;
+    unrunnableLabels.push(target.label);
+    for (const server of unrunnable) unrunnableServerNames.add(server.name);
   }
 
   if (emptyLabels.length > 0) {
     return { status: "no_servers", labels: emptyLabels };
   }
-  if (localOnlyLabels.length > 0) {
+  if (unrunnableLabels.length > 0) {
     return {
-      status: "local_only",
-      labels: localOnlyLabels,
-      serverNames: [...localOnlyServerNames],
+      status: "unrunnable_servers",
+      labels: unrunnableLabels,
+      serverNames: [...unrunnableServerNames],
     };
   }
   return { status: "ok" };
 }
 
-function joinLabels(labels: readonly string[]): string {
+/** The one prose form for a list of labels, shared by every block surface. */
+export function joinLabels(labels: readonly string[]): string {
   if (labels.length <= 2) return labels.join(" and ");
   return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
@@ -164,7 +193,7 @@ export function describeCloudServerBlock(readiness: CloudServerReadiness): {
     };
   }
   return {
-    message: `${subject} only ${verb} servers this run can't reach: ${joinLabels(readiness.serverNames)}.`,
+    message: `${subject} ${verb} servers this run can't reach: ${joinLabels(readiness.serverNames)}.`,
     detail:
       "Sessions run in MCPJam's cloud, which can't reach a stdio server or a localhost/private-address URL. Expose the server over HTTPS (Create tunnel on its card does this) and point the client at that URL, or run it from a local surface instead.",
   };

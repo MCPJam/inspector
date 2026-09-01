@@ -1107,8 +1107,8 @@ async function handleTurn(c: Context): Promise<Response> {
     const tools = noTools
       ? ({} as ToolSet)
       : body.maxToolCalls !== undefined && body.maxToolCalls > 0
-        ? capToolCalls(prepared.allTools, body.maxToolCalls)
-        : prepared.allTools;
+      ? capToolCalls(prepared.allTools, body.maxToolCalls)
+      : prepared.allTools;
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
@@ -1129,7 +1129,8 @@ async function handleTurn(c: Context): Promise<Response> {
     const inputMessages = [...priorMessages, userMessage];
 
     let lastEngineError:
-      { message: string; code?: string; httpStatus?: number } | undefined;
+      | { message: string; code?: string; httpStatus?: number }
+      | undefined;
 
     // Past this line the turn may have spent. See `modelCallStarted`.
     modelCallStarted = true;
@@ -1206,7 +1207,7 @@ async function handleTurn(c: Context): Promise<Response> {
         message,
         {
           reason: rateLimited
-            ? (lastEngineError?.code ?? "ORG_RATE_LIMIT")
+            ? lastEngineError?.code ?? "ORG_RATE_LIMIT"
             : "TURN_FAILED",
         },
       );
@@ -1296,6 +1297,14 @@ async function handleTurn(c: Context): Promise<Response> {
       toolCallCount: result.toolCalls.length,
     });
 
+    // No materialized project secret can be in this turn's payloads: this route
+    // runs MCP SERVER TOOLS ONLY — there is no sandbox and no bash — so nothing
+    // was ever delivered into a box for a tool to echo back. The parameter is
+    // threaded rather than dropped so that the day this route gains a sandbox,
+    // the scrub is already in the path instead of a thing to remember; wiring
+    // it then is one assignment here.
+    const secretScrubber = undefined;
+
     return v1Resource(c, {
       // May be null ONLY when the persist did not land — the caller then knows
       // from `persisted.outcome` that there is nothing to read back yet, which
@@ -1309,7 +1318,11 @@ async function handleTurn(c: Context): Promise<Response> {
       projectId,
       reply: extractAssistantText(result),
       finishReason: result.finishReason ?? null,
-      toolCalls: joinToolCalls(result.toolCalls, result.toolResults),
+      toolCalls: joinToolCalls(
+        result.toolCalls,
+        result.toolResults,
+        secretScrubber,
+      ),
       trace: {
         turnId: leaseTurnId,
         spanCount: result.turnTrace.spans?.length ?? 0,

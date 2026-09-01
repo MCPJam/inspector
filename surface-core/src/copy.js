@@ -74,12 +74,171 @@ export function announcementFor(code, operation, details = {}) {
 }
 
 /**
+ * The user-value chain vocabulary, forked into this package on purpose.
+ *
+ * surface-core has ZERO dependencies so a bot can vendor the directory, which
+ * rules out importing `@mcpjam/sdk/contract` here the way every other reader of
+ * this vocabulary does. A fork of a CLOSED vocabulary that nothing checks is a
+ * fork that goes stale silently, so the guard lives one package up:
+ * `slack-app/tests/user-value-chain-labels.test.js` (slack-app may depend on
+ * the SDK) asserts these three maps are total over `DECISION_LABEL_VOCABULARIES`
+ * and that every value is byte-identical to the SDK's own label. Add a stage
+ * reason to the contract and that test names this file.
+ *
+ * Deliberately NOT a `?? value` lookup at the call sites below: an unknown
+ * member reads as ABSENT and drops the sentence, because the alternative is
+ * printing `argumentMismatch` at a human — the exact failure the labels exist
+ * to prevent, dressed up as having rendered something.
+ */
+export const CHAIN_STAGE_LABELS = Object.freeze({
+	connection: "Connection",
+	discovery: "Discovery",
+	selection: "Selection",
+	call: "Tool call",
+	response: "Response",
+	userValue: "User value",
+});
+
+/** The coarse bucket a non-passing run is grouped under. */
+export const CHAIN_FAILURE_CATEGORY_LABELS = Object.freeze({
+	setup: "setup",
+	metadata: "tool metadata",
+	selection: "tool selection",
+	arguments: "call arguments",
+	serverData: "server data",
+	userValue: "user value",
+	evaluator: "evaluator",
+});
+
+/** Why a stage landed where it did — fragments that complete "…because <x>". */
+export const CHAIN_REASON_LABELS = Object.freeze({
+	noSpanChannel: "this run captures no evidence channel for that stage",
+	noEvidenceCaptured: "nothing eligible for that stage was captured",
+	matchVerdictUnavailable:
+		"extra tool calls were captured but the run did not report whether its match options tolerate them",
+	traceAbsent: "the iteration recorded no trace",
+	executorEmitsNoSpans: "the executor emitted no spans",
+	blockedByPolicy: "a policy blocked the run before it could be measured",
+	evaluatorError:
+		"the evaluator itself failed, so the run says nothing about the server",
+	providerError:
+		"the model provider failed the call, so this stage was never measured",
+	setupAborted: "the environment was never prepared, so the test never began",
+	connectFailed:
+		"the configured server was reached and initialize failed there",
+	toolsListFailed: "initialize succeeded and listing tools failed",
+	egressUnverified:
+		"the connection failed with no evidence that our own network egress works",
+	lifecycleStopped: "the run was stopped mid-flight",
+	notAuthored: "the case asserts nothing this stage could decide",
+	earlierStageFailed: "an earlier stage failed",
+	missingToolCall: "an expected tool call was never made",
+	unexpectedToolCall: "a tool call was made that the case did not expect",
+	argumentMismatch: "the call arguments did not match what the case expects",
+	toolError: "the server reported a tool error",
+	protocolError: "the call never produced a result",
+	renderFailed: "the widget did not render",
+	predicateFailed: "a check on the result did not hold",
+	observed: "the evidence was inspected and the stage held",
+	impliedByLaterEvidence: "a later stage's success implies it",
+	judgeObserved: "the LLM judge scored at or above the threshold",
+	judgePartial:
+		"the LLM judge scored inside the partial band — at or above the floor, below the threshold",
+	judgeFailed: "the LLM judge scored below the partial floor",
+	judgePending: "an LLM judge verdict is owed and has not arrived",
+	judgeNotRequested: "no LLM judge verdict was ever owed",
+});
+
+/**
+ * A member's label, or `undefined` for anything the map does not OWN.
+ *
+ * `map[member]` on its own is NOT that check, and the difference is visible in
+ * somebody's channel. Every plain object inherits `constructor`, `toString`,
+ * `valueOf` and friends from `Object.prototype`, so a payload whose `reason`
+ * reads `"constructor"` resolves to a FUNCTION — truthy — and the callers
+ * below, which drop the sentence on a falsy label, instead render
+ * "First break: Selection — function Object() { [native code] }".
+ *
+ * Nothing on this path validates the payload against the vocabulary: the
+ * watcher fetches the decision summary and hands it straight here. So the
+ * own-property test is the whole guard, and it is what makes the maps' stated
+ * contract — an unknown member reads as ABSENT — actually true.
+ *
+ * @param {Record<string, string>} map
+ * @param {unknown} member
+ * @returns {string | undefined}
+ */
+function labelFor(map, member) {
+	return typeof member === "string" && Object.hasOwn(map, member)
+		? map[member]
+		: undefined;
+}
+
+/**
+ * WHERE THE CHAIN BROKE, in one sentence, from a run's decision summary.
+ *
+ * The second half of the answer a terminal non-pass owes a reader: the outcome
+ * line says what was decided and how much was measured; this says how far value
+ * travelled before it stopped. Read from the FIRST diagnostic — the summary
+ * orders them, and one break named precisely beats six rows nobody scrolls to
+ * in a chat client.
+ *
+ * Returns "" rather than a hedge whenever the summary does not establish a
+ * break: an unverified or absent chain, a stage this build has no word for, a
+ * summary that never arrived. A caller appends nothing, and the outcome line is
+ * exactly what it was before — which is the whole fail-soft contract.
+ *
+ * NOTHING HERE DIAGNOSES. A first failed stage is a LOCATION and a failure
+ * category is a BUCKET; neither is a claim about why, and neither authorizes
+ * telling a reader what to change.
+ *
+ * @param {any} summary the `decision-summary` resource, or null
+ * @returns {string}
+ */
+export function formatFirstBreak(summary) {
+	const chain = summary?.diagnostics?.items?.[0]?.chain;
+	// `verified` alone carries stages: an `unverified` derivation had its claims
+	// withheld on purpose, and `absent` never offered any.
+	if (chain?.status !== "verified") return "";
+	const stage = chain.firstFailedStage;
+	if (typeof stage === "string") {
+		const stageLabel = labelFor(CHAIN_STAGE_LABELS, stage);
+		if (!stageLabel) return "";
+		const row = (Array.isArray(chain.stages) ? chain.stages : []).find(
+			(/** @type {any} */ candidate) => candidate?.stage === stage,
+		);
+		const reason = labelFor(CHAIN_REASON_LABELS, row?.reason);
+		return reason
+			? `First break: ${stageLabel} — ${reason}`
+			: `First break: ${stageLabel}`;
+	}
+	// A setup abort and an evaluator error reach NO stage and still carry a
+	// category — the derivation contract says so explicitly. Naming only the
+	// bucket is the honest thing to say about a run that never got to a stage;
+	// inventing a stage for it would put a location on a run that had none.
+	const category = labelFor(
+		CHAIN_FAILURE_CATEGORY_LABELS,
+		chain.failureCategory,
+	);
+	return category ? `No stage was reached — grouped under ${category}` : "";
+}
+
+/**
+ * What a finished run decided, and — for anything that is not a clean pass —
+ * where its chain broke.
+ *
+ * `decisionSummary` is OPTIONAL and its absence is never an error: the watcher
+ * fetches it fail-soft, so a deployment that does not serve the route, a read
+ * that timed out, or a run with no verified chain all land here as `undefined`
+ * and the line renders exactly as it did before the chain existed.
+ *
  * @param {{status:string,result?:string|null,summary?:{passed?:number,total?:number}}} run
  * @param {string | {url?: string, actorId?: string} | null | undefined} url
  * @param {string} [actorId]
+ * @param {any} [decisionSummary] the run's `decision-summary` resource, or null
  * @returns {StructuredContent}
  */
-export function formatRunOutcome(run, url, actorId) {
+export function formatRunOutcome(run, url, actorId, decisionSummary) {
 	if (url && typeof url === "object") {
 		actorId = url.actorId;
 		url = url.url;
@@ -88,19 +247,34 @@ export function formatRunOutcome(run, url, actorId) {
 		run.summary?.total === undefined
 			? ""
 			: ` (${run.summary.passed ?? 0}/${run.summary.total} passed)`;
+	const passed = run.status === "completed" && run.result === "passed";
+	// BOTH conjuncts, mirroring the pass branch above it. The watcher only calls
+	// this on a terminal status so the status half is defensive symmetry — but a
+	// `result` read on its own is exactly how a still-running run's stale field
+	// would get announced as a verdict.
+	const inconclusive =
+		run.status === "completed" && run.result === "inconclusive";
 	const link = url
 		? {
 				link: {
 					url,
-					label:
-						run.status === "completed" && run.result === "passed"
-							? "see the details"
+					label: passed
+						? "see the details"
+						: inconclusive
+							? "see what it measured"
 							: "details",
 				},
 			}
 		: null;
 	const who = actorId ? [" — started by ", { mention: actorId }] : [];
-	if (run.status === "completed" && run.result === "passed")
+	// On its own line, not spliced into the outcome sentence. The verdict and the
+	// chain answer two different questions ("what was decided" and "how far did
+	// value get"), and a chat client renders the break where a reader looks for
+	// it rather than behind a fourth em-dash. The link in the line above is the
+	// evidence pointer; `evidence.tracePath` is relative to the API root, so
+	// there is no second URL a chat reader could follow.
+	const chainLine = passed ? [] : chainLineParts(decisionSummary);
+	if (passed)
 		return {
 			severity: "success",
 			code: "run_passed",
@@ -110,13 +284,39 @@ export function formatRunOutcome(run, url, actorId) {
 		return {
 			severity: "info",
 			code: "run_cancelled",
-			parts: ["Run cancelled", ...who, ...(link ? [" — ", link] : [])],
+			parts: [
+				"Run cancelled",
+				...who,
+				...(link ? [" — ", link] : []),
+				...chainLine,
+			],
 		};
 	if (run.status === "timed_out")
 		return {
 			severity: "warning",
 			code: "run_timed_out",
-			parts: [`Run timed out${counts}`, ...who, ...(link ? [" — ", link] : [])],
+			parts: [
+				`Run timed out${counts}`,
+				...who,
+				...(link ? [" — ", link] : []),
+				...chainLine,
+			],
+		};
+	// A NO-VERDICT IS NOT A FAILURE. `inconclusive` is a decision the validity
+	// phase reached — the run did not measure the server well enough to judge it
+	// — and falling through to the red branch below rendered it as "Run
+	// inconclusive — see what broke", sending a reader to hunt for a defect that
+	// nothing in the run claims to have found.
+	if (inconclusive)
+		return {
+			severity: "warning",
+			code: "run_inconclusive",
+			parts: [
+				`Run inconclusive${counts} — it did not measure the server well enough to judge it`,
+				...who,
+				...(link ? [" — ", link] : []),
+				...chainLine,
+			],
 		};
 	return {
 		severity: "error",
@@ -125,8 +325,18 @@ export function formatRunOutcome(run, url, actorId) {
 			`Run ${run.result === "failed" ? "failed" : run.status}${counts}`,
 			...who,
 			...(link ? [" — see what broke: ", link] : []),
+			...chainLine,
 		],
 	};
+}
+
+/**
+ * The chain sentence as message parts, or [] when there is none to tell.
+ * @param {any} decisionSummary
+ */
+function chainLineParts(decisionSummary) {
+	const sentence = formatFirstBreak(decisionSummary);
+	return sentence ? ["\n", sentence] : [];
 }
 
 /**
