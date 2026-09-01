@@ -182,18 +182,31 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   /** One in-flight still at a time; see `publishStill`. */
   private stillInFlight = false;
   /**
-   * A capture that hit `STILL_TIMEOUT_MS` and has still not been answered.
+   * A `Page.captureScreenshot` the browser has not answered yet.
    *
-   * The timeout frees the CALLER, not the command: Playwright keeps a
-   * timed-out `send`'s callback registered until the browser replies, and CDP
-   * has no way to cancel one. So the timeout alone bounds nothing — the
-   * screenshot poll asks again a second later, and a renderer that stays
-   * wedged accumulates a pending command per tick for as long as the pane is
-   * open. Refusing to start another while one is outstanding holds that at
-   * ONE, and the browser's eventual answer is also the signal that it is worth
-   * asking again.
+   * Set before the command is sent and cleared only when THAT command
+   * settles, which is what makes it a bound rather than a hint. Both halves
+   * are load-bearing, and both were wrong in the first version of this:
+   *
+   * Set on TIMEOUT instead of on send, it does not engage for five seconds —
+   * and a screenshot poll asking every second has already put five commands in
+   * flight by then. Cleared by whichever command happens to settle, it reopens
+   * the gate while a permanently stuck one is still registered, so the pile
+   * grows again every time a later one comes back.
+   *
+   * Why a bound is needed at all: `STILL_TIMEOUT_MS` frees the CALLER, not the
+   * command. Playwright keeps a timed-out `send`'s callback registered until
+   * the browser replies, and CDP cannot cancel one — so without this, a wedged
+   * renderer accumulates a pending command per poll tick for as long as
+   * somebody leaves the pane open.
+   *
+   * The cost is that two callers wanting a capture at the same instant get one
+   * picture between them — an invocation's evidence screenshot overlapping a
+   * settle still, in practice. That path is best-effort already (the timeline
+   * may say "no screenshot"), and a hard bound of one outstanding command is
+   * worth more than the occasional thumbnail.
    */
-  private captureOutstanding = false;
+  private captureInFlight = false;
   /**
    * An oversize frame arrived while a still was already being captured.
    *
@@ -614,8 +627,12 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    */
   private async captureStill(quality: number): Promise<string | undefined> {
     // Nothing to gain by asking a browser that has not answered the last one,
-    // and something to lose — see `captureOutstanding`.
-    if (this.captureOutstanding) return undefined;
+    // and something to lose — see `captureInFlight`.
+    if (this.captureInFlight) return undefined;
+    this.captureInFlight = true;
+    const free = () => {
+      this.captureInFlight = false;
+    };
     try {
       const sent = this.cdp.send(
         "Page.captureScreenshot" as never,
@@ -627,21 +644,21 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           fromSurface: true,
         } as never,
       );
+      // Released by the COMMAND settling, not by this function returning.
+      // Whatever it eventually is — a picture nobody is waiting for any more,
+      // or an error — it is the browser answering, which is the only thing
+      // that says the next capture is worth sending. Releasing it where the
+      // timeout gives up instead would leave the command registered and the
+      // gate open, which is the accumulation this exists to prevent.
+      void sent.then(free, free);
       const result = (await withTimeout(sent, STILL_TIMEOUT_MS)) as
         | { data?: string }
         | undefined;
-      if (result === undefined) {
-        this.captureOutstanding = true;
-        // Whatever it eventually is — a picture nobody is waiting for any
-        // more, or an error — it means the browser is answering again.
-        const free = () => {
-          this.captureOutstanding = false;
-        };
-        void sent.then(free, free);
-        return undefined;
-      }
       return typeof result?.data === "string" ? result.data : undefined;
     } catch {
+      // A `send` that threw synchronously registered nothing to release it.
+      // Idempotent, so the settled-command path above may also have run.
+      free();
       return undefined;
     }
   }

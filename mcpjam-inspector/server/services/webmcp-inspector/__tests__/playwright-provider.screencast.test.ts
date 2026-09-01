@@ -619,22 +619,30 @@ describe("PlaywrightWebMcpSession screencast", () => {
     const h = await startedWithFakeClock({ still: held.still });
 
     const first = h.session.captureScreenshot();
-    await vi.advanceTimersByTimeAsync(STILL_TIMEOUT_MS + 100);
-    await expect(first).resolves.toBeUndefined();
-    expect(h.stills).toHaveBeenCalledTimes(1);
 
-    // The poll asks again a second later. The timeout freed the CALLER, not
-    // the command — Playwright keeps a timed-out `send`'s callback registered
-    // until the browser replies, and CDP cannot cancel one — so asking again
-    // now would add a pending command per tick for as long as the renderer
-    // stays wedged, and the pane can stay open for hours.
+    // A poll tick, well INSIDE the timeout: the first command has not failed
+    // yet, it simply has not answered. A guard that engages only once
+    // something times out is no guard at all here — a poll asking every second
+    // has five commands in flight before the first one gives up.
+    await vi.advanceTimersByTimeAsync(1_000);
     const second = h.session.captureScreenshot();
     await vi.advanceTimersByTimeAsync(0);
     expect(h.stills).toHaveBeenCalledTimes(1);
     await expect(second).resolves.toBeUndefined();
 
+    await vi.advanceTimersByTimeAsync(STILL_TIMEOUT_MS);
+    await expect(first).resolves.toBeUndefined();
+
+    // And still refused after the timeout, because the timeout freed the
+    // CALLER: Playwright keeps the command's callback registered until the
+    // browser replies, and CDP cannot cancel one.
+    const third = h.session.captureScreenshot();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+    await expect(third).resolves.toBeUndefined();
+
     // The browser answering at last — with a picture nobody is waiting for any
-    // more — is also what says it is worth asking again.
+    // more — is what says the next capture is worth sending.
     held.release();
     await vi.advanceTimersByTimeAsync(0);
     await expect(h.session.captureScreenshot()).resolves.toBe(SMALL_STILL);
