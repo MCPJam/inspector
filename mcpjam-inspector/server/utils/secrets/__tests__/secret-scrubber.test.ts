@@ -24,7 +24,7 @@ describe("createSecretScrubber", () => {
     expect(createSecretScrubber([])).toBeNull();
     expect(
       createSecretScrubber([{ name: "PIN", value: "1234" }]),
-      "a value under the length floor must not be registered",
+      "a value under the length floor must not be registered"
     ).toBeNull();
   });
 
@@ -39,7 +39,7 @@ describe("createSecretScrubber", () => {
     ]);
     expect(scrubber?.size).toBe(1);
     expect(scrubber!.scrubString(`${short} ${long}`)).toBe(
-      `${short} [secret:LONG]`,
+      `${short} [secret:LONG]`
     );
   });
 });
@@ -48,11 +48,9 @@ describe("scrubString", () => {
   it("replaces every occurrence, not just the first", () => {
     const scrubber = createSecretScrubber([STRIPE])!;
     expect(
-      scrubber.scrubString(
-        `export A=${STRIPE.value}\nexport B=${STRIPE.value}`,
-      ),
+      scrubber.scrubString(`export A=${STRIPE.value}\nexport B=${STRIPE.value}`)
     ).toBe(
-      "export A=[secret:STRIPE_API_KEY]\nexport B=[secret:STRIPE_API_KEY]",
+      "export A=[secret:STRIPE_API_KEY]\nexport B=[secret:STRIPE_API_KEY]"
     );
   });
 
@@ -94,10 +92,10 @@ describe("scrubString", () => {
     const outer = { name: "OUTER", value: "Bearer 0123456789abcdef" };
     const scrubber = createSecretScrubber([inner, outer])!;
     expect(scrubber.scrubString(`auth: ${outer.value}`)).toBe(
-      "auth: [secret:OUTER]",
+      "auth: [secret:OUTER]"
     );
     expect(scrubber.scrubString(`raw: ${inner.value}`)).toBe(
-      "raw: [secret:INNER]",
+      "raw: [secret:INNER]"
     );
   });
 });
@@ -155,7 +153,7 @@ describe("scrubDeep", () => {
     // stops being a plain object, which the traversal guard then skips whole.
     const scrubber = createSecretScrubber([STRIPE])!;
     const input = JSON.parse(
-      `{"__proto__": {"leak": "${STRIPE.value}"}, "keep": "ok"}`,
+      `{"__proto__": {"leak": "${STRIPE.value}"}, "keep": "ok"}`
     );
     const out = scrubber.scrubDeep(input) as Record<string, unknown>;
     expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
@@ -196,9 +194,9 @@ describe("scrubDeep", () => {
       chatSessionId: "[secret:ODD_KEY]",
       payload: { echoed: "[secret:ODD_KEY]" },
     });
-    expect(Object.prototype.hasOwnProperty.call(scrubbed, "chatSessionId")).toBe(
-      true,
-    );
+    expect(
+      Object.prototype.hasOwnProperty.call(scrubbed, "chatSessionId")
+    ).toBe(true);
   });
 
   it("still redacts a real value inside serialized JSON", () => {
@@ -257,7 +255,7 @@ describe("scrubDeep", () => {
 
     const scrubbed = scrubber.scrubSerializedJson(body);
     expect(JSON.parse(JSON.parse(scrubbed).output).blob).toBe(
-      "[secret:PEM_KEY]",
+      "[secret:PEM_KEY]"
     );
     expect(scrubbed).not.toContain("BEGIN");
   });
@@ -268,7 +266,7 @@ describe("scrubDeep", () => {
     const scrubber = createSecretScrubber([STRIPE])!;
     const body = JSON.stringify({ key: STRIPE.value });
     expect(JSON.parse(scrubber.scrubSerializedJson(body)).key).toBe(
-      `[secret:${STRIPE.name}]`,
+      `[secret:${STRIPE.name}]`
     );
   });
 
@@ -342,7 +340,7 @@ describe("scrubDeep", () => {
     let deep: Record<string, unknown> = { n: 7, b: false, nil: null };
     for (let i = 0; i < 7; i++) deep = { nested: deep };
     const serialized = JSON.stringify(
-      createSecretScrubber([STRIPE])!.scrubDeep(deep),
+      createSecretScrubber([STRIPE])!.scrubDeep(deep)
     );
     expect(serialized).toContain('"n":7');
     expect(serialized).toContain('"b":false');

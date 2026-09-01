@@ -89,7 +89,7 @@ function replacementFor(name: string): string {
  * function that usually does nothing.
  */
 export function createSecretScrubber(
-  secrets: readonly SecretRegistryEntry[],
+  secrets: readonly SecretRegistryEntry[]
 ): SecretScrubber | null {
   // LONGEST FIRST. If two secrets overlap — one value a prefix or substring of
   // another, which happens when a token and a `Bearer <token>` form are both
@@ -157,14 +157,14 @@ export function createSecretScrubber(
   // prevents between overlapping secrets.
   const byLongestSearch = (
     a: { search: string },
-    b: { search: string },
+    b: { search: string }
   ): number => b.search.length - a.search.length;
   needles.sort(byLongestSearch);
   jsonNeedles.sort(byLongestSearch);
 
   function applyNeedles(
     input: string,
-    list: readonly { search: string; replace: string }[],
+    list: readonly { search: string; replace: string }[]
   ): string {
     let out = input;
     for (const needle of list) {
@@ -268,7 +268,7 @@ export function createSecretScrubber(
       if (seen.has(value)) return CYCLE_MARKER as unknown as T;
       seen.add(value);
       const out = value.map((item) =>
-        scrubDeepInner(item, depth + 1, seen),
+        scrubDeepInner(item, depth + 1, seen)
       ) as unknown as T;
       seen.delete(value);
       return out;
@@ -283,7 +283,7 @@ export function createSecretScrubber(
       seen.add(value as object);
       const out: Record<string, unknown> = {};
       for (const [key, item] of Object.entries(
-        value as Record<string, unknown>,
+        value as Record<string, unknown>
       )) {
         // KEYS ARE SCRUBBED TOO. The tempting rule is that a key is a field
         // name rather than a payload, so no producer would ever build one out

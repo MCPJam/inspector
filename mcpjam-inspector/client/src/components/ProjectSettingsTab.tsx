@@ -42,7 +42,7 @@ function XaaTestDefaultsSection({
   canManage: boolean;
   onUpdateProject: (
     projectId: string,
-    updates: Partial<Project>,
+    updates: Partial<Project>
   ) => Promise<void>;
 }) {
   const [subject, setSubject] = useState(storedIdentity?.subject ?? "");
@@ -74,7 +74,7 @@ function XaaTestDefaultsSection({
     const bothEmpty = trimmedSubject === "" && trimmedEmail === "";
     if (!bothSet && !bothEmpty) {
       setValidationError(
-        "Enter both a subject and an email, or clear both fields.",
+        "Enter both a subject and an email, or clear both fields."
       );
       return;
     }
@@ -189,7 +189,7 @@ interface ProjectSettingsTabProps {
   organizationName?: string;
   onUpdateProject: (
     projectId: string,
-    updates: Partial<Project>,
+    updates: Partial<Project>
   ) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<boolean>;
   onProjectShared: (sharedProjectId: string, sourceProjectId?: string) => void;
@@ -218,7 +218,7 @@ export function ProjectSettingsTab({
   const projectDescription = project?.description ?? "";
   const isDefault = project?.isDefault ?? false;
   const currentMember = activeMembers.find(
-    (member) => member.email.toLowerCase() === user?.email?.toLowerCase(),
+    (member) => member.email.toLowerCase() === user?.email?.toLowerCase()
   );
   const canManageProjectSettings =
     !isAuthenticated || !convexProjectId ? true : canManageMembers;

@@ -365,25 +365,25 @@ const toUserMessage = (options) => ({
     expect(workspaces?.[0]?.content).toMatch(
       /'@anthropic-ai\/claude-code@[\d.]+': true/
     );
-    expect(workspaces?.[0]?.content).not.toContain(
-      "dangerouslyAllowAllBuilds"
-    );
+    expect(workspaces?.[0]?.content).not.toContain("dangerouslyAllowAllBuilds");
 
     // The second, load-bearing layer for pnpm 10: even if the allow-list
     // setting is renamed again, a skipped build must stay a WARNING so the
     // install step exits zero and the version check below is what reports the
     // broken CLI.
     expect(npmrc?.content).toContain("strict-dep-builds=false");
-    // The adapter DROPPED its by-hand `node install.cjs` rescue from the
-    // recipe: its own pnpm-workspace.yaml now pins the build allow-list, so
-    // the postinstall runs during `pnpm install` itself. What remains is the
-    // verification step — `claude --version` fails the bootstrap loudly if
-    // the binary still didn't materialize.
-    expect(
-      bootstrap?.commands.some((command) =>
-        command.command.includes("install.cjs")
-      )
-    ).toBe(false);
+    // Recent adapter versions retain a conditional `install.cjs` rescue for
+    // older images while still verifying that the CLI materialized. If the
+    // rescue is present it must be guarded by the file check, so a missing
+    // optional postinstall cannot make the bootstrap fail before `--version`.
+    const installCommand = bootstrap?.commands.find((command) =>
+      command.command.includes("install.cjs")
+    );
+    if (installCommand) {
+      expect(installCommand.command).toContain(
+        "if [ -f node_modules/@anthropic-ai/claude-code/install.cjs ]; then"
+      );
+    }
     expect(
       bootstrap?.commands.some((command) =>
         command.command.includes("claude --version")
@@ -521,9 +521,9 @@ const toUserMessage = (options) => ({
 
     it("a harness-native tool name keeps no server attribution", () => {
       for (const id of registeredHarnessIds()) {
-        expect(getHarnessAdapter(id).parseToolName("bash", keyToServerId)).toEqual(
-          { toolName: "bash" }
-        );
+        expect(
+          getHarnessAdapter(id).parseToolName("bash", keyToServerId)
+        ).toEqual({ toolName: "bash" });
       }
     });
 

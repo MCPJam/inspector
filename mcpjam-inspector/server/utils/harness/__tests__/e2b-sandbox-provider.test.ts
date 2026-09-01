@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => {
     constructor(
       public exitCode: number,
       public stdout: string,
-      public stderr: string,
+      public stderr: string
     ) {
       super("exit status " + exitCode);
       this.name = "CommandExitError";
@@ -65,11 +65,11 @@ describe("the pnpm guard", () => {
     // because the box could not reach the package registry reported nothing
     // about the box, the exit code, or the registry.
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(1, "", "npm error code ECONNRESET"),
+      new FakeCommandExitError(1, "", "npm error code ECONNRESET")
     );
 
     await expect(provider().createSession()).rejects.toThrow(
-      /pnpm is missing on sandbox sbx_1.*exit 1.*ECONNRESET/s,
+      /pnpm is missing on sandbox sbx_1.*exit 1.*ECONNRESET/s
     );
   });
 
@@ -77,11 +77,11 @@ describe("the pnpm guard", () => {
     // The message has to point at the actual mechanism, because the fix is an
     // ordering one and nothing else in the failure hints at it.
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(1, "", "network request failed"),
+      new FakeCommandExitError(1, "", "network request failed")
     );
 
     await expect(provider().createSession()).rejects.toThrow(
-      /egress is already locked to the model proxy/i,
+      /egress is already locked to the model proxy/i
     );
   });
 
@@ -109,11 +109,11 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
-      expect.objectContaining({ signal: controller.signal }),
+      expect.objectContaining({ signal: controller.signal })
     );
     expect(sandboxState.run).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
-      expect.objectContaining({ signal: controller.signal }),
+      expect.objectContaining({ signal: controller.signal })
     );
   });
 
@@ -160,7 +160,7 @@ describe("abort plumbing", () => {
         "echo hi",
         expect.objectContaining({
           envs: expect.objectContaining({ STRIPE_API_KEY: "sk_live_x" }),
-        }),
+        })
       );
       expect(stamped).toHaveBeenCalledTimes(1);
     });
@@ -190,7 +190,7 @@ describe("abort plumbing", () => {
       sandboxState.run.mockRejectedValueOnce(new Error("socket hang up"));
 
       await expect(session.run({ command: "echo hi" })).rejects.toThrow(
-        "socket hang up",
+        "socket hang up"
       );
       expect(stamped).not.toHaveBeenCalled();
     });
@@ -199,7 +199,7 @@ describe("abort plumbing", () => {
       const stamped = vi.fn();
       const session = await withEnv(stamped).createSession();
       sandboxState.run.mockRejectedValueOnce(
-        new FakeCommandExitError(2, "", "bad command"),
+        new FakeCommandExitError(2, "", "bad command")
       );
 
       await expect(session.run({ command: "false" })).resolves.toMatchObject({
@@ -218,7 +218,7 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.run).toHaveBeenCalledWith(
       "echo hi",
-      expect.objectContaining({ signal: controller.signal }),
+      expect.objectContaining({ signal: controller.signal })
     );
   });
 
@@ -243,7 +243,7 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
-      expect.objectContaining({ signal: controller.signal }),
+      expect.objectContaining({ signal: controller.signal })
     );
   });
 });
@@ -255,7 +255,7 @@ describe("exec result normalization", () => {
     // pinning that they stay different.
     const session = await provider().createSession();
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(3, "out", "err"),
+      new FakeCommandExitError(3, "out", "err")
     );
 
     await expect(session.run({ command: "false" })).resolves.toEqual({

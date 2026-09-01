@@ -436,8 +436,144 @@ const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
       mcpServers,
       cwd: workdir,`;
 
+/* The 1.0.100 bridge moved the turn loop out of createEmitStreamEvent and
+ * stopped stamping parent_tool_use_id on its own user messages. Keep a
+ * second, deliberately small patch path for that shape. The old path above is
+ * still needed for the canary/stable fixture and is left byte-for-byte
+ * compatible with it. */
+const MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE = `  let streamStarted = false;
+  const partialBlocks = /* @__PURE__ */ new Map();`;
+const MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH = `  let streamStarted = false;
+  let streamedAssistantText = false;
+  let lastEmittedFallbackText;
+  let fallbackTextSeq = 0;
+  const emitAssistantTextFallback = (text) => {
+    const normalized = typeof text === "string" ? text : "";
+    if (!normalized || streamedAssistantText || normalized === lastEmittedFallbackText) return;
+    const id = \`mcpjam-fallback-\${Date.now()}-\${++fallbackTextSeq}\`;
+    emit({ type: "text-start", id });
+    emit({ type: "text-delta", id, delta: normalized });
+    emit({ type: "text-end", id });
+    lastEmittedFallbackText = normalized;
+  };
+  const partialBlocks = /* @__PURE__ */ new Map();`;
+const MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE = `      if (type === "stream_event") {
+        handleStreamEvent(msg.event, partialBlocks, emit);`;
+const MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `      if (type === "stream_event") {
+        if (msg.event?.type === "content_block_delta" && msg.event?.delta?.type === "text_delta" && typeof msg.event?.delta?.text === "string" && msg.event.delta.text.length > 0) {
+          streamedAssistantText = true;
+        }
+        handleStreamEvent(msg.event, partialBlocks, emit);`;
+const MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `        for (const block of msg.message.content) {
+          if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
+const MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `        for (const block of msg.message.content) {
+          if (block.type === "text" && typeof block.text === "string") {
+            emitAssistantTextFallback(block.text);
+            continue;
+          }
+          if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
+const MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `        if (msg.subtype === "success") {
+          const emptyResult = !msg.result?.trim?.();`;
+const MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `        if (msg.subtype === "success") {
+          const emptyResult = !msg.result?.trim?.();
+          if (type === "result" && msg.subtype === "success" && !emptyResult) {
+            emitAssistantTextFallback(msg.result);
+          }`;
+const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE = `  const toUserMessage = (text) => ({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "text", text }]
+    }
+  });`;
+const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH = `  const toUserMessage = (text) => ({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "text", text }]
+    },
+    parent_tool_use_id: null
+  });`;
+const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE = `  const q = claudeSdk.query({`;
+const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOverrideSettingsFor(model) {
+    if (typeof model !== "string") return undefined;
+    let overrides;
+    if (model === "haiku") {
+      overrides = {
+        haiku: "anthropic/claude-haiku-4.5",
+        "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+        "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5"
+      };
+    } else {
+      if (!model.startsWith("claude-")) return undefined;
+      const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
+      if (!match) return undefined;
+      const [, family, major, minor] = match;
+      overrides = {
+        [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
+      };
+    }
+    return { modelOverrides: overrides };
+  }
+  const q = claudeSdk.query({`;
+
+function patchModernClaudeCodeBridgeContent(content: string): string {
+  let patched = content;
+  const replacements = [
+    [
+      MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE,
+      MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH,
+    ],
+    [
+      MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE,
+      MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH,
+    ],
+    [
+      MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE,
+      MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH,
+    ],
+    [
+      MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE,
+      MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH,
+    ],
+    [
+      MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE,
+      MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH,
+    ],
+    [
+      MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE,
+      MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH,
+    ],
+    [
+      CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE,
+      CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH,
+    ],
+  ] as const;
+
+  for (const [needle, replacement] of replacements) {
+    if (!patched.includes(needle)) {
+      throw new Error(
+        "Unable to patch Claude Code bridge bootstrap: modern bridge shape changed"
+      );
+    }
+    patched = patched.replace(needle, replacement);
+  }
+
+  return patched;
+}
+
 function patchClaudeCodeBridgeContent(content: string): string {
   let patched = content;
+
+  // 1.0.100+ uses the direct turn loop (`mcpToolUseIds` is unique to that
+  // shape). Patch it separately because the older closure-based anchors are
+  // intentionally strict drift alarms.
+  if (
+    patched.includes("mcpToolUseIds") &&
+    patched.includes("const partialBlocks")
+  ) {
+    return patchModernClaudeCodeBridgeContent(patched);
+  }
 
   if (!patched.includes("emitAssistantTextFallback")) {
     for (const [needle, replacement] of [
@@ -525,13 +661,15 @@ function patchClaudeCodeBridgeContent(content: string): string {
  * settings from `.npmrc`, so it broke every harness bootstrap the moment the
  * recipe hash changed and snapshots stopped hiding it.
  *
- * WHAT CHANGED AT THE STABLE BUMP. `@ai-sdk/harness-claude-code@1.0.x` now
- * ships its OWN `pnpm-workspace.yaml`, pinning the build it needs by exact
- * version (`allowBuilds: { '@anthropic-ai/claude-code@<v>': true }`), and has
- * dropped the by-hand `install.cjs` rescue from its recipe because it no longer
- * needs one. That is strictly better than our blanket allow, so we no longer
- * write that file — see {@link patchClaudeCodeHarnessBootstrap}, which appends
- * ours only if the adapter stops shipping one.
+ * WHAT CHANGED AT THE STABLE BUMP. Newer `@ai-sdk/harness-claude-code@1.0.x`
+ * releases may ship their OWN `pnpm-workspace.yaml`, pinning the build it
+ * needs by exact version (`allowBuilds: { '@anthropic-ai/claude-code@<v>':
+ * true }`). Older/newly rebuilt adapters may omit it, so
+ * {@link patchClaudeCodeHarnessBootstrap} adds an equivalent version-pinned
+ * file from the bundled manifest and falls back to bounded compatibility
+ * settings only when that manifest cannot be read. The adapter may also keep
+ * a conditional `install.cjs` rescue in its recipe; we leave that command
+ * intact and verify it still ends with `claude --version`.
  *
  * `.npmrc` STAYS. pnpm 10 does not read `allowBuilds` from
  * `pnpm-workspace.yaml`, and the computer template installs pnpm UNPINNED
@@ -556,6 +694,31 @@ const CLAUDE_CODE_BOOTSTRAP_NPMRC =
  *  {@link CLAUDE_CODE_BOOTSTRAP_NPMRC}. */
 const CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE =
   "dangerouslyAllowAllBuilds: true\nstrictDepBuilds: false\n";
+
+function pnpmWorkspaceForClaudeCodeBootstrap(
+  files: Awaited<
+    ReturnType<NonNullable<HarnessAgentAdapter["getBootstrap"]>>
+  >["files"]
+): string {
+  const packageFile = files.find((file) => file.path.endsWith("/package.json"));
+  if (packageFile) {
+    try {
+      const pkg = JSON.parse(packageFile.content) as {
+        dependencies?: Record<string, unknown>;
+      };
+      const version = pkg.dependencies?.["@anthropic-ai/claude-code"];
+      if (
+        typeof version === "string" &&
+        /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)
+      ) {
+        return `allowBuilds:\n  '@anthropic-ai/claude-code@${version}': true\n`;
+      }
+    } catch {
+      // Fall through to the bounded compatibility fallback below.
+    }
+  }
+  return CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE;
+}
 
 export function patchClaudeCodeHarnessBootstrap(
   harness: HarnessAgentAdapter
@@ -597,7 +760,7 @@ export function patchClaudeCodeHarnessBootstrap(
             : [
                 {
                   path: `${bootstrap.bootstrapDir}/pnpm-workspace.yaml`,
-                  content: CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE,
+                  content: pnpmWorkspaceForClaudeCodeBootstrap(bootstrap.files),
                 },
               ]),
         ],

@@ -158,7 +158,7 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 async function streamToBytes(
-  stream: ReadableStream<Uint8Array>,
+  stream: ReadableStream<Uint8Array>
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
@@ -178,7 +178,7 @@ async function streamToBytes(
 }
 
 export function createE2BHarnessSandboxProvider(
-  opts: E2BHarnessSandboxProviderOptions,
+  opts: E2BHarnessSandboxProviderOptions
 ): HarnessV1SandboxProvider {
   const bridgePort = opts.bridgePort ?? 39271;
   const cwd = opts.defaultWorkingDirectory ?? "/home/user";
@@ -208,7 +208,7 @@ export function createE2BHarnessSandboxProvider(
     }
   };
   const mergeEnv = (
-    env: Record<string, string> | undefined,
+    env: Record<string, string> | undefined
   ): Record<string, string> | undefined => {
     if (!sessionEnv) return env;
     return { ...sessionEnv, ...(env ?? {}) };
@@ -221,7 +221,7 @@ export function createE2BHarnessSandboxProvider(
   // (which persists on the box) using the `resumeFrom` state; our provider just
   // has to supply the sandbox connection.
   const connectSession = async (
-    connectSignal?: AbortSignal,
+    connectSignal?: AbortSignal
   ): Promise<HarnessV1NetworkSandboxSession> => {
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
@@ -261,7 +261,7 @@ export function createE2BHarnessSandboxProvider(
             `model proxy, the package registry is unreachable by design — the ` +
             `harness runtime must be installed before that lock. Output: ` +
             (output ? output.slice(-500) : "(none)"),
-          { cause: err },
+          { cause: err }
         );
       }
       throw err;
@@ -273,7 +273,7 @@ export function createE2BHarnessSandboxProvider(
       description:
         `E2B sandbox ${sandbox.sandboxId} (host computer). Working dir ${cwd}. ` +
         `Bridge port ${bridgePort} reachable at ${sandbox.getHost(
-          bridgePort,
+          bridgePort
         )}.`,
 
       // ── file I/O ──────────────────────────────────────────────────────
@@ -309,14 +309,14 @@ export function createE2BHarnessSandboxProvider(
         enforceHarnessWritePath(path);
         await sandbox.files.write(
           [{ path, data: content }],
-          signalOpt(abortSignal),
+          signalOpt(abortSignal)
         );
       },
       writeBinaryFile: async ({ path, content, abortSignal }) => {
         enforceHarnessWritePath(path);
         await sandbox.files.write(
           [{ path, data: u8ToArrayBuffer(content) }],
-          signalOpt(abortSignal),
+          signalOpt(abortSignal)
         );
       },
       writeFile: async ({ path, content, abortSignal }) => {
@@ -324,7 +324,7 @@ export function createE2BHarnessSandboxProvider(
         const bytes = await streamToBytes(content);
         await sandbox.files.write(
           [{ path, data: u8ToArrayBuffer(bytes) }],
-          signalOpt(abortSignal),
+          signalOpt(abortSignal)
         );
       },
 
