@@ -264,12 +264,53 @@ free for reuse; what makes `kill(-pid)` safe anyway is that a pid serving as a
 process-GROUP id is not reissued _while that group has members_ — a guarantee
 about a non-empty group, and `unknown` is exactly the failure to establish it.
 So the general rule that `unknown` gates reporting rather than action does not
-reach this signal: the action needs the very fact `unknown` is missing. `live`
-is different, and does escalate.
+reach this signal: the action needs the very fact `unknown` is missing.
 
-This line has been written both ways within a day, so both directions are now
-pinned by tests, and each was checked to fail against the opposite behaviour
-rather than merely to pass against the current one.
+`live` is necessary but not sufficient, and the first version of this paragraph
+got that wrong — it read the rule as making a non-empty group's id proof that
+the group was ours. It is not. The rule is about the FUTURE of a group that
+still has a member: from that moment its id cannot be reissued underneath us. It
+says nothing about a group that emptied. Once ours emptied its id went free, and
+any unrelated process could have taken that pid, made itself a group leader and
+exited, leaving a live group wearing our recorded id with nothing of ours in it
+— which is what an ordinary shell pipeline whose first stage exits early, or a
+double-forking daemon, leaves behind. So `live` says a group with this id
+exists, not that it is ours.
+
+What makes it ours is an **anchor**: a moment at which the group was known to be
+ours _and_ non-empty. A stranger's group carrying our id can only have been
+created after ours emptied, so it cannot predate the anchor. Inside a single
+termination call there is one — the root was verified alive and carrying its
+recorded birth identity just before being signalled, and a leader belongs to its
+own group — and only the grace window separates it from the probe.
+
+Two paths have no anchor at all, and neither signals now:
+
+- `settleGroup` reached with the root already gone on its FIRST look. Nothing in
+  that call ever saw the tree; the group is reported, not signalled.
+- The janitor's dead-root branch. It only runs for a record whose owning
+  supervisor has provably exited, so arbitrary time has passed since anything of
+  ours was in that group. It reports `escaped` and keeps the record.
+
+That costs a real capability: a stray left behind by a harness that exited on
+its own is no longer swept at `stopSession`. It is reported and its record
+retained instead, which an operator can act on — the trade being that an
+unswept survivor you can see beats a `SIGKILL` delivered to whoever now holds
+the id. Restoring the sweep soundly needs per-MEMBER identity rather than a
+group signal: enumerate the group once at the instant the root exits, while its
+id provably still belongs to us, record each member's pid and birth identity,
+and then verify each with `isSameProcess` before signalling it individually.
+That is immune to pid reuse; it is also a new platform primitive plus supervisor
+plumbing, and is not implemented yet.
+
+Even the anchored signal is bounded rather than airtight: our group could empty
+and its id be reissued inside the grace window. That needs the pid space to wrap
+within a few seconds, and ruling it out needs the same per-member identity proof.
+It is stated here rather than papered over.
+
+These lines have been written both ways, so every direction is pinned by tests,
+and each was checked to fail against the opposite behaviour rather than merely
+to pass against the current one.
 
 ### "Gone" and "cannot tell" are different answers
 

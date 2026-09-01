@@ -484,13 +484,46 @@ export async function terminateOwnedProcessGroup(args: {
    * A descendant that ignores SIGTERM keeps running while the leader exits, so
    * "the root's pid is gone" is not "the tree is gone" — and reporting
    * `graceful` on the root alone is how a session gets announced as stopped
-   * over a live vendor process. Signalling the group here is justified by the
-   * same rule the janitor relies on: a pid still in use as a process-GROUP id
-   * is not handed out as a new process's pid while that group has members, so
-   * this can only reach the group we already proved we own.
+   * over a live vendor process.
+   *
+   * ── What the pid-reuse rule actually gives ──────────────────────────────
+   * A pid still in use as a process-GROUP id is not handed out as a new
+   * process's pid WHILE THAT GROUP HAS MEMBERS. That is a guarantee about the
+   * FUTURE of a non-empty group: from any moment the group has a member, its
+   * id cannot be reissued underneath us.
+   *
+   * It is NOT a statement about the past, and reading it as one is the bug
+   * this signal shipped with. If the group ever emptied, its id was free, and
+   * an unrelated process could have taken that pid, made itself a group leader
+   * (`setsid`/`setpgid`), forked, and exited — leaving a LIVE group carrying
+   * our recorded id with nothing of ours in it. That is not exotic: it is what
+   * an ordinary shell pipeline whose first stage exits early, or any
+   * double-forking daemon, leaves behind. So a point-in-time `live` says a
+   * group with this id exists; it does not say the group is ours.
+   *
+   * ── What makes the signal ours to send ─────────────────────────────────
+   * An ANCHOR: a moment at which we knew this group was ours AND non-empty.
+   * A stranger's group with our id can only have been created after our group
+   * emptied, so it cannot predate the anchor. Inside a single termination call
+   * we have one — the root was verified alive and carrying its recorded birth
+   * identity before we signalled it, and a leader is a member of its own group
+   * — and only the grace window separates it from these probes.
+   *
+   * When the root was ALREADY gone the first time we looked, there is no such
+   * anchor: arbitrary time may have passed since anything of ours was in that
+   * group, which is exactly the janitor's situation after an Inspector
+   * restart. Then the live group is reported, not signalled.
+   *
+   * Not closed, and not claimed: even with the anchor, our group could empty
+   * and its id be reissued inside the grace window. That needs the pid space
+   * to wrap within a few seconds, and ruling it out needs a per-member
+   * identity proof no cheap platform primitive offers — enumeration gives
+   * states, not lineage. It is bounded here rather than eliminated.
    */
   const settleGroup = async (
     goneOutcome: "already-gone" | "graceful" | "forced",
+    /** Was the root proven alive and OURS earlier in this same call? */
+    anchored: boolean,
   ): Promise<
     | { outcome: "already-gone" }
     | { outcome: "graceful" }
@@ -524,8 +557,20 @@ export async function terminateOwnedProcessGroup(args: {
           "neither ruled out nor signalled without risking a reused group id",
       };
     }
-    // `live` is different: it proves the group has a member, which is exactly
-    // the fact that makes the id un-reissuable and the signal ours to send.
+    if (!anchored) {
+      // A live group carries our recorded id, and nothing ties it to our tree:
+      // the root was gone before this call looked even once, so the group may
+      // have emptied and the id been reissued long ago. Report it; the caller
+      // keeps its record and the survivors stay visible.
+      return {
+        outcome: "unknown",
+        reason:
+          "a live process group carries this id, but the root was already " +
+          "gone when the stop began, so the group cannot be tied to this tree",
+      };
+    }
+    // Anchored and `live`: the group had a member of ours moments ago and has
+    // one now, so this is the tree we set out to terminate.
     signalProcessGroup(args.pid, "SIGKILL", platform);
     await new Promise((r) => setTimeout(r, Math.min(args.graceMs, 500)));
     const after = await probeGroup(args.pid, platform);
@@ -540,7 +585,7 @@ export async function terminateOwnedProcessGroup(args: {
   };
 
   const initial = await probeProcess(args.pid, platform);
-  if (initial.state === "gone") return settleGroup("already-gone");
+  if (initial.state === "gone") return settleGroup("already-gone", false);
   if (initial.state === "unknown") {
     // We could not look. Reporting "already-gone" here would let a caller
     // announce a stopped session over a tree that may still be running.
@@ -558,7 +603,7 @@ export async function terminateOwnedProcessGroup(args: {
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollMs));
     if ((await probeProcess(args.pid, platform)).state === "gone") {
-      return settleGroup("graceful");
+      return settleGroup("graceful", true);
     }
   }
 
@@ -568,7 +613,7 @@ export async function terminateOwnedProcessGroup(args: {
   // one `false` — and a probe failure reported here as `graceful` is a caller
   // announcing a stopped session over a tree that may still be running.
   const afterGrace = await probeProcess(args.pid, platform);
-  if (afterGrace.state === "gone") return settleGroup("graceful");
+  if (afterGrace.state === "gone") return settleGroup("graceful", true);
   if (afterGrace.state === "unknown") {
     return { outcome: "unknown", reason: afterGrace.reason };
   }
@@ -583,14 +628,14 @@ export async function terminateOwnedProcessGroup(args: {
   while (Date.now() < killDeadline) {
     await new Promise((r) => setTimeout(r, pollMs));
     if ((await probeProcess(args.pid, platform)).state === "gone") {
-      return settleGroup("forced");
+      return settleGroup("forced", true);
     }
   }
   // The polls above only ever conclude "gone". Ask once more so the difference
   // between "SIGKILL was delivered and the root is STILL there" and "the last
   // few probes could not look" survives into the answer.
   const settled = await probeProcess(args.pid, platform);
-  if (settled.state === "gone") return settleGroup("forced");
+  if (settled.state === "gone") return settleGroup("forced", true);
   if (settled.state === "unknown") {
     return { outcome: "unknown", reason: settled.reason };
   }

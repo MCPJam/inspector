@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  probeProcess,
   readProcessBirthIdentity,
   supportsOwnershipProof,
 } from "../process-identity.js";
@@ -217,6 +218,21 @@ describe("a root that exits while its tree does not", () => {
   it.skipIf(!canOwnProcesses)(
     "retains ownership when the root exits naturally before stop",
     async () => {
+      // The root here is gone before `stopSession` ever looks, so nothing in
+      // the stop ties the surviving group to this tree: the id could have been
+      // released and reissued at any point since the root exited, and an
+      // unrelated leader that has since exited would leave a live group
+      // wearing it. So the stop reports the survivor rather than SIGKILLing a
+      // group it cannot prove is ours, and KEEPS the record, which is the only
+      // durable handle on it. This test previously expected the sweep.
+      //
+      // Restoring the sweep soundly needs per-MEMBER identity, not a group
+      // signal: enumerate the group once at the moment the root exits — while
+      // its id provably still belongs to us — and record each member's pid and
+      // birth identity, then at stop verify each with `isSameProcess` and
+      // signal only those that still match. That is immune to pid reuse, but
+      // it is a new platform primitive plus supervisor plumbing, deliberately
+      // not folded in here.
       const sup = supervisor();
       const handle = await sup.spawnSupervised(
         request("s-natural-desert", "natural-deserter.js"),
@@ -237,15 +253,22 @@ describe("a root that exits while its tree does not", () => {
       ).toBeDefined();
 
       await expect(sup.stopSession("s-natural-desert")).resolves.toEqual({
-        stopped: true,
-        escaped: 0,
+        stopped: false,
+        escaped: 1,
       });
-      expect(await waitForExit(descendant)).toBe(true);
+      // Not signalled, and still visible: an unswept survivor the operator can
+      // still see beats a SIGKILL delivered to whoever now holds the id.
+      expect((await probeProcess(descendant)).state).toBe("alive");
       expect(
         (await listProcessRecords()).find(
           (record) => record.sessionId === "s-natural-desert",
         ),
-      ).toBeUndefined();
+      ).toBeDefined();
+      try {
+        process.kill(descendant, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
     },
   );
 });

@@ -246,6 +246,20 @@ const DESERTING_ROOT = [
   "setInterval(()=>{},1000);",
 ].join("");
 
+/**
+ * A detached group leader that spawns one long-lived grandchild, reports its
+ * pid and then idles. Killing the leader leaves the GROUP live with its leader
+ * gone — the shape in which a recorded pgid can no longer be tied to us.
+ */
+const LEADER_WITH_SURVIVOR = [
+  "const{spawn}=require('node:child_process');",
+  "const k=spawn(process.execPath,['-e',",
+  JSON.stringify("setInterval(()=>{},1000)"),
+  "],{stdio:'ignore'});",
+  "console.log(k.pid);",
+  "setInterval(()=>{},1000);",
+].join("");
+
 /** Poll until `pid` is provably gone, or give up. */
 async function waitForGone(pid: number, timeoutMs = 6_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -348,6 +362,64 @@ describe("a group that cannot be enumerated", () => {
           } catch {
             /* already gone */
           }
+        }
+      }
+    },
+  );
+});
+
+describe("a live group whose root was already gone", () => {
+  it.skipIf(!supportsOwnershipProof())(
+    "reports it rather than signalling a group nothing ties to this tree",
+    async () => {
+      // `live` proves a group with this id EXISTS. It does not prove the group
+      // is ours, and the difference is the whole finding: the pid-reuse rule
+      // ("an id in use as a process-group id is not reissued while that group
+      // has members") is a promise about a group that still has one. A group
+      // that emptied released its id, and an unrelated process could have
+      // taken that pid, led a new group with it and exited — leaving a live
+      // group under our id with nothing of ours in it.
+      //
+      // The other paths through `settleGroup` have an anchor: they proved the
+      // root alive and carrying its recorded birth identity moments earlier,
+      // and a leader belongs to its own group. This path has none — the root
+      // was gone on the very first probe — so it must not signal.
+      const { spawn } = await import("node:child_process");
+      const root = spawn(process.execPath, ["-e", LEADER_WITH_SURVIVOR], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const pid = root.pid!;
+      const survivor = Number(
+        await new Promise<string>((resolve) => {
+          root.stdout!.once("data", (d: Buffer) =>
+            resolve(d.toString().trim()),
+          );
+        }),
+      );
+      expect(survivor).toBeGreaterThan(0);
+      // Read the identity while the root still has one, then kill ONLY the
+      // root so the call below finds it gone on its first look.
+      const identity = await readProcessBirthIdentity(pid);
+      process.kill(pid, "SIGKILL");
+      expect(await waitForGone(pid)).toBe(true);
+
+      try {
+        const outcome = await terminateOwnedProcessGroup({
+          pid,
+          birthIdentity: identity!,
+          graceMs: 2_000,
+          pollMs: 25,
+        });
+        // Not `forced`: nothing was killed, and nothing may be reported
+        // stopped either.
+        expect(outcome.outcome).toBe("unknown");
+        expect((await probeProcess(survivor)).state).toBe("alive");
+      } finally {
+        try {
+          process.kill(survivor, "SIGKILL");
+        } catch {
+          /* already gone */
         }
       }
     },
