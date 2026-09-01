@@ -234,6 +234,14 @@ type HarnessRuntimeAdapterBase = {
    *  turn-end adoption) must address the dirs the ADAPTER wrote, so the root
    *  travels with the adapter instead of being hardcoded per pass. */
   skillsBaseDir: string;
+  /** The options THIS adapter's runtime passes to `writeSkills` for its
+   *  turn-time on-box write, mirrored exactly so the `onSandboxSession`
+   *  pre-seed (see `preseed-adapter-skills.ts`) produces the identical
+   *  projected content hash and the adapter's own write becomes a no-op.
+   *  Claude Code passes `trailingNewline: true`; Codex takes the default.
+   *  Verified against the installed packages' `writeClaudeCodeSkills` /
+   *  `writeCodexSkills` — re-verify on adapter bumps. */
+  skillsWriteOptions: { trailingNewline: boolean };
   /** Shape the runtime skills into this adapter's `skills` param, and report
    *  which skills that actually amounts to (a runtime may reject a name outright
    *  — Codex throws mid-`doStart`, which would fail the whole turn). The caller
@@ -948,6 +956,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
+  // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.
+  skillsWriteOptions: { trailingNewline: true },
   prepareSkills: prepareClaudeCodeSkills,
   // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
   // (skills param + `.mcp.json`), which is not the same contract.
@@ -1049,6 +1059,8 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // adapter in `__tests__/codex-skill-parity.test.ts`.
   supportsSkills: true,
   skillsBaseDir: CODEX_SKILLS_BASE,
+  // Mirrors `writeCodexSkills` in `@ai-sdk/harness-codex` (library default).
+  skillsWriteOptions: { trailingNewline: false },
   prepareSkills: prepareCodexSkills,
   // Codex has no plugin-install interface in the installed harness — MCPJam
   // still projects a plugin's components (skills param, host-executed MCP
