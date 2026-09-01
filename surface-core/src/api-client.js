@@ -383,6 +383,45 @@ export function createApiClient(options = {}) {
 	}
 
 	/**
+	 * THE FIRST THING TO READ ABOUT A FINISHED RUN: what it decided, the
+	 * population that decision covers, and one page of per-trial diagnostics
+	 * carrying the user-value chain and the first failed stage.
+	 *
+	 * Separate from {@link getEvalRun} rather than folded into it because the
+	 * poll loop runs every ten seconds and this document is only worth a request
+	 * ONCE, when a run lands on a terminal status that is not a clean pass.
+	 *
+	 * NO LIMIT IS SENT by default, and that is deliberate: `limit` bounds the
+	 * ITERATIONS SCANNED, not the diagnostics returned, so asking for one would
+	 * scan a single iteration and report an empty failure list for every run
+	 * whose first trial happened to pass.
+	 *
+	 * Callers must treat any error as "no chain to tell" — a deployment that
+	 * predates this route answers 404, which is a fact about the deployment and
+	 * never a fact about the run.
+	 *
+	 * @param {string} runId
+	 * @param {SurfaceContext} ctx
+	 * @param {RequestOptions} [opts]
+	 * @returns {Promise<any>}
+	 */
+	async function getEvalRunDecisionSummary(runId, ctx, opts = {}) {
+		const config = getConfig(ctx, opts);
+		const query = opts.limit
+			? `?limit=${encodeURIComponent(String(opts.limit))}`
+			: "";
+		return requestJson(
+			`${config.baseUrl}/api/v1/projects/${encodeURIComponent(config.projectId)}/eval-runs/${encodeURIComponent(runId)}/decision-summary${query}`,
+			{
+				apiKey: config.apiKey,
+				headers: config.headers,
+				timeoutMs: RUN_TIMEOUT_MS,
+				fetchImpl: opts.fetchImpl,
+			},
+		);
+	}
+
+	/**
 	 * @param {string} runId
 	 * @param {SurfaceContext} ctx
 	 * @param {RequestOptions} [opts]
@@ -546,6 +585,7 @@ export function createApiClient(options = {}) {
 		executeProposedAction,
 		startSuiteRun,
 		getEvalRun,
+		getEvalRunDecisionSummary,
 		listEvalRunIterations,
 		getEvalRunSteps,
 		getJourneyRun,
@@ -561,6 +601,7 @@ export const {
 	executeProposedAction,
 	startSuiteRun,
 	getEvalRun,
+	getEvalRunDecisionSummary,
 	listEvalRunIterations,
 	getEvalRunSteps,
 	getJourneyRun,
