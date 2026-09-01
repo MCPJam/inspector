@@ -31,6 +31,24 @@ export const LOCAL_COMPUTER_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
 
 /**
+ * Local AI SDK harness execution (an official vendor harness running as a
+ * supervised process on the machine that runs this inspector) — server-side
+ * kill switch, enforced independently of any client flag.
+ *
+ * Default OFF, unlike `LOCAL_COMPUTER_ENABLED`. The difference is deliberate:
+ * a local bash command is discrete and separately approved, while a local
+ * harness is a long-lived agent process. It stays off until an operator turns
+ * it on for an attended user AND the compatibility manifest carries
+ * conformance evidence for that harness/runtime/platform/mode tuple — the flag
+ * enables the feature, it does not certify it.
+ *
+ * FORCED off in hosted mode regardless of env: a hosted server must never
+ * start a vendor harness on itself.
+ */
+export const LOCAL_HARNESS_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+
+/**
  * WebMCP Inspector (a managed Chromium the user points at a page, so its
  * WebMCP tools can be listed and invoked) — server-side kill switch. FORCED
  * off in hosted mode: the browser runs on the machine running this inspector,
