@@ -246,6 +246,83 @@ describe("checkHarnessRuntimeAvailable", () => {
       expect(checkHarnessRuntimeAvailable(args())).toEqual({ ok: true });
     }
   );
+
+  describe("external-account harnesses skip the model + broker gates", () => {
+    // Three checks below are about a credential MCPJam supplies and a model
+    // MCPJam hosts. An external-account runtime has neither: Cursor
+    // authenticates on the customer's own Cursor account and its adapter
+    // passes NO model, so Cursor Auto picks one. Applying the brokered rules
+    // would refuse every Cursor host — its own seeded model is the
+    // deliberately-not-hosted `cursor/auto` sentinel.
+    const cursorArgs = () =>
+      args({
+        harnessId: "cursor" as HarnessId,
+        model: { id: "cursor/auto", provider: "cursor" },
+      });
+
+    it("is available on a model MCPJam does not host", () => {
+      setFullyAvailable();
+      expect(checkHarnessRuntimeAvailable(cursorArgs())).toEqual({ ok: true });
+    });
+
+    it("stays available with broker delivery killed (it has no broker)", () => {
+      setFullyAvailable();
+      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      expect(checkHarnessRuntimeAvailable(cursorArgs())).toEqual({ ok: true });
+      // …while the brokered harness beside it is still refused, so this is a
+      // targeted exemption and not a hole in the kill switch.
+      const brokered = checkHarnessRuntimeAvailable(args());
+      expect(brokered.ok).toBe(false);
+    });
+
+    it("still enforces the gates that DO apply to it", () => {
+      setFullyAvailable();
+      // Data plane: the CLI runs inside a computer, so this one is real.
+      delete process.env.E2B_API_KEY;
+      const noDataPlane = checkHarnessRuntimeAvailable(cursorArgs());
+      expect(noDataPlane.ok).toBe(false);
+      if (!noDataPlane.ok)
+        expect(noDataPlane.kind).toBe("computers-unconfigured");
+
+      setFullyAvailable();
+      // Approval: `supportsMcpToolApproval` is false pending a live check, so
+      // an approval host WITH servers is refused rather than run with some MCP
+      // calls unapproved.
+      const approvalWithServers = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "cursor" as HarnessId,
+          model: { id: "cursor/auto", provider: "cursor" },
+          requireToolApproval: true,
+          hasSelectedMcpServers: true,
+        })
+      );
+      expect(approvalWithServers.ok).toBe(false);
+      if (!approvalWithServers.ok)
+        expect(approvalWithServers.kind).toBe("tool-approval");
+
+      // …but approval WITHOUT servers is fine: the native surface does pause.
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "cursor" as HarnessId,
+            model: { id: "cursor/auto", provider: "cursor" },
+            requireToolApproval: true,
+            hasSelectedMcpServers: false,
+          })
+        )
+      ).toEqual({ ok: true });
+    });
+
+    it("does not exempt a BROKERED harness from the model gate", () => {
+      // The exemption is keyed on `modelAccess`, not on "harness runs a CLI".
+      setFullyAvailable();
+      const r = checkHarnessRuntimeAvailable(
+        args({ model: { id: "cursor/auto", provider: "cursor" } })
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.kind).toBe("model-not-hosted");
+    });
+  });
 });
 
 /**

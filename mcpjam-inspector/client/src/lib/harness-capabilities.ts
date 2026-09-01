@@ -47,6 +47,23 @@ import {
  * moves the runtime and the editor's claim about it in one edit.
  */
 
+/**
+ * Human-facing runtime name per harness — the client's copy of the server
+ * registry's `displayName`.
+ *
+ * Keyed by `HostConfigHarnessV2`, so adding a harness without naming it is a
+ * COMPILE error. That is the point: the copy this feeds used to hardcode
+ * "Claude Code", which was already wrong for a Codex host and would have been
+ * wrong for two harnesses out of three.
+ */
+export const HARNESS_DISPLAY_NAME: Record<HostConfigHarnessV2, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  // "Cursor CLI", not "Cursor": the emulated `cursor` host style is the IDE's
+  // chat panel, and a user reading this needs to know which one they attached.
+  cursor: "Cursor CLI",
+};
+
 /** Behavior-tab controls whose value may not cross into a harness runtime. */
 export type HarnessGatedControl =
   | "temperature"
@@ -110,6 +127,33 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
     progressiveToolDiscovery: {
       enforced: false,
       note: "Codex does its own tool discovery.",
+    },
+  },
+  cursor: {
+    // Permanent for a different reason than the other two: Cursor's CLI takes
+    // no temperature AND no model — it runs on the customer's Cursor account,
+    // which picks the model itself (Cursor Auto). There is nothing on this host
+    // for the value to reach.
+    temperature: {
+      enforced: false,
+      note: "The Cursor CLI runs on your Cursor account and ignores temperature.",
+    },
+    // The ACP bridge pauses on its own built-ins: every tool call goes through
+    // `session/request_permission`, and under the adapter's "allow-reads" mode
+    // anything outside read/search/think/fetch emits a `tool-approval-request`
+    // the turn waits on. Verified against a live cursor-agent.
+    //
+    // ENFORCED describes the NATIVE surface, which is what this control means
+    // here. Whether Cursor also pauses on MCP-server tools is not yet measured
+    // — the adapter's `supportsMcpToolApproval` is `false` pending that check,
+    // so a host that requires approval AND selects servers is refused outright
+    // rather than run with some calls unapproved. Refused, never silently
+    // un-enforced.
+    requireToolApproval: ENFORCED,
+    // The real Cursor CLI owns its own tool discovery, same as the other two.
+    progressiveToolDiscovery: {
+      enforced: false,
+      note: "The Cursor CLI does its own tool discovery.",
     },
   },
 };

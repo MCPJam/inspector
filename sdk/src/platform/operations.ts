@@ -7908,7 +7908,7 @@ const clientFieldSet = z
       .optional()
       .describe("null clears the host-level opt-in."),
     harness: z
-      .enum(["claude-code", "codex"])
+      .enum(["claude-code", "codex", "cursor"])
       .nullable()
       .optional()
       .describe(

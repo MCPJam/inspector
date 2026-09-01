@@ -138,10 +138,19 @@ export function checkHarnessRuntimeAvailable(args: {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
 
-  // Broker delivery is the ONLY credential path (COMP-23) — with the kill
-  // switch off, no harness turn can obtain model access, so fail here with one
-  // clear pre-stream error instead of a raw mid-turn throw.
-  if (!harnessBrokerDeliveryEnabled()) {
+  // Does MCPJam supply this runtime's model credential, or does the runtime
+  // authenticate on the CUSTOMER's own provider account? Three checks below
+  // apply only to the former, and each would be actively wrong for the latter
+  // (see `HarnessModelAccess`): the broker kill switch, "MCPJam-provided models
+  // only", and per-runtime model support.
+  const brokered = adapter.modelAccess !== "external-account";
+
+  // Broker delivery is the ONLY credential path for a BROKERED harness
+  // (COMP-23) — with the kill switch off, no such turn can obtain model access,
+  // so fail here with one clear pre-stream error instead of a raw mid-turn
+  // throw. An external-account harness has no broker to disable: refusing it
+  // for this would be switching off a path it never uses.
+  if (brokered && !harnessBrokerDeliveryEnabled()) {
     return {
       ok: false,
       kind: "broker-disabled",
@@ -202,11 +211,19 @@ export function checkHarnessRuntimeAvailable(args: {
   // Derived, not passed: `isHostedCatalogModel` canonicalizes internally but
   // needs the PROVIDER to do it, and `supportsModel` needs the canonical form.
   // One resolution, used for both.
+  //
+  // BOTH are skipped for an external-account harness, and not as a leniency:
+  // the model MCPJam knows about is not the model that runs. Cursor's adapter
+  // passes no model at all and Cursor Auto picks one on the customer's own
+  // account, so "is this an MCPJam-hosted model?" and "can the runtime run it?"
+  // are questions about a value nothing consumes. Answering them would refuse
+  // every Cursor host — its own catalog model is the `cursor/auto` sentinel,
+  // which is deliberately not an MCPJam-hosted model.
   const canonicalModelId = getCanonicalModelId(
     args.model.id,
-    args.model.provider
+    args.model.provider,
   );
-  if (!isHostedCatalogModel(args.model.id, args.model.provider)) {
+  if (brokered && !isHostedCatalogModel(args.model.id, args.model.provider)) {
     return {
       ok: false,
       kind: "model-not-hosted",
@@ -219,7 +236,7 @@ export function checkHarnessRuntimeAvailable(args: {
   // Runtime model support: even an MCPJam-provided model may not be one this
   // runtime can run (e.g. a non-gpt-5 model on Codex). Reject it rather than let
   // the runtime silently substitute its own default model.
-  if (!adapter.supportsModel(canonicalModelId)) {
+  if (brokered && !adapter.supportsModel(canonicalModelId)) {
     return {
       ok: false,
       kind: "model-unsupported",

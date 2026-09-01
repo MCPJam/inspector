@@ -41,7 +41,11 @@ import {
   setToolSpanMessageRangesFromResults,
 } from "../live-chat-trace-stream.js";
 import { StreamTurnDriver } from "../stream-turn-driver.js";
-import { getHarnessAdapter, buildBrokerDummyAuth } from "./registry.js";
+import {
+  getHarnessAdapter,
+  buildBrokerDummyAuth,
+  type HarnessAuth,
+} from "./registry.js";
 import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
@@ -106,6 +110,10 @@ import {
   skillsFingerprint,
 } from "./runtime-skills.js";
 import { deliveredSecretsFingerprint, toSecretEnv } from "./runtime-secrets.js";
+import {
+  externalAccountPlanWallError,
+  isExternalAccountPlanWallTurn,
+} from "./external-account-plan-wall.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import { selectHarnessSkillSource } from "./skill-delivery.js";
@@ -485,6 +493,15 @@ export function harnessRuntimeFingerprint(parts: {
    * which would read as "the secrets were removed".
    */
   secretsHash?: string;
+  /**
+   * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
+   * is why rather than an oversight. Their credential is a materialized project
+   * secret, so a rotation already forks through `secretsHash`; and the harness
+   * id is a literal PREFIX of the returned fingerprint, so a cursor session can
+   * never resume into a brokered lane whatever else matches. The one dimension
+   * that looks missing — the model — is genuinely absent from the turn: the
+   * adapter passes none, so there is nothing to fork on.
+   */
 }): string {
   const pluginDimension = pluginVersionsFingerprint(parts.pluginVersions ?? []);
   const s = [
@@ -662,6 +679,14 @@ export async function runHarnessTurn(
     | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
     | undefined;
   let turnFinishReason: FinishReason = "stop";
+  // Tool calls that returned a NON-error result this turn. Read only by the
+  // external-account entitlement-wall check, which must never fire on a turn
+  // that actually did work — see `external-account-plan-wall.ts`.
+  let successfulToolCalls = 0;
+  // The runtime version this box actually installed, for adapters whose CLI is
+  // not version-pinned by the package pin. Telemetry only — see the capture in
+  // `onSandboxSession` and `runtimeVersionCommand` in the registry.
+  let installedRuntimeVersion: string | undefined;
   let capturedTurnTrace: PersistedTurnTrace | undefined;
   // §3 atomic commit: built in executeEngine's finally (after session.detach()),
   // consumed by onFinishEngine's onConversationComplete so the resume state
@@ -984,7 +1009,16 @@ export async function runHarnessTurn(
       // limit the Gateway credential or wake the box.
       //   (a) the runtime must be able to run this model — else createX() would
       //       silently substitute its own default model.
-      if (!harnessAdapter.supportsModel(modelId)) {
+      //       SKIPPED for an external-account harness: the model MCPJam knows
+      //       about is not the model that runs. Cursor's adapter passes no
+      //       model at all and Cursor Auto picks one on the customer's own
+      //       account, so there is no substitution to catch here — asking
+      //       `supportsModel` would only be asking the adapter to rubber-stamp
+      //       a value nothing consumes.
+      if (
+        harnessAdapter.modelAccess !== "external-account" &&
+        !harnessAdapter.supportsModel(modelId)
+      ) {
         throw new Error(
           `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
         );
@@ -1029,7 +1063,15 @@ export async function runHarnessTurn(
       // EVERY scope fails closed here (guests were already broker-only —
       // this now covers members too); the chat-v2 routes surface the same
       // condition pre-stream via checkHarnessRuntimeAvailable.
-      if (!harnessBrokerDeliveryEnabled()) {
+      //
+      // An EXTERNAL-ACCOUNT harness is exempt, and not as a favour: it has no
+      // broker to disable. Its credential is the customer's own materialized
+      // project secret and its model traffic never touches MCPJam's proxy, so
+      // refusing it here would be switching off a path it never uses.
+      if (
+        harnessAdapter.modelAccess !== "external-account" &&
+        !harnessBrokerDeliveryEnabled()
+      ) {
         throw new Error(
           "Harness runs require broker credential delivery, but it is " +
             "disabled on this server (MCPJAM_HARNESS_BROKER_DELIVERY=false). " +
@@ -1220,6 +1262,64 @@ export async function runHarnessTurn(
       const secretEnv = runtimeSecrets
         ? toSecretEnv(runtimeSecrets)
         : undefined;
+
+      // EXTERNAL-ACCOUNT CREDENTIAL. A harness that authenticates on the
+      // customer's own provider account takes its credential from the SAME
+      // materialized project secrets above — there is no broker lease to mint,
+      // so this is the only place the value can come from.
+      //
+      // Resolved HERE, before the sandbox provider is built, for two reasons:
+      // a missing secret must fail the turn before anything is provisioned,
+      // and the credential has to be REMOVED from the box's session env bag
+      // that the provider is about to be constructed with.
+      //
+      // What that removal does and does not buy: the key no longer rides on
+      // every `run`/`spawn` in the box, so an unrelated command the agent
+      // shells out to cannot read it out of its own environment. The Cursor
+      // process itself still receives it — it has to, that is how the CLI
+      // authenticates. Fully keeping it out of the VM needs the adapter's
+      // credential-brokering hook wired to E2B's egress transform, which is
+      // tracked separately.
+      const externalAccountCredentialNames =
+        harnessAdapter.modelAccess === "external-account"
+          ? harnessAdapter.externalAccountCredentialEnv
+          : undefined;
+      let externalAccountAuth: HarnessAuth | undefined;
+      if (externalAccountCredentialNames) {
+        const missing = externalAccountCredentialNames.filter(
+          (name) => !secretEnv?.[name],
+        );
+        if (missing.length > 0) {
+          // Preflight-shaped copy: names the variable and where to set it, so
+          // the reader can act on it without opening a runbook. NEVER defaulted
+          // or silently skipped — starting the CLI with no credential produces
+          // an opaque failure from inside the box instead.
+          const one = missing.length === 1;
+          throw new Error(
+            `The ${harnessAdapter.displayName} harness requires ` +
+              `${one ? "a " : ""}${missing.join(", ")} project ` +
+              `${one ? "secret" : "secrets"} in this environment — add ` +
+              `${one ? "it" : "them"} under Project Settings → Secrets.`,
+          );
+        }
+        externalAccountAuth = Object.fromEntries(
+          externalAccountCredentialNames.map((name) => [
+            name,
+            secretEnv![name] as string,
+          ]),
+        );
+      }
+      // What the BOX's session env carries: everything the project materialized
+      // MINUS the credentials handed to the adapter directly (see above). An
+      // empty result is treated exactly like "no secrets" by the provider
+      // construction below.
+      const sessionSecretEnv = externalAccountCredentialNames
+        ? Object.fromEntries(
+            Object.entries(secretEnv ?? {}).filter(
+              ([name]) => !externalAccountCredentialNames.includes(name),
+            ),
+          )
+        : secretEnv;
       // What the ADAPTER will actually write, per its own rules (Codex rejects
       // a name outright — mid-`doStart`, i.e. it would fail the whole turn — so
       // it filters rather than throws). Every MCPJam-side skill pass below is
@@ -1590,9 +1690,9 @@ export async function runHarnessTurn(
         // In `envs`, never in the command line — the rule `plugin-box.ts`
         // already states: argv is readable by every process in the box through
         // `/proc`, and it lands in shell history.
-        ...(secretEnv && Object.keys(secretEnv).length > 0
+        ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
           ? {
-              sessionEnv: secretEnv,
+              sessionEnv: sessionSecretEnv,
               // Stamped when the env is MERGED INTO A COMMAND, not here.
               //
               // Constructing this provider only puts the values in a local
@@ -1618,31 +1718,56 @@ export async function runHarnessTurn(
       // RECORD the run id before the POST: if the backend installs the E2B rule
       // but the response is lost or aborted, teardown can still revoke by this
       // id (the backend keys revoke on runId). From here on a lease may exist.
-      brokerRunId = turnRunId;
-      const broker = await startHarnessModelBroker({
-        // The project and the execution scope are fields of `box`'s COMPUTER
-        // arm (set where `box` is built, above), so the ephemeral path has no
-        // way to send either: the backend derives project + billing org from
-        // the sandbox row's run.
-        box,
-        harnessId: harnessAdapter.id,
-        modelId,
-        runId: brokerRunId,
-        bearer: authHeader,
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
-      if (!broker.ok) {
-        // Throws propagate to the turn's outer catch; onFinishEngine frees the
-        // claimed lane (sessionEstablished still false) and revokes the broker
-        // lease (brokerRunId set) if the backend installed before a lost response.
-        throw new Error(broker.error);
+      let auth: HarnessAuth;
+      if (externalAccountAuth) {
+        // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
+        // skipped rather than made conditional inside it. `brokerRunId` stays
+        // unset, which is what keeps teardown from issuing a revoke for a lease
+        // that never existed.
+        //
+        // The RESERVATION is deliberately NOT released here. On the brokered
+        // path the lease consumes the claim and takes over the per-box fence;
+        // with no lease there is nothing to take over, so the claim has to be
+        // held by heartbeat for the whole turn — otherwise a second Cursor turn
+        // could start bootstrapping the same box mid-run. `reservationHeld`
+        // stays true and the turn's own teardown releases it.
+        auth = externalAccountAuth;
+        // Stamp delivery HERE, because this path took the credential out of the
+        // session env bag and the provider's `onSessionEnvUsed` can therefore
+        // never fire for it — for a project whose only secret is this one, the
+        // bag is empty and nothing would ever stamp. The value is about to be
+        // handed to the runtime that authenticates with it, which is exactly
+        // the "reached an execution surface" the stamp means. Getting this
+        // wrong makes a live credential read as dormant to whoever is deciding
+        // whether it is safe to delete.
+        onSecretEnvDelivered?.();
+      } else {
+        brokerRunId = turnRunId;
+        const broker = await startHarnessModelBroker({
+          // The project and the execution scope are fields of `box`'s COMPUTER
+          // arm (set where `box` is built, above), so the ephemeral path has no
+          // way to send either: the backend derives project + billing org from
+          // the sandbox row's run.
+          box,
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: brokerRunId,
+          bearer: authHeader,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!broker.ok) {
+          // Throws propagate to the turn's outer catch; onFinishEngine frees the
+          // claimed lane (sessionEstablished still false) and revokes the broker
+          // lease (brokerRunId set) if the backend installed before a lost response.
+          throw new Error(broker.error);
+        }
+        // The lease is recorded, which consumed this turn's claim on the box; the
+        // lease's own per-box fence covers the rest of the turn. Releasing now
+        // would free a box that is very much still in use.
+        clearReservationHeartbeat();
+        reservationHeld = false;
+        auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       }
-      // The lease is recorded, which consumed this turn's claim on the box; the
-      // lease's own per-box fence covers the rest of the turn. Releasing now
-      // would free a box that is very much still in use.
-      clearReservationHeartbeat();
-      reservationHeld = false;
-      const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       tBroker = Date.now();
 
       // 4. Assemble the harness over the host's E2B computer (the provider and
@@ -1654,7 +1779,18 @@ export async function runHarnessTurn(
       // constructs it (for Claude Code: the gateway `creator/model` id becomes a
       // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
       // do zero inference). Returns the HarnessAgent boundary type directly.
-      const harnessRuntime = harnessAdapter.createHarness({ modelId, auth });
+      //
+      // Narrowed on the delivery MECHANISM rather than called through the
+      // union: a `session-config` adapter's `createHarness` REQUIRES `mcpJson`
+      // (its only channel for MCP config), and a `sandbox-files` one does not
+      // take it at all. Writing the branch here is what makes "the servers
+      // cannot be silently dropped at construction" a compile-time fact instead
+      // of a convention.
+      const harnessRuntime =
+        harnessAdapter.mcpDelivery === "native" &&
+        harnessAdapter.mcpNativeDelivery === "session-config"
+          ? harnessAdapter.createHarness({ modelId, auth, mcpJson })
+          : harnessAdapter.createHarness({ modelId, auth });
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
       // to the runtime; when the runtime calls one it pauses, the agent runs the
       // tool's `execute()` HERE on MCPJam's server, and submits the result back.
@@ -1724,12 +1860,19 @@ export async function runHarnessTurn(
           // Code writes a `.mcp.json`). A host-executed adapter has nothing to
           // write — its servers already went out as `tools` above — and the
           // adapter union forbids it from carrying `deliverMcpServers` at all.
-          if (harnessAdapter.mcpDelivery === "native") {
+          if (
+            harnessAdapter.mcpDelivery === "native" &&
+            harnessAdapter.mcpNativeDelivery === "sandbox-files"
+          ) {
             // The "advertises MCP but has no delivery strategy" throw that used
-            // to guard this call is GONE, not relaxed: the native arm of
-            // `HarnessRuntimeAdapter` now REQUIRES `deliverMcpServers`, so the
+            // to guard this call is GONE, not relaxed: each native MECHANISM of
+            // `HarnessRuntimeAdapter` REQUIRES its own hook, so the
             // misconfiguration it caught is a compile error instead of a
             // turn-time one (tsc reports the old check's body as `never`).
+            //
+            // The other native mechanism (`session-config`) has nothing to do
+            // here by construction: its servers were passed to `createHarness`
+            // above, before this session existed.
             await harnessAdapter.deliverMcpServers({
               // Bind to the live session here (it lives behind the dual-`ai`
               // boundary) so the adapter stays free of the harness session type.
@@ -1739,6 +1882,35 @@ export async function runHarnessTurn(
               sessionWorkDir,
               mcpJson,
             });
+          }
+          // VERSION CANARY. For an adapter whose CLI version is not pinned by
+          // the package pin (Cursor bootstraps `curl … | bash`, which always
+          // fetches the current build), ask the box what it actually installed
+          // and record it. Two known cursor-agent builds are four months of
+          // behaviour apart, so without this a silent upstream change presents
+          // as an unattributable regression.
+          //
+          // FAIL-SOFT in every direction: bounded by the turn's own signal plus
+          // a deadline, every error swallowed, and nothing downstream reads the
+          // result. A canary must never be able to fail a run.
+          if (harnessAdapter.runtimeVersionCommand) {
+            try {
+              const probe = await session.run({
+                command: harnessAdapter.runtimeVersionCommand(sessionWorkDir),
+                abortSignal: abortSignal
+                  ? AbortSignal.any([
+                      abortSignal,
+                      AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+                    ])
+                  : AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+              });
+              const version = probe.stdout.trim().split("\n")[0]?.trim();
+              if (probe.exitCode === 0 && version) {
+                installedRuntimeVersion = version;
+              }
+            } catch {
+              // Deliberately silent: see above.
+            }
           }
           // The adapter writes skill CONTENT (via the `skills` param above); this
           // pass only removes managed dirs deleted/renamed in Convex (the adapter
@@ -2336,20 +2508,33 @@ export async function runHarnessTurn(
             const rawToolName = String(
               (part as { toolName?: unknown }).toolName ?? "tool",
             );
-            // Claude Code namespaces MCP tools as mcp__<server>__<tool>; map back
-            // to { serverId, un-namespaced toolName } so the UI chunks, engine
-            // callbacks, and persisted transcript carry MCPJam tool identity
-            // (eval matching + MCP App rendering key off it). Native harness
-            // tools (Bash, Read, …) have no prefix → serverId stays undefined.
-            const { serverId, toolName } = harnessAdapter.parseToolName(
-              rawToolName,
-              harnessKeyToServerId,
-            );
             const input = coerceToolInput(
               (part as { input?: unknown }).input ??
                 (part as { args?: unknown }).args ??
                 {},
             );
+            // Map back to { serverId, un-namespaced toolName } so the UI chunks,
+            // engine callbacks, and persisted transcript carry MCPJam tool
+            // identity (eval matching + MCP App rendering key off it).
+            //
+            // Name AND input, because not every runtime puts the identity in the
+            // name: Claude Code namespaces MCP tools as `mcp__<server>__<tool>`
+            // (native tools have no prefix → serverId stays undefined), while
+            // Cursor streams every MCP call as an opaque `acp_tool_<id>` and
+            // carries `{ providerIdentifier, toolName }` in the input instead.
+            // The adapter decides; this call site only has to hand over both.
+            // (Which is why `input` is now resolved FIRST — it is an argument to
+            // the attribution, not just something recorded after it.)
+            const { serverId, toolName } = harnessAdapter.attributeToolCall
+              ? harnessAdapter.attributeToolCall({
+                  rawToolName,
+                  input,
+                  keyToServerId: harnessKeyToServerId,
+                })
+              : harnessAdapter.parseToolName(
+                  rawToolName,
+                  harnessKeyToServerId,
+                );
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,
@@ -2424,6 +2609,10 @@ export async function runHarnessTurn(
               (part as { error?: unknown }).error != null;
             // Reuse the identity resolved at tool-call time (the result part may
             // omit the name); fall back to parsing the result's own toolName.
+            // Name-only on purpose: a RESULT part carries no call input, so
+            // `attributeToolCall` would have nothing extra to work with. The
+            // identity resolved at call time (above) is the real answer and this
+            // is only its fallback.
             const meta =
               toolMeta.get(toolCallId) ??
               harnessAdapter.parseToolName(
@@ -2532,6 +2721,7 @@ export async function runHarnessTurn(
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
               });
             }
+            if (!isError) successfulToolCalls += 1;
             pendingResults.push({
               toolCallId,
               toolName: meta.toolName,
@@ -2727,6 +2917,25 @@ export async function runHarnessTurn(
         const finalText = await res.text;
         closeReasoning();
 
+        // ENTITLEMENT WALL (external-account harnesses only). Cursor answers a
+        // plan-gated request with a normal, successful-looking turn whose whole
+        // text is an upgrade notice — so without this check chat would persist
+        // it as the assistant's answer and an eval would SCORE it, producing a
+        // verdict about a model that never ran. Fail the turn instead. The rule
+        // is deliberately narrow (exact text, no successful tool call, plain
+        // stop); see `external-account-plan-wall.ts` for why each condition is
+        // there and why a substring match would be wrong.
+        if (
+          externalAccountAuth &&
+          isExternalAccountPlanWallTurn({
+            finalText,
+            finishReason: turnFinishReason,
+            successfulToolCalls,
+          })
+        ) {
+          throw externalAccountPlanWallError(harnessAdapter.displayName);
+        }
+
         // Settle cumulative usage + finish reason on the driver NOW — usage is
         // known from the finish part. Set before the completeness fallback below
         // so the synthesized tool step's finishStep() (and every step settling
@@ -2794,6 +3003,14 @@ export async function runHarnessTurn(
             tStream - tStart
           }ms resumed=${resumedSession}`,
         );
+        if (installedRuntimeVersion) {
+          // Its own line, and greppable: the canary alert watches for this
+          // value CHANGING between sessions of the same harness, which is not a
+          // question the timing line above could answer.
+          logger.info(
+            `[harness][runtime-version] harness=${harnessAdapter.id} version=${installedRuntimeVersion}`,
+          );
+        }
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {

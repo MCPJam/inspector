@@ -13,6 +13,7 @@
  */
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodex } from "@ai-sdk/harness-codex";
+import { createCursor } from "@ai-sdk/harness-cursor";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type {
   HarnessV1AuthenticationEnvironment,
@@ -25,17 +26,24 @@ import {
   type HarnessMcpDelivery,
 } from "@/shared/harness-mcp-delivery";
 import {
+  attributeCursorToolCall,
   parseHarnessToolName,
   serializeHarnessMcpJson,
+  toAcpMcpServers,
   type HarnessMcpJson,
 } from "./mcp-config.js";
 import {
   prepareClaudeCodeSkills,
   prepareCodexSkills,
+  prepareNoSkills,
   type PreparedHarnessSkills,
   type RuntimeSkill,
 } from "./runtime-skills.js";
-import { CLAUDE_CODE_SKILLS_BASE, CODEX_SKILLS_BASE } from "./skill-roots.js";
+import {
+  CLAUDE_CODE_SKILLS_BASE,
+  CODEX_SKILLS_BASE,
+  CURSOR_SKILLS_BASE,
+} from "./skill-roots.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
  *  portable `Harness` union (the persistence-contract source of truth), so the
@@ -73,21 +81,45 @@ const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
  *  `ANTHROPIC_API_KEY` is deliberately ABSENT rather than empty: the adapter
  *  keys its credential-forwarding transformations off which variables are
  *  present, and an empty string would register an `x-api-key` rewrite for a
- *  header the CLI never sends on the auth-token path. */
+ *  header the CLI never sends on the auth-token path.
+ *
+ *  EXHAUSTIVE, and it THROWS for an external-account harness. This used to be a
+ *  fallthrough `if (codex) … else Anthropic`, which meant any harness id that
+ *  was not codex silently received Claude Code's `ANTHROPIC_*` environment —
+ *  so a cursor turn would have been handed an Anthropic base URL and a dummy
+ *  token for a proxy it never talks to, and the failure would have surfaced as
+ *  a confusing runtime error inside the box rather than here. An
+ *  external-account harness has NO broker lease by construction
+ *  (`modelAccess`), so asking for its broker auth is a caller bug; the caller's
+ *  own `modelAccess` branch is what must skip this. */
 export function buildBrokerDummyAuth(
   harnessId: HarnessId,
-  proxyBaseUrl: string
+  proxyBaseUrl: string,
 ): HarnessAuth {
-  if (harnessId === "codex") {
-    return {
-      CODEX_API_KEY: BROKER_DUMMY_CREDENTIAL,
-      OPENAI_BASE_URL: proxyBaseUrl,
-    };
+  switch (harnessId) {
+    case "claude-code":
+      return {
+        ANTHROPIC_AUTH_TOKEN: BROKER_DUMMY_CREDENTIAL,
+        ANTHROPIC_BASE_URL: proxyBaseUrl,
+      };
+    case "codex":
+      return {
+        CODEX_API_KEY: BROKER_DUMMY_CREDENTIAL,
+        OPENAI_BASE_URL: proxyBaseUrl,
+      };
+    case "cursor":
+      throw new Error(
+        "The Cursor harness authenticates with the customer's own Cursor " +
+          "account (modelAccess: 'external-account') and takes no broker " +
+          "lease — buildBrokerDummyAuth must not be called for it.",
+      );
+    default: {
+      const unhandled: never = harnessId;
+      throw new Error(
+        `No broker auth strategy for harness: ${String(unhandled)}`,
+      );
+    }
   }
-  return {
-    ANTHROPIC_AUTH_TOKEN: BROKER_DUMMY_CREDENTIAL,
-    ANTHROPIC_BASE_URL: proxyBaseUrl,
-  };
 }
 
 /** `{ serverId?, toolName }` — the MCPJam tool identity a harness tool name maps
@@ -196,6 +228,41 @@ export type HarnessBuiltinToolInfo = {
  */
 export type { HarnessMcpDelivery };
 
+/**
+ * WHERE a harness's model spend lands — and therefore whether MCPJam brokers a
+ * credential for it at all.
+ *
+ *  - `broker`           — MCPJam mints a short-lived lease, E2B injects it into
+ *    the box's egress outside the VM, the model proxy meters every request and
+ *    MCPJam is billed. Claude Code, Codex. The CLI itself runs with
+ *    `buildBrokerDummyAuth` placeholders.
+ *
+ *  - `external-account` — the runtime reaches its model provider on the
+ *    CUSTOMER's own account, and MCPJam has no seam to broker at. Cursor's CLI
+ *    has no provider/gateway routing whatsoever: it authenticates with a
+ *    `CURSOR_API_KEY`, every request transits Cursor's servers, and the spend
+ *    is billed to that Cursor account. Verified three ways plus Cursor's own
+ *    docs before this arm existed.
+ *
+ * Not a cosmetic label. Everything below keys off it, and each is actively
+ * wrong for the other arm:
+ *   - the broker start is SKIPPED, and `buildBrokerDummyAuth` THROWS;
+ *   - the box reservation is HELD for the turn instead of being consumed by a
+ *     lease that never exists;
+ *   - the credential comes out of the project's materialized secrets and is
+ *     removed from the box's session env;
+ *   - the model gates — the preflight's model-hosted / model-supported checks
+ *     and the turn's `supportsModel` backstop — are skipped, because the model
+ *     MCPJam knows about is not the model that runs;
+ *   - the broker kill switch does not apply (there is no broker to kill);
+ *   - the turn is tagged `modelSource: 'external-account'` rather than
+ *     `'mcpjam'`, so it does not consume the org's MCPJam spend limit;
+ *   - the entitlement-wall check runs (see `external-account-plan-wall.ts`) —
+ *     an external-account runtime can answer "upgrade your plan" as a normal
+ *     successful turn, which a brokered one cannot.
+ */
+export type HarnessModelAccess = "broker" | "external-account";
+
 type HarnessRuntimeAdapterBase = {
   id: HarnessId;
   /** Human-facing runtime name for preflight/availability messages + UI. */
@@ -264,15 +331,6 @@ type HarnessRuntimeAdapterBase = {
   /** Native-tool name used to surface this runtime's `file-change` stream parts
    *  as a synthetic tool call. Undefined ⇒ the runtime doesn't emit file-change. */
   fileChangeToolName?: string;
-  /** Construct the harness adapter (already cast to the server's HarnessAgent
-   *  boundary type) for the given host model + broker dummy auth. (The
-   *  per-adapter `resolveAuth` credential fetch was removed in COMP-23 —
-   *  credentials are broker-delivered outside the VM; see
-   *  `buildBrokerDummyAuth`.) */
-  createHarness(args: {
-    modelId: string;
-    auth: HarnessAuth;
-  }): HarnessAgentAdapter;
   /** The harness's native built-in tools as a normalized, display-only catalog.
    *  No auth/sandbox needed — read straight from the constructed adapter's
    *  static `builtinTools` ToolSet. */
@@ -290,37 +348,142 @@ type HarnessRuntimeAdapterBase = {
    *  per-adapter rather than pinned to Claude's scheme. */
   parseToolName(
     rawToolName: string,
-    keyToServerId: Record<string, string>
+    keyToServerId: Record<string, string>,
   ): HarnessToolAttribution;
+  /** Map a tool CALL — name *and* input — back to MCPJam tool identity.
+   *
+   *  A superset of `parseToolName`, and the hook the turn runner actually calls.
+   *  It exists because not every runtime puts the identity in the NAME: Cursor
+   *  streams every MCP call under an opaque per-session `acp_tool_<id>` and
+   *  carries `{ providerIdentifier, toolName, args }` in the input instead, so a
+   *  name-only signature cannot attribute one at all.
+   *
+   *  Optional: an adapter that omits it falls back to its own `parseToolName`
+   *  at the call site. Both stay because they answer different questions —
+   *  `parseToolName` is also called where only a name exists (a result part
+   *  that omits the input). */
+  attributeToolCall?(args: {
+    rawToolName: string;
+    input: unknown;
+    keyToServerId: Record<string, string>;
+  }): HarnessToolAttribution;
   /** Install verified plugin bundles into a fresh sandbox session, before the
    *  runtime process starts. REQUIRED when `supportsPluginBundles`. */
   deliverPluginBundles?(args: HarnessPluginDeliveryArgs): Promise<void>;
+  /**
+   * Shell command that prints the INSTALLED runtime's version, given the
+   * session workdir — for adapters whose CLI version is NOT pinned by the
+   * package pin.
+   *
+   * Claude Code and Codex bootstrap a version-pinned npm package, so the
+   * installed CLI is knowable from the lockfile and this is absent. Cursor's
+   * bootstrap runs `curl https://cursor.com/install | bash`, which always
+   * fetches the CURRENT build: two builds observed four months apart behaved
+   * differently, so what actually ran is only knowable by asking the box.
+   *
+   * Read at turn end and recorded as telemetry, FAIL-SOFT throughout: a command
+   * that errors, times out, or stops matching the adapter's bootstrap layout
+   * records no version and never affects the turn. A canary is not worth a
+   * failed run.
+   */
+  runtimeVersionCommand?(sessionWorkDir: string): string;
+};
+
+/** Base args every adapter's `createHarness` receives. (The per-adapter
+ *  `resolveAuth` credential fetch was removed in COMP-23 — brokered credentials
+ *  are delivered outside the VM, see `buildBrokerDummyAuth`; an
+ *  external-account harness gets its customer credential in `auth` instead.) */
+export type HarnessCreateArgs = {
+  modelId: string;
+  auth: HarnessAuth;
+};
+
+/** Brokered model access: MCPJam supplies the credential, so the adapter needs
+ *  nothing from the customer's own secrets. */
+type BrokeredModelAccessArm = {
+  modelAccess: "broker";
+  externalAccountCredentialEnv?: never;
+};
+
+/** External-account model access: the runtime authenticates with the
+ *  CUSTOMER's credential, so it must SAY which one. */
+type ExternalAccountModelAccessArm = {
+  modelAccess: "external-account";
+  /**
+   * The environment variable names this runtime needs from the project's
+   * MATERIALIZED secrets, e.g. `["CURSOR_API_KEY"]` (which is exactly what
+   * `@ai-sdk/harness-cursor` declares as its own `credentialEnv`).
+   *
+   * REQUIRED on this arm, and that is the point: an external-account harness
+   * that did not name its credential would have the turn runner silently start
+   * it with no auth at all, and the failure would surface as an opaque error
+   * from inside the box. A missing secret is refused up front instead, with
+   * copy that names the variable and where to set it.
+   *
+   * The turn runner treats every name here as required, pulls them OUT of the
+   * box's session env (so they are not also handed to every other command that
+   * runs there) and passes them to the adapter as its auth environment.
+   */
+  externalAccountCredentialEnv: readonly [string, ...string[]];
+};
+
+/** NATIVE delivery, `sandbox-files` mechanism: MCPJam writes runtime config
+ *  into the box before the process starts (Claude Code's `.mcp.json`). */
+type NativeSandboxFilesArm = {
+  mcpDelivery: "native";
+  mcpNativeDelivery: "sandbox-files";
+  /** Write the host's MCP servers into a fresh sandbox session, before the
+   *  runtime process starts. */
+  deliverMcpServers(args: HarnessMcpDeliveryArgs): Promise<void>;
+  createHarness(args: HarnessCreateArgs): HarnessAgentAdapter;
+};
+
+/** NATIVE delivery, `session-config` mechanism: there is no file to write —
+ *  the servers are a CONSTRUCTOR setting the adapter forwards into its session
+ *  handshake (Cursor's ACP `session/new`). */
+type NativeSessionConfigArm = {
+  mcpDelivery: "native";
+  mcpNativeDelivery: "session-config";
+  /** Never present: nothing is written into the box for this mechanism. */
+  deliverMcpServers?: never;
+  /** `mcpJson` is REQUIRED here, and that is the whole point of the arm: an
+   *  adapter whose only channel for MCP config is construction cannot be
+   *  constructed without it, so the config can never be silently dropped. */
+  createHarness(
+    args: HarnessCreateArgs & { mcpJson: HarnessMcpJson },
+  ): HarnessAgentAdapter;
+};
+
+/** HOST-EXECUTED delivery: the servers reach the model as host-executed tools
+ *  MCPJam runs in-process, never as runtime config in the sandbox. */
+type HostExecutedArm = {
+  mcpDelivery: "host-executed";
+  mcpNativeDelivery?: never;
+  deliverMcpServers?: never;
+  createHarness(args: HarnessCreateArgs): HarnessAgentAdapter;
 };
 
 /**
- * The two MCP-delivery arms, as a discriminated union rather than a boolean +
- * an optional hook. This is what makes "the model never sees a tool twice" a
- * TYPE invariant:
- *   - `native` REQUIRES `deliverMcpServers` (advertise = implement, checked by
- *     the compiler instead of by a runtime throw in `runHarnessTurn`);
- *   - `host-executed` FORBIDS it (`?: never`), so an adapter cannot half-adopt
- *     the relay while still writing runtime MCP config.
+ * The MCP-delivery arms, as a discriminated union rather than a boolean + an
+ * optional hook. This is what makes "the model never sees a tool twice" a TYPE
+ * invariant:
+ *   - `native` REQUIRES a delivery mechanism, and each mechanism requires the
+ *     hook that implements it (advertise = implement, checked by the compiler
+ *     instead of by a runtime throw in `runHarnessTurn`);
+ *   - `host-executed` FORBIDS both (`?: never`), so an adapter cannot
+ *     half-adopt the relay while still writing runtime MCP config.
+ *
+ * `native` is NESTED rather than flat because the two native mechanisms need
+ * different hooks — one writes a file into the session, the other takes the
+ * config at construction — and a flat arm would have had to make both optional,
+ * which is exactly the "advertises MCP, delivers nothing" state this union
+ * exists to make unrepresentable. The MODE (does the traffic cross MCPJam's
+ * proxy? — what evidence capture keys off) stays `mcpDelivery`; the MECHANISM
+ * is `mcpNativeDelivery` and is invisible to everything but construction.
  */
 export type HarnessRuntimeAdapter = HarnessRuntimeAdapterBase &
-  (
-    | {
-        mcpDelivery: "native";
-        /** Write the host's MCP servers into a fresh sandbox session, before the
-         *  runtime process starts. */
-        deliverMcpServers(args: HarnessMcpDeliveryArgs): Promise<void>;
-      }
-    | {
-        mcpDelivery: "host-executed";
-        /** Never present: this arm's servers reach the model as host-executed
-         *  tools, not as runtime config in the sandbox. */
-        deliverMcpServers?: never;
-      }
-  );
+  (BrokeredModelAccessArm | ExternalAccountModelAccessArm) &
+  (NativeSandboxFilesArm | NativeSessionConfigArm | HostExecutedArm);
 
 /* ── Claude Code bridge patches ────────────────────────────────────────────
  *
@@ -561,7 +724,7 @@ function patchModernClaudeCodeBridgeContent(content: string): string {
   for (const [needle, replacement] of replacements) {
     if (!patched.includes(needle)) {
       throw new Error(
-        "Unable to patch Claude Code bridge bootstrap: modern bridge shape changed"
+        "Unable to patch Claude Code bridge bootstrap: modern bridge shape changed",
       );
     }
     patched = patched.replace(needle, replacement);
@@ -610,7 +773,7 @@ function patchClaudeCodeBridgeContent(content: string): string {
     ] as const) {
       if (!patched.includes(needle)) {
         throw new Error(
-          "Unable to patch Claude Code bridge bootstrap: assistant text shape changed"
+          "Unable to patch Claude Code bridge bootstrap: assistant text shape changed",
         );
       }
       patched = patched.replace(needle, replacement);
@@ -630,7 +793,7 @@ function patchClaudeCodeBridgeContent(content: string): string {
     ] as const) {
       if (!patched.includes(needle)) {
         throw new Error(
-          "Unable to patch Claude Code bridge bootstrap: model override shape changed"
+          "Unable to patch Claude Code bridge bootstrap: model override shape changed",
         );
       }
       patched = patched.replace(needle, replacement);
@@ -642,7 +805,7 @@ function patchClaudeCodeBridgeContent(content: string): string {
    * rather than let a subagent's stream merge into the parent transcript. */
   if (!patched.includes("parent_tool_use_id")) {
     throw new Error(
-      "Unable to verify Claude Code bridge bootstrap: user-message shape changed"
+      "Unable to verify Claude Code bridge bootstrap: user-message shape changed",
     );
   }
 
@@ -712,7 +875,7 @@ const CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE =
 function pnpmWorkspaceForClaudeCodeBootstrap(
   files: Awaited<
     ReturnType<NonNullable<HarnessAgentAdapter["getBootstrap"]>>
-  >["files"]
+  >["files"],
 ): string {
   const packageFile = files.find((file) => file.path.endsWith("/package.json"));
   if (packageFile) {
@@ -735,7 +898,7 @@ function pnpmWorkspaceForClaudeCodeBootstrap(
 }
 
 export function patchClaudeCodeHarnessBootstrap(
-  harness: HarnessAgentAdapter
+  harness: HarnessAgentAdapter,
 ): HarnessAgentAdapter {
   const originalGetBootstrap = harness.getBootstrap?.bind(harness);
   if (!originalGetBootstrap) return harness;
@@ -755,7 +918,7 @@ export function patchClaudeCodeHarnessBootstrap(
       // added only if the adapter stops shipping one. `.npmrc` is always ours —
       // the adapter ships none, and pnpm 10 reads nothing else.
       const shipsPnpmWorkspace = bootstrap.files.some((file) =>
-        file.path.endsWith("/pnpm-workspace.yaml")
+        file.path.endsWith("/pnpm-workspace.yaml"),
       );
       cachedPatchedBootstrap = {
         ...bootstrap,
@@ -763,7 +926,7 @@ export function patchClaudeCodeHarnessBootstrap(
           ...bootstrap.files.map((file) =>
             file.path.endsWith("/bridge.mjs")
               ? { ...file, content: patchClaudeCodeBridgeContent(file.content) }
-              : file
+              : file,
           ),
           {
             path: `${bootstrap.bootstrapDir}/.npmrc`,
@@ -806,7 +969,7 @@ function toClaudeCodeModel(modelId: string): string | undefined {
   // minor version (e.g. "claude-opus-4-20250929" -> minor="20250929"),
   // producing an invalid native model string instead of "claude-opus-4".
   const match = withoutProvider.match(
-    /^claude-(haiku|sonnet|opus)-(\d+)(?:-\d{8}|[.-](\d+)(?:-\d{8})?)?$/
+    /^claude-(haiku|sonnet|opus)-(\d+)(?:-\d{8}|[.-](\d+)(?:-\d{8})?)?$/,
   );
   if (match) {
     const [, family, major, minor] = match;
@@ -842,7 +1005,7 @@ function toCodexModel(modelId: string): string | undefined {
  *  inspector's own `zod@4` `z.toJSONSchema` can't read — so use `ai`'s
  *  `asSchema`, which handles both Zod versions and yields a JSON Schema. */
 function builtinInputJsonSchema(
-  schema: unknown
+  schema: unknown,
 ): Record<string, unknown> | undefined {
   if (!schema || typeof schema !== "object") return undefined;
   try {
@@ -858,7 +1021,7 @@ function builtinInputJsonSchema(
 /** Normalize a harness's static `builtinTools` ToolSet into the display catalog.
  *  Shared by every adapter so a new harness reuses the exact same shaping. */
 function normalizeHarnessBuiltinTools(
-  builtinTools: Record<string, unknown>
+  builtinTools: Record<string, unknown>,
 ): HarnessBuiltinToolInfo[] {
   const str = (v: unknown): string | undefined =>
     typeof v === "string" && v.length > 0 ? v : undefined;
@@ -888,13 +1051,13 @@ function normalizeHarnessBuiltinTools(
  *  process, and constructing the adapter (no auth, no sandbox) just to read its
  *  static `builtinTools` once is enough. */
 function memoizedBuiltinTools(
-  build: () => { builtinTools: unknown }
+  build: () => { builtinTools: unknown },
 ): () => HarnessBuiltinToolInfo[] {
   let cache: HarnessBuiltinToolInfo[] | undefined;
   return () => {
     if (!cache) {
       cache = normalizeHarnessBuiltinTools(
-        build().builtinTools as Record<string, unknown>
+        build().builtinTools as Record<string, unknown>,
       );
     }
     return cache;
@@ -913,6 +1076,9 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
   displayName: "Claude Code",
   requiresComputer: true,
+  // MCPJam brokers the model credential: Convex mints a lease, E2B injects it
+  // outside the VM, and the model proxy meters the spend.
+  modelAccess: "broker",
   defaultPermissionMode: "allow-all",
   // WS3: the CLI pauses on a tool-approval-request for side-effecting tools;
   // the turn suspends and resumes with the user's decision (see
@@ -954,6 +1120,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // the shared declaration so the host editor's promises about which knobs bite
   // move with this, instead of being re-asserted by hand on the client.
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
+  // …by writing `.mcp.json` into the session workdir (see deliverMcpServers).
+  mcpNativeDelivery: "sandbox-files",
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.
@@ -1006,7 +1174,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
         // deliberate: the sandbox env is ours, and the adapter's own `effort`
         // option is the supported way to ask for a value.
         env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" },
-      }) as unknown as HarnessAgentAdapter
+      }) as unknown as HarnessAgentAdapter,
     );
   },
 };
@@ -1015,6 +1183,9 @@ const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
   displayName: "Codex",
   requiresComputer: true,
+  // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
+  // Anthropic one.
+  modelAccess: "broker",
   // Codex doesn't support built-in tool approval requests — use allow-all.
   defaultPermissionMode: "allow-all",
   // Unlike Claude Code (see `claudeCodeAdapter`, where the pause was available
@@ -1093,9 +1264,140 @@ const codexAdapter: HarnessRuntimeAdapter = {
   },
 };
 
+const cursorAdapter: HarnessRuntimeAdapter = {
+  id: "cursor",
+  // "Cursor CLI", not "Cursor" — the emulated `cursor` host style (the IDE's
+  // chat panel) keeps that name, and the two are different products with
+  // different surfaces. Every preflight/refusal message a user reads comes from
+  // here, so the distinction has to be in the name itself.
+  displayName: "Cursor CLI",
+  requiresComputer: true,
+  // NO BROKER. cursor-agent has no provider or gateway routing at all: it
+  // authenticates with a `CURSOR_API_KEY` (the adapter's own `credentialEnv`
+  // says so), every model request transits Cursor's servers, and the spend
+  // lands on that Cursor account. There is no seam for MCPJam to mint a lease
+  // at, so the turn skips the broker start entirely and `buildBrokerDummyAuth`
+  // throws if anything asks it for one.
+  modelAccess: "external-account",
+  // The name the CLI itself reads — `@ai-sdk/harness-cursor` declares exactly
+  // this as its `credentialEnv`. Delivered as a MATERIALIZED PROJECT SECRET:
+  // one key per environment, set once by an admin under Project Settings →
+  // Secrets. Missing ⇒ the turn is refused up front with copy that says so,
+  // never defaulted.
+  externalAccountCredentialEnv: ["CURSOR_API_KEY"],
+  defaultPermissionMode: "allow-all",
+  // The ACP bridge routes every tool call through `session/request_permission`
+  // and emits `tool-approval-request` for anything it does not auto-approve,
+  // then resumes on the host's decision — the same pause/resume contract Claude
+  // Code offers. Verified on a live cursor-agent during the harness spike.
+  supportsNativeToolApproval: true,
+  // "allow-reads" for the same reason as Claude Code, though by a different
+  // mechanism. The bridge's `shouldAutoApprove(permissionMode, kind)` lets a
+  // call through when the mode is "allow-all", when the ACP tool KIND is one of
+  // read/search/think/fetch, or — under "allow-edits" only — edit/delete/move.
+  // So "allow-reads" is the narrowest mode that still pauses on execute-class
+  // work while leaving reads free: the faithful mapping to the emulated engine,
+  // which gates tool CALLS and never reads.
+  approvalPermissionMode: "allow-reads",
+  // FALSE pending a live measurement, and deliberately not inferred.
+  //
+  // The mechanism is clearly there — an MCP call reaches the same
+  // `requestPermission` path as a native one, and the bridge's
+  // `claimHostToolPermission` short-circuit covers only HarnessAgent's OWN tool
+  // channel, not the host's servers. What is NOT established is the one fact
+  // that decides the answer: which ACP `toolCall.kind` cursor-agent reports for
+  // an MCP tool. `other`/`execute` would pause under "allow-reads"; a kind of
+  // read/search/fetch/think would be auto-approved and the call would run with
+  // no prompt at all.
+  //
+  // Claiming `true` on the strength of the mechanism would mean a host that
+  // explicitly asked for approval could silently execute MCP tools unapproved —
+  // the one failure this flag exists to prevent. At `false`, such a host is
+  // refused at preflight with a message that says why
+  // (`harnessToolApprovalRefusalReason`), and approval-free Cursor hosts are
+  // unaffected. Flip this to `true` — a one-line change — once a live run with
+  // `requireToolApproval` and a selected MCP server is observed pausing on the
+  // MCP call.
+  supportsMcpToolApproval: false,
+  // Not wired or tested for this adapter; same posture as Codex.
+  supportsHostExecutedToolApproval: false,
+  // NATIVE: the CLI's own MCP client dials MCPJam's signed per-server proxy, so
+  // every `tools/call` crosses the seam where firsthand evidence is captured.
+  // Read from the shared declaration, which the client's Behavior tab derives
+  // its promises from too.
+  mcpDelivery: HARNESS_MCP_DELIVERY.cursor,
+  // …but via the ACP `session/new` config rather than a file in the box: the
+  // servers are a CONSTRUCTOR setting (see createHarness). Same mode, different
+  // mechanism — which is exactly the distinction this field carries.
+  mcpNativeDelivery: "session-config",
+  // OFF for v1. ACP supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this
+  // is a scope decision rather than a capability wall: shipping skills means
+  // owning the same delivery/reconcile/adopt passes the other two adapters
+  // have, plus a parity test against the real adapter. Tracked as a follow-up.
+  supportsSkills: false,
+  // Dormant while the flag above is false; see CURSOR_SKILLS_BASE.
+  skillsBaseDir: CURSOR_SKILLS_BASE,
+  skillsWriteOptions: { trailingNewline: false },
+  // Never called (`runHarnessTurn` guards on supportsSkills), and honest if the
+  // guard ever moves: nothing delivered, every skill reported skipped.
+  prepareSkills: prepareNoSkills,
+  supportsPluginBundles: false,
+  // Cursor does not emit file-change stream parts.
+  fileChangeToolName: undefined,
+  // The ACP wrapper carries a static builtin catalog (31 tools), so the generic
+  // `/v1/harness/:id/builtin-tools` route works with no per-harness edits.
+  listBuiltinTools: memoizedBuiltinTools(() => createCursor()),
+  // AUTO. The adapter passes no model, so Cursor picks — which is the only
+  // honest thing to do while MCPJam has no view of the account's entitlements
+  // (a plan-gated model does not error; it answers "Upgrade your plan to
+  // continue" in a normal end_turn, which the turn runner detects separately).
+  toNativeModel: () => undefined,
+  // Never consulted: `runHarnessTurn` and the preflight skip every model gate
+  // for an external-account harness, because the model MCPJam knows about is
+  // not the model that runs. Declared `true` so the shape is satisfied without
+  // implying a check happened.
+  supportsModel: () => true,
+  // Name-only attribution, for the result parts that arrive without an input.
+  // Cursor's stream name is an opaque `acp_tool_<id>`, so this can only ever
+  // return it verbatim with no serverId — which is the correct answer for a
+  // name that carries no identity. The real work is in attributeToolCall.
+  parseToolName: parseHarnessToolName,
+  // The identity lives in the INPUT (`{ providerIdentifier, toolName, args }`
+  // — the adapter's own `isMcpToolCall` predicate keys off exactly those three
+  // fields), so this hook is what makes Cursor MCP calls attributable at all.
+  attributeToolCall: attributeCursorToolCall,
+  // The installed CLI is whatever `curl https://cursor.com/install | bash`
+  // fetched at bootstrap — the adapter pins its own version but NOT the CLI's,
+  // and two observed builds are four months of behaviour apart. Recording the
+  // version per session is what makes a silent upstream change attributable
+  // instead of a mystery regression.
+  runtimeVersionCommand: (sessionWorkDir) =>
+    // Layout taken from the adapter's own bootstrap: `bootstrapDir` is
+    // `.harness-bootstrap/<harnessId>` under the session workdir, and
+    // `implementation.json` puts the executable at
+    // `implementation/home/.local/bin/agent` (privateHome: true).
+    `"${sessionWorkDir}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version`,
+  createHarness({ auth, mcpJson }) {
+    // Dual-`ai` boundary cast, same as the other two adapters.
+    return createCursor({
+      // The customer's own CURSOR_API_KEY, as the environment arm of
+      // HarnessV1Authentication. Passing an explicit env map (rather than
+      // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading the
+      // SERVER's process env for a credential — and the routing modes would
+      // only produce a warning here anyway, since Cursor cannot be re-routed.
+      auth,
+      // REQUIRED by this arm's signature: `session-config` delivery has no
+      // other channel, so a construction that forgot the servers would be a
+      // silently tool-less turn. The type makes that unwritable.
+      mcpServers: toAcpMcpServers(mcpJson),
+    }) as unknown as HarnessAgentAdapter;
+  },
+};
+
 const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
   "claude-code": claudeCodeAdapter,
   codex: codexAdapter,
+  cursor: cursorAdapter,
 };
 
 /** Membership test against the installed adapters (own-property, prototype-safe).
@@ -1133,4 +1435,20 @@ export function registeredHarnessIds(): HarnessId[] {
  */
 export function harnessSupportsSkills(id: string): boolean {
   return isHarnessId(id) ? HARNESS_ADAPTERS[id].supportsSkills : false;
+}
+
+/**
+ * Does this harness pay for its own model spend on the CUSTOMER's account with
+ * the runtime vendor (`modelAccess: 'external-account'`)?
+ *
+ * Same non-throwing shape as `harnessSupportsSkills`, and the default matters:
+ * an unrecognized id answers `false` — "we cannot say this is customer-billed".
+ * The read decides how a turn is BILLED, so the safe direction is MCPJam's own
+ * ledger, where an over-recorded turn is reconciled rather than written off as
+ * someone else's spend.
+ */
+export function harnessUsesExternalAccount(id: string): boolean {
+  return isHarnessId(id)
+    ? HARNESS_ADAPTERS[id].modelAccess === "external-account"
+    : false;
 }

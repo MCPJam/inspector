@@ -112,6 +112,7 @@
     "@ai-sdk/harness": "^1.0.96",
     "@ai-sdk/harness-claude-code": "^1.0.100",
     "@ai-sdk/harness-codex": "^1.0.98",
+    "@ai-sdk/harness-cursor": "^1.0.9",
     "@ai-sdk/mistral": "^3.0.18",
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.156",

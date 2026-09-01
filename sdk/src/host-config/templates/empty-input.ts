@@ -57,11 +57,11 @@ export type SeededHostConfigInput = {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: { kind: "personal"; workdir?: string };
-  // Real agent harness for this host. `"claude-code"` / `"codex"` run a real CLI
-  // runtime (requires an attached computer); absent ⇒ MCPJam's emulated engine.
-  // Kept as a local literal (mirrors the `Harness` union / HARNESS_IDS in
-  // ../types.ts) so this module stays free of cross-imports.
-  harness?: "claude-code" | "codex";
+  // Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"`
+  // run a real CLI runtime (requires an attached computer); absent ⇒ MCPJam's
+  // emulated engine. Kept as a local literal (mirrors the `Harness` union /
+  // HARNESS_IDS in ../types.ts) so this module stays free of cross-imports.
+  harness?: "claude-code" | "codex" | "cursor";
   connectionDefaults: {
     headers: Record<string, string>;
     requestTimeout: number;
