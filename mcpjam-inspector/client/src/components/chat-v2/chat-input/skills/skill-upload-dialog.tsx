@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { Loader2, Upload, FolderOpen, File, X } from "lucide-react";
+import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
 import { isValidSkillName } from "../../../../../../shared/skill-types";
+import { useProjectMembers } from "@/hooks/useProjects";
 import { track } from "@/lib/analytics";
 
 interface SkillUploadDialogProps {
@@ -59,17 +61,39 @@ export function SkillUploadDialog({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  // Cloud-only: share the new skill with every project member (else personal).
-  const [shareWithProject, setShareWithProject] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isCloud = source?.kind === "cloud";
+
+  /**
+   * Which tier this member can actually write to.
+   *
+   * "Add to library" is ONE button, not a choice: an admin's skill goes to the
+   * project library, everyone else's lands personal because the backend
+   * (`projectSkills:createSkill`) refuses `sharing: 'project'` from a
+   * non-admin. Asking the user to tick a box for a permission they may not
+   * hold turns a plumbing detail into a decision, and refuses it after they
+   * have committed the upload.
+   *
+   * `canManageMembers` is the SAME backend authority as the skill gate — both
+   * resolve to `canManageProjectMembers` — and it fails closed to `false`, so
+   * a still-loading query uploads a personal skill rather than one the server
+   * will reject.
+   *
+   * Gated on `open` as well as on the cloud source: this dialog is mounted
+   * (closed) by every chat input, and an ungated query would hold a standing
+   * Convex subscription per mounted composer.
+   */
+  const { isAuthenticated } = useConvexAuth();
+  const { canManageMembers: canManageShared } = useProjectMembers({
+    isAuthenticated: isAuthenticated && open && isCloud,
+    projectId: source?.kind === "cloud" ? source.projectId : null,
+  });
 
   const resetForm = () => {
     setFiles([]);
     setSkillInfo(null);
     setError(null);
     setIsDragOver(false);
-    setShareWithProject(false);
   };
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -209,7 +233,8 @@ export function SkillUploadDialog({
     setIsLoading(true);
 
     try {
-      const sharing = isCloud && shareWithProject ? "project" : "user";
+      // Resolved from the member's role, never from a form control.
+      const sharing = isCloud && canManageShared ? "project" : "user";
       const skill = await uploadSkillFolder(
         files,
         skillInfo.name,
@@ -257,7 +282,7 @@ export function SkillUploadDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upload Skill</DialogTitle>
+          <DialogTitle>{isCloud ? "Add to library" : "Upload Skill"}</DialogTitle>
           <DialogDescription>
             {source?.kind === "cloud" ? (
               <>
@@ -401,24 +426,13 @@ export function SkillUploadDialog({
             </div>
           )}
 
-          {/* Cloud-only: share with the whole project (else personal). */}
+          {/* Where it lands — stated, not asked. See `canManageShared`. */}
           {isCloud && (
-            <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={shareWithProject}
-                onChange={(e) => setShareWithProject(e.target.checked)}
-                disabled={isLoading}
-                className="mt-0.5"
-              />
-              <span>
-                Share with the project
-                <span className="block text-xs text-muted-foreground">
-                  Every member can see and use it. Otherwise it stays personal
-                  (only you). Publishing to a project requires admin.
-                </span>
-              </span>
-            </label>
+            <p className="text-xs text-muted-foreground">
+              {canManageShared
+                ? "This skill will be added to the project library. Every member can see and use it."
+                : "This will be added as a personal skill — only you can use it. A project admin can publish it to the project library."}
+            </p>
           )}
 
           {/* Error message */}
@@ -453,7 +467,7 @@ export function SkillUploadDialog({
               ) : (
                 <>
                   <Upload className="h-4 w-4 mr-2" />
-                  Upload Skill
+                  {isCloud ? "Add to library" : "Upload Skill"}
                 </>
               )}
             </Button>

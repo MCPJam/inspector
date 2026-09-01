@@ -38,6 +38,13 @@ vi.mock("../skills/ServerSkillsSection", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// The tab resolves the publish permission from Convex; these suites are about
+// the tab's chrome, not about that resolution (see SkillsTab.promote-gate).
+vi.mock("convex/react", () => ({ useConvexAuth: () => ({ isAuthenticated: false }) }));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({ canManageMembers: false, isLoading: false }),
+}));
+
 import { SkillsTab } from "../SkillsTab";
 
 beforeEach(() => {
@@ -55,10 +62,10 @@ describe("SkillsTab — cloud store gate", () => {
     expect(screen.getByTestId("server-skills")).toBeInTheDocument();
     expect(screen.queryByText("No skills available")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /upload your first skill/i })
+      screen.queryByRole("button", { name: /add your first skill/i })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /upload skill/i })
+      screen.queryByRole("button", { name: /add to library/i })
     ).not.toBeInTheDocument();
     // A list behind the flag is a request the backend gates anyway.
     expect(listSkills).not.toHaveBeenCalled();
@@ -69,7 +76,7 @@ describe("SkillsTab — cloud store gate", () => {
 
     expect(screen.getByTestId("server-skills")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /upload skill/i })
+      screen.getByRole("button", { name: /add to library/i })
     ).toBeInTheDocument();
     expect(listSkills).toHaveBeenCalled();
   });

@@ -34,6 +34,13 @@ vi.mock("../skills/ServerSkillsSection", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// The tab resolves the publish permission from Convex; these suites are about
+// the tab's chrome, not about that resolution (see SkillsTab.promote-gate).
+vi.mock("convex/react", () => ({ useConvexAuth: () => ({ isAuthenticated: false }) }));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({ canManageMembers: false, isLoading: false }),
+}));
+
 import { SkillsTab } from "../SkillsTab";
 
 afterEach(() => {

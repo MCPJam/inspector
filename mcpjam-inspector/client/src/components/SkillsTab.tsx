@@ -20,7 +20,10 @@ import {
   Pencil,
   Laptop,
 } from "lucide-react";
+import { useConvexAuth } from "convex/react";
+import { toast } from "sonner";
 import { track } from "@/lib/analytics";
+import { useProjectMembers } from "@/hooks/useProjects";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -132,6 +135,23 @@ export function SkillsTab({
         : { kind: "local" },
     [isCloudMode, projectId]
   );
+  /**
+   * Whether this member may publish a skill to the project library.
+   *
+   * Backend `projectSkills:promoteSkillToProject` requires project admin
+   * (`canManageProjectMembers`) — the same authority `canManageMembers`
+   * resolves — so a non-admin's Publish click was always going to be refused.
+   * It used to be offered anyway, and the refusal went to the devtools
+   * console: the button appeared to do nothing at all.
+   *
+   * Fails closed while the query loads, which is the safe direction: a button
+   * that appears a moment late beats one that refuses on click.
+   */
+  const { isAuthenticated } = useConvexAuth();
+  const { canManageMembers: canManageShared } = useProjectMembers({
+    isAuthenticated: isAuthenticated && isCloudMode,
+    projectId: isCloudMode && projectId ? projectId : null,
+  });
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
@@ -399,7 +419,12 @@ export function SkillsTab({
       });
       await fetchSkills();
     } catch (err) {
+      // The person who clicked is the one who needs to know it failed, and
+      // they are not reading the console. `webPost` throws a `WebApiError`
+      // carrying the server's own message.
+      const message = err instanceof Error ? err.message : String(err);
       console.error("Error promoting skill:", err);
+      toast.error(`Couldn't publish "${selectedItem.name}": ${message}`);
     }
   };
 
@@ -558,7 +583,7 @@ export function SkillsTab({
                       onClick={() => setIsUploadDialogOpen(true)}
                       variant="ghost"
                       size="sm"
-                      title="Upload skill"
+                      title={isCloudMode ? "Add to library" : "Upload skill"}
                       disabled={cloudUnavailable}
                     >
                       <Plus className="h-3 w-3 cursor-pointer" />
@@ -644,7 +669,9 @@ export function SkillsTab({
                           disabled={cloudUnavailable}
                         >
                           <Plus className="h-3 w-3 mr-2" />
-                          Upload your first skill
+                          {isCloudMode
+                            ? "Add your first skill"
+                            : "Upload your first skill"}
                         </Button>
                       </div>
                     ))}
@@ -776,14 +803,18 @@ export function SkillsTab({
                           <Pencil className="h-4 w-4" />
                         </Button>
                       )}
+                    {/* Publishing is admin-only on the backend, so a member
+                        who cannot publish is not offered the button — see
+                        `canManageShared`. */}
                     {selectedItem?.origin === "cloud" &&
-                      selectedItem.sharing === "user" && (
+                      selectedItem.sharing === "user" &&
+                      canManageShared && (
                         <Button
                           onClick={handlePromote}
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                          title="Promote to project (share with all members)"
+                          title="Publish to project library"
                         >
                           <Globe className="h-4 w-4" />
                         </Button>
