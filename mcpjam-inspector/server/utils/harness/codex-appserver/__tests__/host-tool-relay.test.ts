@@ -134,6 +134,52 @@ describe("host tool relay", () => {
     expect(body.error).toBe("turn aborted");
     release?.();
   });
+
+  it("refuses an oversized body instead of buffering it", async () => {
+    // The credential keeps a stranger off this socket, but the caller it DOES
+    // admit is a model-driven agent in the sandbox. An unbounded read is a way
+    // for a steered turn to kill the bridge by exhausting its heap, so the
+    // read is capped and the request is refused rather than accumulated.
+    const relay = await relayWith({
+      listTools: () => [],
+      callTool: async () => "never",
+    });
+    const response = await fetch(`${relay.url}/call`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-mcpjam-relay-credential": relay.credential,
+      },
+      // Comfortably past the 8 MiB cap, and not valid JSON either — the size
+      // check must fire before any parse is attempted.
+      body: "x".repeat(9 * 1024 * 1024),
+    }).catch(() => undefined);
+    // The relay destroys the socket after replying, so a client-side abort is
+    // an acceptable observation of the same refusal.
+    if (response) expect(response.status).toBe(413);
+  });
+
+  it("cancels a parked call when the relay closes, so teardown cannot hang", async () => {
+    // `server.close()` waits for open connections. A host tool parked on a
+    // human approval keeps its request open indefinitely, so close() has to
+    // cancel first or session teardown blocks on a decision never coming.
+    const relay = await relayWith({
+      listTools: () => [],
+      callTool: () => new Promise(() => {}),
+    });
+    const call = fetch(`${relay.url}/call`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-mcpjam-relay-credential": relay.credential,
+      },
+      body: JSON.stringify({ toolName: "parked", input: {} }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await relay.close();
+    const body = (await (await call).json()) as { ok: boolean };
+    expect(body.ok).toBe(false);
+  });
 });
 
 describe("the stdio MCP server Codex spawns", () => {

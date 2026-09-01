@@ -322,6 +322,10 @@ export const USED_NOTIFICATIONS = [
   "item/reasoning/summaryPartAdded",
   "item/commandExecution/outputDelta",
   "item/fileChange/patchUpdated",
+  // Switched on by the translator to label a compaction as manual vs automatic.
+  // Absent from this list the snapshot guard would not notice an upstream
+  // rename, which is the one thing the list exists to catch.
+  "thread/compacted",
   "mcpServer/startupStatus/updated",
   "error",
   "warning",

@@ -24,9 +24,11 @@
  *
  * ## Ordering
  *
- * Codex sends the approval BEFORE `item/started`, so the tool call the harness
- * requires to already exist is seeded here through the translator's
- * `ensureToolCall`, and the later item is a no-op.
+ * The tool call the harness requires to already exist is seeded through the
+ * translator's `ensureToolCall`, which is idempotent. In practice `item/started`
+ * arrives first and this is a no-op, but the protocol does not order the two,
+ * so the approval path seeds the call itself rather than assuming the item beat
+ * it here.
  *
  * ## Nothing may hang
  *
@@ -155,7 +157,12 @@ export function createApprovalController(input: {
         "Codex asked to widen its permissions mid-turn; MCPJam granted none " +
         `(cwd: ${params.cwd}).`,
     });
-    return { permissions: [], scope: "turn" };
+    // OBJECT-shaped, not an array: the schema's `RequestPermissionProfile` is
+    // `{fileSystem?, network?}` with `additionalProperties: false`, so `{}` is
+    // a well-formed profile that grants nothing. An array would be rejected as
+    // malformed and leave Codex blocked on an unanswered request — the one
+    // outcome this whole controller exists to prevent.
+    return { permissions: {}, scope: "turn" };
   };
 
   const handleUserInput = async (params: ToolRequestUserInputParams) => {

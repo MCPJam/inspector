@@ -29,6 +29,9 @@
 import { createServer, type Server } from "node:http";
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 
+/** Cap on a `/call` body. See the bounded-read note in the request handler. */
+const MAX_CALL_BODY_BYTES = 8 * 1024 * 1024;
+
 export type HostToolInvocation = {
   /** The tool name as the HOST declared it (already un-aliased). */
   toolName: string;
@@ -95,12 +98,27 @@ export async function startHostToolRelay(
       return;
     }
 
+    // BOUNDED. The credential keeps a stranger off this socket, but the caller
+    // it does admit is a model-driven agent inside the sandbox, so an
+    // unbounded `body +=` is a way for a confused (or steered) turn to kill the
+    // bridge by exhausting its heap. A tool argument list is kilobytes; the cap
+    // is generous enough that no real call meets it and small enough that a
+    // runaway one dies immediately.
     let body = "";
+    let aborted = false;
     req.setEncoding("utf8");
     req.on("data", (chunk: string) => {
+      if (aborted) return;
+      if (body.length + chunk.length > MAX_CALL_BODY_BYTES) {
+        aborted = true;
+        reply(413, { error: "request body too large" });
+        req.destroy();
+        return;
+      }
       body += chunk;
     });
     req.on("end", () => {
+      if (aborted) return;
       let invocation: HostToolInvocation;
       try {
         invocation = JSON.parse(body) as HostToolInvocation;
@@ -136,6 +154,14 @@ export async function startHostToolRelay(
     url: `http://127.0.0.1:${port}`,
     credential,
     async close() {
+      // Cancel BEFORE awaiting: `server.close()` waits for open connections to
+      // finish, and a host tool parked on a human approval keeps its request
+      // open indefinitely. Without this, session teardown blocks on a decision
+      // that is never coming.
+      for (const reject of inFlight) {
+        reject(new Error("bridge is shutting down"));
+      }
+      inFlight.clear();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
     cancelAll(reason) {

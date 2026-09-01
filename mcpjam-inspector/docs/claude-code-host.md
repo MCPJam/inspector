@@ -40,7 +40,7 @@ for your org.
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model (BYOK fails closed; the CLI maps it to its native alias). |
 | System prompt | Honored (passed to the runtime). |
-| Require tool approval | **Can't be switched on from the Behavior tab** — the toggle is disabled for harness hosts (`client/src/lib/harness-capabilities.ts` marks it not enforced), though it keeps the host's stored value. A host that already carries approval (e.g. set before the host was switched to the harness) does get it honored for **native and host-executed** tools (WS3): the adapter runs the CLI in its `allow-edits` permission mode, so side-effecting built-ins pause the turn and resume with your decision; reads stay free. The runtime can't pause for **MCP-server** tools, so approval combined with selected MCP servers is rejected pre-flight (`supportsMcpToolApproval: false`). |
+| Require tool approval | **Switchable from the Behavior tab** (`client/src/lib/harness-capabilities.ts` marks it enforced for `claude-code`). Approval is honored on all three surfaces — **native, host-executed and MCP-server** tools. The adapter runs the CLI in its `allow-reads` permission mode, which is what makes the MCP case work: every call passes the bridge's `canUseTool` before the CLI may run it, and an external `mcp__<server>__<tool>` name falls into that table's `edit` default, which `allow-reads` gates. Reads stay free. (This row previously said MCP tools could not pause and that approval plus selected servers was rejected pre-flight; `claudeCodeAdapter.supportsMcpToolApproval` has been `true` since that was measured against the vendored bridge.) |
 | Selected MCP servers | Honored — delivered via `.mcp.json` through MCPJam's proxy. |
 | Skills | Honored (runtime skills are materialized into the sandbox). |
 | Temperature / other sampling knobs | **Not honored** — the CLI owns its sampling. Grayed out in the UI. |
@@ -78,8 +78,9 @@ shutoff, never a bypass.
 
 Codex runs over one of two transports, selected by
 `MCPJAM_CODEX_APPSERVER_TRANSPORT` (off by default). It is one host either way —
-same harness id, same lane, same model rules, same host-executed MCP delivery —
-and the difference is what the runtime can be asked to do.
+same harness id, same model rules, same host-executed MCP delivery — but NOT
+one resumable session lane (see the fingerprint note below), and the difference
+is what the runtime can be asked to do.
 
 | | `codex exec` (default) | `codex app-server` |
 |---|---|---|

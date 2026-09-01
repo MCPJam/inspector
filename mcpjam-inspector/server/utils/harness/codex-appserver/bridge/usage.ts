@@ -38,6 +38,19 @@ export function zeroUsage(): HarnessUsage {
  * cached/reasoning components, and the harness shape wants the remainder. They
  * are clamped at zero rather than allowed to go negative — a negative token
  * count is never the truth, and it would propagate into billing telemetry.
+ *
+ * `cacheWrite` is subtracted from `noCache` because the two are DISJOINT in
+ * this shape, which is not obvious from the field docs ("non-cached input
+ * tokens" reads like it should include tokens written to cache, since those
+ * were processed fresh). The ecosystem's own answer settles it:
+ * `@ai-sdk/harness-claude-code` maps Anthropic's disjoint triple straight
+ * across — `noCache: input_tokens`, `cacheWrite: cache_creation_input_tokens`,
+ * with `total` the SUM of all three — so a consumer that adds the components
+ * expects no overlap. The published `@ai-sdk/harness-codex` sidesteps the
+ * question by reporting `cacheWrite: 0` unconditionally; this adapter forwards
+ * what Codex actually reports, so it has to get the subtraction right. Every
+ * capture so far has `cacheWriteInputTokens: 0`, which is exactly why this
+ * would have gone unnoticed until it did not.
  */
 export function toHarnessUsage(
   breakdown: TokenUsageBreakdown | undefined,
@@ -52,7 +65,7 @@ export function toHarnessUsage(
     inputTokens: {
       ...(input !== undefined ? { total: input } : {}),
       ...(input !== undefined && cacheRead !== undefined
-        ? { noCache: Math.max(0, input - cacheRead) }
+        ? { noCache: Math.max(0, input - cacheRead - (cacheWrite ?? 0)) }
         : {}),
       ...(cacheRead !== undefined ? { cacheRead } : {}),
       ...(cacheWrite !== undefined ? { cacheWrite } : {}),

@@ -247,7 +247,12 @@ async function main(): Promise<void> {
         serviceName: "mcpjam-inspector",
       };
 
-      const resumeId = threadId ?? start.resumeThreadId;
+      // `mustRestart` means the turn configuration changed under a live
+      // thread, so the thread must be rebuilt. `threadId` is already cleared
+      // above, but the host's `resumeThreadId` (sent on every rerun start)
+      // would otherwise resume the very thread we just decided to abandon,
+      // carrying the stale tools, instructions and permissions with it.
+      const resumeId = mustRestart ? undefined : (threadId ?? start.resumeThreadId);
       const thread = resumeId
         ? await runtime.request<ThreadStartResult>("thread/resume", {
             ...threadParams,

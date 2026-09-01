@@ -44,7 +44,14 @@ const PERMISSIVE_SCHEMA: Record<string, unknown> = {
 function asObjectSchema(schema: unknown): Record<string, unknown> {
   if (!schema || typeof schema !== "object") return { ...PERMISSIVE_SCHEMA };
   const candidate = schema as Record<string, unknown>;
-  if (candidate.type === "object") return candidate;
+  // A JSON Schema may describe an object WITHOUT saying `type: "object"` —
+  // `{properties, required}` alone is valid and common. Replacing those with
+  // the permissive stub silently dropped every argument the tool declares, so
+  // the model saw a tool it could not call correctly. Normalize instead:
+  // preserve the schema and stamp the type Codex expects.
+  if (!Array.isArray(schema) && (candidate.type === "object" || candidate.type === undefined)) {
+    return { ...candidate, type: "object" };
+  }
   return { ...PERMISSIVE_SCHEMA };
 }
 

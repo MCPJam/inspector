@@ -312,7 +312,12 @@ export function createCodexAppServer(
 
       const token = createBridgeToken();
       const env: Record<string, string> = {
-        ...(settings.auth ?? {}),
+        // Fall back to the credential environment captured when this session
+        // was created: a bridge that died is respawned from lifecycle state,
+        // and the caller has no reason to re-supply `auth` on a resume. Without
+        // this the replacement bridge starts with no Codex credential and the
+        // resumed turn cannot authenticate.
+        ...(settings.auth ?? parsed.sandboxCredentialEnvironment ?? {}),
         BRIDGE_CHANNEL_TOKEN: token,
         BRIDGE_WS_PORT: "0",
         ...(respawnStrategy === "replay"

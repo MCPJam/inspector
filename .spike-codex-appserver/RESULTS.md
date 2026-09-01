@@ -43,24 +43,34 @@ With an MCP server configured, three more appear (`list_mcp_resources`,
 `list_mcp_resource_templates`, `read_mcp_resource`) plus one namespace tool per
 server.
 
-## P2 — approvals are real, and they arrive BEFORE the item
+## P2 — approvals are real, and they arrive WITH the item
 
 Thread started with `approvalPolicy: "untrusted"`, `approvalsReviewer: "user"`,
 `sandbox: "workspace-write"`. Observed order:
 
 ```
-request: item/commandExecution/requestApproval   <-- first
 started:  userMessage
 completed: userMessage
-started:  commandExecution                        <-- only after the decision
+started:  commandExecution                        <-- t
+request: item/commandExecution/requestApproval    <-- t (SAME millisecond)
+resolved: serverRequest/resolved                  <-- after the decision
 completed: commandExecution   (status: completed, exitCode 0)
 started/completed: agentMessage
 ```
 
-**This settles the top-ranked risk in the plan.** The approval request precedes
-`item/started`, so the bridge cannot wait for the item to synthesize the
-`tool-call` that a `tool-approval-request` must follow. It has to seed the call
-from the approval params, which carry everything needed:
+**CORRECTED 2026-09-01.** An earlier revision of this file claimed the approval
+arrives BEFORE `item/started` and built the translator's rationale on it. That
+was wrong, and two reviewers caught it against the recorded fixtures. Re-running
+this gate settles it: `item/started` lands FIRST, in the same millisecond as the
+approval.
+
+The design conclusion is unchanged but its reason is not. The protocol orders
+neither event — a same-millisecond pair is precisely the ordering that flips
+between versions or under load — so the bridge cannot assume either arrives
+first. `ensureToolCall` is idempotent and called from BOTH paths: whichever
+lands first synthesizes the `tool-call` a `tool-approval-request` must follow,
+and the other is a no-op. The approval params carry everything needed to seed it
+unaided:
 
 ```json
 {

@@ -11,10 +11,13 @@
  *
  *  1. A `tool-approval-request` MUST follow a `tool-call` with the same
  *     `toolCallId` — the framework throws on an approval for an unknown call.
- *     Codex sends the approval BEFORE `item/started` (measured; see
- *     `.spike-codex-appserver/RESULTS.md`), so the call cannot be synthesized
- *     from the item. {@link Translator.ensureToolCall} lets the approval path
- *     seed it and makes the later `item/started` a no-op.
+ *     The protocol does NOT order the two. In every capture taken so far
+ *     `item/started` lands first, in the same millisecond as the approval
+ *     (see `.spike-codex-appserver/RESULTS.md`), but nothing in the schema
+ *     promises that and a same-millisecond pair is exactly the kind of order
+ *     that flips. {@link Translator.ensureToolCall} is therefore idempotent
+ *     and callable from EITHER path: whichever arrives first synthesizes the
+ *     call, and the other becomes a no-op.
  *  2. Exactly ONE `tool-call` per item. Two would double-count in every
  *     downstream aggregation.
  *  3. Nothing is silently dropped. Every notification is also emitted as a

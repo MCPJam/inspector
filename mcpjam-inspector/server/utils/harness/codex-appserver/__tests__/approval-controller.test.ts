@@ -64,8 +64,9 @@ const commandApproval = (itemId = "call_1") => ({
 
 describe("command execution approvals", () => {
   it("emits the tool-call before the approval, from the approval's own params", async () => {
-    // Codex sends the approval BEFORE `item/started`, so the call cannot be
-    // built from the item. Everything the call needs is on the approval.
+    // The controller is driven here with NO preceding item, which is the case
+    // the protocol permits but the recordings do not happen to show: everything
+    // the call needs is on the approval, so it can seed the call unaided.
     const { controller, parts } = harness({ approve: true });
     await controller.handle(commandApproval());
 
@@ -162,7 +163,11 @@ describe("requests we answer without asking the user", () => {
       method: "item/permissions/requestApproval",
       params: { threadId: "t", turnId: "u", itemId: "i", cwd: "/w" },
     });
-    expect(result).toEqual({ permissions: [], scope: "turn" });
+    // OBJECT, not an array: `RequestPermissionProfile` in the pinned schema is
+    // `{fileSystem?, network?}`, so `{}` grants nothing in a shape Codex can
+    // parse. This assertion previously pinned an array — the test agreed with
+    // the code and both were wrong about the protocol.
+    expect(result).toEqual({ permissions: {}, scope: "turn" });
     expect(warnings.join(" ")).toContain("granted none");
   });
 

@@ -44,7 +44,8 @@ type Replay = {
  * Replay a fixture the way the bridge does: notifications to the translator,
  * approval requests to the same `ensureToolCall` seam the approval controller
  * uses. Keeping both in ONE replay is what makes the ordering guarantee
- * testable — the approval arrives first in these recordings.
+ * testable against the order actually recorded — `item/started` first, in the
+ * same millisecond as the approval.
  */
 function replay(name: string): Replay {
   const parts: BridgeEvent[] = [];
@@ -139,10 +140,11 @@ describe("codex app-server stream translation", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  // The ordering guarantee, and the reason `ensureToolCall` exists. Codex sends
-  // the approval BEFORE `item/started`, and the framework throws on an approval
-  // for a tool call it has not seen — so a translator that waited for the item
-  // would fail every approved turn.
+  // The ordering guarantee, and the reason `ensureToolCall` exists. The
+  // framework throws on an approval for a tool call it has not seen, and the
+  // protocol does not order `item/started` against the approval — they land in
+  // the same millisecond. Whichever the bridge sees first must synthesize the
+  // call, so this holds no matter which way the pair arrives.
   it("emits the tool-call before the approval that references it", () => {
     const { parts, approvals } = replay("command-approved");
     expect(approvals).not.toHaveLength(0);
