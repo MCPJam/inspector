@@ -51,6 +51,7 @@ import {
   type LocalPermissionProfile,
   type SupportedLocalHarnessId,
 } from "./targets.js";
+import { createLocalStateMutationLock } from "./local-state-lock.js";
 
 export const LOCAL_HARNESS_GRANT_HEADER = "x-mcpjam-local-harness-grant";
 
@@ -113,31 +114,23 @@ interface PersistedState {
   harnessGrants: PersistedHarnessGrant[];
 }
 
-const EMPTY_STATE: PersistedState = {
-  version: 1,
-  workspaces: [],
-  harnessGrants: [],
-};
+function emptyState(): PersistedState {
+  return { version: 1, workspaces: [], harnessGrants: [] };
+}
 
 /** Grants are attended and short-lived by construction: local execution is not
  *  an unattended capability in v1, so a grant that outlives the sitting is a
  *  grant nobody is watching. */
 const GRANT_TTL_MS = 12 * 60 * 60 * 1000;
 
-/**
- * Grant/revoke are read-modify-write over one file; verification is a pure
- * read and stays lock-free so enforcement never queues behind a mutation.
- * Same shape as `computers/local-consent.ts`, for the same reasons.
- */
-let mutationChain: Promise<unknown> = Promise.resolve();
-function withGrantLock<T>(op: () => Promise<T>): Promise<T> {
-  const run = mutationChain.then(op, op);
-  mutationChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
+/** Grant, revoke, workspace registration, and machine-id minting all mutate
+ * owner-only state. The lock is cross-process so a second Inspector window
+ * cannot overwrite a revocation made by the first. */
+const withGrantLock = createLocalStateMutationLock({
+  rootDir: localHarnessStateRoot,
+  lockFileName: "grants.lock",
+  resourceLabel: "grant store",
+});
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -172,50 +165,124 @@ export function hashGrantBinding(binding: HarnessGrantBinding): string {
   );
 }
 
+/** Existing security state that cannot be understood is never treated as an
+ * empty store: doing so lets the next mutation overwrite grants or resurrect
+ * a revocation from a concurrent writer's stale snapshot. */
+export class GrantStateUnreadableError extends Error {}
+
+function isValidDate(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function isWorkspaceGrant(value: unknown): value is WorkspaceGrant {
+  if (!value || typeof value !== "object") return false;
+  const workspace = value as Partial<WorkspaceGrant>;
+  return (
+    typeof workspace.workspaceGrantId === "string" &&
+    workspace.workspaceGrantId.length > 0 &&
+    typeof workspace.canonicalPath === "string" &&
+    workspace.canonicalPath.length > 0 &&
+    isValidDate(workspace.createdAt)
+  );
+}
+
+function isHarnessGrantBinding(value: unknown): value is HarnessGrantBinding {
+  if (!value || typeof value !== "object") return false;
+  const binding = value as Partial<HarnessGrantBinding>;
+  const isolatedBackend =
+    binding.backend === "linux-bwrap" ||
+    binding.backend === "darwin-seatbelt" ||
+    binding.backend === "oci-v1" ||
+    binding.backend === "vm-v1";
+  return (
+    typeof binding.userId === "string" &&
+    binding.userId.length > 0 &&
+    typeof binding.machineId === "string" &&
+    binding.machineId.length > 0 &&
+    typeof binding.projectId === "string" &&
+    binding.projectId.length > 0 &&
+    typeof binding.workspaceGrantId === "string" &&
+    binding.workspaceGrantId.length > 0 &&
+    (binding.harnessId === "claude-code" || binding.harnessId === "codex") &&
+    (binding.targetKind === "local-native" ||
+      binding.targetKind === "local-isolated") &&
+    typeof binding.runtimeId === "string" &&
+    binding.runtimeId.length > 0 &&
+    (binding.permissionProfile === "read-only" ||
+      binding.permissionProfile === "workspace-edits" ||
+      binding.permissionProfile === "unrestricted") &&
+    typeof binding.policyVersion === "string" &&
+    binding.policyVersion.length > 0 &&
+    (binding.targetKind === "local-native"
+      ? binding.backend === undefined &&
+        binding.isolationPolicyVersion === undefined
+      : isolatedBackend &&
+        typeof binding.isolationPolicyVersion === "string" &&
+        binding.isolationPolicyVersion.length > 0)
+  );
+}
+
+function isPersistedHarnessGrant(
+  value: unknown,
+): value is PersistedHarnessGrant {
+  if (!value || typeof value !== "object") return false;
+  const grant = value as Partial<PersistedHarnessGrant>;
+  return (
+    typeof grant.grantId === "string" &&
+    grant.grantId.length > 0 &&
+    typeof grant.tokenHash === "string" &&
+    /^[0-9a-f]{64}$/.test(grant.tokenHash) &&
+    typeof grant.bindingHash === "string" &&
+    /^[0-9a-f]{64}$/.test(grant.bindingHash) &&
+    isHarnessGrantBinding(grant.binding) &&
+    isValidDate(grant.grantedAt) &&
+    isValidDate(grant.expiresAt)
+  );
+}
+
 async function readState(): Promise<PersistedState> {
+  let raw: string;
   try {
-    const raw = await readFile(grantsFilePath(), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { ...EMPTY_STATE };
-    const record = parsed as Partial<PersistedState>;
-    if (record.version !== 1) return { ...EMPTY_STATE };
-    // Validate every persisted record. A malformed `expiresAt` would let
-    // verification treat a grant as live while pruning removes it, and a
-    // non-string `tokenHash` would make `Buffer.from` throw out of a function
-    // whose whole contract is to RETURN a verification result.
-    return {
-      version: 1,
-      workspaces: (Array.isArray(record.workspaces)
-        ? record.workspaces
-        : []
-      ).filter(
-        (w): w is WorkspaceGrant =>
-          !!w &&
-          typeof w === "object" &&
-          typeof (w as WorkspaceGrant).workspaceGrantId === "string" &&
-          typeof (w as WorkspaceGrant).canonicalPath === "string",
-      ),
-      harnessGrants: (Array.isArray(record.harnessGrants)
-        ? record.harnessGrants
-        : []
-      ).filter((g): g is PersistedHarnessGrant => {
-        if (!g || typeof g !== "object") return false;
-        const grant = g as PersistedHarnessGrant;
-        return (
-          typeof grant.grantId === "string" &&
-          typeof grant.tokenHash === "string" &&
-          /^[0-9a-f]{64}$/.test(grant.tokenHash) &&
-          typeof grant.bindingHash === "string" &&
-          typeof grant.expiresAt === "string" &&
-          Number.isFinite(Date.parse(grant.expiresAt)) &&
-          !!grant.binding &&
-          typeof grant.binding === "object"
-        );
-      }),
-    };
-  } catch {
-    return { ...EMPTY_STATE };
+    raw = await readFile(grantsFilePath(), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyState();
+    throw new GrantStateUnreadableError(
+      `the local harness grant store could not be read: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new GrantStateUnreadableError(
+      "the local harness grant store is corrupt; refusing to treat it as " +
+        "empty or overwrite it",
+    );
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new GrantStateUnreadableError(
+      "the local harness grant store is not an object",
+    );
+  }
+  const record = parsed as Partial<PersistedState>;
+  if (
+    record.version !== 1 ||
+    !Array.isArray(record.workspaces) ||
+    !Array.isArray(record.harnessGrants) ||
+    !record.workspaces.every(isWorkspaceGrant) ||
+    !record.harnessGrants.every(isPersistedHarnessGrant)
+  ) {
+    throw new GrantStateUnreadableError(
+      "the local harness grant store has an unrecognized or malformed shape",
+    );
+  }
+  return {
+    version: 1,
+    workspaces: [...record.workspaces],
+    harnessGrants: [...record.harnessGrants],
+  };
 }
 
 async function writeState(state: PersistedState): Promise<void> {
@@ -237,29 +304,48 @@ async function writeState(state: PersistedState): Promise<void> {
  * then have to be kept out of telemetry.
  */
 export async function getLocalMachineId(): Promise<string> {
-  try {
-    const raw = await readFile(machineFilePath(), "utf8");
-    const parsed = JSON.parse(raw) as { machineId?: unknown };
-    if (typeof parsed.machineId === "string" && parsed.machineId.length >= 8) {
-      return parsed.machineId;
-    }
-  } catch {
-    /* fall through and mint */
-  }
-  return withGrantLock(async () => {
-    // Re-read inside the lock: a concurrent caller may have minted one.
+  const readExisting = async (): Promise<string | null> => {
+    let raw: string;
     try {
-      const raw = await readFile(machineFilePath(), "utf8");
-      const parsed = JSON.parse(raw) as { machineId?: unknown };
-      if (
-        typeof parsed.machineId === "string" &&
-        parsed.machineId.length >= 8
-      ) {
-        return parsed.machineId;
-      }
-    } catch {
-      /* mint below */
+      raw = await readFile(machineFilePath(), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw new GrantStateUnreadableError(
+        `the local harness machine identity could not be read: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new GrantStateUnreadableError(
+        "the local harness machine identity is corrupt; refusing to replace it",
+      );
+    }
+    if (!parsed || typeof parsed !== "object") {
+      throw new GrantStateUnreadableError(
+        "the local harness machine identity has an unrecognized shape",
+      );
+    }
+    const machineId = (parsed as { machineId?: unknown }).machineId;
+    if (typeof machineId !== "string" || machineId.length < 8) {
+      throw new GrantStateUnreadableError(
+        "the local harness machine identity has an invalid id",
+      );
+    }
+    return machineId;
+  };
+
+  const existing = await readExisting();
+  if (existing !== null) return existing;
+
+  return withGrantLock(async () => {
+    // Re-read inside the cross-process lock: another Inspector may have
+    // minted the installation identity while this caller was waiting.
+    const raced = await readExisting();
+    if (raced !== null) return raced;
+
     const machineId = `mach_${randomUUID()}`;
     const dir = localHarnessStateRoot();
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -272,7 +358,8 @@ export async function getLocalMachineId(): Promise<string> {
 }
 
 export type WorkspaceGrantResult =
-  { ok: true; grant: WorkspaceGrant } | { ok: false; message: string };
+  | { ok: true; grant: WorkspaceGrant }
+  | { ok: false; message: string };
 
 /**
  * Register a directory the user picked, and return its opaque id.
@@ -346,7 +433,18 @@ export async function resolveWorkspaceGrant(
 ): Promise<
   { ok: true; canonicalPath: string } | { ok: false; message: string }
 > {
-  const state = await readState();
+  let state: PersistedState;
+  try {
+    state = await readState();
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "the local harness grant store could not be read",
+    };
+  }
   const grant = state.workspaces.find(
     (w) => w.workspaceGrantId === workspaceGrantId,
   );
@@ -492,7 +590,19 @@ export async function verifyLocalHarnessGrant(
     };
   }
   const bindingHash = hashGrantBinding(binding);
-  const state = await readState();
+  let state: PersistedState;
+  try {
+    state = await readState();
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "invalid",
+      message:
+        error instanceof Error
+          ? error.message
+          : "the local harness grant store could not be read",
+    };
+  }
   const presented = Buffer.from(sha256(token), "hex");
   const now = opts?.now ?? Date.now();
 

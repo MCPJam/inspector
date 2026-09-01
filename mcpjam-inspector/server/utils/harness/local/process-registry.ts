@@ -20,7 +20,6 @@ import {
   mkdir,
   readFile,
   rename,
-  stat,
   writeFile,
   chmod,
   rm,
@@ -28,6 +27,7 @@ import {
 import { join, resolve, sep } from "node:path";
 import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
+import { createLocalStateMutationLock } from "./local-state-lock.js";
 import {
   probeProcess,
   probeProcessGroup,
@@ -38,7 +38,12 @@ import {
 } from "./process-identity.js";
 
 export type LocalHarnessLifecycleState =
-  "starting" | "running" | "suspended" | "stopping" | "stopped" | "failed";
+  | "starting"
+  | "running"
+  | "suspended"
+  | "stopping"
+  | "stopped"
+  | "failed";
 
 export interface LocalHarnessProcessRecord {
   sessionId: string;
@@ -75,154 +80,6 @@ function registryPath(): string {
   return join(localHarnessStateRoot(), "processes.json");
 }
 
-let mutationChain: Promise<unknown> = Promise.resolve();
-
-/** Exclusive lock file guarding registry read-modify-write ACROSS processes. */
-function lockPath(): string {
-  return join(localHarnessStateRoot(), "processes.lock");
-}
-
-/**
- * A lock whose holder is provably dead is broken immediately. The age bound is
- * NOT a second way to break a live holder's lock — that was the hole: a
- * janitor sweep can exceed thirty seconds all on its own (each abandoned tree
- * costs up to ~10s in `terminateOwnedProcessGroup`), so an age-only break let
- * a second Inspector into the critical section while the first was still
- * inside, and one of them lost its record write. It applies only to a lock
- * whose body names nobody: a truncated write, or a lock from a build that did
- * not record a holder, which no probe can ever resolve.
- *
- * A valid lock naming a holder we cannot prove dead is therefore waited out
- * and then FAILED rather than stolen. That is the safe direction: a refused
- * mutation makes the supervisor tear down the tree it just spawned, whereas a
- * lost record leaves a live tree with no durable handle on it at all.
- *
- * The timeout is deliberately LONGER than the staleness bound: an earlier
- * draft had it shorter, which meant a lock left by a crashed Inspector could
- * never be broken by the waiters that needed it — every mutation, including
- * the crash-recovery sweep itself, would time out while the lock sat under the
- * staleness threshold.
- */
-const LOCK_STALE_MS = 30_000;
-const LOCK_POLL_MS = 25;
-const LOCK_TIMEOUT_MS = 45_000;
-
-interface LockFileBody {
-  pid: number;
-  nonce: string;
-  at: number;
-}
-
-async function readLockBody(file: string): Promise<LockFileBody | null> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-    if (!parsed || typeof parsed !== "object") return null;
-    const body = parsed as Partial<LockFileBody>;
-    // A pid that cannot name a process makes the body unattributable, not
-    // "held by someone alive": `process.kill(0, 0)` signals THIS process's
-    // group and succeeds, so a body carrying 0 would read as a live holder and
-    // wedge the registry forever. Same for a negative pid, which is a group.
-    if (
-      typeof body.pid !== "number" ||
-      !Number.isInteger(body.pid) ||
-      body.pid <= 0 ||
-      typeof body.nonce !== "string" ||
-      body.nonce.length === 0
-    ) {
-      return null;
-    }
-    return { pid: body.pid, nonce: body.nonce, at: Number(body.at) || 0 };
-  } catch {
-    return null;
-  }
-}
-
-/** Is the process named by a lock file provably gone? */
-function lockHolderProvablyGone(body: LockFileBody | null): boolean {
-  if (body === null) return false;
-  if (body.pid === process.pid) return false;
-  try {
-    process.kill(body.pid, 0);
-    return false; // alive
-  } catch (error) {
-    // EPERM means alive but not ours to signal. Only ESRCH is proof of death.
-    return (error as NodeJS.ErrnoException).code === "ESRCH";
-  }
-}
-
-/**
- * Acquire the cross-process registry lock.
- *
- * In-process serialization alone is not enough here: two Inspector instances
- * read-modify-write this same file, so without an exclusive lock one
- * instance's `recordProcess` can be written over the other's — losing the
- * durable record of a tree that is still running, which is precisely the
- * record crash recovery depends on.
- *
- * `wx` is the atomic primitive (create-or-fail). The lock body carries the
- * holder's pid and a nonce, so a release can verify the lock is still ITS
- * lock: an unconditional unlink would let a process whose lock was broken as
- * stale delete its successor's lock, admitting two writers at once — the exact
- * lost update this exists to prevent.
- */
-async function acquireFileLock(): Promise<() => Promise<void>> {
-  const file = lockPath();
-  await mkdir(localHarnessStateRoot(), { recursive: true, mode: 0o700 });
-  const nonce = randomUUID();
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  for (;;) {
-    try {
-      await writeFile(
-        file,
-        JSON.stringify({ pid: process.pid, nonce, at: Date.now() }),
-        { flag: "wx", mode: 0o600 },
-      );
-      return async () => {
-        const held = await readLockBody(file);
-        if (held?.nonce !== nonce) {
-          // Someone else holds it now — ours was broken as stale. Removing
-          // theirs would put two writers in the critical section.
-          logger.warn(
-            "[local-harness] registry lock was taken over; not releasing",
-          );
-          return;
-        }
-        await rm(file, { force: true }).catch(() => {});
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const body = await readLockBody(file);
-      const age = await stat(file).then(
-        (info) => Date.now() - info.mtimeMs,
-        () => 0,
-      );
-      const holderGone = lockHolderProvablyGone(body);
-      // `body === null` is a lock that names nobody — truncated, or written by
-      // a build that recorded no holder. Nothing can ever prove it dead, so
-      // age is the only recovery it has.
-      const unattributable = body === null && age > LOCK_STALE_MS;
-      if (holderGone || unattributable) {
-        logger.warn("[local-harness] breaking an abandoned registry lock", {
-          age,
-          holderGone,
-          unattributable,
-        });
-        await rm(file, { force: true }).catch(() => {});
-        continue;
-      }
-      if (Date.now() > deadline) {
-        throw new Error(
-          "timed out waiting for the local harness process registry lock" +
-            (body === null ? "" : ` (held by pid ${body.pid})`) +
-            ". Its holder could not be proven gone, and taking it over would " +
-            "put two writers in the registry at once.",
-        );
-      }
-      await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
-    }
-  }
-}
-
 /**
  * Serialize a registry mutation, in this process and across processes.
  *
@@ -230,22 +87,11 @@ async function acquireFileLock(): Promise<() => Promise<void>> {
  * only ever replaced by `rename`, and the enforcement paths must not queue
  * behind a mutation.
  */
-function withRegistryLock<T>(op: () => Promise<T>): Promise<T> {
-  const guarded = async (): Promise<T> => {
-    const release = await acquireFileLock();
-    try {
-      return await op();
-    } finally {
-      await release();
-    }
-  };
-  const run = mutationChain.then(guarded, guarded);
-  mutationChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
+const withRegistryLock = createLocalStateMutationLock({
+  rootDir: localHarnessStateRoot,
+  lockFileName: "processes.lock",
+  resourceLabel: "process registry",
+});
 
 /** A registry that exists but cannot be understood. Never treated as empty:
  *  overwriting it would erase the only durable record of running trees. */

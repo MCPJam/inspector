@@ -1,4 +1,12 @@
-import { mkdtemp, mkdir, realpath, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +16,7 @@ import {
 } from "../targets.js";
 import {
   getLocalMachineId,
+  GrantStateUnreadableError,
   grantLocalHarnessConsent,
   hashGrantBinding,
   pruneExpiredHarnessGrants,
@@ -52,7 +61,10 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  await revokeLocalHarnessGrants();
+  const dir = join(base, ".mcpjam", "harness-local");
+  await rm(join(dir, "grants.json"), { force: true });
+  await rm(join(dir, "grants.json.tmp"), { force: true });
+  await rm(join(dir, "grants.lock"), { force: true });
 });
 
 describe("workspace grants", () => {
@@ -111,11 +123,10 @@ describe("workspace grants", () => {
     });
   });
 
-  it("drops malformed persisted records instead of throwing out of verify", async () => {
-    // Local state can be hand-edited or truncated. A non-hex `tokenHash` would
-    // make `Buffer.from` throw out of a function whose contract is to RETURN a
-    // verification result, and an unparseable `expiresAt` would let
-    // verification treat a grant as live while pruning removed it.
+  it("fails closed on malformed persisted state and never overwrites it", async () => {
+    // Local state can be hand-edited or truncated. Verification returns a
+    // refusal, while mutations reject rather than treating the file as empty
+    // and replacing the only record of outstanding capabilities.
     const { mkdir, writeFile } = await import("node:fs/promises");
     const dir = join(base, ".mcpjam", "harness-local");
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -138,11 +149,46 @@ describe("workspace grants", () => {
     );
     await expect(
       verifyLocalHarnessGrant("x".repeat(64), binding()),
-    ).resolves.toMatchObject({ ok: false, reason: "absent" });
+    ).resolves.toMatchObject({ ok: false, reason: "invalid" });
     await expect(resolveWorkspaceGrant("ws_1")).resolves.toMatchObject({
       ok: false,
     });
-    await expect(pruneExpiredHarnessGrants()).resolves.toBe(0);
+    await expect(pruneExpiredHarnessGrants()).rejects.toThrow(
+      GrantStateUnreadableError,
+    );
+    expect(await readFile(join(dir, "grants.json"), "utf8")).toContain(
+      '"nonsense":true',
+    );
+  });
+});
+
+describe("the cross-process grant lock", () => {
+  it("waits for another live Inspector instead of losing its update", async () => {
+    const dir = join(base, ".mcpjam", "harness-local");
+    const lock = join(dir, "grants.lock");
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(
+      lock,
+      JSON.stringify({
+        pid: process.pid,
+        nonce: "another-inspector",
+        at: Date.now(),
+      }),
+    );
+
+    let settled = false;
+    const pending = grantLocalHarnessConsent(binding()).then(() => {
+      settled = true;
+    });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+    expect(settled).toBe(false);
+    expect(JSON.parse(await readFile(lock, "utf8")).nonce).toBe(
+      "another-inspector",
+    );
+
+    await rm(lock, { force: true });
+    await pending;
+    expect(settled).toBe(true);
   });
 });
 
@@ -314,5 +360,14 @@ describe("machine identity", () => {
     const first = await getLocalMachineId();
     expect(first).toMatch(/^mach_/);
     await expect(getLocalMachineId()).resolves.toBe(first);
+  });
+
+  it("does not replace a corrupt identity with a new machine", async () => {
+    const file = join(base, ".mcpjam", "harness-local", "machine.json");
+    await writeFile(file, "{not-json", { mode: 0o600 });
+    await expect(getLocalMachineId()).rejects.toThrow(
+      GrantStateUnreadableError,
+    );
+    await expect(readFile(file, "utf8")).resolves.toBe("{not-json");
   });
 });

@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -113,6 +114,7 @@ async function buildSession(
   supervisor: LocalHarnessSupervisor,
   onBridgeStarted?: (a: { pid: number; port: number }) => Promise<void>,
   bridgeSource: string = FAKE_BRIDGE,
+  maxFileBytes?: number,
 ): Promise<{
   session: HarnessV1NetworkSandboxSession;
   sessionStateDir: string;
@@ -154,6 +156,7 @@ async function buildSession(
     targetKind: "local-native",
     bridgePort,
     bridgeReadinessTimeoutMs: 10_000,
+    ...(maxFileBytes === undefined ? {} : { maxFileBytes }),
     scopedEnv: { MCPJAM_GATEWAY_URL: "http://127.0.0.1:39400/gateway" },
     ...(onBridgeStarted ? { onBridgeStarted } : {}),
   });
@@ -175,8 +178,28 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     expect(session.description).toMatch(/operating-system user's authority/);
     // A no-op `setNetworkPolicy` would let a caller believe a policy applied.
     expect(session.setNetworkPolicy).toBeUndefined();
-    // `restricted()` is the same resource with a narrower type.
-    expect(session.restricted()).toBe(session);
+    // The restricted view is a runtime capability boundary, not merely a
+    // narrower TypeScript type over the full infrastructure object.
+    const restricted = session.restricted();
+    expect(restricted).not.toBe(session);
+    expect(Object.isFrozen(restricted)).toBe(true);
+    expect(Object.keys(restricted).sort()).toEqual(
+      [
+        "description",
+        "readBinaryFile",
+        "readFile",
+        "readTextFile",
+        "run",
+        "spawn",
+        "writeBinaryFile",
+        "writeFile",
+        "writeTextFile",
+      ].sort(),
+    );
+    expect("stop" in restricted).toBe(false);
+    expect("destroy" in restricted).toBe(false);
+    expect("setPorts" in restricted).toBe(false);
+    expect("getPortUrl" in restricted).toBe(false);
     await session.stop();
   });
 
@@ -227,6 +250,65 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(write).rejects.toThrow(/caller went away/);
     // ...and nothing was created for it.
     await expect(readFile(join(workspace, "never.bin"))).rejects.toThrow();
+    await session.stop();
+  });
+
+  it("bounds every file primitive and never leaves a partial target", async () => {
+    const sup = supervisor();
+    const { session } = await buildSession(
+      "file-limits",
+      sup,
+      undefined,
+      FAKE_BRIDGE,
+      8,
+    );
+    const large = join(workspace, "nine-bytes.bin");
+    await writeFile(large, new Uint8Array(9));
+
+    await expect(session.readBinaryFile({ path: large })).rejects.toThrow(
+      /8 bytes/,
+    );
+    await expect(session.readTextFile({ path: large })).rejects.toThrow(
+      /8 bytes/,
+    );
+    await expect(session.readFile({ path: large })).rejects.toThrow(/8 bytes/);
+
+    const target = join(workspace, "bounded-target.bin");
+    await writeFile(target, "original");
+    if (process.platform !== "win32") await chmod(target, 0o755);
+    await expect(
+      session.writeBinaryFile({ path: target, content: new Uint8Array(9) }),
+    ).rejects.toThrow(/8 bytes/);
+    await expect(readFile(target, "utf8")).resolves.toBe("original");
+
+    const aborted = new AbortController();
+    aborted.abort(new Error("cancelled before replacement"));
+    await expect(
+      session.writeTextFile({
+        path: target,
+        content: "updated",
+        abortSignal: aborted.signal,
+      }),
+    ).rejects.toThrow(/cancelled before replacement/);
+    await expect(readFile(target, "utf8")).resolves.toBe("original");
+
+    await session.writeTextFile({ path: target, content: "updated" });
+    await expect(readFile(target, "utf8")).resolves.toBe("updated");
+    if (process.platform !== "win32") {
+      expect((await stat(target)).mode & 0o777).toBe(0o755);
+    }
+
+    const tooLargeStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(5));
+        controller.enqueue(new Uint8Array(5));
+        controller.close();
+      },
+    });
+    await expect(
+      session.writeFile({ path: target, content: tooLargeStream }),
+    ).rejects.toThrow(/8-byte/);
+    await expect(readFile(target, "utf8")).resolves.toBe("updated");
     await session.stop();
   });
 

@@ -116,6 +116,19 @@ beforeAll(async () => {
     ].join("\n"),
   );
   await writeFile(
+    join(scripts, "natural-deserter.js"),
+    [
+      "const { spawn } = require('node:child_process');",
+      "const child = spawn(process.execPath, ['-e',",
+      "  \"process.on('SIGTERM', function(){}); setInterval(()=>{},1000);\"],",
+      "  { stdio: 'ignore' });",
+      "console.log(child.pid);",
+      // Give the supervisor time to persist the root record, then let the
+      // leader disappear without a stop signal while its descendant remains.
+      "setTimeout(function(){ process.exit(0); }, 250);",
+    ].join("\n"),
+  );
+  await writeFile(
     join(scripts, "dump-env.js"),
     "process.stdout.write(JSON.stringify(process.env));",
   );
@@ -198,6 +211,41 @@ describe("a root that exits while its tree does not", () => {
       expect(result).toEqual({ stopped: true, escaped: 0 });
       expect(await waitForExit(handle.pid)).toBe(true);
       expect(await waitForExit(deserter)).toBe(true);
+    },
+  );
+
+  it.skipIf(!canOwnProcesses)(
+    "retains ownership when the root exits naturally before stop",
+    async () => {
+      const sup = supervisor();
+      const handle = await sup.spawnSupervised(
+        request("s-natural-desert", "natural-deserter.js"),
+      );
+      const output = await new Response(handle.stdout).text();
+      await expect(handle.wait()).resolves.toEqual({ exitCode: 0 });
+      const descendant = Number(output.trim());
+      expect(descendant).toBeGreaterThan(0);
+      expect(await readProcessBirthIdentity(descendant)).not.toBeNull();
+
+      // The leader is no longer live, but its ownership tombstone and durable
+      // record remain until the whole group has been settled.
+      expect(sup.liveProcessCount("s-natural-desert")).toBe(0);
+      expect(
+        (await listProcessRecords()).find(
+          (record) => record.sessionId === "s-natural-desert",
+        ),
+      ).toBeDefined();
+
+      await expect(sup.stopSession("s-natural-desert")).resolves.toEqual({
+        stopped: true,
+        escaped: 0,
+      });
+      expect(await waitForExit(descendant)).toBe(true);
+      expect(
+        (await listProcessRecords()).find(
+          (record) => record.sessionId === "s-natural-desert",
+        ),
+      ).toBeUndefined();
     },
   );
 });
@@ -293,11 +341,16 @@ describe.skipIf(!canOwnProcesses)("supervised processes", () => {
     });
     const text = await new Response(handle.stdout).text();
     await handle.wait();
-    expect(Object.keys(JSON.parse(text)).sort()).toEqual([
-      "HOME",
-      "LANG",
-      "PATH",
-    ]);
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(
+      [
+        "HOME",
+        "LANG",
+        "PATH",
+        // macOS injects this Core Foundation locale value into a child even
+        // when Node receives an explicit, otherwise-empty environment.
+        ...(process.platform === "darwin" ? ["__CF_USER_TEXT_ENCODING"] : []),
+      ].sort(),
+    );
   });
 
   it("records the root process with a birth identity before it runs", async () => {

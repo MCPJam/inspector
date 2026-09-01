@@ -101,6 +101,12 @@ interface LiveProcess {
   birthIdentity: string | null;
   role: "root" | "helper";
   killed: boolean;
+  /**
+   * The direct child has closed, but its detached process group may still
+   * contain descendants. Closed entries remain as ownership tombstones until
+   * `stopSession` proves the whole group empty.
+   */
+  exited: boolean;
 }
 
 function bufferedStream(maxBytes: number): {
@@ -281,7 +287,11 @@ export class LocalHarnessSupervisor {
     // so counting `bucket.size` alone let concurrent launches all see the same
     // "0 of 4" across their awaits and admit more processes than the limit.
     const pending = this.pendingLaunches.get(request.sessionId) ?? 0;
-    const admitted = bucket.size + pending;
+    // An exited direct child does not consume a concurrency slot, but its
+    // entry stays in the bucket as the only in-memory ownership handle for
+    // descendants that may have outlived it.
+    const active = [...bucket].filter((entry) => !entry.exited).length;
+    const admitted = active + pending;
     if (admitted >= this.limits.maxConcurrentProcesses) {
       throw new SupervisorError(
         `session ${request.sessionId} already has ` +
@@ -386,9 +396,11 @@ export class LocalHarnessSupervisor {
 
     let exitResult: { exitCode: number } | null = null;
     let notifyExit: ((result: { exitCode: number }) => void) | null = null;
+    let entry!: LiveProcess;
     const recordExit = (exitCode: number) => {
       if (exitResult !== null) return;
       exitResult = { exitCode };
+      if (entry !== undefined) entry.exited = true;
       notifyExit?.(exitResult);
     };
     child.on("error", (error: Error) => {
@@ -414,12 +426,13 @@ export class LocalHarnessSupervisor {
       );
     }
 
-    const entry: LiveProcess = {
+    entry = {
       child,
       pid,
       birthIdentity: null,
       role: request.role,
       killed: false,
+      exited: exitResult !== null,
     };
     bucket.add(entry);
     // Registered: it is counted by `bucket.size` from here, so the pending
@@ -562,10 +575,11 @@ export class LocalHarnessSupervisor {
     void exited.then(() => {
       clearTimeout(wallClockTimer);
       request.abortSignal?.removeEventListener("abort", onAbort);
-      bucket.delete(entry);
-      if (bucket.size === 0 && this.live.get(request.sessionId) === bucket) {
-        this.live.delete(request.sessionId);
-      }
+      // Do NOT remove the ownership entry merely because the direct child
+      // closed. A descendant can remain in the detached process group after
+      // its leader exits; dropping this entry would make a later stop forget
+      // the durable root record and report success over that live descendant.
+      // `stopSession` settles the group and removes only entries proven gone.
       if (out.truncated() || err.truncated()) {
         logger.warn("[local-harness] output ceiling reached; output dropped", {
           sessionId: request.sessionId,
@@ -629,26 +643,44 @@ export class LocalHarnessSupervisor {
             // reporting `graceful` on a probe that could not look.
             entry.child.kill("SIGKILL");
             return {
-              outcome: "unknown" as const,
-              reason:
-                "the process was never identified, so only its own " +
-                "handle could be signalled",
+              entry,
+              result: {
+                outcome: "unknown" as const,
+                reason:
+                  "the process was never identified, so only its own " +
+                  "handle could be signalled",
+              },
             };
           }
-          return terminateOwnedProcessGroup({
-            pid: entry.pid,
-            birthIdentity: entry.birthIdentity,
-            graceMs: this.limits.terminationGraceMs,
-            platform: this.platform,
-          });
+          return {
+            entry,
+            result: await terminateOwnedProcessGroup({
+              pid: entry.pid,
+              birthIdentity: entry.birthIdentity,
+              graceMs: this.limits.terminationGraceMs,
+              platform: this.platform,
+            }),
+          };
         }),
       );
-      // "unknown" counts with "escaped": both mean we cannot say the tree is
-      // gone, and `stopped` must never be reported on a guess.
-      escaped = outcomes.filter(
-        (o) => o?.outcome === "escaped" || o?.outcome === "unknown",
-      ).length;
-      this.live.delete(sessionId);
+      // Remove only ownership entries whose WHOLE groups are proven gone.
+      // `unknown`, `escaped`, and `not-owned` all retain their entry so an
+      // operator or a later retry still has the handle; none authorizes a
+      // successful stop.
+      for (const { entry, result } of outcomes) {
+        if (
+          result.outcome === "already-gone" ||
+          result.outcome === "graceful" ||
+          result.outcome === "forced"
+        ) {
+          bucket.delete(entry);
+        } else {
+          escaped += 1;
+        }
+      }
+      if (bucket.size === 0 && this.live.get(sessionId) === bucket) {
+        this.live.delete(sessionId);
+      }
     }
     if (escaped === 0) {
       await forgetProcess(sessionId);
@@ -662,6 +694,8 @@ export class LocalHarnessSupervisor {
 
   /** Live supervised process count for a session (tests and diagnostics). */
   liveProcessCount(sessionId: string): number {
-    return this.live.get(sessionId)?.size ?? 0;
+    const bucket = this.live.get(sessionId);
+    if (!bucket) return 0;
+    return [...bucket].filter((entry) => !entry.exited).length;
   }
 }

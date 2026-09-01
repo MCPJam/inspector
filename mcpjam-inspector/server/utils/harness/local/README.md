@@ -69,6 +69,7 @@ native.**
 | `command-translation.ts` | The closed adapter command grammar → structured operations. **No shell, ever**                                               |
 | `runtime-identity.ts`    | Managed-bundle tree digests, system-install discovery, and re-verification before spawn                                      |
 | `grants.ts`              | Workspace grants (opaque ids → canonical paths) and the local harness consent capability                                     |
+| `local-state-lock.ts`    | Reusable cross-process lock for security-sensitive local state mutations                                                     |
 | `confine.ts`             | Symlink-aware confinement for the Inspector file API                                                                         |
 | `session-env.ts`         | Allowlisted child environment and synthetic `$HOME`                                                                          |
 | `node-launcher.ts`       | Which absolute Node binary launches the bridge                                                                               |
@@ -127,6 +128,16 @@ path under the bootstrap directory into exactly three outcomes:
 Comparing rather than writing is the point: if the adapter's `bridge.mjs`
 differs from the bundle's, the session would be running bytes the adapter did
 not bootstrap. That is a bundle rebuild, not something to paper over.
+
+Every Inspector file operation is capped at 16 MiB by default. Reads stream
+through the cap (and detect a file that grows after its initial `stat`), while
+writes are bounded before an owner-only temporary file is atomically renamed
+over the target. An oversized or aborted adapter stream therefore cannot grow
+the Inspector heap without bound or leave a partially written workspace file.
+
+The SDK's `restricted()` view is also a real capability object, not a type cast
+over the full session. It contains only file and process methods and is frozen;
+port mutation, endpoint resolution, stop, and destroy are absent at runtime.
 
 **The pinned bridges bind `0.0.0.0`.**
 Harmless inside a sandbox; on a laptop it publishes an agent control channel to
@@ -202,6 +213,12 @@ graceful stop on the root's own disappearance announces a stopped session over
 a live vendor process. Every path that would report the tree terminated checks
 the process GROUP first, escalates to `SIGKILL` if anything is still there, and
 reports `escaped` if it survives that.
+
+The direct child's `close` event does not discard ownership either. Its entry
+becomes a non-live tombstone that no longer consumes a concurrency slot, but it
+stays attached to the session until `stopSession` proves the process group
+empty. This covers a bridge that crashes or exits naturally before cleanup,
+not only a leader that exits in response to the supervisor's own signal.
 
 The group check cannot be `kill(-pgid, 0)`, for the same reason the single
 process probe cannot be "`/proc/<pid>/stat` exists": a ZOMBIE still belongs to
@@ -287,7 +304,8 @@ the macOS `ps` path, and both parsers are pure and directly tested.
 11. Every terminal path kills the whole owned tree — `supervisor.ts`, `process-identity.ts`. `stopped` is reported only on a proven `gone`; an `unknown` probe counts with `escaped`.
 12. A pid alone never proves ownership — `process-identity.ts`, `process-registry.ts`. A supervisor _nonce_ alone does not prove its owner exited either: the janitor requires the owning Inspector's pid and birth identity to be provably gone, so a second window cannot reclaim the first's live sessions.
 13. Unsupported tuples fail closed with actionable diagnostics — `compatibility.ts`, `availability.ts`.
-14. Attended, explicitly scoped consent — `grants.ts`, `availability.ts`.
+14. Attended, explicitly scoped consent, with mutations serialized across Inspector processes and unreadable state never treated as empty — `grants.ts`, `local-state-lock.ts`, `availability.ts`.
+15. The tool-facing restricted session is a separate runtime capability, and file transfers are bounded and atomically replaced — `supervised-provider.ts`.
 
 ## Enabling it
 

@@ -33,8 +33,9 @@
  * confine the vendor process, which runs as the OS user. Both facts must
  * survive into product copy.
  */
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { dirname, join, posix, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -65,6 +66,9 @@ import type { LocalHarnessSupervisor } from "./supervisor.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
 
 const encoder = new TextEncoder();
+export const DEFAULT_LOCAL_HARNESS_FILE_LIMIT_BYTES = 16 * 1024 * 1024;
+
+export class LocalHarnessFileLimitError extends Error {}
 
 export interface SupervisedLocalHarnessProviderOptions {
   harnessId: SupportedLocalHarnessId;
@@ -95,6 +99,8 @@ export interface SupervisedLocalHarnessProviderOptions {
   bridgeReadinessTimeoutMs?: number;
   /** Called once the bridge is up AND its binding has been verified. */
   onBridgeStarted?: (args: { pid: number; port: number }) => Promise<void>;
+  /** Maximum bytes one file API operation may read or write. */
+  maxFileBytes?: number;
 }
 
 /** The `SandboxProcess` shape, synthesized for translations that need no
@@ -127,6 +133,7 @@ function completedProcess(stdout: string, exitCode = 0) {
 async function collectStreamBytes(
   stream: ReadableStream<Uint8Array>,
   abortSignal?: AbortSignal,
+  maxBytes = Number.MAX_SAFE_INTEGER,
 ): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
@@ -155,6 +162,7 @@ async function collectStreamBytes(
   }
 
   try {
+    let total = 0;
     for (;;) {
       if (abortSignal?.aborted) throw abortError();
       const pending = reader.read();
@@ -166,7 +174,15 @@ async function collectStreamBytes(
           ? await pending
           : await Promise.race([pending, abortRace]);
       if (done) break;
-      if (value) chunks.push(value);
+      if (value) {
+        if (value.byteLength > maxBytes - total) {
+          throw new LocalHarnessFileLimitError(
+            `file operation exceeds the ${maxBytes}-byte local harness limit`,
+          );
+        }
+        total += value.byteLength;
+        chunks.push(value);
+      }
     }
   } catch (error) {
     // Let the source go rather than leaving it pumping into a reader nothing
@@ -188,6 +204,140 @@ async function collectStreamBytes(
   return merged;
 }
 
+async function openBoundedFileStream(
+  path: string,
+  maxBytes: number,
+  abortSignal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array> | null> {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(path, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) {
+      throw new Error(`refusing to read non-regular file ${path}`);
+    }
+    if (info.size > maxBytes) {
+      throw new LocalHarnessFileLimitError(
+        `file ${path} is ${info.size} bytes; the local harness limit is ` +
+          `${maxBytes} bytes`,
+      );
+    }
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+
+  let position = 0;
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    await handle.close().catch(() => {});
+  };
+  const abortError = (): Error =>
+    abortSignal?.reason instanceof Error
+      ? abortSignal.reason
+      : new Error("aborted");
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        if (abortSignal?.aborted) throw abortError();
+        // Read one byte past the limit when necessary so a file that grows
+        // after the initial stat is rejected rather than silently truncated.
+        const room = Math.max(maxBytes - position, 0);
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, room + 1));
+        const { bytesRead } = await handle.read(
+          buffer,
+          0,
+          buffer.byteLength,
+          position,
+        );
+        if (abortSignal?.aborted) throw abortError();
+        if (bytesRead === 0) {
+          await close();
+          controller.close();
+          return;
+        }
+        if (bytesRead > room) {
+          throw new LocalHarnessFileLimitError(
+            `file ${path} grew beyond the ${maxBytes}-byte local harness limit`,
+          );
+        }
+        position += bytesRead;
+        controller.enqueue(
+          new Uint8Array(buffer.buffer, buffer.byteOffset, bytesRead),
+        );
+      } catch (error) {
+        await close();
+        controller.error(error);
+      }
+    },
+    async cancel() {
+      await close();
+    },
+  });
+}
+
+async function readBoundedFileBytes(
+  path: string,
+  maxBytes: number,
+  abortSignal?: AbortSignal,
+): Promise<Uint8Array | null> {
+  const stream = await openBoundedFileStream(path, maxBytes, abortSignal);
+  if (stream === null) return null;
+  return collectStreamBytes(stream, abortSignal, maxBytes);
+}
+
+/** Write by atomic replacement so aborts and failures never leave a partial
+ * target behind. The caller has already enforced the byte ceiling. */
+async function writeBytesAtomically(
+  path: string,
+  bytes: Uint8Array,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  const abortError = (): Error =>
+    abortSignal?.reason instanceof Error
+      ? abortSignal.reason
+      : new Error("aborted");
+  if (abortSignal?.aborted) throw abortError();
+
+  const parent = dirname(path);
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  // Atomic replacement should not silently strip an existing script's execute
+  // bit or other user-selected permissions. New files remain owner-only.
+  let mode = 0o600;
+  try {
+    mode = (await stat(path)).mode & 0o777;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const temp = join(parent, `.${basename(path)}.${randomUUID()}.tmp`);
+  const handle = await open(temp, "wx", mode);
+  let closed = false;
+  try {
+    await handle.writeFile(
+      bytes,
+      abortSignal === undefined ? undefined : { signal: abortSignal },
+    );
+    await handle.sync();
+    if (abortSignal?.aborted) throw abortError();
+    await handle.close();
+    closed = true;
+    await rename(temp, path);
+  } catch (error) {
+    if (!closed) await handle.close().catch(() => {});
+    await rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 /** Text view of a byte stream — for process output, never for file content. */
 async function collectStream(
   stream: ReadableStream<Uint8Array>,
@@ -198,6 +348,19 @@ async function collectStream(
 export function createSupervisedLocalHarnessProvider(
   opts: SupervisedLocalHarnessProviderOptions,
 ): HarnessV1SandboxProvider {
+  const maxFileBytes =
+    opts.maxFileBytes ?? DEFAULT_LOCAL_HARNESS_FILE_LIMIT_BYTES;
+  if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes <= 0) {
+    throw new Error("maxFileBytes must be a positive safe integer");
+  }
+  const assertFileSize = (bytes: number): void => {
+    if (bytes > maxFileBytes) {
+      throw new LocalHarnessFileLimitError(
+        `file operation is ${bytes} bytes; the local harness limit is ` +
+          `${maxFileBytes} bytes`,
+      );
+    }
+  };
   const syntheticHome = join(opts.sessionStateDir, "home");
   // The writable half of the adapter's bootstrap directory. The framework
   // writes a `.bootstrap-<identity>.ok` marker there to skip re-bootstrapping;
@@ -294,6 +457,7 @@ export function createSupervisedLocalHarnessProvider(
     const resolveForWrite = async (
       path: string,
       bytes: Uint8Array,
+      signal?: AbortSignal,
     ): Promise<string | null> => {
       const target = classifyBootstrapPath(path, translationContext);
       if (target.kind === "session-overlay") {
@@ -301,11 +465,12 @@ export function createSupervisedLocalHarnessProvider(
       }
       if (target.kind === "workspace") return confine(path);
 
-      let existing: Buffer;
-      try {
-        existing = await readFile(target.bundlePath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const existing = await readBoundedFileBytes(
+        target.bundlePath,
+        maxFileBytes,
+        signal,
+      );
+      if (existing === null) {
         throw new Error(
           `the managed ${opts.harnessId} bundle does not contain ` +
             `${target.relativePath}, which the pinned adapter's bootstrap ` +
@@ -313,7 +478,7 @@ export function createSupervisedLocalHarnessProvider(
             `refusing rather than installing it into the workspace.`,
         );
       }
-      if (!existing.equals(Buffer.from(bytes))) {
+      if (!Buffer.from(existing).equals(Buffer.from(bytes))) {
         throw new Error(
           `the pinned adapter's ${target.relativePath} differs from the copy ` +
             `in the verified managed bundle. Local sessions run the bundle's ` +
@@ -418,6 +583,9 @@ export function createSupervisedLocalHarnessProvider(
       }
     };
 
+    let restrictedSession!: ReturnType<
+      HarnessV1NetworkSandboxSession["restricted"]
+    >;
     const session: HarnessV1NetworkSandboxSession = {
       id: sessionId,
       // The granted workspace is the session's root. The harness framework
@@ -437,21 +605,21 @@ export function createSupervisedLocalHarnessProvider(
       // ── file I/O (confined to the granted roots) ──────────────────────
       readTextFile: async ({
         path,
-        abortSignal: _s,
+        abortSignal: signal,
         encoding,
         startLine,
         endLine,
       }) => {
         const canonical = await resolveForRead(path);
-        let text: string;
-        try {
-          text = await readFile(canonical, {
-            encoding: (encoding as BufferEncoding | undefined) ?? "utf8",
-          });
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-          throw error;
-        }
+        const bytes = await readBoundedFileBytes(
+          canonical,
+          maxFileBytes,
+          signal ?? abortSignal,
+        );
+        if (bytes === null) return null;
+        const text = Buffer.from(bytes).toString(
+          (encoding as BufferEncoding | undefined) ?? "utf8",
+        );
         if (startLine === undefined && endLine === undefined) return text;
         const lines = text.split("\n");
         const from = Math.max((startLine ?? 1) - 1, 0);
@@ -461,57 +629,54 @@ export function createSupervisedLocalHarnessProvider(
             : Math.min(endLine, lines.length);
         return lines.slice(from, to).join("\n");
       },
-      readBinaryFile: async ({ path }) => {
+      readBinaryFile: async ({ path, abortSignal: signal }) => {
         const canonical = await resolveForRead(path);
-        try {
-          return new Uint8Array(await readFile(canonical));
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-          throw error;
-        }
-      },
-      readFile: async ({ path }) => {
-        const canonical = await resolveForRead(path);
-        let bytes: Uint8Array;
-        try {
-          bytes = new Uint8Array(await readFile(canonical));
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-          throw error;
-        }
-        return new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        });
-      },
-      writeTextFile: async ({ path, content, encoding }) => {
-        const charset = (encoding as BufferEncoding | undefined) ?? "utf8";
-        const canonical = await resolveForWrite(
-          path,
-          Buffer.from(content, charset),
+        return readBoundedFileBytes(
+          canonical,
+          maxFileBytes,
+          signal ?? abortSignal,
         );
-        if (canonical === null) return;
-        await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
-        await writeFile(canonical, content, {
-          encoding: charset,
-          mode: 0o600,
-        });
       },
-      writeBinaryFile: async ({ path, content }) => {
-        const canonical = await resolveForWrite(path, content);
+      readFile: async ({ path, abortSignal: signal }) => {
+        const canonical = await resolveForRead(path);
+        return openBoundedFileStream(
+          canonical,
+          maxFileBytes,
+          signal ?? abortSignal,
+        );
+      },
+      writeTextFile: async ({
+        path,
+        content,
+        encoding,
+        abortSignal: signal,
+      }) => {
+        const charset = (encoding as BufferEncoding | undefined) ?? "utf8";
+        const bytes = Buffer.from(content, charset);
+        assertFileSize(bytes.byteLength);
+        const writeSignal = signal ?? abortSignal;
+        const canonical = await resolveForWrite(path, bytes, writeSignal);
         if (canonical === null) return;
-        await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
-        await writeFile(canonical, content, { mode: 0o600 });
+        await writeBytesAtomically(canonical, bytes, writeSignal);
+      },
+      writeBinaryFile: async ({ path, content, abortSignal: signal }) => {
+        assertFileSize(content.byteLength);
+        const writeSignal = signal ?? abortSignal;
+        const canonical = await resolveForWrite(path, content, writeSignal);
+        if (canonical === null) return;
+        await writeBytesAtomically(canonical, content, writeSignal);
       },
       writeFile: async ({ path, content, abortSignal: signal }) => {
         // Bytes, not text: this is the contract's binary write primitive.
-        const bytes = await collectStreamBytes(content, signal ?? abortSignal);
-        const canonical = await resolveForWrite(path, bytes);
+        const bytes = await collectStreamBytes(
+          content,
+          signal ?? abortSignal,
+          maxFileBytes,
+        );
+        const writeSignal = signal ?? abortSignal;
+        const canonical = await resolveForWrite(path, bytes, writeSignal);
         if (canonical === null) return;
-        await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
-        await writeFile(canonical, bytes, { mode: 0o600 });
+        await writeBytesAtomically(canonical, bytes, writeSignal);
       },
 
       // ── exec ──────────────────────────────────────────────────────────
@@ -581,7 +746,7 @@ export function createSupervisedLocalHarnessProvider(
             // The first spawned process is the session's root: killing it must
             // take the whole tree, and it is the record the janitor reclaims.
             role: isBridge ? "root" : "helper",
-            ...((signal ?? abortSignal)
+            ...(signal ?? abortSignal
               ? { abortSignal: (signal ?? abortSignal)! }
               : {}),
           });
@@ -672,8 +837,23 @@ export function createSupervisedLocalHarnessProvider(
         await removeSessionStateDir(opts.sessionStateDir);
       },
 
-      restricted: () => session,
+      // A TypeScript annotation does not remove properties at runtime. Return
+      // a separately constructed capability object so user-tool code cannot
+      // cast its way to stop/destroy, port mutation, or endpoint resolution.
+      restricted: () => restrictedSession,
     };
+
+    restrictedSession = Object.freeze({
+      description: session.description,
+      readFile: session.readFile,
+      readBinaryFile: session.readBinaryFile,
+      readTextFile: session.readTextFile,
+      writeFile: session.writeFile,
+      writeBinaryFile: session.writeBinaryFile,
+      writeTextFile: session.writeTextFile,
+      spawn: session.spawn,
+      run: session.run,
+    });
 
     return session;
   };
