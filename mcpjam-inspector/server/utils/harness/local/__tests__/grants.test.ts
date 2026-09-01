@@ -89,6 +89,13 @@ describe("workspace grants", () => {
   });
 
   it("refuses a file, a missing path, the home directory, and the root", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const file = join(base, "not-a-dir.txt");
+    await writeFile(file, "x");
+    await expect(registerWorkspaceGrant(file)).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/not a directory/),
+    });
     await expect(registerWorkspaceGrant(join(base, "nope"))).resolves.toMatchObject({
       ok: false,
     });
@@ -96,6 +103,39 @@ describe("workspace grants", () => {
       ok: false,
       message: expect.stringMatching(/project directory/),
     });
+    await expect(registerWorkspaceGrant("/")).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/project directory/),
+    });
+  });
+
+  it("drops malformed persisted records instead of throwing out of verify", async () => {
+    // Local state can be hand-edited or truncated. A non-hex `tokenHash` would
+    // make `Buffer.from` throw out of a function whose contract is to RETURN a
+    // verification result, and an unparseable `expiresAt` would let
+    // verification treat a grant as live while pruning removed it.
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const dir = join(base, ".mcpjam", "harness-local");
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(dir, "grants.json"),
+      JSON.stringify({
+        version: 1,
+        workspaces: [{ nonsense: true }],
+        harnessGrants: [
+          { grantId: "g1", tokenHash: 42, bindingHash: "x", expiresAt: "soon" },
+          { grantId: "g2", tokenHash: "zz", bindingHash: "x", expiresAt: "nope" },
+          null,
+        ],
+      })
+    );
+    await expect(
+      verifyLocalHarnessGrant("x".repeat(64), binding())
+    ).resolves.toMatchObject({ ok: false, reason: "absent" });
+    await expect(resolveWorkspaceGrant("ws_1")).resolves.toMatchObject({
+      ok: false,
+    });
+    await expect(pruneExpiredHarnessGrants()).resolves.toBe(0);
   });
 });
 

@@ -261,7 +261,12 @@ describe("codex", () => {
     const t = target({ harnessId: "codex", permissionProfile: "unrestricted" });
     const { token } = await grantLocalHarnessConsent(binding(t));
     await expect(
-      query({ target: t, grantToken: token, manifests: codexManifests })
+      query({
+        target: t,
+        grantToken: token,
+        manifests: codexManifests,
+        installedAdapterVersion: LOCAL_HARNESS_MANIFEST.codex.adapterVersion,
+      })
     ).resolves.toMatchObject({ status: "native-not-eligible" });
   });
 });

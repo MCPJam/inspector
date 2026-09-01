@@ -29,6 +29,19 @@ describe("argv structure", () => {
     expect(() => assertArgumentAllowed("")).toThrow(ArgvPolicyViolation);
   });
 
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["a number", 42],
+    ["an object", {}],
+  ])("rejects %s reaching the policy at runtime", (_label, value) => {
+    // The type says string; the check exists because a value can arrive from
+    // JSON, a test double, or a future caller the compiler never saw.
+    expect(() => assertArgumentAllowed(value as unknown as string)).toThrow(
+      ArgvPolicyViolation
+    );
+  });
+
   it("rejects an argument longer than any real path", () => {
     expect(() => assertArgumentAllowed("/x".repeat(4000))).toThrow(
       /exceeds 4096/

@@ -19,23 +19,31 @@
  * re-derived as paths and re-confined.
  *
  * ── Why a closed grammar is enough ────────────────────────────────────────
- * The grammar is small and finite because the adapters are pinned exactly
- * (`@ai-sdk/harness-claude-code@1.0.0-canary.9`,
- * `@ai-sdk/harness-codex@1.0.0-canary.9`) and every command they emit is a
- * template literal in their own source, not model- or repo-derived text. The
- * shapes are enumerated in `ADAPTER_COMMAND_SHAPES` below. An adapter upgrade
- * that changes one of them fails CLOSED — the session errors with the
- * offending string rather than guessing — and that failure is the signal to
- * re-review the manifest, which is exactly the review this design wants.
+ * The grammar is small and finite because the framework and adapters are
+ * pinned exactly (`@ai-sdk/harness@1.0.96`,
+ * `@ai-sdk/harness-claude-code@1.0.100`, `@ai-sdk/harness-codex@1.0.98`) and
+ * every command they emit is a literal in their own source, not model- or
+ * repo-derived text. The shapes are enumerated in `ADAPTER_COMMAND_SHAPES`
+ * below. An adapter upgrade that changes one of them fails CLOSED — the
+ * session errors with the offending string rather than guessing — and that
+ * failure is the signal to re-review the manifest.
+ *
+ * That is not hypothetical: this module was first written against the
+ * `1.0.0-canary.9` adapters, and the move to the stable line changed almost
+ * every shape — the bootstrap directory went from an absolute `/tmp` path to
+ * one relative to the working directory, operands became shell-quoted, Codex
+ * swapped `--bootstrap-dir` for `--cli-shim-dir`, and the framework moved two
+ * of its own `mkdir`s onto environment-variable indirection. The pin caught
+ * it, which is the whole point of having one.
  *
  * ── Path remapping is part of the translation, not a detail ───────────────
- * The adapters hardcode `bootstrapDir = /tmp/harness/<harnessId>` and then
- * `pnpm install` a vendor CLI into it at session start. Both halves are
- * unacceptable on a host:
+ * The adapters declare `bootstrapDir = .harness-bootstrap/<harnessId>`, which
+ * the framework resolves against the session's default working directory — for
+ * us, the user's granted workspace — and then `pnpm install` a vendor CLI into
+ * it at session start. Both halves are unacceptable on a host:
  *
- *   - `/tmp/harness/*` is a predictable path in a world-writable directory —
- *     a classic pre-created-symlink / TOCTOU target, and one any other process
- *     on the machine can populate before we look.
+ *   - a vendor CLI's whole dependency graph does not belong inside somebody's
+ *     checkout, where it lands in their working tree and their VCS status;
  *   - installing a package graph while starting a session is the runtime
  *     bootstrapping the plan forbids outright.
  *
@@ -59,7 +67,7 @@ import type { SupportedLocalHarnessId } from "./targets.js";
 export type TranslatedCommand =
   /** Create directories (recursive, owner-only). Paths are already confined. */
   | { kind: "mkdir"; paths: readonly string[] }
-  /** Answer on stdout with no process at all — the adapters' `$HOME` probe. */
+  /** Answer on stdout with no process at all — the framework's `pwd` probe. */
   | { kind: "reply"; stdout: string }
   /** A command the managed runtime bundle already satisfies. No process runs;
    *  `reason` is recorded so an operator can see WHY nothing happened. */
@@ -93,17 +101,22 @@ export class CommandTranslationError extends Error {
  */
 export interface CommandTranslationContext {
   harnessId: SupportedLocalHarnessId;
-  /** The adapter's hardcoded bootstrap dir (e.g. `/tmp/harness/claude-code`),
-   *  read from its manifest entry. Never touched on disk — only matched. */
+  /**
+   * The adapter's declared bootstrap directory as the framework resolves it —
+   * `<defaultWorkingDirectory>/.harness-bootstrap/<harnessId>`. Never touched
+   * on disk: it is matched, and every reference to it is remapped onto the
+   * verified managed bundle.
+   */
   adapterBootstrapDir: string;
   /** Verified, read-only managed runtime bundle root that stands in for it. */
   managedBundleRoot: string;
   /** Absolute path to the Node launcher shipped/verified with the bundle. */
   nodeExecutable: string;
-  /** Absolute canonical session root. Every writable operand must live under
-   *  this, and it is the default working directory for `exec`. */
+  /** Absolute canonical session root: the granted workspace, and the session's
+   *  `defaultWorkingDirectory`. Every writable operand must live under it or
+   *  under the session state directory, and it is the default cwd for `exec`. */
   sessionRoot: string;
-  /** Synthetic HOME handed to the child; the answer to the `$HOME` probe. */
+  /** Synthetic HOME handed to the child. */
   syntheticHome: string;
   /**
    * Confine a path the command named to the session's writable area.
@@ -125,46 +138,60 @@ export interface CommandTranslationContext {
  * one list to compare against.
  */
 export const ADAPTER_COMMAND_SHAPES: Readonly<
-  Record<SupportedLocalHarnessId, readonly string[]>
+  Record<SupportedLocalHarnessId | "framework", readonly string[]>
 > = {
+  // Issued by `@ai-sdk/harness` itself, for every adapter. The two `mkdir`s
+  // pass their path through the environment rather than the command string,
+  // which is why those two shapes have no interpolation to inspect.
+  framework: [
+    'mkdir -p "$BOOTSTRAP_DIR"',
+    'mkdir -p "$WORK_DIR"',
+    "pwd",
+  ],
   "claude-code": [
-    'printf "%s" "$HOME"',
-    "mkdir -p <bootstrapDir>",
-    "mkdir -p <workDir> <bridgeStateDir>",
-    "mkdir -p '<homeDir>'/.claude/skills",
-    "pnpm --dir <bootstrapDir> install --frozen-lockfile --store-dir <bootstrapDir>/.pnpm-store",
-    "cd <bootstrapDir> && if [ -f node_modules/@anthropic-ai/claude-code/install.cjs ]; " +
-      "then node node_modules/@anthropic-ai/claude-code/install.cjs; fi && " +
-      "./node_modules/.bin/claude --version",
-    "node <bootstrapDir>/bridge.mjs --workdir <workDir> --bridge-state-dir <bridgeStateDir>",
+    "pnpm install --frozen-lockfile --store-dir .pnpm-store",
+    "./node_modules/.bin/claude --version",
+    "mkdir -p '<workDir>' '<bridgeStateDir>'",
+    "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir '<bridgeStateDir>'",
   ],
   codex: [
-    'printf "%s" "$HOME"',
-    "mkdir -p <bootstrapDir>",
-    "mkdir -p '<codexHomeDir>'",
-    "mkdir -p '<rootDir>'",
-    "mkdir -p <workDir> <bridgeStateDir>",
-    "pnpm --dir <bootstrapDir> install --frozen-lockfile --store-dir <bootstrapDir>/.pnpm-store",
-    "node <bootstrapDir>/bridge.mjs --workdir <workDir> --bridge-state-dir <bridgeStateDir> " +
-      "--bootstrap-dir <bootstrapDir>",
+    "pnpm install --frozen-lockfile --store-dir .pnpm-store",
+    "mkdir -p '<workDir>' '<bridgeStateDir>'",
+    "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir " +
+      "'<bridgeStateDir>' --cli-shim-dir '<cliShimDir>'",
   ],
 };
 
-/** The adapters' `$HOME` probe, byte for byte. */
-const HOME_PROBE = 'printf "%s" "$HOME"';
+/**
+ * The framework's working-directory probe. Only issued when a session does not
+ * expose `defaultWorkingDirectory` — ours does, so in practice this never
+ * arrives. Answered from the session root regardless, because running a real
+ * `pwd` would mean starting a shell to learn a value we already hold.
+ */
+const PWD_PROBE = "pwd";
+
+/**
+ * The framework's two environment-indirected `mkdir`s. The path travels in
+ * `env`, not in the command string, so these are matched as whole literals and
+ * their operand is read from the environment the caller passed.
+ */
+const ENV_MKDIR_SHAPES: Readonly<Record<string, string>> = {
+  'mkdir -p "$BOOTSTRAP_DIR"': "BOOTSTRAP_DIR",
+  'mkdir -p "$WORK_DIR"': "WORK_DIR",
+};
 
 /**
  * Split the operands of a recognized `mkdir -p` into paths.
  *
- * NOT a shell tokenizer. The adapters produce operands in exactly two forms:
- * a bare path with no spaces, or a POSIX single-quoted path (possibly with a
- * literal suffix, as in `'<home>'/.claude/skills`). Anything else — a double
+ * NOT a shell tokenizer. The pinned code produces operands in exactly two
+ * forms: a bare token with no spaces, or a POSIX single-quoted string (the
+ * `shellQuote` the adapters apply to every path). Anything else — a double
  * quote, an unterminated quote, a `$`, a backslash escape — is unrecognized
  * and the whole command is rejected. Recognizing two forms is not the same as
  * implementing quoting rules, and the difference is the point: there is no
  * expansion step here for anything to hide in.
  */
-function splitMkdirOperands(operands: string, command: string): string[] {
+function splitQuotedTokens(operands: string, command: string): string[] {
   const paths: string[] = [];
   let i = 0;
   while (i < operands.length) {
@@ -200,9 +227,6 @@ function splitMkdirOperands(operands: string, command: string): string[] {
       i += 1;
     }
     if (token.length > 0) paths.push(token);
-  }
-  if (paths.length === 0) {
-    throw new CommandTranslationError("mkdir -p with no operands", command);
   }
   return paths;
 }
@@ -280,12 +304,14 @@ async function translateMkdir(
   command: string,
   ctx: CommandTranslationContext
 ): Promise<TranslatedCommand> {
-  const operands = command.slice("mkdir -p ".length);
-  const raw = splitMkdirOperands(operands, command);
+  const raw = splitQuotedTokens(command.slice("mkdir -p ".length), command);
+  if (raw.length === 0) {
+    throw new CommandTranslationError("mkdir -p with no operands", command);
+  }
   const paths: string[] = [];
   for (const path of raw) {
     assertPlainPathOperand(path, command);
-    if (underBootstrapDir(path, ctx.adapterBootstrapDir)) {
+    if (underBootstrapDir(path, normalize(ctx.adapterBootstrapDir))) {
       // The bundle already exists and is read-only by design; creating it is
       // a no-op rather than an error so the adapter's bootstrap sequence
       // completes unchanged.
@@ -303,19 +329,19 @@ async function translateMkdir(
 }
 
 /**
- * The two bootstrap commands whose entire job is to materialize the vendor CLI
- * that the managed bundle already contains, matched as whole strings against
- * the pinned adapter templates.
+ * Commands whose entire job is to materialize the vendor CLI that the managed
+ * bundle already contains.
+ *
+ * The stable line runs these with `workingDirectory` set to the bootstrap
+ * directory, so they carry no path in the command string at all — which is
+ * why they are matched as exact literals and the working directory is checked
+ * separately by the caller.
  */
 function matchBootstrapInstall(
   command: string,
   ctx: CommandTranslationContext
 ): TranslatedCommand | null {
-  const b = ctx.adapterBootstrapDir;
-  if (
-    command ===
-    `pnpm --dir ${b} install --frozen-lockfile --store-dir ${b}/.pnpm-store`
-  ) {
+  if (command === "pnpm install --frozen-lockfile --store-dir .pnpm-store") {
     return {
       kind: "noop",
       reason:
@@ -325,67 +351,60 @@ function matchBootstrapInstall(
   }
   if (
     ctx.harnessId === "claude-code" &&
-    command ===
-      `cd ${b} && if [ -f node_modules/@anthropic-ai/claude-code/install.cjs ]; ` +
-        `then node node_modules/@anthropic-ai/claude-code/install.cjs; fi && ` +
-        `./node_modules/.bin/claude --version`
+    command === "./node_modules/.bin/claude --version"
   ) {
     return {
       kind: "noop",
       reason:
         "vendor CLI is installed and version-verified in the managed runtime " +
-        "bundle at build time; the session does not re-run its installer",
+        "bundle at build time; the session does not re-run its version probe",
     };
   }
   return null;
 }
 
-/** Translate the adapters' `node <bootstrapDir>/bridge.mjs …` launch. */
+/** Translate the adapters' `node '<bootstrapDir>/bridge.mjs' …` launch. */
 async function matchBridgeLaunch(
   command: string,
   ctx: CommandTranslationContext
 ): Promise<TranslatedCommand | null> {
-  const prefix = `node ${ctx.adapterBootstrapDir}/bridge.mjs `;
-  if (!command.startsWith(prefix)) return null;
-  const rest = command.slice(prefix.length);
-  const tokens = rest.split(" ").filter((t) => t.length > 0);
+  if (!command.startsWith("node ")) return null;
+  const tokens = splitQuotedTokens(command.slice("node ".length), command);
 
   // The EXACT flag vector each pinned adapter emits, in order. Matching a
   // subset, a permutation, or another harness's flags would let an adapter
   // change slip through as a valid launch — the opposite of the fail-closed
-  // behaviour this module promises. Codex passes `--bootstrap-dir`; Claude
+  // behaviour this module promises. Codex carries `--cli-shim-dir`; Claude
   // Code does not.
   const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> = {
     "claude-code": ["--workdir", "--bridge-state-dir"],
-    codex: ["--workdir", "--bridge-state-dir", "--bootstrap-dir"],
-  };
-  const resolution: Record<string, "session" | "bundle"> = {
-    "--workdir": "session",
-    "--bridge-state-dir": "session",
-    "--bootstrap-dir": "bundle",
+    codex: ["--workdir", "--bridge-state-dir", "--cli-shim-dir"],
   };
   const flags = expected[ctx.harnessId];
 
-  if (tokens.length !== flags.length * 2) {
-    // A workspace path containing a space lands here too, because the adapters
-    // interpolate these values UNQUOTED. That command is genuinely ambiguous —
-    // not something to guess at — so it is refused with a message that names
-    // the real cause rather than an arithmetic one.
+  if (tokens.length !== 1 + flags.length * 2) {
     throw new CommandTranslationError(
-      `the ${ctx.harnessId} bridge launch must carry exactly ` +
-        `${flags.join(", ")} (${flags.length * 2} tokens), but ` +
-        `${tokens.length} were given. The adapters interpolate these paths ` +
-        `unquoted, so a workspace or session path containing a space produces ` +
-        `an ambiguous command; choose a path without spaces, or the adapter ` +
-        `must be changed to quote them.`,
+      `the ${ctx.harnessId} bridge launch must be the bridge path followed by ` +
+        `exactly ${flags.join(", ")}, but ${tokens.length} tokens were given`,
       command
     );
   }
 
-  const args: string[] = [];
+  const bridgeToken = tokens[0]!;
+  assertPlainPathOperand(bridgeToken, command);
+  const expectedBridge = `${ctx.adapterBootstrapDir}/bridge.mjs`;
+  if (normalize(bridgeToken) !== normalize(expectedBridge)) {
+    throw new CommandTranslationError(
+      `bridge launch names ${JSON.stringify(bridgeToken)}, but the only ` +
+        `bridge this session may run is the one in its managed bundle`,
+      command
+    );
+  }
+
+  const args: string[] = [remapBootstrapPath(expectedBridge, ctx)];
   for (let i = 0; i < flags.length; i += 1) {
-    const flag = tokens[i * 2]!;
-    const value = tokens[i * 2 + 1]!;
+    const flag = tokens[1 + i * 2]!;
+    const value = tokens[2 + i * 2]!;
     if (flag !== flags[i]) {
       throw new CommandTranslationError(
         `expected bridge flag ${JSON.stringify(flags[i])} at position ` +
@@ -394,40 +413,39 @@ async function matchBridgeLaunch(
       );
     }
     assertPlainPathOperand(value, command);
-    args.push(
-      flag,
-      resolution[flag] === "bundle"
-        ? remapBootstrapPath(value, ctx)
-        : await ctx.confine(value)
-    );
+    args.push(flag, await ctx.confine(value));
   }
-  const bridge = remapBootstrapPath(
-    `${ctx.adapterBootstrapDir}/bridge.mjs`,
-    ctx
-  );
-  const argv = [bridge, ...args];
-  assertArgvAllowed(argv);
+  assertArgvAllowed(args);
   return {
     kind: "exec",
     executable: ctx.nodeExecutable,
-    args: argv,
+    args,
     workingDirectory: await ctx.confine(ctx.sessionRoot),
   };
 }
 
 /**
- * Translate one adapter command string, or throw.
+ * Translate one framework/adapter command, or throw.
  *
- * Order matters only for readability — the shapes are mutually exclusive. The
- * function is total: every path either returns a `TranslatedCommand` or
+ * Takes the whole `SandboxProcessOptions` shape, not just the string: the
+ * stable line carries meaning in all three fields — the bootstrap commands are
+ * identified by running in the bootstrap directory, and two of the framework's
+ * `mkdir`s pass their operand through `env` rather than the command text.
+ *
+ * The function is total: every path either returns a `TranslatedCommand` or
  * throws `CommandTranslationError`. There is no fall-through that runs a
  * shell, and adding one would be the single most damaging change possible to
  * this file.
  */
 export async function translateAdapterCommand(
-  command: string,
+  invocation: {
+    command: string;
+    workingDirectory?: string | undefined;
+    env?: Readonly<Record<string, string>> | undefined;
+  },
   ctx: CommandTranslationContext
 ): Promise<TranslatedCommand> {
+  const { command } = invocation;
   if (typeof command !== "string" || command.length === 0) {
     throw new CommandTranslationError("empty command", String(command));
   }
@@ -444,15 +462,52 @@ export async function translateAdapterCommand(
     );
   }
 
-  if (command === HOME_PROBE) {
-    // Answered from the session's synthetic home. Running a real `$HOME` probe
-    // would report the OS user's home, which is precisely the value the
-    // synthetic config root exists to keep the vendor process away from.
-    return { kind: "reply", stdout: ctx.syntheticHome };
+  if (command === PWD_PROBE) {
+    return { kind: "reply", stdout: ctx.sessionRoot };
+  }
+
+  // The framework's environment-indirected mkdirs. The operand never appears
+  // in the command text, so it is read from the environment the caller passed
+  // and confined like any other path.
+  const envVar = ENV_MKDIR_SHAPES[command];
+  if (envVar !== undefined) {
+    const target = invocation.env?.[envVar];
+    if (typeof target !== "string" || target.length === 0) {
+      throw new CommandTranslationError(
+        `${command} was issued without a ${envVar} value to create`,
+        command
+      );
+    }
+    assertPlainPathOperand(target, command);
+    if (underBootstrapDir(target, normalize(ctx.adapterBootstrapDir))) {
+      return {
+        kind: "noop",
+        reason:
+          "mkdir targeted the adapter bootstrap directory, which is served by " +
+          "the read-only managed runtime bundle",
+      };
+    }
+    return { kind: "mkdir", paths: [await ctx.confine(target)] };
   }
 
   const bootstrapNoop = matchBootstrapInstall(command, ctx);
-  if (bootstrapNoop) return bootstrapNoop;
+  if (bootstrapNoop) {
+    // These are identified partly by WHERE they run: the framework sets the
+    // bootstrap directory as their working directory, and the same string
+    // arriving from anywhere else is not the shape we reviewed.
+    const cwd = invocation.workingDirectory;
+    if (
+      cwd !== undefined &&
+      normalize(cwd) !== normalize(ctx.adapterBootstrapDir)
+    ) {
+      throw new CommandTranslationError(
+        `a bootstrap command was issued from ${JSON.stringify(cwd)} rather ` +
+          `than the adapter's bootstrap directory`,
+        command
+      );
+    }
+    return bootstrapNoop;
+  }
 
   const bridge = await matchBridgeLaunch(command, ctx);
   if (bridge) return bridge;

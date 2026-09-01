@@ -34,7 +34,7 @@
  * survive into product copy.
  */
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, posix, resolve, sep } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -187,7 +187,13 @@ export function createSupervisedLocalHarnessProvider(
 
     const translationContext: CommandTranslationContext = {
       harnessId: opts.harnessId,
-      adapterBootstrapDir: opts.manifest.adapterBootstrapDir,
+      // Resolved exactly as the framework resolves it — against the session's
+      // default working directory — so the translator matches the string the
+      // adapters will actually emit.
+      adapterBootstrapDir: posix.resolve(
+        opts.workspacePath,
+        opts.manifest.adapterBootstrapDir
+      ),
       managedBundleRoot: opts.runtime.rootPath,
       nodeExecutable: opts.launcher.executable,
       sessionRoot: opts.workspacePath,
@@ -209,6 +215,15 @@ export function createSupervisedLocalHarnessProvider(
     // the session root and have the second overwrite the first's durable
     // record (the registry keys by session id).
     let bridgeClaimed = false;
+
+    const assertPortLeased = (port: number): void => {
+      if (!ports.includes(port)) {
+        throw new Error(
+          `port ${port} is not leased to this session; the local provider ` +
+            `only resolves ports it opened`
+        );
+      }
+    };
 
     /**
      * Prove the runtime is still what consent named, immediately before every
@@ -359,17 +374,27 @@ export function createSupervisedLocalHarnessProvider(
       },
 
       // ── exec ──────────────────────────────────────────────────────────
-      run: async ({ command, abortSignal: signal, env: suppliedEnv }) => {
+      run: async ({
+        command,
+        workingDirectory,
+        abortSignal: signal,
+        env: suppliedEnv,
+      }) => {
         const translated = await translateAdapterCommand(
-          command,
+          { command, workingDirectory, env: suppliedEnv },
           translationContext
         );
         return runTranslated(translated, signal ?? abortSignal, suppliedEnv);
       },
 
-      spawn: async ({ command, abortSignal: signal, env: suppliedEnv }) => {
+      spawn: async ({
+        command,
+        workingDirectory,
+        abortSignal: signal,
+        env: suppliedEnv,
+      }) => {
         const translated = await translateAdapterCommand(
-          command,
+          { command, workingDirectory, env: suppliedEnv },
           translationContext
         );
         if (translated.kind !== "exec") {
@@ -433,13 +458,18 @@ export function createSupervisedLocalHarnessProvider(
 
       // ── infra surface ─────────────────────────────────────────────────
       ports,
+      // Both resolvers answer from the same loopback authority. The stable
+      // contract made `getPortEndpoint` the required one and left `getPortUrl`
+      // in place as deprecated; a local provider must never let either return
+      // an address reachable from off-box.
+      getPortEndpoint: async ({ port, protocol }) => {
+        assertPortLeased(port);
+        return {
+          url: localBridgeUrl({ port, ...(protocol ? { protocol } : {}) }),
+        };
+      },
       getPortUrl: async ({ port, protocol }) => {
-        if (!ports.includes(port)) {
-          throw new Error(
-            `port ${port} is not leased to this session; the local provider ` +
-              `only resolves ports it opened`
-          );
-        }
+        assertPortLeased(port);
         return localBridgeUrl({ port, ...(protocol ? { protocol } : {}) });
       },
       setPorts: async (next) => {
@@ -482,7 +512,9 @@ export function createSupervisedLocalHarnessProvider(
   return {
     specificationVersion: "harness-sandbox-v1",
     providerId: "mcpjam-local-supervised",
-    bridgePorts: [opts.bridgePort],
+    // `bridgePorts` is gone from the stable contract: port discovery is the
+    // adapter's job now, reading `session.ports` and resolving through
+    // `getPortEndpoint`.
     createSession: async (options) => {
       const sessionId = options?.sessionId ?? `local-${Date.now()}`;
       return buildSession(sessionId, options?.abortSignal);

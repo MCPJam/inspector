@@ -376,6 +376,34 @@ describe("system installations", () => {
     expect(result).toMatchObject({ status: "system-runtime-identity-mismatch" });
   });
 
+  it.skipIf(process.getuid?.() !== 0)(
+    "catches a system executable replaced after consent was granted",
+    async () => {
+      // The other half of `revalidateRuntime`. The managed-bundle branch is
+      // covered above; this is the one that notices a binary swapped after the
+      // user clicked Allow.
+      const dir = join(base, "revalidate-bin");
+      const exe = await installAt(dir);
+      const resolved = await resolveSystemInstall({
+        manifest: systemManifest,
+        platform: "linux",
+        forbiddenRoots: [],
+        searchPaths: [dir],
+        probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+      });
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok) return;
+      await expect(revalidateRuntime(resolved.runtime)).resolves.toEqual({
+        ok: true,
+      });
+
+      await writeFile(exe, "#!/bin/sh\necho 'swapped'\n", { mode: 0o755 });
+      const result = await revalidateRuntime(resolved.runtime);
+      expect(result.ok).toBe(false);
+      expect((result as { message: string }).message).toMatch(/was replaced/);
+    }
+  );
+
   it("searches only system-owned locations by default", () => {
     for (const platform of ["darwin", "linux"] as const) {
       for (const path of systemInstallSearchPaths(platform)) {

@@ -57,7 +57,7 @@ describe("parseLinuxProcStat", () => {
 });
 
 describe("parseDarwinPsLine", () => {
-  it("splits state, the five-token start time, and the executable", () => {
+  it("splits state, the five-token start time, and the full argv", () => {
     expect(
       parseDarwinPsLine("S     Mon Sep  1 01:00:00 2026 /usr/local/bin/node\n")
     ).toEqual({
@@ -66,11 +66,22 @@ describe("parseDarwinPsLine", () => {
       // not a better one.
       state: "S",
       lstart: "Mon Sep 1 01:00:00 2026",
-      comm: "/usr/local/bin/node",
+      command: "/usr/local/bin/node",
     });
   });
 
-  it("keeps an executable path containing spaces intact", () => {
+  it("keeps the arguments, not just the executable name", () => {
+    // The whole point of `command=` over `comm=`: two instances of the same
+    // program started in the same second are only distinguishable by argv, and
+    // a supervised bridge's argv carries its session's own paths.
+    expect(
+      parseDarwinPsLine(
+        "S Mon Sep  1 01:00:00 2026 /usr/bin/node /bundle/bridge.mjs --workdir /w/a"
+      )?.command
+    ).toBe("/usr/bin/node /bundle/bridge.mjs --workdir /w/a");
+  });
+
+  it("keeps a command containing spaces intact", () => {
     // The lstart field is a fixed FIVE tokens, so the split is positional and
     // does not assume `comm` is one token — which it is not for an app bundle.
     expect(
@@ -80,12 +91,14 @@ describe("parseDarwinPsLine", () => {
     ).toEqual({
       state: "Ss",
       lstart: "Mon Sep 1 01:00:00 2026",
-      comm: "/Applications/My App.app/Contents/MacOS/My App",
+      command: "/Applications/My App.app/Contents/MacOS/My App",
     });
   });
 
-  it("keeps only the first character meaningful for decorated states", () => {
-    // macOS decorates state with modifiers: `Ss`, `S+`, `R<`.
+  it("preserves the full decorated state, leaving the caller to read its first char", () => {
+    // macOS decorates state with modifiers: `Ss`, `S+`, `R<`. The parser keeps
+    // them; `readDarwinBirthIdentity` is what looks at charAt(0) to decide
+    // whether the state is a dead one.
     expect(parseDarwinPsLine("Ss+   Mon Sep  1 01:00:00 2026 /bin/x")?.state).toBe(
       "Ss+"
     );

@@ -12,10 +12,9 @@
  * whatever mode the SDK defaults to".
  *
  * ── Why Codex is not native-eligible ──────────────────────────────────────
- * Verified against the pinned packages: `@ai-sdk/harness-codex@1.0.0-canary.9`
- * declares `supportsBuiltinToolApprovals: false`, rejects every permission
- * mode except `allow-all`, and starts Codex with `sandboxMode:
- * 'danger-full-access'` and `approvalPolicy: 'never'`. That configuration
+ * Verified against the pinned packages: `@ai-sdk/harness-codex@1.0.98`
+ * declares `supportsBuiltinToolApprovals: false` and rejects every permission
+ * mode except `allow-all`, starting Codex unrestricted. That configuration
  * assumes the AI SDK sandbox provider IS the security boundary. A supervised
  * native provider supplies no such boundary, so the same configuration on a
  * host means an unrestricted agent with the OS user's authority and no
@@ -112,8 +111,13 @@ export interface LocalHarnessCompatibility {
   >;
   /** Bumped whenever the lifecycle evidence is re-gathered. */
   lifecycleConformanceVersion: string;
-  /** The adapter's hardcoded bootstrap dir, matched (never touched) by the
-   *  command translator. */
+  /**
+   * The adapter's DECLARED bootstrap directory, relative to the session's
+   * default working directory. The framework resolves it against that
+   * directory — which for a local session is the user's granted workspace —
+   * and the translator remaps every reference onto the verified managed
+   * bundle, so a vendor dependency graph never lands in somebody's checkout.
+   */
   adapterBootstrapDir: string;
   /** SHA-256 of the bridge artifact shipped with Inspector. */
   bridgeBundleDigest: string;
@@ -129,7 +133,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
 > = {
   "claude-code": {
     harnessId: "claude-code",
-    adapterVersion: "1.0.0-canary.9",
+    adapterVersion: "1.0.100",
     runtime: {
       source: "managed-bundle",
       bundleName: "claude-code",
@@ -161,12 +165,12 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     // Empty until a backend's escape probes actually pass (I6).
     isolatedBackends: {},
     lifecycleConformanceVersion: "",
-    adapterBootstrapDir: "/tmp/harness/claude-code",
+    adapterBootstrapDir: ".harness-bootstrap/claude-code",
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },
   codex: {
     harnessId: "codex",
-    adapterVersion: "1.0.0-canary.9",
+    adapterVersion: "1.0.98",
     runtime: {
       source: "managed-bundle",
       bundleName: "codex",
@@ -187,7 +191,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     nativePlatforms: [],
     isolatedBackends: {},
     lifecycleConformanceVersion: "",
-    adapterBootstrapDir: "/tmp/harness/codex",
+    adapterBootstrapDir: ".harness-bootstrap/codex",
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
   },
 };

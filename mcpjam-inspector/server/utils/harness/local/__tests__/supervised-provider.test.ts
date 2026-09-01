@@ -209,38 +209,41 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await session.stop();
   });
 
-  it("answers the adapter's $HOME probe with the synthetic home", async () => {
+  it("answers the framework's pwd probe from the session root", async () => {
     const sup = supervisor();
-    const { session, sessionStateDir } = await buildSession("home", sup);
-    const result = await session.run({ command: 'printf "%s" "$HOME"' });
-    expect(result).toEqual({
+    const { session } = await buildSession("home", sup);
+    await expect(session.run({ command: "pwd" })).resolves.toEqual({
       exitCode: 0,
-      stdout: join(sessionStateDir, "home"),
+      stdout: workspace,
       stderr: "",
     });
-    expect(result.stdout).not.toBe(base);
     await session.stop();
   });
 
-  it("satisfies the adapter's package-manager bootstrap without running one", async () => {
+  it("satisfies the bootstrap sequence without running a package manager", async () => {
     const sup = supervisor();
     const { session } = await buildSession("bootstrap", sup);
-    for (const command of [
-      "mkdir -p /tmp/harness/claude-code",
-      "pnpm --dir /tmp/harness/claude-code install --frozen-lockfile " +
-        "--store-dir /tmp/harness/claude-code/.pnpm-store",
-      "cd /tmp/harness/claude-code && if [ -f node_modules/@anthropic-ai/claude-code/install.cjs ]; " +
-        "then node node_modules/@anthropic-ai/claude-code/install.cjs; fi && " +
-        "./node_modules/.bin/claude --version",
-    ]) {
-      await expect(session.run({ command })).resolves.toEqual({
+    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+    const invocations = [
+      { command: 'mkdir -p "$BOOTSTRAP_DIR"', env: { BOOTSTRAP_DIR: bootstrapDir } },
+      {
+        command: "pnpm install --frozen-lockfile --store-dir .pnpm-store",
+        workingDirectory: bootstrapDir,
+      },
+      {
+        command: "./node_modules/.bin/claude --version",
+        workingDirectory: bootstrapDir,
+      },
+    ];
+    for (const invocation of invocations) {
+      await expect(session.run(invocation)).resolves.toEqual({
         exitCode: 0,
         stdout: "",
         stderr: "",
       });
     }
-    // Nothing was created at the adapter's hardcoded /tmp path.
-    await expect(readFile("/tmp/harness/claude-code/package.json")).rejects.toThrow();
+    // The adapter's dependency graph never lands in the user's checkout.
+    await expect(readFile(join(bootstrapDir, "package.json"))).rejects.toThrow();
     await session.stop();
   });
 
@@ -254,18 +257,16 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(
       session.spawn({
         command:
-          "node /tmp/harness/claude-code/bridge.mjs --workdir " +
-          join(workspace, "escape-args", "work") +
-          " --bridge-state-dir " +
-          join(workspace, "state"),
+          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+          `--workdir '${join(workspace, "escape-args", "work")}' ` +
+          `--bridge-state-dir '${join(workspace, "state")}'`,
       })
     ).rejects.toThrow(/outside every directory/);
     await expect(
       session.spawn({
         command:
-          "node /tmp/harness/claude-code/bridge.mjs --workdir /etc " +
-          "--bridge-state-dir " +
-          join(workspace, "state"),
+          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+          `--workdir '/etc' --bridge-state-dir '${join(workspace, "state")}'`,
       })
     ).rejects.toThrow(/outside every directory/);
     await session.stop();
@@ -317,8 +318,8 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
     const proc = await session.spawn({
       command:
-        `node /tmp/harness/claude-code/bridge.mjs --workdir ${workDir} ` +
-        `--bridge-state-dir ${bridgeStateDir}`,
+        `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+        `--workdir '${workDir}' --bridge-state-dir '${bridgeStateDir}'`,
       // What the adapter actually passes: the bridge's own channel token and
       // port, plus — here — a name outside the allowlist that must not reach
       // the child.
@@ -387,8 +388,8 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     await expect(
       session.spawn({
         command:
-          `node /tmp/harness/claude-code/bridge.mjs --workdir ${workspace} ` +
-          `--bridge-state-dir ${join(workspace, "state")}`,
+          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+          `--workdir '${workspace}' --bridge-state-dir '${join(workspace, "state")}'`,
         env: { BRIDGE_WS_PORT: String(bridgePort) },
       })
     ).rejects.toThrow(/reachable from the local network/);
@@ -403,8 +404,8 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     );
     const proc = await session.spawn({
       command:
-        `node /tmp/harness/claude-code/bridge.mjs --workdir ${workspace} ` +
-        `--bridge-state-dir ${join(workspace, "state")}`,
+        `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+        `--workdir '${workspace}' --bridge-state-dir '${join(workspace, "state")}'`,
       env: { BRIDGE_WS_PORT: String(bridgePort) },
     });
     await session.destroy!();
@@ -420,8 +421,8 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     await expect(
       session.spawn({
         command:
-          `node /tmp/harness/claude-code/bridge.mjs --workdir ${workspace} ` +
-          `--bridge-state-dir ${join(workspace, "state")}`,
+          `node '${join(workspace, ".harness-bootstrap", "claude-code")}/bridge.mjs' ` +
+          `--workdir '${workspace}' --bridge-state-dir '${join(workspace, "state")}'`,
         env: { BRIDGE_WS_PORT: String(bridgePort) },
       })
     ).rejects.toThrow(/changed after consent was granted/);

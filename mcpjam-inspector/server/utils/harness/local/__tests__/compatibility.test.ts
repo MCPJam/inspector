@@ -13,10 +13,12 @@ import {
   SUPPORTED_LOCAL_HARNESS_IDS,
 } from "../targets.js";
 
-/** The adapter version the shipped manifest was reviewed against. Supplied on
- *  every query because the pin is mandatory — a caller that cannot state the
- *  installed version does not get to skip it. */
+/** The version each manifest was reviewed against. Supplied on every query
+ *  because the pin is mandatory — a caller that cannot state the installed
+ *  version does not get to skip it — and it differs per adapter, so it is read
+ *  from the manifest rather than hardcoded once. */
 const PINNED = LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion;
+const PINNED_CODEX = LOCAL_HARNESS_MANIFEST.codex.adapterVersion;
 
 /** A manifest with conformance recorded, so the platform/profile rules can be
  *  exercised on their own. Everything shipped has an EMPTY conformance version
@@ -41,7 +43,8 @@ describe("the shipped manifest", () => {
         harnessId,
         platform: "linux",
         targetKind: "local-native",
-        installedAdapterVersion: PINNED,
+        installedAdapterVersion:
+          LOCAL_HARNESS_MANIFEST[harnessId].adapterVersion,
         permissionProfile: "workspace-edits",
       });
       expect(result.ok).toBe(false);
@@ -55,6 +58,12 @@ describe("the shipped manifest", () => {
     // launching an unverified runtime.
     for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
       expect(manifest.bridgeBundleDigest).toBe(`sha256:${"0".repeat(64)}`);
+      // The one `resolveManagedBundle` actually compares a real tree against,
+      // so it is the one that keeps an unverified runtime from launching.
+      expect(manifest.runtime).toMatchObject({
+        source: "managed-bundle",
+        bundleDigest: `sha256:${"0".repeat(64)}`,
+      });
     }
   });
 
@@ -72,11 +81,26 @@ describe("the shipped manifest", () => {
   });
 
   it("pins the exact adapter versions the evidence was gathered against", () => {
+    // The pin that caught the canary-to-stable move: the manifest was reviewed
+    // against `1.0.0-canary.9`, the repo moved to the stable line, and this
+    // assertion is what said so rather than the translator failing at runtime.
     expect(LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion).toBe(
       claudeAdapterPkg.version
     );
     expect(LOCAL_HARNESS_MANIFEST.codex.adapterVersion).toBe(
       codexAdapterPkg.version
+    );
+  });
+
+  it("records the bootstrap directory each adapter actually declares", () => {
+    // Relative on the stable line, resolved by the framework against the
+    // session's working directory. A stale absolute `/tmp` value here would
+    // make the translator match nothing the adapters emit.
+    expect(LOCAL_HARNESS_MANIFEST["claude-code"].adapterBootstrapDir).toBe(
+      ".harness-bootstrap/claude-code"
+    );
+    expect(LOCAL_HARNESS_MANIFEST.codex.adapterBootstrapDir).toBe(
+      ".harness-bootstrap/codex"
     );
   });
 
@@ -115,7 +139,7 @@ describe("codex is structurally barred from native mode", () => {
           harnessId: "codex",
           platform,
           targetKind: "local-native",
-          installedAdapterVersion: PINNED,
+          installedAdapterVersion: PINNED_CODEX,
         permissionProfile: "unrestricted",
         },
         conformed(LOCAL_HARNESS_MANIFEST.codex)

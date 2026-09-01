@@ -51,8 +51,8 @@ Per harness:
 
 | Harness | Native | Why |
 |---|---|---|
-| claude-code | Eligible (darwin, linux) | The pinned adapter declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks |
-| codex | **Never** | The pinned adapter declares `supportsBuiltinToolApprovals: false`, rejects every mode but `allow-all`, and starts Codex with `sandboxMode: 'danger-full-access'`, `approvalPolicy: 'never'`. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
+| claude-code | Eligible (darwin, linux) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks |
+| codex | **Never** | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
 | cursor | Not supported | No AI SDK adapter to pin or audit |
 
 `isolatedBackends` is empty for every harness: no backend has passed escape
@@ -76,26 +76,35 @@ native.**
 | `process-registry.ts` | The durable owned-process record and the crash-recovery janitor |
 | `supervisor.ts` | The only process owner |
 | `bridge-endpoint.ts` | Loopback URLs, and the probe that proves the bridge is loopback-only |
-| `supervised-provider.ts` | `HarnessV1SandboxProvider` over the supervisor |
+| `supervised-provider.ts` | `HarnessV1SandboxProvider` over the supervisor (stable contract: required `getPortEndpoint` and `destroy`, no `bridgePorts`) |
 | `availability.ts` | The single chokepoint: kill switch → actor → compatibility → workspace → runtime → consent |
 
 ## Two findings this code exists to handle
 
-**The adapters emit shell command strings.**
+**The framework and adapters emit shell command strings.**
 `Experimental_SandboxSession.run/spawn` takes `{ command: string }`, and the
-pinned adapters fill it with `mkdir -p …`, `pnpm … install …`, and
-`node /tmp/harness/<id>/bridge.mjs …`. In a cloud sandbox that string goes to a
+pinned code fills it with `mkdir -p …`, `pnpm install …`, and
+`node '<bootstrapDir>/bridge.mjs' …`. In a cloud sandbox that string goes to a
 shell inside the box. On a host it must not. `command-translation.ts` takes the
 reviewed option: recognize only the exact pinned shapes, translate them to
 structured operations, and **reject everything else** — there is no general
 shell parser and no `shell: true`. An adapter upgrade that changes a shape
 fails the session closed, which is the signal to re-review the manifest.
 
-It also **remaps** the adapters' hardcoded `/tmp/harness/<id>` bootstrap
-directory onto the digest-verified managed bundle. That path is predictable and
-world-writable — a pre-created-symlink target — and the `pnpm install` that
-would populate it is exactly the runtime bootstrapping the design forbids. Both
-become no-ops against a bundle built in CI.
+That is not hypothetical. This module was first written against
+`@ai-sdk/harness-claude-code@1.0.0-canary.9`; the repo then moved to the stable
+`1.0` line, and almost every shape changed — the bootstrap directory went from
+an absolute `/tmp` path to one relative to the working directory, operands
+became shell-quoted, Codex swapped `--bootstrap-dir` for `--cli-shim-dir`, and
+the framework moved two of its own `mkdir`s onto environment-variable
+indirection. The manifest's exact-version pin is what surfaced it.
+
+It also **remaps** the adapters' `.harness-bootstrap/<id>` directory — which
+the framework resolves against the session's working directory, i.e. inside the
+user's granted workspace — onto the digest-verified managed bundle. A vendor
+CLI's whole dependency graph does not belong in somebody's checkout, and the
+`pnpm install` that would put it there is exactly the runtime bootstrapping the
+design forbids. Both become no-ops against a bundle built in CI.
 
 **The pinned bridges bind `0.0.0.0`.**
 Harmless inside a sandbox; on a laptop it publishes an agent control channel to
