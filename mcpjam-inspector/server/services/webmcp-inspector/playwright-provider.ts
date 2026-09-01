@@ -182,6 +182,19 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   /** One in-flight still at a time; see `publishStill`. */
   private stillInFlight = false;
   /**
+   * A capture that hit `STILL_TIMEOUT_MS` and has still not been answered.
+   *
+   * The timeout frees the CALLER, not the command: Playwright keeps a
+   * timed-out `send`'s callback registered until the browser replies, and CDP
+   * has no way to cancel one. So the timeout alone bounds nothing — the
+   * screenshot poll asks again a second later, and a renderer that stays
+   * wedged accumulates a pending command per tick for as long as the pane is
+   * open. Refusing to start another while one is outstanding holds that at
+   * ONE, and the browser's eventual answer is also the signal that it is worth
+   * asking again.
+   */
+  private captureOutstanding = false;
+  /**
    * An oversize frame arrived while a still was already being captured.
    *
    * Remembered rather than dropped, because oversize frames come in BURSTS: the
@@ -600,20 +613,33 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * coordinate. This degrades QUALITY only, never geometry.
    */
   private async captureStill(quality: number): Promise<string | undefined> {
+    // Nothing to gain by asking a browser that has not answered the last one,
+    // and something to lose — see `captureOutstanding`.
+    if (this.captureOutstanding) return undefined;
     try {
-      const result = (await withTimeout(
-        this.cdp.send(
-          "Page.captureScreenshot" as never,
-          {
-            format: "jpeg",
-            quality,
-            // The compositor's own surface: no relayout, no paint, and the
-            // picture the person is actually looking at.
-            fromSurface: true,
-          } as never,
-        ),
-        STILL_TIMEOUT_MS,
-      )) as { data?: string } | undefined;
+      const sent = this.cdp.send(
+        "Page.captureScreenshot" as never,
+        {
+          format: "jpeg",
+          quality,
+          // The compositor's own surface: no relayout, no paint, and the
+          // picture the person is actually looking at.
+          fromSurface: true,
+        } as never,
+      );
+      const result = (await withTimeout(sent, STILL_TIMEOUT_MS)) as
+        | { data?: string }
+        | undefined;
+      if (result === undefined) {
+        this.captureOutstanding = true;
+        // Whatever it eventually is — a picture nobody is waiting for any
+        // more, or an error — it means the browser is answering again.
+        const free = () => {
+          this.captureOutstanding = false;
+        };
+        void sent.then(free, free);
+        return undefined;
+      }
       return typeof result?.data === "string" ? result.data : undefined;
     } catch {
       return undefined;

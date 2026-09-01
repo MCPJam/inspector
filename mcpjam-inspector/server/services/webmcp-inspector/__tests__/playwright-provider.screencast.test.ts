@@ -586,32 +586,59 @@ describe("PlaywrightWebMcpSession screencast", () => {
   });
 
   it("gives up on a capture the browser never answers", async () => {
-    // A CDP session that takes the command and never replies — a wedged
+    // A CDP session that takes the command and does not reply — a wedged
     // browser, or a target that went away mid-capture. `cdp.send` has no
     // timeout of its own, which is the difference from the `page.screenshot()`
     // this path used to go through.
-    const h = await startedWithFakeClock({
-      still: () => new Promise<string>(() => {}),
-    });
+    const held = heldStill();
+    const h = await startedWithFakeClock({ still: held.still });
     await h.session.setScreencast(true);
 
     const shot = h.session.captureScreenshot();
     await vi.advanceTimersByTimeAsync(STILL_TIMEOUT_MS + 100);
-    // The poll recovers on its next tick rather than accumulating requests
-    // that will never answer.
+    // The poll recovers on its next tick rather than waiting on a reply that
+    // may never come.
     await expect(shot).resolves.toBeUndefined();
 
-    // And the still path is usable again. A capture that never settles holds
-    // the single-flight latch forever, which disables the settle still AND the
-    // oversize substitute for the life of the session — a pane that silently
-    // stops sharpening and stops converging, long after the browser recovered.
-    h.stills.mockResolvedValue(SMALL_STILL);
+    // And when the browser does answer, everything the wedge held is released.
+    held.release();
+    await vi.advanceTimersByTimeAsync(0);
     h.cdp.emit(
       "Page.screencastFrame",
       screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1), 1),
     );
     await vi.advanceTimersByTimeAsync(10);
+    // A capture that never settled would hold `publishStill`'s single-flight
+    // latch for the life of the session — the settle still and the oversize
+    // substitute both silently disabled, long after the browser recovered.
     expect(h.frames.map((frame) => frame.data)).toEqual([SMALL_STILL]);
+  });
+
+  it("does not queue another capture behind one that wedged", async () => {
+    const held = heldStill();
+    const h = await startedWithFakeClock({ still: held.still });
+
+    const first = h.session.captureScreenshot();
+    await vi.advanceTimersByTimeAsync(STILL_TIMEOUT_MS + 100);
+    await expect(first).resolves.toBeUndefined();
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    // The poll asks again a second later. The timeout freed the CALLER, not
+    // the command — Playwright keeps a timed-out `send`'s callback registered
+    // until the browser replies, and CDP cannot cancel one — so asking again
+    // now would add a pending command per tick for as long as the renderer
+    // stays wedged, and the pane can stay open for hours.
+    const second = h.session.captureScreenshot();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+    await expect(second).resolves.toBeUndefined();
+
+    // The browser answering at last — with a picture nobody is waiting for any
+    // more — is also what says it is worth asking again.
+    held.release();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(h.session.captureScreenshot()).resolves.toBe(SMALL_STILL);
+    expect(h.stills).toHaveBeenCalledTimes(2);
   });
 
   it("paces substitute captures on a page that never fits", async () => {
