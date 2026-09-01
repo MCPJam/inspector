@@ -224,47 +224,205 @@ describe("terminating a tree we own", () => {
   );
 });
 
-describe("escalating when the group cannot be read", () => {
-  it.skipIf(!supportsOwnershipProof())(
-    "still SIGKILLs a group it could not enumerate",
-    async () => {
-      // The regression: `settleGroup` returned `unknown` BEFORE the escalation,
-      // so a descendant that ignored SIGTERM survived with no SIGKILL ever
-      // sent whenever the group probe could not enumerate. Not knowing whether
-      // a survivor exists is a reason to make sure, not to walk away.
-      const { spawn } = await import("node:child_process");
-      const child = spawn(
-        process.execPath,
-        ["-e", "process.on('SIGTERM',function(){});setInterval(()=>{},1000)"],
-        { detached: true, stdio: "ignore" },
-      );
-      const pid = child.pid!;
+/**
+ * A root that exits on SIGTERM, with a descendant in its group that ignores it.
+ *
+ * The descendant announces itself only AFTER installing its handler, and the
+ * root relays its pid only after that — without the handshake, the SIGTERM
+ * that starts termination can land before the handler is registered and kill
+ * the descendant by default action, which quietly turns these tests into
+ * something that measures nothing.
+ */
+const DESERTING_ROOT = [
+  "const{spawn}=require('node:child_process');",
+  "const k=spawn(process.execPath,['-e',",
+  JSON.stringify(
+    "process.on('SIGTERM',function(){});console.log('ready');" +
+      "setInterval(()=>{},1000)",
+  ),
+  "],{stdio:['ignore','pipe','ignore']});",
+  "k.stdout.once('data',function(){console.log(k.pid)});",
+  "process.on('SIGTERM',function(){process.exit(0)});",
+  "setInterval(()=>{},1000);",
+].join("");
+
+/**
+ * A detached group leader that spawns one long-lived grandchild, reports its
+ * pid and then idles. Killing the leader leaves the GROUP live with its leader
+ * gone — the shape in which a recorded pgid can no longer be tied to us.
+ */
+const LEADER_WITH_SURVIVOR = [
+  "const{spawn}=require('node:child_process');",
+  "const k=spawn(process.execPath,['-e',",
+  JSON.stringify("setInterval(()=>{},1000)"),
+  "],{stdio:'ignore'});",
+  "console.log(k.pid);",
+  "setInterval(()=>{},1000);",
+].join("");
+
+/**
+ * Spawn one of the fixtures above, wait for it to name its descendant, run the
+ * body, and kill both whatever happens.
+ *
+ * The spawn and the handshake belong INSIDE the guarded region: a rejected
+ * handshake or a failed assertion before the `try` would leak a detached group
+ * leader and its child, each holding a `setInterval`, for the life of the host.
+ * Nothing reaps a detached leader.
+ */
+async function withDetachedTree(
+  script: string,
+  body: (pid: number, descendant: number) => Promise<void>,
+): Promise<void> {
+  const { spawn } = await import("node:child_process");
+  const root = spawn(process.execPath, ["-e", script], {
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const pid = root.pid!;
+  let descendant = 0;
+  try {
+    descendant = Number(
+      await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("the fixture never announced its descendant")),
+          10_000,
+        );
+        root.once("error", reject);
+        root.stdout!.once("data", (d: Buffer) => {
+          clearTimeout(timer);
+          resolve(d.toString().trim());
+        });
+      }),
+    );
+    expect(descendant).toBeGreaterThan(0);
+    await body(pid, descendant);
+  } finally {
+    if (descendant > 0) {
       try {
+        process.kill(descendant, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    } else {
+      // The handshake never named it. The root has not been signalled yet, so
+      // it is still alive and its group id is provably still ours — the only
+      // way to reach a descendant we cannot name.
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** Poll until `pid` is provably gone, or give up. */
+async function waitForGone(pid: number, timeoutMs = 6_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if ((await probeProcess(pid)).state === "gone") return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+describe("a group that cannot be enumerated", () => {
+  it.skipIf(!supportsOwnershipProof())(
+    "reports unknown and does NOT signal a group it cannot prove",
+    async () => {
+      // Shaped so that ONLY `settleGroup` could do the killing: the root exits
+      // on SIGTERM, so the grace loop returns through `settleGroup("graceful")`
+      // before the main flow's own SIGKILL is ever reached. A descendant that
+      // ignores SIGTERM is therefore still alive at that point, and whether it
+      // dies tells us exactly what `settleGroup` did.
+      //
+      // It must NOT die here. Every caller of `settleGroup` has already proven
+      // the root gone, so its pid is reusable; `kill(-pid)` is only safe
+      // because a group id is not reissued while the group has members, and
+      // `unknown` is the failure to establish that. Signalling anyway risks a
+      // stranger's group.
+      await withDetachedTree(DESERTING_ROOT, async (pid, descendant) => {
         const identity = await readProcessBirthIdentity(pid);
         const outcome = await terminateOwnedProcessGroup({
           pid,
           birthIdentity: identity!,
-          graceMs: 200,
+          graceMs: 2_000,
           pollMs: 25,
           // Always unprovable, as an unreadable /proc would be.
           probeGroup: async () => "unknown",
         });
         expect(outcome.outcome).toBe("unknown");
-        // ...and the tree is gone anyway, because the kill still happened.
-        const deadline = Date.now() + 4_000;
-        let probe = await probeProcess(pid);
-        while (probe.state !== "gone" && Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 25));
-          probe = await probeProcess(pid);
-        }
-        expect(probe.state).toBe("gone");
-      } finally {
-        try {
-          process.kill(-pid, "SIGKILL");
-        } catch {
-          /* already gone */
-        }
-      }
+        // The root cooperated and is gone...
+        expect(await waitForGone(pid)).toBe(true);
+        // ...and the descendant was left alone rather than signalled on an
+        // unverifiable group id.
+        expect((await probeProcess(descendant)).state).toBe("alive");
+      });
+    },
+  );
+
+  it.skipIf(!supportsOwnershipProof())(
+    "DOES force-kill a group it can prove still has a member",
+    async () => {
+      // The counterpart. `live` alone would not earn this: it says a group
+      // with our id exists, not that the group is ours. What earns it is the
+      // anchor — this call proved the root alive and carrying its recorded
+      // birth identity moments before, and a leader belongs to its own group,
+      // so a stranger could not have created this one in between.
+      await withDetachedTree(DESERTING_ROOT, async (pid, descendant) => {
+        const identity = await readProcessBirthIdentity(pid);
+        const outcome = await terminateOwnedProcessGroup({
+          pid,
+          birthIdentity: identity!,
+          graceMs: 2_000,
+          pollMs: 25,
+        });
+        expect(["forced", "graceful"]).toContain(outcome.outcome);
+        expect(await waitForGone(descendant)).toBe(true);
+      });
+    },
+  );
+});
+
+describe("a live group whose root was already gone", () => {
+  it.skipIf(!supportsOwnershipProof())(
+    "reports it rather than signalling a group nothing ties to this tree",
+    async () => {
+      // `live` proves a group with this id EXISTS. It does not prove the group
+      // is ours, and the difference is the whole finding: the pid-reuse rule
+      // ("an id in use as a process-group id is not reissued while that group
+      // has members") is a promise about a group that still has one. A group
+      // that emptied released its id, and an unrelated process could have
+      // taken that pid, led a new group with it and exited — leaving a live
+      // group under our id with nothing of ours in it.
+      //
+      // The other paths through `settleGroup` have an anchor: they proved the
+      // root alive and carrying its recorded birth identity moments earlier,
+      // and a leader belongs to its own group. This path has none — the root
+      // was gone on the very first probe — so it must not signal.
+      await withDetachedTree(LEADER_WITH_SURVIVOR, async (pid, survivor) => {
+        // Read the identity while the root still has one, then kill ONLY the
+        // root so the call below finds it gone on its first look.
+        const identity = await readProcessBirthIdentity(pid);
+        process.kill(pid, "SIGKILL");
+        expect(await waitForGone(pid)).toBe(true);
+
+        const outcome = await terminateOwnedProcessGroup({
+          pid,
+          birthIdentity: identity!,
+          graceMs: 2_000,
+          pollMs: 25,
+        });
+        // Not `forced`: nothing was killed, and nothing may be reported
+        // stopped either.
+        expect(outcome.outcome).toBe("unknown");
+        expect((await probeProcess(survivor)).state).toBe("alive");
+      });
     },
   );
 });

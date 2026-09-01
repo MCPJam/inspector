@@ -7794,7 +7794,6 @@ export const searchSessionsOperation: PlatformOperation<
   description:
     "Search conversation sessions in a project across every surface (Playground, user testing, evals, swarms), ranked by relevance. " +
     "scope=titles (default) searches session titles and opening messages; scope=transcripts searches what was said inside the conversations. " +
-    "Older sessions (created before 2026-08-14) are EXCLUDED from transcript search — they cannot match at all; use scope=titles to find them. " +
     "Every result carries a link to open the session.",
   readOnly: true,
   permalink: responsePermalinks((result) =>
