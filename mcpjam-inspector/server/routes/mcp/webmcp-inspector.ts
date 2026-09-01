@@ -413,6 +413,19 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
   const replay = Number.isFinite(replayParam)
     ? Math.max(0, Math.min(500, replayParam))
     : 200;
+  /**
+   * `frames=off`: send everything BUT the viewport frames.
+   *
+   * For a client carrying frames on the binary WebSocket instead (see
+   * `routes/web/webmcp-frames.ts`). Filtered HERE rather than in the hub,
+   * which stays a clean fan-out: subscribers with different appetites are a
+   * property of the transport, not of the session.
+   *
+   * Absent or any other value means frames flow, so a client that has never
+   * heard of this parameter — every client older than the WebSocket — gets
+   * exactly the stream it gets today.
+   */
+  const framesSuppressed = c.req.query("frames") === "off";
 
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
@@ -462,11 +475,16 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
         }
       };
       const send = (payload: unknown) => {
-        const chunk = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
         const isFrame =
           typeof payload === "object" &&
           payload !== null &&
           (payload as { type?: unknown }).type === "frame";
+        // Dropped before it is even serialized, and dropped for REPLAYED
+        // frames as well as live ones: `subscribe` delivers the retained frame
+        // through this same closure, and a client on the binary socket would
+        // otherwise still pay the base64-in-JSON tax once per connect.
+        if (isFrame && framesSuppressed) return;
+        const chunk = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
         if (isFrame) {
           const room = controller.desiredSize;
           if (room !== null && room <= 0) {

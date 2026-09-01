@@ -126,14 +126,32 @@ describe("modifiersOf / buttonOf", () => {
   });
 });
 
-/** A forwarder with hand-cranked timers and a fixed pane. */
-function harness(options: { geometry?: ViewportGeometry | undefined } = {}) {
+/**
+ * A forwarder with hand-cranked timers and a fixed pane.
+ *
+ * `deferSends` makes every `send` return a promise the test settles by hand,
+ * which is what makes "in flight" observable at all: the wheel path's whole
+ * behaviour is defined in terms of whether a request is still on the wire.
+ */
+function harness(
+  options: {
+    geometry?: ViewportGeometry | undefined;
+    deferSends?: boolean;
+  } = {},
+) {
   const sent: WebMcpInputEvent[][] = [];
   const timers = new Map<number, () => void>();
+  const settlers: Array<{ resolve: () => void; reject: () => void }> = [];
   let nextHandle = 1;
 
   const forwarder = createInputForwarder({
-    send: (events) => sent.push(events),
+    send: (events) => {
+      sent.push(events);
+      if (!options.deferSends) return;
+      return new Promise<void>((resolve, reject) => {
+        settlers.push({ resolve, reject: () => reject(new Error("failed")) });
+      });
+    },
     geometry: () =>
       "geometry" in options ? options.geometry : geometry({}, {}),
     flushMs: 50,
@@ -150,6 +168,15 @@ function harness(options: { geometry?: ViewportGeometry | undefined } = {}) {
   return {
     forwarder,
     sent,
+    /** Settle the oldest outstanding send, and let its follow-up run. */
+    async settleOldest(outcome: "resolve" | "reject" = "resolve") {
+      settlers.shift()?.[outcome]();
+      // The forwarder flushes from a `.then`, so the queued microtask has to
+      // run before the effect is observable.
+      await Promise.resolve();
+      await Promise.resolve();
+    },
+    outstanding: () => settlers.length,
     /** Fire every armed timer, as advancing past the flush window would. */
     runTimers() {
       for (const [handle, fn] of [...timers]) {
@@ -162,7 +189,165 @@ function harness(options: { geometry?: ViewportGeometry | undefined } = {}) {
   };
 }
 
+function wheel(overrides: Record<string, unknown> = {}) {
+  return pointer({ deltaX: 0, deltaY: 0, ...overrides });
+}
+
+/**
+ * The wheel path.
+ *
+ * A scroll was the one discrete gesture still riding the 50ms move timer, so
+ * the first turn of the wheel cost a batch window before anything moved. It is
+ * also the highest-frequency input there is, which is why it cannot simply be
+ * made immediate: a continuous scroll would then be one request per event,
+ * piling up behind the store's serialized chain until the page scrolled
+ * seconds after the person stopped.
+ */
+describe("createInputForwarder — wheel", () => {
+  it("sends the first wheel of a gesture straight away", () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.wheel(wheel({ clientX: 10, clientY: 20, deltaY: -120 }));
+    // Synchronously, with no timer run: this is the assertion the whole change
+    // exists for, and it fails on the shipped code.
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toEqual([
+      { kind: "wheel", x: 10, y: 20, deltaX: 0, deltaY: -120 },
+    ]);
+    expect(h.pendingTimers()).toBe(0);
+  });
+
+  it("coalesces wheels arriving while a request is in flight, summing deltas", async () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.wheel(wheel({ clientX: 10, clientY: 20, deltaY: -100 }));
+    expect(h.sent).toHaveLength(1);
+
+    h.forwarder.wheel(wheel({ clientX: 11, clientY: 21, deltaY: -10 }));
+    h.forwarder.wheel(wheel({ clientX: 12, clientY: 22, deltaY: -20 }));
+    h.forwarder.wheel(wheel({ clientX: 13, clientY: 23, deltaY: -30 }));
+    // Nothing new goes out while one is on the wire: the flood bound is the
+    // transport's real capacity, not a fixed rate.
+    expect(h.sent).toHaveLength(1);
+
+    await h.settleOldest();
+    expect(h.sent).toHaveLength(2);
+    // Summed, not latest-wins: scroll distance is additive, and keeping only
+    // the newest would make a fast flick move the page less than a slow one.
+    // The coordinate is the newest, because that is where the pointer is.
+    expect(h.sent[1]).toEqual([
+      { kind: "wheel", x: 13, y: 23, deltaX: 0, deltaY: -60 },
+    ]);
+  });
+
+  it("never merges a ctrl-wheel with a plain one", async () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.wheel(wheel({ deltaY: -10 }));
+    h.forwarder.wheel(wheel({ deltaY: -20 }));
+    h.forwarder.wheel(wheel({ deltaY: -30, ctrlKey: true }));
+    h.forwarder.wheel(wheel({ deltaY: -40, ctrlKey: true }));
+    await h.settleOldest();
+
+    // A ctrl-wheel is a ZOOM. Folding it into a scroll would change what the
+    // page is being asked to do — and the order between them is the gesture.
+    expect(h.sent[1]).toEqual([
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -20 },
+      {
+        kind: "wheel",
+        x: 0,
+        y: 0,
+        deltaX: 0,
+        deltaY: -70,
+        modifiers: { ctrl: true },
+      },
+    ]);
+  });
+
+  it("flushes a pending wheel with a mouse down, in gesture order", async () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.wheel(wheel({ deltaY: -10 }));
+    h.forwarder.wheel(wheel({ deltaY: -20 }));
+    h.forwarder.mouseDown(pointer({ clientX: 5, clientY: 6 }));
+
+    // A click is never held, and the wheel ahead of it in the buffer goes with
+    // it — reordering them would click before the page had scrolled.
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]).toEqual([
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -20 },
+      { kind: "mouse_down", x: 5, y: 6, button: "left" },
+    ]);
+  });
+
+  it("drains the in-flight count on a rejected send", async () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.wheel(wheel({ deltaY: -10 }));
+    h.forwarder.wheel(wheel({ deltaY: -20 }));
+
+    await h.settleOldest("reject");
+    // A failed request that left the count raised would wedge the wheel path
+    // for the rest of the session: every later scroll silently coalescing into
+    // a batch nothing would ever flush.
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]).toEqual([
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -20 },
+    ]);
+  });
+
+  it("keeps flushing across several round trips", async () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.wheel(wheel({ deltaY: -10 }));
+    h.forwarder.wheel(wheel({ deltaY: -20 }));
+    await h.settleOldest();
+    h.forwarder.wheel(wheel({ deltaY: -30 }));
+    await h.settleOldest();
+    await h.settleOldest();
+    h.forwarder.wheel(wheel({ deltaY: -40 }));
+
+    expect(h.sent.map((batch) => batch[0])).toEqual([
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -10 },
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -20 },
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -30 },
+      { kind: "wheel", x: 0, y: 0, deltaX: 0, deltaY: -40 },
+    ]);
+  });
+
+  it("sends every wheel immediately when the caller reports no completion", () => {
+    // A `void`-returning send has no in-flight clock, so the forwarder must
+    // behave as it always has rather than coalescing into a batch that only a
+    // settle would release — which would be a wheel that never arrives.
+    const h = harness();
+    h.forwarder.wheel(wheel({ deltaY: -10 }));
+    h.forwarder.wheel(wheel({ deltaY: -20 }));
+    expect(h.sent).toHaveLength(2);
+  });
+
+  it("drops a settle that lands after the pane is disposed", async () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.wheel(wheel({ deltaY: -10 }));
+    h.forwarder.wheel(wheel({ deltaY: -20 }));
+    h.forwarder.dispose();
+    await h.settleOldest();
+    // The pane is gone, so the coalesced wheel behind it goes nowhere —
+    // `dispose` empties the buffer, which is what leaves the pending settle's
+    // flush with nothing to send.
+    expect(h.sent).toHaveLength(1);
+  });
+});
+
 describe("createInputForwarder", () => {
+  it("still holds mouse moves on the timer, even with an in-flight send", async () => {
+    const h = harness({ deferSends: true });
+    h.forwarder.mouseDown(pointer({ clientX: 1, clientY: 2 }));
+    h.forwarder.mouseMove(pointer({ clientX: 10, clientY: 20 }));
+    h.forwarder.mouseMove(pointer({ clientX: 11, clientY: 21 }));
+    // The wheel's in-flight rule is the wheel's alone: a move trail arriving
+    // 50ms late reads as nothing at all, and coalescing it against round trips
+    // would make a drag jump between whole requests.
+    expect(h.sent).toHaveLength(1);
+    expect(h.pendingTimers()).toBe(1);
+
+    h.runTimers();
+    expect(h.sent[1]).toEqual([{ kind: "mouse_move", x: 11, y: 21 }]);
+  });
+
   it("sends a mouse down immediately, without waiting out the window", () => {
     const h = harness();
     h.forwarder.mouseDown(pointer({ clientX: 10, clientY: 20 }));

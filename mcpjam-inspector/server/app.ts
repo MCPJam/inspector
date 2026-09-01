@@ -89,6 +89,11 @@ import {
   killLocalComputerTerminals,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal.js";
+import {
+  createWebMcpFramesWsHandler,
+  killWebMcpFrameSockets,
+  shutdownWebMcpFrameSockets,
+} from "./routes/web/webmcp-frames.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 import { buildHealthMeta } from "./utils/health-payload.js";
 
@@ -341,6 +346,14 @@ export async function createHonoApp() {
     app.get(
       "/api/web/computers/local-terminal",
       createLocalComputerTerminalWsHandler(upgradeWebSocket)
+    );
+  }
+  // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
+  // local browser there to stream. Mirror of the mount in server/index.ts.
+  if (!HOSTED_MODE) {
+    app.get(
+      "/api/web/webmcp/sessions/:id/frames",
+      createWebMcpFramesWsHandler(upgradeWebSocket)
     );
   }
   app.post(
@@ -648,5 +661,10 @@ export async function createHonoApp() {
     injectWebSocket,
     shutdownLocalComputerTerminals,
     killLocalComputerTerminals,
+    // The frame sockets need the same pair for the same reason: an established
+    // WebSocket outlives `server.close()`, and `window-all-closed` on macOS is
+    // followed by a RESTART, so its variant must not latch.
+    shutdownWebMcpFrameSockets,
+    killWebMcpFrameSockets,
   };
 }
