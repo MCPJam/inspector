@@ -545,6 +545,25 @@ export class LocalHarnessSupervisor {
           pid,
         });
       }
+      if (outcome.outcome === "unknown") {
+        logger.warn("[local-harness] tree not proven stopped; will retry", {
+          sessionId: request.sessionId,
+          pid,
+          reason: outcome.reason,
+        });
+      }
+      // The latch means "a kill is in flight, or the tree is settled" — not
+      // "a kill was attempted once". `escaped` and `unknown` settle nothing,
+      // and leaving it latched is how a descendant gets stranded for the rest
+      // of this process's life: the abort listener and the wall-clock timer
+      // both funnel through here, and `stopSession` may never come. Reopening
+      // it lets the next trigger try again, which matters most for `unknown`,
+      // where the answer may simply be that the probe could not look yet.
+      //
+      // `not-owned` stays latched: retrying cannot help and must not signal.
+      if (outcome.outcome === "escaped" || outcome.outcome === "unknown") {
+        entry.killed = false;
+      }
     };
 
     const onAbort = () => {

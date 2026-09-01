@@ -262,23 +262,33 @@ describe("the janitor", () => {
         stdio: ["ignore", "pipe", "ignore"],
       });
       const pid = leader.pid!;
-      const survivor = Number(
-        await new Promise<string>((resolve) => {
-          leader.stdout!.once("data", (d: Buffer) =>
-            resolve(d.toString().trim()),
-          );
-        }),
-      );
-      expect(survivor).toBeGreaterThan(0);
-      // Kill the ROOT only. The group outlives it.
-      process.kill(pid, "SIGKILL");
-      for (let i = 0; i < 200; i++) {
-        if ((await probeProcess(pid)).state === "gone") break;
-        await new Promise((r) => setTimeout(r, 25));
-      }
-      expect((await probeProcess(pid)).state).toBe("gone");
-
+      // Everything from here is guarded: a rejected handshake or a failed
+      // assertion outside the `try` would leak a detached leader and its
+      // child, and nothing reaps a detached group leader.
+      let survivor = 0;
       try {
+        survivor = Number(
+          await new Promise<string>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("the fixture never announced its child")),
+              10_000,
+            );
+            leader.once("error", reject);
+            leader.stdout!.once("data", (d: Buffer) => {
+              clearTimeout(timer);
+              resolve(d.toString().trim());
+            });
+          }),
+        );
+        expect(survivor).toBeGreaterThan(0);
+        // Kill the ROOT only. The group outlives it.
+        process.kill(pid, "SIGKILL");
+        for (let i = 0; i < 200; i++) {
+          if ((await probeProcess(pid)).state === "gone") break;
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        expect((await probeProcess(pid)).state).toBe("gone");
+
         // A WELL-FORMED record: the group id is exactly the recorded root pid,
         // which is what the removed gate vouched for. That is what makes this
         // discriminating — the old code signalled precisely here.
@@ -304,8 +314,23 @@ describe("the janitor", () => {
         // The point of the test: the group was not signalled.
         expect((await probeProcess(survivor)).state).toBe("alive");
       } finally {
+        if (survivor > 0) {
+          try {
+            process.kill(survivor, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+        } else {
+          // Never named: the root has not been signalled, so its group id is
+          // provably still ours and this is the only way to reach the child.
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+        }
         try {
-          process.kill(survivor, "SIGKILL");
+          process.kill(pid, "SIGKILL");
         } catch {
           /* already gone */
         }
