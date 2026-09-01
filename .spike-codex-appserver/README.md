@@ -16,7 +16,7 @@ can never move production behaviour.
 | `probe/app-server-client.mjs` | Dependency-free JSONL JSON-RPC client for `codex app-server` |
 | `probe/fake-responses-server.mjs` | Scripted OpenAI Responses API stand-in, so gates are deterministic and free |
 | `probe/tiny-mcp-server.mjs` | One-tool stdio MCP server for the MCP gate |
-| `probe/run-gates.mjs` | The P1-P4 gates |
+| `probe/run-gates.mjs` | The P1-P5 gates |
 | `artifacts/` | Raw wire logs from the last run (gitignored) |
 
 ## Running

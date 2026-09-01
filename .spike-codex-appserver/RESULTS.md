@@ -20,6 +20,7 @@ what E2B runs. Do not certify Strict-mode semantics from a macOS run.
 | P3 | Does `turn/interrupt` end a running turn? | **Pass** |
 | P4 | Does `thread/start.config` take nested tables? Endpoint inventory? | **Pass** |
 | P4b | Does a non-git cwd work? | **Pass** |
+| P5 | Which hosted gpt-5 models does the pinned CLI equip with tools? | **Pass** — three are equipped with NONE |
 
 ## The tool surface is `exec_command`, not `shell`
 
@@ -166,6 +167,48 @@ cannot mint a call that codex's tool registry resolves (the rejection comes from
 2. Native MCP delivery is not blocked by callability. Its blocker is approvals:
    no server request exists for an MCP `tools/call`, and none fired during this
    gate. That is why Strict-mode hosts keep host-executed delivery.
+
+## P5 — the model admission matrix, and the silent line
+
+Every gpt-5-family id in MCPJam's hosted catalog, plus two non-hosted controls,
+started a thread and ran one scripted turn. What is counted is the `tools` array
+codex actually sent the model.
+
+| Tools | Known to the CLI | Models |
+| --- | --- | --- |
+| 11 | yes | `gpt-5.2`, `-chat`, `-codex`, `-pro`; `gpt-5.4`, `-mini`, `-nano`, `-pro`; `gpt-5.5`, `-pro` |
+| 10 | no (warns) | `gpt-5`, `-chat`, `-codex`, `-mini`, `-nano`, `-pro`; `gpt-5.1-codex`, `-codex-max`, `-codex-mini`, `-instant`, `-thinking`; `gpt-5.3-chat`, `-codex`; controls `o4-mini`, `gpt-4o` |
+| **0** | **yes** | **`gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`** |
+
+Two findings, and the second is the one that drove a code change.
+
+**Being unknown to the CLI is not the failure mode.** The 15 models in the
+middle row produce the `Model metadata … not found. Defaulting to fallback
+metadata` warning from P4b and are then equipped with 10 tools anyway. The
+warning is noise here, not a verdict — which is why the model gate cannot be
+written from it.
+
+**The 5.6 line is known, warns about nothing, and gets zero tools.** All three
+ids are in the hosted catalog and pass the `gpt-5` prefix rule, so a Codex host
+can be pointed at one today. The turn completes and the model answers from chat
+alone, having never had the ability to act. There is no signal anywhere for a
+user to notice: no warning, no error, no empty result — just an agent that
+quietly cannot do anything.
+
+That asymmetry is the reason `toCodexModel` carries
+`CODEX_TOOL_LESS_MODEL_LINES` (a LINE denylist inside the family allowlist)
+rather than an exact-id allowlist. The hosted catalog is dynamic: an exact list
+would refuse newly hosted models that work fine, trading a silent-bad turn for a
+loud-wrong one.
+
+The controls are recorded but NOT acted on: `o4-mini` and `gpt-4o` both get 10
+tools here, which says the family allowlist could widen. That is a separate,
+evidence-gated change — a raw-protocol tool count is not proof the product path
+works, and this rig deliberately does not run one.
+
+**Re-run this on every codex bump** (`node probe/run-gates.mjs --gate P5`) and
+diff against the table above. Move a line out of the denylist only with a matrix
+to show for it.
 
 ## Open for the credentialed E2B pass
 
