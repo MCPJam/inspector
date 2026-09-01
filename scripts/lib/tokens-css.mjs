@@ -103,6 +103,16 @@ export function parseVars(block) {
       continue;
     }
 
+    // A backslash escapes the next code point anywhere in a value, so it must
+    // be consumed before anything else reads that character as syntax:
+    // `url(a\\);b)` ends at the LAST paren, and treating the escaped one as the
+    // terminator truncates the value at the semicolon after it.
+    if (ch === "\\") {
+      decl += ch;
+      if (i + 1 < block.length) decl += block[++i];
+      continue;
+    }
+
     // Only a top-level `;` ends a declaration; inside url()/calc()/oklch() it
     // is content.
     if (ch === ";" && parens === 0) {

@@ -402,11 +402,12 @@ tables are bottom-hairline only, callouts are left-rail editorial marks.
 
 **Don't**
 
-- Don't write a literal hex or `oklch()` value into a component, or into this
-  file's prose. Role values belong in `design-system/src/tokens.css`, so there
-  is one place to change. (A package-local accent palette deliberately outside
-  the role system — chat-ui's `--trace-waterfall-*` — is the one exception, and
-  adding another is a decision to make on purpose: it won't track the theme.)
+- Don't write a literal hex or `oklch()` value into a component, a stylesheet, or
+  this file's prose. Role values belong in `design-system/src/tokens.css`, so
+  there is one place to change. The one exception is a package-local accent
+  palette deliberately outside the role system — chat-ui's
+  `--trace-waterfall-*` — and adding another is a decision to make on purpose:
+  it won't track the theme, and nothing will check it.
 - Don't hand-edit generated regions: this file's front matter, the fenced blocks in
   `docs/style.css` and `chat-ui/src/styles.css`, or the derived color fields in
   `docs/docs.json`. CI fails on drift; run the sync script.

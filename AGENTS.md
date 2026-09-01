@@ -16,9 +16,10 @@ agents working outside this repository.
   `docs/docs.json`. Never hand-edit a generated region.
 - Change a color by editing `tokens.css`, then run `npm run design:sync`.
 - `npm run design:check` (drift) and `npm run design:lint` (spec) both gate CI.
-- Never write a literal hex or `oklch()` value into a component — use the role
-  tokens. Role values live in `design-system/src/tokens.css` and nowhere else.
-- A package-local accent palette that is deliberately outside the role system
-  is the one exception (chat-ui's `--trace-waterfall-*` is the existing one).
-  Adding another is a real decision, not a shortcut around the rule: it will
-  not track the theme, and nothing will check it.
+- Never write a literal hex or `oklch()` value into a component or a stylesheet
+  — use the role tokens. Role values live in `design-system/src/tokens.css` and
+  nowhere else.
+- The one exception is a package-local accent palette deliberately outside the
+  role system (chat-ui's `--trace-waterfall-*`). Adding another is a real
+  decision, not a shortcut around the rule: it will not track the theme, and
+  nothing will check it.
