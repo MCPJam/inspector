@@ -255,8 +255,15 @@ export class WebMcpBridge {
     await this.cdp.send("WebMCP.enable").catch(() => {
       domainEnabled = false;
     });
-    this.supported =
-      domainEnabled && (await probeSupported().catch(() => false));
+    // Run the probe REGARDLESS of the domain, then combine. `&&` would
+    // short-circuit past it, and the callback is the caller's only hook for
+    // work that has to happen inside `start` — the inspector navigates the
+    // page there, between the domains being enabled and the page being asked
+    // about itself. Skipping it leaves the page on `about:blank`, which an
+    // embedded session then streams, under an error that says the page loaded
+    // normally.
+    const probed = await probeSupported().catch(() => false);
+    this.supported = domainEnabled && probed;
   }
 
   isSupported(): boolean {

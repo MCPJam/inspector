@@ -76,6 +76,30 @@ describe("WebMcpBridge — discovery", () => {
     expect(bridge.isSupported()).toBe(true);
   });
 
+  it("still runs the callback when the WebMCP domain is unavailable", async () => {
+    const fake = fakeCdp({
+      onSend: (method) => {
+        if (method === "WebMCP.enable") {
+          throw new Error("Protocol error: 'WebMCP.enable' wasn't found");
+        }
+        return {};
+      },
+    });
+    const probe = vi.fn(async () => true);
+    const bridge = new WebMcpBridge(fake.cdp);
+    await bridge.start(probe);
+
+    // The callback is not only a probe — it is the caller's one hook for work
+    // that must happen between the domains being enabled and the page being
+    // asked about itself, and the inspector NAVIGATES there. Short-circuiting
+    // it on a browser without the domain leaves the page on `about:blank`,
+    // which an embedded session then streams, under an error that says the
+    // page loaded normally.
+    expect(probe).toHaveBeenCalled();
+    // Unsupported all the same: both halves have to hold.
+    expect(bridge.isSupported()).toBe(false);
+  });
+
   it("reports unsupported when the page API is absent", async () => {
     const fake = fakeCdp();
     const bridge = await started(fake, undefined, false);

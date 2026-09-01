@@ -630,6 +630,42 @@ describe("webmcp inspector store", () => {
     );
   });
 
+  it("abandons the rest of a split gesture when the session turns over", async () => {
+    await openSession();
+    const bodies: string[] = [];
+    let release!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      bodies.push(String((init as RequestInit)?.body));
+      // Only the FIRST request is held; the rest would answer immediately.
+      if (bodies.length > 1) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    });
+
+    const sending = useWebmcpInspectorStore.getState().sendInput(
+      Array.from({ length: 70 }, (_, i) => ({
+        kind: "mouse_move" as const,
+        x: i,
+        y: 0,
+      })),
+    );
+    await vi.waitFor(() => expect(bodies).toHaveLength(1));
+    // The session turns over between the two halves of one gesture.
+    useWebmcpInspectorStore.setState({
+      session: { ...SESSION, sessionId: "session-2" },
+    });
+    release(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await sending;
+
+    // The guard has to run per BATCH, not once before the loop: a gesture past
+    // the route's cap is more than one request, and the tail landing on
+    // whichever page replaced this one is a click going somewhere nobody aimed.
+    expect(bodies).toHaveLength(1);
+  });
+
   it("serializes overlapping commands so a release cannot precede its press", async () => {
     await openSession();
     const order: string[] = [];

@@ -277,14 +277,17 @@ describe("WebmcpInspectorTab — viewport", () => {
 
     await act(async () => {
       fireEvent.keyDown(pane, { key: "Escape" });
+      // The key-up too: a browser sends both, and forwarding only the release
+      // would hand the page a key it never saw pressed.
+      fireEvent.keyUp(pane, { key: "Escape" });
     });
 
     // Tab is FORWARDED — tabbing between fields is most of what people do to a
     // form — so Tab cannot also be the way out. Without a key that leaves, a
     // keyboard-only user would be trapped in the live view.
     expect(document.activeElement).not.toBe(pane);
-    // And Escape itself never reaches the page, so it cannot close a dialog
-    // there on the way out.
+    // And Escape itself never reaches the page, in either transition, so it
+    // cannot close a dialog there on the way out.
     expect(sendInput).not.toHaveBeenCalled();
   });
 

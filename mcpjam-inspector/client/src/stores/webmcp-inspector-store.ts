@@ -638,8 +638,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // Serialized: a release that reached the browser before its press would
         // leave the page mid-drag, and concurrent POSTs give no ordering.
         await inOrder(async () => {
-          if (get().session?.sessionId !== aimedAt) return;
           for (const batch of batches) {
+            // Re-checked EVERY batch, not once before the loop: a gesture past
+            // the route's cap sends more than one request, and the session can
+            // turn over while the first is in flight. The rest would then land
+            // on whichever page replaced it.
+            if (get().session?.sessionId !== aimedAt) return;
             // Through `sendCommand`, unlike `set_screencast`: input the server
             // refuses is a person's click going nowhere, which they should be
             // told about rather than left to wonder at.

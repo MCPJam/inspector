@@ -172,6 +172,36 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
     );
   });
 
+  it("still loads the page on a browser with no WebMCP domain", async () => {
+    const goneTo: string[] = [];
+    const h = harness({
+      onSend: (method) => {
+        if (method === "WebMCP.enable") {
+          throw new Error("Protocol error: 'WebMCP.enable' wasn't found");
+        }
+        return {};
+      },
+    });
+    Reflect.set(h.session as unknown as { page: unknown }, "page", {
+      on: () => {},
+      goto: async (url: string) => {
+        goneTo.push(url);
+      },
+      url: () => "https://example.test/book",
+      evaluate: async () => true,
+      screenshot: async () => Buffer.from("s"),
+    });
+
+    await expect(h.session.start("https://example.test/book")).rejects.toThrow(
+      /does not expose the WebMCP page API/i,
+    );
+    // The navigation lives inside the probe callback, so a bridge that skips
+    // the probe skips the page load with it — and an embedded session would
+    // then stream `about:blank` under an error that says, in as many words,
+    // "the page itself loaded normally".
+    expect(goneTo).toEqual(["https://example.test/book"]);
+  });
+
   it("ignores a subframe navigation for the session's own URL", async () => {
     const h = await started();
     const before = h.navigations.length;
