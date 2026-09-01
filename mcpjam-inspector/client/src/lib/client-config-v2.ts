@@ -53,6 +53,7 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import type {
   CspDomainSet,
+  Harness,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   McpToolResultImageRenderPlacement,
@@ -122,10 +123,15 @@ export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
  * the real CLI runtime (the `@ai-sdk/harness-claude-code` /
  * `@ai-sdk/harness-codex` / `@ai-sdk/harness-cursor` adapter) inside the
  * attached personal computer instead of MCPJam's emulated engine. Absent ⇒
- * emulated. Mirrors the SDK's `Harness` type; the backend enforces
- * `harness ⇒ computer`.
+ * emulated. The backend enforces `harness ⇒ computer`.
+ *
+ * ALIASED, not re-listed. This was a hand-copied union that had to be edited
+ * in lockstep with `HARNESS_IDS`, and the dangerous direction is narrow drift:
+ * the editor would reject a harness the API and the backend validator both
+ * accept, which reads as "that host cannot be built" rather than as a stale
+ * type. The name stays because 60+ files import it from here.
  */
-export type HostConfigHarnessV2 = "claude-code" | "codex" | "cursor";
+export type HostConfigHarnessV2 = Harness;
 
 /**
  * Mutable input shape. All fields are required at write time so the editor

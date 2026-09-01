@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
 import type {
+  Harness,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
@@ -358,7 +359,9 @@ interface PersistChatSessionOptions {
     scenarioId?: string;
     leaseId: string;
     expectedStateVersion: number;
-    harnessId: "claude-code" | "codex" | "cursor";
+    // The SDK union itself, not a copy: a stale copy here silently drops the
+    // session commit for a harness the rest of the stack already runs.
+    harnessId: Harness;
     harnessSessionId: string;
     resumeState: unknown;
     computerId: string;
