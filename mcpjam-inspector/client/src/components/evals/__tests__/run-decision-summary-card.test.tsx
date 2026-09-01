@@ -35,6 +35,7 @@ import {
   readDecisionSummaryFixture,
 } from "@/test/eval-decision-summary-fixtures";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
+import { isDiagnosticTraceable } from "../run-decision-summary-presentation";
 import type { EvalRunDecisionSummary } from "@mcpjam/sdk/contract";
 
 afterEach(cleanup);
@@ -571,5 +572,55 @@ describe("states that are not a summary", () => {
       .getByTestId("run-decision-summary")
       .querySelector('[aria-live="polite"]');
     expect(live).toHaveAttribute("aria-busy", "true");
+  });
+});
+
+describe("isDiagnosticTraceable, extracted and pinned", () => {
+  // The rule now has two callers — this card's row and the stage findings —
+  // so the three conditions are pinned here rather than only observed through
+  // one renderer's button.
+  const diagnostic = readDecisionSummaryFixture(
+    "measured-failure-at-every-stage",
+  ).diagnostics.items[0]!;
+
+  it("is traceable with a handler, a matching run and a case id", () => {
+    expect(
+      isDiagnosticTraceable(diagnostic, diagnostic.evidence.runId, () => {}),
+    ).toBe(true);
+  });
+
+  it("is not traceable without a handler to call", () => {
+    expect(
+      isDiagnosticTraceable(diagnostic, diagnostic.evidence.runId, undefined),
+    ).toBe(false);
+  });
+
+  it("is not traceable when the evidence names a DIFFERENT run", () => {
+    // A locator that does not match the run on screen would navigate somewhere
+    // this view cannot answer for.
+    expect(isDiagnosticTraceable(diagnostic, "some-other-run", () => {})).toBe(
+      false,
+    );
+  });
+
+  it("is not traceable when the evidence names a different iteration", () => {
+    const crossed = {
+      ...diagnostic,
+      evidence: { ...diagnostic.evidence, iterationId: "another-iteration" },
+    };
+    expect(
+      isDiagnosticTraceable(crossed, crossed.evidence.runId, () => {}),
+    ).toBe(false);
+  });
+
+  it("is not traceable without a case id", () => {
+    // The app focuses an iteration THROUGH its case; without one there is
+    // nowhere to send the reader, and a button that opens nothing reads as
+    // broken.
+    const caseless = { ...diagnostic };
+    delete (caseless as { testCaseId?: string }).testCaseId;
+    expect(
+      isDiagnosticTraceable(caseless, caseless.evidence.runId, () => {}),
+    ).toBe(false);
   });
 });

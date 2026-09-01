@@ -537,6 +537,15 @@ export function SuiteDetailOverview({
           suiteId={suite._id}
           runCount={runs.length}
           runsLoading={runsLoading}
+          // The run rows the findings read needs for the SELECTED document's
+          // status and revision — the analytics document carries neither.
+          runs={runs}
+          // "Open run", not a trace: deep trace focus exists only on the run
+          // page, and this is the affordance that surface actually has.
+          onRunClick={onRunClick}
+          // The same flag the verdict cell above already rides. Nothing new to
+          // turn on, and with it off no decision-summary request is issued.
+          decisionSummaryEnabled={decisionSummaryEnabled}
         />
       ) : null}
 

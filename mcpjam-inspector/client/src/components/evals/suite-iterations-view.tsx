@@ -1058,6 +1058,20 @@ export function SuiteIterationsView({
       onEditTestCase={onEditTestCase}
       alwaysShowEditIterationRows={alwaysShowEditIterationRows}
       runTrendData={runTrendData}
+      // The stage findings ride the SAME opt-in as the decision card beside
+      // them, and the same project gate: the read is per-project and the
+      // browser never resolves or guesses one. With this false the underlying
+      // read issues no request at all.
+      stageFindingsEnabled={Boolean(evaluateDecisionSummary && projectId)}
+      onViewStageTrace={({ iterationId, testCaseId }) =>
+        // Identical routing to the decision card's own trace link, and for the
+        // reason its comment gives: `tracePath` is an API path rather than an
+        // app route, and the CASE editor is the one path that actually
+        // consumes an iteration id.
+        navigation.toTestEdit(suite._id, testCaseId, {
+          iteration: iterationId,
+        })
+      }
       decisionSummarySlot={
         // Only Evaluate opts in, and only with a project id in hand: the read
         // is per-project and the browser never resolves or guesses one.
