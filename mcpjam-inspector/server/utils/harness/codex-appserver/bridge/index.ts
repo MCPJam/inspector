@@ -308,4 +308,15 @@ async function main(): Promise<void> {
   });
 }
 
-void main();
+/*
+ * AUTOSTART IS OPT-IN.
+ *
+ * The bundle script appends the `main()` call to the built `bridge.mjs`, so the
+ * shipped artifact starts on its own. The SOURCE must not: this module also
+ * exports `toCodexPermissions`, and importing it from a unit test would
+ * otherwise bind a WebSocket server and spawn Codex. That is not hypothetical —
+ * it happened, and the test suite printed a `bridge-ready` line.
+ */
+if (process.env.MCPJAM_CODEX_APPSERVER_BRIDGE_AUTOSTART === "true") {
+  void main();
+}

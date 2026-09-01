@@ -114,7 +114,10 @@ export function createHostToolMcpServer(options: {
           // error: the model should see the message and be able to react,
           // which a JSON-RPC error would deny it.
           if (result.ok === false) {
-            return { id, result: errorResult(result.error ?? "host tool failed") };
+            return {
+              id,
+              result: errorResult(result.error ?? "host tool failed"),
+            };
           }
           return { id, result: toMcpToolResult(result.result) };
         } catch (error) {
@@ -191,7 +194,8 @@ export function pumpJsonLines(input: {
         continue;
       }
       void input.server.handle(frame).then((reply) => {
-        if (reply) input.write(`${JSON.stringify({ jsonrpc: "2.0", ...reply })}\n`);
+        if (reply)
+          input.write(`${JSON.stringify({ jsonrpc: "2.0", ...reply })}\n`);
       });
     }
   });
