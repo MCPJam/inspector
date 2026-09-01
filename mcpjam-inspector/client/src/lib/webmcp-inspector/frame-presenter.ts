@@ -62,7 +62,13 @@ export function createFramePresenter(
       // happen to surround it. Ownership is not the reason; the Blob
       // constructor copies its input either way.
       const url = createUrl(new Blob([jpeg.slice()], { type: "image/jpeg" }));
-      if (previous) revokeUrl(previous);
+      // Deferred, like `clear()`'s. `present` runs inside the store's `set`,
+      // and React commits the new `src` on a LATER task — so a synchronous
+      // revoke here can land while the element still points at the URL being
+      // revoked, if two frames arrived between commits. One task's delay puts
+      // it after the commit that moved the element on.
+      const aged = previous;
+      if (aged) defer(() => revokeUrl(aged));
       previous = current;
       current = url;
       return url;

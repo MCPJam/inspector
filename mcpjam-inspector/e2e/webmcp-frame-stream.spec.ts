@@ -313,6 +313,10 @@ test.describe("WebMCP viewport frame stream", () => {
       // ---- resting rate ---------------------------------------------------
       socket.frames.length = 0;
       await sleep(2_500);
+      // Asserted before the median: `medianGap` answers Infinity for fewer
+      // than two arrivals, and `Infinity > floor` is true — so a stream that
+      // delivered nothing at all would sail through the cadence bound below.
+      expect(socket.frames.length, "resting frames").toBeGreaterThan(1);
       const restingGap = medianGap(socket.frames.map((f) => f.receivedAt));
       console.log(
         `[frame-stream] resting: ${socket.frames.length} frames, median gap ${restingGap}ms`,
@@ -332,6 +336,7 @@ test.describe("WebMCP viewport frame stream", () => {
         });
         await sleep(120);
       }
+      expect(socket.frames.length, "driven frames").toBeGreaterThan(1);
       const drivenGap = medianGap(socket.frames.map((f) => f.receivedAt));
       console.log(
         `[frame-stream] driven: ${socket.frames.length} frames, median gap ${drivenGap}ms`,
@@ -354,6 +359,9 @@ test.describe("WebMCP viewport frame stream", () => {
       await sleep(2_000);
       socket.frames.length = 0;
       await sleep(2_000);
+      // Same reason as the resting sample: a stream that stopped entirely
+      // would otherwise read as "back at the resting floor".
+      expect(socket.frames.length, "settled frames").toBeGreaterThan(1);
       const settledGap = medianGap(socket.frames.map((f) => f.receivedAt));
       console.log(
         `[frame-stream] settled: ${socket.frames.length} frames, median gap ${settledGap}ms`,

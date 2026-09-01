@@ -38,22 +38,40 @@ const jpeg = (byte: number) => new Uint8Array([0xff, 0xd8, byte]);
 
 describe("frame presenter", () => {
   it("revokes exactly URL N−2 as URL N is created", () => {
-    const { presenter, created, revoked } = harness();
+    const { presenter, created, revoked, runDeferred } = harness();
 
     presenter.present(jpeg(1));
     presenter.present(jpeg(2));
+    runDeferred();
     // Nothing yet: URL 1 may still be the one on screen while 2 decodes.
     expect(revoked).toEqual([]);
 
     presenter.present(jpeg(3));
+    runDeferred();
     expect(revoked).toEqual([created[0]]);
 
     presenter.present(jpeg(4));
     presenter.present(jpeg(5));
+    runDeferred();
     expect(revoked).toEqual([created[0], created[1], created[2]]);
     // The two newest are always still owned.
     expect(revoked).not.toContain(created[3]);
     expect(revoked).not.toContain(created[4]);
+  });
+
+  it("defers the aged-out revoke past the render that moved the element on", () => {
+    const { presenter, created, revoked, runDeferred } = harness();
+    presenter.present(jpeg(1));
+    presenter.present(jpeg(2));
+    presenter.present(jpeg(3));
+
+    // `present` runs inside the store's `set`; React commits the new `src` on
+    // a LATER task. Revoking synchronously here can land while the element
+    // still points at the URL being revoked — a broken image, if two frames
+    // arrived between commits.
+    expect(revoked).toEqual([]);
+    runDeferred();
+    expect(revoked).toEqual([created[0]]);
   });
 
   it("clear() revokes on a LATER task, not synchronously", () => {
@@ -73,6 +91,7 @@ describe("frame presenter", () => {
   it("leaves nothing outstanding after clear", () => {
     const { presenter, created, revoked, runDeferred } = harness();
     for (let i = 0; i < 5; i += 1) presenter.present(jpeg(i));
+    runDeferred();
     presenter.clear();
     runDeferred();
     // Every URL ever minted is accounted for: three revoked as they aged out,
@@ -97,6 +116,7 @@ describe("frame presenter", () => {
     // The cleared pair is forgotten, so nothing is double-revoked.
     presenter.present(jpeg(3));
     presenter.present(jpeg(4));
+    runDeferred();
     expect(revoked.filter((url) => url === created[0])).toHaveLength(1);
   });
 

@@ -38,7 +38,7 @@ presenter and tab vitest suites instead.
 
 It prints the numbers it measures, which is most of its value:
 
-```
+```text
 [frame-stream] capture→arrival over 33 frames: p50 14ms, p95 82ms
 [frame-stream] resting: 24 frames, median gap 101ms
 [frame-stream] driven: 53 frames, median gap 34ms
