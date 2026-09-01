@@ -36,9 +36,9 @@ import { WEBMCP_WEBVIEW_PARTITION } from "@/shared/webmcp-inspector-protocol";
  *     open and un-driven).
  *
  * Not present, on purpose: `nodeintegration`, `preload`, `webpreferences`,
- * `disablewebsecurity`. `will-attach-webview` enforces their absence anyway —
- * this element's attributes are a request, not a fact — but asking for
- * something the main process would strip is a lie in the source.
+ * `disablewebsecurity`. `will-attach-webview` overrides all four anyway — this
+ * element's attributes are a request, not a fact — but asking for something the
+ * main process would strip is a lie in the source.
  */
 
 /** How long to wait for the guest to exist before giving up on it. */

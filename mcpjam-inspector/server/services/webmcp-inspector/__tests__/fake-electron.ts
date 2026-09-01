@@ -179,10 +179,18 @@ export class FakeWebContents extends EventEmitter {
     queueMicrotask(() => this.emit("did-stop-loading"));
   }
 
+  /** True when `goBack` has somewhere to go; false models a fresh surface. */
+  backHistory = true;
+
   readonly navigationHistory = {
+    canGoBack: () => this.backHistory,
     goBack: () => {
       this.navigations.push("goBack");
-      queueMicrotask(() => this.emit("did-stop-loading"));
+      // Only a REAL back emits a loading event. A no-op back emits nothing,
+      // which is what makes the provider's `canGoBack` check load-bearing.
+      if (this.backHistory) {
+        queueMicrotask(() => this.emit("did-stop-loading"));
+      }
     },
   };
 

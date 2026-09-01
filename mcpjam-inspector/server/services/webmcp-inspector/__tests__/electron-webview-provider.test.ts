@@ -254,6 +254,53 @@ describe("electron-webview provider — the session surface", () => {
     ]);
   });
 
+  it("returns immediately from go_back when there is nothing to go back to", async () => {
+    vi.useFakeTimers();
+    try {
+      const { guest, electron } = ownedGuest();
+      const { session } = await startSession({ guest, electron });
+      guest.backHistory = false;
+
+      let settled = false;
+      const pending = session.goBack().then(() => {
+        settled = true;
+      });
+      // A no-op `goBack()` emits no loading event, so a provider that waited
+      // unconditionally would sit out the full 30s navigation timeout on the
+      // one case where nothing happened at all.
+      await pending;
+      expect(settled).toBe(true);
+      expect(guest.navigations).not.toContain("goBack");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a navigation ONCE, whichever source sees it first", async () => {
+    const { guest, recorder } = await startSession();
+    const before = recorder.navigated.length;
+
+    // Electron's event first, then CDP's for the same navigation. Both describe
+    // one page load; two `navigated` entries in the timeline is a duplicate in
+    // the record the session exists to produce.
+    guest.navigateTo("https://shop.test/cart");
+    guest.debugger.emitCdp("Page.frameNavigated", {
+      frame: { id: "main", url: "https://shop.test/cart" },
+    });
+    expect(recorder.navigated.length - before).toBe(1);
+
+    // And the other ordering, for the next navigation.
+    guest.debugger.emitCdp("Page.frameNavigated", {
+      frame: { id: "main", url: "https://shop.test/checkout" },
+    });
+    guest.navigateTo("https://shop.test/checkout");
+    expect(recorder.navigated.length - before).toBe(2);
+    expect(recorder.navigated.at(-1)).toEqual({
+      url: "https://shop.test/checkout",
+      origin: "https://shop.test",
+    });
+  });
+
   it("honours the frame pin instead of letting the main frame shadow it", async () => {
     const { session, guest } = await startSession();
     // Both frames offer the same name. Name resolution prefers the main frame,

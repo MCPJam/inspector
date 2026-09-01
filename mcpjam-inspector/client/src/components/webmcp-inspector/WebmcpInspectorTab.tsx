@@ -155,6 +155,14 @@ export function WebmcpInspectorTab() {
     null,
   );
   /**
+   * True for the whole mount-attach-start flow, which the store's `starting`
+   * does not cover: it goes true only once the request goes out. Both the
+   * re-entry guard and the button's disabled state read this, so the guard and
+   * what the person sees can never disagree.
+   */
+  const [openingSurface, setOpeningSurface] = useState(false);
+  const openingSurfaceRef = useRef(false);
+  /**
    * An error this screen produced rather than the server.
    *
    * Kept beside the store's, because a surface that never came up is not a
@@ -248,7 +256,14 @@ export function WebmcpInspectorTab() {
       return;
     }
     if (session && session.status !== "closed") {
-      surfaceAttached.current = true;
+      // Only OUR transport keeps the surface up. Any other kind means the
+      // server is painting the viewport itself, and the pane it gave us is the
+      // one the viewer needs to see.
+      if (session.viewportTransport.kind === "electron-webview") {
+        surfaceAttached.current = true;
+        return;
+      }
+      setWebviewMounted(false);
       return;
     }
     if (surfaceAttached.current) setWebviewMounted(false);
@@ -363,6 +378,15 @@ export function WebmcpInspectorTab() {
       await startSession(url, startOptions());
       return;
     }
+    // RE-ENTRANCY is a real click, not a theoretical one. `starting` only goes
+    // true once the request goes out, which is AFTER the mount-and-attach wait
+    // — up to five seconds with the button still live. A second click in that
+    // window re-keys the pane out from under the first attempt, whose waiter
+    // then rejects and tears down the second attempt's surface, failing both
+    // with an error neither of them caused.
+    if (openingSurfaceRef.current) return;
+    openingSurfaceRef.current = true;
+    setOpeningSurface(true);
     setLocalError(undefined);
     // The previous attempt's handle, if any, must not answer for this one.
     webviewRef.current = null;
@@ -371,6 +395,20 @@ export function WebmcpInspectorTab() {
     try {
       const webContentsId = await nextWebviewId();
       await startSession(url, { display: "in-app", webContentsId });
+      // WHAT CAME BACK decides whether our surface is the viewport. A server
+      // too old to know `webContentsId` strips it and answers `frame-stream` —
+      // the documented degrade — and the streamed pane it gave us is the one to
+      // render; leaving our surface up would hide it behind a blank
+      // `about:blank`. A start that failed without throwing (the store reports
+      // it as an error and leaves no session) lands here too, and the same
+      // answer is right: take the dead surface down.
+      //
+      // Read from the store rather than the `session` in scope, which is the
+      // render-time value from before the await.
+      const started = useWebmcpInspectorStore.getState().session;
+      if (started?.viewportTransport.kind !== "electron-webview") {
+        setWebviewMounted(false);
+      }
     } catch (error) {
       setWebviewMounted(false);
       setLocalError(
@@ -378,6 +416,9 @@ export function WebmcpInspectorTab() {
           ? error.message
           : "The embedded browser did not start.",
       );
+    } finally {
+      openingSurfaceRef.current = false;
+      setOpeningSurface(false);
     }
   };
 
@@ -528,7 +569,7 @@ export function WebmcpInspectorTab() {
             variant="outline"
             aria-pressed={inApp}
             onClick={() => setInApp((on) => !on)}
-            disabled={starting}
+            disabled={starting || openingSurface}
             title={
               inApp
                 ? isElectron
@@ -546,7 +587,7 @@ export function WebmcpInspectorTab() {
             variant={hosted ? "default" : "outline"}
             aria-pressed={hosted}
             onClick={() => setHosted((on) => !on)}
-            disabled={starting}
+            disabled={starting || openingSurface}
             title={
               hosted
                 ? "Runs on your MCPJam computer. It cannot reach localhost, and its awake time is billed."
@@ -560,9 +601,9 @@ export function WebmcpInspectorTab() {
           <Button
             size="sm"
             onClick={() => void openBrowser()}
-            disabled={starting}
+            disabled={starting || openingSurface}
           >
-            {starting ? "Opening…" : "Open browser"}
+            {starting || openingSurface ? "Opening…" : "Open browser"}
           </Button>
         ) : null}
         {session ? <StatusBadge status={session.status} /> : null}

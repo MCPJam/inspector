@@ -942,10 +942,14 @@ app.on("web-contents-created", (_, contents) => {
    * refuse, and it refuses by default — a guest that is not on the WebMCP
    * partition does not attach at all.
    *
-   * The three deletions matter individually. A guest `preload` would run
-   * privileged code inside a page we do not control; `nodeIntegration` would
-   * hand that page `require`; `contextIsolation: false` would put our world and
-   * the page's in one place. `sandbox: true` is the backstop for all of it.
+   * Every reset matters individually. A guest `preload` would run privileged
+   * code inside a page we do not control; `nodeIntegration` would hand that
+   * page `require`; `contextIsolation: false` would put our world and the
+   * page's in one place; `sandbox: true` is the backstop for all of it. And
+   * `webSecurity: false` — what the element's `disablewebsecurity` attribute
+   * asks for — would drop the same-origin policy inside the guest, so a page
+   * the provider navigates to could read this app's own local server
+   * cross-origin with no CORS to stop it.
    */
   contents.on("will-attach-webview", (event, webPreferences, params) => {
     if (params.partition !== WEBMCP_WEBVIEW_PARTITION) {
@@ -962,6 +966,8 @@ app.on("web-contents-created", (_, contents) => {
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
   });
 
   contents.setWindowOpenHandler(({ url, frameName }) => {

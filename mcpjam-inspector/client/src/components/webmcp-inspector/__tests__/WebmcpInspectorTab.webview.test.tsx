@@ -163,6 +163,38 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     }
   });
 
+  it("ignores a second Open browser click during the mount-and-attach wait", async () => {
+    const startSession = vi.fn(async () => {
+      useWebmcpInspectorStore.setState({ session: webviewSession() });
+    });
+    useWebmcpInspectorStore.setState({ startSession });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    const button = screen.getByRole("button", { name: "Open browser" });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    const first = mountedWebview();
+    // `starting` only goes true once the request goes out, which is after the
+    // wait — so without a guard of its own the button stays live for seconds.
+    expect(screen.getByRole("button", { name: "Opening…" })).toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Opening…" }));
+    });
+    // The same element, not a re-keyed one: a second attempt would tear this
+    // pane down, reject the first attempt's waiter, and its catch would then
+    // unmount the second attempt's pane — failing both.
+    expect(mountedWebview()).toBe(first);
+
+    await act(async () => {
+      bringUpWebview();
+      await Promise.resolve();
+    });
+    expect(startSession).toHaveBeenCalledTimes(1);
+  });
+
   it("takes the surface down when the session closes", async () => {
     const startSession = vi.fn(async () => {
       useWebmcpInspectorStore.setState({ session: webviewSession() });
@@ -211,6 +243,15 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     });
 
     expect(screen.getByText(/running in the pane below/)).toBeInTheDocument();
+    // The notice alone proves nothing: what matters is that the STREAMED pane
+    // is the one on screen. Leaving our surface mounted would hide it behind a
+    // blank about:blank and leave the viewer with no page at all.
+    expect(mountedWebview()).toBeNull();
+    expect(
+      screen.getByText(
+        /Waiting for the first frame|Live view of the inspected page/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("hides the destination toggle in the packaged app", async () => {

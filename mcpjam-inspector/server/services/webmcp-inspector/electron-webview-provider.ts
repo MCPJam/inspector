@@ -187,6 +187,8 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
   private url: string;
   private disposed = false;
   private lastActivityReport = 0;
+  /** The URL of the last navigation actually reported upward. See `report`. */
+  private lastReported = "";
   /** Listeners we bound on the guest, so dispose removes exactly those. */
   private readonly bound: Array<{
     event: string;
@@ -263,12 +265,15 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
   }
 
   /**
-   * The one Page-domain fact this class needs for itself: where we are.
+   * Where we are, from CDP — wired before the bridge so the runtime sees
+   * `navigated` ahead of the tool snapshot the bridge publishes from the same
+   * event.
    *
-   * Read from CDP rather than from the `did-navigate` event so it lands in the
-   * same ordering as the bridge's own `Page.frameNavigated` bookkeeping. The
-   * Electron events feed `onActivityObserved` and the client's URL bar; this
-   * feeds the session's reported URL.
+   * Routed through `report` like every other source, because a main-frame
+   * navigation reaches this class TWICE: once here and once as Electron's
+   * `did-navigate`. Whichever arrives first should write the timeline entry,
+   * and the other should be dropped — reporting unconditionally from either
+   * side puts a duplicate `navigated` in the record on every single page load.
    */
   private wireNavigation(): void {
     this.cdp.on("Page.frameNavigated", (event) => {
@@ -276,8 +281,7 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
         frame?: { id: string; url: string; parentId?: string };
       };
       if (!frame || frame.parentId) return;
-      this.url = frame.url;
-      this.callbacks.onNavigated(frame.url, originOf(frame.url));
+      this.report(frame.url);
     });
   }
 
@@ -310,14 +314,14 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
     this.bind("before-input-event", () => this.reportActivity());
     this.bind("did-navigate", (_event: unknown, navigationUrl: string) => {
       this.reportActivity();
-      this.noteUrl(navigationUrl);
+      this.report(navigationUrl);
     });
     this.bind(
       "did-navigate-in-page",
       (_event: unknown, navigationUrl: string, isMainFrame: boolean) => {
         if (!isMainFrame) return;
         this.reportActivity();
-        this.noteUrl(navigationUrl);
+        this.report(navigationUrl);
       },
     );
     this.bind("console-message", () => this.reportActivity());
@@ -342,15 +346,27 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
   }
 
   /**
-   * Keep the reported URL current between `Page.frameNavigated` events.
+   * Report a main-frame navigation exactly once, whichever source saw it first.
    *
-   * Belt and braces: the CDP handler is the authority and fires for every
-   * main-frame navigation, but an in-page (History API) navigation is not one,
-   * and the client's URL bar should follow those too.
+   * Three sources feed this: CDP's `Page.frameNavigated`, and Electron's
+   * `did-navigate` and `did-navigate-in-page`. The first two describe the same
+   * event and race each other; the third describes History API navigations,
+   * which CDP does not report as frame navigations at all and which a
+   * single-page app does most of its navigating with — so none of the three can
+   * simply be dropped.
+   *
+   * Dedup is against `lastReported`, NOT against `this.url`. They look
+   * interchangeable and are not: `navigate()` sets `this.url` from the
+   * webContents before either event arrives, so a check against it would
+   * swallow the first navigation of the session entirely in one ordering and
+   * report it twice in the other. `lastReported` starts empty and only ever
+   * moves here, so exactly one report survives per navigation regardless of
+   * which source wins the race.
    */
-  private noteUrl(navigationUrl: string): void {
+  private report(navigationUrl: string): void {
     if (!navigationUrl) return;
-    if (navigationUrl === this.url) return;
+    if (navigationUrl === this.lastReported) return;
+    this.lastReported = navigationUrl;
     this.url = navigationUrl;
     this.callbacks.onNavigated(navigationUrl, originOf(navigationUrl));
   }
@@ -380,6 +396,11 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
   }
 
   async goBack(): Promise<void> {
+    // Asked FIRST, because `goBack()` on an empty history is a no-op that
+    // emits no loading event — so the wait below would sit out its full 30
+    // seconds and the command would appear to hang on the one case where
+    // nothing happened at all.
+    if (!this.wc.navigationHistory.canGoBack()) return;
     this.wc.navigationHistory.goBack();
     await this.waitForNavigation();
     this.url = this.wc.getURL();

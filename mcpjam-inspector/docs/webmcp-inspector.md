@@ -175,9 +175,12 @@ The main process's half is in `src/main.ts`: `appendSwitch("enable-features",
 "WebMCP")` before `whenReady` (switches freeze there, and the flag lives in the
 renderer — note that `appendSwitch` REPLACES the value for a key, so a future
 feature must comma-join into that one call), `webviewTag` on the main window, a
-`will-attach-webview` guard that refuses any guest off the partition and strips
-`preload`/`nodeIntegration`/`contextIsolation:false` from the ones it allows,
-and deny-all permission handlers on the partition's session. The renderer learns
+`will-attach-webview` guard that refuses any guest off the partition and
+overrides `preload`, `nodeIntegration`, `contextIsolation`, `sandbox` and
+`webSecurity` on the ones it allows (the element's attributes are a request,
+not a fact — `disablewebsecurity` would otherwise drop the same-origin policy
+inside a guest the provider then navigates to arbitrary pages), and deny-all
+permission handlers on the partition's session. The renderer learns
 it is packaged from `--mcpjam-packaged` in `process.argv`, because a sandboxed
 preload cannot read `process.env` and `isElectron` is true in dev too.
 

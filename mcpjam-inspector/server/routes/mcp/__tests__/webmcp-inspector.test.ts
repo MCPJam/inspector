@@ -25,7 +25,9 @@ const hostedState = vi.hoisted(() => ({
 vi.mock("../../../services/browserd/live-session-deps.js", () => ({
   ensureLiveBrowserSession: (args: Record<string, unknown>) => {
     hostedState.ensureArgs.push(args);
-    return Promise.reject(new Error("ensureLiveBrowserSession not reached in this test"));
+    return Promise.reject(
+      new Error("ensureLiveBrowserSession not reached in this test"),
+    );
   },
 }));
 
@@ -107,7 +109,10 @@ describe("webmcp-inspector routes", () => {
   it("404s every route when the kill switch is off", async () => {
     configState.enabled = false;
     // Not 403: a disabled capability should not be discoverable.
-    expect((await call("/api/mcp/webmcp/sessions", json({ url: "https://a.test" }))).status).toBe(404);
+    expect(
+      (await call("/api/mcp/webmcp/sessions", json({ url: "https://a.test" })))
+        .status,
+    ).toBe(404);
     expect((await call("/api/mcp/webmcp/sessions/anything")).status).toBe(404);
     const { status, body } = await call("/api/mcp/webmcp/sessions/x", {
       method: "DELETE",
@@ -169,7 +174,9 @@ describe("webmcp-inspector routes", () => {
 
   it("describes a session with its current tools", async () => {
     const started = await openSession(provider);
-    provider.sessions[0].emitTools([fakeTool({ origin: "https://example.test" })]);
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+    ]);
 
     const { status, body } = await call(
       `/api/mcp/webmcp/sessions/${started.sessionId}`,
@@ -183,7 +190,9 @@ describe("webmcp-inspector routes", () => {
 
   it("accepts an invocation with 202 and an invokeId", async () => {
     const started = await openSession(provider);
-    provider.sessions[0].emitTools([fakeTool({ origin: "https://example.test" })]);
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+    ]);
 
     const { status, body } = await call(
       `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
@@ -207,7 +216,11 @@ describe("webmcp-inspector routes", () => {
 
     await call(
       `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
-      json({ type: "invoke_tool", toolKey: "https://example.test::echo", input: {} }),
+      json({
+        type: "invoke_tool",
+        toolKey: "https://example.test::echo",
+        input: {},
+      }),
     );
     await vi.waitFor(() => expect(session.invocations).toHaveLength(1));
 
@@ -350,15 +363,18 @@ describe("webmcp-inspector routes", () => {
     ["unknown button", { kind: "mouse_down", x: 1, y: 1, button: "extra" }],
     ["unknown kind", { kind: "teleport", x: 1, y: 1 }],
     ["empty key", { kind: "key_down", key: "" }],
-  ])("refuses an input event with a %s coordinate or field", async (_l, event) => {
-    const started = await openSession(provider);
-    const { status } = await call(
-      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
-      json({ type: "input", events: [event] }),
-    );
-    expect(status).toBe(400);
-    expect(provider.sessions[0].inputBatches).toHaveLength(0);
-  });
+  ])(
+    "refuses an input event with a %s coordinate or field",
+    async (_l, event) => {
+      const started = await openSession(provider);
+      const { status } = await call(
+        `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+        json({ type: "input", events: [event] }),
+      );
+      expect(status).toBe(400);
+      expect(provider.sessions[0].inputBatches).toHaveLength(0);
+    },
+  );
 
   it("accepts a signed wheel delta", async () => {
     const started = await openSession(provider);
@@ -423,18 +439,26 @@ describe("webmcp-inspector routes", () => {
   it("closes a session, and says so when there was nothing to close", async () => {
     const started = await openSession(provider);
     expect(
-      (await call(`/api/mcp/webmcp/sessions/${started.sessionId}`, { method: "DELETE" }))
-        .body,
+      (
+        await call(`/api/mcp/webmcp/sessions/${started.sessionId}`, {
+          method: "DELETE",
+        })
+      ).body,
     ).toEqual({ closed: true });
     expect(
-      (await call(`/api/mcp/webmcp/sessions/${started.sessionId}`, { method: "DELETE" }))
-        .body,
+      (
+        await call(`/api/mcp/webmcp/sessions/${started.sessionId}`, {
+          method: "DELETE",
+        })
+      ).body,
     ).toEqual({ closed: false });
   });
 
   it("streams replayed then live events over SSE", async () => {
     const started = await openSession(provider);
-    provider.sessions[0].emitTools([fakeTool({ origin: "https://example.test" })]);
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+    ]);
 
     const res = await app.request(
       `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50`,
@@ -572,9 +596,10 @@ describe("POST /sessions — transport selection", () => {
 describe("POST /sessions — the embedded surface", () => {
   const saved = process.env.ELECTRON_APP;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     webviewState.factoryArgs.length = 0;
     delete process.env.ELECTRON_APP;
+    await webMcpSessions.disposeAll();
   });
 
   afterEach(() => {
@@ -647,13 +672,26 @@ describe("POST /sessions — the embedded surface", () => {
 
   it("leaves an ordinary in-app session on the local provider", async () => {
     process.env.ELECTRON_APP = "true";
-    // The compatibility path: a client too old to send a surface, or one
-    // running in a browser, still gets frame-stream.
-    const { status } = await call(
+    // A VALID url, so the request actually reaches transport selection. With an
+    // invalid one the route stops at schema validation and "the factory was not
+    // called" would be true whatever the selection did — a test that passes for
+    // a reason unrelated to what it claims.
+    //
+    // Filling the registry to its cap first is what makes the assertion land
+    // without launching Chromium: `reserve()` runs INSIDE `startWebMcpSession`,
+    // i.e. AFTER the provider has been chosen, so a 429 proves selection ran
+    // and did not choose the embedded provider.
+    await openSession(new FakeProvider());
+    await openSession(new FakeProvider());
+    const { status, body } = await call(
       "/api/mcp/webmcp/sessions",
-      json({ url: "file:///etc/passwd", display: "in-app" }),
+      json({ url: "https://a.test/", display: "in-app" }),
     );
-    expect(status).toBe(400);
+    expect(status).toBe(429);
+    expect(body.code).toBe("capacity");
+    // The compatibility path: a client too old to send a surface, or one
+    // running in a browser, still takes the local provider and gets
+    // frame-stream.
     expect(webviewState.factoryArgs).toHaveLength(0);
   });
 });
