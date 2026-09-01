@@ -784,6 +784,11 @@ describe("bootstrap recipes are auth-independent", () => {
     ANTHROPIC_BASE_URL: `https://${suffix}.invalid`,
     CODEX_API_KEY: `openai-key-${suffix}`,
     OPENAI_BASE_URL: `https://${suffix}.invalid`,
+    // Cursor's credential varies too, or the cursor arm of the loop below
+    // compares two runs handed the SAME value — which cannot detect a
+    // `CURSOR_API_KEY` written into a bootstrap file, the one leak the
+    // external-account harness makes possible.
+    CURSOR_API_KEY: `cursor-key-${suffix}`,
   });
 
   /**
@@ -825,6 +830,17 @@ describe("bootstrap recipes are auth-independent", () => {
       expect(rb.bootstrapDir).toBe(ra.bootstrapDir);
       expect(rb.commands).toEqual(ra.commands);
       expect(rb.files).toEqual(ra.files);
+
+      // The equality above already implies this — a credential in the output
+      // would make the two runs differ — but state it directly so a failure
+      // says WHICH secret leaked instead of dumping two large file trees.
+      const emitted = [
+        ...ra.commands,
+        ...ra.files.map((f) => `${f.path}\n${f.content}`),
+      ].join("\n");
+      for (const value of Object.values(auth("one"))) {
+        expect(emitted, `${id} bootstrap embeds ${value}`).not.toContain(value);
+      }
     });
   }
 

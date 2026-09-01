@@ -933,6 +933,49 @@ describe("resolveTraceModel", () => {
     expect(model.id).toBe("not-a-provider/mystery");
   });
 
+  it('treats an EMPTY snapshot field as absent, not as a provider named ""', () => {
+    // `||`, not `??`, so `""` falls through. Worth pinning because the two
+    // fields fall back independently: an empty provider with a real model must
+    // not produce the id `/gpt-5`, and an empty model must not produce
+    // `openai/` — either would be a model id nothing can resolve.
+    expect(
+      resolveTraceModel(
+        iterationWith({ provider: "", model: "auto" }),
+        caseWith([{ provider: "cursor", model: "ignored" }]),
+      ).id,
+    ).toBe("cursor/auto");
+
+    expect(
+      resolveTraceModel(iterationWith({ provider: "", model: "auto" }), null),
+    ).toEqual({
+      id: "openai/auto",
+      name: "auto",
+      provider: "openai",
+    });
+
+    expect(
+      resolveTraceModel(iterationWith({ provider: "cursor", model: "" }), null),
+    ).toEqual({
+      id: "cursor/unknown-model",
+      name: "unknown-model",
+      provider: "cursor",
+    });
+  });
+
+  it("falls back past an EMPTY case model too", () => {
+    // Both layers empty: neither may contribute a half-formed id.
+    expect(
+      resolveTraceModel(
+        iterationWith(),
+        caseWith([{ provider: "", model: "" }]),
+      ),
+    ).toEqual({
+      id: "openai/unknown-model",
+      name: "unknown-model",
+      provider: "openai",
+    });
+  });
+
   it("falls all the way back when neither snapshot nor case names anything", () => {
     const model = resolveTraceModel(iterationWith(), null);
     expect(model).toEqual({
