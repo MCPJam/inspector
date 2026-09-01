@@ -1,13 +1,10 @@
 /**
- * Share affordances for a User Testing scenario.
+ * {@link ScenarioShareEmptyPanel} — the Insights empty state, which offers a
+ * self-serve run plus the same invite / copy-link actions.
  *
- * - {@link ScenarioShareBanner} — compact strip in the detail header.
- * - {@link ScenarioShareEmptyPanel} — the Insights empty state, which offers
- *   the same invite / copy-link actions plus a self-serve run, and does NOT
- *   restate the banner's headline copy.
- *
- * Full access / invite management lives on the Edit route
- * ({@link ScenarioShareSection}).
+ * This is the only share affordance in the page BODY. The header's `Share`
+ * button owns the general case ({@link ScenarioShareDialog}), and full access
+ * / invite management lives on the Edit route ({@link ScenarioShareSection}).
  */
 import { useState } from "react";
 import { ArrowUp, Link2, Mail } from "lucide-react";
@@ -223,62 +220,13 @@ function ShareActions({
   );
 }
 
-export function ScenarioShareBanner({
-  scenario,
-}: {
-  scenario: ScenarioSettings;
-}) {
-  const { isAuthenticated } = useConvexAuth();
-  const share = useScenarioShareInvite(scenario);
-
-  if (!isAuthenticated) return null;
-
-  return (
-    /* Neutral surface, not the primary tint this used to wear. Handing someone
-       a link is routine; a coloured border under an already busy header read as
-       a warning about the scenario rather than a tool for sharing it. */
-    <div
-      className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl border border-border/60 bg-muted/30 px-4 py-2.5"
-      data-testid="user-testing-share-banner"
-    >
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="shrink-0 text-xs font-medium text-muted-foreground">
-          Tester link
-        </span>
-        {/* The URL is this strip's subject, so it is also its affordance:
-            clicking it copies. The explicit button stays — a bare string
-            does not announce itself as clickable, and losing the primary
-            action to a guess would be a worse trade than the redundancy. */}
-        <button
-          type="button"
-          disabled={!share.shareLink}
-          onClick={() => void share.handleCopyLink()}
-          title={share.shareLink ?? undefined}
-          aria-label={
-            share.shareLink ? `Copy tester link ${share.displayLink}` : undefined
-          }
-          className={cn(
-            "min-w-0 truncate rounded-md px-1.5 py-0.5 font-mono text-sm text-foreground",
-            "transition-colors hover:bg-foreground/[0.06]",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            "disabled:pointer-events-none disabled:text-muted-foreground",
-          )}
-          data-testid="user-testing-share-link"
-        >
-          {share.displayLink ?? "No share link yet."}
-        </button>
-      </div>
-      <ShareActions id="user-testing-share" showInvite {...share} />
-    </div>
-  );
-}
-
 /**
  * Insights empty state — the two ways to get a first session, in the order
  * they cost the reader: run it yourself, or send it to a tester.
  *
- * The detail page hides the header share strip while this panel is up, so
- * share lives here alone until the first session arrives.
+ * The header's `Share` button is always there too; this panel repeats copy /
+ * invite because a first-run page whose only next step is behind a button in
+ * the corner reads as a dead end.
  *
  * The composer is a LINK dressed as a chat input, not an input. Typing into a
  * real field whose text we then discard (the guest runtime takes no prefill)
