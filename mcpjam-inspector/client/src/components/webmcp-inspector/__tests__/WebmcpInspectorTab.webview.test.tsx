@@ -279,6 +279,44 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     expect(mountedWebview()).toBeNull();
   });
 
+  it("closes a session that arrives after the screen has gone away", async () => {
+    // Leaving the tab mid-start is the race: the unmount cleanup runs while the
+    // POST is still in flight, sees no session, and closes nothing — then the
+    // session lands on a server whose surface React has just destroyed, holding
+    // a capacity slot until the idle sweep reaps it.
+    let resolveStart!: () => void;
+    const startPending = new Promise<void>((resolve) => {
+      resolveStart = () => resolve();
+    });
+    const closeSession = vi.fn(async () => {});
+    const startSession = vi.fn(async () => {
+      await startPending;
+      useWebmcpInspectorStore.setState({ session: webviewSession() });
+    });
+    useWebmcpInspectorStore.setState({ startSession, closeSession });
+
+    const view = render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open browser" }));
+    });
+    await act(async () => {
+      bringUpWebview();
+      await Promise.resolve();
+    });
+    expect(startSession).toHaveBeenCalled();
+
+    // The person tabs away while the request is still out.
+    view.unmount();
+    await act(async () => {
+      resolveStart();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(closeSession).toHaveBeenCalled();
+  });
+
   it("hides the destination toggle in the packaged app", async () => {
     window.isElectronPackaged = true;
     render(<WebmcpInspectorTab />);

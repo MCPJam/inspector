@@ -163,6 +163,22 @@ export function WebmcpInspectorTab() {
   const [openingSurface, setOpeningSurface] = useState(false);
   const openingSurfaceRef = useRef(false);
   /**
+   * False once this screen has gone away.
+   *
+   * Needed because the unmount cleanup and the start request race: leaving the
+   * tab mid-start runs the cleanup while the POST is still out, so it sees no
+   * session and closes nothing — and the session then lands on a server whose
+   * surface React has already destroyed. `openBrowser` reads this after its
+   * await and closes what the cleanup could not have known about.
+   */
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
+  /**
    * An error this screen produced rather than the server.
    *
    * Kept beside the store's, because a surface that never came up is not a
@@ -415,7 +431,16 @@ export function WebmcpInspectorTab() {
       const attached =
         started?.viewportTransport.kind === "electron-webview" &&
         started.status !== "closed";
-      if (!attached) setWebviewMounted(false);
+      if (!attached) {
+        setWebviewMounted(false);
+        return;
+      }
+      // The screen went away while the request was in flight. This is the ONLY
+      // place that can close the result: the unmount cleanup already ran, and
+      // at that moment there was no session to see. Left alone it holds a
+      // capacity slot until the idle sweep, attached to a `webContents` React
+      // destroyed with the component.
+      if (!mountedRef.current) void closeSession();
     } catch (error) {
       setWebviewMounted(false);
       setLocalError(
