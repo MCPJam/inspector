@@ -2070,7 +2070,13 @@ export function MCPAppsRendererSurface({
           appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
           const tools: AppToolDescriptor[] = [];
           let cursor: string | undefined;
-          for (let page = 0; page < 8; page += 1) {
+          const APP_TOOLS_PAGE_CAP = 8;
+          // The page values cross the iframe boundary, so they are
+          // untrusted: a non-string `nextCursor` is not a cursor. A REPEATED
+          // one is still a cursor though — the value is opaque, and an app may
+          // legally reissue one constant token (`""` included) for every
+          // page — so the page cap is the only bound.
+          for (let page = 0; page < APP_TOOLS_PAGE_CAP; page += 1) {
             const result = await bridge.listTools(
               cursor === undefined ? {} : { cursor }
             );
@@ -2079,8 +2085,23 @@ export function MCPAppsRendererSurface({
                 Boolean(t && typeof t.name === "string" && t.name.length > 0)
               )
             );
-            cursor = result.nextCursor;
-            if (!cursor) break;
+            cursor =
+              typeof result.nextCursor === "string"
+                ? result.nextCursor
+                : undefined;
+            // Presence, not truthiness: MCP 2026-07-28
+            // `server/utilities/pagination` makes `""` a valid cursor that MUST
+            // NOT be read as the end of results.
+            if (cursor === undefined) break;
+            // Stopping at the cap is not the same as reaching the end, and the
+            // registered set is about to be treated as this app's whole tool
+            // surface. Say so rather than letting a truncated read pass as
+            // complete.
+            if (page === APP_TOOLS_PAGE_CAP - 1) {
+              console.warn(
+                `[MCP Apps] tools/list still had more pages after ${APP_TOOLS_PAGE_CAP}; registering a partial tool set for bridge ${bridgeId}.`
+              );
+            }
           }
 
           appToolsListedBridgeIdsRef.current.add(bridgeId);

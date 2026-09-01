@@ -41,8 +41,18 @@ const FETCH_TIMEOUT_MS = 5_000;
 const RETRY_DELAYS_MS = [1_000, 3_000];
 const FAILURE_COOLDOWN_MS = 60_000;
 
+/** The backend's verdict on whether the hosted browser may be offered. Absent
+ *  on a backend that predates the gate — which is NOT the same as a refusal;
+ *  see `isHostedBrowserExposable`. */
+const hostedBrowserSchema = z
+  .object({
+    exposable: z.boolean(),
+    reason: z.string().optional(),
+  })
+  .optional();
+
 const runtimeConfigSchema = z.union([
-  z.object({ enabled: z.literal(false) }),
+  z.object({ enabled: z.literal(false), hostedBrowser: hostedBrowserSchema }),
   z.object({
     enabled: z.literal(true),
     e2bApiKey: z.string().min(1),
@@ -50,6 +60,7 @@ const runtimeConfigSchema = z.union([
     e2bDomain: z.string().nullable(),
     e2bTemplateId: z.string().nullable(),
     terminalTokenSecret: z.string().nullable(),
+    hostedBrowser: hostedBrowserSchema,
   }),
 ]);
 
@@ -89,10 +100,33 @@ type BootstrapOutcome =
 
 let bootstrapPromise: Promise<BootstrapOutcome> | null = null;
 let lastFailureAtMs: number | null = null;
+/** null = the backend did not say (old backend, or bootstrap never ran). */
+let hostedBrowserExposable: boolean | null = null;
 
 export function resetComputersRuntimeConfigBootstrapForTests(): void {
   bootstrapPromise = null;
   lastFailureAtMs = null;
+  hostedBrowserExposable = null;
+}
+
+/**
+ * Has the backend said the hosted browser may be offered?
+ *
+ * Three states, and the difference between two of them matters:
+ *
+ *   true  — the backend's gate is satisfied (catalog entry, desktop template
+ *           and desktop credit rate are all configured).
+ *   false — the backend explicitly REFUSED. Honor it: the most likely reason
+ *           is that the desktop rate is unset, which would meter every hosted
+ *           browser hour at the terminal rate.
+ *   null  — the backend did not answer (it predates the gate, or bootstrap has
+ *           not run). NOT a refusal, and not a yes: the caller falls back to
+ *           its own env flag, which is dark by default anyway. Treating
+ *           silence as refusal would break the staging path the flag exists
+ *           for; treating it as approval would defeat the gate.
+ */
+export function isHostedBrowserExposable(): boolean | null {
+  return hostedBrowserExposable;
 }
 
 async function fetchRuntimeConfigOnce(
@@ -155,6 +189,20 @@ async function fetchRuntimeConfigOnce(
     // nothing rather than a partial credential set.
     logger.error("[computers] runtime-config bootstrap payload failed validation");
     return "failed";
+  }
+  // Record the verdict regardless of `enabled`: a deployment with no vendor
+  // key still answers the question, and answering it early keeps the
+  // registry's check synchronous.
+  if (parsed.data.hostedBrowser) {
+    hostedBrowserExposable = parsed.data.hostedBrowser.exposable;
+    if (!parsed.data.hostedBrowser.exposable) {
+      logger.info(
+        "[computers] hosted browser is not exposable" +
+          (parsed.data.hostedBrowser.reason
+            ? `: ${parsed.data.hostedBrowser.reason}`
+            : ""),
+      );
+    }
   }
   if (!parsed.data.enabled) {
     return "unavailable";

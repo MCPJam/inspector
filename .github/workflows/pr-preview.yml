@@ -54,9 +54,18 @@ env:
 
 jobs:
   upsert-preview:
+    # Dependabot PRs are excluded for the same reason as fork PRs: GitHub
+    # hands Dependabot-triggered runs the Dependabot secret store, not the
+    # Actions one, so RAILWAY_API_TOKEN and BACKEND_PREVIEW_DISPATCH_TOKEN
+    # arrive empty and the job dies on `BACKEND_PREVIEW_DISPATCH_TOKEN
+    # cannot access MCPJam/mcpjam-backend (HTTP 401)`. That is not a
+    # failure anyone can fix on the PR — it made every Dependabot PR show a
+    # red X that had nothing to do with the bump, which is how a real
+    # breakage hides in plain sight.
     if: >
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     # Newer pushes cancel older upsert/sync runs for the same PR. Prevents
     # the "commit A's sync clobbers commit B's env vars" race the audit
@@ -78,9 +87,7 @@ jobs:
       # it is provisioned; fall back to duplicating staging — secrets and
       # all — until then.
       RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
-      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
-      STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # Default Convex backend for previews when no per-PR backend preview
       # exists. Points at the shared preview deployment once the
       # PREVIEW_BACKEND_* repo vars are provisioned (see
@@ -166,16 +173,11 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_NONPROD_LOCKDOWN=true \
-            MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            VITE_MCPJAM_NONPROD_LOCKDOWN=true \
-            VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -387,9 +389,7 @@ jobs:
       # it is provisioned; fall back to duplicating staging — secrets and
       # all — until then.
       RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
-      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
-      STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # Default Convex backend for previews when no per-PR backend preview
       # exists. Points at the shared preview deployment once the
       # PREVIEW_BACKEND_* repo vars are provisioned (see
@@ -454,16 +454,11 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_NONPROD_LOCKDOWN=true \
-            MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            VITE_MCPJAM_NONPROD_LOCKDOWN=true \
-            VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -644,9 +639,13 @@ jobs:
             });
 
   destroy-preview:
+    # Must mirror upsert-preview's exclusions exactly: a PR that never got
+    # an environment has nothing to destroy, and the teardown would fail on
+    # the same empty token.
     if: >
       github.event_name == 'pull_request' &&
       github.event.action == 'closed' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     # Same group as upsert so closing a PR cancels any in-flight upsert
     # for that PR; destroy runs last.
@@ -796,9 +795,7 @@ jobs:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
-      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
-      STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # See upsert-preview: shared preview deployment when provisioned,
       # staging deployment until then.
       DEFAULT_BACKEND_VITE_CONVEX_URL: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL || vars.STAGING_VITE_CONVEX_URL }}
@@ -856,16 +853,11 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_NONPROD_LOCKDOWN=true \
-            MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            VITE_MCPJAM_NONPROD_LOCKDOWN=true \
-            VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
-            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             VITE_CONVEX_URL="${{ steps.backend_target.outputs.vite_convex_url }}" \
             CONVEX_HTTP_URL="${{ steps.backend_target.outputs.convex_http_url }}"
 

@@ -29,8 +29,7 @@ import {
   type UiToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
-import { CloudSkillsError, listCloudSkills } from "../computers/cloud-skills";
-import { CLOUD_SKILLS_FETCH_TIMEOUT_MS } from "../computers/cloud-skill-tools";
+import { listCloudSkills } from "../computers/cloud-skills";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
@@ -808,24 +807,41 @@ describe("prepareChatV2 built-in tools", () => {
   });
 
   it("fails closed when a built-in name collides with a skill tool", async () => {
-    vi.mocked(getSkillToolsAndPrompt).mockResolvedValue({
-      tools: {
-        [WEB_SEARCH_TOOL_NAME]: {
-          description: "skill web search",
-          execute: async () => ({}),
-        },
-      } as any,
-      systemPromptSection: "",
-    });
+    // The skill surface owns `loadSkill`. A built-in claiming it would leave
+    // the model with one name and two meanings, resolved by merge order — so
+    // the turn refuses to start rather than silently picking a winner.
     const manager = mockManager({});
 
     await expect(
       prepareChatV2({
         ...baseArgs,
         mcpClientManager: manager,
-        builtInTools: webSearchBuiltIn(),
+        builtInTools: {
+          loadSkill: {
+            description: "a built-in that wants the skill surface's name",
+            execute: async () => ({}),
+          },
+        } as any,
+        skillsSource: {
+          kind: "resolved",
+          capabilities: {
+            ...emptyCapabilities(),
+            standaloneSkills: [
+              {
+                skillId: "sk_1",
+                ref: "pdf-tools",
+                name: "pdf-tools",
+                description: "Process PDFs",
+                content: "# pdf",
+                aggregateHash: "h",
+                channels: [],
+                files: [],
+              },
+            ],
+          },
+        },
       })
-    ).rejects.toThrow(/web_search.*collides/);
+    ).rejects.toThrow(/loadSkill.*collides/);
   });
 
   it("fails closed when a built-in name collides with an app tool", async () => {
@@ -1460,6 +1476,21 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
   });
 });
 
+function emptyCapabilities() {
+  return {
+    explicitServerIds: [],
+    pluginServerIds: [],
+    effectiveServerIds: [],
+    servers: [],
+    pluginSkills: [],
+    standaloneSkills: [],
+    serverSkills: [],
+    localSkills: [],
+    pluginVersions: [],
+    problems: [],
+  } as any;
+}
+
 describe("prepareChatV2 — pinned skills × harness (Project Environments guard)", () => {
   it("does not wrap an explicit none source with live MCP server skills", async () => {
     const manager = mockManager({});
@@ -1496,7 +1527,29 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
           ],
         },
       })
-    ).rejects.toThrow(/receive pinned skills on box via `pinnedHarnessSkills`/);
+    ).rejects.toThrow(/receive skills on box via `pinnedHarnessSkills`/);
+  });
+
+  it("REFUSES a live resolved source on a harness turn, flag or no flag", async () => {
+    // The flag says "this surface is live"; the harness says "skills arrive on
+    // box". Serving both would deliver the same skill twice by two mechanisms,
+    // so the turn refuses rather than silently picking one — the same rule that
+    // has always covered pinned sources, now covering every in-memory shape.
+    const manager = mockManager({});
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: ["srv-1"],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        harness: "claude-code" as any,
+        skillsSource: {
+          kind: "resolved",
+          capabilities: emptyCapabilities(),
+          composeLiveServerSkills: true,
+        },
+      })
+    ).rejects.toThrow(/deliberately disjoint/);
   });
 
   it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
@@ -1513,95 +1566,90 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
   });
 });
 
-describe("prepareChatV2 — live cloud skills catalog", () => {
-  const cloudSkills = { authHeader: "Bearer t", projectId: "proj-1" };
+describe("prepareChatV2 — a live resolved source", () => {
+  // The project's catalog is fetched by the ROUTE now and handed over as an
+  // `EffectiveCapabilitySet`, so what `prepareChatV2` owes is what it does with
+  // one: inline the listing, advertise `loadSkill`, and never invent a
+  // `listSkills` discovery tool. Catalog fetching and its failure modes are
+  // `listCloudRuntimeSkills`'s to prove, and are covered where they live.
+  function liveSet(
+    skills: Array<{ ref: string; name: string; description: string }>
+  ) {
+    return {
+      ...emptyCapabilities(),
+      standaloneSkills: skills.map((skill) => ({
+        skillId: `sk_${skill.name}`,
+        ref: skill.ref,
+        name: skill.name,
+        description: skill.description,
+        content: async () => `# ${skill.name}`,
+        aggregateHash: "h",
+        channels: [],
+        files: [],
+      })),
+    };
+  }
 
   it("inlines the catalog and advertises loadSkill, not listSkills", async () => {
-    vi.mocked(listCloudSkills).mockResolvedValue([
-      {
-        skillId: "sk1",
-        projectId: "proj-1",
-        name: "pdf-tools",
-        description: "Process PDFs",
-        sharing: "user",
-        isOwner: true,
-        aggregateHash: "h",
-        createdAt: 1,
-        updatedAt: 1,
-      },
-    ] as never);
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      cloudSkills,
+      skillsSource: {
+        kind: "resolved",
+        capabilities: liveSet([
+          { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
+        ]),
+        composeLiveServerSkills: true,
+      },
     });
     expect(result.enhancedSystemPrompt).toContain("## Skills");
-    expect(result.enhancedSystemPrompt).toContain(
-      "- **pdf-tools**: Process PDFs"
-    );
-    expect(result.enhancedSystemPrompt).toContain("loadSkill");
+    expect(result.enhancedSystemPrompt).toContain("**pdf-tools**");
+    expect(result.enhancedSystemPrompt).toContain("Process PDFs");
     expect(result.allTools).toHaveProperty("loadSkill");
     expect(result.allTools).not.toHaveProperty("listSkills");
-    expect(result.skillsFetchFailed).toBeUndefined();
   });
 
-  it("advertises no skill tools or stanza when the project has zero skills", async () => {
-    vi.mocked(listCloudSkills).mockResolvedValue([]);
+  it("advertises no skill tools or stanza when the set is empty", async () => {
+    // An empty project and a project whose skills failed to load look the same
+    // HERE on purpose: the difference is recorded by whoever did the fetching.
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      cloudSkills,
+      skillsSource: {
+        kind: "resolved",
+        capabilities: emptyCapabilities(),
+        composeLiveServerSkills: true,
+      },
     });
     expect(result.allTools).not.toHaveProperty("loadSkill");
     expect(result.allTools).not.toHaveProperty("listSkills");
     expect(result.enhancedSystemPrompt).toBe("Base prompt.");
-    expect(result.skillsFetchFailed).toBeUndefined();
   });
 
-  it("prepares the turn without skill tools when the catalog fetch throws", async () => {
-    vi.mocked(listCloudSkills).mockRejectedValue(
-      new CloudSkillsError("CONVEX_URL is not configured", 500)
-    );
+  it("keeps skill tools under the host's approval rule, unlike a pinned source", async () => {
+    // `resolved` is an interactive turn; only the pinned kinds bypass approval,
+    // and that divergence is the whole reason they are separate kinds.
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      cloudSkills,
+      requireToolApproval: true,
+      skillsSource: {
+        kind: "resolved",
+        capabilities: liveSet([
+          { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
+        ]),
+        composeLiveServerSkills: true,
+      },
     });
-    expect(result.allTools).not.toHaveProperty("loadSkill");
-    expect(result.enhancedSystemPrompt).toBe("Base prompt.");
-    expect(result.skillsFetchFailed).toMatchObject({
-      errorClass: "CloudSkillsError",
-      status: 500,
-    });
-  });
-
-  it("prepares the turn without skill tools when the catalog fetch times out", async () => {
-    vi.useFakeTimers();
-    vi.mocked(listCloudSkills).mockImplementation(() => new Promise(() => {}));
-    try {
-      const resultPromise = prepareChatV2({
-        mcpClientManager: mockManager({}),
-        selectedServers: [],
-        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
-        systemPrompt: "Base prompt.",
-        cloudSkills,
-      });
-      await vi.advanceTimersByTimeAsync(CLOUD_SKILLS_FETCH_TIMEOUT_MS);
-      const result = await resultPromise;
-      expect(result.allTools).not.toHaveProperty("loadSkill");
-      expect(result.enhancedSystemPrompt).toBe("Base prompt.");
-      expect(result.skillsFetchFailed).toMatchObject({
-        errorClass: "CloudSkillsFetchTimeoutError",
-        status: 504,
-      });
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(
+      (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
+        .needsApproval
+    ).toBe(true);
   });
 });

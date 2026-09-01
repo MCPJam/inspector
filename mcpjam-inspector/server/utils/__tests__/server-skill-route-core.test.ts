@@ -55,12 +55,28 @@ async function makeManager(
       },
     ],
   };
+  /**
+   * Models the real manager's connection lifecycle, which is the whole point
+   * on a hosted request: `getSkillsSupport` reads what a LIVE connection
+   * negotiated, so before anything connects it answers `active: false` for
+   * every server — regardless of what the server actually declares. A core
+   * that reads it synchronously therefore reports "inactive" on every hosted
+   * call. Only `ensureSkillsSupport` awaits the connection first.
+   */
+  let connected = false;
+  const support = () => ({
+    declared: connected && options.active !== false,
+    advertised: connected && options.active !== false,
+    directoryRead: false,
+    active: connected && options.active !== false,
+  });
   return {
-    getSkillsSupport: () => ({
-      declared: options.active !== false,
-      advertised: options.active !== false,
-      directoryRead: false,
-      active: options.active !== false,
+    connectCount: 0,
+    getSkillsSupport: () => support(),
+    ensureSkillsSupport: vi.fn(async function (this: any) {
+      connected = true;
+      this.connectCount += 1;
+      return support();
     }),
     listServerSkills: vi.fn(async () => ({ skills: [entry] })),
     getServerSkill: vi.fn(async () => entry),
@@ -75,6 +91,45 @@ async function makeManager(
     })),
   } as unknown as MCPClientManager;
 }
+
+describe("support is read from a connection, not before one", () => {
+  // The regression: a hosted manager is EPHEMERAL, so nothing has connected
+  // when the handler starts. Reading `getSkillsSupport` synchronously answered
+  // "inactive" on every hosted request and returned an empty listing, while
+  // the route's teardown aborted the negotiation still in flight — a 200 with
+  // no skills and an `AbortError`, against a reachable server.
+  it("connects before answering, so a declared extension is seen", async () => {
+    const manager = (await makeManager()) as any;
+    // The synchronous read is false right now, and stays false unless the core
+    // awaits the connection.
+    expect(manager.getSkillsSupport().active).toBe(false);
+
+    const result = await listServerSkillsCore(manager, { serverId: SERVER_ID });
+
+    expect(manager.ensureSkillsSupport).toHaveBeenCalledWith(SERVER_ID);
+    expect(result.support.active).toBe(true);
+    expect(result.skills).toHaveLength(1);
+  });
+
+  it("does the same on get and read-file", async () => {
+    const getManager = (await makeManager()) as any;
+    const got = await getServerSkillCore(getManager, {
+      serverId: SERVER_ID,
+      uri: SKILL_URI,
+    });
+    expect(getManager.ensureSkillsSupport).toHaveBeenCalledWith(SERVER_ID);
+    expect(got.skill).toBeDefined();
+
+    const readManager = (await makeManager()) as any;
+    const read = await readServerSkillFileCore(readManager, {
+      serverId: SERVER_ID,
+      skillUri: SKILL_URI,
+      resourceUri: FILE_URI,
+    });
+    expect(readManager.ensureSkillsSupport).toHaveBeenCalledWith(SERVER_ID);
+    expect(read.file).toBeDefined();
+  });
+});
 
 describe("an inactive extension is a state, not a failure", () => {
   // The client renders a response with no refusal as a generic `fetch_failed`,

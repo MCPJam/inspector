@@ -586,9 +586,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
         {
           id: "scenario-1",
           environmentId,
-          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          name: created ? (requestBody.name as string) ?? "Checkout" : "Kept",
           mode: created
-            ? ((requestBody.mode as string) ?? "project_members")
+            ? (requestBody.mode as string) ?? "project_members"
             : "anyone_with_link",
           accessVersion: 1,
           link: "https://app.mcpjam.com/s/checkout?t=abc",
@@ -618,7 +618,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
       };
       return Response.json({
         items: [{ name: "echo", cursorSeen: requestBody.cursor ?? null }],
-        nextCursor: "tools-page-2",
+        // The `""` sentinel lets one test exercise an empty-string nextCursor
+        // coming back off the MCP passthrough; every other cursor is unchanged.
+        nextCursor: requestBody.cursor === "penultimate" ? "" : "tools-page-2",
       });
     }
     if (
@@ -1251,9 +1253,9 @@ describe("createEvalSuiteOperation", () => {
     });
     expect(parsed.success).toBe(false);
     if (parsed.success) return;
-    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
-      true
-    );
+    expect(
+      parsed.error.issues.some((issue) => /hostz/.test(issue.message))
+    ).toBe(true);
   });
 
   it("requires a name, at least one server, and at least one case", () => {
@@ -1847,6 +1849,7 @@ describe("operation catalog consistency", () => {
     show_servers: {},
     connect_project_server: { url: "https://example.com/mcp" },
     get_project_server_connection_status: { connectionRequestId: "scr_abc" },
+    cancel_project_server_connection: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -1948,6 +1951,18 @@ describe("operation catalog consistency", () => {
     create_persona: { name: "Ada", role: "buyer" },
     update_persona: { persona: "pe", name: "Ada" },
     delete_persona: { persona: "pe" },
+    list_secrets: {},
+    get_secret: { secret: "sec" },
+    // `delivery` is REQUIRED with no default, which is the point: a caller who
+    // has not said whether the value ends up inside the sandbox has not made
+    // the decision this operation exists to make.
+    create_secret: {
+      name: "STRIPE_API_KEY",
+      value: "sk_live_example_value",
+      delivery: "materialized",
+    },
+    update_secret: { secret: "sec", value: "sk_live_rotated_value" },
+    delete_secret: { secret: "sec" },
     generate_personas: { environmentId: "e" },
     get_journey: { journey: "j" },
     create_journey: {
@@ -2141,6 +2156,8 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      // Stops a pending connection, releasing the slot it holds.
+      "cancel_project_server_connection",
       "request_eval_run_judge",
       "connect_eval_check_repo",
       "create_eval_suite",
@@ -2197,6 +2214,11 @@ describe("operation catalog consistency", () => {
       "create_persona",
       "update_persona",
       "delete_persona",
+      // Secret writes. `create_secret` and `update_secret` carry a credential
+      // in their INPUT (risk: exposure); `delete_secret` revokes one.
+      "create_secret",
+      "update_secret",
+      "delete_secret",
       "create_journey",
       "update_journey",
       "archive_journey",
@@ -2321,6 +2343,42 @@ describe("server live operations", () => {
     expect(result.nextCursor).toBe("tools-page-2");
   });
 
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results". These listings
+  // are a PASSTHROUGH of the MCP server's cursor, so the rule reaches them.
+  it("accepts an empty-string cursor and puts it on the wire", () => {
+    const parsed = listServerToolsOperation.inputSchema.safeParse({
+      project: "new",
+      server: "Echo",
+      cursor: "",
+    });
+    // A `.min(1)` here would refuse to page a conforming server.
+    expect(parsed.success).toBe(true);
+  });
+
+  it("list_server_tools forwards an empty-string cursor verbatim", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "" },
+      { client }
+    );
+
+    expect(result.items).toEqual([{ name: "echo", cursorSeen: "" }]);
+  });
+
+  it("list_server_tools surfaces an empty-string nextCursor instead of dropping it", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "penultimate" },
+      { client }
+    );
+
+    expect(result.nextCursor).toBe("");
+    expect("nextCursor" in result).toBe(true);
+  });
+
   it("call_server_tool defaults parameters and posts the call body", async () => {
     const { client } = makeClient({ servers: HTTP_SERVERS });
 
@@ -2431,14 +2489,18 @@ describe("registry operations", () => {
       if (path === "/api/v1/projects") {
         return Response.json({ items: PROJECTS });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)
+      ) {
         return Response.json({
           serverId: "server-installed",
           serverName: "Installed",
           outcome: options?.outcome ?? "created",
         });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)
+      ) {
         return Response.json({
           id: "server-installed",
           projectId: "project-new",

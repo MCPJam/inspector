@@ -228,6 +228,92 @@ describe("web chat-v2 — environment-backed scenario", () => {
     else process.env.CONVEX_URL = originalConvexUrl;
   });
 
+  it("records turn provenance — the isDirectChat gate must NOT swallow it", async () => {
+    // THE BYPASS THIS PINS. `resumeConfig` and friends are merged only for a
+    // direct chat, because they are the restorable-resume surface. Provenance
+    // is not: a scenario turn runs through an environment too, and gating it
+    // the same way would leave User Testing — the most environment-driven
+    // surface there is — with no record of what it ran.
+    const PROVENANCE = {
+      skillId: "sk_env",
+      projectSkillVersionNumber: 3,
+      versionPinned: true,
+      name: "release-notes",
+      contentHash: "h_env",
+      sharing: "project",
+      channels: ["environment"],
+    };
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        ...SCENARIO_CONFIG,
+        environment: {
+          ...ENVIRONMENT_PAYLOAD,
+          skills: [
+            { ...ENVIRONMENT_PAYLOAD.skills[0], provenance: PROVENANCE },
+          ],
+        },
+      },
+    });
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    // A scenario turn: no resumeConfig (the gate is still doing its job)…
+    expect(persistArgs.resumeConfig).toBeUndefined();
+    // …and provenance regardless.
+    expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
+      environmentId: "env_1",
+      name: "Staging",
+      revision: 7,
+    });
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([PROVENANCE]);
+  });
+
+  it("drops a malformed provenance entry without failing the turn", async () => {
+    // Tolerant pass-through: losing a provenance LABEL must never cost a turn.
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        ...SCENARIO_CONFIG,
+        environment: {
+          ...ENVIRONMENT_PAYLOAD,
+          skills: [
+            { ...ENVIRONMENT_PAYLOAD.skills[0], provenance: "not an object" },
+          ],
+        },
+      },
+    });
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([]);
+    expect(persistArgs.turnTrace.environmentAtTurn).toBeDefined();
+    // Delivery is unaffected — the skill still reaches the engine.
+    const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(args.skillsSource.capabilities.standaloneSkills).toHaveLength(1);
+  });
+
+  it("a HOST-backed scenario records nothing — there is no environment", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: SCENARIO_CONFIG,
+    });
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    expect(persistArgs.turnTrace.environmentAtTurn).toBeUndefined();
+    expect(persistArgs.turnTrace.skillsAtTurn).toBeUndefined();
+  });
+
   it("runs on the payload's server set everywhere, never the body's", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
@@ -254,15 +340,16 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
   });
 
-  it("delivers the payload's skills to the emulated engine, cloud skills off", async () => {
+  it("delivers the payload's skills to the emulated engine, and nothing live", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
     expect(response.status).toBe(200);
 
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    // Project-wide cloud skills would double-deliver alongside the resolved
-    // set — the same single-channel rule as an environment target.
-    expect(args.cloudSkills).toBeUndefined();
+    // Captured, not live — the same single-channel rule as an environment
+    // target: the payload already froze this turn's skills, so composing the
+    // connected servers' live catalogs would add ones it excluded.
+    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
     expect(args.skillsSource.kind).toBe("resolved");
     expect(args.skillsSource.capabilities.standaloneSkills).toEqual([
       {
@@ -310,7 +397,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(response.status).toBe(200);
 
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.cloudSkills).toBeUndefined();
+    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
     expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
     // Deploy-skew fallback: no `connectable` projection ⇒ raw ids connect and
     // the manager shows the id as the name.

@@ -126,6 +126,7 @@ const PLAIN_TOOLS = [
   // Server live operations are agent-oriented payloads with no widget view.
   "connect_project_server",
   "get_project_server_connection_status",
+  "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
@@ -212,6 +213,9 @@ const PLAIN_TOOLS = [
   "create_persona",
   "update_persona",
   "delete_persona",
+  "list_secrets",
+  "get_secret",
+  "delete_secret",
   "generate_personas",
   "list_journeys",
   "get_journey",
@@ -338,7 +342,9 @@ describe("platform tool registration", () => {
       registrations.map((registration) => [registration.name, registration])
     );
     for (const operation of PLATFORM_CATALOG_OPERATIONS) {
-      const description = String(byName.get(operation.name)?.config.description);
+      const description = String(
+        byName.get(operation.name)?.config.description
+      );
       expect(description.includes("COSTS MONEY")).toBe(
         operation.risk === "spend"
       );
@@ -347,9 +353,9 @@ describe("platform tool registration", () => {
     expect(String(byName.get("run_eval_suite")?.config.description)).toContain(
       "COSTS MONEY"
     );
-    expect(String(byName.get("list_eval_suites")?.config.description)).not.toContain(
-      "COSTS MONEY"
-    );
+    expect(
+      String(byName.get("list_eval_suites")?.config.description)
+    ).not.toContain("COSTS MONEY");
   });
 
   it("registers show_servers with the MCP Apps UI resource", () => {
@@ -387,6 +393,7 @@ describe("platform tool registration", () => {
       "delete_project_server",
       "connect_project_server",
       "get_project_server_connection_status",
+      "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -460,6 +467,9 @@ describe("platform tool registration", () => {
       "create_persona",
       "update_persona",
       "delete_persona",
+      "list_secrets",
+      "get_secret",
+      "delete_secret",
       "generate_personas",
       "list_journeys",
       "get_journey",
@@ -560,6 +570,10 @@ describe("platform tool registration", () => {
       fakeToolContext({ bearerToken: "jwt" })
     );
 
+    // Writes whose handler is a no-op when the work is already done, so a
+    // client may safely repeat one after a dropped response.
+    const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
+
     const NON_DESTRUCTIVE_WRITES = new Set([
       // Starting dials a third party's server and can spend; cancelling stops
       // one. Neither destroys a record, so both annotate as plain writes.
@@ -649,6 +663,9 @@ describe("platform tool registration", () => {
       // that running a third party's tool twice is safe.
       "render_server_widget",
       "delete_persona",
+      // A HARD credential revoke: the row and the ciphertext both go, so a
+      // second call cannot find the row to report the same outcome.
+      "delete_secret",
       "archive_journey",
       "archive_swarm",
       "remove_user_testing_member",
@@ -669,6 +686,9 @@ describe("platform tool registration", () => {
       // roster and a second call answers not-found. From the caller's side
       // that is a removal.
       "delete_persona",
+      // Revoking a credential. Unlike the soft deletes around it, this one is
+      // genuinely irreversible — the encrypted value is gone.
+      "delete_secret",
       "archive_journey",
       "archive_swarm",
       "cancel_journey_run",
@@ -692,7 +712,17 @@ describe("platform tool registration", () => {
     ]);
 
     for (const registration of registrations) {
-      if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
+      if (IDEMPOTENT_WRITES.has(registration.name)) {
+        // A write that can be repeated. Cancelling an already-cancelled request
+        // is a no-op on the backend, so a client that retries a dropped
+        // response lands on the state the first call produced — and NOT saying
+        // so would leave a lost cancel holding a connection slot.
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        });
+      } else if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: false,

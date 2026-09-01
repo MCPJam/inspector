@@ -3,6 +3,7 @@ import { Hono } from "hono";
 
 const {
   prepareChatV2Mock,
+  listCloudRuntimeSkillsMock,
   handleMCPJamFreeChatModelMock,
   fetchHostRuntimeConfigMock,
   fetchScenarioRuntimeConfigMock,
@@ -20,6 +21,7 @@ const {
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
+  listCloudRuntimeSkillsMock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
   fetchScenarioRuntimeConfigMock: vi.fn(),
@@ -155,6 +157,17 @@ vi.mock("@/shared/types", async () => {
   };
 });
 
+vi.mock("../../../utils/computers/cloud-skill-tools.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/cloud-skill-tools.js")
+  >("../../../utils/computers/cloud-skill-tools.js");
+  return {
+    ...actual,
+    listCloudRuntimeSkills: (...args: unknown[]) =>
+      listCloudRuntimeSkillsMock(...args),
+  };
+});
+
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 
@@ -180,6 +193,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       ok: true,
       config: { selectedServerIds: ["server-1"] },
     });
+    listCloudRuntimeSkillsMock.mockReset().mockResolvedValue([]);
     // Default: scenario runtime-config resolves (empty = host has no
     // overrides). Scenario turns now FAIL CLOSED on a failed fetch, so the
     // happy-path tests must resolve it rather than lean on the old fallback.
@@ -1204,5 +1218,99 @@ describe("web routes — chat-v2 hosted mode", () => {
         ],
       })
     );
+  });
+
+  /**
+   * The project pool on a target that resolves NO environment (host / adhoc).
+   *
+   * This is the arm the convergence rewired: it used to reach the orchestrator as
+   * a `cloudSkills` option that chose one exclusive branch of a chain, and it now
+   * arrives as a live capability set alongside every other origin. The three
+   * cases below are the three the route can actually be in, and they differ in
+   * ways that matter: an EMPTY catalog is authoritative, a FAILED one is not.
+   */
+  describe("hosted chat-v2 — the project skill catalog", () => {
+    const bodyWithSkills = {
+      projectId: "project-1",
+      selectedServerIds: ["server-1"],
+      chatSessionId: "chat-session-1",
+      messages: [{ role: "user", content: "hi" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+    };
+
+    it("delivers a non-empty catalog as a live resolved source", async () => {
+      listCloudRuntimeSkillsMock.mockResolvedValue([
+        {
+          skillId: "sk_1",
+          ref: "release-notes",
+          name: "release-notes",
+          description: "Write release notes",
+          aggregateHash: "agg_1",
+          channels: [],
+          content: async () => "# release-notes",
+          files: [],
+        },
+      ]);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        bodyWithSkills,
+        token
+      );
+      expect(response.status).toBe(200);
+
+      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+      expect(args.skillsSource.kind).toBe("resolved");
+      // Live, so a connected server's SEP-2640 skills compose on top rather than
+      // being displaced by the project's.
+      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+      expect(
+        args.skillsSource.capabilities.standaloneSkills.map(
+          (skill: { ref: string }) => skill.ref
+        )
+      ).toEqual(["release-notes"]);
+    });
+
+    it("keeps an empty catalog authoritative rather than falling back", async () => {
+      listCloudRuntimeSkillsMock.mockResolvedValue([]);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        bodyWithSkills,
+        token
+      );
+      expect(response.status).toBe(200);
+
+      // "This project has no skills" is an answer, not a gap: the source is still
+      // resolved and still live, it is simply empty.
+      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+      expect(args.skillsSource.kind).toBe("resolved");
+      expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
+      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+    });
+
+    it("loses the turn's project skills, and nothing else, when the catalog fails", async () => {
+      listCloudRuntimeSkillsMock.mockRejectedValue(new Error("convex down"));
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        bodyWithSkills,
+        token
+      );
+      // Losing the skills must not lose the turn.
+      expect(response.status).toBe(200);
+
+      // No source at all is the LIVE shape: the orchestrator still composes the
+      // connected servers' skills, which never failed. Collapsing to
+      // `{ kind: "none" }` here would take those down with the project's.
+      const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+      expect(args.skillsSource).toBeUndefined();
+    });
   });
 });

@@ -82,6 +82,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Project servers
   "get /projects/{projectId}/servers": "listProjectServers",
   "post /projects/{projectId}/servers": "createProjectServer",
+  "get /projects/{projectId}/server-groups": "listServerGroups",
+  "post /projects/{projectId}/server-groups": "createServerGroup",
   "get /projects/{projectId}/servers/{serverId}": "getProjectServer",
   "patch /projects/{projectId}/servers/{serverId}": "updateProjectServer",
   "delete /projects/{projectId}/servers/{serverId}": "deleteProjectServer",
@@ -186,6 +188,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
     "setEvalSuiteSchedule",
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
+  "get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics":
+    "listEvalSuiteStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/stage-analytics":
+    "getEvalRunStageAnalytics",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":
@@ -245,6 +251,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/personas/{personaId}": "updatePersona",
   "delete /projects/{projectId}/personas/{personaId}": "deletePersona",
   "post /projects/{projectId}/personas/generate": "generatePersonas",
+
+  // Project secrets. Write-only end to end: the two reads return metadata and
+  // the three writes return metadata; no method on either side can produce a
+  // value.
+  "get /projects/{projectId}/secrets": "listSecrets",
+  "get /projects/{projectId}/secrets/{secretId}": "getSecret",
+  "post /projects/{projectId}/secrets": "createSecret",
+  "patch /projects/{projectId}/secrets/{secretId}": "updateSecret",
+  "delete /projects/{projectId}/secrets/{secretId}": "deleteSecret",
   "get /projects/{projectId}/swarms": "listSwarms",
   "get /projects/{projectId}/swarms/{swarmId}": "getSwarm",
   "post /projects/{projectId}/swarms": "createSwarm",
@@ -418,16 +433,16 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       unmapped,
       `/api/v1 routes with no SDK client method — add one, or an EXCLUDED_FROM_SDK reason:\n  ${unmapped.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     const both = [...mapped].filter((route) => excluded.has(route)).sort();
     expect(
       both,
       `Routes claimed by BOTH maps — the partition must be disjoint:\n  ${both.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -438,8 +453,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       stale,
       `Map entries for routes that no longer exist (renamed? removed?):\n  ${stale.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -464,8 +479,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       missing,
       `ROUTE_TO_SDK names PlatformApiClient methods that do not exist:\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 

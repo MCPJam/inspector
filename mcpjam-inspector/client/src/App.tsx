@@ -1,5 +1,4 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   useCallback,
   useContext,
@@ -15,6 +14,7 @@ import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -154,7 +154,6 @@ import {
   ScenarioChatPage,
   getScenarioPathTokenFromLocation,
 } from "./components/hosted/ScenarioChatPage";
-import { isEmbeddedPreview } from "./lib/embedded-preview";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
@@ -165,7 +164,7 @@ import {
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
 import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
-import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import { HOSTED_MODE } from "./lib/config";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -227,7 +226,6 @@ import {
   clearScenarioSignInReturnPath,
   readScenarioSession,
   readScenarioSignInReturnPath,
-  writeScenarioSignInReturnPath,
 } from "./lib/scenario-session";
 import {
   clearCliSignInReturnPath,
@@ -535,6 +533,8 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 
 import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
 import { ScoreResultsPage } from "@/components/score/ScoreResultsPage";
+import { BenchRunnerPage } from "@/components/score/BenchRunnerPage";
+import { BenchResultsPage } from "@/components/score/BenchResultsPage";
 
 /**
  * The no-router render path.
@@ -1168,6 +1168,27 @@ export function ScoreRunnerRoute() {
  */
 export function ScoreResultsRoute() {
   return <ScoreResultsPage />;
+}
+
+/**
+ * The Connector Bench runner, on the same chrome-less guest surface.
+ *
+ * Unlike the conformance runner it never executes anything in the browser: it
+ * starts a hosted run and then reads it. The run id is a route param, so this
+ * component holds no phase a reload could lose.
+ */
+export function BenchRunnerRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  return <BenchRunnerPage convexProjectId={convexProjectId ?? null} />;
+}
+
+/**
+ * One benchmark scorecard, addressable only by its secret link. Read through
+ * an unauthenticated GET on purpose — a shared result must open with no
+ * session, no guest cookie, and no project.
+ */
+export function BenchResultsRoute() {
+  return <BenchResultsPage />;
 }
 
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
@@ -1938,7 +1959,6 @@ export function SkillsRoute() {
   );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
-  const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
 
   // Skills is a Servers-page view (Servers | Client | Computer | Skills), so
@@ -1958,9 +1978,13 @@ export function SkillsRoute() {
   // whole route on the Cloud flag would hold the protocol half hostage to an
   // unrelated feature's rollout, so the flag is passed DOWN instead.
   //
-  // `computersEnabled` is passed through only for the local-mode Local/Cloud
-  // toggle; the skills flag applies to hosted mode only (local FS skills are
-  // always available).
+  // The same flag also decides whether the local-mode Local/Cloud toggle is
+  // offered, because that toggle browses the project store: gating it on
+  // `computers-enabled` was a leftover from when cloud skills lived on a
+  // Computer's filesystem. That is why the prop below is the flag itself and
+  // not `!HOSTED_MODE || flag` — the old form read as "local mode always has
+  // the store", which was harmless while the toggle carried its own gate and
+  // becomes "no gate at all" the moment the toggle reads this prop instead.
   if (HOSTED_MODE && !convexProjectId) {
     // Wait for the project to resolve before rendering: hosted skills have no
     // local FS to fall back to, and the server-skills routes address their
@@ -1971,7 +1995,6 @@ export function SkillsRoute() {
   const skillsView = (
     <SkillsTab
       projectId={convexProjectId}
-      computersEnabled={computersEnabled === true}
       // Skills over MCP (SEP-2640): the "From MCP servers" section reads its
       // catalog live, per connection, so it needs the CURRENT server list —
       // the label (host-assigned, from our registry) and whether the
@@ -1981,7 +2004,7 @@ export function SkillsRoute() {
       // renders its protocol half immediately and the Cloud store appears when
       // the flag resolves — content arriving is a better first paint than a
       // blank page for every user who only has the protocol half.
-      cloudSkillsEnabled={!HOSTED_MODE || skillsEnabled === true}
+      cloudSkillsEnabled={skillsEnabled === true}
     />
   );
 
@@ -2460,7 +2483,6 @@ export default function App() {
   const {
     getAccessToken,
     signIn,
-    signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
   } = useAuth();
@@ -2517,6 +2539,12 @@ export default function App() {
   const isBareCaniuseRoute =
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
+    barePathname === routePaths.embedBench ||
+    // `/embed/bench/<runId>` is the same chrome-less screen resumed, so the
+    // deep link has to clear the shell and the NUX redirect too — otherwise
+    // reloading a running benchmark drops the visitor into onboarding.
+    barePathname.startsWith(`${routePaths.embedBench}/`) ||
+    barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
     barePathname.startsWith(`${routePaths.evalsShared}/`) ||
@@ -3082,26 +3110,17 @@ export default function App() {
   )?.name;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
-    nonProdLockdown: NON_PROD_LOCKDOWN,
-    // Read on every render, like `scenarioPathToken` above: framing is a fact
-    // about this document, fixed for its lifetime, so there is nothing to
-    // memoize and nothing that can change under us.
-    embeddedPreview: isScenarioChatRoute && isEmbeddedPreview(),
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
-    workOsUserEmail: workOsUser?.email ?? null,
   });
   const baseHostedShellGateState = hostedShellGateState;
   const pendingDashboardOAuthServer = pendingDashboardOAuth
     ? projectServers[pendingDashboardOAuth.serverName]
     : null;
   const shouldShowPendingDashboardOAuthGate =
-    !!pendingDashboardOAuth &&
-    !pendingDashboardOAuthServer &&
-    baseHostedShellGateState !== "logged-out" &&
-    baseHostedShellGateState !== "restricted";
+    !!pendingDashboardOAuth && !pendingDashboardOAuthServer;
   const effectiveHostedShellGateState = shouldShowPendingDashboardOAuthGate
     ? "project-loading"
     : baseHostedShellGateState;
@@ -5050,6 +5069,7 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <SessionRefreshBanner />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}
@@ -5067,36 +5087,6 @@ export default function App() {
                     ? pendingDashboardOAuthMessage
                     : undefined
                 }
-                onSignIn={() => {
-                  if (scenarioPathToken) {
-                    // The scenario gate owns its own return path; leaving the
-                    // permalink nonce out keeps exactly one mechanism live on
-                    // that route rather than two racing to redirect.
-                    writeScenarioSignInReturnPath(window.location.pathname);
-                    signIn();
-                    return;
-                  }
-                  // THE primary signed-out path for a permalink. This gate
-                  // intercepts a hosted cold load before any screen renders,
-                  // so a bare `signIn()` here loses the resource path and its
-                  // `?project=` scope no matter what the header button does —
-                  // the visitor authenticates and lands on the app shell.
-                  //
-                  // The generic path is stored alongside the scenario one, not
-                  // instead of it: the scenario flow keeps its precedence on
-                  // `/callback`, and this only fills in for everything else.
-                  captureAppSignInReturnPath();
-                  signIn(permalinkSignInOptions());
-                }}
-                onSignOut={() => {
-                  void (async () => {
-                    try {
-                      await disconnectRuntimeServersForAuthExit();
-                    } finally {
-                      await signOut();
-                    }
-                  })();
-                }}
               >
                 {isScenarioChatRoute ? (
                   <ScenarioChatPage

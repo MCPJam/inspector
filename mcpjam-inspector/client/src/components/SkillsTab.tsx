@@ -61,10 +61,8 @@ import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
 
 interface SkillsTabProps {
-  /** Convex project id — required to address the cloud (computer) skill store. */
+  /** Convex project id — required to address the project skill store. */
   projectId?: string;
-  /** Whether the Computer feature is enabled for this user (PostHog gate). */
-  computersEnabled?: boolean;
   /**
    * Connected MCP servers, for the SEP-2640 "From MCP servers" section. Read
    * LIVE per connection (never from a cache), so a disconnected server simply
@@ -90,13 +88,23 @@ interface SkillsTabProps {
 
 export function SkillsTab({
   projectId,
-  computersEnabled,
   mcpServers,
   cloudSkillsEnabled = true,
 }: SkillsTabProps = {}) {
-  // Skills data source. Hosted mode has no local FS, so it's always cloud.
-  // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
-  const showSourceToggle = !HOSTED_MODE && !!computersEnabled && !!projectId;
+  // Which store the tab BROWSES. Hosted mode has no local filesystem, so it is
+  // always the project store; locally the user can switch.
+  //
+  // Gated on the project store's own release flag, not on `computers-enabled`.
+  // The two were conflated when cloud skills lived on a Computer's filesystem,
+  // and that stopped being true when Convex became the source of truth — so a
+  // user with Skills released and Computers not had no way to reach their own
+  // project skills, while a user with the reverse got a toggle to a store they
+  // could not write to.
+  //
+  // Note this is a BROWSING choice only. It no longer decides what a chat turn
+  // can use: a turn merges local files and project skills into one catalog
+  // regardless of what this tab is showing.
+  const showSourceToggle = !HOSTED_MODE && !!cloudSkillsEnabled && !!projectId;
   const [source, setSource] = useState<"local" | "cloud">(
     HOSTED_MODE ? "cloud" : "local"
   );
@@ -143,6 +151,23 @@ export function SkillsTab({
    * section owns its own per-connection fetch state.
    */
   const [refreshToken, setRefreshToken] = useState(0);
+  /**
+   * What the server-skills half of the list currently holds.
+   *
+   * The tab makes two claims about the list as a whole — the header count, and
+   * the "no skills yet" call to action — and since the group headers went away
+   * both halves are one flat list. Reported up rather than re-derived here: the
+   * section owns the per-connection fetch, and only it knows which servers
+   * declared the extension at all.
+   */
+  const [serverSkills, setServerSkills] = useState<{
+    count: number;
+    pending: boolean;
+  }>({ count: 0, pending: false });
+  const handleServerSkillsChange = useCallback(
+    (state: { count: number; pending: boolean }) => setServerSkills(state),
+    []
+  );
   const [skillFiles, setSkillFiles] = useState<Record<string, SkillFile[]>>({});
   const [loadingFiles, setLoadingFiles] = useState<Record<string, boolean>>({});
   const [selectedFilePath, setSelectedFilePath] = useState<string>("SKILL.md");
@@ -477,6 +502,13 @@ export function SkillsTab({
     setRawMode(false);
   };
 
+  // Both halves, because the placeholders below speak for the whole list.
+  // `listIsSettling` covers a listing that has not answered yet — offering
+  // "upload your first skill" in that window would be a claim about a store we
+  // are still reading, and it would flash away the moment the rows land.
+  const listIsEmpty = skills.length === 0 && serverSkills.count === 0;
+  const listIsSettling = fetchingSkills || serverSkills.pending;
+
   return (
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
@@ -490,15 +522,17 @@ export function SkillsTab({
                 <h2 className="text-xs font-semibold text-foreground">
                   Skills
                 </h2>
-                {/* Counts the PROJECT store only. Server skills are counted
-                    per origin inside their own section, because one number
-                    spanning both would imply a single namespace they do not
-                    share — a name here, a URI there. */}
-                {!cloudStoreHidden && (
-                  <Badge variant="secondary" className="text-xs font-mono">
-                    {skills.length}
-                  </Badge>
-                )}
+                {/* Counts BOTH halves, because it counts what is on the screen.
+                    It used to count the project store alone, which was
+                    unambiguous while server skills sat under a heading of their
+                    own and became a plain falsehood when they joined the same
+                    flat list — "Skills 0" over a panel of visible rows. The two
+                    halves really are different namespaces (a name here, a URI
+                    there), but a badge next to a list is read as the length of
+                    that list, not as the size of a namespace. */}
+                <Badge variant="secondary" className="text-xs font-mono">
+                  {skills.length + serverSkills.count}
+                </Badge>
               </div>
               {/* Upload and the Local/Cloud toggle act on the project store,
                   so they go with it. Refresh does NOT: it re-reads the server
@@ -554,31 +588,7 @@ export function SkillsTab({
             <div className="flex-1 overflow-hidden">
               <ScrollArea className="h-full">
                 <div className="p-2">
-                  {cloudStoreHidden ? null : fetchingSkills ? (
-                    <div className="flex flex-col items-center justify-center py-16 text-center">
-                      <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                        <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                      </div>
-                      <p className="text-xs text-muted-foreground font-semibold mb-1">
-                        Loading skills...
-                      </p>
-                    </div>
-                  ) : skills.length === 0 ? (
-                    <div className="text-center py-8">
-                      <p className="text-sm text-muted-foreground mb-4">
-                        No skills available
-                      </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsUploadDialogOpen(true)}
-                        disabled={cloudUnavailable}
-                      >
-                        <Plus className="h-3 w-3 mr-2" />
-                        Upload your first skill
-                      </Button>
-                    </div>
-                  ) : (
+                  {!cloudStoreHidden && skills.length > 0 && (
                     <SkillsFileTree
                       skills={skills}
                       skillFiles={skillFiles}
@@ -602,7 +612,42 @@ export function SkillsTab({
                     {...(projectId ? { projectId } : {})}
                     refreshToken={refreshToken}
                     onOpenSkill={handleOpenServerSkill}
+                    onListingChange={handleServerSkillsChange}
                   />
+                  {/* Placeholders for the WHOLE list, so they render only when
+                      the whole list is empty — and BELOW the rows, so nothing
+                      can sit above them. The project store's own empty state
+                      used to render on its own count: a signed-out user with a
+                      server serving skills got a hundred-odd pixels of centered
+                      "upload your first skill" wedged between the header and
+                      rows that were right there. */}
+                  {listIsEmpty &&
+                    !cloudStoreHidden &&
+                    (listIsSettling ? (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                          <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
+                        </div>
+                        <p className="text-xs text-muted-foreground font-semibold mb-1">
+                          Loading skills...
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="text-center py-8">
+                        <p className="text-sm text-muted-foreground mb-4">
+                          No skills available
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIsUploadDialogOpen(true)}
+                          disabled={cloudUnavailable}
+                        >
+                          <Plus className="h-3 w-3 mr-2" />
+                          Upload your first skill
+                        </Button>
+                      </div>
+                    ))}
                 </div>
               </ScrollArea>
             </div>
