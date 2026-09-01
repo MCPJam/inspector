@@ -30,12 +30,21 @@ vi.mock("e2b", () => ({
 import { e2bRunner } from "../run-command";
 
 const envs = { STRIPE_API_KEY: "sk_live_abcdefgh" };
-const call = (onEnvsDispatched: () => void, withEnvs = true) =>
+/**
+ * `"omit"` leaves the key off entirely; `{}` is the boundary the runner's own
+ * `Object.keys(...).length > 0` check turns on. They mean the same thing and
+ * are different inputs, so both are exercised — and a literal `undefined`
+ * cannot express the first, because it would just select the default.
+ */
+const call = (
+  onEnvsDispatched: () => void,
+  withEnvs: Record<string, string> | "omit" = envs,
+) =>
   e2bRunner({
     sandboxId: "sbx",
     command: "stripe balance retrieve",
     timeoutMs: 1000,
-    ...(withEnvs ? { envs } : {}),
+    ...(withEnvs === "omit" ? {} : { envs: withEnvs }),
     onEnvsDispatched,
   });
 
@@ -75,7 +84,21 @@ describe("e2bRunner env dispatch boundary", () => {
 
   it("stays silent when there are no envs to dispatch", async () => {
     const onEnvsDispatched = vi.fn();
-    await call(onEnvsDispatched, false);
+    await call(onEnvsDispatched, "omit");
     expect(onEnvsDispatched).not.toHaveBeenCalled();
+    expect(runMock).toHaveBeenCalledWith(
+      "stripe balance retrieve",
+      expect.not.objectContaining({ envs: expect.anything() }),
+    );
+  });
+
+  it("stays silent for an EMPTY env record, and sends no envs", async () => {
+    const onEnvsDispatched = vi.fn();
+    await call(onEnvsDispatched, {});
+    expect(onEnvsDispatched).not.toHaveBeenCalled();
+    expect(runMock).toHaveBeenCalledWith(
+      "stripe balance retrieve",
+      expect.not.objectContaining({ envs: expect.anything() }),
+    );
   });
 });
