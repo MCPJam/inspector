@@ -1359,6 +1359,9 @@ chatV2.post("/", async (c) => {
       ),
       ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
       hasChatSessionId: Boolean(body.chatSessionId),
+      secretsUnavailable,
+      environmentSelectsSecrets:
+        scenarioEnvironment?.selectsMaterializedSecrets === true,
     });
     let suppressComputerResource = sandboxPlan.action === "suppress";
     if (sandboxPlan.suppressReason === "no_chat_session_id") {
@@ -1370,6 +1373,19 @@ chatV2.post("/", async (c) => {
         "[chat-v2] ephemeral scenario sandbox requested without a chatSessionId; bash suppressed",
         { scenarioId },
       );
+    } else if (sandboxPlan.suppressReason === "secrets_unavailable") {
+      // The scenario counterpart of the harness fork. A harness session that
+      // cannot establish its secret state starts a fresh bridge, which holds
+      // nothing; a scenario conversation's box is keyed to the conversation and
+      // cannot be swapped without destroying the shell state that is the whole
+      // point of it. So the box is left alone and simply not spoken to for this
+      // turn — it may still hold a credential from an earlier turn, and this
+      // turn has no list to scrub what it prints.
+      logger.warn(
+        "[chat-v2] secret resolution failed for a conversation with a persistent sandbox; bash suppressed for this turn",
+        { scenarioId },
+      );
+      if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
     } else if (sandboxPlan.suppressReason === "not_a_data_plane") {
       logger.warn(
         "[chat-v2] ephemeral scenario sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",

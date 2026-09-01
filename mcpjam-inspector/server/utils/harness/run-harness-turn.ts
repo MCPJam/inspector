@@ -1529,17 +1529,23 @@ export async function runHarnessTurn(
         // already states: argv is readable by every process in the box through
         // `/proc`, and it lands in shell history.
         ...(secretEnv && Object.keys(secretEnv).length > 0
-          ? { sessionEnv: secretEnv }
+          ? {
+              sessionEnv: secretEnv,
+              // Stamped when the env is MERGED INTO A COMMAND, not here.
+              //
+              // Constructing this provider only puts the values in a local
+              // object — nothing has reached E2B yet, and harness setup can
+              // still throw before any command runs (`startHarnessModelBroker`
+              // below is the usual one). Stamping at construction made
+              // `lastDeliveredAt` mean "a turn got this far", when the question
+              // it is read for, before deleting a credential believed dormant,
+              // is "did anything actually receive it".
+              ...(onSecretEnvDelivered
+                ? { onSessionEnvUsed: onSecretEnvDelivered }
+                : {}),
+            }
           : {}),
       });
-      // The box now has a provider carrying the session env, so the values are
-      // genuinely in the harness's hands rather than merely resolved. Fired
-      // here rather than at the route, which only knew a destination looked
-      // available — a harness start that throws above this line delivered
-      // nothing and must not stamp.
-      if (secretEnv && Object.keys(secretEnv).length > 0) {
-        onSecretEnvDelivered?.();
-      }
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own

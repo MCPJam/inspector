@@ -26,6 +26,20 @@ import { confineToHome } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
 
 export interface E2BHarnessSandboxProviderOptions {
+  /**
+   * Fired the first time `sessionEnv` is actually merged into a command's
+   * environment — i.e. when the box really receives the values, not when the
+   * provider is constructed holding them.
+   *
+   * The distinction is what `lastDeliveredAt` is read for. Constructing this
+   * provider only puts the values in a local object; harness setup can still
+   * throw before any command runs (the model broker install is the usual one),
+   * and stamping there would mark an unused credential active for whoever is
+   * deciding whether it is safe to delete.
+   *
+   * Called at most once per provider, and never when there is no session env.
+   */
+  onSessionEnvUsed?: () => void;
   /** E2B sandbox id of the host's computer — resolved via the control plane
    *  (`ensureComputerReady` → `getComputerSandboxInfo.providerComputerId`, see
    *  `resolve-sandbox.ts`). The box must already be AWAKE: `ensureComputerReady`
@@ -178,10 +192,24 @@ export function createE2BHarnessSandboxProvider(
   // runtime fingerprint exists precisely so a change forks a NEW session
   // instead.
   const sessionEnv = opts.sessionEnv;
+  // Latched: several commands in one session must not stamp several times, and
+  // the question the stamp answers ("did anything receive this?") is answered
+  // by the first one.
+  let sessionEnvUsed = false;
   const mergeEnv = (
     env: Record<string, string> | undefined,
   ): Record<string, string> | undefined => {
     if (!sessionEnv) return env;
+    if (!sessionEnvUsed) {
+      sessionEnvUsed = true;
+      // Best-effort by contract: failing to RECORD a delivery must never fail
+      // the delivery itself, and this sits directly in the command path.
+      try {
+        opts.onSessionEnvUsed?.();
+      } catch {
+        // ignore
+      }
+    }
     return { ...sessionEnv, ...(env ?? {}) };
   };
 

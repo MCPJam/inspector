@@ -14,12 +14,12 @@ import {
 describe("readComputerSandboxMode", () => {
   it("reads the two stated modes", () => {
     expect(
-      readComputerSandboxMode({ computerSandbox: { mode: "ephemeral" } })
+      readComputerSandboxMode({ computerSandbox: { mode: "ephemeral" } }),
     ).toBe("ephemeral");
     expect(
       readComputerSandboxMode({
         computerSandbox: { mode: "unavailable", reason: "no ready build" },
-      })
+      }),
     ).toBe("unavailable");
   });
 
@@ -27,7 +27,7 @@ describe("readComputerSandboxMode", () => {
     // Absent must not be read as "no image": that would silently strip bash
     // from every scenario the moment a deploy skewed.
     expect(readComputerSandboxMode({ computer: { kind: "personal" } })).toBe(
-      null
+      null,
     );
     expect(readComputerSandboxMode(undefined)).toBe(null);
     expect(readComputerSandboxMode(null)).toBe(null);
@@ -37,10 +37,10 @@ describe("readComputerSandboxMode", () => {
     // Reading garbage as `ephemeral` would provision a paid box against a
     // policy nobody stated.
     expect(readComputerSandboxMode({ computerSandbox: { mode: "yes" } })).toBe(
-      null
+      null,
     );
     expect(readComputerSandboxMode({ computerSandbox: "ephemeral" })).toBe(
-      null
+      null,
     );
     expect(readComputerSandboxMode({ computerSandbox: {} })).toBe(null);
   });
@@ -67,7 +67,7 @@ describe("planScenarioSandbox", () => {
 
   it("suppresses WITH a tester notice when this server is not a data plane", () => {
     expect(
-      planScenarioSandbox({ ...ephemeral, ephemeralCloudAvailable: false })
+      planScenarioSandbox({ ...ephemeral, ephemeralCloudAvailable: false }),
     ).toEqual({
       action: "suppress",
       suppressReason: "not_a_data_plane",
@@ -81,13 +81,79 @@ describe("planScenarioSandbox", () => {
         ...ephemeral,
         ephemeralCloudAvailable: false,
         hasChatSessionId: false,
-      })
+      }),
     ).toMatchObject({ suppressReason: "not_a_data_plane" });
+  });
+
+  it("suppresses WITH a notice when the turn could not establish its secret state", () => {
+    // A scenario conversation's box is keyed to the conversation and reused
+    // across turns. A harness session in the same situation forks to a fresh
+    // bridge holding nothing; this one cannot, so an earlier turn's credential
+    // may still be sitting in a file or a background process while this turn
+    // has no list to scrub what a command prints.
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        secretsUnavailable: true,
+        environmentSelectsSecrets: true,
+      }),
+    ).toEqual({
+      action: "suppress",
+      suppressReason: "secrets_unavailable",
+      notice: "secrets_unavailable",
+    });
+  });
+
+  it("does NOT suppress a conversation whose environment has no secrets", () => {
+    // The half that keeps this from repeating the 503 mistake. `{ok:false}`
+    // covers every failure of the secrets service, so keying on it alone would
+    // take bash away from every scenario conversation during a blip —
+    // including the overwhelming majority that never had a secret and whose box
+    // holds nothing to leak.
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        secretsUnavailable: true,
+        environmentSelectsSecrets: false,
+      }),
+    ).toEqual({ action: "provision" });
+    // Absent (an older backend) is treated the same way, so a deploy skew
+    // cannot start suppressing shells.
+    expect(
+      planScenarioSandbox({ ...ephemeral, secretsUnavailable: true }),
+    ).toEqual({ action: "provision" });
+  });
+
+  it("does NOT suppress when secrets simply resolved to none", () => {
+    // The distinction the tri-state exists for. An environment that grants
+    // nothing is an ordinary turn; only a FAILED resolution leaves the box's
+    // contents unknown.
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        secretsUnavailable: false,
+        environmentSelectsSecrets: true,
+      }),
+    ).toEqual({ action: "provision" });
+    expect(planScenarioSandbox(ephemeral)).toEqual({ action: "provision" });
+  });
+
+  it("does not narrate at a turn that never asked for bash", () => {
+    // Ordering: the bash-requested exit comes first, so a conversation with no
+    // shell in play gets no notice about one.
+    expect(
+      planScenarioSandbox({
+        ...ephemeral,
+        bashRequested: false,
+        secretsUnavailable: true,
+        environmentSelectsSecrets: true,
+      }),
+    ).toEqual({ action: "none" });
   });
 
   it("suppresses silently (log-only) without a chatSessionId", () => {
     expect(
-      planScenarioSandbox({ ...ephemeral, hasChatSessionId: false })
+      planScenarioSandbox({ ...ephemeral, hasChatSessionId: false }),
     ).toEqual({ action: "suppress", suppressReason: "no_chat_session_id" });
   });
 
@@ -98,7 +164,7 @@ describe("planScenarioSandbox", () => {
         mode: "unavailable",
         ephemeralCloudAvailable: false,
         bashRequested: false,
-      })
+      }),
     ).toEqual({
       action: "suppress",
       suppressReason: "sandbox_mode_unavailable",
@@ -113,7 +179,7 @@ describe("planScenarioSandbox", () => {
         ...ephemeral,
         mode: null,
         ephemeralCloudAvailable: false,
-      })
+      }),
     ).toEqual({ action: "none" });
   });
 
@@ -123,7 +189,7 @@ describe("planScenarioSandbox", () => {
         ...ephemeral,
         bashRequested: false,
         ephemeralCloudAvailable: false,
-      })
+      }),
     ).toEqual({ action: "none" });
   });
 });
@@ -156,7 +222,7 @@ describe("shouldWarnSecretsUndelivered", () => {
   it("stays quiet when a project-provisioned box will receive them", () => {
     // The scenario path: the secrets are delivered, so a notice would be a lie.
     expect(
-      shouldWarnSecretsUndelivered({ ...base, hasSandboxBinding: true })
+      shouldWarnSecretsUndelivered({ ...base, hasSandboxBinding: true }),
     ).toBe(false);
   });
 
@@ -166,14 +232,14 @@ describe("shouldWarnSecretsUndelivered", () => {
     // the binding alone would fire on EVERY harness turn — the loudest possible
     // false alarm, on the path where delivery actually works.
     expect(
-      shouldWarnSecretsUndelivered({ ...base, harness: "claude-code" })
+      shouldWarnSecretsUndelivered({ ...base, harness: "claude-code" }),
     ).toBe(false);
     expect(
       shouldWarnSecretsUndelivered({
         ...base,
         harness: "claude-code",
         hasSandboxBinding: true,
-      })
+      }),
     ).toBe(false);
   });
 
@@ -183,10 +249,10 @@ describe("shouldWarnSecretsUndelivered", () => {
     // none, and brokered-only environments are exactly this case — brokered
     // values are injected outside the box and never enter `secretEnv`.
     expect(shouldWarnSecretsUndelivered({ ...base, secretCount: 0 })).toBe(
-      false
+      false,
     );
     expect(shouldWarnSecretsUndelivered({ ...base, secretCount: -1 })).toBe(
-      false
+      false,
     );
   });
 });

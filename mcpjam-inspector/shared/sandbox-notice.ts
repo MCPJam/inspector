@@ -35,6 +35,22 @@ export type SandboxNoticeReason =
    */
   | "sandbox_unavailable"
   /**
+   * This turn could not establish which secrets the conversation's box holds,
+   * so bash was not advertised.
+   *
+   * The narrow case: the secrets service failed, the conversation has a
+   * PERSISTENT sandbox, and an earlier turn may have run a command carrying a
+   * credential. That box can still hold the value — cached in a file, exported
+   * into a background process — and this turn has no list to build a scrubber
+   * from, so anything it printed would be persisted verbatim.
+   *
+   * A harness session forks to a fresh box in the same situation. A scenario
+   * conversation cannot: its box is keyed to the conversation. Suppressing for
+   * one turn is the equivalent remedy — the box is left intact and comes back
+   * as soon as the secrets service does.
+   */
+  | "secrets_unavailable"
+  /**
    * The environment selected MATERIALIZED secrets, they were resolved for this
    * turn, and there is no project-provisioned box to put them in — so they were
    * NOT delivered and no command this turn can see them.

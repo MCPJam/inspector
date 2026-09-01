@@ -46,6 +46,15 @@ export type ScenarioEnvironmentRuntime = {
     name: string;
     revision: number;
   };
+  /**
+   * Whether a box on this environment could ever have been handed a
+   * materialized value. Resolved by the backend on a call that SUCCEEDED, which
+   * is the point: it is consulted precisely when the secrets call did not.
+   *
+   * Absent means an older backend — treated as `false`, i.e. today's behaviour,
+   * so a deploy skew cannot start suppressing shells.
+   */
+  selectsMaterializedSecrets?: boolean;
   servers: {
     /** The closed set this turn may connect — never the request body's. */
     effectiveServerIds: string[];
@@ -188,7 +197,7 @@ export type ScenarioRuntimeConfig = RuntimeExecutionFields & {
  * as `unavailable` (we'd silently remove a working shell).
  */
 export function readComputerSandboxMode(
-  config: unknown
+  config: unknown,
 ): "ephemeral" | "unavailable" | null {
   const raw = (config as { computerSandbox?: unknown } | null | undefined)
     ?.computerSandbox;
@@ -250,7 +259,8 @@ export interface ScenarioSandboxPlan {
   suppressReason?:
     | "sandbox_mode_unavailable"
     | "not_a_data_plane"
-    | "no_chat_session_id";
+    | "no_chat_session_id"
+    | "secrets_unavailable";
   /** Set when the suppression should be narrated to the tester (SSE notice). */
   notice?: SandboxNoticeReason;
 }
@@ -275,12 +285,56 @@ export function planScenarioSandbox(args: {
   bashRequested: boolean;
   ephemeralCloudAvailable: boolean;
   hasChatSessionId: boolean;
+  /**
+   * The turn's secret resolution FAILED — not "resolved to none". Only the
+   * failure suppresses; an environment that genuinely grants nothing is an
+   * ordinary turn.
+   */
+  secretsUnavailable?: boolean;
+  /**
+   * Whether this environment selects any materialized secret, per the backend's
+   * own (successful) resolution of it. BOTH conditions are required to
+   * suppress: a failed secrets call alone says nothing about whether this
+   * particular box ever held a value.
+   */
+  environmentSelectsSecrets?: boolean;
 }): ScenarioSandboxPlan {
   if (args.mode === "unavailable") {
     return { action: "suppress", suppressReason: "sandbox_mode_unavailable" };
   }
   if (args.mode !== "ephemeral" || !args.bashRequested) {
     return { action: "none" };
+  }
+  // UNKNOWN SECRET STATE SUPPRESSES THE BOX.
+  //
+  // The fork that protects a harness session does not reach here. A scenario
+  // conversation's sandbox is keyed to the conversation and reused across
+  // turns, so when the secrets service fails, a box that an earlier turn ran a
+  // credential-bearing command in is still the box this turn would use — while
+  // this turn has no list to build a scrubber from. A cached file or a
+  // background process holding the value could print it straight into a
+  // transcript with nothing to redact it.
+  //
+  // BOTH conditions, and the second is what keeps this from being the 503 over
+  // again. `{ok:false}` covers every failure of the secrets service, so keying
+  // on it alone would take bash away from every scenario conversation during a
+  // blip — including the overwhelming majority that have never had a secret and
+  // whose box therefore holds nothing to leak. The environment's own flag comes
+  // from a backend call that succeeded this turn, so it stays trustworthy
+  // exactly when the secrets call is not.
+  //
+  // Checked BEFORE the data-plane and session-id cases so the reason the tester
+  // sees is the specific one, and after the "bash was not requested" exit so a
+  // turn that was never going to use the shell is not narrated at.
+  if (
+    args.secretsUnavailable === true &&
+    args.environmentSelectsSecrets === true
+  ) {
+    return {
+      action: "suppress",
+      suppressReason: "secrets_unavailable",
+      notice: "secrets_unavailable",
+    };
   }
   if (!args.ephemeralCloudAvailable) {
     return {
@@ -325,7 +379,7 @@ export async function fetchScenarioRuntimeConfig(args: {
 }): Promise<ScenarioRuntimeConfigResult> {
   const url = new URL(
     "/web/scenario/runtime-config",
-    getConvexHttpUrl()
+    getConvexHttpUrl(),
   ).toString();
   const authorization = args.bearer.startsWith("Bearer ")
     ? args.bearer
@@ -421,7 +475,7 @@ const SKILL_CHANNELS: ReadonlySet<string> = new Set([
  * backend — the caller keeps today's behavior byte-identical.
  */
 export function readScenarioEnvironment(
-  config: ScenarioRuntimeConfig
+  config: ScenarioRuntimeConfig,
 ): ScenarioEnvironmentReadResult {
   const raw = (config as { environment?: unknown }).environment;
   if (raw === undefined || raw === null) return { kind: "absent" };
@@ -440,7 +494,7 @@ export function readScenarioEnvironment(
     return { kind: "invalid", detail: "missing effective server set" };
   }
   const effectiveServerIds = servers.effectiveServerIds.filter(
-    (id): id is string => typeof id === "string"
+    (id): id is string => typeof id === "string",
   );
   if (effectiveServerIds.length !== servers.effectiveServerIds.length) {
     // A torn id list is an unknown server set, not a smaller one.
@@ -484,7 +538,7 @@ export function readScenarioEnvironment(
         const channels = Array.isArray(entry.channels)
           ? entry.channels.filter(
               (channel): channel is RuntimeSkillChannel =>
-                typeof channel === "string" && SKILL_CHANNELS.has(channel)
+                typeof channel === "string" && SKILL_CHANNELS.has(channel),
             )
           : undefined;
         const files = Array.isArray(entry.files)
@@ -499,7 +553,7 @@ export function readScenarioEnvironment(
                       url: typeof file.url === "string" ? file.url : null,
                     },
                   ]
-                : []
+                : [],
             )
           : undefined;
         return [

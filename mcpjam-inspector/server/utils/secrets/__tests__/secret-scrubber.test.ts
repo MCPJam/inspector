@@ -200,6 +200,56 @@ describe("scrubDeep", () => {
     expect(JSON.parse(scrubbed).blob).toBe("[secret:PEM_KEY]");
   });
 
+  it("scrubs a credential nested inside a JSON-STRING tool result", () => {
+    // The double-escape case, and the reason needles are generated per depth.
+    //
+    // A tool that returns its config as a JSON string already holds the value
+    // in escaped form; serializing the surrounding ingest body escapes it a
+    // second time. The once-escaped needle does not appear in that text at all,
+    // so a quote-bearing credential used to survive here and surface intact the
+    // moment the outer document was parsed.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+
+    // What a tool returning JSON-as-a-string actually produces.
+    const toolResult = JSON.stringify({ apiKey: quoted.value });
+    const body = JSON.stringify({ output: toolResult });
+    // Precondition: the value really is doubly escaped in these bytes, so the
+    // test is exercising the case it claims to.
+    expect(body).toContain('abcdefgh\\\\\\"i');
+
+    const scrubbed = scrubber.scrubSerializedJson(body);
+    // Parsed back out at BOTH levels — the credential must not be recoverable
+    // from the transcript by anyone who simply parses what we stored.
+    const inner = JSON.parse(JSON.parse(scrubbed).output);
+    expect(inner.apiKey).toBe("[secret:ODD_KEY]");
+    expect(scrubbed).not.toContain("abcdefgh");
+  });
+
+  it("scrubs backslash- and newline-bearing values at nesting depth two", () => {
+    const pem = { name: "PEM_KEY", value: "-----BEGIN-----\nab\\c\n" };
+    const scrubber = createSecretScrubber([pem])!;
+    const body = JSON.stringify({
+      output: JSON.stringify({ blob: pem.value }),
+    });
+
+    const scrubbed = scrubber.scrubSerializedJson(body);
+    expect(JSON.parse(JSON.parse(scrubbed).output).blob).toBe(
+      "[secret:PEM_KEY]",
+    );
+    expect(scrubbed).not.toContain("BEGIN");
+  });
+
+  it("still scrubs an ordinary value at depth one after the depth change", () => {
+    // The guard on the guard: generating deeper forms must not stop the
+    // single-level case, which is the overwhelmingly common one.
+    const scrubber = createSecretScrubber([STRIPE])!;
+    const body = JSON.stringify({ key: STRIPE.value });
+    expect(JSON.parse(scrubber.scrubSerializedJson(body)).key).toBe(
+      `[secret:${STRIPE.name}]`,
+    );
+  });
+
   it("passes non-plain objects through by identity", () => {
     // Rebuilding a Date or a typed array as a plain object would corrupt the
     // payload far more than a missed scrub would.

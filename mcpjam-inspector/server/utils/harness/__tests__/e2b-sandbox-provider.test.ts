@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => {
     constructor(
       public exitCode: number,
       public stdout: string,
-      public stderr: string
+      public stderr: string,
     ) {
       super("exit status " + exitCode);
       this.name = "CommandExitError";
@@ -56,8 +56,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const provider = () =>
-  createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
+const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
 
 describe("the pnpm guard", () => {
   it("explains itself when pnpm is missing and installing it fails", async () => {
@@ -66,11 +65,11 @@ describe("the pnpm guard", () => {
     // because the box could not reach the package registry reported nothing
     // about the box, the exit code, or the registry.
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(1, "", "npm error code ECONNRESET")
+      new FakeCommandExitError(1, "", "npm error code ECONNRESET"),
     );
 
     await expect(provider().createSession()).rejects.toThrow(
-      /pnpm is missing on sandbox sbx_1.*exit 1.*ECONNRESET/s
+      /pnpm is missing on sandbox sbx_1.*exit 1.*ECONNRESET/s,
     );
   });
 
@@ -78,11 +77,11 @@ describe("the pnpm guard", () => {
     // The message has to point at the actual mechanism, because the fix is an
     // ordering one and nothing else in the failure hints at it.
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(1, "", "network request failed")
+      new FakeCommandExitError(1, "", "network request failed"),
     );
 
     await expect(provider().createSession()).rejects.toThrow(
-      /egress is already locked to the model proxy/i
+      /egress is already locked to the model proxy/i,
     );
   });
 
@@ -110,12 +109,80 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
     expect(sandboxState.run).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
+  });
+
+  describe("the session-env delivery stamp", () => {
+    // `lastDeliveredAt` is read before deleting a credential believed dormant,
+    // so it has to mean "something received this", not "a turn got far enough
+    // to hold it". Constructing a provider only puts the values in a local
+    // object — harness setup can still throw before any command runs.
+    const withEnv = (onSessionEnvUsed: () => void) =>
+      createE2BHarnessSandboxProvider({
+        sandboxId: "sbx_1",
+        sessionEnv: { STRIPE_API_KEY: "sk_live_x" },
+        onSessionEnvUsed,
+      });
+
+    it("does NOT fire on construction, only when a command carries the env", async () => {
+      const stamped = vi.fn();
+      const p = withEnv(stamped);
+      // Constructed, and holding the values — but nothing has reached the box.
+      expect(stamped).not.toHaveBeenCalled();
+
+      const session = await p.createSession();
+      await session.run({ command: "stripe customers list" });
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires ONCE across several commands", async () => {
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      await session.run({ command: "one" });
+      await session.run({ command: "two" });
+      await session.run({ command: "three" });
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
+
+    it("actually merges the env into the command it stamps for", async () => {
+      // The stamp must not be able to drift away from the delivery: if this
+      // assertion and the one above ever disagree, the callback is lying.
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      sandboxState.run.mockClear();
+      await session.run({ command: "echo hi" });
+      expect(sandboxState.run).toHaveBeenCalledWith(
+        "echo hi",
+        expect.objectContaining({
+          envs: expect.objectContaining({ STRIPE_API_KEY: "sk_live_x" }),
+        }),
+      );
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
+
+    it("never fires when there is no session env at all", async () => {
+      const stamped = vi.fn();
+      const session = await createE2BHarnessSandboxProvider({
+        sandboxId: "sbx_1",
+        onSessionEnvUsed: stamped,
+      }).createSession();
+      await session.run({ command: "echo hi" });
+      expect(stamped).not.toHaveBeenCalled();
+    });
+
+    it("a throwing callback does not break the command", async () => {
+      // Best-effort by contract: failing to RECORD a delivery must never fail
+      // the delivery, and this sits directly in the command path.
+      const session = await withEnv(() => {
+        throw new Error("convex down");
+      }).createSession();
+      await expect(session.run({ command: "echo hi" })).resolves.toBeDefined();
+    });
   });
 
   it("honors a per-command signal on exec", async () => {
@@ -127,7 +194,7 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.run).toHaveBeenCalledWith(
       "echo hi",
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
   });
 
@@ -152,7 +219,7 @@ describe("abort plumbing", () => {
 
     expect(sandboxState.connect).toHaveBeenCalledWith(
       "sbx_1",
-      expect.objectContaining({ signal: controller.signal })
+      expect.objectContaining({ signal: controller.signal }),
     );
   });
 });
@@ -164,7 +231,7 @@ describe("exec result normalization", () => {
     // pinning that they stay different.
     const session = await provider().createSession();
     sandboxState.run.mockRejectedValueOnce(
-      new FakeCommandExitError(3, "out", "err")
+      new FakeCommandExitError(3, "out", "err"),
     );
 
     await expect(session.run({ command: "false" })).resolves.toEqual({
