@@ -268,6 +268,7 @@ describe("webmcp inspector store", () => {
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
     });
@@ -1097,6 +1098,7 @@ describe("webmcp inspector store — frame transport", () => {
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
     });
@@ -1262,6 +1264,79 @@ describe("webmcp inspector store — frame transport", () => {
     expect(useWebmcpInspectorStore.getState().liveFrame?.src).toBe(
       "data:image/jpeg;base64,newer",
     );
+  });
+
+  it("reports the socket once it is open, and nothing before that", async () => {
+    const transport = () => useWebmcpInspectorStore.getState().frameTransport;
+    const { ws } = await openFrameSession();
+    // One attempt spent, nothing carrying pixels yet: the handshake is still
+    // in flight and SSE has already been told to stop sending frames.
+    expect(transport()).toEqual({ rung: "none", attempts: 1, latched: false });
+
+    ws.open();
+    expect(transport()).toEqual({ rung: "ws", attempts: 0, latched: false });
+
+    useWebmcpInspectorStore.getState().disconnect();
+    // A teardown is not a degradation: the counters go back to where a fresh
+    // session starts, so the next one is not described by the last one's
+    // failures.
+    expect(transport()).toEqual({ rung: "none", attempts: 0, latched: false });
+  });
+
+  it("counts the ladder's attempts, and says when it has given up", async () => {
+    vi.useFakeTimers();
+    const transport = () => useWebmcpInspectorStore.getState().frameTransport;
+    const { ws } = await openFrameSession();
+
+    // 1006 — an old server's 404 upgrade. Frames move back to SSE at once and
+    // the ladder starts retrying: degraded, but NOT settled, so nothing should
+    // be telling the person about it yet.
+    ws.emitClose(1006);
+    expect(transport()).toMatchObject({ rung: "sse-frames", latched: false });
+
+    for (const [attempt, delay] of [
+      [2, 500],
+      [3, 1_000],
+      [4, 2_000],
+    ] as const) {
+      vi.advanceTimersByTime(delay);
+      expect(transport().attempts).toBe(attempt);
+      FakeWebSocket.instances.at(-1)!.emitClose(1006);
+    }
+
+    // The fourth failure exhausts the ladder. THIS is the state worth showing:
+    // the pane is on the slower path and nothing will move it back for the
+    // rest of the session.
+    expect(transport()).toEqual({
+      rung: "sse-frames",
+      attempts: 4,
+      latched: true,
+    });
+  });
+
+  it("latches without retrying when the socket is refused outright", async () => {
+    const { ws } = await openFrameSession();
+    // 4401/4503: auth, or the feature switched off. Retrying cannot fix
+    // either, so the ladder stops here rather than spending its budget.
+    ws.emitClose(4401);
+    expect(useWebmcpInspectorStore.getState().frameTransport).toEqual({
+      rung: "sse-frames",
+      attempts: 1,
+      latched: true,
+    });
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("reports the screenshot poll as the transport it is", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
+    // A server too old to screencast at all. Whatever the socket ladder is
+    // doing, what is on screen came from a screenshot.
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("ws");
   });
 
   it("puts frames back on SSE at once, then retries three times and latches", async () => {

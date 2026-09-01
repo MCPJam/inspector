@@ -78,6 +78,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
     });
@@ -470,6 +471,88 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(sendInput.mock.calls[0]![0]).toEqual([
       expect.objectContaining({ kind: "mouse_down", x: 640, y: 400 }),
     ]);
+  });
+
+  /**
+   * The badge that says the pane is not on the path it should be.
+   *
+   * Everything about the fallback ladder is silent by design — that is what
+   * keeps a pane painting through a dead socket — which leaves a session
+   * quietly running on the slowest transport it has and nobody any the wiser.
+   * The badge is the one place that shows up.
+   */
+  describe("transport badge", () => {
+    async function renderWith(frameTransport: {
+      rung: "ws" | "sse-frames" | "poll" | "none";
+      attempts: number;
+      latched: boolean;
+    }) {
+      useWebmcpInspectorStore.setState({
+        session: session({
+          viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+        }),
+      });
+      stubViewportActions({ screencastAccepted: true });
+      render(<WebmcpInspectorTab />);
+      await act(async () => {});
+      // Seeded AFTER mount: the tab's `reconnect()` effect tears the stream
+      // down for a session with no live socket, which resets the very field
+      // this is about.
+      await act(async () => {
+        useWebmcpInspectorStore.setState({ frameTransport });
+      });
+    }
+
+    it("says nothing while the socket is carrying frames", async () => {
+      await renderWith({ rung: "ws", attempts: 0, latched: false });
+      expect(screen.queryByText(/^Frames:/)).toBeNull();
+    });
+
+    it("says nothing while the ladder is still retrying", async () => {
+      // Degraded, but about to be fine. A badge that flickered on every
+      // reconnect would train people to ignore it.
+      await renderWith({ rung: "sse-frames", attempts: 2, latched: false });
+      expect(screen.queryByText(/^Frames:/)).toBeNull();
+    });
+
+    it("names the fallback once the ladder has given up", async () => {
+      await renderWith({ rung: "sse-frames", attempts: 4, latched: true });
+      const badge = screen.getByText("Frames: SSE");
+      // The attempt count rides in the tooltip rather than the badge: the
+      // number matters to whoever is diagnosing it, not to the person reading
+      // the header.
+      expect(badge).toHaveAttribute("title", expect.stringContaining("4"));
+    });
+
+    it("names the screenshot poll", async () => {
+      await renderWith({ rung: "poll", attempts: 0, latched: false });
+      expect(screen.getByText("Frames: polling")).toBeInTheDocument();
+    });
+  });
+
+  it("tells the store when it falls back to polling screenshots", async () => {
+    // The server refuses `set_screencast` — every server older than it does —
+    // and the pane starts its own screenshot loop. Without this report the
+    // store would describe a pane painting from screenshots as one with no
+    // transport at all.
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+    });
+    stubViewportActions({ screencastAccepted: false });
+    const view = render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    view.unmount();
+    await act(async () => {});
+    // And stops saying so when the pane goes away, or the next session would
+    // inherit a poll that is not running.
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
+      "poll",
+    );
   });
 
   it("leaves a native-window session view-only", async () => {

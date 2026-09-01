@@ -27,9 +27,25 @@ const MAX_SAMPLES = 2_000;
 /** Inputs that never saw a newer frame — a page that simply did not repaint. */
 const INPUT_TIMEOUT_MS = 3_000;
 
+/**
+ * Which transport the pane's pixels are arriving on.
+ *
+ * Recorded so the percentiles can be SPLIT by it. A p95 that mixes socket
+ * frames with polled screenshots describes neither, and the number people
+ * actually want out of this — "did the transport change help?" — is precisely
+ * a comparison between two of them.
+ */
+export type FrameTransportRung = "ws" | "sse-frames" | "poll" | "none";
+
+interface Sample {
+  v: number;
+  rung: FrameTransportRung;
+}
+
 let enabled: boolean | undefined;
-const captureToPaint: number[] = [];
-const inputToPaint: number[] = [];
+let currentRung: FrameTransportRung = "none";
+const captureToPaint: Sample[] = [];
+const inputToPaint: Sample[] = [];
 /** Gestures still waiting for the first frame that postdates them. */
 let awaitingPaint: Array<{ sentAt: number; afterSeq: number }> = [];
 
@@ -46,9 +62,20 @@ export function frameStatsEnabled(): boolean {
   return enabled;
 }
 
-function push(into: number[], value: number): void {
-  into.push(value);
+function push(into: Sample[], value: number): void {
+  into.push({ v: value, rung: currentRung });
   if (into.length > MAX_SAMPLES) into.splice(0, into.length - MAX_SAMPLES);
+}
+
+/**
+ * Called when the store's transport ladder moves.
+ *
+ * Free when the flag is off, like everything else here — and unconditional
+ * when it is on, because a rung recorded late tags the wrong samples.
+ */
+export function noteFrameTransportRung(rung: FrameTransportRung): void {
+  if (!frameStatsEnabled()) return;
+  currentRung = rung;
 }
 
 /** Called when a gesture leaves the client, with the seq currently on screen. */
@@ -79,9 +106,9 @@ export function notePainted(frame: { ts: number; seq: number }): void {
   for (const entry of settled) push(inputToPaint, now - entry.sentAt);
 }
 
-function percentile(samples: number[], p: number): number | undefined {
+function percentile(samples: Sample[], p: number): number | undefined {
   if (samples.length === 0) return undefined;
-  const sorted = [...samples].sort((a, b) => a - b);
+  const sorted = samples.map((sample) => sample.v).sort((a, b) => a - b);
   const index = Math.min(
     sorted.length - 1,
     Math.max(0, Math.ceil((p / 100) * sorted.length) - 1),
@@ -89,23 +116,46 @@ function percentile(samples: number[], p: number): number | undefined {
   return Math.round(sorted[index]!);
 }
 
+export interface FrameStatsBucket {
+  n: number;
+  p50?: number;
+  p95?: number;
+}
+
 export interface FrameStatsReport {
-  captureToPaint: { n: number; p50?: number; p95?: number };
-  inputToPaint: { n: number; p50?: number; p95?: number };
+  captureToPaint: FrameStatsBucket;
+  inputToPaint: FrameStatsBucket;
+  /**
+   * The same capture→paint samples, split by the transport that carried them.
+   *
+   * Only rungs with samples appear, so a session that never left the socket
+   * reports one bucket rather than four mostly-empty ones — and the top-level
+   * figures above are unchanged, because they are what every existing reader
+   * of this report already asks for.
+   */
+  byTransport: Partial<Record<FrameTransportRung, FrameStatsBucket>>;
+}
+
+function bucket(samples: Sample[]): FrameStatsBucket {
+  return {
+    n: samples.length,
+    p50: percentile(samples, 50),
+    p95: percentile(samples, 95),
+  };
 }
 
 export function frameStatsReport(): FrameStatsReport {
+  const byTransport: Partial<Record<FrameTransportRung, FrameStatsBucket>> = {};
+  for (const sample of captureToPaint) {
+    if (byTransport[sample.rung]) continue;
+    byTransport[sample.rung] = bucket(
+      captureToPaint.filter((entry) => entry.rung === sample.rung),
+    );
+  }
   return {
-    captureToPaint: {
-      n: captureToPaint.length,
-      p50: percentile(captureToPaint, 50),
-      p95: percentile(captureToPaint, 95),
-    },
-    inputToPaint: {
-      n: inputToPaint.length,
-      p50: percentile(inputToPaint, 50),
-      p95: percentile(inputToPaint, 95),
-    },
+    captureToPaint: bucket(captureToPaint),
+    inputToPaint: bucket(inputToPaint),
+    byTransport,
   };
 }
 
@@ -113,6 +163,7 @@ export function resetFrameStats(): void {
   captureToPaint.length = 0;
   inputToPaint.length = 0;
   awaitingPaint = [];
+  currentRung = "none";
 }
 
 /** Test seam: the flag is read once and cached for the tab's lifetime. */

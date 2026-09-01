@@ -31,6 +31,7 @@ import type {
 } from "@/shared/webmcp-inspector-protocol";
 import type { WebMcpLiveFrame } from "@/stores/webmcp-inspector-store";
 import { notePainted } from "@/lib/webmcp-inspector/frame-stats";
+import { copyWebMcpDiagnostics } from "@/lib/webmcp-inspector/diagnostics";
 
 /**
  * Cadence of the FALLBACK screenshot poll.
@@ -82,6 +83,8 @@ export function WebmcpInspectorTab() {
     error,
     lastScreenshot,
     liveFrame,
+    frameTransport,
+    noteScreenshotPolling,
     startSession,
     closeSession,
     sendCommand,
@@ -346,6 +349,10 @@ export function WebmcpInspectorTab() {
       const shoot = () => void captureScreenshot({ silent: true });
       shoot();
       poll = setInterval(shoot, SCREENSHOT_POLL_MS);
+      // The poll is this surface's own fallback, so this surface is the only
+      // thing that can report it. Without it the store would describe a pane
+      // painting from screenshots as one that has no transport at all.
+      noteScreenshotPolling(true);
     };
 
     if (pollsScreenshots) {
@@ -358,13 +365,22 @@ export function WebmcpInspectorTab() {
 
     return () => {
       cancelled = true;
-      if (poll !== undefined) clearInterval(poll);
+      if (poll !== undefined) {
+        clearInterval(poll);
+        noteScreenshotPolling(false);
+      }
       // Asked for unconditionally, including when the stream was never running:
       // it is idempotent on the server, and a session left encoding frames for
       // a pane nobody is looking at is exactly what demand-driving avoids.
       if (!pollsScreenshots) void setScreencast(false);
     };
-  }, [streaming, pollsScreenshots, setScreencast, captureScreenshot]);
+  }, [
+    streaming,
+    pollsScreenshots,
+    setScreencast,
+    captureScreenshot,
+    noteScreenshotPolling,
+  ]);
 
   /**
    * Where this session's browser should run and appear.
@@ -607,6 +623,31 @@ export function WebmcpInspectorTab() {
             </Button>
           </>
         ) : null}
+        {/* Everything the pane knows about itself, as one paste-able object.
+            The viewport degrades silently by design — a fallback transport, a
+            stepped-down quality — so "it looks bad" and "it is bad" are not
+            distinguishable from a screenshot. */}
+        {session ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              void copyWebMcpDiagnostics({
+                session,
+                frameTransport,
+                frame: liveFrame
+                  ? {
+                      deviceWidth: liveFrame.deviceWidth,
+                      deviceHeight: liveFrame.deviceHeight,
+                      seq: liveFrame.seq,
+                    }
+                  : undefined,
+              })
+            }
+          >
+            Copy diagnostics
+          </Button>
+        ) : null}
         {/* Hidden in the PACKAGED app, where "Chrome window" cannot work:
             forge ships `.vite` with no node_modules and `playwright` is
             externalized, so launching one always fails. A button that can only
@@ -655,6 +696,25 @@ export function WebmcpInspectorTab() {
           </Button>
         ) : null}
         {session ? <StatusBadge status={session.status} /> : null}
+        {/* Only when the pane is on a WORSE path than it should be, and only
+            once retrying has stopped: a socket that is mid-ladder is about to
+            be fine, and a badge that flickered on every reconnect would train
+            people to ignore it. */}
+        {transportKind === "frame-stream" &&
+        ((frameTransport.rung === "sse-frames" && frameTransport.latched) ||
+          frameTransport.rung === "poll") ? (
+          <Badge
+            variant="outline"
+            className="text-[10px]"
+            title={
+              frameTransport.rung === "poll"
+                ? "This server cannot stream the viewport, so the pane is polling screenshots."
+                : `The frame socket could not be used, so frames are riding the event stream. Attempts: ${frameTransport.attempts}`
+            }
+          >
+            {frameTransport.rung === "poll" ? "Frames: polling" : "Frames: SSE"}
+          </Badge>
+        ) : null}
       </header>
 
       {error || localError ? (

@@ -33,6 +33,7 @@ import {
   type FrameStreamConnection,
 } from "@/lib/webmcp-inspector/frame-stream-connection";
 import {
+  noteFrameTransportRung,
   noteInputSent,
   resetFrameStats,
 } from "@/lib/webmcp-inspector/frame-stats";
@@ -150,6 +151,21 @@ function toLiveFrame(
   };
 }
 
+/**
+ * How the pane is getting its pixels, and how hard that was.
+ *
+ * `ws` is the binary socket, `sse-frames` the JSON stream it falls back to,
+ * `poll` the screenshot loop for a server too old to screencast at all, and
+ * `none` no stream at all.
+ */
+export interface WebMcpFrameTransport {
+  rung: "ws" | "sse-frames" | "poll" | "none";
+  /** Socket attempts spent on this session; reset by one that opens. */
+  attempts: number;
+  /** The ladder has given up climbing back to the socket. */
+  latched: boolean;
+}
+
 /** Where a session's browser runs. See `startSession`. */
 export interface StartSessionOptions {
   transport?: "local" | "hosted";
@@ -194,6 +210,22 @@ interface WebMcpInspectorState {
    * collapsing them would make the thumbnail flicker with every paint.
    */
   liveFrame: WebMcpLiveFrame | undefined;
+  /**
+   * WHICH transport is actually carrying the pane's pixels right now.
+   *
+   * The ladder degrades silently on purpose — a pane that keeps painting
+   * through a dead socket is the whole point — which leaves no way to tell a
+   * working session from one quietly running on the slowest path it has. This
+   * is that way: `rung` is what pixels are arriving on, `attempts` is how many
+   * socket tries this session has spent, and `latched` says the ladder has
+   * stopped trying to climb back.
+   *
+   * DERIVED, never stored twice: the ladder and the screenshot poll are
+   * independent (an old server produces both — 1006 on the socket and a
+   * refused `set_screencast`), and two writers racing over one field is how a
+   * badge ends up contradicting the pane beside it.
+   */
+  frameTransport: WebMcpFrameTransport;
   lastScreenshot: string | undefined;
   /**
    * Whether chat turns may use this page's tools. Off by default and reset when
@@ -256,6 +288,14 @@ interface WebMcpInspectorState {
    * the surface unmounts and mounts again. Idempotent for the same session.
    */
   reconnect(): void;
+  /**
+   * Report that the screenshot POLL is running, or has stopped.
+   *
+   * Owned by the surface rather than inferred here, because the poll is the
+   * surface's own fallback: it starts it when `set_screencast` comes back
+   * refused, and only it knows when its pane went away.
+   */
+  noteScreenshotPolling(active: boolean): void;
   /** Test seam; also used when the surface unmounts. */
   disconnect(): void;
 }
@@ -285,6 +325,10 @@ let frameRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let frameAttempts = 0;
 /** Set once we stop trying: frames stay on SSE for the rest of the session. */
 let frameSocketLatched = false;
+/** Which stream the LADDER is currently on, before the poll is considered. */
+let ladderRung: "ws" | "sse-frames" | "none" = "none";
+/** Whether the surface's screenshot poll is running. */
+let polling = false;
 
 /**
  * Delays before the 2nd, 3rd and 4th attempt. FOUR TOTAL, then never again for
@@ -476,6 +520,38 @@ function inOrder<T>(run: () => Promise<T>): Promise<T> {
 export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
   (set, get) => {
     /**
+     * Recompute what the pane's pixels are arriving on, and publish it if it
+     * changed.
+     *
+     * DERIVED from the ladder's own variables rather than written at each
+     * site, which removes every ordering hazard between the two independent
+     * things that can degrade: the socket ladder and the screenshot poll. An
+     * older server produces BOTH — 1006 on the socket and a refused
+     * `set_screencast` — and two writers racing over one field is how a badge
+     * ends up contradicting the pane beside it.
+     */
+    function publishFrameTransport() {
+      const rung = polling ? "poll" : ladderRung;
+      const next: WebMcpFrameTransport = {
+        rung,
+        attempts: frameAttempts,
+        latched: frameSocketLatched,
+      };
+      const current = get().frameTransport;
+      if (
+        current.rung === next.rung &&
+        current.attempts === next.attempts &&
+        current.latched === next.latched
+      ) {
+        return;
+      }
+      set({ frameTransport: next });
+      // The measurement split follows the transport: a p95 that mixes socket
+      // frames with polled screenshots describes neither.
+      noteFrameTransportRung(rung);
+    }
+
+    /**
      * Apply one server event.
      *
      * An explicit ALLOWLIST of known types, with anything else ignored by
@@ -590,6 +666,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       source = new EventSource(
         addTokenToUrl(`${BASE}/sessions/${sessionId}/events${query}`),
       );
+      // Frames on this stream means the ladder is running on SSE — either
+      // because the socket was never opened, or because it fell back here.
+      if (frames === "on") {
+        ladderRung = "sse-frames";
+        publishFrameTransport();
+      }
       source.onmessage = (message) => {
         try {
           const parsed = JSON.parse(message.data);
@@ -645,6 +727,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
     function openFrameSocket(sessionId: string, generation: number) {
       if (frameSocketLatched) return;
       frameAttempts += 1;
+      publishFrameTransport();
       frameSocket = openWebMcpFrameStream({
         sessionId,
         onOpen: () => {
@@ -656,6 +739,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // session that has been working fine, permanently reverting it to
           // the latency this whole change removes.
           frameAttempts = 0;
+          ladderRung = "ws";
+          publishFrameTransport();
           // Frames are arriving here now, so stop paying for them twice. On
           // the first attempt this is already the case and does nothing; after
           // a successful retry it is what puts SSE back to carrying only the
@@ -696,6 +781,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       frameSocket = undefined;
       if (code === FRAME_WS_CLOSE.NORMAL || code === FRAME_WS_CLOSE.GONE) {
         frameSocketLatched = true;
+        // The session is over. Nothing is carrying pixels, and nothing will.
+        ladderRung = "none";
+        publishFrameTransport();
         return;
       }
       if (
@@ -704,6 +792,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       ) {
         frameSocketLatched = true;
         ensureSseFrames(sessionId, "on");
+        publishFrameTransport();
         return;
       }
       // Before the retry, not after it: a pane that went blank for two and a
@@ -713,8 +802,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       const retryIndex = frameAttempts - 1;
       if (retryIndex >= FRAME_WS_RETRY_DELAYS_MS.length) {
         frameSocketLatched = true;
+        publishFrameTransport();
         return;
       }
+      publishFrameTransport();
       frameRetryTimer = setTimeout(() => {
         frameRetryTimer = undefined;
         // The generation is the guarantee, not the clearTimeout below: a timer
@@ -778,6 +869,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       frameSocket = undefined;
       frameAttempts = 0;
       frameSocketLatched = false;
+      ladderRung = "none";
+      polling = false;
       lastAppliedFrameSeq = 0;
       source?.close();
       source = undefined;
@@ -790,6 +883,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       // otherwise be settled by an unrelated frame of the NEXT page and
       // recorded as that page's latency.
       resetFrameStats();
+      publishFrameTransport();
     }
 
     return {
@@ -800,8 +894,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
+
+      noteScreenshotPolling(active) {
+        polling = active;
+        publishFrameTransport();
+      },
 
       setChatEnabled(enabled) {
         set({ chatEnabled: enabled });

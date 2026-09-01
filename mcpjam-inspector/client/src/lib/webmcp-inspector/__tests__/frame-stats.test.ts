@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   frameStatsEnabled,
   frameStatsReport,
+  noteFrameTransportRung,
   notePainted,
   noteInputSent,
   resetFrameStats,
@@ -44,7 +45,33 @@ describe("frame stats", () => {
     expect(frameStatsReport()).toEqual({
       captureToPaint: { n: 0, p50: undefined, p95: undefined },
       inputToPaint: { n: 0, p50: undefined, p95: undefined },
+      // No samples, so no buckets — rather than four empty ones for rungs this
+      // session never used.
+      byTransport: {},
     });
+  });
+
+  it("splits the percentiles by the transport that carried them", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+    notePainted({ ts: 999_980, seq: 2 });
+    // The socket dies and the pane falls back; a p95 that mixed the two would
+    // describe neither, and "did the socket help?" is exactly the question
+    // this file exists to answer.
+    noteFrameTransportRung("sse-frames");
+    notePainted({ ts: 999_900, seq: 3 });
+
+    const report = frameStatsReport();
+    // The top-level figures are unchanged — every existing reader asks for
+    // those — and the split rides beside them.
+    expect(report.captureToPaint.n).toBe(3);
+    expect(report.byTransport.ws).toMatchObject({ n: 2, p50: 10, p95: 20 });
+    expect(report.byTransport["sse-frames"]).toMatchObject({ n: 1, p50: 100 });
+    expect(report.byTransport.poll).toBeUndefined();
   });
 
   it("treats an empty string as set, since presence is the flag", () => {
