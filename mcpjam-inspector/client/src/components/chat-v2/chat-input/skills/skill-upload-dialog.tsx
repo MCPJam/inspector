@@ -127,6 +127,13 @@ export function SkillUploadDialog({
    * skipped then — and reusing it on open would restore exactly the bug the
    * guard exists to close.
    *
+   * Scoped to ONE open session, and dropped on close. Carrying it further
+   * would answer the next session's question with the last session's answer:
+   * an admin who is demoted between opening the dialog twice would reopen to
+   * an enabled button that uploads `sharing: 'project'` before the new query
+   * lands, and the server would refuse it. A reconnect is a re-load of a
+   * question already asked; a reopen is a new question.
+   *
    * Keyed on the project, and every later resolution overwrites it, so a
    * revoked role takes effect as soon as the list says so.
    */
@@ -135,7 +142,9 @@ export function SkillUploadDialog({
   const decidedRoleRef = useRef<{ key: string; canManage: boolean } | null>(
     null,
   );
-  if (roleQueryActive && !rolePending) {
+  if (!open) {
+    decidedRoleRef.current = null;
+  } else if (roleQueryActive && !rolePending) {
     decidedRoleRef.current = { key: roleKey, canManage: canManageShared };
   }
   const decidedRole = decidedRoleRef.current;

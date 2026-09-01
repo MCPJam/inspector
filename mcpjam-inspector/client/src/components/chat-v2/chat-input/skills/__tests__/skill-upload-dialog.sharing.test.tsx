@@ -198,6 +198,38 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
     expect(mocks.uploadSkillFolder.mock.calls[0][3]).toBe("project");
   });
 
+  it("re-asks on reopen instead of answering with the last session's role", async () => {
+    // A reconnect is a re-load of a question already asked; a REOPEN is a new
+    // question. An admin demoted between two opens would otherwise reopen to
+    // an enabled button and upload `sharing: 'project'` before the new query
+    // landed, and the server would refuse it.
+    mocks.canManageMembers = true;
+    const { rerender } = render(
+      <SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />,
+    );
+    expect(
+      screen.getByText(/will be added to the project library/i),
+    ).toBeInTheDocument();
+
+    rerender(
+      <SkillUploadDialog open={false} onOpenChange={vi.fn()} source={CLOUD} />,
+    );
+
+    // Reopened while the fresh role query is still in flight.
+    mocks.canManageMembers = false;
+    mocks.roleLoading = true;
+    rerender(<SkillUploadDialog open onOpenChange={vi.fn()} source={CLOUD} />);
+
+    expect(
+      screen.getByText(/Checking your role in this project/i),
+    ).toBeInTheDocument();
+    await pickSkillFolder();
+    expect(
+      screen.getByRole("button", { name: /add to library/i }),
+    ).toBeDisabled();
+    expect(mocks.uploadSkillFolder).not.toHaveBeenCalled();
+  });
+
   it("refuses to reuse a 'decision' taken while the dialog was closed", async () => {
     // The query is SKIPPED when the dialog is closed, so `canManageMembers`
     // reads false and `isLoading` reads false — a non-answer that looks
