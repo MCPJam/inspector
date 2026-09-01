@@ -17490,7 +17490,7 @@
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", null],
+            "enum": ["claude-code", "codex", "cursor", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
           },
           "computer": {
