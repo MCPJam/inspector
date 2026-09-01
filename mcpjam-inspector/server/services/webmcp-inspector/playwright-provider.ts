@@ -60,6 +60,18 @@ import {
 /** Cap on how long a browser teardown may block shutdown. */
 const CLOSE_TIMEOUT_MS = 5_000;
 /**
+ * Cap on how long one `Page.captureScreenshot` may take.
+ *
+ * The same 5s Playwright's own `page.screenshot()` was given before these
+ * captures moved to raw CDP, and it is load-bearing in a way that is easy to
+ * lose with the Playwright call: raw `send` has no timeout of its own, so a
+ * wedged browser or a dead CDP session would hang the caller forever — the
+ * screenshot poll accumulating requests that never answer, and the still path
+ * holding its single-flight latch for the life of the session, which disables
+ * the settle still and the oversize substitute permanently.
+ */
+export const STILL_TIMEOUT_MS = 5_000;
+/**
  * How much of a frame's base64 to decode when reading its SOF marker.
  *
  * A prefix, because the answer is in the first few hundred bytes and decoding
@@ -93,6 +105,32 @@ interface CdpScreencastFrame {
     deviceHeight?: number;
     timestamp?: number;
   };
+}
+
+/**
+ * `work`, or `undefined` if it takes longer than `ms`.
+ *
+ * The abandoned promise is left to settle on its own — it is one CDP reply,
+ * and nothing is waiting on it once the caller has given up.
+ */
+function withTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    timer.unref?.();
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 /** As in the widget harness: a hung close must not block shutdown. */
@@ -551,6 +589,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * discards ITSELF as overtaken. Reading the compositor surface instead
    * touches no DOM at all.
    *
+   * Bounded by `STILL_TIMEOUT_MS`, because raw `send` has none of its own: an
+   * unbounded capture would hang the screenshot poll and hold `publishStill`'s
+   * single-flight latch for the rest of the session.
+   *
    * NO `clip`, ever. A clip is in document coordinates and goes through an
    * emulation path that can relayout and paint — the same self-defeating
    * mutation — and a cropped picture published as a full viewport would stretch
@@ -559,16 +601,19 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    */
   private async captureStill(quality: number): Promise<string | undefined> {
     try {
-      const result = (await this.cdp.send(
-        "Page.captureScreenshot" as never,
-        {
-          format: "jpeg",
-          quality,
-          // The compositor's own surface: no relayout, no paint, and the
-          // picture the person is actually looking at.
-          fromSurface: true,
-        } as never,
-      )) as { data?: string };
+      const result = (await withTimeout(
+        this.cdp.send(
+          "Page.captureScreenshot" as never,
+          {
+            format: "jpeg",
+            quality,
+            // The compositor's own surface: no relayout, no paint, and the
+            // picture the person is actually looking at.
+            fromSurface: true,
+          } as never,
+        ),
+        STILL_TIMEOUT_MS,
+      )) as { data?: string } | undefined;
       return typeof result?.data === "string" ? result.data : undefined;
     } catch {
       return undefined;

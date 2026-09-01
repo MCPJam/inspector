@@ -648,6 +648,19 @@ describe("viewport frames", () => {
     const session = new FakeBrowserSession(runtime.callbacks());
     runtime.attach(session);
     expect(runtime.toPublic().streamQuality).toBe(60);
+
+    // And it really does ride one. `toPublic()` alone would prove only that
+    // the value was retained — a quality that never reaches the wire leaves
+    // every client believing the stream is still at its baseline.
+    runtime.publishSession();
+    expect(
+      events
+        .filter(
+          (event): event is Extract<WebMcpEvent, { type: "session" }> =>
+            event.type === "session",
+        )
+        .at(-1)?.session.streamQuality,
+    ).toBe(60);
   });
 
   it("omits the quality entirely for a provider that never reports one", () => {

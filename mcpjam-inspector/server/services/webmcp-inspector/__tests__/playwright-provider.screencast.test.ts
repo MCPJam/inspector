@@ -8,7 +8,10 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
-import { PlaywrightWebMcpSession } from "../playwright-provider";
+import {
+  PlaywrightWebMcpSession,
+  STILL_TIMEOUT_MS,
+} from "../playwright-provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_HOUSEKEEPING_INTERVAL_MS,
@@ -525,6 +528,35 @@ describe("PlaywrightWebMcpSession screencast", () => {
     await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(h.stills).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up on a capture the browser never answers", async () => {
+    // A CDP session that takes the command and never replies — a wedged
+    // browser, or a target that went away mid-capture. `cdp.send` has no
+    // timeout of its own, which is the difference from the `page.screenshot()`
+    // this path used to go through.
+    const h = await startedWithFakeClock({
+      still: () => new Promise<string>(() => {}),
+    });
+    await h.session.setScreencast(true);
+
+    const shot = h.session.captureScreenshot();
+    await vi.advanceTimersByTimeAsync(STILL_TIMEOUT_MS + 100);
+    // The poll recovers on its next tick rather than accumulating requests
+    // that will never answer.
+    await expect(shot).resolves.toBeUndefined();
+
+    // And the still path is usable again. A capture that never settles holds
+    // the single-flight latch forever, which disables the settle still AND the
+    // oversize substitute for the life of the session — a pane that silently
+    // stops sharpening and stops converging, long after the browser recovered.
+    h.stills.mockResolvedValue(SMALL_STILL);
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1), 1),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    expect(h.frames.map((frame) => frame.data)).toEqual([SMALL_STILL]);
   });
 
   it("paces substitute captures on a page that never fits", async () => {

@@ -893,10 +893,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       frameSocketLatched = false;
       ladderRung = "none";
       // `polling` is deliberately NOT cleared: it belongs to the surface that
-      // owns the interval, and that interval outlives a session change — the
-      // pane keeps polling across `startSession`, so clearing it here would
-      // report a transport of `none` for a pane visibly painting screenshots.
-      // The surface reports `false` when its poll actually stops.
+      // owns the interval, and only that surface knows whether the interval
+      // has actually stopped. Clearing it from here would report a transport
+      // of `none` for a pane still visibly painting screenshots — this runs on
+      // every stream teardown, including ones the poll is unaffected by. The
+      // surface reports `false` when its poll really stops, which includes the
+      // session change that ends it (its effect is keyed on the session id).
       lastAppliedFrameSeq = 0;
       source?.close();
       source = undefined;

@@ -338,6 +338,19 @@ export function WebmcpInspectorTab() {
    * nothing to withdraw on unmount.
    */
   const pollsScreenshots = behaviour.pollsScreenshots;
+  /**
+   * The poll belongs to the SESSION, not just to the pane.
+   *
+   * A dependency rather than a detail: `streaming` and `pollsScreenshots` are
+   * both unchanged when one `frame-stream` session replaces another, so
+   * without this the effect never re-runs — and a poll started because the
+   * OLD session's browser refused `set_screencast` would keep firing
+   * screenshots at a new session whose socket works perfectly, with the badge
+   * stuck on "Frames: polling". Re-running asks the new session the question
+   * fresh, and the cleanup below stops the interval that answered it for the
+   * old one.
+   */
+  const pollSessionId = session?.sessionId;
   useEffect(() => {
     if (!streaming) return;
     let cancelled = false;
@@ -377,6 +390,7 @@ export function WebmcpInspectorTab() {
   }, [
     streaming,
     pollsScreenshots,
+    pollSessionId,
     setScreencast,
     captureScreenshot,
     noteScreenshotPolling,

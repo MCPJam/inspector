@@ -556,6 +556,57 @@ describe("WebmcpInspectorTab — viewport", () => {
     );
   });
 
+  it("stops an inherited poll when the next session can stream", async () => {
+    // ONE pair of store actions for the whole test, deliberately: they are
+    // dependencies of the poll effect too, so restubbing them mid-test would
+    // re-run it for the wrong reason and pass with the session dependency
+    // removed. The session is the only thing that changes here.
+    const captureScreenshot = vi.fn(async () => {});
+    const setScreencast = vi.fn(
+      async () =>
+        useWebmcpInspectorStore.getState().session?.sessionId ===
+        "session-streams",
+    );
+    const streamKind = {
+      kind: "frame-stream" as const,
+      width: 1280,
+      height: 800,
+    };
+    useWebmcpInspectorStore.setState({
+      setScreencast,
+      captureScreenshot,
+      // The first session's browser refuses `set_screencast` — every server
+      // older than the command does — so the pane runs its own screenshot loop.
+      session: session({
+        sessionId: "session-refuses",
+        viewportTransport: streamKind,
+      }),
+    });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+    const polledForFirstSession = captureScreenshot.mock.calls.length;
+
+    // A new session with the same transport KIND, so every other input to the
+    // effect is unchanged — and a browser that streams perfectly well.
+    useWebmcpInspectorStore.setState({
+      session: session({
+        sessionId: "session-streams",
+        viewportTransport: streamKind,
+      }),
+    });
+    await act(async () => {});
+
+    // The interval belonged to the session that needed it. Left running, it
+    // would fire a screenshot a second at a session that is streaming, and the
+    // badge would read "Frames: polling" over a working socket.
+    expect(setScreencast).toHaveBeenLastCalledWith(true);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
+      "poll",
+    );
+    expect(captureScreenshot.mock.calls.length).toBe(polledForFirstSession);
+  });
+
   it("leaves a native-window session view-only", async () => {
     useWebmcpInspectorStore.setState({
       liveFrame: liveFrame("data:image/jpeg;base64,paint"),
