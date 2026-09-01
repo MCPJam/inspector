@@ -180,6 +180,10 @@ export function buildSandboxBashTool(
           Math.max(timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
           MAX_COMMAND_TIMEOUT_S,
         ) * 1000;
+      // Whether this invocation hands real credentials to the box. Captured
+      // before the call so the stamp below cannot disagree with what was sent.
+      const deliversSecrets =
+        !!opts.secretEnv && Object.keys(opts.secretEnv).length > 0;
       try {
         const result = await runner({
           sandboxId: opts.sandboxId,
@@ -197,11 +201,6 @@ export function buildSandboxBashTool(
             ? { envs: opts.secretEnv }
             : {}),
         });
-        // The values are now in a real process's environment. Fired AFTER the
-        // call returns, so a command that threw before exec records nothing.
-        if (opts.secretEnv && Object.keys(opts.secretEnv).length > 0) {
-          opts.onSecretEnvDelivered?.();
-        }
         const authUrls = detectAuthUrls(`${result.stdout}\n${result.stderr}`);
         return {
           stdout: truncate(result.stdout, MODEL_OUTPUT_CAP),
@@ -220,6 +219,21 @@ export function buildSandboxBashTool(
         }
         logger.error("[sandbox-bash] exec failed", error);
         return { error: "Command failed to run in the sandbox." };
+      } finally {
+        // Stamped on every outcome, not just a clean return.
+        //
+        // A timeout or an abort rejects `runner()` AFTER the box has already
+        // accepted the command with these values in its environment — and the
+        // process may still be alive in there holding them. Stamping only on
+        // success recorded exactly that case as never-delivered.
+        //
+        // The two ways to be wrong here are not symmetric. `lastDeliveredAt` is
+        // what someone reads before deciding a credential was never exposed and
+        // does not need rotating, so a missing stamp invites an unsafe call
+        // while a spurious one only invites a needless rotation. When the
+        // values have been handed over and the outcome is unknown, say
+        // delivered.
+        if (deliversSecrets) opts.onSecretEnvDelivered?.();
       }
     },
   });

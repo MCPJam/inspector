@@ -246,6 +246,41 @@ describe("scrubDeep", () => {
     expect(scrubbed).not.toContain("abcdefgh");
   });
 
+  it("leaves a large UNESCAPED payload untouched, and cheaply", () => {
+    // The depth bound is read off the input's own longest backslash run, not
+    // off its size. Prose carrying no escaping at all resolves to depth 1 no
+    // matter how large it is, so a megabyte of tool output does not drag every
+    // registered secret out to twenty-odd escaped forms.
+    //
+    // This asserts the CORRECTNESS half of that (the payload survives intact);
+    // the cost half is not something a unit test can pin without becoming a
+    // timing flake, so it lives in the comment on the bound itself.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+    const prose = "lorem ipsum dolor sit amet. ".repeat(40_000);
+
+    expect(scrubber.scrubString(prose)).toBe(prose);
+    // Still finds a genuine occurrence in a payload of that size.
+    expect(scrubber.scrubString(`${prose}${quoted.value}`)).toBe(
+      `${prose}[secret:ODD_KEY]`,
+    );
+  });
+
+  it("terminates on a payload that is mostly backslashes", () => {
+    // The pathological input for a run-derived bound: a long backslash run
+    // implies a deep escaping that nothing here is actually carrying. The
+    // ceiling and the form-length guard have to stop it rather than building
+    // forms that double all the way up.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+    const slashes = "\\".repeat(100_000);
+
+    expect(scrubber.scrubString(slashes)).toBe(slashes);
+    expect(scrubber.scrubString(`${slashes}${quoted.value}`)).toContain(
+      "[secret:ODD_KEY]",
+    );
+  });
+
   it("scrubs a credential nested past any fixed escape depth", () => {
     // The depth-3 cap was a cliff, not a limit. Each escaped form is a distinct
     // string that contains none of the shallower ones — re-escaping DOUBLES the

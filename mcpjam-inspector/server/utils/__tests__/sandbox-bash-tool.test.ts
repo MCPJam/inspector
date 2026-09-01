@@ -52,6 +52,53 @@ describe("buildEvalBashTool", () => {
     expect(result).not.toHaveProperty("error");
   });
 
+  describe("materialized-secret delivery stamp", () => {
+    const secretEnv = { STRIPE_API_KEY: "sk_live_abcdefgh" };
+
+    const runWith = async (runner: BashRunner) => {
+      const onSecretEnvDelivered = vi.fn();
+      const tool = buildSandboxBashTool(
+        { sandboxId: "sbx", secretEnv, onSecretEnvDelivered },
+        runner,
+      );
+      const result = await tool.execute!({ command: "sleep 600" }, opts);
+      return { result, onSecretEnvDelivered };
+    };
+
+    it("stamps when the command completes", async () => {
+      const { onSecretEnvDelivered } = await runWith(
+        vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+      );
+      expect(onSecretEnvDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it("stamps when the command TIMES OUT", async () => {
+      // The box already accepted the command with these values in its
+      // environment, and the process may still be alive in there holding them.
+      // Recording that as never-delivered is the dangerous direction: it is the
+      // signal someone reads before deciding a credential was never exposed.
+      const { result, onSecretEnvDelivered } = await runWith(
+        vi.fn(async () => {
+          throw new Error("command timed out");
+        }),
+      );
+      expect(result).toMatchObject({ error: expect.any(String) });
+      expect(onSecretEnvDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not stamp when no secrets were sent", async () => {
+      const onSecretEnvDelivered = vi.fn();
+      const tool = buildSandboxBashTool(
+        { sandboxId: "sbx", onSecretEnvDelivered },
+        vi.fn(async () => {
+          throw new Error("boom");
+        }),
+      );
+      await tool.execute!({ command: "ls" }, opts);
+      expect(onSecretEnvDelivered).not.toHaveBeenCalled();
+    });
+  });
+
   it("returns { error } (not throw) when the runner fails", async () => {
     const runner: BashRunner = vi.fn(async () => {
       throw new Error("connect failed");
