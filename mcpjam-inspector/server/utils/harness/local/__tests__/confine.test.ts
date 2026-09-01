@@ -70,6 +70,19 @@ describe("confinePath", () => {
     );
   });
 
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["a number", 42],
+  ])("rejects %s reaching it past the type system", async (_label, value) => {
+    // The contract's callers are adapter-driven, so the guard is a runtime one
+    // and not merely a type annotation. A non-string that fell through would
+    // reach `normalize` and throw something that is not a confinement refusal.
+    await expect(
+      confinePath(value as unknown as string, { roots }),
+    ).rejects.toThrow(PathConfinementError);
+  });
+
   it("does not drop a character when the parent is the filesystem root", async () => {
     // Discriminating on purpose: the buggy slice turned `/ttmp/x` into
     // `/tmp/x`, so the root set here must CONTAIN the malformed result. With
