@@ -14,10 +14,10 @@ import { SwarmRunDetail } from "../swarm-run-detail";
 /**
  * Two layers under test:
  *
- *  1. `SwarmFindingsTab` — pure props, no convex: the failing persona is
- *     selected by default with goals collapsed (expanding one lands on its
- *     diagnosis stage), the empty-stage copy refuses to read as a pass,
- *     sentiment is a pill only.
+ *  1. `SwarmFindingsTab` — the failing persona is selected by default with
+ *     goals collapsed (expanding one lands on its diagnosis stage), the
+ *     empty-stage copy refuses to read as a pass, sentiment is a pill only.
+ *     Session click-through is opt-in (`projectId`); these tests omit it.
  *  2. `SwarmRunDetail` wiring — Findings sits beside Insights | Sessions and
  *     a `?tab=findings` deep link renders it.
  */
@@ -87,6 +87,18 @@ const waveSignals: SwarmWaveSignals = {
   terminal: true,
 };
 
+const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
+  mockUseGoalOutcomeDrilldown: vi.fn(() => ({
+    drilldown: undefined,
+    isLoading: false,
+  })),
+}));
+
+vi.mock("@/hooks/useUsageInsights", () => ({
+  useGoalOutcomeDrilldown: (...args: unknown[]) =>
+    mockUseGoalOutcomeDrilldown(...args),
+}));
+
 vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
@@ -152,7 +164,6 @@ function renderDetail() {
       projectId="proj-1"
       personas={personas}
       onRunAgain={vi.fn()}
-      onOpenPersona={vi.fn()}
     />
   );
 }
@@ -167,6 +178,10 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  mockUseGoalOutcomeDrilldown.mockReturnValue({
+    drilldown: undefined,
+    isLoading: false,
+  });
 });
 
 // ── SwarmFindingsTab (pure props) ───────────────────────────────────────────
@@ -201,7 +216,7 @@ describe("SwarmFindingsTab", () => {
     );
   });
 
-  it("renders the verbatim empty-stage copy and the do-not-infer-pass legend", () => {
+  it("renders the verbatim empty-stage copy", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -215,12 +230,9 @@ describe("SwarmFindingsTab", () => {
     expect(screen.getByTestId("findings-empty-stage").textContent).toBe(
       EMPTY_STAGE_COPY
     );
-    expect(screen.getByTestId("findings-legend").textContent).toContain(
-      "No finding · do not infer pass"
-    );
   });
 
-  it("switches personas by tab and shows the pill-only sentiment with its disclaimer", () => {
+  it("switches personas by tab", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -234,14 +246,10 @@ describe("SwarmFindingsTab", () => {
     fireEvent.click(jonahTab);
     const panel = screen.getByTestId("findings-persona-card");
     expect(within(panel).getByText("Jonah Okoye")).toBeInTheDocument();
-    expect(panel.textContent).toContain("not a score for the person");
+    expect(panel.textContent).not.toContain("not a score for the person");
     expect(within(panel).getByTestId("findings-persona-meta").textContent).toBe(
       "New hire · 4 sessions"
     );
-    // Jonah landed — pill says Relieved, and no card wash exists (tone lives
-    // on the pill element only).
-    const pills = within(panel).getAllByTestId("findings-sentiment-pill");
-    expect(pills.some((p) => p.textContent === "Relieved")).toBe(true);
   });
 
   it("opens an exemplar session from an evidence row", () => {
@@ -257,6 +265,56 @@ describe("SwarmFindingsTab", () => {
     fireEvent.click(screen.getByTestId("findings-goal-row"));
     fireEvent.click(screen.getByTestId("findings-evidence-open-session"));
     expect(onOpenSession).toHaveBeenCalledWith("sess-1");
+    expect(
+      screen.queryByTestId("findings-goal-sessions")
+    ).not.toBeInTheDocument();
+  });
+
+  it("lists this goal's sessions for click-through when a project is in scope", () => {
+    const onOpenSession = vi.fn();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          {
+            _id: "sess-a",
+            firstMessagePreview: "Pull the proposal-stage prospects",
+            lastActivityAt: NOW,
+          },
+        ],
+        nextBefore: null,
+        total: 4,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    render(
+      <SwarmFindingsTab
+        wave={wave()}
+        waveSignals={waveSignals}
+        personas={personas}
+        onOpenSession={onOpenSession}
+        projectId="proj-1"
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    const whatHappened = screen.getByTestId("findings-stage-evidence");
+    expect(
+      within(whatHappened).getByTestId("findings-goal-sessions")
+    ).toBeInTheDocument();
+    expect(
+      within(whatHappened).getByTestId("findings-evidence-sessions-toggle")
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("findings-goal-session"));
+    expect(onOpenSession).toHaveBeenCalledWith("sess-a");
+    expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: {
+          kind: "swarm",
+          projectId: "proj-1",
+          journeyRunIds: ["run-1"],
+        },
+      })
+    );
   });
 
   it("survives a legacy wave with no signals (no crash)", () => {
@@ -287,7 +345,7 @@ describe("SwarmFindingsTab", () => {
       />
     );
     expect(screen.getByTestId("findings-headline").textContent).toBe(
-      'Maya Chen left lost. "Export the board" broke at discovery.'
+      '"Export the board" broke at discovery.'
     );
     expect(screen.getByText(/Choose a persona/i)).toBeInTheDocument();
   });

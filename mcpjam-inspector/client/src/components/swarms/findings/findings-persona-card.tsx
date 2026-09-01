@@ -1,7 +1,7 @@
 /**
  * The selected persona's panel: identity aside (avatar, name, meta, issue
- * one-liner, sentiment pill + disclaimer) beside the "Goals they tried"
- * accordion. Expanding a goal mounts `FindingsGoalInspect` inline.
+ * one-liner) beside the "Goals they tried" accordion. Expanding a goal
+ * mounts `FindingsGoalInspect` inline.
  */
 
 import { ChevronDown } from "lucide-react";
@@ -20,6 +20,7 @@ export function FindingsPersonaCard({
   selectedStage,
   onSelectStage,
   onOpenSession,
+  projectId,
 }: {
   persona: PersonaFindingsModel;
   /** id of the tab that labels this panel (aria wiring). */
@@ -29,6 +30,7 @@ export function FindingsPersonaCard({
   selectedStage: JourneyStageId;
   onSelectStage: (stage: JourneyStageId) => void;
   onOpenSession?: (sessionId: string) => void;
+  projectId?: string;
 }) {
   return (
     <section
@@ -65,11 +67,6 @@ export function FindingsPersonaCard({
           data-testid="findings-persona-issue"
         >
           {persona.issue}
-        </p>
-        <p className="mt-3.5 text-[11px] leading-relaxed text-muted-foreground">
-          <SentimentPill sentiment={persona.sentiment} className="mr-1.5" />
-          is the inferred feeling attached to the experience, not a score for
-          the person.
         </p>
       </aside>
 
@@ -116,6 +113,7 @@ export function FindingsPersonaCard({
                     selectedStage={selectedStage}
                     onSelectStage={onSelectStage}
                     onOpenSession={onOpenSession}
+                    projectId={projectId}
                   />
                 </div>
               ) : null}

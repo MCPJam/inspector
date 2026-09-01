@@ -1,7 +1,7 @@
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
- * Chrome: identity row (back · title · time · actions) above Findings |
+ * Chrome: identity row (back · title · actions) above Findings |
  * Insights | Sessions. Findings is the default landing tab.
  *
  * This page is also where a live run lives once the create wizard is left: the
@@ -13,11 +13,6 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
 import {
@@ -40,7 +35,6 @@ import {
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
-import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
@@ -77,8 +71,6 @@ export interface SwarmRunDetailProps {
    * coordinator (idempotency / quota). Returns after all launches settle.
    */
   onRunAgain: (journeyRefIds: string[]) => Promise<void>;
-  /** Jump to list Personas with this persona selected. */
-  onOpenPersona: (personaName: string) => void;
 }
 
 export function SwarmRunDetail({
@@ -87,7 +79,6 @@ export function SwarmRunDetail({
   personas,
   hosts = [],
   onRunAgain,
-  onOpenPersona,
 }: SwarmRunDetailProps) {
   const navigate = useAppNavigate();
   const tabParam = useCurrentSearchParam("tab");
@@ -290,21 +281,12 @@ export function SwarmRunDetail({
         onBack={() => navigate(routePaths.swarms)}
         backTestId="swarm-run-detail-back"
         title={
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-            <h1
-              className="truncate text-xl font-bold tracking-tight text-foreground"
-              data-testid="swarm-run-detail-title"
-            >
-              {title}
-            </h1>
-            <span
-              className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              data-testid="swarm-run-detail-time"
-            >
-              {formatSwarmAbsoluteTime(wave.createdAt)}
-            </span>
-            <DetailPersonasChip wave={wave} onOpenPersona={onOpenPersona} />
-          </div>
+          <h1
+            className="truncate text-xl font-bold tracking-tight text-foreground"
+            data-testid="swarm-run-detail-title"
+          >
+            {title}
+          </h1>
         }
         actions={
           <>
@@ -396,6 +378,7 @@ export function SwarmRunDetail({
               waveSignals={waveSignals}
               personas={personas}
               onOpenSession={handleOpenSession}
+              projectId={projectId ?? undefined}
             />
           </div>
         ) : null}
@@ -452,71 +435,5 @@ export function SwarmRunDetail({
         ) : null}
       </div>
     </div>
-  );
-}
-
-/** Compact persona chip in the detail header — names open from a popover. */
-function DetailPersonasChip({
-  wave,
-  onOpenPersona,
-}: {
-  wave: SwarmWave;
-  onOpenPersona: (personaName: string) => void;
-}) {
-  const rows = useMemo(() => {
-    const byName = new Map<string, { name: string; journeyCount: number }>();
-    for (const run of wave.runs) {
-      const existing = byName.get(run.personaName);
-      if (existing) existing.journeyCount += 1;
-      else
-        byName.set(run.personaName, { name: run.personaName, journeyCount: 1 });
-    }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [wave.runs]);
-
-  if (rows.length === 0) return null;
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
-          aria-label={`${rows.length} ${
-            rows.length === 1 ? "persona" : "personas"
-          }`}
-        >
-          {rows.length} {rows.length === 1 ? "persona" : "personas"}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 max-w-[90vw] p-3">
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          data-testid="swarm-run-detail-personas"
-        >
-          {rows.map((row) => (
-            <button
-              key={row.name}
-              type="button"
-              title={
-                row.journeyCount === 1
-                  ? row.name
-                  : `${row.name} · ${row.journeyCount} goals`
-              }
-              className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-border/50 bg-muted/25 px-2 py-0.5 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/50 hover:text-foreground"
-              onClick={() => onOpenPersona(row.name)}
-              data-testid="swarm-run-detail-persona"
-            >
-              <span className="truncate">{row.name}</span>
-              {row.journeyCount > 1 ? (
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {row.journeyCount}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }

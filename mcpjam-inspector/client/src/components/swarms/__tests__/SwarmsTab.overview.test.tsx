@@ -718,15 +718,10 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.queryByText(/Some launches did not reach a session/i)).toBeNull();
   });
 
-  it("shows persona chips and wave-scoped Sankey on the Insights tab", async () => {
+  it("shows wave-scoped Sankey on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
 
-    fireEvent.click(screen.getByRole("button", { name: "2 personas" }));
-    expect(await screen.findByTestId("swarm-run-detail-personas")).toBeTruthy();
-    expect(screen.getAllByTestId("swarm-run-detail-persona").length).toBeGreaterThan(
-      0
-    );
     fireEvent.click(screen.getByRole("button", { name: "Insights" }));
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
     const sankeyCall = queryCalls.find(

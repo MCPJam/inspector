@@ -655,18 +655,6 @@ export function SwarmsTab({
     },
     [launchJourney],
   );
-  const handleOpenPersonaFromDetail = useCallback(
-    (personaName: string) => {
-      const match = (personas ?? []).find(
-        (p) => p.name.toLowerCase() === personaName.toLowerCase(),
-      );
-      if (match) setSelectedPersonaId(match._id);
-      setViewMode("journeys");
-      navigate(routePaths.swarms);
-    },
-    [navigate, personas],
-  );
-
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
   const resolvePersona = (raw: unknown): Persona => {
@@ -1021,7 +1009,6 @@ export function SwarmsTab({
           personas={personas ?? []}
           hosts={hosts ?? []}
           onRunAgain={handleRunAgainFromDetail}
-          onOpenPersona={handleOpenPersonaFromDetail}
         />
       </div>
     );

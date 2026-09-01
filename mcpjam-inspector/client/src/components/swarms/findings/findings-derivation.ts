@@ -442,7 +442,7 @@ export function deriveSwarmFindingsModel(args: {
     }
   }
 
-  // Group goals under personas, alphabetical like `DetailPersonasChip`.
+  // Group goals under personas, alphabetical.
   const byPersona = new Map<string, SwarmOverviewRun[]>();
   for (const run of runs) {
     const list = byPersona.get(run.personaName);

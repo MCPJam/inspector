@@ -1,16 +1,17 @@
 /**
  * The expanded panel under a goal row: the 6-stage user-value chain as
- * buttons, the selected stage's evidence, the "Journey read" diagnosis, and
- * the tone legend.
+ * buttons and the selected stage's evidence.
  *
  * The empty-stage copy is verbatim and load-bearing: a stage with no
- * evidence is UNKNOWN, and both the copy and the legend refuse to let it
- * read as a pass.
+ * evidence is UNKNOWN and must not read as a pass.
  */
 
+import { useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { JOURNEY_STAGES, type JourneyStageId } from "./journey-stages";
 import type { GoalFindingsModel, StageState } from "./findings-derivation";
+import { FindingsGoalSessions } from "./findings-goal-sessions";
 
 export const EMPTY_STAGE_COPY =
   "No finding landed on this stage. This is not evidence that the stage passed.";
@@ -41,15 +42,24 @@ export function FindingsGoalInspect({
   selectedStage,
   onSelectStage,
   onOpenSession,
+  projectId,
 }: {
   goal: GoalFindingsModel;
   selectedStage: JourneyStageId;
   onSelectStage: (stage: JourneyStageId) => void;
   onOpenSession?: (sessionId: string) => void;
+  /** When set, the inspect panel pages this goal's sessions for click-through. */
+  projectId?: string;
 }) {
   const stageMeta = JOURNEY_STAGES.find((s) => s.id === selectedStage)!;
   const stageModel = goal.stages[selectedStage];
   const evidencePanelId = `findings-stage-evidence-${goal.runId}`;
+  const canListSessions = Boolean(projectId && onOpenSession);
+  const [openEvidence, setOpenEvidence] = useState(canListSessions ? 0 : -1);
+
+  useEffect(() => {
+    setOpenEvidence(canListSessions ? 0 : -1);
+  }, [selectedStage, goal.runId, canListSessions]);
 
   return (
     <article
@@ -123,7 +133,7 @@ export function FindingsGoalInspect({
         })}
         </ol>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(250px,0.75fr)]">
+        <div className="mt-3">
           <section
             className="rounded-xl border border-white/12 bg-white/[0.045] p-4 sm:p-5"
             data-testid="findings-stage-evidence"
@@ -149,80 +159,106 @@ export function FindingsGoalInspect({
             </p>
             {stageModel.evidence.length > 0 ? (
               <div className="mt-4 divide-y divide-white/10 border-t border-white/10">
-                {stageModel.evidence.map((evidence, i) => (
-                  <div
-                    key={`${evidence.observation}-${i}`}
-                    className="py-3.5 first:pt-4"
-                    data-testid="findings-evidence-row"
-                  >
-                    <p className="text-sm font-semibold leading-relaxed text-zinc-50">
-                      {evidence.observation}
-                    </p>
-                    <p className="mt-1 font-mono text-[10px] text-zinc-500">
-                      {evidence.meta}
-                    </p>
-                    {evidence.sessionId && onOpenSession ? (
-                      <button
-                        type="button"
-                        className="mt-2 text-[11px] font-medium text-orange-300 underline-offset-4 hover:text-orange-200 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
-                        onClick={() => onOpenSession(evidence.sessionId!)}
-                        data-testid="findings-evidence-open-session"
-                      >
-                        Open source session →
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
+                {stageModel.evidence.map((evidence, i) => {
+                  const expanded = openEvidence === i;
+                  return (
+                    <div
+                      key={`${evidence.observation}-${i}`}
+                      className="py-3.5 first:pt-4"
+                      data-testid="findings-evidence-row"
+                    >
+                      <p className="text-sm font-semibold leading-relaxed text-zinc-50">
+                        {evidence.observation}
+                      </p>
+                      {canListSessions ? (
+                        <button
+                          type="button"
+                          className="mt-1.5 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setOpenEvidence(expanded ? -1 : i)
+                          }
+                          data-testid="findings-evidence-sessions-toggle"
+                        >
+                          {evidence.meta}
+                          <ChevronDown
+                            className={cn(
+                              "h-3.5 w-3.5 text-zinc-500 transition-transform",
+                              expanded && "rotate-180"
+                            )}
+                            aria-hidden
+                          />
+                        </button>
+                      ) : (
+                        <p className="mt-1 font-mono text-[10px] text-zinc-500">
+                          {evidence.meta}
+                        </p>
+                      )}
+                      {evidence.sessionId && onOpenSession && !canListSessions ? (
+                        <button
+                          type="button"
+                          className="mt-2 text-[11px] font-medium text-orange-300 underline-offset-4 hover:text-orange-200 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
+                          onClick={() => onOpenSession(evidence.sessionId!)}
+                          data-testid="findings-evidence-open-session"
+                        >
+                          Open source session →
+                        </button>
+                      ) : null}
+                      {canListSessions && expanded && projectId && onOpenSession ? (
+                        <FindingsGoalSessions
+                          key={goal.runId}
+                          projectId={projectId}
+                          runId={goal.runId}
+                          expectedCount={goal.sessions}
+                          onOpenSession={onOpenSession}
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
-              <p
-                className="mt-4 border-t border-white/10 pt-4 text-xs italic leading-relaxed text-zinc-400"
-                data-testid="findings-empty-stage"
-              >
-                {EMPTY_STAGE_COPY}
-              </p>
+              <div className="mt-4 border-t border-white/10 pt-4">
+                <p
+                  className="text-xs italic leading-relaxed text-zinc-400"
+                  data-testid="findings-empty-stage"
+                >
+                  {EMPTY_STAGE_COPY}
+                </p>
+                {canListSessions && projectId && onOpenSession ? (
+                  <>
+                    <button
+                      type="button"
+                      className="mt-3 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
+                      aria-expanded={openEvidence === 0}
+                      onClick={() =>
+                        setOpenEvidence(openEvidence === 0 ? -1 : 0)
+                      }
+                      data-testid="findings-evidence-sessions-toggle"
+                    >
+                      {goal.sessions} session{goal.sessions === 1 ? "" : "s"}
+                      <ChevronDown
+                        className={cn(
+                          "h-3.5 w-3.5 text-zinc-500 transition-transform",
+                          openEvidence === 0 && "rotate-180"
+                        )}
+                        aria-hidden
+                      />
+                    </button>
+                    {openEvidence === 0 ? (
+                      <FindingsGoalSessions
+                        key={goal.runId}
+                        projectId={projectId}
+                        runId={goal.runId}
+                        expectedCount={goal.sessions}
+                        onOpenSession={onOpenSession}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
             )}
           </section>
-          <aside
-            className="rounded-xl border border-orange-200/20 bg-orange-300 p-4 text-zinc-950 sm:p-5"
-            data-testid="findings-diagnosis"
-          >
-            <p className="font-mono text-[8px] font-bold uppercase tracking-[0.16em] text-zinc-700/80">
-              Journey read
-            </p>
-            <h4 className="mt-2 text-lg font-semibold tracking-[-0.02em]">
-              {goal.diagnosis.title}
-            </h4>
-            <p className="mt-2 text-xs leading-relaxed text-zinc-800">
-              {goal.diagnosis.detail}
-            </p>
-            <div className="mt-5 border-t border-zinc-950/15 pt-3 text-[10px] font-medium leading-relaxed text-zinc-700">
-              Diagnosis starts at the earliest stage with a clear break.
-            </div>
-          </aside>
-        </div>
-
-        <div
-          className="mt-4 grid gap-1.5 border-t border-white/10 pt-3 text-[10px] text-zinc-500 sm:grid-cols-2 lg:grid-cols-4"
-          aria-label="Stage state legend"
-          data-testid="findings-legend"
-        >
-          <div className="flex items-center gap-2">
-            <i className="size-1.5 rounded-full bg-emerald-400" />
-            <span>Held · positive evidence</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <i className="size-1.5 rounded-full bg-amber-400" />
-            <span>Warning · friction or weak outcome</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <i className="size-1.5 rounded-full bg-red-400" />
-            <span>Failed · clear break</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <i className="size-1.5 rounded-full bg-zinc-500" />
-            <span>No finding · do not infer pass</span>
-          </div>
         </div>
       </div>
     </article>

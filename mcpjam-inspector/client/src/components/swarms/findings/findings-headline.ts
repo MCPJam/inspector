@@ -12,12 +12,8 @@ import type {
   SwarmFindingsModel,
 } from "./findings-derivation";
 
-/** How the persona "left" — the sentiment word, lowercased for prose. */
-function feelingWord(persona: PersonaFindingsModel): string {
-  return persona.sentiment.tone === "fail"
-    ? persona.sentiment.label.toLowerCase()
-    : "uneasy";
-}
+const HEADLINE_MAX_WORDS = 10;
+const GOAL_TITLE_MAX_WORDS = 4;
 
 function firstFailingGoal(
   persona: PersonaFindingsModel
@@ -25,20 +21,40 @@ function firstFailingGoal(
   return persona.goals.find((goal) => goal.diagnosisStage !== null);
 }
 
-/** Keep quoted goal titles short enough to sit on one display line. */
-export function shortenGoalTitle(title: string, max = 40): string {
-  const trimmed = title.trim();
-  if (trimmed.length <= max) return trimmed;
-  const slice = trimmed.slice(0, max);
-  const breakAt = slice.lastIndexOf(" ");
-  const base = (breakAt > 16 ? slice.slice(0, breakAt) : slice).trimEnd();
-  return `${base}…`;
+export function countWords(text: string): number {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+/** Hard cap — the summary card is a headline, not a paragraph. */
+export function limitWords(text: string, max = HEADLINE_MAX_WORDS): string {
+  const words = text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length <= max) return words.join(" ");
+  return `${words.slice(0, max).join(" ")}…`;
+}
+
+/** Keep quoted goal titles to a few words so the headline stays ≤10. */
+export function shortenGoalTitle(
+  title: string,
+  maxWords = GOAL_TITLE_MAX_WORDS
+): string {
+  const words = title
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length <= maxWords) return words.join(" ");
+  return `${words.slice(0, maxWords).join(" ")}…`;
 }
 
 /**
  * Branch order is the contract: broken goals outrank friction outranks
- * landed outranks silence. Lead with one persona; extra failures become a
- * count so the summary card stays a headline, not a report.
+ * landed outranks silence. Persona names stay off the line — they blow
+ * the 10-word cap. Extra failures become a count.
  */
 export function composeFindingsHeadline(model: SwarmFindingsModel): string {
   const failingPersonas = model.personas.filter(
@@ -50,25 +66,27 @@ export function composeFindingsHeadline(model: SwarmFindingsModel): string {
     const goal = firstFailingGoal(lead)!;
     const stage = journeyStageTitle(goal.diagnosisStage!).toLowerCase();
     const title = shortenGoalTitle(goal.title);
-    let headline = `${lead.name} left ${feelingWord(lead)}. "${title}" broke at ${stage}.`;
     const others = failingPersonas.length - 1;
-    if (others > 0) {
-      headline += ` ${others} other${others === 1 ? "" : "s"} never landed.`;
-    }
-    return headline;
+    const headline =
+      others > 0
+        ? `"${title}" broke at ${stage}. ${failingPersonas.length} stalled.`
+        : `"${title}" broke at ${stage}.`;
+    return limitWords(headline);
   }
 
   const goals = model.personas.flatMap((persona) => persona.goals);
   const frictionGoals = goals.filter((goal) => goal.sentiment.tone === "warn");
   if (frictionGoals.length > 0) {
-    return `No goal broke outright, but ${frictionGoals.length} of ${goals.length} goals showed friction.`;
+    return limitWords(
+      `${frictionGoals.length} of ${goals.length} goals showed friction.`
+    );
   }
 
   if (goals.some((goal) => goal.sentiment.label === "Landed")) {
-    return `Every graded goal landed. ${model.sessionCount} sessions, no failures found.`;
+    return "Every graded goal landed.";
   }
 
-  return `No findings yet. ${model.sessionCount} sessions ran; nothing has been graded.`;
+  return "No findings yet.";
 }
 
 /**
@@ -93,9 +111,7 @@ export function deriveHonestyFootnotes(args: {
     notes.push("This swarm is still running — findings may change");
   }
   const { graded, total } = signals.judgeCoverage;
-  if (graded === 0 && total > 0) {
-    notes.push("No judge graded these sessions");
-  } else if (graded > 0 && graded < total) {
+  if (graded > 0 && graded < total) {
     notes.push(`Judge covered ${graded} of ${total} sessions`);
   }
   if (signals.truncated) {

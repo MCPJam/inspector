@@ -34,7 +34,7 @@ export function FindingsSummaryCard({
         </p>
         <h2
           id="swarm-findings-headline"
-          className="mt-1.5 w-full text-[2rem] font-semibold leading-[1.2] tracking-[-0.03em] text-foreground"
+          className="mt-1.5 max-w-md text-pretty text-[2rem] font-semibold leading-[1.2] tracking-[-0.03em] text-foreground"
           data-testid="findings-headline"
         >
           {headline}

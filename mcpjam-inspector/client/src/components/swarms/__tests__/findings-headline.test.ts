@@ -4,6 +4,7 @@ import type { SwarmOverviewRun, SwarmWaveSignals } from "@/lib/swarm-api";
 import { deriveSwarmFindingsModel } from "../findings/findings-derivation";
 import {
   composeFindingsHeadline,
+  countWords,
   deriveHonestyFootnotes,
   shortenGoalTitle,
 } from "../findings/findings-headline";
@@ -64,18 +65,18 @@ const failingRun = (name: string, runId: string, journeyRefId: string) =>
   });
 
 describe("shortenGoalTitle", () => {
-  it("leaves short titles intact and ellipsizes long ones at a word break", () => {
+  it("leaves short titles intact and caps long ones at four words", () => {
     expect(shortenGoalTitle("Export the board")).toBe("Export the board");
     expect(
       shortenGoalTitle(
         "Execute custom code to sync external data into monday.com"
       )
-    ).toBe("Execute custom code to sync external…");
+    ).toBe("Execute custom code to…");
   });
 });
 
 describe("composeFindingsHeadline", () => {
-  it("leads with one failing persona and counts the rest", () => {
+  it("names the broken goal and counts stalled personas, in 10 words", () => {
     const headline = composeFindingsHeadline(
       modelFor([
         failingRun("Maya Chen", "run-1", "journey-1"),
@@ -83,11 +84,8 @@ describe("composeFindingsHeadline", () => {
         failingRun("Ada Third", "run-3", "journey-3"),
       ])
     );
-    // Personas order alphabetically, so Ada leads; Jonah and Maya are the
-    // "2 others". Evidence stays off the headline.
-    expect(headline).toBe(
-      'Ada Third left stalled. "Export the board" broke at user value. 2 others never landed.'
-    );
+    expect(headline).toBe('"Export the board" broke at user value. 3 stalled.');
+    expect(countWords(headline)).toBeLessThanOrEqual(10);
     expect(headline).not.toContain("Goal completion missed");
     expect(headline).not.toContain("Maya Chen");
   });
@@ -105,9 +103,8 @@ describe("composeFindingsHeadline", () => {
         }),
       ])
     );
-    expect(headline).toBe(
-      "No goal broke outright, but 1 of 2 goals showed friction."
-    );
+    expect(headline).toBe("1 of 2 goals showed friction.");
+    expect(countWords(headline)).toBeLessThanOrEqual(10);
   });
 
   it("celebrates only when every graded goal landed", () => {
@@ -118,9 +115,8 @@ describe("composeFindingsHeadline", () => {
         }),
       ])
     );
-    expect(headline).toBe(
-      "Every graded goal landed. 12 sessions, no failures found."
-    );
+    expect(headline).toBe("Every graded goal landed.");
+    expect(countWords(headline)).toBeLessThanOrEqual(10);
   });
 
   it("says nothing has been graded when nothing has", () => {
@@ -135,9 +131,8 @@ describe("composeFindingsHeadline", () => {
         null
       )
     );
-    expect(headline).toBe(
-      "No findings yet. 4 sessions ran; nothing has been graded."
-    );
+    expect(headline).toBe("No findings yet.");
+    expect(countWords(headline)).toBeLessThanOrEqual(10);
   });
 });
 
@@ -153,7 +148,7 @@ describe("deriveHonestyFootnotes", () => {
     ).toContain("Rubric findings only");
   });
 
-  it("flags no judge, partial judge, truncation, low confidence, and a live wave", () => {
+  it("flags partial judge, truncation, low confidence, and a live wave", () => {
     const notes = deriveHonestyFootnotes({
       signals: signals({
         judgeCoverage: { graded: 0, total: 8 },
@@ -163,7 +158,7 @@ describe("deriveHonestyFootnotes", () => {
       }),
       hasGroupId: true,
     });
-    expect(notes).toContain("No judge graded these sessions");
+    expect(notes).not.toContain("No judge graded these sessions");
     expect(notes).toContain("Session scan hit its cap — counts cover a subset");
     expect(notes).toContain(
       "Most sessions are unanalyzed — treat counts as partial"
