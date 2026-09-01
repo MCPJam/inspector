@@ -1140,11 +1140,31 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           captureApplied = ticket;
           return true;
         };
+        /**
+         * A picture, or nothing to say.
+         *
+         * An answer that carries no image is NOT a blank page — it is a
+         * capture the browser could not produce right now: nothing fit the
+         * byte budget, or another capture was already outstanding and the
+         * provider holds those at one. Writing it would replace a good picture
+         * with an empty pane, and — because a write claims the slot — would
+         * also reject the real capture still on its way. The poll runs once a
+         * second, so a browser that takes longer than that per capture would
+         * discard EVERY successful result and leave the pane blank for as long
+         * as it stayed slow.
+         *
+         * Same reasoning as the failure case above, one step further in: a
+         * successful response is not the same thing as a picture.
+         */
+        const applies = (shot: string | undefined) =>
+          shot !== undefined && newest();
         if (!options?.silent) {
           const result = (await get().sendCommand({
             type: "capture_screenshot",
           })) as { screenshotBase64?: string } | undefined;
-          if (newest()) set({ lastScreenshot: result?.screenshotBase64 });
+          if (applies(result?.screenshotBase64)) {
+            set({ lastScreenshot: result?.screenshotBase64 });
+          }
           return;
         }
         // The polling path, which runs once a second and must be INVISIBLE in
@@ -1164,7 +1184,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // this write after the session changed would hang the OLD page's paint
         // in the new session's pane, where nothing would ever correct it.
         if (get().session?.sessionId !== sessionId) return;
-        if (result.ok && newest()) {
+        if (result.ok && applies(result.data.screenshotBase64)) {
           set({ lastScreenshot: result.data.screenshotBase64 });
         }
       },

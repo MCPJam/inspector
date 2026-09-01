@@ -967,6 +967,45 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("older");
   });
 
+  it("keeps the picture when a poll answers without one", async () => {
+    await openSession();
+    const releases: Array<(response: Response) => void> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+
+    const first = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    const second = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+
+    // 200, and no picture: the provider holds outstanding captures at one, so
+    // a browser slower than the poll's one-second cadence answers the next
+    // tick this way. It is "nothing to show you right now", NOT "the page is
+    // blank".
+    releases[1](new Response("{}", { status: 200 }));
+    await second;
+
+    // The real capture, still on its way when that landed. Had the empty
+    // answer claimed the slot, this would be rejected as stale — and with a
+    // browser that stays slow, so would every one after it, leaving the pane
+    // blank for as long as it lasted.
+    releases[0](
+      new Response(JSON.stringify({ screenshotBase64: "real" }), {
+        status: 200,
+      }),
+    );
+    await first;
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("real");
+  });
+
   it("abandons the rest of a split gesture when the session turns over", async () => {
     await openSession();
     const bodies: string[] = [];
