@@ -893,11 +893,13 @@ export async function runHarnessTurn(
       // WS3: requireToolApproval is now SUPPORTED via the harness's native
       // permissionMode (built-ins) + toolApproval (host tools) — the turn pauses
       // on a `tool-approval-request`, we surface MCPJam's approval chunk, then
-      // resume with the decision. NOTE: this gates built-in + host-executed
-      // tools only; MCP-server tools (via .mcp.json) have no harness approval
-      // knob, so harness approval is weaker than emulated — the availability
-      // preflight still rejects approval hosts WITH selected MCP servers
-      // (adapter.supportsMcpToolApproval stays false).
+      // resume with the decision. This is ONE path for all three surfaces —
+      // built-ins, host-executed tools, and (for an adapter whose permission
+      // mode reaches them) MCP-server tools delivered through `.mcp.json`. The
+      // adapter decides which calls pause; nothing here is per-surface, which
+      // is why widening Claude Code's coverage needed no change on this side.
+      // The availability preflight still refuses a harness that cannot pause on
+      // the surface its MCP tools actually run on — Codex, today.
       // Detect an approval-response resume up front (the inbound messages carry
       // the user's decision as trailing tool-approval-response parts); a resume
       // continues the paused turn rather than starting a new prompt.
