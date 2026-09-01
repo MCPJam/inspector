@@ -34,6 +34,7 @@ import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
+import { reconcileTurnEvidence } from "./harness-evidence-turn.js";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
@@ -492,6 +493,17 @@ export async function driveHostedEvalTurn(
   // gives the parsed `{ code?, message, details? }` so failure branches can
   // surface the actual reason instead of the generic fallback.
   let lastEngineError: MCPJamEngineErrorEvent | undefined;
+  /**
+   * What the run FROZE about evidence, as the mint reported it on this turn.
+   *
+   * Undefined until the harness turn mints — and on the emulated path, never.
+   * Read rather than derived: this is the decision the control plane recorded
+   * at RUN CREATION, so a flag flipped mid-run cannot change what this turn
+   * does.
+   */
+  let harnessEvidence:
+    | { captureEnabled: boolean; gradingSource: string; turnId: string }
+    | undefined;
 
   // Cursor + Codex review fix: thread `toolChoice` AND `maxOutputTokens`
   // through `extraBodyFields` since the engine options don't expose them as
@@ -566,11 +578,6 @@ export async function driveHostedEvalTurn(
             ...(params.evalIterationId
               ? { evalIterationId: params.evalIterationId }
               : {}),
-            ...(params.onHarnessEvidenceDecision
-              ? {
-                  onHarnessEvidenceDecision: params.onHarnessEvidenceDecision,
-                }
-              : {}),
             ...(params.harnessToolPolicy
               ? { harnessToolPolicy: params.harnessToolPolicy }
               : {}),
@@ -640,6 +647,14 @@ export async function driveHostedEvalTurn(
       onEngineError: (event) => {
         lastEngineError = event;
       },
+      // The run's FROZEN evidence decision, as the mint reported it. Captured
+      // here as well as forwarded to the caller: this turn needs it to decide
+      // whether to read evidence at all, and the caller needs it to decide how
+      // the iteration is graded.
+      onHarnessEvidenceDecision: (decision) => {
+        harnessEvidence = decision;
+        params.onHarnessEvidenceDecision?.(decision);
+      },
       ...(browser.prepareAdvertisedTools
         ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
         : {}),
@@ -669,10 +684,28 @@ export async function driveHostedEvalTurn(
   // spans land with `stepIndex: -1` (no `prepareStep` bridge to the engine);
   // the engine's own LLM-step spans land on `turnTrace.spans` with correct
   // per-step indices. Merge both.
-  acc.capturedSpans.push(...traceCtx.recordedSpans);
-  if (turnResult.turnTrace?.spans?.length) {
-    acc.capturedSpans.push(...turnResult.turnTrace.spans);
-  }
+  //
+  // EVIDENCE runs BEFORE the drain, not after: the spans it annotates are the
+  // ones being pushed here, and annotating a copy the accumulator already
+  // holds would leave the persisted trace unprovenanced while the in-memory
+  // one looked right.
+  const turnSpans = [
+    ...traceCtx.recordedSpans,
+    ...(turnResult.turnTrace?.spans ?? []),
+  ];
+  const evidence = await reconcileTurnEvidence({
+    ...(params.evalIterationId
+      ? { iterationId: params.evalIterationId }
+      : {}),
+    ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
+    captureEnabled: harnessEvidence?.captureEnabled === true,
+    spans: turnSpans,
+    // The turn's OWN messages: the engine returns the full transcript, and
+    // reconciling against all of it would try to match this turn's evidence
+    // to earlier turns' calls.
+    newMessages: turnResult.messages.slice(messageCountBeforeTurn),
+  });
+  acc.capturedSpans.push(...evidence.spans);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink
   // rolls `accumulatedUsage` per step for live snapshots; this final
