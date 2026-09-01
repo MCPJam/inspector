@@ -51,6 +51,8 @@ import type {
   PlatformJourneyArchived,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformSecret,
+  PlatformSecretDeleted,
   PlatformRunCompare,
   PlatformRunScorecard,
   PlatformGuestExecution,
@@ -220,6 +222,26 @@ function pickReadinessStartBody(params: {
   return body;
 }
 
+/**
+ * Strip every trailing `/` from a base URL.
+ *
+ * `replace(/\/+$/, "")` is the shorter spelling and what the rest of the SDK
+ * uses, but CodeQL rates it `js/polynomial-redos` (high): on input shaped like
+ * `"a" + "/".repeat(n) + "b"` the engine retries `\/+$` from each position, so
+ * the match is O(n²) in the length of a caller-supplied `baseUrl`. Not a
+ * practical attack here — the caller owns the string — but this is the one
+ * occurrence CodeQL surfaces on a PR that edits this file, and a linear scan
+ * costs nothing.
+ *
+ * Behaviour is identical to the regex: every trailing slash removed, nothing
+ * else touched, `"/"`-only input collapsing to `""`.
+ */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") end -= 1;
+  return url.slice(0, end);
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -229,9 +251,8 @@ export class PlatformApiClient {
   private readonly extraHeaders?: Record<string, string>;
 
   constructor(options: PlatformApiClientOptions) {
-    this.baseUrl = (options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL).replace(
-      /\/+$/,
-      ""
+    this.baseUrl = stripTrailingSlashes(
+      options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
     this.getAuth = options.getAuth;
     // Native fetch must run with `this` bound to the global scope. Storing the
@@ -248,7 +269,7 @@ export class PlatformApiClient {
           Object.entries(options.extraHeaders).map(([name, value]) => [
             name.toLowerCase(),
             value,
-          ])
+          ]),
         )
       : undefined;
   }
@@ -550,13 +571,13 @@ export class PlatformApiClient {
 
   listServerGroups(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformServerGroup>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
       {},
-      options
+      options,
     );
   }
 
@@ -565,13 +586,13 @@ export class PlatformApiClient {
       projectId: string;
       body: { name: string; description?: string; serverIds: string[] };
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformServerGroup> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
       { body: params.body },
-      options
+      options,
     );
   }
 
@@ -3142,6 +3163,153 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Project secrets ───────────────────────────────────────────────────────
+  //
+  // WRITE-ONLY. Every method below returns metadata; none returns a value, and
+  // there is deliberately no method that could. A secret is written and
+  // delivered into a run, never read back.
+
+  /**
+   * List the project's secrets — METADATA ONLY.
+   *
+   * Returns project-shared secrets plus the CALLER'S OWN personal ones. Another
+   * member's personal secret is absent entirely: not redacted, not listed with
+   * a hidden value — its name never appears.
+   */
+  listSecrets(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformSecret>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/secrets`,
+      {},
+      options
+    );
+  }
+
+  /** One secret's metadata. Never its value. */
+  getSecret(
+    params: { projectId: string; secretId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSecret> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Create a secret.
+   *
+   * THE VALUE BECOMES VISIBLE TO WHATEVER CARRIES THIS CALL. It is in the
+   * request body, so it passes through whatever process, log, shell history or
+   * transcript the call is made from. Prefer reading it from a file, an
+   * environment variable, or stdin rather than pasting it into an argument.
+   *
+   * `delivery` is required, with no default, because it decides whether the
+   * value ends up INSIDE the sandbox:
+   *   - `"brokered"` — injected by the egress proxy outside the VM. The box
+   *     never holds it. Prevents extraction, not use, and works for HTTPS APIs
+   *     only.
+   *   - `"materialized"` — a real environment variable in the box, so a CLI can
+   *     read it. Extractable by design.
+   *
+   * `sharing` defaults to `"project"`. A non-admin asking for it is refused,
+   * not silently downgraded to personal — a downgrade would look like success
+   * and then not reach anyone else's sessions.
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, and worth passing: a retried create
+   * without one fails as a name conflict with the row the first attempt already
+   * made, which is indistinguishable from a genuine collision.
+   */
+  createSecret(
+    params: {
+      projectId: string;
+      name: string;
+      value: string;
+      description?: string;
+      delivery: "brokered" | "materialized";
+      brokerHosts?: string[];
+      brokerHeader?: string;
+      brokerTemplate?: string;
+      sharing?: "user" | "project";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSecret> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/secrets`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Rotate a secret's value and/or edit its delivery binding.
+   *
+   * ROTATION REACHES NEW RUNS ONLY. A session already running holds the old
+   * value — materialized in its box's environment, or inside an egress
+   * transform that cannot be read back — and there is no safe way to replace it
+   * mid-run.
+   *
+   * `name` and `sharing` are absent on purpose: both are immutable. Renaming
+   * would break the workflows that reference the environment variable, and
+   * re-sharing would change who has been handed the value without changing the
+   * value. Delete and recreate for either.
+   */
+  updateSecret(
+    params: {
+      projectId: string;
+      secretId: string;
+      value?: string;
+      /** `null` clears the description; omit to leave it unchanged. */
+      description?: string | null;
+      delivery?: "brokered" | "materialized";
+      brokerHosts?: string[];
+      brokerHeader?: string;
+      brokerTemplate?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSecret> {
+    const { projectId, secretId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/secrets/${encodeURIComponent(
+        secretId
+      )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Delete a secret — HARD. The row and the ciphertext both go.
+   *
+   * Not blocked when an environment still selects it: the selection resolver
+   * drops ids that no longer resolve, and refusing would make a leaked
+   * credential un-revokable until someone edited every environment naming it.
+   * Revocation is never gated on cleanup.
+   */
+  deleteSecret(
+    params: { projectId: string; secretId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSecretDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
   getJourney(
     params: { projectId: string; journeyId: string },
     options?: RequestOptions
@@ -4196,9 +4364,9 @@ export class PlatformApiClient {
       body && typeof body === "object" && !Array.isArray(body)
         ? (body as { code?: unknown; message?: unknown; details?: unknown })
         : undefined;
-    // Tracked, not just resolved: a caller cannot tell an assumed code from a
-    // server-sent one afterwards, and for 404 the difference decides whether
-    // the RESOURCE is missing or the ROUTE is. See `PlatformApiError.codeSource`.
+    // Track whether the server supplied a code. A status-derived 404 can mean
+    // an undeployed route, while an envelope code identifies a missing
+    // resource; callers need to distinguish those cases.
     const sentCode =
       typeof envelope?.code === "string" && envelope.code.length > 0
         ? envelope.code
