@@ -26,28 +26,28 @@
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^0.4.0",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@workos-inc/node": "^8.0.0",
-    "convex": "^1.31.4",
-    "jose": "^6.1.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "zod": "^4.1.13"
+    "convex": "^1.45.0",
+    "jose": "^6.2.10",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.5.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.2.1",
-    "cors": "^2.8.5",
+    "cors": "^2.8.6",
     "cross-env": "^10.1.0",
     "express": "^5.1.0",
     "typescript": "^5.9.3",
     "vite": "^6.0.0",
-    "vite-plugin-singlefile": "^2.3.0"
+    "vite-plugin-singlefile": "^2.3.3"
   },
   "overrides": {
     "shell-quote": "^1.8.4"
