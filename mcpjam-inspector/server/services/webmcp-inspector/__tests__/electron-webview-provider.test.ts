@@ -58,7 +58,8 @@ async function startSession(
   });
   const session = await provider.createSession({
     url: options.url ?? START_URL,
-    callbacks: options.callbacks ?? (recorder.callbacks as WebMcpSessionCallbacks),
+    callbacks:
+      options.callbacks ?? (recorder.callbacks as WebMcpSessionCallbacks),
   });
   return { session, guest, electron, recorder };
 }
@@ -77,9 +78,9 @@ describe("electron-webview provider — the ownership guard", () => {
   it("refuses a destroyed surface", async () => {
     const { guest, electron } = ownedGuest();
     guest.destroyed = true;
-    await expect(
-      startSession({ guest, electron }),
-    ).rejects.toBeInstanceOf(WebMcpWebviewAttachError);
+    await expect(startSession({ guest, electron })).rejects.toBeInstanceOf(
+      WebMcpWebviewAttachError,
+    );
   });
 
   it("refuses to attach to this app's OWN window", async () => {
@@ -134,9 +135,9 @@ describe("electron-webview provider — the ownership guard", () => {
       contents: [guest, host],
       windows: [{ webContents: host as unknown as WebContents }],
     });
-    await expect(
-      startSession({ guest, electron }),
-    ).rejects.toBeInstanceOf(WebMcpWebviewAttachError);
+    await expect(startSession({ guest, electron })).rejects.toBeInstanceOf(
+      WebMcpWebviewAttachError,
+    );
   });
 
   it("refuses a webview hosted by a window that is not ours", async () => {
@@ -149,9 +150,9 @@ describe("electron-webview provider — the ownership guard", () => {
     // wrong, so this proves that check is separately load-bearing.
     expect(guest.session).toBe(fakePartitionSession(WEBMCP_WEBVIEW_PARTITION));
     const electron = fakeElectron({ contents: [guest], windows: [] });
-    await expect(
-      startSession({ guest, electron }),
-    ).rejects.toBeInstanceOf(WebMcpWebviewAttachError);
+    await expect(startSession({ guest, electron })).rejects.toBeInstanceOf(
+      WebMcpWebviewAttachError,
+    );
   });
 
   it("says what to do when devtools hold the debugger slot", async () => {
@@ -193,9 +194,9 @@ describe("electron-webview provider — startup", () => {
     guest.debugger.emitCdp("Page.frameNavigated", {
       frame: { id: "main", url: "https://shop.test/cart" },
     });
-    expect(recorder.log.filter((e) => e === "tools" || e.startsWith("navigated:"))).toEqual(
-      ["navigated:https://shop.test/cart", "tools"],
-    );
+    expect(
+      recorder.log.filter((e) => e === "tools" || e.startsWith("navigated:")),
+    ).toEqual(["navigated:https://shop.test/cart", "tools"]);
   });
 
   it("reports a page with no WebMCP support as unsupported, and detaches", async () => {
@@ -408,7 +409,9 @@ describe("electron-webview provider — callbacks", () => {
       url: "https://auth.test/authorize",
     }) as {
       action: string;
-      overrideBrowserWindowOptions?: { webPreferences: Record<string, unknown> };
+      overrideBrowserWindowOptions?: {
+        webPreferences: Record<string, unknown>;
+      };
     };
     expect(recorder.popups).toEqual(["https://auth.test/authorize"]);
     // "Left open and un-driven": closing a popup, or folding it into the main

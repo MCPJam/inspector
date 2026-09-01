@@ -153,7 +153,9 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
         await Promise.resolve();
       });
       expect(startSession).not.toHaveBeenCalled();
-      expect(screen.getByText(/embedded browser did not start/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/embedded browser did not start/),
+      ).toBeInTheDocument();
       // And the dead surface is taken down rather than left on screen.
       expect(mountedWebview()).toBeNull();
     } finally {
@@ -287,7 +289,8 @@ describe("WebmcpInspectorTab — electron-webview transport", () => {
     ).toBeInTheDocument();
     // The exact trap the exhaustive branch exists to close: a new kind
     // inheriting the window arm's copy.
-    expect(screen.queryByText(/A browser window is open on this machine/))
-      .toBeNull();
+    expect(
+      screen.queryByText(/A browser window is open on this machine/),
+    ).toBeNull();
   });
 });

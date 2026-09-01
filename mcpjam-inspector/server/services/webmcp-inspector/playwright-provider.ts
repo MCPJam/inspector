@@ -32,10 +32,7 @@ import {
   PAGE_API_PROBE,
   webMcpHeadlessRequested,
 } from "./launch-args";
-import {
-  WebMcpBridge,
-  type CdpLike,
-} from "../browserd/daemon/webmcp-bridge";
+import { WebMcpBridge, type CdpLike } from "../browserd/daemon/webmcp-bridge";
 import {
   SCREENSHOT_MAX_BYTES,
   SCREENSHOT_WIDTH,

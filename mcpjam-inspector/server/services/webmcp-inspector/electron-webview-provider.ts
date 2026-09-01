@@ -247,9 +247,8 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
       // domain even where it works, and `WebMCP.enable` resolves even where the
       // feature is switched off.
       return (
-        (await this.wc
-          .executeJavaScript(PAGE_API_PROBE)
-          .catch(() => false)) === true
+        (await this.wc.executeJavaScript(PAGE_API_PROBE).catch(() => false)) ===
+        true
       );
     });
     if (navigationFailure) throw navigationFailure;

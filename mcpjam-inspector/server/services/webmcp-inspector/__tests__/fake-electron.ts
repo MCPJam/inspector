@@ -93,9 +93,10 @@ export function fakeImage(options: FakeImageOptions): FakeImage {
     toJPEG: (quality: number) =>
       Buffer.alloc(
         resized
-          ? (options.resizedJpegBytes ?? ((q: number) => options.jpegBytes(q) / 4))(
-              quality,
-            )
+          ? (
+              options.resizedJpegBytes ??
+              ((q: number) => options.jpegBytes(q) / 4)
+            )(quality)
           : options.jpegBytes(quality),
         0x41,
       ),
@@ -256,10 +257,11 @@ export function fakeElectron(options: FakeElectronOptions = {}): FakeElectron {
     webContents: {
       fromId: (id: number) =>
         contents.find((wc) => wc.id === id) as unknown as
-          | WebContents
-          | undefined,
+          WebContents | undefined,
     },
-    session: { fromPartition: (partition: string) => fakePartitionSession(partition) },
+    session: {
+      fromPartition: (partition: string) => fakePartitionSession(partition),
+    },
     BrowserWindow: { getAllWindows: () => options.windows ?? [] },
   };
 }

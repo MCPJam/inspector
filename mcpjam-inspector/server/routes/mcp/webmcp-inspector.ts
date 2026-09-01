@@ -327,7 +327,7 @@ webmcpInspector.post("/sessions", async (c) => {
       return c.json(
         {
           error:
-            "An embedded browser surface is the in-app view; ask for `display: \"in-app\"` or omit the surface.",
+            'An embedded browser surface is the in-app view; ask for `display: "in-app"` or omit the surface.',
           code: "webview-display-mismatch",
         },
         400,

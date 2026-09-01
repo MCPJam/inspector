@@ -13,9 +13,7 @@
  * different — one owns a browser process, the other borrows a surface — and
  * pulling more up here would mean one set of options meaning two things.
  */
-import {
-  WebMcpBridgeError,
-} from "../browserd/daemon/webmcp-bridge";
+import { WebMcpBridgeError } from "../browserd/daemon/webmcp-bridge";
 import {
   WebMcpInvocationCancelledError,
   WebMcpToolGoneError,
@@ -33,10 +31,7 @@ export const SCREENSHOT_MAX_BYTES = 64 * 1024;
  * scope rather than inline so the mapping is one readable table instead of a
  * `catch` block with four branches in the middle of an invocation.
  */
-export function translateBridgeError(
-  error: unknown,
-  toolName: string,
-): Error {
+export function translateBridgeError(error: unknown, toolName: string): Error {
   if (!(error instanceof WebMcpBridgeError)) {
     return error instanceof Error ? error : new Error(String(error));
   }

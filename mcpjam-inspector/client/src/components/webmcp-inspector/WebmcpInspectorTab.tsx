@@ -437,7 +437,9 @@ export function WebmcpInspectorTab() {
           onChange={(event) => setUrl(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== "Enter") return;
-            void (live ? sendCommand({ type: "navigate", url }) : openBrowser());
+            void (live
+              ? sendCommand({ type: "navigate", url })
+              : openBrowser());
           }}
           placeholder="http://localhost:3000"
           className="max-w-md font-mono text-sm"
