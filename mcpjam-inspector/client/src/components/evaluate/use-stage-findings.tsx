@@ -97,7 +97,17 @@ export function useStageFindings({
   // `RunDecisionSummarySection` applies, so the two callers share cache entries
   // rather than racing each other into different ones.
   const terminal = isTerminalEvalRunStatus(run?.status);
-  const active = Boolean(enabled && projectId && run && terminal);
+  /**
+   * The CALLER's switch, kept apart from the run's lifecycle.
+   *
+   * `useEvalRunDecisionDetail` collapses both into `disabled` — it issues no
+   * request either way, so one word is enough for it. It is not enough here:
+   * forwarding that word would report a still-running run as "the reader
+   * turned this off", and `runNotTerminal` — a state the union declares —
+   * would be unreachable from the real wiring.
+   */
+  const callerDisabled = !enabled || !projectId || !run;
+  const active = !callerDisabled && terminal;
 
   const detail = useEvalRunDecisionDetail({
     projectId: projectId ?? null,
@@ -116,7 +126,16 @@ export function useStageFindings({
         scannedIterations: detail.scannedIterations,
         serverComplete: detail.serverComplete,
         walkExhausted: detail.walkExhausted,
-        status: enabled ? detail.status : "disabled",
+        // Only the caller's own switch may produce `disabled`. A non-terminal
+        // run passes a non-disabled status through and `runTerminal` below
+        // names it for what it is; the value sent here is never read in that
+        // branch, because `buildStageFindings` checks `runTerminal` before it
+        // looks at `loading`.
+        status: callerDisabled
+          ? "disabled"
+          : terminal
+            ? detail.status
+            : "loading",
         error: detail.error
           ? (FINDINGS_FAILURE_COPY[detail.error.kind] ?? null)
           : null,
@@ -132,7 +151,7 @@ export function useStageFindings({
       detail.walkExhausted,
       detail.status,
       detail.error,
-      enabled,
+      callerDisabled,
       terminal,
       canOpenTrial,
     ],

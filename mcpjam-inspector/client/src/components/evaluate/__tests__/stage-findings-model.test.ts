@@ -22,7 +22,10 @@ import {
   stageAnalyticsVariation,
 } from "@/test/stage-analytics-fixtures";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
-import { buildStageFindings } from "../stage-findings-model";
+import {
+  buildStageFindings,
+  STAGE_REASON_NOT_RECORDED_LABEL,
+} from "../stage-findings-model";
 
 const SUMMARY = readDecisionSummaryFixture("measured-failure-at-every-stage");
 
@@ -247,6 +250,44 @@ describe("grouping and caps", () => {
     const first = state.byStage.selection!.groups[0]!;
     expect(first.count).toBe(5);
     expect(first.trials).toHaveLength(5);
+  });
+
+  it("NEVER invents a reason for a failed row that recorded none", () => {
+    // `stageResultRowSchema` makes `reason` optional, so a verified `failed`
+    // row can legitimately carry none. An earlier draft substituted
+    // `noEvidenceCaptured`, which states a specific cause the run never
+    // recorded — under a label a reader would take as measured.
+    const reasonless = withStages("it-noreason", [
+      ["connection", "passed"],
+      ["discovery", "passed"],
+      ["selection", "failed"],
+      ["call", "notReached", "earlierStageFailed"],
+      ["response", "notReached", "earlierStageFailed"],
+      ["userValue", "notReached", "earlierStageFailed"],
+    ]);
+    const group = ready(build({ diagnostics: [reasonless] })).byStage.selection!
+      .groups[0]!;
+    expect(group.reason).toBeNull();
+    expect(group.key).toBe("reasonNotRecorded");
+    expect(group.label).toBe(STAGE_REASON_NOT_RECORDED_LABEL);
+    // The substituted reason's own words must not appear anywhere.
+    expect(group.label).not.toBe(STAGE_REASON_LABELS.noEvidenceCaptured);
+  });
+
+  it("sorts the unexplained group LAST within its count, not first", () => {
+    // With no reason there is nothing for a reader to act on, so it must not
+    // outrank a group that names one. `STAGE_REASONS.indexOf(null)` is -1,
+    // which sorted it ahead of every named reason.
+    const mixed = [
+      withStages("a", [["selection", "failed"]]),
+      withStages("b", [["selection", "failed", "missingToolCall"]]),
+    ];
+    const groups = ready(build({ diagnostics: mixed })).byStage.selection!
+      .groups;
+    expect(groups.map((group) => group.key)).toEqual([
+      "missingToolCall",
+      "reasonNotRecorded",
+    ]);
   });
 
   it("carries the diagnostics' own nextAction, and withholds a disputed one", () => {

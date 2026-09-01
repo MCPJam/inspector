@@ -85,9 +85,25 @@ export interface StageFindingTrial {
   runId: string;
 }
 
+/**
+ * The words for a failed row that recorded no reason.
+ *
+ * `stageResultRowSchema` makes `reason` OPTIONAL, so a verified `failed` row
+ * can legitimately carry none. Substituting a real `StageReason` for the
+ * absence — `noEvidenceCaptured` was the first draft — states a specific cause
+ * the run never recorded, under a label a reader would take as measured. It is
+ * the same invention this module refuses everywhere else, so the absence gets
+ * its own group and says what it is.
+ */
+export const STAGE_REASON_NOT_RECORDED_LABEL =
+  "the run recorded no reason for this failure";
+
 /** Trials that failed a stage for the same reason, grouped. */
 export interface StageFindingGroup {
-  reason: StageReason;
+  /** `null` when the row recorded no reason. NEVER a substituted one. */
+  reason: StageReason | null;
+  /** A stable key for a React list and a `data-` attribute. */
+  key: string;
   label: string;
   count: number;
   /** Every trial in the group; the view caps what it shows. */
@@ -239,7 +255,7 @@ export function buildStageFindings(
   for (const [stage, tally] of tallyByStage) {
     const trials: {
       trial: StageFindingTrial;
-      reason: StageReason;
+      reason: StageReason | null;
       nextAction: string;
     }[] = [];
     for (const diagnostic of input.diagnostics) {
@@ -252,7 +268,10 @@ export function buildStageFindings(
       if (!row || row.state !== "failed") continue;
       attributed.add(diagnostic.iterationId);
       trials.push({
-        reason: row.reason ?? "noEvidenceCaptured",
+        // `?? null`, never `?? <some reason>`: an absent reason is a fact
+        // about what the run recorded, and naming a cause here would be the
+        // one thing this join exists not to do.
+        reason: row.reason ?? null,
         nextAction: diagnostic.nextAction,
         trial: toFindingTrial(
           diagnostic,
@@ -439,12 +458,12 @@ function toFindingTrial(
 function groupByReason(
   entries: {
     trial: StageFindingTrial;
-    reason: StageReason;
+    reason: StageReason | null;
     nextAction: string;
   }[],
 ): StageFindingGroup[] {
   const buckets = new Map<
-    StageReason,
+    StageReason | null,
     { trials: StageFindingTrial[]; actions: Set<string> }
   >();
   for (const entry of entries) {
@@ -459,7 +478,11 @@ function groupByReason(
   return [...buckets.entries()]
     .map(([reason, bucket]) => ({
       reason,
-      label: STAGE_REASON_LABELS[reason],
+      key: reason ?? "reasonNotRecorded",
+      label:
+        reason === null
+          ? STAGE_REASON_NOT_RECORDED_LABEL
+          : STAGE_REASON_LABELS[reason],
       count: bucket.trials.length,
       trials: bucket.trials,
       // One action only when the group AGREES on one. Two failure categories
@@ -469,6 +492,14 @@ function groupByReason(
     }))
     .sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
-      return STAGE_REASONS.indexOf(a.reason) - STAGE_REASONS.indexOf(b.reason);
+      // The unexplained group sorts LAST within its count, not first: with no
+      // reason there is nothing for a reader to act on, so it should not
+      // outrank a group that names one. `indexOf` returns -1 for `null`, which
+      // would have sorted it ahead of every named reason.
+      return reasonRank(a.reason) - reasonRank(b.reason);
     });
+}
+
+function reasonRank(reason: StageReason | null): number {
+  return reason === null ? STAGE_REASONS.length : STAGE_REASONS.indexOf(reason);
 }

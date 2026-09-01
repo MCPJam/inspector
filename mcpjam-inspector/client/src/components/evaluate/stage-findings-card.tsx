@@ -120,7 +120,9 @@ function Group({
     <div
       className="mt-1.5"
       data-testid="stage-finding-group"
-      data-reason={group.reason}
+      // `key`, not `reason`: a group whose row recorded no reason has none to
+      // put here, and `data-reason={null}` would drop the attribute entirely.
+      data-reason={group.key}
     >
       <p className="text-[11px] text-foreground">
         {/* The count first, then the reason — the same shape the tally line
@@ -206,7 +208,7 @@ function ReadyStage({
       ) : null}
       {groups.map((group) => (
         <Group
-          key={group.reason}
+          key={group.key}
           group={group}
           openLabel={openLabel}
           {...(onOpenTrial ? { onOpenTrial } : {})}

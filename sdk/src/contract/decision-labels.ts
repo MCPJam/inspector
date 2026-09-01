@@ -88,8 +88,9 @@ export const USER_VALUE_STAGE_QUESTIONS = Object.freeze({
  *
  * The outcome-oriented companion to {@link USER_VALUE_STAGE_QUESTIONS}: the
  * same six links, said as the thing that happened when the link held. A row of
- * stage chips reading "Session connected → Tools discovered → Right tool
- * selected" tells the delivery story; a row reading "passed → passed → passed"
+ * stage chips reading "Session connected → Tools and resources discovered →
+ * Right tool selected" tells the delivery story; a row reading
+ * "passed → passed → passed"
  * tells the reader only that six checks ran.
  *
  * ONLY for a stage measured as passed. These are claims about the chain
@@ -99,7 +100,11 @@ export const USER_VALUE_STAGE_QUESTIONS = Object.freeze({
  */
 export const USER_VALUE_STAGE_OUTCOMES = Object.freeze({
   connection: "Session connected",
-  discovery: "Tools discovered",
+  // "and resources", because the stage is not tools-only: `chain.ts` defines
+  // discovery as "its tools/resources were listed and readable", and the
+  // question map asks about "usable primitives and metadata". A resource-only
+  // server that discovered fine would have been told its tools were found.
+  discovery: "Tools and resources discovered",
   selection: "Right tool selected",
   call: "Valid call made",
   response: "Usable response returned",

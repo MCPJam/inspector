@@ -655,10 +655,13 @@ describe("labels are total over the vocabularies they render", () => {
     );
   });
 
-  it("asks a QUESTION per stage and answers it in the past tense", () => {
-    // The two maps are a pair — one is what the reader came to find out, the
-    // other is what happened when the link held — and they are only a pair if
-    // they stay in their own grammatical mood.
+  it("keeps the questions interrogative and the outcomes declarative", () => {
+    // Named for what it actually pins. An earlier name promised "past tense",
+    // which nothing below checks and nothing here could check cheaply — the
+    // outcomes are past participles, and "made" and "satisfied" do not share a
+    // suffix to match on. What IS mechanically checkable is that the two maps
+    // stay in different moods: a question mark on one side and none on the
+    // other. The wording itself is pinned by the two examples below.
     for (const question of Object.values(USER_VALUE_STAGE_QUESTIONS)) {
       expect(question.endsWith("?")).toBe(true);
     }
