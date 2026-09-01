@@ -18,6 +18,8 @@ import {
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
@@ -27,6 +29,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  projectResolutionError,
   resolveEnvironmentOperation,
   resolveProject,
   runEvalCaseOperation,
@@ -41,6 +44,10 @@ import {
   type PlatformOperation,
   type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
+import {
+  validateImportToolReferences,
+  type ImportToolFinding,
+} from "../lib/eval-import-live-validation.js";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
@@ -78,6 +85,7 @@ import {
   type GateReport,
   type LoadedCorpus,
   type PublicMatchOptions,
+  type ResolvedEvalSuiteFile,
   type StructuredCaseResult,
   type StructuredEvalRunInput,
   type StructuredRunReport,
@@ -103,6 +111,7 @@ import {
 import {
   executeEvalRunFromFile,
   looksLikeVersionedSuiteFile,
+  MAX_APPROVAL_REASON_LENGTH,
 } from "../lib/eval-run-file.js";
 import {
   CORPUS_DRIFT_EXIT_CODE,
@@ -134,6 +143,8 @@ import {
   policyFromOptions,
   parseWaiverExpiry,
   policyNeedsIterations,
+  importEvidenceBlocksGate,
+  importIneligibleReport,
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
@@ -219,7 +230,9 @@ function composeField(options: {
   composeHost?: string;
   composeComputer?: string;
   composeModel?: string | string[];
+  composeServer?: string[];
   composeServerGroup?: string;
+  composeHostServers?: boolean;
   composeSkill?: string[];
   withClientDefault?: boolean;
   saveTargets?: boolean;
@@ -227,6 +240,9 @@ function composeField(options: {
   compose?: {
     host: string;
     serverGroup?: string;
+    server?: string;
+    servers?: string[];
+    hostServers?: boolean;
     models?: string[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
@@ -242,7 +258,9 @@ function composeField(options: {
   const refinements =
     options.composeComputer !== undefined ||
     models !== undefined ||
+    (options.composeServer?.length ?? 0) > 0 ||
     options.composeServerGroup !== undefined ||
+    options.composeHostServers === true ||
     (options.composeSkill?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
     options.saveTargets === true;
@@ -254,12 +272,40 @@ function composeField(options: {
     }
     return {};
   }
+  // Both fill the same slot: --compose-server RESOLVES to a group. Rejected
+  // here as well as in the op so the CLI names the two flags the user typed.
+  if (
+    options.composeServerGroup !== undefined &&
+    options.composeServer?.length
+  ) {
+    throw usageError(
+      "--compose-server and --compose-server-group both pin the run's servers. Use --compose-server with server names, or --compose-server-group with an existing group ID."
+    );
+  }
+  const pinsServers =
+    options.composeServerGroup !== undefined ||
+    (options.composeServer?.length ?? 0) > 0;
+  if (options.composeHostServers === true && pinsServers) {
+    throw usageError(
+      "--compose-host-servers runs against the host's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
+    );
+  }
+  // The server is what the suite is testing, so a composed run has to name it.
+  // Left implicit, the run reads the host's list at execution time and a later
+  // edit to that shared host silently repoints the eval.
+  if (!pinsServers && options.composeHostServers !== true) {
+    throw usageError(
+      "--compose-host needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the host points at right now — which changes when the host is edited — pass --compose-host-servers."
+    );
+  }
   return {
     compose: {
       host: options.composeHost,
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
+      ...(options.composeHostServers === true ? { hostServers: true } : {}),
+      ...selectorField("server", "servers", options.composeServer),
       ...(models !== undefined ? { models } : {}),
       ...(options.withClientDefault === true
         ? { includeClientDefault: true }
@@ -1339,6 +1385,39 @@ async function runEvalGate(
           };
         }
 
+        // Import evidence, BEFORE any verdict is computed and before
+        // `--baseline` gets a chance to merge one in.
+        //
+        // Early-returned rather than folded into the threshold report because
+        // the merge ranks `failed` above `incomplete`: a baseline regression
+        // alongside ineligible evidence would surface as exit 1, reporting a
+        // measured verdict this run is explicitly not allowed to produce.
+        // A waiver cannot reach it either — `applyGateWaiver` refuses to touch
+        // `incomplete`, which is the property that keeps import completeness
+        // un-overridable.
+        if (importEvidenceBlocksGate(run)) {
+          decisionSummary =
+            iterations && iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run,
+                  iterations,
+                })
+              : await readEvalRunDecisionSummary(
+                  client,
+                  signal,
+                  project.id,
+                  run,
+                );
+          return {
+            report: importIneligibleReport(run),
+            run,
+            iterations: iterations?.items ?? [],
+            iterationsComplete: iterations?.complete ?? false,
+            ...(iterationError ? { iterationError } : {}),
+          };
+        }
+
         // Assembled from the walk this gate already paid for, through the
         // canonical assembler. The gate's own verdict is untouched: this
         // EXPLAINS the run, it does not re-decide it, and the summary's verdict
@@ -1947,6 +2026,9 @@ async function runEvalCompare(
       reporter,
       out: options.out,
       format: globalOptions.format,
+      ...(outcome.decisionSummary
+        ? { decisionSummary: outcome.decisionSummary }
+        : {}),
     },
     outcome.compare
       ? buildRunCompareReport(outcome.compare, outcome.report, {
@@ -2194,6 +2276,15 @@ async function writeCompareResult(
     reporter: ReturnType<typeof parseReporterFormat>;
     out?: string;
     format: ReturnType<typeof getGlobalOptions>["format"];
+    /**
+     * The COMPARE side's own decision, for the JSON document.
+     *
+     * Already built by the caller for the report and the human block; carried
+     * here so `--format json` stops being the one terminal that gets the gate
+     * verdict without the run's verdict. Absent whenever it could not be
+     * assembled — an incomplete comparison, a failed walk.
+     */
+    decisionSummary?: EvalRunDecisionSummary;
   },
   structured: StructuredRunReport | undefined
 ): Promise<void> {
@@ -2208,7 +2299,18 @@ async function writeCompareResult(
     return;
   }
   writeResult(
-    { compare: args.report, exitCode: evalGateExitCode(args.report) },
+    {
+      compare: args.report,
+      exitCode: evalGateExitCode(args.report),
+      // JSON ONLY. `writeResult` pretty-prints this same object in human
+      // format, so including it there would put the raw wire enums on the
+      // terminal immediately above the label-aware block that exists to
+      // replace them — the narrative twice, once unreadably. `eval status`
+      // strips it for exactly this reason.
+      ...(args.format === "json" && args.decisionSummary
+        ? { decisionSummary: args.decisionSummary }
+        : {}),
+    },
     args.format
   );
 }
@@ -2275,6 +2377,23 @@ type ValidateResult = {
     enabledCases: number;
   };
   findings: unknown[];
+  /**
+   * Present ONLY when `--project` was passed.
+   *
+   * A separate block rather than more entries in `findings`, because the two
+   * answer different questions: `findings` is "is this a valid suite file?",
+   * which is a property of the bytes and reproducible on any machine, and this
+   * is "does it resolve against THIS project right now?", which is a property
+   * of a live inventory that changes under you. Merging them would make a
+   * caller unable to tell a file it must edit from a project it must fix.
+   */
+  projectValidation?: {
+    project: { id: string; name: string };
+    /** Every target the file resolved to, so a finding's scope is readable. */
+    targets: string[];
+    valid: boolean;
+    findings: ImportToolFinding[];
+  };
 };
 
 /**
@@ -2291,15 +2410,151 @@ type ValidateResult = {
  * network round trip, and it is a later step's work. "Valid" here therefore
  * means "a valid suite file", never "this will run".
  */
-function runEvalValidate(options: { file: string }, command: Command): void {
+/**
+ * Parse `--allow-approximated` / `--approval-reason` into the file-run knob.
+ *
+ * Every rule here is enforced BEFORE the launch, and each one exists because
+ * the alternative silently spends money or silently weakens the policy:
+ *
+ *   - **`--suite` rejects them.** A hosted suite's cases are not the ones this
+ *     invocation authored, so an authored-id selector has nothing to resolve
+ *     against. Accepting the flags and ignoring them would let somebody believe
+ *     an approximation had been approved when the run refused it.
+ *   - **Selectors require a reason, and a reason requires selectors.** An
+ *     override with no stated reason is indistinguishable from an accident,
+ *     and a reason with nothing to apply it to is a typo the caller wants to
+ *     hear about before the run starts, not after.
+ *   - **Duplicates refuse.** Naming a case twice is either a mistake or a
+ *     misunderstanding of what approving twice would mean; neither should be
+ *     resolved by quietly deduplicating.
+ *
+ * Returns `undefined` when neither flag was passed, which is the ordinary case
+ * and must stay indistinguishable from the pre-flag behaviour.
+ */
+export function parseApprovalFlags(options: {
+  suite?: string;
+  allowApproximated?: string[];
+  approvalReason?: string;
+}): { cases: string[]; reason: string } | undefined {
+  const selectors = options.allowApproximated ?? [];
+  const rawReason = options.approvalReason;
+  if (selectors.length === 0 && rawReason === undefined) return undefined;
+
+  if (options.suite) {
+    throw usageError(
+      "--allow-approximated and --approval-reason apply to a file run (--file). A hosted suite's cases are not the ones this command authored, so there is no authored case id to approve."
+    );
+  }
+  if (selectors.length === 0) {
+    throw usageError(
+      "--approval-reason needs at least one --allow-approximated <case> to apply to."
+    );
+  }
+  if (rawReason === undefined) {
+    throw usageError(
+      "--allow-approximated requires --approval-reason <text>: an approval with no stated reason is indistinguishable from an accident."
+    );
+  }
+  const reason = rawReason.trim();
+  if (reason.length === 0 || reason.length > MAX_APPROVAL_REASON_LENGTH) {
+    throw usageError(
+      `--approval-reason must be 1-${MAX_APPROVAL_REASON_LENGTH} characters after trimming (received ${reason.length}).`
+    );
+  }
+  const seen = new Set<string>();
+  for (const selector of selectors) {
+    const trimmed = selector.trim();
+    if (trimmed.length === 0) {
+      throw usageError("--allow-approximated does not accept a blank case.");
+    }
+    if (seen.has(trimmed)) {
+      throw usageError(
+        `--allow-approximated names "${trimmed}" more than once. Approving a case twice is not twice the approval; name it once.`
+      );
+    }
+    seen.add(trimmed);
+  }
+  return { cases: [...seen], reason };
+}
+
+/**
+ * Findings from a live check, rendered the way `formatSuiteFileFindings`
+ * renders structural ones — same pointer-first shape, so a reader scanning both
+ * halves of a `--project` validation is reading one format, not two.
+ */
+export function formatImportToolFindings(
+  findings: readonly ImportToolFinding[]
+): string {
+  return findings
+    .map(
+      (entry) =>
+        `  ${entry.pointer}: ${entry.message} ` +
+        `(case ${entry.caseId}${entry.disabled ? ", disabled" : ""}` +
+        `${entry.imported ? ", imported" : ""})`
+    )
+    .join("\n");
+}
+
+/**
+ * The live half of `eval validate --project`.
+ *
+ * Authenticates and resolves the named project with the same helpers every
+ * other cloud command uses, then runs the ONE shared reference check. A failure
+ * to authenticate, reach the project, or list a server's tools propagates as a
+ * command error: the file has not been judged, and saying it has would be a
+ * lie in the one direction that matters.
+ */
+async function runProjectValidation(
+  options: PlatformOptions & { project?: string },
+  command: Command,
+  resolved: ResolvedEvalSuiteFile
+): Promise<NonNullable<ValidateResult["projectValidation"]>> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = resolveCloudProjectArgs(options);
+  return runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const page = await client.listProjects({}, { signal });
+      const resolution = resolveProject(page.items, scope.project);
+      if (!resolution.ok) throw projectResolutionError(resolution.message);
+      const project = resolution.project;
+      const outcome = await validateImportToolReferences(client, {
+        projectId: project.id,
+        resolved,
+        signal,
+      });
+      return {
+        project: { id: project.id, name: project.name },
+        targets: outcome.targets.map((target) => target.label),
+        valid: outcome.findings.length === 0,
+        findings: outcome.findings,
+      };
+    }
+  );
+}
+
+async function runEvalValidate(
+  options: PlatformOptions & { file: string; project?: string },
+  command: Command
+): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const source = readSuiteFileInput(options.file);
   const label = options.file === "-" ? "<stdin>" : options.file;
   const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
 
   if (loaded.ok) {
+    // Keyed off the FLAG, never off the resolved project scope. A linked
+    // directory or an `MCPJAM_PROJECT` in the environment must not silently
+    // turn the one offline command in this CLI into a networked one —
+    // somebody validating a file on a plane would get an auth error for a
+    // question that needs no auth.
+    const projectValidation =
+      options.project === undefined
+        ? undefined
+        : await runProjectValidation(options, command, loaded.resolved);
     const result: ValidateResult = {
-      valid: true,
+      valid: projectValidation ? projectValidation.valid : true,
       file: label,
       suite: {
         id: loaded.authored.suite.id,
@@ -2308,17 +2563,33 @@ function runEvalValidate(options: { file: string }, command: Command): void {
         enabledCases: loaded.resolved.enabledCases.length,
       },
       findings: [],
+      ...(projectValidation ? { projectValidation } : {}),
     };
     if (globalOptions.format === "human") {
       const total = result.suite?.cases ?? 0;
       process.stdout.write(
-        `${label}: valid — suite ${result.suite?.id} ` +
+        `${label}: ${result.valid ? "valid" : "invalid"} — suite ${result.suite?.id} ` +
           `(${total} ${total === 1 ? "case" : "cases"}, ` +
           `${result.suite?.enabledCases} enabled)\n`
       );
-      return;
+      if (projectValidation && !projectValidation.valid) {
+        process.stdout.write(
+          `${projectValidation.findings.length} unresolved reference(s) ` +
+            `against project ${projectValidation.project.name}:\n` +
+            formatImportToolFindings(projectValidation.findings) +
+            "\n"
+        );
+      }
+    } else {
+      writeResult(result, globalOptions.format);
     }
-    writeResult(result, globalOptions.format);
+    // A completed live check that found unresolved references is a VERDICT on
+    // the file, so it takes the command's ordinary "file judged invalid" exit.
+    // An auth or network failure never reaches here — it threw, and threw as a
+    // command error.
+    if (projectValidation && !projectValidation.valid) {
+      setProcessExitCode(SUITE_FILE_INVALID_EXIT_CODE);
+    }
     return;
   }
 
@@ -2721,21 +2992,41 @@ export function registerEvalCommands(program: Command): void {
         "Attach the composed environments to the suite (append, capped at 10). Default is ephemeral."
       )
       .option(
+        "--compose-server <id-or-name...>",
+        "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
+      )
+      .option(
         "--compose-server-group <id>",
         "Standalone server group to pin on the composed stack"
       )
       .option(
+        "--compose-host-servers",
+        "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
+      )
+      .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--allow-approximated <case...>",
+        "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason."
+      )
+      .option(
+        "--approval-reason <text>",
+        "Why the approximations named by --allow-approximated are acceptable for this run (1-500 characters). Recorded on the run by the server."
       ).action(
     async (
       options: PlatformOptions & {
+        allowApproximated?: string[];
+        approvalReason?: string;
         composeHost?: string;
         composeComputer?: string;
         composeModel?: string[];
         withClientDefault?: boolean;
         saveTargets?: boolean;
+        composeServer?: string[];
         composeServerGroup?: string;
+        composeHostServers?: boolean;
         composeSkill?: string[];
         project?: string;
         suite?: string;
@@ -2783,6 +3074,7 @@ export function registerEvalCommands(program: Command): void {
       if (options.waitTimeout !== undefined && !options.wait) {
         throw usageError("--wait-timeout requires --wait.");
       }
+      const approvals = parseApprovalFlags(options);
       const globalOptions = getGlobalOptions(command);
       const reporter = parseReporterFormat(options.reporter);
       const waitTimeoutMs =
@@ -2890,6 +3182,7 @@ export function registerEvalCommands(program: Command): void {
                   ...(options.idempotencyKey
                     ? { idempotencyKey: options.idempotencyKey }
                     : {}),
+                  ...(approvals ? { approvals } : {}),
                   ...composeField(options),
                 },
               }
@@ -3049,15 +3342,21 @@ export function registerEvalCommands(program: Command): void {
 
           if (!needsReport) {
             // No report was asked for, so no iteration walk was paid for — but
-            // in human format the whole value of `--wait` is being told what
-            // happened, and today a failing wait prints a receipt and an exit
-            // code and nothing about why. One bounded read buys that back.
+            // the whole value of `--wait` is being told what happened, and
+            // without this a failing wait prints a receipt and an exit code and
+            // nothing about why. One bounded read buys that back.
+            //
+            // NOT human-only any more. `--format json` used to drop this on the
+            // floor — the guard read `format === "human"` — so the machine
+            // consumer, the one that cannot ask a follow-up question, was the
+            // one surface that never got the decision. The cost is exactly one
+            // extra read on `--wait --format json` single-run paths (and, on a
+            // deployment without the endpoint, a bounded fallback walk).
             //
             // SINGLE-RUN ONLY, here and below. `StructuredRunReport` carries
             // one summary and a fan-out has several runs; attaching one of them
             // would label a report about N runs with the decision of one.
             const soloSummary =
-              globalOptions.format === "human" &&
               result.targets.length === 1 &&
               runs.length === 1 &&
               TERMINAL_RUN_STATUSES.has(runs[0]!.status)
@@ -3223,7 +3522,22 @@ export function registerEvalCommands(program: Command): void {
         writeReporterResult(reporter, report);
       } else {
         writeResult(
-          { launch: result, runs: completion.runs },
+          {
+            launch: result,
+            runs: completion.runs,
+            // ONE DOCUMENT, and the decision belongs in it. `--format json` is
+            // the stable contract and the human block below is not, so a
+            // pipeline that reads stdout used to get run ids and a status and
+            // had to make a second call to learn what the run decided.
+            //
+            // JSON ONLY, though: `writeResult` pretty-prints this same object
+            // in human format, so leaving it ungated would print the raw wire
+            // enums directly above the label-aware block written to replace
+            // them. `eval status` strips it for the same reason.
+            ...(globalOptions.format === "json" && completion.decisionSummary
+              ? { decisionSummary: completion.decisionSummary }
+              : {}),
+          },
           globalOptions.format
         );
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
@@ -3280,29 +3594,70 @@ export function registerEvalCommands(program: Command): void {
       .command("status")
       .description("Get the status and summary of an eval run")
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      )
+      .option(
+        "--diagnostics-limit <n>",
+        "Failure diagnostics per page (1–200; default 20)"
+      )
+      .option(
+        "--diagnostics-cursor <cursor>",
+        "Cursor from a previous response's decisionSummary.diagnostics.nextCursor"
+      )
+      .option(
+        "--stages",
+        "Print all six user-value chain rows for each failing trial (human output)"
       ).action(
     async (
-      options: PlatformOptions & { project?: string; run: string },
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        diagnosticsLimit?: string;
+        diagnosticsCursor?: string;
+        stages?: boolean;
+      },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       let decisionSummary: EvalRunDecisionSummary | undefined;
       const resolved = resolveCloudProjectArgs(options);
+      // VALIDATED, not cast. The cast this replaced asserted a shape rather
+      // than checking one, so `--diagnostics-limit 500` would have travelled
+      // to the wire instead of failing here against the schema's own 1..200
+      // bound. `projectOptional` is load-bearing: the schema requires
+      // `project` and the cloud CLI fills it from --project/env/link AFTER
+      // this point, so without the flag omitting the flag becomes a usage
+      // error on a command that has always worked without it.
+      const input = validateOpInput(
+        getEvalRunOperation,
+        {
+          runId: options.run,
+          ...(resolved.project === undefined
+            ? {}
+            : { project: resolved.project }),
+          ...(options.diagnosticsLimit !== undefined
+            ? {
+                diagnosticsLimit: parsePositiveInteger(
+                  options.diagnosticsLimit,
+                  "--diagnostics-limit"
+                ),
+              }
+            : {}),
+          ...(options.diagnosticsCursor !== undefined
+            ? { diagnosticsCursor: options.diagnosticsCursor }
+            : {}),
+        },
+        { projectOptional: true }
+      );
       const result = await runPlatformCommand(
         platformOptionsOf(command),
         globalOptions.timeout,
         async (context) => {
           webOrigin = context.webOrigin;
-          const result = await getEvalRunOperation.execute(
-            {
-              runId: options.run,
-              ...(resolved.project === undefined
-                ? {}
-                : { project: resolved.project }),
-            } as { project: string; runId: string },
-            { client: context.client, signal: context.signal }
-          );
+          const result = await getEvalRunOperation.execute(input, {
+            client: context.client,
+            signal: context.signal,
+          });
           // Any terminal run that did NOT pass — not just a failed one.
           // `inconclusive` and a run that stopped without a verdict are the
           // outcomes a reader is least able to explain on their own, and the
@@ -3347,13 +3702,94 @@ export function registerEvalCommands(program: Command): void {
       writeEvalDecisionSummary(
         globalOptions.format,
         decisionSummary,
-        process.stdout
+        process.stdout,
+        { stages: options.stages === true }
       );
       writeRunLink(globalOptions.format, webOrigin, {
         projectId: result.project.id,
         suiteId: result.run.suiteId,
         runId: result.run.id,
       });
+    }
+  );
+
+      addProjectOption(
+      evals
+      .command("stage-analytics")
+      .description(
+        "Read the user-value chain funnel for one run (--run) or a suite's runs as a trend series (--suite)"
+      )
+      )
+      .option("--run <id>", "Eval run ID — one run's funnel")
+      .option(
+        "--suite <id-or-name>",
+        "Eval suite name or ID — one page of runs, newest first"
+      )
+      .option(
+        "--cursor <cursor>",
+        "Pagination cursor from a previous response (--suite only)"
+      )
+      .option("--limit <n>", "Documents per page, 1-100 (--suite only)").action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run?: string;
+        suite?: string;
+        cursor?: string;
+        limit?: string;
+      },
+      command
+    ) => {
+      // XOR, and both halves refused explicitly. `--run` and `--suite` address
+      // two genuinely different reads — one document, or a page of them — so
+      // "neither" has nothing to fetch and "both" would silently pick one and
+      // answer a question the caller did not ask.
+      if ((options.run === undefined) === (options.suite === undefined)) {
+        throw usageError(
+          "Provide either --run <id> or --suite <id-or-name>, not both."
+        );
+      }
+      const suiteMode = options.suite !== undefined;
+      if (
+        !suiteMode &&
+        (options.cursor !== undefined || options.limit !== undefined)
+      ) {
+        // A single run has ONE document. Accepting paging flags there would
+        // imply pages that do not exist.
+        throw usageError("--cursor and --limit apply to --suite only.");
+      }
+      const operation = suiteMode
+        ? listEvalSuiteStageAnalyticsOperation
+        : getEvalRunStageAnalyticsOperation;
+      // `projectOptional` is load-bearing: both schemas REQUIRE `project` (a
+      // run id alone is ambiguous across projects), and the cloud CLI fills it
+      // from --project/env/link/automatic AFTER this point. Without the flag,
+      // omitting --project would be a usage error on a command that should
+      // resolve a project the way every sibling does.
+      const input = validateOpInput(
+        operation as PlatformOperation<Record<string, unknown>, unknown>,
+        {
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(suiteMode
+            ? {
+                suite: options.suite,
+                ...(options.cursor !== undefined
+                  ? { cursor: options.cursor }
+                  : {}),
+                ...(options.limit !== undefined
+                  ? { limit: parsePositiveInteger(options.limit, "--limit") }
+                  : {}),
+              }
+            : { runId: options.run }),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        operation as PlatformOperation<Record<string, unknown>, unknown>,
+        input,
+        options,
+        command
+      );
     }
   );
 
@@ -3734,15 +4170,24 @@ export function registerEvalCommands(program: Command): void {
   evals
     .command("validate")
     .description(
-      "Validate a local eval suite file offline — no auth, no network (0 valid, 1 contract-invalid, 2 unreadable/oversize/malformed)"
+      "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)"
     )
     .requiredOption(
       "--file <path>",
       "Suite file to validate, .yaml or .json (or - for stdin)"
     )
-    .action((options: { file: string }, command: Command) => {
-      runEvalValidate(options, command);
-    });
+    .option(
+      "--project <id-or-name>",
+      "Also resolve the file's deterministic tool references against this project's live servers. Opt-in: without it the command stays entirely offline."
+    )
+    .action(
+      async (
+        options: PlatformOptions & { file: string; project?: string },
+        command: Command
+      ) => {
+        await runEvalValidate(options, command);
+      }
+    );
 
       evals
       .command("export")
@@ -4380,8 +4825,16 @@ export function registerEvalCommands(program: Command): void {
         "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
       )
       .option(
+        "--compose-server <id-or-name...>",
+        "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
+      )
+      .option(
         "--compose-server-group <id>",
         "Standalone server group to pin on the composed stack"
+      )
+      .option(
+        "--compose-host-servers",
+        "Run against whatever servers the host points at right now, instead of pinning a set. Editing that host later changes what a rerun tests."
       )
       .option(
         "--compose-skill <id...>",
@@ -4392,7 +4845,9 @@ export function registerEvalCommands(program: Command): void {
         composeHost?: string;
         composeComputer?: string;
         composeModel?: string;
+        composeServer?: string[];
         composeServerGroup?: string;
+        composeHostServers?: boolean;
         composeSkill?: string[];
         project?: string;
         suite: string;

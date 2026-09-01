@@ -26,6 +26,7 @@ import {
   SwarmSessionsGroupCount,
 } from "@/components/swarms/SwarmSessionsGroupedList";
 import { SwarmSessionsMetricStrip } from "@/components/swarms/swarm-sessions-metric-strip";
+import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   DEFAULT_PAGE_SIZE,
@@ -376,6 +377,24 @@ export function SwarmsSessionsPanel({
           />
         </ErrorBoundary>
       </div>
+
+      {/* D8: one funnel PER RUN, never one folded across runs — two runs
+          against different hosts have different denominators and a combined
+          bar would describe neither. Rendered only on the run-scoped mount:
+          without `journeyRunIds` this panel is project-wide, which is not a
+          population any single funnel can honestly describe. */}
+      {/* The spacing rides on the component rather than on a wrapper here:
+          `runIdSet` is an empty-but-TRUTHY Set when the caller passes an empty
+          list, and a wrapper would then reserve `pt-3` of blank band above the
+          session list for a funnel that never appears. Owning its own class
+          means the component that decides whether to render anything also
+          decides whether anything takes up space. */}
+      {runIdSet ? (
+        <SwarmRunStageFunnelPanels
+          journeyRunIds={[...runIdSet]}
+          className="shrink-0 space-y-2 px-4 pt-3"
+        />
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">

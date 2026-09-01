@@ -75,14 +75,21 @@ export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
  * ChatGPT's own baseline allowlist, which the catalog row carries as
  * `cspDirectives`; it is not evidence the declaration was ignored.
  *
- * `cspResourceDomains` is deliberately absent (unknown): the only declared
- * resource origin was `cdn.jsdelivr.net`, which is in that same baseline, so
- * nothing in the probe separates honored from ignored. Re-probe with a
- * declared origin the baseline does not cover before writing `false`.
+ * The 2026-08-23 paired probe (captured 2026-08-24Z) declared
+ * `fastly.jsdelivr.net`, outside that baseline, and every declared resource
+ * subtype loaded in the treatment fixture, so the resource declaration is
+ * honored.
  */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+  cspResourceDomains: {
+    script: true,
+    stylesheet: true,
+    image: true,
+    font: true,
+    media: true,
+  },
   downloadFile: false,
   requestTeardown: false,
 });
@@ -115,8 +122,9 @@ export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
     font: true,
     media: true,
   },
-  // downloadFile stays inherited-true and requestTeardown is an explicit
-  // false, both per the catalog row this matrix is supposed to mirror.
+  // Both explicit false per the catalog row this matrix mirrors. downloadFile
+  // was flipped 2026-08-26: it is absent from Cursor's hostCapabilities.
+  downloadFile: false,
   requestTeardown: false,
 });
 

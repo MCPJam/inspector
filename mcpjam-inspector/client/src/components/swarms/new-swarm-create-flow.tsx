@@ -60,6 +60,7 @@ import {
   type SwarmLaunchedRun,
 } from "@/components/swarms/new-swarm-running-step";
 import {
+  buildEnvironmentSelectionKey,
   clearNewSwarmFlowDraft,
   readNewSwarmFlowDraft,
   saveNewSwarmFlowDraft,
@@ -250,7 +251,7 @@ function EnvironmentGroundingHint({
 }) {
   const inventory = useQuery(
     SWARM_QUERIES.getEnvironmentToolInventory as any,
-    { projectId, environmentId } as any
+    { projectId, environmentId } as any,
   ) as
     | {
         environmentName: string;
@@ -292,7 +293,7 @@ function EnvironmentGroundingHint({
 async function runWithConcurrency<T>(
   items: T[],
   limit: number,
-  worker: (item: T) => Promise<void | "stop">
+  worker: (item: T) => Promise<void | "stop">,
 ): Promise<void> {
   let cursor = 0;
   let stopped = false;
@@ -308,7 +309,7 @@ async function runWithConcurrency<T>(
           return;
         }
       }
-    }
+    },
   );
   await Promise.all(runners);
 }
@@ -320,7 +321,7 @@ async function runWithConcurrency<T>(
  */
 function sameEnvironmentSelection(
   stored: readonly string[] | null,
-  selection: readonly string[]
+  selection: readonly string[],
 ): boolean {
   const current = stored ?? [];
   if (current.length !== selection.length) return false;
@@ -362,7 +363,7 @@ export function NewSwarmCreateFlow({
   onCreatePersona: (draft: CreatePersonaDraft) => Promise<string>;
   onCreateJourney: (
     personaRefId: string,
-    draft: CreateJourneyDraft
+    draft: CreateJourneyDraft,
   ) => Promise<string>;
   /** Apply this swarm's promises to a REUSED journey before launch: the
    * Describe env selection (when its stored fan-out differs) and the merged
@@ -377,7 +378,7 @@ export function NewSwarmCreateFlow({
       judgeConfig?: GoalJudgeConfig;
       /** Confirm edits a reused goal's text in place (BB-122). */
       goal?: string;
-    }
+    },
   ) => Promise<void>;
   launchJourney: (
     journeyId: string,
@@ -389,7 +390,7 @@ export function NewSwarmCreateFlow({
      * environment id) was therefore invisible to this interface, one rename
      * away from being silently dropped.
      */
-    opts?: { swarmRunGroupId?: string; environmentIds?: string[] }
+    opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -427,7 +428,7 @@ export function NewSwarmCreateFlow({
    */
   onSaveExistingPersona: (
     personaRefId: string,
-    patch: { name?: string; role?: string; notes?: string }
+    patch: { name?: string; role?: string; notes?: string },
   ) => Promise<void>;
   /**
    * Save the project's clustering settings. Optional: absent hides the row, so
@@ -442,8 +443,7 @@ export function NewSwarmCreateFlow({
   const resolveComposerTargets = useComposerResolver(projectId);
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
-  const hostsQueryEnabled =
-    isAuthenticated && shouldQueryProjectId(projectId);
+  const hostsQueryEnabled = isAuthenticated && shouldQueryProjectId(projectId);
   const attachmentsQueryEnabled =
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const { hosts, isLoading: hostsLoading } = useHostList({
@@ -466,7 +466,7 @@ export function NewSwarmCreateFlow({
    */
   const [restoredDraft] = useState(() => readNewSwarmFlowDraft(projectId));
   const [step, setStep] = useState<"describe" | "confirm" | "running">(
-    restoredDraft?.step ?? "describe"
+    restoredDraft?.step ?? "describe",
   );
   const [draft, setDraft] = useState(restoredDraft?.description ?? "");
   /**
@@ -476,7 +476,7 @@ export function NewSwarmCreateFlow({
   const [swarmName, setSwarmName] = useState(
     // `||`, not `??`: a draft written before this field existed carries an
     // empty string, which should still fall back to the suggestion.
-    () => restoredDraft?.name || suggestSwarmName(new Date())
+    () => restoredDraft?.name || suggestSwarmName(new Date()),
   );
   /**
    * Whether the user has typed in the name field.
@@ -489,10 +489,10 @@ export function NewSwarmCreateFlow({
    * was cleared. So the fact is recorded, and travels with the draft.
    */
   const [nameEdited, setNameEdited] = useState(
-    restoredDraft?.nameEdited === true
+    restoredDraft?.nameEdited === true,
   );
   const [targetState, setTargetState] = useState<EnvironmentComposerState>(
-    () => restoredDraft?.targetState ?? emptyComposerState()
+    () => restoredDraft?.targetState ?? emptyComposerState(),
   );
   /** One-shot auto-seed — never overwrite after the user clears or edits. */
   const targetSeededRef = useRef(false);
@@ -517,7 +517,7 @@ export function NewSwarmCreateFlow({
   // make every create flow subscribe to a function that does not exist.
   const insightsTuning = useQuery(
     SWARM_QUERIES.getSwarmInsightsTuning as any,
-    onSetInsightsTuning ? ({ projectId } as any) : "skip"
+    onSetInsightsTuning ? ({ projectId } as any) : "skip",
   ) as { tuning: ClusterTuning; source: string } | null | undefined;
 
   const handleSaveInsightsTuning = useCallback(
@@ -532,24 +532,24 @@ export function NewSwarmCreateFlow({
           toast.error(
             error instanceof Error
               ? error.message
-              : "Could not save insight grouping."
+              : "Could not save insight grouping.",
           );
         })
         .finally(() => setSavingInsightsTuning(false));
     },
-    [onSetInsightsTuning]
+    [onSetInsightsTuning],
   );
   const [pushIntensity, setPushIntensity] = useState<SwarmPushIntensity>(
-    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY
+    restoredDraft?.pushIntensity ?? DEFAULT_SWARM_INTENSITY,
   );
   const [reusedIds, setReusedIds] = useState<string[]>(
-    restoredDraft?.reusedIds ?? []
+    restoredDraft?.reusedIds ?? [],
   );
   const [proposed, setProposed] = useState<ProposedPersona[]>(
-    restoredDraft?.proposed ?? []
+    restoredDraft?.proposed ?? [],
   );
   const [launchedRuns, setLaunchedRuns] = useState<SwarmLaunchedRun[]>(
-    restoredDraft?.launchedRuns ?? []
+    restoredDraft?.launchedRuns ?? [],
   );
   const [generating, setGenerating] = useState(false);
   /** When the in-flight generation started — drives the progress line. */
@@ -562,7 +562,7 @@ export function NewSwarmCreateFlow({
   const [errorMessage, setErrorMessage] = useState<string | null>(
     restoredDraft?.generatingSince != null
       ? "Persona generation was interrupted when this view reloaded. Nothing was saved — press Continue to generate again."
-      : null
+      : null,
   );
   // Sync latch: `generating`/`launching` are state, so two fast clicks in one
   // tick would both see the old value and fire twice.
@@ -570,20 +570,20 @@ export function NewSwarmCreateFlow({
   // Labels for Overview session grouping — set at launch, handed to onDone
   // when the user leaves Running (Cancel / Stop / Look now).
   const launchedRunLabelsRef = useRef<Map<string, string>>(
-    new Map(restoredDraft?.runLabels ?? [])
+    new Map(restoredDraft?.runLabels ?? []),
   );
   // Rows a previous attempt already created. A launch failure leaves the user
   // on Confirm with a Retry, and without this the retry would create every
   // persona and journey a SECOND time — the rows are already real, only the
   // launch needs redoing.
   const persistedTargetsRef = useRef<LaunchTarget[] | null>(
-    restoredDraft?.launch.targets ?? null
+    restoredDraft?.launch.targets ?? null,
   );
   // Environments baked into those persisted journeys. If the user goes Back
   // and changes the env selection, retrying must NOT relaunch the old
   // single-client journeys while the matrix shows the new multi-client set.
   const persistedEnvironmentKeyRef = useRef<string | null>(
-    restoredDraft?.launch.environmentKey ?? null
+    restoredDraft?.launch.environmentKey ?? null,
   );
   /**
    * The wave id for THIS swarm, minted once and reused across a retry.
@@ -596,7 +596,7 @@ export function NewSwarmCreateFlow({
    * Overview.
    */
   const persistedRunGroupIdRef = useRef<string | null>(
-    restoredDraft?.launch.runGroupId ?? null
+    restoredDraft?.launch.runGroupId ?? null,
   );
   /**
    * Stable prefix for this authoring session's idempotency keys.
@@ -611,7 +611,7 @@ export function NewSwarmCreateFlow({
   const flowIdRef = useRef<string | null>(restoredDraft?.launch.flowId ?? null);
   /** The swarm row this launch created, so a retry doesn't create a second. */
   const persistedSwarmIdRef = useRef<string | null>(
-    restoredDraft?.launch.swarmId ?? null
+    restoredDraft?.launch.swarmId ?? null,
   );
 
   const envList = useMemo(() => environments ?? [], [environments]);
@@ -627,11 +627,7 @@ export function NewSwarmCreateFlow({
     if (attachmentsQueryEnabled && attachmentsLoading) return;
     // Auth settled but DB user not ready yet — attachments are still skipped.
     // Seeding now would permanently miss the default server group.
-    if (
-      isAuthenticated &&
-      shouldQueryProjectId(projectId) &&
-      !isUserReady
-    ) {
+    if (isAuthenticated && shouldQueryProjectId(projectId) && !isUserReady) {
       return;
     }
     // Any non-empty stack or customized flag means the user already touched
@@ -712,18 +708,16 @@ export function NewSwarmCreateFlow({
    */
   const environmentSelectionKey = useMemo(
     () =>
-      [
-        composeMode ? "compose" : "castles",
-        ...[...targetState.environmentIds].sort(),
-        ...[...targetState.stack.hostIds].sort(),
-        targetState.stack.serverAttachmentId ?? "",
-        targetState.stack.computerEnvironmentId ?? "",
-        `skills:${(targetState.stack.skillSelection?.skillIds ?? []).join(
-          ","
-        )}`,
-        targetState.customized ? "custom" : "seeded",
-      ].join("|"),
-    [composeMode, targetState]
+      buildEnvironmentSelectionKey({
+        composeMode,
+        environmentIds: targetState.environmentIds,
+        hostIds: targetState.stack.hostIds,
+        serverAttachmentId: targetState.stack.serverAttachmentId,
+        computerEnvironmentId: targetState.stack.computerEnvironmentId,
+        skillSelection: targetState.stack.skillSelection,
+        customized: targetState.customized,
+      }),
+    [composeMode, targetState],
   );
 
   // A restored draft already carries the resolution for the selection key it
@@ -757,7 +751,7 @@ export function NewSwarmCreateFlow({
   const preset = SWARM_INTENSITY_PRESETS[pushIntensity];
   const reusedPersonas = useMemo(
     () => personaList.filter((persona) => reusedIds.includes(persona._id)),
-    [personaList, reusedIds]
+    [personaList, reusedIds],
   );
 
   const hasGenerateTargets =
@@ -851,7 +845,7 @@ export function NewSwarmCreateFlow({
       skillsEnabled,
       swarmName,
       targetState.stack,
-    ]
+    ],
   );
 
   /**
@@ -916,7 +910,7 @@ export function NewSwarmCreateFlow({
       });
       const payload = buildEnvJourneyPayload(
         composed.environmentIds,
-        composed.environments
+        composed.environments,
       );
       resolved = payload
         ? {
@@ -942,7 +936,7 @@ export function NewSwarmCreateFlow({
     setResolvedEnvironments(resolved.environments);
     if (resolved.materialized?.createdIds.length) {
       const created = resolved.environments.filter((env) =>
-        resolved.materialized!.createdIds.includes(env.environmentId)
+        resolved.materialized!.createdIds.includes(env.environmentId),
       );
       setCreatedEnvOverlay((prev) => {
         const byId = new Map(prev.map((e) => [e.environmentId, e]));
@@ -981,7 +975,7 @@ export function NewSwarmCreateFlow({
         throw new Error(
           composeMode
             ? "Could not create environments from the selected clients."
-            : "Pick an environment to generate against."
+            : "Pick an environment to generate against.",
         );
       }
       const result = await generateSwarmPersonaBatch({
@@ -1003,7 +997,7 @@ export function NewSwarmCreateFlow({
       });
       if (result.personas.length === 0) {
         throw new Error(
-          "Generation returned no personas. Try again, or make sure the environment's servers have been connected so their tools are inspected."
+          "Generation returned no personas. Try again, or make sure the environment's servers have been connected so their tools are inspected.",
         );
       }
       // A fresh slate is a fresh set of rows to create — drop any memory of
@@ -1041,7 +1035,7 @@ export function NewSwarmCreateFlow({
                 }
               : {}),
           })),
-        }))
+        })),
       );
       track("swarm_create_generate_completed", {
         location: "swarms",
@@ -1056,7 +1050,7 @@ export function NewSwarmCreateFlow({
           err instanceof ComposerResolveError ||
           err instanceof SwarmGenerateError
           ? err.message
-          : errorMessageOf(err, "Failed to generate personas.")
+          : errorMessageOf(err, "Failed to generate personas."),
       );
     } finally {
       inFlightRef.current = false;
@@ -1103,7 +1097,7 @@ export function NewSwarmCreateFlow({
       // otherwise fail partway through, leaving some personas created.
       if (personaList.length + proposed.length > MAX_PERSONAS_PER_PROJECT) {
         setErrorMessage(
-          `This project is at its limit of ${MAX_PERSONAS_PER_PROJECT} personas. Delete some before creating ${proposed.length} more.`
+          `This project is at its limit of ${MAX_PERSONAS_PER_PROJECT} personas. Delete some before creating ${proposed.length} more.`,
         );
         return;
       }
@@ -1130,15 +1124,15 @@ export function NewSwarmCreateFlow({
               ? err.message
               : errorMessageOf(
                   err,
-                  "Could not resolve environments for launch."
-                )
+                  "Could not resolve environments for launch.",
+                ),
           );
           return;
         }
       }
       if (!envPayload && proposed.length > 0) {
         setErrorMessage(
-          "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host."
+          "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
         );
         return;
       }
@@ -1217,7 +1211,7 @@ export function NewSwarmCreateFlow({
             // journeys are simply created without a container.
             firstError ??= errorMessageOf(
               err,
-              "The swarm record could not be created."
+              "The swarm record could not be created.",
             );
           }
         }
@@ -1243,7 +1237,7 @@ export function NewSwarmCreateFlow({
             payload.reusedGrading.map((row) => [
               row.journeyId,
               row.existingRubric,
-            ])
+            ]),
           );
 
           for (const target of payload.reusedTargets) {
@@ -1278,7 +1272,7 @@ export function NewSwarmCreateFlow({
               } catch (err) {
                 firstError ??= errorMessageOf(
                   err,
-                  "A reused goal could not be updated for this swarm."
+                  "A reused goal could not be updated for this swarm.",
                 );
                 // Only grading can fail here now, and grading is advisory: the
                 // run is still the one the user asked for, so it goes ahead
@@ -1292,7 +1286,7 @@ export function NewSwarmCreateFlow({
 
           for (const persona of proposed) {
             const journeys = persona.journeys.filter((journey) =>
-              journey.goal.trim()
+              journey.goal.trim(),
             );
             // Draft rows with blank goals are authoring placeholders — skip
             // the whole persona rather than create an empty shell.
@@ -1314,7 +1308,7 @@ export function NewSwarmCreateFlow({
             } catch (err) {
               firstError ??= errorMessageOf(
                 err,
-                "A persona could not be created."
+                "A persona could not be created.",
               );
               continue;
             }
@@ -1366,7 +1360,7 @@ export function NewSwarmCreateFlow({
               } catch (err) {
                 firstError ??= errorMessageOf(
                   err,
-                  "A goal could not be created."
+                  "A goal could not be created.",
                 );
               }
             }
@@ -1400,7 +1394,7 @@ export function NewSwarmCreateFlow({
                 target.environmentIds !== undefined &&
                 !sameEnvironmentSelection(
                   target.environmentIds,
-                  envPayload.environmentIds
+                  envPayload.environmentIds,
                 )
                   ? { environmentIds: envPayload.environmentIds }
                   : {}),
@@ -1444,11 +1438,11 @@ export function NewSwarmCreateFlow({
               }
               firstError ??= errorMessageOf(
                 err,
-                "A run could not be launched."
+                "A run could not be launched.",
               );
             }
             return undefined;
-          }
+          },
         );
       } catch (err) {
         firstError ??= errorMessageOf(err, "The swarm could not be launched.");
@@ -1480,13 +1474,13 @@ export function NewSwarmCreateFlow({
                 } created — retrying only launches ${
                   created === 1 ? "it" : "them"
                 }.`
-              : "")
+              : ""),
         );
         return;
       }
       if (launched === targets.length) {
         toast.success(
-          `Launched ${launched} ${launched === 1 ? "run" : "runs"}`
+          `Launched ${launched} ${launched === 1 ? "run" : "runs"}`,
         );
       } else if (billingBlocked) {
         // ONE billing message for the whole wave. The count matters here in a
@@ -1496,7 +1490,7 @@ export function NewSwarmCreateFlow({
         toast.warning(
           `Launched ${launched} of ${targets.length} runs — ${
             billingError ?? "the organization's credit limit was reached."
-          }`
+          }`,
         );
       } else {
         toast.warning(`Launched ${launched} of ${targets.length} runs`);
@@ -1520,7 +1514,7 @@ export function NewSwarmCreateFlow({
       pushIntensity,
       resolveTargets,
       targetState.environmentIds.length,
-    ]
+    ],
   );
 
   /**
@@ -1616,7 +1610,7 @@ export function NewSwarmCreateFlow({
         ...(criterionId ? { criterionId } : {}),
       });
     },
-    [onOpenSession]
+    [onOpenSession],
   );
 
   const activeStepIndex = step === "describe" ? 0 : step === "confirm" ? 1 : 2;
@@ -1633,7 +1627,7 @@ export function NewSwarmCreateFlow({
         setStep("describe");
       }
     },
-    [activeStepIndex, generating, launching, materializing, step]
+    [activeStepIndex, generating, launching, materializing, step],
   );
 
   /**
@@ -1647,7 +1641,7 @@ export function NewSwarmCreateFlow({
       if (step === "running") return false;
       return index < activeStepIndex;
     },
-    [activeStepIndex, generating, launching, materializing, step]
+    [activeStepIndex, generating, launching, materializing, step],
   );
 
   /**
@@ -1681,7 +1675,7 @@ export function NewSwarmCreateFlow({
   const runningFallbackColumns = useMemo(() => {
     return environmentIds.flatMap((environmentId) => {
       const env = envListForPayload.find(
-        (entry) => entry.environmentId === environmentId
+        (entry) => entry.environmentId === environmentId,
       );
       if (!env) return [];
       return [
@@ -1697,7 +1691,7 @@ export function NewSwarmCreateFlow({
     () =>
       environmentIds.map((environmentId) => {
         const env = envListForPayload.find(
-          (entry) => entry.environmentId === environmentId
+          (entry) => entry.environmentId === environmentId,
         );
         // `slice(0, 8)` stays for a row that isn't in the list AT ALL — a
         // different failure from a row that merely has no name, which
@@ -1706,7 +1700,7 @@ export function NewSwarmCreateFlow({
           ? environmentLabel(env, { hostName: hostNameById })
           : environmentId.slice(0, 8);
       }),
-    [envListForPayload, environmentIds, hostNameById]
+    [envListForPayload, environmentIds, hostNameById],
   );
 
   const groundingEnvironmentId =
@@ -1751,7 +1745,7 @@ export function NewSwarmCreateFlow({
           "min-h-0 flex-1 bg-background",
           step === "confirm" || step === "running"
             ? "overflow-hidden"
-            : "overflow-y-auto"
+            : "overflow-y-auto",
         )}
       >
         {step === "running" ? (
@@ -1790,7 +1784,7 @@ export function NewSwarmCreateFlow({
             availablePersonas={personaList}
             onAddReused={(personaId) =>
               setReusedIds((ids) =>
-                ids.includes(personaId) ? ids : [...ids, personaId]
+                ids.includes(personaId) ? ids : [...ids, personaId],
               )
             }
             onSaveReusedPersona={onSaveExistingPersona}
@@ -1905,7 +1899,7 @@ export function NewSwarmCreateFlow({
                         className="shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground"
                         onClick={() =>
                           setReusedIds((ids) =>
-                            ids.filter((id) => id !== persona._id)
+                            ids.filter((id) => id !== persona._id),
                           )
                         }
                       >
@@ -1934,7 +1928,7 @@ export function NewSwarmCreateFlow({
                       setReusedIds((ids) =>
                         ids.includes(personaId)
                           ? ids.filter((id) => id !== personaId)
-                          : [...ids, personaId]
+                          : [...ids, personaId],
                       ),
                   }}
                 />
@@ -1967,7 +1961,7 @@ export function NewSwarmCreateFlow({
                         "rounded-lg px-3 py-2.5 text-left transition-colors",
                         selected
                           ? "bg-background shadow-sm ring-1 ring-border/60"
-                          : "hover:bg-background/60"
+                          : "hover:bg-background/60",
                       )}
                     >
                       <span className="block text-sm font-semibold text-foreground">
@@ -2043,7 +2037,7 @@ export function NewSwarmCreateFlow({
                   // shouldn't read like incidental helper text.
                   className={cn(
                     "mr-auto text-sm leading-relaxed",
-                    canContinue ? "text-muted-foreground" : "text-foreground"
+                    canContinue ? "text-muted-foreground" : "text-foreground",
                   )}
                 >
                   {continueHint}

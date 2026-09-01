@@ -333,6 +333,12 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // via authFetch (not a manual header) keeps the on-401 session-token refresh
   // so a dev-server restart doesn't strand consent at 401 until a page reload.
   "/api/mcp/computers/local-consent",
+  // The local-terminal nonce mint mounts the same bearerAuthMiddleware +
+  // `requireVerifiedAuth` stack as the consent routes, so it needs the user's
+  // bearer for the same reason — without it the mint 401s on the missing
+  // bearer before the consent check ever runs, and the terminal can never
+  // open on a WorkOS-signed-in inspector.
+  "/api/mcp/computers/local-terminal-token",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
   // Registry catalog/star routes are Convex HTTP actions called via absolute
@@ -393,6 +399,16 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // module header on why a pattern, not a prefix, is what keeps the grant as
   // narrow as the id segments in the middle.
   /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+  // The Evaluate (New) chain reads: D9's decision summary and D5c's stage
+  // analytics, suite-paged and run-scoped. Same anchored bearer-scope grant as
+  // the disclosure above, and needed for the same reason — both go out through
+  // `authFetch`, so without an entry here they ship no `Authorization` at all
+  // and the route answers "Bearer token required". That 401 surfaces as
+  // `requestFailed`/service copy ("could not be loaded"), which reads as a
+  // backend outage rather than a missing header, so the panels look broken
+  // while the API is fine.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics)$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {

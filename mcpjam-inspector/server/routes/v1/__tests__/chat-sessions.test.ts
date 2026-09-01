@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  withSkillsExtensionCapability,
+  clientDeclaresSkillsExtension,
+  mergeClientCapabilities,
+  getDefaultClientCapabilities,
+} from "@mcpjam/sdk";
 import { Hono } from "hono";
+import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 
 /**
  * The agent Playground surface (`chat-sessions.ts` + `chat-session-turn.ts`).
@@ -51,6 +58,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 
 import chatSessions from "../chat-sessions.js";
+import { createSecretScrubber } from "../../../utils/secrets/secret-scrubber.js";
 import { v1OnError } from "../envelope.js";
 import { __testing } from "../chat-session-turn.js";
 import {
@@ -563,6 +571,62 @@ describe("computeExcludedToolNames", () => {
       ),
     ).rejects.toThrow(/tool policy cannot be applied/);
   });
+
+  it("fails CLOSED, and in bounded time, when tools/list never answers", async () => {
+    // The failure this exists for: a server that answers `initialize` and then
+    // hangs on `tools/list`. Connecting was already bounded; listing was not,
+    // so the turn sat on a promise that never settled until the edge proxy
+    // killed the request and returned a 502 with no body — no code, no
+    // message, nothing naming the server. Now it is this route's own 502.
+    vi.useFakeTimers();
+    try {
+      const hangs = { getTools: () => new Promise(() => {}) } as never;
+      const pending = computeExcludedToolNames(hangs, ["srv"], {
+        toolMode: "read_only",
+      });
+      const assertion = expect(pending).rejects.toThrow(
+        /did not answer tools\/list/,
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("unappliedBuiltInToolIds", () => {
+  const { unappliedBuiltInToolIds } = __testing;
+
+  // This surface does not wire built-in tools — `bash` and `web_search` are
+  // applied in routes/web/chat-v2.ts, not here. Observed on a real turn: a
+  // client with a computer attached and `builtInToolIds: ["bash"]` ran with
+  // the MCP server's tools alone and the model answered "I don't actually
+  // have a bash tool", which a caller cannot tell apart from the model
+  // declining to use one. Naming it is the fix; refusing the turn is not.
+  it("names the built-ins a client asked for", () => {
+    expect(unappliedBuiltInToolIds({ builtInToolIds: ["bash"] })).toEqual([
+      "bash",
+    ]);
+    expect(
+      unappliedBuiltInToolIds({ builtInToolIds: ["bash", "web_search"] }),
+    ).toEqual(["bash", "web_search"]);
+  });
+
+  // A client that asked for nothing must not grow a field in the response.
+  it("is empty for a client that configures none", () => {
+    expect(unappliedBuiltInToolIds({})).toEqual([]);
+    expect(unappliedBuiltInToolIds({ builtInToolIds: [] })).toEqual([]);
+    expect(unappliedBuiltInToolIds(undefined)).toEqual([]);
+  });
+
+  // The config blob is opaque to this route, so it is not assumed well-formed.
+  it("ignores a malformed builtInToolIds", () => {
+    expect(unappliedBuiltInToolIds({ builtInToolIds: "bash" })).toEqual([]);
+    expect(unappliedBuiltInToolIds({ builtInToolIds: [1, "", null] })).toEqual(
+      [],
+    );
+  });
 });
 
 // ── Target narrowing ────────────────────────────────────────────────────────
@@ -606,6 +670,121 @@ describe("allowedServerIds narrowing", () => {
       undefined,
     );
     expect(result.names).toBeUndefined();
+  });
+});
+
+// ── Server-skill namespacing ────────────────────────────────────────────────
+
+describe("serverLabels on the agent turn", () => {
+  const { narrowTarget, serverLabelsFor } = __testing;
+
+  it("namespaces skill refs by the user-assigned name, not the raw id", () => {
+    // The bug this pins: the hosted turn called `prepareChatV2` without
+    // `serverLabels`, so every SEP-2640 ref fell back to the server id and the
+    // model (and the user) saw `p176vpy587jn4v51vd9bm5g3rx8d8yry/run-evals`
+    // instead of `mcpjam-staging-skills/run-evals` — in the `listSkills`
+    // catalog AND in the origin banner on loaded skill content.
+    const { selected } = narrowTarget(
+      {
+        serverIds: ["p176vpy587jn4v51vd9bm5g3rx8d8yry"],
+        serverNames: ["mcpjam-staging-skills"],
+      },
+      undefined,
+    );
+    expect(serverLabelsFor(selected)).toEqual({
+      p176vpy587jn4v51vd9bm5g3rx8d8yry: "mcpjam-staging-skills",
+    });
+  });
+
+  it("keys by id, so a missing name only costs that one server its label", () => {
+    // Keyed rather than positional precisely BECAUSE `narrowTarget().names` is
+    // all-or-nothing: reusing that array would let one unnamed server strip
+    // the labels off every named one. An entry with no name is simply absent
+    // here and falls back to the id in `prepareChatV2` — never to a neighbor's
+    // name, which would be confidently wrong.
+    const { selected, names } = narrowTarget(
+      { serverIds: ["a", "b", "c"], serverNames: ["Alpha"] },
+      undefined,
+    );
+    expect(names).toBeUndefined();
+    expect(serverLabelsFor(selected)).toEqual({ a: "Alpha" });
+  });
+
+  it("returns undefined when nothing is labelled", () => {
+    // So the call site can keep to spread-only-when-present and leave the
+    // option off entirely rather than passing an empty map.
+    const { selected } = narrowTarget({ serverIds: ["a", "b"] }, undefined);
+    expect(serverLabelsFor(selected)).toBeUndefined();
+  });
+});
+
+// ── Skills extension declaration ────────────────────────────────────────────
+
+describe("skills capability on the agent turn", () => {
+  it("declares the extension in a form the SDK's own gate recognises", () => {
+    // The bug this pins: a hosted turn that advertises nothing leaves the
+    // extension inactive, so `withServerSkills` merges no tools and the model
+    // is handed no `listSkills` / `loadSkill` at all — a server that serves
+    // skills is then indistinguishable from one that does not.
+    //
+    // Asserted through `clientDeclaresSkillsExtension`, the same predicate the
+    // dispatch gate uses, rather than against a hand-written object: a
+    // declaration the gate does not accept is not a declaration. `true` or a
+    // misspelled id would satisfy a shape check and fail this.
+    expect(
+      clientDeclaresSkillsExtension(withSkillsExtensionCapability({})),
+    ).toBe(true);
+  });
+
+  it("MERGES with the SDK defaults instead of replacing them", () => {
+    // The regression this exists to prevent, named concretely. Passing the
+    // extension as a per-server `clientCapabilities` takes
+    // `MCPClientManager`'s exact-set branch, which advertises the object
+    // VERBATIM — and the default set declares `io.modelcontextprotocol/ui`,
+    // so the agent turn would silently stop advertising MCP Apps and lose
+    // widget rendering. The fix sets it on the manager's DEFAULTS, which
+    // merge.
+    const UI = "io.modelcontextprotocol/ui";
+    const SKILLS = "io.modelcontextprotocol/skills";
+
+    const alone = withSkillsExtensionCapability({}) as {
+      extensions?: Record<string, unknown>;
+    };
+    // The counterfactual is what gives the merge its point: alone, this
+    // object carries skills and nothing else.
+    expect(alone.extensions).toHaveProperty(SKILLS);
+    expect(alone.extensions).not.toHaveProperty(UI);
+
+    // `mergeClientCapabilities(getDefaultClientCapabilities(), …)` is exactly
+    // what the manager constructor does with `defaultCapabilities`, so this
+    // asserts the real composition rather than an approximation.
+    const merged = mergeClientCapabilities(
+      getDefaultClientCapabilities(),
+      withSkillsExtensionCapability({}),
+    ) as { extensions?: Record<string, unknown> };
+    expect(merged.extensions).toHaveProperty(SKILLS);
+    expect(merged.extensions).toHaveProperty(UI);
+    expect(clientDeclaresSkillsExtension(merged)).toBe(true);
+  });
+
+  it("leaves a connection that declares nothing inactive", () => {
+    // The other half of advertise = enforce: absence stays absent, so an
+    // emulated third-party host does not start claiming skills support it
+    // was never configured for.
+    expect(clientDeclaresSkillsExtension({})).toBe(false);
+    expect(clientDeclaresSkillsExtension(undefined)).toBe(false);
+  });
+
+  it("keeps the turn path guest-closed", () => {
+    // The turn builds a LIVE capability set from the project skill pool, which
+    // resolves `projectSkills:listSkills` — a signed-in-only Convex query that
+    // refuses a guest bearer (CONVEX-19R). Default-deny already covers this
+    // path; asserted so an allowlist edit has to break this test to reach it.
+    // `/chat-sessions` itself IS guest-allowed, so the two live one exact-match
+    // pattern apart.
+    const TURN = "/api/v1/chat-sessions/messages";
+    expect(isGuestAllowedV1Request("POST", TURN)).toBe(false);
+    expect(isGuestAllowedV1Request("POST", "/api/v1/chat-sessions")).toBe(true);
   });
 });
 
@@ -812,6 +991,94 @@ describe("payload bounding", () => {
     expect(joined[0]!.output).toEqual({ temp: 12 });
     expect(joined[0]!.status).toBe("ok");
     expect(joined[1]!.status).toBe("error");
+  });
+
+  it("scrubs a credential that STRADDLES the truncation boundary", () => {
+    // Bounding used to run first, cutting the serialized payload at a fixed
+    // offset. A credential spanning that cut left a fragment in the retained
+    // prefix — no needle matches a fragment — and those bytes went out in a
+    // response that crosses the trust boundary. A partial credential is not
+    // safe; it is a shorter one.
+    //
+    // THE SHAPE HERE IS LOAD-BEARING and took two attempts to get right. The
+    // obvious payload (filler + secret) has no filler length that works: the
+    // window where the cut lands inside the value under the OLD ordering is
+    // exactly the window where the NEW ordering, having shrunk the value to
+    // `[secret:…]`, drops back under the cap and never truncates at all. The
+    // test then passes for the wrong reason, proving only the untruncated
+    // path. The trailing field is what fixes it — it keeps the payload over
+    // the cap after redaction, so BOTH orderings truncate and the only
+    // difference left is whether a fragment survives.
+    const value = `sk_live_${"a".repeat(64)}`;
+    const scrubber = createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!;
+    const input = {
+      filler: "x".repeat(15_940),
+      key: value,
+      tail: "y".repeat(200),
+    };
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input }],
+      [{ toolCallId: "t1", output: { type: "json", value: input } }],
+      scrubber,
+    );
+
+    // Truncation really happened — without this the assertions below could
+    // pass on a payload that was never cut.
+    expect(joined[0]!.truncated).toBe(true);
+
+    const serialized = JSON.stringify(joined);
+    // The FRAGMENT is the assertion that matters. The whole value never
+    // survives bounding under either ordering, so asserting only on it would
+    // pass while the bug was live.
+    expect(serialized).not.toContain(value.slice(0, 20));
+    expect(serialized).not.toContain(value);
+  });
+
+  it("survives a CYCLIC payload now that scrubbing runs first", () => {
+    // The regression the reordering could have introduced. `boundPayload`'s
+    // depth cap is what turns a cycle into a marker, and it used to run before
+    // the scrubber — so the scrubber never saw one. Scrubbing first removed
+    // that shield, and an unguarded recursive rebuild would blow the stack and
+    // turn a turn that used to succeed into a 500.
+    const value = "sk_live_cyclictest_value";
+    const cyclic: Record<string, unknown> = { key: value };
+    cyclic.self = cyclic;
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: cyclic }],
+      [{ toolCallId: "t1", output: { type: "json", value: cyclic } }],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+
+    expect(joined).toHaveLength(1);
+    expect(JSON.stringify(joined)).not.toContain(value);
+  });
+
+  it("survives a pathologically DEEP payload", () => {
+    // The other half of the same shield: depth, not just cycles.
+    const value = "sk_live_deeptest_value_here";
+    let deep: Record<string, unknown> = { key: value };
+    for (let i = 0; i < 2_000; i++) deep = { nested: deep };
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: deep }],
+      [],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+    expect(joined).toHaveLength(1);
+  });
+
+  it("still scrubs when nothing is truncated", () => {
+    // The guard on the guard: reordering must not break the ordinary path.
+    const value = "sk_live_shortbutlongenough";
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: { key: value } }],
+      [{ toolCallId: "t1", output: { type: "json", value: { key: value } } }],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+    expect(joined[0]!.input).toEqual({ key: "[secret:STRIPE_API_KEY]" });
+    expect(joined[0]!.output).toEqual({ key: "[secret:STRIPE_API_KEY]" });
   });
 
   it("keeps absolute message indices when projecting a page", () => {

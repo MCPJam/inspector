@@ -49,7 +49,13 @@ interface ToolsSidebarProps {
   displayedToolCount: number;
   sentinelRef: RefObject<HTMLDivElement | null>;
   loadingMore: boolean;
-  cursor: string;
+  /**
+   * The next-page cursor, or `undefined` when the walk is finished. NOT a
+   * `string` defaulting to `""`: MCP 2026-07-28 `server/utilities/pagination`
+   * makes `""` a valid cursor that MUST NOT be treated as the end of results,
+   * so "no cursor" and "empty cursor" have to stay distinguishable here.
+   */
+  cursor: string | undefined;
   serverConnected?: boolean;
   // Parameters form props (for full-page replacement pattern)
   formFields?: FormField[];
@@ -456,7 +462,7 @@ export function ToolsSidebar({
             {activeTab === "tools" ? (
               <ScrollArea className="h-full">
                 <div className="p-2 pb-16">
-                  {fetchingTools && !cursor ? (
+                  {fetchingTools && cursor === undefined ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
                         <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
@@ -505,7 +511,7 @@ export function ToolsSidebar({
                         </div>
                       )}
 
-                      {!cursor &&
+                      {cursor === undefined &&
                         filteredToolNames.length > 0 &&
                         !loadingMore && (
                           <div className="text-center py-3 text-xs text-muted-foreground">

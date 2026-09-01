@@ -403,6 +403,7 @@ export class PromptResult {
       externalIterationId: options?.externalIterationId,
       caseId: options?.caseId,
       externalCaseId: options?.externalCaseId,
+      intent: options?.intent,
       metadata: options?.metadata,
       isNegativeTest: options?.isNegativeTest,
       advancedConfig: options?.advancedConfig,

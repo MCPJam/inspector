@@ -44,6 +44,54 @@ const DRAFT_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
 export type NewSwarmFlowStep = "describe" | "confirm" | "running";
 
+/**
+ * The identity of an environment SELECTION, for cache invalidation.
+ *
+ * The create flow resolves environments and creates journeys against them, then
+ * caches both. That cache is keyed on this string, so anything that changes
+ * WHICH EXECUTION the user asked for must change the key — otherwise a confirm
+ * after the edit relaunches rows built for the previous setup.
+ *
+ * Extracted from the flow component because getting it wrong is silent: the
+ * flow still works, it just runs the wrong thing. A pure function can be tested
+ * against that.
+ *
+ * Ids that the resolver treats as a SET are sorted; `skillIds` is not, because
+ * the resolver iterates them in order into `composeSkillChannels`.
+ */
+export function buildEnvironmentSelectionKey(input: {
+  composeMode: boolean;
+  environmentIds: readonly string[];
+  hostIds: readonly string[];
+  serverAttachmentId?: string | null;
+  computerEnvironmentId?: string | null;
+  skillSelection?: {
+    skillIds: string[];
+    versionPins?: { skillId: string; versionId: string }[];
+  } | null;
+  customized: boolean;
+}): string {
+  return [
+    input.composeMode ? "compose" : "castles",
+    ...[...input.environmentIds].sort(),
+    ...[...input.hostIds].sort(),
+    input.serverAttachmentId ?? "",
+    input.computerEnvironmentId ?? "",
+    `skills:${(input.skillSelection?.skillIds ?? []).join(",")}`,
+    // EXACT-VERSION PINS. Pinning a selected skill to a different revision
+    // changes nothing about `skillIds`, so without this the key would compare
+    // equal and the flow would reuse journeys created against the OLD revision
+    // — running the revision the user just pinned away from, which is the exact
+    // mistake pinning exists to prevent. Sorted by skill: which revision each
+    // skill is held at is the identity, not the order the picker wrote them in.
+    `skillVersions:${[...(input.skillSelection?.versionPins ?? [])]
+      .map((pin) => `${pin.skillId}@${pin.versionId}`)
+      .sort()
+      .join(",")}`,
+    input.customized ? "custom" : "seeded",
+  ].join("|");
+}
+
 /** Ids a retry must reuse so the backend replays rows instead of doubling them. */
 export type NewSwarmLaunchIdentity = {
   flowId: string | null;
@@ -114,7 +162,7 @@ function isLabelEntries(value: unknown): value is [string, string][] {
         Array.isArray(entry) &&
         entry.length === 2 &&
         typeof entry[0] === "string" &&
-        typeof entry[1] === "string"
+        typeof entry[1] === "string",
     )
   );
 }
@@ -141,8 +189,8 @@ function isProposedPersonaArray(value: unknown): value is ProposedPersona[] {
           (journey) =>
             isRecord(journey) &&
             typeof journey.key === "string" &&
-            typeof journey.goal === "string"
-        )
+            typeof journey.goal === "string",
+        ),
     )
   );
 }
@@ -156,7 +204,7 @@ function isLaunchedRunArray(value: unknown): value is SwarmLaunchedRun[] {
         typeof entry.runId === "string" &&
         typeof entry.journeyId === "string" &&
         typeof entry.personaId === "string" &&
-        typeof entry.label === "string"
+        typeof entry.label === "string",
     )
   );
 }
@@ -169,7 +217,7 @@ function isLaunchTargetArray(value: unknown): value is LaunchTarget[] {
         isRecord(entry) &&
         typeof entry.journeyId === "string" &&
         typeof entry.label === "string" &&
-        typeof entry.personaId === "string"
+        typeof entry.personaId === "string",
     )
   );
 }
@@ -191,9 +239,10 @@ function isComposerState(value: unknown): value is EnvironmentComposerState {
  * keeps every reader working on a complete stack.
  */
 function withModelSelection(
-  state: EnvironmentComposerState
+  state: EnvironmentComposerState,
 ): EnvironmentComposerState {
-  const selection = (state.stack as { modelSelection?: unknown }).modelSelection;
+  const selection = (state.stack as { modelSelection?: unknown })
+    .modelSelection;
   if (
     isRecord(selection) &&
     typeof selection.includeClientDefaults === "boolean" &&
@@ -211,7 +260,7 @@ function isEnvironmentArray(value: unknown): value is ProjectEnvironmentView[] {
   return (
     Array.isArray(value) &&
     value.every(
-      (entry) => isRecord(entry) && typeof entry.environmentId === "string"
+      (entry) => isRecord(entry) && typeof entry.environmentId === "string",
     )
   );
 }
@@ -233,7 +282,10 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
   if (!isRecord(value)) return null;
   const step = value.step;
   const intensity = value.pushIntensity;
-  if (typeof step !== "string" || !FLOW_STEPS.includes(step as NewSwarmFlowStep)) {
+  if (
+    typeof step !== "string" ||
+    !FLOW_STEPS.includes(step as NewSwarmFlowStep)
+  ) {
     return null;
   }
   if (
@@ -269,7 +321,10 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
   if (!isProposedPersonaArray(value.proposed)) return null;
   if (!isLaunchedRunArray(value.launchedRuns)) return null;
   if (!isLabelEntries(value.runLabels)) return null;
-  if (value.generatingSince !== null && typeof value.generatingSince !== "number") {
+  if (
+    value.generatingSince !== null &&
+    typeof value.generatingSince !== "number"
+  ) {
     return null;
   }
   if (!isLaunchIdentity(value.launch)) return null;
@@ -295,7 +350,7 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
 
 export function saveNewSwarmFlowDraft(
   projectId: string,
-  draft: NewSwarmFlowDraft
+  draft: NewSwarmFlowDraft,
 ): void {
   const key = projectId.trim();
   if (!key) return;
@@ -320,7 +375,7 @@ export function saveNewSwarmFlowDraft(
  * after ITS remount.
  */
 export function readNewSwarmFlowDraft(
-  projectId: string | null | undefined
+  projectId: string | null | undefined,
 ): NewSwarmFlowDraft | null {
   const key = projectId?.trim();
   if (!key) return null;

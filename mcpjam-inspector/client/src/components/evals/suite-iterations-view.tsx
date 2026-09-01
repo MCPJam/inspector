@@ -50,6 +50,7 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
+import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
@@ -273,6 +274,7 @@ export function SuiteIterationsView({
   onShowCasesSidebar,
   omitSuiteHeader = false,
   suiteDetailOverview = false,
+  evaluateDecisionSummary = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch,
@@ -351,6 +353,15 @@ export function SuiteIterationsView({
    * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
    */
   suiteDetailOverview?: boolean;
+  /**
+   * Evaluate (New) only: read and render D9's canonical run decision summary
+   * on run detail and on the suite's run history.
+   *
+   * OFF by default, and the default is what keeps `/evals` byte-identical:
+   * with this false nothing here subscribes, so a non-Evaluate mount issues
+   * exactly zero decision-summary requests. Only `EvaluateTab` passes it.
+   */
+  evaluateDecisionSummary?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -1047,6 +1058,45 @@ export function SuiteIterationsView({
       onEditTestCase={onEditTestCase}
       alwaysShowEditIterationRows={alwaysShowEditIterationRows}
       runTrendData={runTrendData}
+      // The stage findings ride the SAME opt-in as the decision card beside
+      // them, and the same project gate: the read is per-project and the
+      // browser never resolves or guesses one. With this false the underlying
+      // read issues no request at all.
+      stageFindingsEnabled={Boolean(evaluateDecisionSummary && projectId)}
+      onViewStageTrace={({ iterationId, testCaseId }) =>
+        // Identical routing to the decision card's own trace link, and for the
+        // reason its comment gives: `tracePath` is an API path rather than an
+        // app route, and the CASE editor is the one path that actually
+        // consumes an iteration id.
+        navigation.toTestEdit(suite._id, testCaseId, {
+          iteration: iterationId,
+        })
+      }
+      decisionSummarySlot={
+        // Only Evaluate opts in, and only with a project id in hand: the read
+        // is per-project and the browser never resolves or guesses one.
+        evaluateDecisionSummary && projectId ? (
+          <RunDecisionSummarySection
+            projectId={projectId}
+            run={selectedRunDetails}
+            enabled
+            onViewTrace={({ iterationId, testCaseId }) =>
+              // `tracePath` is an API path, not an app route, so this goes
+              // through the app's own routing. It goes to the CASE editor
+              // rather than run detail because that is the one path that
+              // actually consumes an iteration id: the route's `iteration`
+              // becomes `openCompareIterationId` and the editor opens on it.
+              // Run detail takes a `selectedIterationId` that
+              // `RunIterationsSidebar` marks deprecated and never forwards, so
+              // sending the reader there would land them on the page they are
+              // already looking at with nothing opened.
+              navigation.toTestEdit(suite._id, testCaseId, {
+                iteration: iterationId,
+              })
+            }
+          />
+        ) : undefined
+      }
     />
   ) : null;
 
@@ -1239,6 +1289,8 @@ export function SuiteIterationsView({
                   runningTestCaseId={runningTestCaseId}
                   evalRunsDisabledReason={evalRunsDisabledReason}
                   readOnlyConfig={readOnlyConfig}
+                  projectId={projectId}
+                  decisionSummaryEnabled={evaluateDecisionSummary}
                 />
               </motion.div>
             ) : showFoldedUnifiedDashboard ? (

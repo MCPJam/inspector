@@ -12,6 +12,7 @@ import {
   runHostLabel,
 } from "../evals/helpers";
 import { computeRunEffectiveStats } from "../evals/suite-runs-list";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
@@ -70,6 +71,25 @@ export type SuiteRunHistoryRow = {
   runId: string;
   date: number;
   dateLabel: string;
+  /**
+   * The run's LIFECYCLE status, carried through so a row can tell whether it
+   * has a decision to read at all. Not a verdict — see `statusMeta` in
+   * `project-runs-table.tsx` for the same distinction.
+   */
+  status: EvalSuiteRun["status"];
+  /**
+   * A marker for this row as currently observed. When it changes, a cached
+   * decision summary for the run is describing an older reading (asynchronous
+   * judge fanout lands after a run is already terminal).
+   */
+  revision: string;
+  /**
+   * LOCALLY DERIVED, and the trap this whole type sits next to: `verdict` /
+   * `verdictLabel` / `passRate` are computed from iteration rows, which is a
+   * second reading of a run that the run itself already decided. Canonical
+   * summaries OVERRIDE these wherever one has been fetched; they remain only
+   * as the pre-canonical fallback for rows nothing has read yet.
+   */
   verdict: RunHistoryVerdict;
   verdictLabel: string;
   passRate: number | null;
@@ -271,6 +291,8 @@ export function buildSuiteRunHistoryRows(
         runId: run._id,
         date,
         dateLabel: formatSuiteRunDate(date),
+        status: run.status,
+        revision: evalRunDecisionRevision(run),
         verdict,
         verdictLabel: label,
         passRate: stats.passRate,

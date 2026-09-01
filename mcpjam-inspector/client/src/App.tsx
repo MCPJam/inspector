@@ -1,5 +1,4 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   useCallback,
   useContext,
@@ -15,6 +14,7 @@ import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -49,6 +49,7 @@ import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
 import { TracingTab } from "./components/TracingTab";
+import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import {
@@ -75,6 +76,7 @@ import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerTabView } from "./components/computer/ComputerTabView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
+import { useWebmcpInspectorEnabledState } from "./hooks/useWebmcpInspectorEnabled";
 import { useSkillsEnabledState } from "./hooks/useSkillsEnabled";
 import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
@@ -152,7 +154,6 @@ import {
   ScenarioChatPage,
   getScenarioPathTokenFromLocation,
 } from "./components/hosted/ScenarioChatPage";
-import { isEmbeddedPreview } from "./lib/embedded-preview";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
@@ -163,7 +164,7 @@ import {
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
 import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
-import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import { HOSTED_MODE } from "./lib/config";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -225,7 +226,6 @@ import {
   clearScenarioSignInReturnPath,
   readScenarioSession,
   readScenarioSignInReturnPath,
-  writeScenarioSignInReturnPath,
 } from "./lib/scenario-session";
 import {
   clearCliSignInReturnPath,
@@ -277,6 +277,7 @@ import {
 } from "@mcpjam/sdk/host-config/templates";
 import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -299,6 +300,7 @@ import {
   scopeNavigationTarget,
   type OrganizationRouteSection,
   useCurrentLocationParts,
+  useCurrentSearchParam,
   useActiveTab,
   useAppNavigate,
   useCurrentOrgRoute,
@@ -360,7 +362,7 @@ function getHostedOAuthCallbackErrorMessage(): string {
 
   return sanitizeHostedOAuthErrorMessage(
     description || error,
-    "Authorization could not be completed. Try again."
+    "Authorization could not be completed. Try again.",
   );
 }
 
@@ -474,10 +476,10 @@ function UserSetupError() {
 }
 
 function resolveDeletedOrganizationFallbackId(
-  organizations: ReadonlyArray<{ _id: string; myRole?: string }>
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
 ): string | undefined {
   const firstOwnedOrganization = organizations.find(
-    (organization) => organization.myRole === "owner"
+    (organization) => organization.myRole === "owner",
   );
   return firstOwnedOrganization?._id ?? organizations[0]?._id;
 }
@@ -532,8 +534,8 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 
 import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
 import { ScoreResultsPage } from "@/components/score/ScoreResultsPage";
-
-
+import { BenchRunnerPage } from "@/components/score/BenchRunnerPage";
+import { BenchResultsPage } from "@/components/score/BenchResultsPage";
 
 /**
  * The no-router render path.
@@ -584,6 +586,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <XAAFlowRoute />;
     case "tracing":
       return <TracingRoute />;
+    case "webmcp":
+      return <WebmcpInspectorRoute />;
     case "clients":
       return <HostsRoute />;
     case "host-compare":
@@ -666,7 +670,7 @@ export function ServersRoute() {
     (next: string | null) => {
       navigate(next ? buildHostsPath(next) : routePaths.servers);
     },
-    [navigate]
+    [navigate],
   );
 
   // Local mode: the Connect switcher is the only path to Skills, so it must
@@ -878,10 +882,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-      ? "pending"
-      : routeHosts.some((h) => h.hostId === idShapedHostId)
-      ? "live"
-      : "dead";
+        ? "pending"
+        : routeHosts.some((h) => h.hostId === idShapedHostId)
+          ? "live"
+          : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -954,7 +958,7 @@ export function HostsRoute() {
     (next: string | null) => {
       navigate(next ? buildHostsPath(next) : routePaths.hosts);
     },
-    [navigate]
+    [navigate],
   );
 
   useTemplateVerifyDeepLink({
@@ -1010,10 +1014,11 @@ function useTemplateVerifyDeepLink({
   const { createHost } = useHostMutations();
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
+  const cursorCliEnabled = useCursorHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
-      HOST_VERIFY_TEMPLATE_PARAM
+      HOST_VERIFY_TEMPLATE_PARAM,
     );
     if (!raw) return null;
     return HOST_TEMPLATES.some((t) => t.id === raw)
@@ -1034,7 +1039,7 @@ function useTemplateVerifyDeepLink({
     if (!requestedTemplateId) return;
     const timer = setTimeout(
       () => setFlagWaitExpired(true),
-      HOST_TEMPLATE_FLAG_WAIT_MS
+      HOST_TEMPLATE_FLAG_WAIT_MS,
     );
     return () => clearTimeout(timer);
   }, [requestedTemplateId]);
@@ -1052,7 +1057,7 @@ function useTemplateVerifyDeepLink({
     if (
       typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get(
-        HOST_VERIFY_TEMPLATE_PARAM
+        HOST_VERIFY_TEMPLATE_PARAM,
       ) !== requestedTemplateId
     ) {
       handledRef.current = true;
@@ -1079,6 +1084,7 @@ function useTemplateVerifyDeepLink({
     const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1099,7 +1105,7 @@ function useTemplateVerifyDeepLink({
       try {
         const seed = cloneHostTemplateInput(
           seedFromHostTemplate(template.id, { theme: themeMode }),
-          { themeMode }
+          { themeMode },
         );
         const { hostId } = await createHost({
           projectId,
@@ -1116,7 +1122,7 @@ function useTemplateVerifyDeepLink({
         // committed before it timed out. Retrying means opening the link again,
         // which remounts this hook and clears the latch.
         toast.error(
-          err instanceof Error ? err.message : "Couldn't open that client"
+          err instanceof Error ? err.message : "Couldn't open that client",
         );
       }
     })();
@@ -1129,6 +1135,7 @@ function useTemplateVerifyDeepLink({
     requestedFocusTab,
     claudeCodeEnabled,
     codexEnabled,
+    cursorCliEnabled,
     flagWaitExpired,
     themeMode,
     createHost,
@@ -1138,7 +1145,7 @@ function useTemplateVerifyDeepLink({
 
 function buildHostVerifyLandingPath(
   hostId: string,
-  tab: HostFocusTabId | null
+  tab: HostFocusTabId | null,
 ): string {
   const path = buildHostsPath(hostId);
   if (!tab) return path;
@@ -1165,6 +1172,27 @@ export function ScoreRunnerRoute() {
  */
 export function ScoreResultsRoute() {
   return <ScoreResultsPage />;
+}
+
+/**
+ * The Connector Bench runner, on the same chrome-less guest surface.
+ *
+ * Unlike the conformance runner it never executes anything in the browser: it
+ * starts a hosted run and then reads it. The run id is a route param, so this
+ * component holds no phase a reload could lose.
+ */
+export function BenchRunnerRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  return <BenchRunnerPage convexProjectId={convexProjectId ?? null} />;
+}
+
+/**
+ * One benchmark scorecard, addressable only by its secret link. Read through
+ * an unauthenticated GET on purpose — a shared result must open with no
+ * session, no guest cookie, and no project.
+ */
+export function BenchResultsRoute() {
+  return <BenchResultsPage />;
 }
 
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
@@ -1339,11 +1367,11 @@ export function ToolsRoute() {
           }
           tasksMode={taskModeForSurface(
             readTasksPolicy(activeHost?.config),
-            "tools"
+            "tools",
           )}
           mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
             activeHost?.config?.mcpToolResultImageRendering,
-            activeHost?.config?.modelVisibleMcpToolResults
+            activeHost?.config?.modelVisibleMcpToolResults,
           )}
         />
       </div>
@@ -1483,9 +1511,7 @@ export function ConformanceRunDetailRoute() {
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
-    params.runId ??
-    pathname.replace(/\/+$/, "").split("/").pop() ??
-    "";
+    params.runId ?? pathname.replace(/\/+$/, "").split("/").pop() ?? "";
   return (
     <ConformanceRunDetailPage
       runId={decodeParam(raw) ?? raw}
@@ -1498,9 +1524,7 @@ export function ConformanceSharedRoute() {
   const params = useParams<{ token?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
-    params.token ??
-    pathname.replace(/\/+$/, "").split("/").pop() ??
-    "";
+    params.token ?? pathname.replace(/\/+$/, "").split("/").pop() ?? "";
   return <ConformanceSharedPage token={decodeParam(raw) ?? raw} />;
 }
 
@@ -1508,9 +1532,7 @@ export function EvalRunSharedRoute() {
   const params = useParams<{ token?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
-    params.token ??
-    pathname.replace(/\/+$/, "").split("/").pop() ??
-    "";
+    params.token ?? pathname.replace(/\/+$/, "").split("/").pop() ?? "";
   return <EvalRunSharedPage token={decodeParam(raw) ?? raw} />;
 }
 
@@ -1518,7 +1540,7 @@ export function CompatibilityRoute() {
   const { appState, selectedServerEntry, activeProjectId, setSelectedServer } =
     useAppRouteContext();
   const connectedServers = Object.values<ServerWithName>(
-    appState.servers
+    appState.servers,
   ).filter((s) => s.connectionStatus === "connected");
   // The page resolves the detail against `servers` (ignoring a stale/
   // disconnected global selection), so it's safe to pass the raw selection.
@@ -1815,10 +1837,28 @@ export function SessionsRoute() {
   const { convexProjectId } = useAppRouteContext();
   const unifiedSessionsEnabled = useUnifiedSessionsEnabledState();
 
+  /**
+   * A permalink names ONE exact session, and this feed is the only screen that
+   * opens one: every `/v1/sessions` item carries `/sessions?session=<id>` as
+   * its link, which the backend mints as the universal target for sessions
+   * whose surface-native page does not exist (an eval Quick Run, a session
+   * whose parent run was deleted). Nothing else in the app can render it.
+   *
+   * So the ROLLOUT flag must not swallow that link. It gates who DISCOVERS the
+   * feed — the sidebar item, an unaddressed `/sessions` visit — not who may
+   * read a session they were handed the id of, and bouncing a permalink to
+   * Connect drops the id on the floor and lands the recipient on a screen they
+   * never asked for, with nothing to say what happened. Row-level visibility
+   * is entirely server-side (`canViewSessionInProject`), so honouring the link
+   * exposes nothing the flag was protecting, and the dark-ship ErrorBoundary
+   * below still covers a deployment whose feed queries are not live yet.
+   */
+  const permalinkSessionId = useCurrentSearchParam("session");
+
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /sessions directly. (Same tradeoff as SwarmsRoute.)
-  if (unifiedSessionsEnabled === false) {
+  if (unifiedSessionsEnabled === false && !permalinkSessionId) {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (unifiedSessionsEnabled === undefined) {
@@ -1891,8 +1931,13 @@ export function SkillsRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor, appState } =
     useAppRouteContext();
   const servers = appState?.servers as
-    | Record<string, ServerWithName>
-    | undefined;
+    Record<string, ServerWithName> | undefined;
+  // Names, in both modes. The local manager registers connections under their
+  // name, and the hosted API layer resolves a name to its Convex server id
+  // inside `buildServerRequest` — so resolving here too would duplicate that,
+  // and the label must stay the name regardless: a server must never choose
+  // the namespace its skills are addressed under.
+  //
   // Memoized on a stable signature rather than rebuilt per render: the
   // consuming section fetches per connection, and a fresh array identity on
   // every render would restart those fetches indefinitely.
@@ -1912,13 +1957,12 @@ export function SkillsRoute() {
         Object.entries(servers ?? {}).map(([name, server]) => [
           name,
           server.connectionStatus,
-        ])
+        ]),
       ),
-    ]
+    ],
   );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
-  const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
 
   // Skills is a Servers-page view (Servers | Client | Computer | Skills), so
@@ -1927,39 +1971,44 @@ export function SkillsRoute() {
   // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
 
-  // Hosted skills are a project-MEMBERSHIP resource (authored in Convex,
-  // available even without a Computer) but gated behind the `skills-enabled`
-  // PostHog flag until QA completes. Access is also enforced server-side.
-  // `computersEnabled` is passed through only for the local-mode Local/Cloud
-  // toggle; the skills flag applies to hosted mode only (local FS skills are
-  // always available).
-  if (HOSTED_MODE) {
-    // Wait for the project to resolve before rendering, since hosted skills
-    // have no local FS to fall back to (rendering early would hit the
-    // unavailable /api/mcp/skills/* routes).
-    if (!convexProjectId) {
-      return null;
-    }
-    // Only redirect on an explicit `false`. While PostHog hydrates the flag is
-    // `undefined`; bouncing then would strand a flagged-in user who cold-loads
-    // /skills directly. Render nothing until it settles.
-    if (skillsEnabled === false) {
-      return <ScopedNavigate to={routePaths.servers} replace />;
-    }
-    if (skillsEnabled === undefined) {
-      return null;
-    }
+  // The `skills-enabled` flag gates ONE HALF of this tab, not the tab.
+  //
+  // Hosted Cloud Skills are a project-MEMBERSHIP resource (authored in Convex,
+  // available even without a Computer) still behind the flag until QA
+  // completes, and enforced server-side too. Skills over MCP (SEP-2640) is a
+  // different thing on the same page: a protocol capability served by whatever
+  // the user connected, gated only by mutual declaration, whose
+  // `/api/web/server-skills/*` routes carry no product flag. Redirecting the
+  // whole route on the Cloud flag would hold the protocol half hostage to an
+  // unrelated feature's rollout, so the flag is passed DOWN instead.
+  //
+  // The same flag also decides whether the local-mode Local/Cloud toggle is
+  // offered, because that toggle browses the project store: gating it on
+  // `computers-enabled` was a leftover from when cloud skills lived on a
+  // Computer's filesystem. That is why the prop below is the flag itself and
+  // not `!HOSTED_MODE || flag` — the old form read as "local mode always has
+  // the store", which was harmless while the toggle carried its own gate and
+  // becomes "no gate at all" the moment the toggle reads this prop instead.
+  if (HOSTED_MODE && !convexProjectId) {
+    // Wait for the project to resolve before rendering: hosted skills have no
+    // local FS to fall back to, and the server-skills routes address their
+    // connection by project.
+    return null;
   }
 
   const skillsView = (
     <SkillsTab
       projectId={convexProjectId}
-      computersEnabled={computersEnabled === true}
       // Skills over MCP (SEP-2640): the "From MCP servers" section reads its
       // catalog live, per connection, so it needs the CURRENT server list —
       // the label (host-assigned, from our registry) and whether the
       // connection is up. A disconnected server can't answer `skills/list`.
       mcpServers={skillsMcpServers}
+      // `undefined` is PostHog still hydrating. Treated as off so the tab
+      // renders its protocol half immediately and the Cloud store appears when
+      // the flag resolves — content arriving is a better first paint than a
+      // blank page for every user who only has the protocol half.
+      cloudSkillsEnabled={skillsEnabled === true}
     />
   );
 
@@ -2141,6 +2190,22 @@ export function TracingRoute() {
   return <TracingTab />;
 }
 
+export function WebmcpInspectorRoute() {
+  const webmcpEnabled = useWebmcpInspectorEnabledState();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`, and bouncing then would strand a flagged-in user who
+  // cold-loads /webmcp directly — the same hydration race `ComputerRoute`
+  // guards against.
+  if (webmcpEnabled === false) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
+  }
+  if (webmcpEnabled === undefined) {
+    return null;
+  }
+  return <WebmcpInspectorTab />;
+}
+
 export function PlaygroundRoute() {
   const {
     activeHost,
@@ -2187,7 +2252,7 @@ export function PlaygroundRoute() {
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>
-          current?.id === id ? null : current
+          current?.id === id ? null : current,
         )
       }
     />
@@ -2290,7 +2355,7 @@ export function GithubInstallCallbackSettingsRoute() {
       onError={(error) =>
         console.error(
           "[settings/integrations/github/callback] unavailable:",
-          error
+          error,
         )
       }
       fallback={<Navigate to="/settings" replace />}
@@ -2399,7 +2464,7 @@ export default function App() {
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const posthog = usePostHog();
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui"
+    "billing-entitlements-ui",
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
@@ -2414,15 +2479,14 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-      ? "xaa"
-      : null;
+        ? "xaa"
+        : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
   const {
     getAccessToken,
     signIn,
-    signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
   } = useAuth();
@@ -2430,7 +2494,7 @@ export default function App() {
   const actorKey = useActorKey();
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
-    isAuthenticated ? ({} as any) : "skip"
+    isAuthenticated ? ({} as any) : "skip",
   );
   // Keyed off the stored callback context rather than the platform: the
   // scenario runtime (and its OAuth flows) runs on local/desktop builds too,
@@ -2479,6 +2543,12 @@ export default function App() {
   const isBareCaniuseRoute =
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
+    barePathname === routePaths.embedBench ||
+    // `/embed/bench/<runId>` is the same chrome-less screen resumed, so the
+    // deep link has to clear the shell and the NUX redirect too — otherwise
+    // reloading a running benchmark drops the visitor into onboarding.
+    barePathname.startsWith(`${routePaths.embedBench}/`) ||
+    barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
     barePathname.startsWith(`${routePaths.evalsShared}/`) ||
@@ -2510,11 +2580,11 @@ export default function App() {
 
     setOptimisticallyDeletedOrganizationIds((currentIds) => {
       const nextIds = currentIds.filter((organizationId) =>
-        sortedOrganizations.some((org) => org._id === organizationId)
+        sortedOrganizations.some((org) => org._id === organizationId),
       );
       return nextIds.length === currentIds.length &&
         nextIds.every(
-          (organizationId, index) => organizationId === currentIds[index]
+          (organizationId, index) => organizationId === currentIds[index],
         )
         ? currentIds
         : nextIds;
@@ -2524,9 +2594,9 @@ export default function App() {
     () =>
       sortedOrganizations.filter(
         (organization) =>
-          !optimisticallyDeletedOrganizationIds.includes(organization._id)
+          !optimisticallyDeletedOrganizationIds.includes(organization._id),
       ),
-    [optimisticallyDeletedOrganizationIds, sortedOrganizations]
+    [optimisticallyDeletedOrganizationIds, sortedOrganizations],
   );
   // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
   // whose membership hasn't linked yet, so every org-scoped query for it is
@@ -2536,7 +2606,7 @@ export default function App() {
   // active org, by route or by fallback.
   const selectableOrganizations = useMemo(
     () => effectiveOrganizations.filter((org) => !org.seatPending),
-    [effectiveOrganizations]
+    [effectiveOrganizations],
   );
   const hasRouteOrganization = !!routeOrganizationId
     ? selectableOrganizations.some((org) => org._id === routeOrganizationId)
@@ -2575,7 +2645,7 @@ export default function App() {
       if (errorMessage && callbackContext.serverName) {
         markPendingChatScopeStepUpCancelled(
           callbackContext.serverName,
-          errorMessage
+          errorMessage,
         );
       }
       if (callbackContext.serverName) {
@@ -2693,16 +2763,16 @@ export default function App() {
         finalizeHostedOAuth(
           sanitizeHostedOAuthErrorMessage(
             result.error,
-            "Authorization could not be completed. Try again."
-          )
+            "Authorization could not be completed. Try again.",
+          ),
         );
       })
       .catch((callbackError) => {
         finalizeHostedOAuth(
           sanitizeHostedOAuthErrorMessage(
             callbackError,
-            "Authorization could not be completed. Try again."
-          )
+            "Authorization could not be completed. Try again.",
+          ),
         );
       })
       .finally(() => {
@@ -2811,7 +2881,7 @@ export default function App() {
           ? "absent"
           : restoredPath === appReturnPath
             ? "restored"
-            : "superseded"
+            : "superseded",
       );
       // `navigateApp`, not `history.replaceState`: a raw history write leaves
       // the ROUTER matched on `/callback` while the address bar says
@@ -2926,7 +2996,7 @@ export default function App() {
     const serverNames = Object.keys(appState.servers);
     const cleanupPromise = Promise.allSettled([
       Promise.allSettled(
-        serverNames.map((serverName) => handleDisconnect(serverName))
+        serverNames.map((serverName) => handleDisconnect(serverName)),
       ),
       disconnectAllRuntimeServers(),
     ]);
@@ -2934,7 +3004,7 @@ export default function App() {
     const timeoutPromise = new Promise<void>((resolve) => {
       timeoutId = window.setTimeout(
         resolve,
-        AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS
+        AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS,
       );
     });
 
@@ -2965,7 +3035,7 @@ export default function App() {
         resourceMetadataUrl: event.resourceMetadataUrl,
       });
     },
-    [appState]
+    [appState],
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
   // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
@@ -2999,12 +3069,12 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-      ? [appState.selectedServer]
-      : [];
+        ? [appState.selectedServer]
+        : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
-    persistRuntimeServerToProjectIfNeeded
+    persistRuntimeServerToProjectIfNeeded,
   );
   persistRuntimeServerToProjectRef.current =
     persistRuntimeServerToProjectIfNeeded;
@@ -3026,9 +3096,9 @@ export default function App() {
   useEffect(() => {
     return subscribeToOAuthDebuggerRequests(({ serverName }) => {
       const matchedServerName = Object.entries(
-        oauthDebuggerServersRef.current
+        oauthDebuggerServersRef.current,
       ).find(
-        ([name, server]) => name === serverName || server.name === serverName
+        ([name, server]) => name === serverName || server.name === serverName,
       )?.[0];
 
       if (
@@ -3040,30 +3110,21 @@ export default function App() {
     });
   }, [setSelectedServer]);
   const activeOrganizationName = effectiveOrganizations.find(
-    (org) => org._id === activeOrganizationId
+    (org) => org._id === activeOrganizationId,
   )?.name;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
-    nonProdLockdown: NON_PROD_LOCKDOWN,
-    // Read on every render, like `scenarioPathToken` above: framing is a fact
-    // about this document, fixed for its lifetime, so there is nothing to
-    // memoize and nothing that can change under us.
-    embeddedPreview: isScenarioChatRoute && isEmbeddedPreview(),
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
-    workOsUserEmail: workOsUser?.email ?? null,
   });
   const baseHostedShellGateState = hostedShellGateState;
   const pendingDashboardOAuthServer = pendingDashboardOAuth
     ? projectServers[pendingDashboardOAuth.serverName]
     : null;
   const shouldShowPendingDashboardOAuthGate =
-    !!pendingDashboardOAuth &&
-    !pendingDashboardOAuthServer &&
-    baseHostedShellGateState !== "logged-out" &&
-    baseHostedShellGateState !== "restricted";
+    !!pendingDashboardOAuth && !pendingDashboardOAuthServer;
   const effectiveHostedShellGateState = shouldShowPendingDashboardOAuthGate
     ? "project-loading"
     : baseHostedShellGateState;
@@ -3071,7 +3132,7 @@ export default function App() {
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
   const hasAnyFirstRunBlockingProjectServers = Object.keys(projectServers).some(
-    (serverName) => serverName !== EXCALIDRAW_SERVER_NAME
+    (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
   );
   const remoteFirstRunOnboardingShown =
     currentUser == null
@@ -3160,7 +3221,7 @@ export default function App() {
       activeTab,
       !!workOsUser,
       remoteFirstRunOnboardingShown,
-      isNewSignedInAccount
+      isNewSignedInAccount,
     );
   const shouldHoldHostedHomeRouteForFirstRunRedirect =
     HOSTED_MODE && activeTab === "home" && shouldRouteToFirstRunOnboarding;
@@ -3170,13 +3231,13 @@ export default function App() {
     const connectedServers = new Set(
       Object.entries<ServerWithName>(appState.servers)
         .filter(([, server]) => server.connectionStatus === "connected")
-        .map(([name]) => name)
+        .map(([name]) => name),
     );
 
     const previousConnectedServers = previousConnectedServersRef.current;
     const newlyConnectedServers = getNewlyConnectedServers(
       previousConnectedServers,
-      connectedServers
+      connectedServers,
     );
 
     if (activeTab === "servers" || activeTab === "clients") {
@@ -3194,7 +3255,7 @@ export default function App() {
         try {
           localStorage.setItem(
             `testing-auto-opened:${firstVisitServer}`,
-            "true"
+            "true",
           );
         } catch {
           // Ignore localStorage failures and still select the server.
@@ -3219,7 +3280,7 @@ export default function App() {
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(projectServers).find(
-      ([, server]) => (server as any).connectionStatus === "connected"
+      ([, server]) => (server as any).connectionStatus === "connected",
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);
@@ -3251,7 +3312,7 @@ export default function App() {
       projects,
       activeProjectId,
     }),
-    [appState, projects, activeProjectId]
+    [appState, projects, activeProjectId],
   );
 
   // Get the Convex project ID from the active project
@@ -3270,7 +3331,7 @@ export default function App() {
   // hook for the full chain.
   const hostedClientCapabilities = useHostedClientCapabilities(
     activeHost?.clientCapabilities,
-    activeProject?.clientConfig
+    activeProject?.clientConfig,
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
@@ -3278,7 +3339,7 @@ export default function App() {
     "projectServerConfig:getConfig" as never,
     canQueryProjectServerConfig
       ? ({ projectId: convexProjectId } as never)
-      : "skip"
+      : "skip",
   ) as ProjectServerConfigDto | null | undefined;
   // A skipped query reads as `undefined`, so this already covers the window
   // where `canQueryProjectServerConfig` is false for a project-scoped session.
@@ -3296,7 +3357,7 @@ export default function App() {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
-    ? routeOrganizationId ?? null
+    ? (routeOrganizationId ?? null)
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -3357,7 +3418,7 @@ export default function App() {
   const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
   const upgradePlanForActiveTab = getUpgradePlanForDeniedGate(
     navPremiumness,
-    activeTabGate
+    activeTabGate,
   );
   const projectCreationGate = resolveBillingGateState({
     billingUiEnabled,
@@ -3401,10 +3462,10 @@ export default function App() {
   const createProjectDisabledReason = guestProjectLimitReached
     ? "Sign in to create more projects"
     : noOrganizationsAvailable
-    ? "Create or join an organization to create projects"
-    : insufficientOrgRoleForCreate
-    ? "You don't have permission to create projects"
-    : projectCreationGate.denialMessage ?? undefined;
+      ? "Create or join an organization to create projects"
+      : insufficientOrgRoleForCreate
+        ? "You don't have permission to create projects"
+        : (projectCreationGate.denialMessage ?? undefined);
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
   >(null);
@@ -3453,18 +3514,18 @@ export default function App() {
   const hostedServerIdsByName = useMemo(
     () =>
       Object.fromEntries(
-        Array.from(serversById.entries()).map(([id, name]) => [name, id])
+        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
       ),
-    [serversById]
+    [serversById],
   );
   const oauthTokensByServerId = useMemo(
     () =>
       buildOAuthTokensByServerId(
         Object.keys(hostedServerIdsByName),
         (name) => hostedServerIdsByName[name],
-        (name) => appState.servers[name]?.oauthTokens?.access_token
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
       ),
-    [hostedServerIdsByName, appState.servers]
+    [hostedServerIdsByName, appState.servers],
   );
   const hostedMcpProfilePins = useMemo(() => {
     const rawClientInfo = activeMcpProfile?.initialize?.clientInfo;
@@ -3480,7 +3541,7 @@ export default function App() {
     const supportedProtocolVersions =
       Array.isArray(rawSupportedVersions) && rawSupportedVersions.length > 0
         ? rawSupportedVersions.filter(
-            (v): v is string => typeof v === "string" && v.trim() !== ""
+            (v): v is string => typeof v === "string" && v.trim() !== "",
           )
         : undefined;
 
@@ -3494,7 +3555,7 @@ export default function App() {
       {};
     const seenServerIds = new Set<string>();
     for (const [serverName, serverId] of Object.entries(
-      hostedServerIdsByName
+      hostedServerIdsByName,
     )) {
       if (seenServerIds.has(serverId)) continue;
       seenServerIds.add(serverId);
@@ -3548,6 +3609,14 @@ export default function App() {
         : undefined;
     const supportsMrtr =
       activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+    const suppressListenChannel =
+      activeMcpProfile?.toolListChanged?.listens === false
+        ? (true as const)
+        : undefined;
+    const dropToolListChanged =
+      activeMcpProfile?.toolListChanged?.refetches === false
+        ? (true as const)
+        : undefined;
 
     return {
       clientInfo,
@@ -3559,6 +3628,8 @@ export default function App() {
       mirrorToolParamHeaders,
       firstPageOnly,
       supportsMrtr,
+      suppressListenChannel,
+      dropToolListChanged,
       xaaPolicy,
     };
   }, [
@@ -3603,7 +3674,7 @@ export default function App() {
     (target: string, options?: { replace?: boolean }) => {
       navigateApp(navigationTargetToPath(target), options);
     },
-    []
+    [],
   );
   const navigateToServers = useCallback(
     (options?: { replace?: boolean }) => {
@@ -3616,7 +3687,7 @@ export default function App() {
       }
       navigateToTarget(routePaths.servers, options);
     },
-    [navigateToTarget]
+    [navigateToTarget],
   );
 
   useEffect(() => {
@@ -3658,7 +3729,7 @@ export default function App() {
         if (!resolved.ok) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            resolved.reason
+            resolved.reason,
           );
         }
 
@@ -3684,14 +3755,14 @@ export default function App() {
         if (landedSurface?.agentTools.kind === "group") {
           await waitForUiToolNames(
             listSurfaceGroupToolNames(landedSurface.id),
-            1500
+            1500,
           );
         }
 
         // Report the tab the shell actually landed on — the caller (SSE bus /
         // WebMCP UI tools) plans its next step from this.
         return { activeTab: pathnameToActiveTab(window.location.pathname) };
-      }
+      },
     );
 
     const unregisterSelectServer = registerInspectorCommandHandler(
@@ -3708,7 +3779,7 @@ export default function App() {
         if (!serverState) {
           throw createInspectorCommandClientError(
             "unknown_server",
-            `Unknown server "${command.payload.serverName}".`
+            `Unknown server "${command.payload.serverName}".`,
           );
         }
 
@@ -3719,7 +3790,7 @@ export default function App() {
         if (connectionStatus !== "connected") {
           throw createInspectorCommandClientError(
             "disconnected_server",
-            `Server "${command.payload.serverName}" is ${connectionStatus}.`
+            `Server "${command.payload.serverName}" is ${connectionStatus}.`,
           );
         }
 
@@ -3730,7 +3801,7 @@ export default function App() {
           selectedServer: command.payload.serverName,
           connectionStatus,
         };
-      }
+      },
     );
 
     const unregisterOpenPlayground = registerInspectorCommandHandler(
@@ -3749,7 +3820,7 @@ export default function App() {
           if (!serverState) {
             throw createInspectorCommandClientError(
               "unknown_server",
-              `Unknown server "${command.payload.serverName}".`
+              `Unknown server "${command.payload.serverName}".`,
             );
           }
 
@@ -3769,7 +3840,7 @@ export default function App() {
           if (runtimeForPersist?.connectionStatus === "connected") {
             void persistRuntimeServerToProjectRef.current(
               command.payload.serverName,
-              runtimeForPersist
+              runtimeForPersist,
             );
           }
         }
@@ -3782,7 +3853,7 @@ export default function App() {
           selectedServer:
             command.payload.serverName || selectedServerRef.current || "none",
         };
-      }
+      },
     );
 
     // The ONE `snapshotApp` handler. Surfaces contribute via the provider
@@ -3810,8 +3881,8 @@ export default function App() {
           throw createInspectorCommandClientError(
             "invalid_request",
             `Invalid surface ${JSON.stringify(
-              requested
-            )}. Omit it to snapshot the whole app, or pass a known screen id.`
+              requested,
+            )}. Omit it to snapshot the whole app, or pass a known screen id.`,
           );
         }
 
@@ -3825,12 +3896,12 @@ export default function App() {
             if (result.reason === "no_provider") {
               throw createInspectorCommandClientError(
                 "unsupported_in_mode",
-                `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`
+                `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`,
               );
             }
             throw createInspectorCommandClientError(
               "execution_failed",
-              result.error
+              result.error,
             );
           }
           return { surface: requested, [requested]: result.data };
@@ -3845,8 +3916,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-          ? [focused]
-          : [];
+            ? [focused]
+            : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),
@@ -3857,11 +3928,11 @@ export default function App() {
               connectionStatus:
                 (server as { connectionStatus?: string })?.connectionStatus ??
                 "unknown",
-            })
+            }),
           ),
           surfaces: await readAllSurfaceSnapshots(),
         };
-      }
+      },
     );
 
     // --- Connect-screen commands -------------------------------------
@@ -3875,7 +3946,7 @@ export default function App() {
       if (!state) {
         throw createInspectorCommandClientError(
           "unknown_server",
-          `Unknown server "${serverName}".`
+          `Unknown server "${serverName}".`,
         );
       }
       return state;
@@ -3928,7 +3999,7 @@ export default function App() {
         if (result.status !== "connected") {
           throw createInspectorCommandClientError(
             "execution_failed",
-            result.error ?? `Could not connect "${serverName}".`
+            result.error ?? `Could not connect "${serverName}".`,
           );
         }
 
@@ -3937,7 +4008,7 @@ export default function App() {
           status: "connected",
           connectionStatus: readConnectionStatus(serverName),
         };
-      }
+      },
     );
 
     const unregisterDisconnectServer = registerInspectorCommandHandler(
@@ -3953,7 +4024,7 @@ export default function App() {
           serverName,
           connectionStatus: readConnectionStatus(serverName),
         };
-      }
+      },
     );
 
     const unregisterRemoveServer = registerInspectorCommandHandler(
@@ -3971,11 +4042,11 @@ export default function App() {
         if (getInspectorServerState(serverName)) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            `"${serverName}" is still present after the remove.`
+            `"${serverName}" is still present after the remove.`,
           );
         }
         return { serverName, removed: true };
-      }
+      },
     );
 
     return () => {
@@ -4102,7 +4173,7 @@ export default function App() {
     const orgId = resolveCheckoutOrganizationId(
       selectableOrganizations,
       activeOrganizationId,
-      projectOrgId
+      projectOrgId,
     );
 
     if (!orgId) {
@@ -4150,10 +4221,10 @@ export default function App() {
     ) {
       toast.error(
         `${formatBillingFeatureName(
-          activeTabBillingFeature
+          activeTabBillingFeature,
         )} is not included in the ${formatPlanName(
-          shellBillingStatus?.plan
-        )} plan. Upgrade the organization to continue.`
+          shellBillingStatus?.plan,
+        )} plan. Upgrade the organization to continue.`,
       );
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "clients" && !isAuthenticated && !isAuthLoading) {
@@ -4205,12 +4276,12 @@ export default function App() {
   const handleSidebarSwitchOrganization = useCallback(
     (
       organizationId: string,
-      section: OrganizationRouteSection = "overview"
+      section: OrganizationRouteSection = "overview",
     ) => {
       setActiveOrganizationId(organizationId);
       navigateApp(buildOrganizationPath(organizationId, section));
     },
-    [setActiveOrganizationId]
+    [setActiveOrganizationId],
   );
 
   const handleSwitchActiveOrganization = useCallback(
@@ -4226,7 +4297,7 @@ export default function App() {
       setActiveOrganizationId(organizationId);
       navigateToServers();
     },
-    [activeOrganizationId, setActiveOrganizationId, navigateToServers]
+    [activeOrganizationId, setActiveOrganizationId, navigateToServers],
   );
 
   const handleContinueEvalInChat = useCallback(
@@ -4238,7 +4309,7 @@ export default function App() {
       });
       navigateApp(routePaths.playground);
     },
-    [setSelectedMCPConfigs]
+    [setSelectedMCPConfigs],
   );
 
   useEffect(() => {
@@ -4286,14 +4357,14 @@ export default function App() {
       setOptimisticallyDeletedOrganizationIds((currentIds) =>
         currentIds.includes(deletedOrganizationId)
           ? currentIds
-          : [...currentIds, deletedOrganizationId]
+          : [...currentIds, deletedOrganizationId],
       );
 
       const remainingOrganizations = selectableOrganizations.filter(
-        (organization) => organization._id !== deletedOrganizationId
+        (organization) => organization._id !== deletedOrganizationId,
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
-        remainingOrganizations
+        remainingOrganizations,
       );
       const isDeletedCurrentOrganization =
         activeOrganizationId === deletedOrganizationId ||
@@ -4302,7 +4373,7 @@ export default function App() {
 
       clearLocalFallbackProjectSelection(
         deletedOrganizationId,
-        fallbackOrganizationId
+        fallbackOrganizationId,
       );
 
       if (
@@ -4329,7 +4400,7 @@ export default function App() {
       navigateToServers,
       routeOrganizationId,
       setActiveOrganizationId,
-    ]
+    ],
   );
 
   // The URL owns which project this tab is on. This reconciles the two
@@ -4343,7 +4414,7 @@ export default function App() {
   // bar back at them.
   const switchProjectForRoute = useCallback(
     (projectId: string) => handleSwitchProject(projectId, { silent: true }),
-    [handleSwitchProject]
+    [handleSwitchProject],
   );
   const projectRouteState = useProjectRouteCoordinator({
     isAuthenticated,
@@ -4367,7 +4438,7 @@ export default function App() {
     (projectId: string) => {
       navigateToTarget(buildProjectSwitchTarget(projectId));
     },
-    [navigateToTarget]
+    [navigateToTarget],
   );
 
   /** The switcher's per-row gear — one gesture, one URL, no pre-switch. */
@@ -4375,7 +4446,7 @@ export default function App() {
     (projectId: string) => {
       navigateToTarget(buildProjectSettingsTarget(projectId));
     },
-    [navigateToTarget]
+    [navigateToTarget],
   );
 
   /**
@@ -4392,7 +4463,7 @@ export default function App() {
   const handleDeleteProjectAndLeave = useCallback(
     async (projectId: string) => {
       const remainingIds = Object.keys(projects).filter(
-        (id) => id !== projectId
+        (id) => id !== projectId,
       );
       const fallbackProjectId =
         remainingIds.find((id) => (projects[id] as any)?.isDefault) ??
@@ -4419,7 +4490,7 @@ export default function App() {
       }
       return deleted;
     },
-    [handleDeleteProject, projects]
+    [handleDeleteProject, projects],
   );
 
   const isBillingEntryHandoff =
@@ -4452,8 +4523,7 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    | PlaygroundServerSelectorProps
-    | undefined => {
+    PlaygroundServerSelectorProps | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -4644,8 +4714,8 @@ export default function App() {
             activeTab === "xaa-flow" && xaaEnabled === true
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
-              ? () => setOauthServerModalNonce((n) => n + 1)
-              : undefined,
+                ? () => setOauthServerModalNonce((n) => n + 1)
+                : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
@@ -4937,7 +5007,7 @@ export default function App() {
                 setTrialModalDismissedForOrg(billingOrganizationId ?? null);
                 if (billingOrganizationId) {
                   navigateToTarget(
-                    `organizations/${billingOrganizationId}/billing`
+                    `organizations/${billingOrganizationId}/billing`,
                   );
                 }
               }}
@@ -5003,6 +5073,7 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <SessionRefreshBanner />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}
@@ -5020,36 +5091,6 @@ export default function App() {
                     ? pendingDashboardOAuthMessage
                     : undefined
                 }
-                onSignIn={() => {
-                  if (scenarioPathToken) {
-                    // The scenario gate owns its own return path; leaving the
-                    // permalink nonce out keeps exactly one mechanism live on
-                    // that route rather than two racing to redirect.
-                    writeScenarioSignInReturnPath(window.location.pathname);
-                    signIn();
-                    return;
-                  }
-                  // THE primary signed-out path for a permalink. This gate
-                  // intercepts a hosted cold load before any screen renders,
-                  // so a bare `signIn()` here loses the resource path and its
-                  // `?project=` scope no matter what the header button does —
-                  // the visitor authenticates and lands on the app shell.
-                  //
-                  // The generic path is stored alongside the scenario one, not
-                  // instead of it: the scenario flow keeps its precedence on
-                  // `/callback`, and this only fills in for everything else.
-                  captureAppSignInReturnPath();
-                  signIn(permalinkSignInOptions());
-                }}
-                onSignOut={() => {
-                  void (async () => {
-                    try {
-                      await disconnectRuntimeServersForAuthExit();
-                    } finally {
-                      await signOut();
-                    }
-                  })();
-                }}
               >
                 {isScenarioChatRoute ? (
                   <ScenarioChatPage

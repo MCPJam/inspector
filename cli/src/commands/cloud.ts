@@ -6,10 +6,12 @@ import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
 import { registerClientsCommands } from "./clients.js";
 import { registerImagesCommands } from "./images.js";
+import { registerSkillsCommands } from "./skills.js";
 import { registerJourneysCommands } from "./journeys.js";
 import { registerOrganizationsCommands } from "./organizations.js";
 import { registerProjectsCommands } from "./projects.js";
 import { registerScenariosCommands } from "./scenarios.js";
+import { registerSecretsCommands } from "./secrets.js";
 import { registerSessionsCommands } from "./sessions.js";
 import { registerSwarmAuthoringCommands } from "./swarms.js";
 import { registerTunnelCommands } from "./tunnel.js";
@@ -43,7 +45,11 @@ export function registerCloudCommands(program: Command): Command {
   registerEvalCommands(cloud);
   registerClientsCommands(cloud);
   registerEnvironmentsCommands(cloud);
+  // Project secrets sit with environments because an environment is what grants
+  // one to a run — you create a secret here and then select it there.
+  registerSecretsCommands(cloud);
   registerImagesCommands(cloud);
+  registerSkillsCommands(cloud);
 
   cloud.commandsGroup("Swarms and user testing:");
   const journeys = registerJourneysCommands(cloud);
