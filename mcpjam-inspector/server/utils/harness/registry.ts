@@ -14,7 +14,10 @@
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodex } from "@ai-sdk/harness-codex";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
+import type {
+  HarnessV1AuthenticationEnvironment,
+  HarnessV1PermissionMode,
+} from "@ai-sdk/harness";
 import { asSchema } from "ai";
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import {
@@ -43,16 +46,19 @@ import { CLAUDE_CODE_SKILLS_BASE, CODEX_SKILLS_BASE } from "./skill-roots.js";
 export type HarnessId = Harness;
 
 /** Auth the inspector hands an adapter — BROKER-ONLY (COMP-23): dummy
- *  `anthropic`/`openaiCompatible` creds pointed at the model proxy. The REAL
- *  lease is injected by E2B OUTSIDE the VM, so these placeholders only satisfy
- *  the CLI's auth env. (The `gateway` variant carried the raw AI Gateway key on
- *  the retired client path — removed; the inspector never holds a real model
- *  credential.) All-optional so a single value type is accepted by both
- *  `createClaudeCode` and `createCodex`. */
-export type HarnessAuth = {
-  anthropic?: { apiKey: string; authToken: string; baseUrl: string };
-  openaiCompatible?: { apiKey: string; baseUrl: string };
-};
+ *  credentials pointed at the model proxy. The REAL lease is injected by E2B
+ *  OUTSIDE the VM, so these placeholders only satisfy the CLI's auth env. (A
+ *  `gateway` variant carried the raw AI Gateway key on the retired client path
+ *  — removed; the inspector never holds a real model credential.)
+ *
+ *  Since `@ai-sdk/harness@1.0.x` this is the adapters' `HarnessV1Authentication`
+ *  ENVIRONMENT arm: a flat env map, rather than the canary line's structured
+ *  `{ anthropic }` / `{ openaiCompatible }` objects. Supplying the map (instead
+ *  of `'auto'` / `'ai-gateway'` / `'direct'`) is what keeps the adapters from
+ *  reading the SERVER's own process env for a model credential — the property
+ *  COMP-23 depends on. One flat type is accepted by both `createClaudeCode` and
+ *  `createCodex`. */
+export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 
 /** Placeholder credential value handed to the in-sandbox CLI on the broker path.
  *  It is never used for auth (the proxy ignores VM-supplied Authorization/
@@ -62,25 +68,25 @@ const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
 
 /** Build the dummy broker auth pointed at the proxy base URL. Claude Code reads
  *  `ANTHROPIC_AUTH_TOKEN` (Bearer) + `ANTHROPIC_BASE_URL`; Codex reads
- *  `CODEX_API_KEY` + `OPENAI_BASE_URL`. */
+ *  `CODEX_API_KEY` + `OPENAI_BASE_URL`.
+ *
+ *  `ANTHROPIC_API_KEY` is deliberately ABSENT rather than empty: the adapter
+ *  keys its credential-forwarding transformations off which variables are
+ *  present, and an empty string would register an `x-api-key` rewrite for a
+ *  header the CLI never sends on the auth-token path. */
 export function buildBrokerDummyAuth(
   harnessId: HarnessId,
   proxyBaseUrl: string
 ): HarnessAuth {
   if (harnessId === "codex") {
     return {
-      openaiCompatible: {
-        apiKey: BROKER_DUMMY_CREDENTIAL,
-        baseUrl: proxyBaseUrl,
-      },
+      CODEX_API_KEY: BROKER_DUMMY_CREDENTIAL,
+      OPENAI_BASE_URL: proxyBaseUrl,
     };
   }
   return {
-    anthropic: {
-      apiKey: "",
-      authToken: BROKER_DUMMY_CREDENTIAL,
-      baseUrl: proxyBaseUrl,
-    },
+    ANTHROPIC_AUTH_TOKEN: BROKER_DUMMY_CREDENTIAL,
+    ANTHROPIC_BASE_URL: proxyBaseUrl,
   };
 }
 
@@ -308,111 +314,130 @@ export type HarnessRuntimeAdapter = HarnessRuntimeAdapterBase &
       }
   );
 
-const CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE = 'type: "user",\n    message: {';
-const CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH =
-  'type: "user",\n    parent_tool_use_id: null,\n    message: {';
-const CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE =
-  "let streamStarted = false;\n  const partialBlocks";
-const CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH = `let streamStarted = false;
+/* ── Claude Code bridge patches ────────────────────────────────────────────
+ *
+ * Two groups survive on the `@ai-sdk/harness-claude-code@1.0.x` stable line.
+ * A third — injecting `parent_tool_use_id: null` into the outbound user message
+ * — was RETIRED at the stable bump: the adapter's own `toUserMessage` now sets
+ * it, and re-applying ours would have written the key twice.
+ *
+ * Every needle below is quoted from the vendored `dist/bridge/index.mjs` and
+ * must match VERBATIM. A miss throws rather than silently shipping an
+ * unpatched bridge; `registry.test.ts` runs the patcher against the really
+ * installed package so a version bump fails loudly here instead of at runtime.
+ */
+
+/** Group B — assistant-text fallback.
+ *
+ *  The bridge emits assistant text ONLY from `stream_event` text deltas. When
+ *  the CLI returns a non-streamed response the turn ends with empty output, so
+ *  we synthesize text parts from the assistant message's text blocks and, as a
+ *  last resort, from the terminal `result`.
+ *
+ *  Everything lives inside `createEmitStreamEvent`, whose closure already owns
+ *  `emit` and the per-turn `state`. On the canary line the `result` fallback sat
+ *  in the main turn loop; on stable that loop calls `emitStreamEvent(msg)` for
+ *  the `result` message too, so both fallbacks share one scope and one dedup
+ *  variable. */
+const CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE = `  let streamStarted = false;
+  return (msg) => {
+    const type = msg.type;`;
+const CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH = `  let streamStarted = false;
   let streamedAssistantText = false;
   let lastEmittedFallbackText;
+  let fallbackTextSeq = 0;
   const emitAssistantTextFallback = (text) => {
     const normalized = typeof text === "string" ? text : "";
     if (!normalized || streamedAssistantText || normalized === lastEmittedFallbackText) return;
-    const id = randomUUID();
+    const id = \`mcpjam-fallback-\${Date.now()}-\${++fallbackTextSeq}\`;
     emit({ type: "text-start", id });
     emit({ type: "text-delta", id, delta: normalized });
     emit({ type: "text-end", id });
     lastEmittedFallbackText = normalized;
+    // Mirror the adapter's own structured-output path: text emitted outside a
+    // step is dropped unless the step is open when the result arrives.
+    state.stepOpen = true;
   };
-  const partialBlocks`;
-const CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE = `if (type === "stream_event") {
-        handleStreamEvent(msg.event, partialBlocks, emit);
-        continue;
-      }`;
-const CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `if (type === "stream_event") {
-        if (msg.event?.type === "content_block_delta" && msg.event?.delta?.type === "text_delta" && typeof msg.event?.delta?.text === "string" && msg.event.delta.text.length > 0) {
-          streamedAssistantText = true;
+  return (msg) => {
+    const type = msg.type;`;
+
+const CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE = `    if (type === "stream_event") {
+      handleStreamEvent({`;
+const CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `    if (type === "stream_event") {
+      if (msg.event?.type === "content_block_delta" && msg.event?.delta?.type === "text_delta" && typeof msg.event?.delta?.text === "string" && msg.event.delta.text.length > 0) {
+        streamedAssistantText = true;
+      }
+      handleStreamEvent({`;
+
+const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `      for (const block of msg.message.content) {
+        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
+const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `      for (const block of msg.message.content) {
+        if (block.type === "text" && typeof block.text === "string") {
+          emitAssistantTextFallback(block.text);
+          continue;
         }
-        handleStreamEvent(msg.event, partialBlocks, emit);
-        continue;
-      }`;
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `for (const block of msg.message.content) {
-          if (block.type === "tool_use"`;
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `for (const block of msg.message.content) {
-          if (block.type === "text" && typeof block.text === "string") {
-            emitAssistantTextFallback(block.text);
-            continue;
-          }
-          if (block.type === "tool_use"`;
-const CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `const emptyResult = !msg.result?.trim?.();
-          if (emptyResult && observedTerminalError) {`;
-const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `const emptyResult = !msg.result?.trim?.();
-          if (!emptyResult) {
-            emitAssistantTextFallback(msg.result);
-          }
-          if (emptyResult && observedTerminalError) {`;
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `const permissionOptions = createPermissionOptions({
-    start,
-    turn,
-    emit,
-    nativeToolCallNames,
-    approvalRequestedToolUseIds
-  });`;
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `const permissionOptions = createPermissionOptions({
-    start,
-    turn,
-    emit,
-    nativeToolCallNames,
-    approvalRequestedToolUseIds
-  });
-  const gatewayModelOverridesForClaudeModel = (model) => {
-    if (typeof model !== "string") return undefined;
-    if (model === "haiku") {
-      return {
-        haiku: "anthropic/claude-haiku-4.5",
-        "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-        "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5"
-      };
+        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
+
+/** `createEmitStreamEvent` has no `result` branch of its own, so this adds one.
+ *  It is anchored AFTER the `parent_tool_use_id` sub-agent guard so a subagent's
+ *  terminal result never leaks into the parent transcript. */
+const CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `    if (msg.parent_tool_use_id != null) {
+      return;
+    }`;
+const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != null) {
+      return;
     }
+    if (type === "result" && msg.subtype === "success") {
+      emitAssistantTextFallback(msg.result);
+    }`;
+
+/** Group C — AI Gateway model overrides.
+ *
+ *  Claude Code puts its own native id on the wire (`haiku`, `claude-sonnet-4-5`,
+ *  a dated snapshot); the Gateway wants `anthropic/claude-<family>-<major>.<minor>`.
+ *  `settings.modelOverrides` bridges that.
+ *
+ *  The companion `CLAUDE_CODE_EFFORT_LEVEL` write this group used to carry is
+ *  GONE from the patch: stable exposes a first-class `env` option on
+ *  `createClaudeCode`, so it is passed as configuration instead (see
+ *  `createHarness` below). */
+const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";`;
+const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
+function gatewayModelOverrideSettingsFor(model) {
+  if (typeof model !== "string") return undefined;
+  let overrides;
+  if (model === "haiku") {
+    overrides = {
+      haiku: "anthropic/claude-haiku-4.5",
+      "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+      "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5"
+    };
+  } else {
     if (!model.startsWith("claude-")) return undefined;
     const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
     if (!match) return undefined;
     const [, family, major, minor] = match;
-    return {
+    overrides = {
       [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
     };
-  };
-  const gatewayModelOverrides = gatewayModelOverridesForClaudeModel(start.model);
-  const gatewayModelOverrideSettings = gatewayModelOverrides
-    ? { modelOverrides: gatewayModelOverrides }
-    : undefined;
-  // AI Gateway's Anthropic-compat schema rejects the newer output_config.effort
-  // request field ("400 output_config.effort: Extra inputs are not permitted").
-  // "unset" makes the CLI omit the field entirely (verified in CLI 0.2.x-2.1.x:
-  // CLAUDE_CODE_EFFORT_LEVEL of "unset"/"auto" short-circuits effort resolution).
-  // The CLI runs as a child of this bridge process, so it inherits this env;
-  // ??= keeps any operator-provided override authoritative.
-  process.env.CLAUDE_CODE_EFFORT_LEVEL ??= "unset";`;
-const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE = `...start.model ? { model: start.model } : {},
-      ...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},`;
-const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `...start.model ? { model: start.model } : {},
-      ...(gatewayModelOverrideSettings ? { settings: gatewayModelOverrideSettings } : {}),
-      ...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},`;
+  }
+  return { modelOverrides: overrides };
+}`;
+
+/** `permissionOptions` is spread LAST into the query options and carries its own
+ *  `settings` whenever a permission mode or an inactive native tool produces ask
+ *  rules. Injecting `settings` earlier in the literal would be silently clobbered
+ *  by that spread, so the overrides are MERGED on top of it here instead. */
+const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE = `      ...permissionOptions,
+      mcpServers,
+      cwd: workdir,`;
+const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
+      ...(gatewayModelOverrideSettingsFor(start.model) ? { settings: { ...(permissionOptions.settings ?? {}), ...gatewayModelOverrideSettingsFor(start.model) } } : {}),
+      mcpServers,
+      cwd: workdir,`;
 
 function patchClaudeCodeBridgeContent(content: string): string {
   let patched = content;
-  if (!patched.includes("parent_tool_use_id")) {
-    if (!patched.includes(CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE)) {
-      throw new Error(
-        "Unable to patch Claude Code bridge bootstrap: user-message shape changed"
-      );
-    }
-    patched = patched.replace(
-      CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE,
-      CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH
-    );
-  }
 
   if (!patched.includes("emitAssistantTextFallback")) {
     for (const [needle, replacement] of [
@@ -442,7 +467,7 @@ function patchClaudeCodeBridgeContent(content: string): string {
     }
   }
 
-  if (!patched.includes("gatewayModelOverrideSettings")) {
+  if (!patched.includes("gatewayModelOverrideSettingsFor")) {
     for (const [needle, replacement] of [
       [
         CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE,
@@ -460,6 +485,15 @@ function patchClaudeCodeBridgeContent(content: string): string {
       }
       patched = patched.replace(needle, replacement);
     }
+  }
+
+  /* The adapter now sets `parent_tool_use_id` itself. If a future version drops
+   * it again the sub-agent guard silently stops filtering, so fail loudly
+   * rather than let a subagent's stream merge into the parent transcript. */
+  if (!patched.includes("parent_tool_use_id")) {
+    throw new Error(
+      "Unable to verify Claude Code bridge bootstrap: user-message shape changed"
+    );
   }
 
   return patched;
@@ -489,10 +523,21 @@ function patchClaudeCodeBridgeContent(content: string): string {
  * which has already happened once: the first version of this patch shipped
  * only `.npmrc`, verified against pnpm 10 — and pnpm 11 reads none of its
  * settings from `.npmrc`, so it broke every harness bootstrap the moment the
- * recipe hash changed and snapshots stopped hiding it. Both spellings are
- * written for that reason, and BOTH FILES ARE REQUIRED: `.npmrc` is the only
- * one pnpm 10 reads, `pnpm-workspace.yaml` the only one pnpm 11 reads.
- * Verified against pnpm 10.34.5 and 11.24.0.
+ * recipe hash changed and snapshots stopped hiding it.
+ *
+ * WHAT CHANGED AT THE STABLE BUMP. `@ai-sdk/harness-claude-code@1.0.x` now
+ * ships its OWN `pnpm-workspace.yaml`, pinning the build it needs by exact
+ * version (`allowBuilds: { '@anthropic-ai/claude-code@<v>': true }`), and has
+ * dropped the by-hand `install.cjs` rescue from its recipe because it no longer
+ * needs one. That is strictly better than our blanket allow, so we no longer
+ * write that file — see {@link patchClaudeCodeHarnessBootstrap}, which appends
+ * ours only if the adapter stops shipping one.
+ *
+ * `.npmrc` STAYS. pnpm 10 does not read `allowBuilds` from
+ * `pnpm-workspace.yaml`, and the computer template installs pnpm UNPINNED
+ * (`npm install -g pnpm`), so a box that has not been rebuilt still resolves
+ * pnpm 10 and still needs the `.npmrc` spelling. Verified against pnpm 10.34.5
+ * and 11.24.0.
  *
  * WHY NOT THE MANIFEST. `onlyBuiltDependencies` would be narrower, but the
  * manifest is a bundled asset of `@ai-sdk/harness-claude-code`, not ours to
@@ -506,7 +551,9 @@ function patchClaudeCodeBridgeContent(content: string): string {
 const CLAUDE_CODE_BOOTSTRAP_NPMRC =
   "dangerously-allow-all-builds=true\nstrict-dep-builds=false\n";
 
-/** pnpm 11's home for the same two settings; see {@link CLAUDE_CODE_BOOTSTRAP_NPMRC}. */
+/** pnpm 11's home for the same two settings, written ONLY as a fallback for a
+ *  future adapter that stops shipping its own; see
+ *  {@link CLAUDE_CODE_BOOTSTRAP_NPMRC}. */
 const CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE =
   "dangerouslyAllowAllBuilds: true\nstrictDepBuilds: false\n";
 
@@ -525,11 +572,16 @@ export function patchClaudeCodeHarnessBootstrap(
     getBootstrap: async (...args) => {
       if (cachedPatchedBootstrap) return cachedPatchedBootstrap;
       const bootstrap = await originalGetBootstrap(...args);
+      // The adapter ships its own version-pinned `pnpm-workspace.yaml` since
+      // the stable line. Appending a second entry for the same path would write
+      // the file twice with conflicting content, so ours is a FALLBACK: it is
+      // added only if the adapter stops shipping one. `.npmrc` is always ours —
+      // the adapter ships none, and pnpm 10 reads nothing else.
+      const shipsPnpmWorkspace = bootstrap.files.some((file) =>
+        file.path.endsWith("/pnpm-workspace.yaml")
+      );
       cachedPatchedBootstrap = {
         ...bootstrap,
-        // Appended rather than merged over an existing entry: the adapter
-        // ships neither file today, and if a future version starts shipping
-        // one we want the duplicate to surface instead of silently winning.
         files: [
           ...bootstrap.files.map((file) =>
             file.path.endsWith("/bridge.mjs")
@@ -540,10 +592,14 @@ export function patchClaudeCodeHarnessBootstrap(
             path: `${bootstrap.bootstrapDir}/.npmrc`,
             content: CLAUDE_CODE_BOOTSTRAP_NPMRC,
           },
-          {
-            path: `${bootstrap.bootstrapDir}/pnpm-workspace.yaml`,
-            content: CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE,
-          },
+          ...(shipsPnpmWorkspace
+            ? []
+            : [
+                {
+                  path: `${bootstrap.bootstrapDir}/pnpm-workspace.yaml`,
+                  content: CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE,
+                },
+              ]),
         ],
       };
       return cachedPatchedBootstrap;
@@ -729,8 +785,22 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
         // Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
         // Anthropic API shape the AI Gateway's Anthropic-compat schema rejects
         // (400: expected 'disabled' | 'enabled'). Pin thinking off until the
-        // gateway accepts adaptive.
-        thinking: "off",
+        // gateway accepts adaptive. (`"off"` on the canary line; the stable
+        // line takes the richer `{ type }` config, where `'disabled'` is the
+        // same wire behavior.)
+        thinking: { type: "disabled" },
+        // AI Gateway's Anthropic-compat schema rejects the newer
+        // output_config.effort request field ("400 output_config.effort: Extra
+        // inputs are not permitted"). "unset" makes the CLI omit the field
+        // entirely (verified in CLI 0.2.x-2.1.x: CLAUDE_CODE_EFFORT_LEVEL of
+        // "unset"/"auto" short-circuits effort resolution).
+        //
+        // This used to be a `process.env.… ??=` write injected into the bridge
+        // source. Stable's first-class `env` merges OVER the bridge process
+        // env, so unlike `??=` it is now authoritative rather than a default —
+        // deliberate: the sandbox env is ours, and the adapter's own `effort`
+        // option is the supported way to ask for a value.
+        env: { CLAUDE_CODE_EFFORT_LEVEL: "unset" },
       }) as unknown as HarnessAgentAdapter
     );
   },
