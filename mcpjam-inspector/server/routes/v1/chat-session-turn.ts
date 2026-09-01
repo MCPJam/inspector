@@ -73,6 +73,13 @@ import {
   runtimeServerNames,
 } from "../../services/environments/runtime.js";
 import { logger } from "../../utils/logger.js";
+import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  buildLiveEffectiveCapabilities,
+  resolveEffectiveCapabilities,
+  type EffectiveCapabilitySet,
+} from "../../services/environments/effective-capabilities.js";
+import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { v1Error, v1Resource } from "./envelope.js";
 import { readJsonObjectBody } from "./adapter.js";
@@ -96,6 +103,23 @@ const TURN_WALL_CLOCK_MS = 90_000;
 const MAX_CONCURRENT_TURNS_PER_ORG = 4;
 /** Connect budget for the target's MCP servers, inside the turn wall clock. */
 const CONNECT_TIMEOUT_MS = 30_000;
+/**
+ * Enumeration budget, the peer of {@link CONNECT_TIMEOUT_MS}.
+ *
+ * Connecting was bounded; listing was not. A server that answers `initialize`
+ * and then never answers `tools/list` is not hypothetical — it is how a
+ * half-healthy server usually presents — and it left the turn hanging on an
+ * unbounded promise. `TURN_WALL_CLOCK_MS` could not save it: that abort signal
+ * is never handed to `getTools`, so nothing in-process observed the stall. The
+ * request eventually died at the edge proxy instead, which returns a 502 with
+ * NO body, so the SDK could only report `Request to … failed (502)` — no code,
+ * no message, nothing naming the server that hung.
+ *
+ * With a budget the same stall becomes this route's own 502, carrying
+ * `SERVER_UNREACHABLE` and a message that says what timed out. Sized to match
+ * the connect budget, so connect + list still sit well inside the wall clock.
+ */
+const LIST_TOOLS_TIMEOUT_MS = 30_000;
 
 // ── Request contract ────────────────────────────────────────────────────────
 
@@ -322,6 +346,50 @@ interface ResolvedTarget {
   serverIds: string[];
   serverNames?: string[];
   environmentId?: string;
+  /**
+   * The environment's own capability set, when the turn named one.
+   *
+   * An environment DECIDES what runs — which skills, which plugin versions,
+   * which captured server skills — and that decision is the whole reason a
+   * caller names one. Building a live set from the project pool instead would
+   * hand the model every skill the project has, including the ones the
+   * environment deliberately left out, drop the plugin skills it attached, and
+   * swap its captured server skills for live ones. Absent ⇒ the turn pinned
+   * bare `serverIds` and there is no environment decision to honour, so the
+   * caller builds a live set instead.
+   */
+  environmentCapabilities?: EffectiveCapabilitySet;
+  /**
+   * Built-in tool ids the target's client advertises that THIS surface does
+   * not run — see {@link unappliedBuiltInToolIds}.
+   */
+  unappliedCapabilities?: string[];
+}
+
+/**
+ * The client's `builtInToolIds`, which this route deliberately does not apply.
+ *
+ * Built-in tools (`bash`, `web_search`) are wired in `routes/web/chat-v2.ts`
+ * via `resolveHostTools`; nothing in this route reads them, so an environment
+ * whose client attaches a computer and asks for `bash` runs here with the MCP
+ * server tools alone. That is a real limitation, not an oversight to paper
+ * over — the computer-backed shell needs a reserved box and a data plane this
+ * synchronous surface does not stand up.
+ *
+ * What was wrong is that it happened SILENTLY. The write path accepts the
+ * capability, the turn drops it, and the caller sees a model that simply never
+ * uses the tool it was configured with — indistinguishable from the model
+ * choosing not to. Reporting it turns an invisible gap into a named one.
+ *
+ * Reported, not refused: a client carrying a computer is a perfectly good
+ * client for a plain MCP turn, and refusing the turn would break every caller
+ * whose client happens to have one attached.
+ */
+function unappliedBuiltInToolIds(runtimeConfig: unknown): string[] {
+  const ids = (runtimeConfig as { builtInToolIds?: unknown } | undefined)
+    ?.builtInToolIds;
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((id): id is string => typeof id === "string" && id !== "");
 }
 
 /**
@@ -360,10 +428,26 @@ async function resolveTarget(
     );
   }
   const serverNames = runtimeServerNames(spec);
+  const unappliedCapabilities = unappliedBuiltInToolIds(
+    spec.host?.runtimeConfig,
+  );
+  // Attribution is a SECOND read and deliberately cannot fail the turn: the
+  // environment already decided what runs, so a probe blip must degrade origin
+  // reporting rather than stop a send. Costs nothing when no plugins are
+  // pinned. Mirrors `routes/web/chat-v2.ts`, which is the surface this one has
+  // to agree with about what an environment means.
+  const attribution = await fetchPluginRuntimeAttribution(client, {
+    projectId,
+    pluginVersionIds: (spec.pluginVersions ?? []).map(
+      (plugin) => plugin.pluginVersionId,
+    ),
+  }).catch(() => null);
   return {
     serverIds,
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
     environmentId: input.environmentId,
+    environmentCapabilities: resolveEffectiveCapabilities(spec, attribution),
+    ...(unappliedCapabilities.length > 0 ? { unappliedCapabilities } : {}),
   };
 }
 
@@ -380,6 +464,40 @@ async function resolveTarget(
  * model's plan, and still produces a turn that reads as a refusal rather than
  * a capability boundary.
  */
+/**
+ * `manager.getTools`, but it cannot hang forever.
+ *
+ * Rejects rather than degrading to "no tools": the caller turns any failure
+ * into a 502, and that fail-closed choice is deliberate — a target we cannot
+ * enumerate is a target we cannot apply `read_only` to, and answering with an
+ * empty exclusion list would advertise everything.
+ */
+async function listToolsWithinBudget(
+  manager: MCPClientManager,
+  serverIds: string[],
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      manager.getTools(serverIds),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `the server did not answer tools/list within ${LIST_TOOLS_TIMEOUT_MS}ms`,
+            ),
+          );
+        }, LIST_TOOLS_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    // The loser of the race is abandoned, not cancelled — leaving the timer
+    // live would hold the event loop open for the rest of the budget on every
+    // healthy turn.
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function computeExcludedToolNames(
   manager: MCPClientManager,
   serverIds: string[],
@@ -392,7 +510,7 @@ async function computeExcludedToolNames(
 ): Promise<{ excluded: string[]; advertised: number }> {
   let tools: Array<{ name?: string; annotations?: { readOnlyHint?: unknown } }>;
   try {
-    tools = (await manager.getTools(serverIds)) as typeof tools;
+    tools = (await listToolsWithinBudget(manager, serverIds)) as typeof tools;
   } catch (error) {
     // A target we cannot enumerate is a target we cannot apply a tool policy
     // to. Failing OPEN here would advertise every tool on a `read_only` turn,
@@ -452,6 +570,34 @@ function narrowTarget(
     ? selected.map((entry) => entry.name as string)
     : undefined;
   return { selected, ...(names ? { names } : {}) };
+}
+
+/**
+ * serverId → user-assigned name, for namespacing SEP-2640 server-skill refs.
+ *
+ * Keyed by id rather than positional like `narrowTarget`'s `names`, so a
+ * half-populated name array cannot misalign anything: an entry with no name is
+ * simply absent, and `prepareChatV2` falls back to the server id for it. That
+ * fallback is safe but ugly — the id is host-assigned, which is the property
+ * that matters (a server must never get to choose the namespace its own skills
+ * are addressed under, so `serverInfo.name` is never a candidate) — it just
+ * reads as `p176vpy…/run-evals` instead of `mcpjam-staging-skills/run-evals`
+ * in the `listSkills` catalog and in the origin banner on loaded skill content,
+ * both of which the model and the user see.
+ *
+ * Returns `undefined` when nothing is labelled, so the call site can keep to
+ * the spread-only-when-present convention the rest of the options use.
+ */
+function serverLabelsFor(
+  selected: ReadonlyArray<{ id: string; name?: string }>,
+): Record<string, string> | undefined {
+  const labels: Record<string, string> = {};
+  for (const entry of selected) {
+    if (typeof entry.name === "string" && entry.name.length > 0) {
+      labels[entry.id] = entry.name;
+    }
+  }
+  return Object.keys(labels).length > 0 ? labels : undefined;
 }
 
 /** The two equivalent ways a caller says "run this turn with no tools". */
@@ -757,6 +903,7 @@ async function handleTurn(c: Context): Promise<Response> {
       return v1Resource(c, {
         sessionId: lease.sessionId ?? body.sessionId ?? null,
         turnId: lease.turnId,
+        projectId,
         persisted: { outcome: "duplicate" as const },
         origin: "api" as const,
         replay: true as const,
@@ -801,6 +948,10 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
     const selectedServerIds = selected.map((entry) => entry.id);
+    // Built from the PAIRS, not from `selectedServerNames`: that array is
+    // all-or-nothing on purpose, so one unnamed server would strip the labels
+    // off every named one and send the whole turn back to raw ids.
+    const serverLabels = serverLabelsFor(selected);
 
     const modelDefinition = await resolveHostModelDefinition({
       modelId: pins.modelId,
@@ -817,7 +968,17 @@ async function handleTurn(c: Context): Promise<Response> {
         ...(selectedServerNames ? { serverNames: selectedServerNames } : {}),
       },
       connectionSchema,
-      { timeoutMs: CONNECT_TIMEOUT_MS },
+      {
+        timeoutMs: CONNECT_TIMEOUT_MS,
+        // This surface emulates no host persona — it is MCPJam's own agent —
+        // and it ships the fulfiller, since `prepareChatV2` merges
+        // `withServerSkills`, which loads only through the verified read path
+        // in `server-skills.ts`. Without the declaration the extension can
+        // never be active: the model is handed no `listSkills` / `loadSkill`
+        // at all, so a server that serves skills is indistinguishable from one
+        // that does not.
+        advertiseSkillsExtension: true,
+      },
     );
     manager = connection.manager;
 
@@ -842,9 +1003,81 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
 
+    // The project's own skills, which this surface has never had. #4419 gave it
+    // a connected server's skills by advertising the extension above; the
+    // project pool was still invisible, so an agent driving MCPJam could read
+    // somebody else's skills but not its own.
+    //
+    // TWO shapes, because a turn that named an environment is not a live turn.
+    // An environment IS a decision about what runs, so its own resolved set is
+    // the answer — pinned skill selection, attached plugin skills, captured
+    // server skills and all. Only a turn pinning bare `serverIds` has no such
+    // decision behind it, and only that turn builds a live set from the
+    // project pool.
+    //
+    // The live shape stays lazy, like every other live surface: the catalog is
+    // one query and a body is fetched only for the skill the model loads. A
+    // catalog failure degrades to no skills rather than failing the turn.
+    let turnCapabilities: EffectiveCapabilitySet | undefined;
+    let capabilitiesAreLive = false;
+    // The project pool is a MEMBER resource: `listCloudRuntimeSkills` resolves
+    // `projectSkills:listSkills`, which is signed-in-only, and
+    // `getConvexBearerForRequest` forwards a guest bearer verbatim. The v1 mount
+    // already 401s guests on this path (`/chat-sessions/messages` is absent from
+    // `guest-allowed-paths.ts`), so this term is unreachable today — it is here
+    // because that allowlist is edited independently of this file, and the
+    // reachable twin of this exact gate on the local route is what produced
+    // CONVEX-19R.
+    const callerIsGuest = Boolean(c.get("guestId"));
+    if (target.environmentCapabilities) {
+      turnCapabilities = target.environmentCapabilities;
+    } else if (projectId && !callerIsGuest) {
+      try {
+        turnCapabilities = buildLiveEffectiveCapabilities({
+          standaloneSkills: await listCloudRuntimeSkills({
+            authHeader,
+            projectId,
+          }),
+        });
+        capabilitiesAreLive = true;
+      } catch (error) {
+        logger.warn(
+          "[v1/chat-session-turn] project skill catalog unavailable",
+          {
+            projectId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
+    }
+
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
+      ...(turnCapabilities
+        ? {
+            skillsSource: {
+              kind: "resolved" as const,
+              capabilities: turnCapabilities,
+              // Only a LIVE set composes live server skills, and that is the
+              // same rule `web-chat-turn` follows. An environment's server
+              // skills were CAPTURED; fetching more from the connection would
+              // falsify the claim that the set describes the turn — which is
+              // exactly what this flag exists to prevent. On the live arm it
+              // keeps #4419's server skills composed alongside the project's.
+              ...(capabilitiesAreLive
+                ? { composeLiveServerSkills: true as const }
+                : {}),
+              // The turn's own controller, so a lazy body or file read stops
+              // with the turn instead of running to its own fetch timeout.
+              abortSignal: abortController.signal,
+            },
+          }
+        : {}),
+      // Without this every server-skill ref is namespaced by the raw server
+      // id, in the `listSkills` catalog the model reads AND in the origin
+      // banner prepended to loaded skill content.
+      ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
       ...(pins.temperature !== undefined
@@ -1064,15 +1297,32 @@ async function handleTurn(c: Context): Promise<Response> {
       toolCallCount: result.toolCalls.length,
     });
 
+    // No materialized project secret can be in this turn's payloads: this route
+    // runs MCP SERVER TOOLS ONLY — there is no sandbox and no bash — so nothing
+    // was ever delivered into a box for a tool to echo back. The parameter is
+    // threaded rather than dropped so that the day this route gains a sandbox,
+    // the scrub is already in the path instead of a thing to remember; wiring
+    // it then is one assignment here.
+    const secretScrubber = undefined;
+
     return v1Resource(c, {
       // May be null ONLY when the persist did not land — the caller then knows
       // from `persisted.outcome` that there is nothing to read back yet, which
       // is better than an id that resolves to nothing.
       sessionId: sessionDocId ?? null,
       turnId: leaseTurnId,
+      // The project this turn ran in, which on a CONTINUATION the caller never
+      // sent: it comes off the session row. Without it a caller holding only
+      // this response cannot say where the session lives, and the session
+      // permalink an agent is meant to hand back cannot be composed at all.
+      projectId,
       reply: extractAssistantText(result),
       finishReason: result.finishReason ?? null,
-      toolCalls: joinToolCalls(result.toolCalls, result.toolResults),
+      toolCalls: joinToolCalls(
+        result.toolCalls,
+        result.toolResults,
+        secretScrubber,
+      ),
       trace: {
         turnId: leaseTurnId,
         spanCount: result.turnTrace.spans?.length ?? 0,
@@ -1091,6 +1341,11 @@ async function handleTurn(c: Context): Promise<Response> {
       toolMode: pins.toolMode,
       advertisedToolCount: Object.keys(tools).length,
       excludedToolCount: excluded.length,
+      // Present only when the client asked for something this surface does not
+      // run, so a caller that never configures built-ins sees no new field.
+      ...(target.unappliedCapabilities
+        ? { unappliedCapabilities: target.unappliedCapabilities }
+        : {}),
       persisted: {
         outcome: persisted.outcome,
         ...("version" in persisted && persisted.version !== undefined
@@ -1183,9 +1438,11 @@ export const __testing = {
   assertUnambiguousModelId,
   capToolCalls,
   narrowTarget,
+  serverLabelsFor,
   shouldReleaseLease,
   wantsNoTools,
   computeExcludedToolNames,
+  unappliedBuiltInToolIds,
   CONFIG_FIELDS,
   turnSchema,
 };

@@ -1,6 +1,6 @@
 {
   "id": "hosted-0005",
-  "note": "transport-local error — attributed to setup, never to the server",
+  "note": "transport-local error \u2014 attributed to setup, never to the server",
   "origin": "synthetic",
   "authored": {
     "mode": "model_driven",
@@ -91,6 +91,6 @@
     ],
     "firstFailedStage": "call",
     "failureCategory": "setup",
-    "stageAnalyzerVersion": 4
+    "stageAnalyzerVersion": 8
   }
 }

@@ -38,7 +38,18 @@ import {
 } from "../../utils/built-in-tools/registry.js";
 import type { TrustedHarnessSandboxBinding } from "../../utils/harness/resolve-sandbox.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
-import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
+import { browserApprovalDeliveryFor } from "../evals/browser-tool-policy.js";
+import {
+  listCloudRuntimeSkills,
+  shouldEnableCloudSkillTools,
+  skillsFailureFrom,
+  type SkillsFetchFailure,
+} from "../../utils/computers/cloud-skill-tools.js";
+import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
+import {
+  buildLiveEffectiveCapabilities,
+  type EffectiveCapabilitySet,
+} from "../../services/environments/effective-capabilities.js";
 import {
   persistChatSessionToConvex,
   type PersistChatOutcome,
@@ -56,7 +67,7 @@ import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/e
 function warnIfSimulationPersistNotSaved(
   outcome: PersistChatOutcome | undefined,
   stage: "empty-session" | "turn",
-  chatSessionId: string
+  chatSessionId: string,
 ): void {
   // This is observability, not control flow — it must never be the thing that
   // takes a synthetic run down, so an absent outcome is simply nothing to say.
@@ -162,7 +173,7 @@ const TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
 async function withDeadline<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  fallback: T
+  fallback: T,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -228,6 +239,13 @@ export interface SyntheticHostRuntime {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  /**
+   * What the hosted `browser_*` tools may do in this unattended run. A
+   * journey/swarm session never pauses, so approval does not exist here and a
+   * DECLARED policy is the only thing that can authorize them; absent or
+   * malformed ⇒ they are not advertised (fail-closed).
+   */
+  browserToolPolicy?: unknown;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
@@ -293,12 +311,12 @@ export interface SyntheticHostRuntime {
   scenarioId?: string;
   /**
    * Authoritative pinned skills for an ENVIRONMENT-based swarm target
-   * (Project Environments, D3). `undefined` ⇒ legacy live-pool semantics
-   * (cloud skill tools / harness live fetch, unchanged). An array — possibly
-   * EMPTY, meaning deliberately skill-less — ⇒ skills come EXCLUSIVELY from
-   * these pinned artifacts: the emulated engine gets them via prepareChatV2
-   * `skillsSource` (never `cloudSkills`), and a harness turn gets them via the
-   * pinned harness path (never `fetchRuntimeSkills`, and NEVER through
+   * (Project Environments, D3). `undefined` ⇒ live-pool semantics: the project
+   * catalog as a resolved capability set, plus the connected servers' own
+   * skills. An array — possibly EMPTY, meaning deliberately skill-less — ⇒
+   * skills come EXCLUSIVELY from these pinned artifacts: the emulated engine
+   * gets them via prepareChatV2 `skillsSource`, and a harness turn gets them
+   * via the pinned harness path (never `fetchRuntimeSkills`, and NEVER through
    * prepareChatV2's pinned branch, which throws on harness).
    */
   pinnedSkills?: PinnedSkillArtifact[];
@@ -337,7 +355,7 @@ export interface SyntheticHostSessionAdapter {
   abortSignal?: AbortSignal;
   /** Surface persona driver: produce the next simulated user message. */
   nextPersonaTurn(
-    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>
+    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
   ): Promise<{ message: string; endSession: boolean }>;
   /** Persistence attribution tags (scenario vs swarm). */
   persist: SyntheticPersistAttribution;
@@ -375,7 +393,7 @@ export interface SyntheticHostSessionAdapter {
 }
 
 export async function runSyntheticHostSession(
-  adapter: SyntheticHostSessionAdapter
+  adapter: SyntheticHostSessionAdapter,
 ): Promise<SessionResult> {
   const {
     runId,
@@ -400,6 +418,7 @@ export async function runSyntheticHostSession(
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    browserToolPolicy,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
@@ -536,7 +555,7 @@ export async function runSyntheticHostSession(
     warnIfSimulationPersistNotSaved(
       emptySessionPersist,
       "empty-session",
-      chatSessionId
+      chatSessionId,
     );
     sessionRowEnsured = true;
   };
@@ -577,7 +596,7 @@ export async function runSyntheticHostSession(
         Array.isArray(selectedServerNames) &&
         selectedServerNames.length === selectedServerIds.length
           ? selectedServerNames.filter(
-              (_, i) => !nonResumable.has(selectedServerIds[i]!)
+              (_, i) => !nonResumable.has(selectedServerIds[i]!),
             )
           : selectedServerIds.filter((id) => !nonResumable.has(id)),
     };
@@ -585,6 +604,10 @@ export async function runSyntheticHostSession(
     // Built-in tools from the scenario host config (e.g. web_search) resolve
     // the same way a real visitor's chat-v2 turn would: billed via Convex
     // against this project, namespaced under the synthetic session id.
+    const browserApprovalDelivery = browserApprovalDeliveryFor(
+      browserToolPolicy,
+      { source: "sessionSimulation" },
+    );
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
@@ -597,6 +620,9 @@ export async function runSyntheticHostSession(
         // would otherwise share the launcher's one project computer. See the
         // `bash` gate in registry.ts.
         isJourneySession: persist.sourceType === "swarm",
+        // Unattended: the run's declared policy is the only authorization
+        // browser tools can have here, since nothing can pause to ask.
+        ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
         // …and WITH one, bash binds to this session's own disposable box. The
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
@@ -626,7 +652,7 @@ export async function runSyntheticHostSession(
             message,
           });
         },
-      }
+      },
     );
 
     // Cloud Skills parity with a real chat-v2 visitor: a synthetic session is
@@ -664,28 +690,70 @@ export async function runSyntheticHostSession(
     // gets frozen pinned tools via `skillsSource` — NEVER the live cloud-skill
     // tools. `kind: "none"` covers (a) a deliberately skill-less target, (b) the
     // approval-mode no-skills semantics (a headless visitor can't approve, same
-    // rationale as the cloudSkills gate above), and (c) HARNESS turns —
+    // rationale as the live-catalog gate above), and (c) HARNESS turns —
     // prepareChatV2 THROWS on harness+pinned, so a harness target's pinned
     // artifacts ride `pinnedHarnessSkills` on the drain instead.
+    // The live arm, for a run with no pins: the project pool as a capability
+    // set. Previously this was "pass nothing and let the orchestrator fall
+    // through to its cloud branch"; that fallback is gone, so the source is
+    // now stated here.
+    //
+    // A catalog failure degrades to a live set with no PROJECT skills — never
+    // to `{ kind: "none" }`. The source also carries `composeLiveServerSkills`,
+    // so collapsing it would take the connected servers' SEP-2640 skills down
+    // with the project's, and those never failed: losing skills we could not
+    // fetch is a degradation, losing skills we could is a bug. The failure is
+    // recorded here rather than read back off `prepared`, because the fetch now
+    // happens on this side of `prepareChatV2` and the orchestrator cannot know
+    // how it went.
+    let liveCapabilities: EffectiveCapabilitySet | undefined;
+    let skillsFetchFailed: SkillsFetchFailure | undefined;
+    // `!harness` explicitly, not just via `cloudSkillsEnabled`: that gate only
+    // suppresses a harness on a hosted-catalog model, so a harness on a BYOK
+    // model would otherwise build a live set and hit the disjointness refusal.
+    if (!harness && cloudSkillsEnabled && authHeader && projectId) {
+      const startedAt = Date.now();
+      let standaloneSkills: RuntimeStandaloneSkill[] = [];
+      try {
+        standaloneSkills = await listCloudRuntimeSkills({
+          authHeader,
+          projectId,
+        });
+      } catch (error) {
+        skillsFetchFailed = skillsFailureFrom(error, Date.now() - startedAt);
+      }
+      liveCapabilities = buildLiveEffectiveCapabilities({ standaloneSkills });
+    }
+
     const skillsSource:
       | { kind: "pinned"; skills: PinnableSkill[] }
       | { kind: "none" }
-      | undefined =
+      | {
+          kind: "resolved";
+          capabilities: EffectiveCapabilitySet;
+          composeLiveServerSkills?: boolean;
+        } =
       pinnedSkills === undefined
-        ? undefined
+        ? liveCapabilities
+          ? {
+              kind: "resolved",
+              capabilities: liveCapabilities,
+              // Live surface: server skills come from the connected servers,
+              // preserving what the fallthrough arm used to compose.
+              composeLiveServerSkills: true,
+            }
+          : { kind: "none" }
         : harness || requireToolApproval || pinnedSkills.length === 0
-        ? { kind: "none" }
-        : {
-            kind: "pinned",
-            skills: pinnedSkills.map(
-              (a): PinnableSkill => ({
+          ? { kind: "none" }
+          : {
+              kind: "pinned",
+              skills: pinnedSkills.map((a): PinnableSkill => ({
                 name: a.name,
                 description: a.description,
                 content: a.content,
                 contentHash: a.contentHash,
-              })
-            ),
-          };
+              })),
+            };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -705,23 +773,22 @@ export async function runSyntheticHostSession(
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
-      ...(skillsSource ? { skillsSource } : {}),
-      ...(cloudSkillsEnabled ? { cloudSkills: { authHeader, projectId } } : {}),
+      skillsSource,
     });
 
-    if (prepared.skillsFetchFailed) {
+    if (skillsFetchFailed) {
       logger.warn("[sessionSimulation.runner] skills catalog fetch failed", {
         runId,
         chatSessionId,
-        errorClass: prepared.skillsFetchFailed.errorClass,
-        status: prepared.skillsFetchFailed.status,
-        latencyMs: prepared.skillsFetchFailed.latencyMs,
+        errorClass: skillsFetchFailed.errorClass,
+        status: skillsFetchFailed.status,
+        latencyMs: skillsFetchFailed.latencyMs,
       });
       emit?.({
         type: "session_notice",
         kind: "tool_suppressed",
         toolId: "skills",
-        message: prepared.skillsFetchFailed.message,
+        message: skillsFetchFailed.message,
       });
     }
 
@@ -989,7 +1056,7 @@ export async function runSyntheticHostSession(
             await exportConnectedServerToolSnapshotForEvalAuthoring(
               liveManager,
               knownIds,
-              { logPrefix: "sessionSimulation.persist" }
+              { logPrefix: "sessionSimulation.persist" },
             );
         }
       } catch {
@@ -1066,7 +1133,7 @@ export async function runSyntheticHostSession(
               chatSessionId,
               promptIndex: turn,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
         }
       }
@@ -1159,7 +1226,7 @@ export async function runSyntheticHostSession(
               runId,
               chatSessionId,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
         }
       }
@@ -1201,7 +1268,7 @@ export async function runSyntheticHostSession(
                     runId,
                     chatSessionId,
                     error: err instanceof Error ? err.message : String(err),
-                  }
+                  },
                 );
               }
               if (videoBytes) await outbox.stageVideo(videoBytes);
@@ -1218,7 +1285,7 @@ export async function runSyntheticHostSession(
                   written: 0,
                   pending: outbox.pendingBatchCount,
                   videoAttached: false,
-                }
+                },
               );
               if (result.pending > 0) {
                 logger.warn(
@@ -1228,7 +1295,7 @@ export async function runSyntheticHostSession(
                     chatSessionId,
                     pending: result.pending,
                     videoAttached: result.videoAttached,
-                  }
+                  },
                 );
               }
             },
@@ -1307,7 +1374,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
   if (!convexUrl) {
     logger.warn(
       "[sessionSimulation.runner] CONVEX_URL not set; skipping widget snapshot capture",
-      { chatSessionId, scenarioId }
+      { chatSessionId, scenarioId },
     );
     return;
   }
@@ -1366,7 +1433,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
             ...(accessVersion !== undefined ? { accessVersion } : {}),
             chatSessionId,
             ...sanitized,
-          }
+          },
         );
         // Null = the ingest race (session row not written yet) — leave the
         // id unmarked so the next turn retries. Anything else is the row id.
@@ -1380,7 +1447,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
           error: err instanceof Error ? err.message : String(err),
         });
       }
-    })
+    }),
   );
 }
 
@@ -1452,7 +1519,7 @@ export async function drainAssistantTurn(
     journeyRunId?: string;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
-  }
+  },
 ): Promise<{
   history: ModelMessage[];
   turnTrace: PersistedTurnTrace | undefined;
@@ -1486,7 +1553,7 @@ export async function drainAssistantTurn(
   if (args.sourceType === "swarm" && !!journeyRunId !== !!hostId) {
     throw new Error(
       "Swarm turn has partial continuity identity: journeyRunId and hostId " +
-        "must be provided together"
+        "must be provided together",
     );
   }
 
@@ -1539,8 +1606,7 @@ export async function drainAssistantTurn(
   // Engine-error signal. Structural type covers both the hosted
   // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
   let lastEngineError:
-    | { message: string; code?: string; httpStatus?: number }
-    | undefined;
+    { message: string; code?: string; httpStatus?: number } | undefined;
   const captureEngineError = (event: {
     message: string;
     code?: string;
@@ -1611,7 +1677,7 @@ export async function drainAssistantTurn(
     // billing — with the same message shape the old headless path did.
     if (lastEngineError) {
       throw new Error(
-        lastEngineError.message || "Local org-BYOK turn failed mid-stream."
+        lastEngineError.message || "Local org-BYOK turn failed mid-stream.",
       );
     }
 
@@ -1719,11 +1785,11 @@ export async function drainAssistantTurn(
       throw new Error(
         detail
           ? `${lastEngineError.message} (${detail})`
-          : lastEngineError.message
+          : lastEngineError.message,
       );
     }
     throw new Error(
-      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)"
+      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)",
     );
   }
 
@@ -1753,7 +1819,7 @@ function extractAssistantText(history: ModelMessage[]): string {
           typeof part === "object" &&
           part !== null &&
           (part as { type?: string }).type === "text" &&
-          typeof (part as { text?: unknown }).text === "string"
+          typeof (part as { text?: unknown }).text === "string",
       )
       .map((part) => part.text)
       .join("");

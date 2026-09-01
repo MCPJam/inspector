@@ -27,10 +27,12 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import {
   deriveStageResults,
+  attachStageMeasurements,
   stageDerivationToMetadata,
   type EvalSuiteFileToolPolicy,
   type StageAuthoredCase,
   type StageEvidence,
+  type StagePredicateResultLike,
   type StageResultRow,
   type StageSetupSignals,
   type IterationStatus as ContractIterationStatus,
@@ -90,7 +92,7 @@ type PolicyBlockRecord = { reason?: unknown };
  * summary reason when multiple policy blocks occur.
  */
 function getIterationPolicyReason(
-  policyBlocks: ReadonlyArray<PolicyBlockRecord>
+  policyBlocks: ReadonlyArray<PolicyBlockRecord>,
 ): string | undefined {
   const reason = policyBlocks[0]?.reason;
   return typeof reason === "string" ? reason : undefined;
@@ -123,6 +125,8 @@ function buildStageEvidence(args: {
    * failure would leave `call`/`response` looking unmeasured.
    */
   toolErrors?: unknown[];
+  /** Which layer raised a fatal step error, when the runner classified it. */
+  stepError?: StageEvidence["stepError"];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
   /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
@@ -138,10 +142,12 @@ function buildStageEvidence(args: {
     ...(hasPrompts ? { prompts: args.prompts } : {}),
     ...(args.predicateResults?.length
       ? {
-          predicateResults: args.predicateResults as ReadonlyArray<{
-            passed?: boolean;
-            reason?: string;
-          }>,
+          // The `predicate` discriminator crosses with the row. It was always
+          // present at runtime — `PredicateResult` carries the whole predicate
+          // — and this cast used to drop it, which is why UVH-IN1's routing
+          // could not tell a tool-selection assertion from a user-value one.
+          predicateResults:
+            args.predicateResults as ReadonlyArray<StagePredicateResultLike>,
         }
       : {}),
     ...(args.widgetRenderObservations?.length
@@ -155,6 +161,7 @@ function buildStageEvidence(args: {
           }>,
         }
       : {}),
+    ...(args.stepError ? { stepError: args.stepError } : {}),
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
     ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
     ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
@@ -194,6 +201,12 @@ export function buildStageMetadata(args: {
   predicateResults?: unknown[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
   stageToolErrors?: unknown[];
+  /**
+   * Which layer raised a fatal step error, when the runner classified it.
+   * Reported by the catch site, never parsed out of `error` — see
+   * `StageStepErrorLike`.
+   */
+  stepError?: StageEvidence["stepError"];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
   /**
@@ -220,7 +233,27 @@ export function buildStageMetadata(args: {
 }): Record<string, unknown> {
   const { stageCase, status, error } = args;
   if (!stageCase) return {};
-  return stageDerivationToMetadata(
+  /**
+   * The classification itself, recorded beside the chain it produced.
+   *
+   * `stepError` is transient runner state, so a re-derivation that does not
+   * receive it derives from strictly less evidence than the first pass did.
+   * The judge second pass used to recover it by looking for a `providerError`
+   * row, on the stated grounds that the chain "already says it" — but it does
+   * not always: `categoryFor` returns `setup` for a model-call failure where
+   * NOTHING failed, and in that case no row is relabelled at all. The
+   * re-derivation then lost the category with no row missing to show for it.
+   *
+   * One key, written only for the classification that has a consequence.
+   * `code` and `httpStatus` stay out: they are diagnostics, were never part of
+   * the classification, and persisting them would invite a reader to treat
+   * them as evidence.
+   */
+  const stepErrorSource =
+    args.stepError?.source === "model"
+      ? { stageStepErrorSource: "model" as const }
+      : {};
+  const metadata = stageDerivationToMetadata(
     deriveStageResults({
       authored: stageCase,
       evidence: buildStageEvidence({
@@ -230,6 +263,7 @@ export function buildStageMetadata(args: {
         predicateResults: args.predicateResults,
         widgetRenderObservations: args.widgetRenderObservations,
         toolErrors: args.stageToolErrors,
+        ...(args.stepError ? { stepError: args.stepError } : {}),
         toolSignals: args.toolSignals,
         setupSignals: args.setupSignals,
         ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
@@ -241,11 +275,15 @@ export function buildStageMetadata(args: {
       policy: args.policy,
     }),
   );
+  return {
+    ...attachStageMeasurements(metadata, args.spans),
+    ...stepErrorSource,
+  };
 }
 
 /** A predicate row the score projection can key a criterion off. */
 function isHostedPredicateResult(
-  value: unknown
+  value: unknown,
 ): value is HostedPredicateResultLike {
   if (typeof value !== "object" || value === null) return false;
   const row = value as { predicate?: unknown; passed?: unknown };
@@ -258,7 +296,7 @@ function isHostedPredicateResult(
 
 /** Read only the matcher fields the projection needs, typed rather than cast. */
 function narrowEvaluation(
-  evaluation: Record<string, unknown>
+  evaluation: Record<string, unknown>,
 ): HostedEvaluationLike {
   const list = (key: string): readonly unknown[] | undefined => {
     const value = evaluation[key];
@@ -348,7 +386,7 @@ function buildScoreMetadata(args: {
 } {
   if (args.mode === "off") return { keys: {} };
   const predicateResults = (args.predicateResults ?? []).filter(
-    isHostedPredicateResult
+    isHostedPredicateResult,
   );
   const { scores, evaluationConfig } = buildHostedScoreContract({
     ...(predicateResults.length ? { predicateResults } : {}),
@@ -414,7 +452,7 @@ function buildScoreMetadata(args: {
         ...(typeof args.stageMetadata.stageAnalyzerVersion === "number"
           ? { stageAnalyzerVersion: args.stageMetadata.stageAnalyzerVersion }
           : {}),
-      }
+      },
     );
     // The emitter is only REACHED on disagreement, so a spy on it counts
     // mismatches rather than comparisons — that is what makes
@@ -436,14 +474,20 @@ function buildScoreMetadata(args: {
  * first-pass mismatch means the score projection disagrees with `passed`.
  */
 function readUserValueRow(
-  stageMetadata: Record<string, unknown>
-): { state: StageResultRow["state"]; reason: StageResultRow["reason"] } | undefined {
+  stageMetadata: Record<string, unknown>,
+):
+  | { state: StageResultRow["state"]; reason: StageResultRow["reason"] }
+  | undefined {
   const rows = stageMetadata.stageResults;
   if (!Array.isArray(rows)) return undefined;
   for (const row of rows) {
     if (typeof row !== "object" || row === null) continue;
     const candidate = row as Partial<StageResultRow>;
-    if (candidate.stage === "userValue" && candidate.state && candidate.reason) {
+    if (
+      candidate.stage === "userValue" &&
+      candidate.state &&
+      candidate.reason
+    ) {
       return { state: candidate.state, reason: candidate.reason };
     }
   }
@@ -468,7 +512,9 @@ function buildSelectionToolCatalogMetadata(args: {
   if (!Array.isArray(rows)) return {};
   const selectionRow = rows.find(
     (row): row is Partial<StageResultRow> =>
-      typeof row === "object" && row !== null && (row as { stage?: unknown }).stage === "selection"
+      typeof row === "object" &&
+      row !== null &&
+      (row as { stage?: unknown }).stage === "selection",
   );
   if (selectionRow?.state !== "failed") return {};
 
@@ -478,12 +524,14 @@ function buildSelectionToolCatalogMetadata(args: {
   // and folding them in could fill the catalog's cap before the turn that
   // actually caused the failure is ever considered.
   const failingPrompts = prompts.filter(
-    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0
+    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0,
   );
   const expectedToolNames = failingPrompts
     .flatMap((p) => p.missing ?? [])
     .map((t) => t.toolName)
-    .filter((name): name is string => typeof name === "string" && name.length > 0);
+    .filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
   // `unexpected` names FIRST, then the rest of the turn's actual calls:
   // `buildSelectionToolCatalog`'s cap is shared across both roles, and for
   // an `unexpectedToolCall` failure (e.g. `maxExtraToolCalls: 0`, six
@@ -498,11 +546,15 @@ function buildSelectionToolCatalogMetadata(args: {
   const unexpectedToolNames = failingPrompts
     .flatMap((p) => p.unexpected ?? [])
     .map((t) => t.toolName)
-    .filter((name): name is string => typeof name === "string" && name.length > 0);
+    .filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
   const otherActualToolNames = failingPrompts
     .flatMap((p) => p.actualToolCalls ?? [])
     .map((t) => t.toolName)
-    .filter((name): name is string => typeof name === "string" && name.length > 0);
+    .filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
   const actualToolNames = [...unexpectedToolNames, ...otherActualToolNames];
   if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
     return {};
@@ -589,6 +641,11 @@ export function buildIterationFinishParams(args: {
    * them unless they are threaded here.
    */
   stageToolErrors?: unknown[];
+  /**
+   * Which layer raised the fatal step error, forwarded from the executor.
+   * Absent when nothing fatal happened, or when the caller could not say.
+   */
+  stepError?: StageEvidence["stepError"];
   /** Execution-layer policy blocks; persisted as metadata, never a failure. */
   policyBlocks?: PolicyBlockRecord[];
   /** Non-fatal policy configuration warnings, persisted for run consumers. */
@@ -688,10 +745,7 @@ export function buildIterationFinishParams(args: {
     selectionTools,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
-  const persistedSpans = [
-    ...(setupSpans ?? []),
-    ...(spans ?? []),
-  ];
+  const persistedSpans = [...(setupSpans ?? []), ...(spans ?? [])];
   const stageMetadata = buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),
     spans,
@@ -700,6 +754,7 @@ export function buildIterationFinishParams(args: {
     predicateResults,
     widgetRenderObservations,
     stageToolErrors,
+    ...(args.stepError ? { stepError: args.stepError } : {}),
     toolSignals,
     setupSignals,
     policy:
@@ -736,14 +791,13 @@ export function buildIterationFinishParams(args: {
   // would silently switch D7's catalog capture back OFF for the cohort that
   // has progressed furthest. The predicate is what keeps "dual_write and
   // above" in one place.
-  const selectionToolCatalogMetadata =
-    isDualWrite(gradingMode)
-      ? buildSelectionToolCatalogMetadata({
-          stageMetadata,
-          prompts,
-          selectionTools,
-        })
-      : {};
+  const selectionToolCatalogMetadata = isDualWrite(gradingMode)
+    ? buildSelectionToolCatalogMetadata({
+        stageMetadata,
+        prompts,
+        selectionTools,
+      })
+    : {};
 
   // THE FLIP, and the ONE DIRECTION IT MAY MOVE.
   //
@@ -1008,8 +1062,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-        ? "eval_failed"
-        : "eval_completed";
+      ? "eval_failed"
+      : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke
@@ -1064,8 +1118,7 @@ export async function finalizeEvalIteration(
   // before any turn landed. With turns already written, re-sending
   // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
   // orphan turns 1..N. See persist-eval-trace.ts for the contract.
-  const useW1Fallback =
-    fanout.persisted === false && fanout.turnsWritten === 0;
+  const useW1Fallback = fanout.persisted === false && fanout.turnsWritten === 0;
   if (fanout.persisted === false) {
     logger.warn(
       useW1Fallback
@@ -1111,8 +1164,7 @@ export async function finalizeEvalIteration(
               : {}),
             ...(widgetSnapshots?.length
               ? {
-                  widgetSnapshots:
-                    sanitizeForConvexTransport(widgetSnapshots),
+                  widgetSnapshots: sanitizeForConvexTransport(widgetSnapshots),
                 }
               : {}),
             // PR 6b: browser artifacts already uploaded + sanitized above;

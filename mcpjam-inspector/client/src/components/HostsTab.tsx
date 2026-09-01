@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
-import { useNavigate } from "react-router";
 import { HostBuilderView } from "./hosts/HostBuilderView";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { HostsConnectViewPhaseContext } from "./hosts/HostsConnectViewPhaseContext";
@@ -9,7 +8,11 @@ import { SNAPPY_RAIL } from "./hosts/transition-tokens";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList, useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useProjects";
-import { buildHostComparePath, routePaths } from "@/lib/app-navigation";
+import {
+  buildHostComparePath,
+  routePaths,
+  useAppNavigate,
+} from "@/lib/app-navigation";
 import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
@@ -53,7 +56,7 @@ export function HostsTab({
   onSelectHost,
   serversTabElement,
 }: HostsTabProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
   const { hosts, isLoading: isHostListLoading } = useHostList({
     isAuthenticated,

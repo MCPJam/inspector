@@ -50,6 +50,7 @@ function baseParams(
     extractToolCalls: () => [],
     acc: {
       messageHistory: [],
+      traceMessageHistory: [],
       capturedSpans: [],
       accumulatedUsage: {},
       toolsCalledByPrompt: [],
@@ -274,5 +275,25 @@ describe("harness execution options reach the engine", () => {
     expect(options.modelVisibleMcpToolResults).toBeUndefined();
     expect(options.respectToolVisibility).toBeUndefined();
     expect(options.tasks).toBeUndefined();
+  });
+
+  it("forwards extraHeaders BY REFERENCE, so a rotated credential reaches later steps", async () => {
+    // The bench worker's `x-mcpjam-benchmark-grant` carrier. The engine reads
+    // `extraHeaders` per step and the worker rotates the grant inside the
+    // object when the backend reissues one, so copying it here would pin an
+    // in-flight run to a grant that has since expired — and its remaining
+    // steps would be refused by `/stream` with the run half-run and paid for.
+    const extraHeaders = { "x-mcpjam-benchmark-grant": "grant-token" };
+    const options = await engineOptionsFor({
+      extraHeaders,
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+
+    expect(options.extraHeaders).toBe(extraHeaders);
+  });
+
+  it("sends no extraHeaders when the caller has none", async () => {
+    const options = await engineOptionsFor({});
+
+    expect(options.extraHeaders).toBeUndefined();
   });
 });
