@@ -219,22 +219,41 @@ function judgeReasonsFrom(verdict: JudgeVerdictMetadata): string[] {
  * compared only score-to-boundary, so a threshold of 0.7001 and a floor of
  * 0.6999 both rendered `0.7` while the score sat far from either — erasing the
  * partial band's configured width in a line whose whole job is to show it.
+ *
+ * AND WHEN SIX IS NOT ENOUGH, the line says so rather than asserting a false
+ * equality. The cap used to fall through to the six-decimal rendering anyway,
+ * so two values differing past it printed identically — "scored 0.7 against a
+ * 0.7 threshold" for numbers that were never equal, which is the exact defect
+ * every paragraph above is about, reintroduced at the boundary. Values still
+ * colliding at the cap are marked approximate. Equal values are not: they ARE
+ * equal, and `≈` would make a true statement look uncertain.
  */
+const APPROX = "\u2248";
+
 function showAgainst(
   score: number,
   bounds: readonly number[],
 ): (n: number) => string {
   const at = (n: number, digits: number) => String(Number(n.toFixed(digits)));
   const values = [score, ...bounds];
+  const collidesAt = (digits: number) =>
+    values.some((a, i) =>
+      values.slice(i + 1).some((b) => a !== b && at(a, digits) === at(b, digits)),
+    );
   // Six is the floor of usefulness, not an arbitrary cap: past it a judge
   // score is float noise, and a line no one can read explains nothing.
   for (let digits = 2; digits <= 6; digits += 1) {
-    const collides = values.some((a, i) =>
-      values.slice(i + 1).some((b) => a !== b && at(a, digits) === at(b, digits)),
-    );
-    if (!collides) return (n: number) => at(n, digits);
+    if (!collidesAt(digits)) return (n: number) => at(n, digits);
   }
-  return (n: number) => at(n, 6);
+  // Past the cap the numbers cannot be told apart on screen, so the honest
+  // rendering admits the rounding instead of claiming two of them are the
+  // same. Marked per VALUE, not blanket: only one that shares its rendering
+  // with a DIFFERENT value is uncertain.
+  return (n: number) => {
+    const shown = at(n, 6);
+    const ambiguous = values.some((v) => v !== n && at(v, 6) === shown);
+    return ambiguous ? `${APPROX}${shown}` : shown;
+  };
 }
 
 function readJudgeVerdict(

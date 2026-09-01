@@ -305,16 +305,29 @@ export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
  * this was called.
  *
  * The first version of this decision lived inline and assumed every engine
- * error was a stream failure. That holds for the chat engine and not for the
- * harness: `runHarnessTurn` wraps its whole turn — preparation included — in
- * one try, so a missing `projectId`, a missing auth bearer, or disabled broker
- * credential delivery arrives looking exactly like a provider outage. Calling
- * those `model` files our own setup bug as the provider's, which is the
- * mis-attribution this work exists to remove, moved one layer over.
+ * error was a stream failure. `runHarnessTurn` wraps its whole turn —
+ * preparation included — in one try, so a missing `projectId`, a missing auth
+ * bearer, or disabled broker credential delivery arrives looking exactly like
+ * a provider outage. Calling those `model` files our own setup bug as the
+ * provider's, which is the mis-attribution this work exists to remove, moved
+ * one layer over.
  *
- * `model` stays the answer for an engine that reports no phase at all: every
- * emitter that omits it today is a real stream failure, and defaulting the
- * other way would un-attribute the outages this work was built for.
+ * TWO EARLIER CLAIMS HERE WERE WRONG, and both said the same comfortable
+ * thing — that the gap was narrower than it was:
+ *
+ *   - "that holds for the chat engine": it did not. `runChatEngineLoop`'s
+ *     outer catch covers its own preparation just as broadly — the
+ *     trace-payload `structuredClone`, message scrubbing, tool narrowing,
+ *     `emitTurnStart`. It was simply never given a phase to report.
+ *   - "every emitter that omits it today is a real stream failure": that
+ *     engine's three emitters ALL omitted it, so every emulated-path failure,
+ *     preparation bugs included, resolved here to `model`. On the hosted path
+ *     that also WITHDREW the eval failures a provider outage excuses.
+ *
+ * Both engines now report a phase, so the default below governs only emitters
+ * outside them. It stays `model` deliberately: with the in-repo emitters
+ * truthful, an unknown emitter is far likelier to be a stream failure, and
+ * flipping it would un-attribute the outages this work was built for.
  */
 export function failedLayerForEngineError(
   event: { phase?: "setup" | "stream" } | undefined,
