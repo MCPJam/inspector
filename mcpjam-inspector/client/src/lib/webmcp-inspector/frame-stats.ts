@@ -181,10 +181,20 @@ export function resetFrameStats(): void {
   // new transport straight after clearing.
 }
 
+/** Everything, including the rung — see `resetFrameStatsFlagForTests`. */
+function resetAll(): void {
+  resetFrameStats();
+  currentRung = "none";
+}
+
 /** Test seam: the flag is read once and cached for the tab's lifetime. */
 export function resetFrameStatsFlagForTests(): void {
   enabled = undefined;
-  resetFrameStats();
+  // The rung too, which `resetFrameStats` deliberately keeps: a test seam that
+  // left it set would carry one case's transport into the next, and a test
+  // reading `byTransport` without setting a rung would be describing whatever
+  // ran before it.
+  resetAll();
 }
 
 function install(): void {

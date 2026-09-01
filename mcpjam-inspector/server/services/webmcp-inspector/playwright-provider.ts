@@ -44,11 +44,7 @@ import {
   webMcpHeadlessRequested,
 } from "./launch-args";
 import { WebMcpBridge, type CdpLike } from "../browserd/daemon/webmcp-bridge";
-import {
-  SCREENSHOT_MAX_BYTES,
-  SCREENSHOT_WIDTH,
-  translateBridgeError,
-} from "./provider-shared";
+import { SCREENSHOT_MAX_BYTES, translateBridgeError } from "./provider-shared";
 import {
   WebMcpChromiumNotInstalledError,
   WebMcpNoDisplayError,
@@ -72,6 +68,13 @@ const CLOSE_TIMEOUT_MS = 5_000;
  * number of base64 groups.
  */
 const JPEG_PROBE_BASE64_CHARS = 4_096;
+/**
+ * Qualities tried for a timeline screenshot, best first.
+ *
+ * Lower than the stream's baseline, because these are PERSISTED evidence at a
+ * 64 KiB budget rather than a picture the next paint replaces.
+ */
+const SCREENSHOT_QUALITY_LADDER = [50, 30, 20] as const;
 /** The modifier keys a pointer event's snapshot can name, in Playwright's spelling. */
 const MODIFIER_KEYS = ["Alt", "Control", "Meta", "Shift"] as const;
 
@@ -913,38 +916,35 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     }
   }
 
+  /**
+   * A capture for the timeline — and for the client's screenshot POLL, which
+   * is the fallback whenever a screencast cannot be started.
+   *
+   * QUALITY degrades, geometry never. This used to retry as a crop of the
+   * top-left 640x400, which is defensible for a thumbnail viewed as-is and
+   * wrong for the poll: the pane renders whatever comes back as the whole
+   * 1280x800 surface and maps clicks across it, so a crop presented as a
+   * viewport puts every click at up to twice its true coordinate. A session
+   * rendering above one device pixel per CSS pixel made that retry far more
+   * likely, because a device-scaled full capture is four times the pixels and
+   * blows the 64 KiB budget on ordinary pages.
+   *
+   * The same surface capture the stills use, for the same reasons: no DOM
+   * mutation (Playwright's caret hiding paints), no clip (which resets the
+   * context's own device scale factor), and CSS resolution, which is the
+   * geometry the client scales against.
+   */
   async captureScreenshot(): Promise<string | undefined> {
-    try {
-      const buffer = await this.page.screenshot({
-        type: "jpeg",
-        quality: 50,
-        timeout: 5_000,
-      });
-      if (buffer.byteLength <= SCREENSHOT_MAX_BYTES) {
-        return buffer.toString("base64");
+    for (const quality of SCREENSHOT_QUALITY_LADDER) {
+      const data = await this.captureStill(quality);
+      if (data === undefined) return undefined;
+      if (Buffer.byteLength(data, "base64") <= SCREENSHOT_MAX_BYTES) {
+        return data;
       }
-      // One retry at a smaller size. A frame that still will not fit the budget
-      // is dropped: the timeline can say "no screenshot", but it must not carry
-      // multi-megabyte entries.
-      const smaller = await this.page.screenshot({
-        type: "jpeg",
-        quality: 30,
-        clip: {
-          x: 0,
-          y: 0,
-          width: SCREENSHOT_WIDTH,
-          height: Math.round(
-            (SCREENSHOT_WIDTH * WEBMCP_VIEWPORT.height) / WEBMCP_VIEWPORT.width,
-          ),
-        },
-        timeout: 5_000,
-      });
-      return smaller.byteLength > SCREENSHOT_MAX_BYTES
-        ? undefined
-        : smaller.toString("base64");
-    } catch {
-      return undefined;
     }
+    // Nothing fit. The timeline can say "no screenshot"; it must not carry a
+    // multi-megabyte entry, and the pane must not be handed a wrong shape.
+    return undefined;
   }
 
   currentUrl(): string {
@@ -1168,6 +1168,9 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // A browser that cannot screencast reports it here, and the caller turns
       // that `false` into the client's screenshot fallback.
       if (!(await this.sendStartScreencast())) this.screencasting = false;
+      // The retry belonged to the stream that was refused, and that stream is
+      // over.
+      this.restartPending = false;
       // A fresh audience, and the replay burst that comes with it, is not
       // evidence about the link: the drops that pressured the PREVIOUS stream
       // are stale, and the hold keeps the first seconds of this one from being
@@ -1182,6 +1185,9 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       return this.screencasting;
     }
     this.clearHousekeeping();
+    // The retry belonged to the stream being stopped; carrying it forward
+    // would stop and start the NEXT one for no reason.
+    this.restartPending = false;
     this.frameThrottle.reset();
     // The next stream is a fresh picture. Keeping the old bytes would let the
     // first frame of a restarted cast be dropped as a duplicate of the last

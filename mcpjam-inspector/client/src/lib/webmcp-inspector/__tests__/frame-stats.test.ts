@@ -109,6 +109,28 @@ describe("frame stats", () => {
     expect(report.byTransport.none).toBeUndefined();
   });
 
+  it("resets the rung as well as the samples, for the test seam only", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+
+    // The seam is what every test's `beforeEach` calls. Leaving the rung set
+    // would carry one case's transport into the next, and a case that read
+    // `byTransport` without setting a rung would be describing whatever ran
+    // before it — the quiet kind of test pollution that only shows up as a
+    // reordering failure months later.
+    resetFrameStatsFlagForTests();
+    localStorage.setItem(FLAG, "1");
+    expect(frameStatsEnabled()).toBe(true);
+    notePainted({ ts: 999_980, seq: 2 });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.ws).toBeUndefined();
+    expect(report.byTransport.none).toMatchObject({ n: 1 });
+  });
+
   it("treats an empty string as set, since presence is the flag", () => {
     localStorage.setItem(FLAG, "");
     resetFrameStatsFlagForTests();

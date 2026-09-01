@@ -24,24 +24,32 @@ import type {
 } from "@/shared/webmcp-inspector-protocol";
 
 /**
- * The page's identity, without anything that identifies a PERSON.
+ * The page's ORIGIN, and nothing else about the URL.
  *
- * Origin and path only: a query string is where session tokens, magic-link
- * codes and one-time secrets live, and this payload is built to be pasted into
- * an issue. `URL` also drops any `user:password@` on the way through, which is
- * the other place a credential hides. A URL that will not parse is reported as
- * the fact that it did not rather than passed through as-is.
+ * This payload is built to be pasted into an issue, and every other part of a
+ * URL is somewhere a secret is routinely found: a query string carries session
+ * tokens and magic-link codes, `user:password@` carries a credential outright,
+ * and a PATH carries reset tokens, share links and account ids —
+ * `/reset/9f3c…`, `/u/48213`. The origin is what a viewport bug report
+ * actually needs (which site, which scheme, which port), so that is what it
+ * keeps.
+ *
+ * What was dropped is named rather than silently lost, so a reader is not left
+ * wondering why this does not match their address bar. A URL that will not
+ * parse says so instead of being passed through.
  */
 function redactUrl(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     const parsed = new URL(url);
-    const trimmed = `${parsed.origin}${parsed.pathname}`;
-    // Say that something was dropped, so a reader is not left wondering why
-    // the URL in the report does not match the one in the address bar.
-    return parsed.search || parsed.hash
-      ? `${trimmed} [query redacted]`
-      : trimmed;
+    const dropped: string[] = [];
+    if (parsed.pathname && parsed.pathname !== "/") dropped.push("path");
+    if (parsed.search) dropped.push("query");
+    if (parsed.hash) dropped.push("fragment");
+    if (parsed.username || parsed.password) dropped.push("credentials");
+    return dropped.length > 0
+      ? `${parsed.origin} [${dropped.join(", ")} redacted]`
+      : parsed.origin;
   } catch {
     return "[unparseable url]";
   }

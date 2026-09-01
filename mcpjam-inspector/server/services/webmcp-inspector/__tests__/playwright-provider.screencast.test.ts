@@ -22,6 +22,7 @@ import {
   type WebMcpFrame,
 } from "@/shared/webmcp-inspector-protocol";
 import type { WebMcpSessionCallbacks, WebMcpViewportMode } from "../provider";
+import { SCREENSHOT_MAX_BYTES } from "../provider-shared";
 
 class FakeCdp {
   readonly handlers = new Map<string, Array<(payload: unknown) => void>>();
@@ -659,6 +660,43 @@ describe("PlaywrightWebMcpSession screencast", () => {
     // (Chromium gates on that) but published nowhere.
     h.cdp.emit("Page.screencastFrame", screencastFrame("after"));
     expect(h.frames).toHaveLength(0);
+  });
+});
+
+/**
+ * The timeline capture, which is ALSO the client's screenshot poll.
+ *
+ * That double duty is the whole hazard: a picture that is fine as evidence
+ * viewed at its own size is not fine as a surface the pane maps clicks across.
+ */
+describe("PlaywrightWebMcpSession screenshots", () => {
+  it("degrades quality, never geometry", async () => {
+    const oversize = base64OfSize(SCREENSHOT_MAX_BYTES + 1);
+    const h = await started({
+      still: ({ quality }) => (quality >= 50 ? oversize : "smaller"),
+    });
+
+    expect(await h.session.captureScreenshot()).toBe("smaller");
+    // No crop, ever. The pane renders whatever comes back as the whole
+    // 1280x800 surface and maps input across it, so a top-left crop presented
+    // as a viewport puts every click at up to twice its true coordinate — and
+    // a session rendering at a high device pixel ratio hits the retry far more
+    // often, because a device-scaled capture is four times the pixels.
+    for (const call of h.cdp.sent) {
+      if (call.method !== "Page.captureScreenshot") continue;
+      expect(call.params).not.toHaveProperty("clip");
+    }
+    // And never Playwright's own screenshot, whose caret hiding mutates the
+    // document it is capturing.
+    expect(h.screenshots).not.toHaveBeenCalled();
+  });
+
+  it("gives up rather than exceed its budget", async () => {
+    const oversize = base64OfSize(SCREENSHOT_MAX_BYTES + 1);
+    const h = await started({ still: () => oversize });
+    // The timeline can say "no screenshot". It must not carry a multi-megabyte
+    // entry into an export, and the pane must not be handed a wrong shape.
+    expect(await h.session.captureScreenshot()).toBeUndefined();
   });
 });
 
@@ -1502,6 +1540,37 @@ describe("PlaywrightWebMcpSession stream governor", () => {
     // pane stays frozen until somebody hides the tab and comes back.
     h.cdp.emit("Page.screencastFrame", screencastFrame("after-recovery"));
     expect(h.frames.map((frame) => frame.data)).toContain("after-recovery");
+  });
+
+  it("drops a pending retry when the stream is turned off and on again", async () => {
+    let refuse = false;
+    const h = await startedWithFakeClock({
+      onSend: (method) => {
+        if (method === "Page.startScreencast" && refuse) {
+          throw new Error("Protocol error: target closed");
+        }
+        return undefined;
+      },
+    });
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+
+    refuse = true;
+    for (let i = 0; i < WEBMCP_QUALITY_PRESSURE_DROPS; i += 1) {
+      h.session.noteFramePressure();
+    }
+    await vi.advanceTimersByTimeAsync(50);
+
+    // The pane goes away and comes back — a tab switch, a remount — and the
+    // stream that was refused is over. A retry carried across that would stop
+    // and start a perfectly healthy encoder as soon as the hold expired.
+    refuse = false;
+    await h.session.setScreencast(false);
+    await h.session.setScreencast(true);
+    const afterReenable = h.cdp.methods().length;
+
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 1_000);
+    expect(h.cdp.methods().slice(afterReenable)).toEqual([]);
   });
 
   it("lets a disable that lands mid-restart win", async () => {

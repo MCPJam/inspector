@@ -65,7 +65,9 @@ describe("webmcp diagnostics", () => {
     expect(report).toMatchObject({
       sessionId: "session-1",
       status: "ready",
-      url: "https://shop.test/",
+      // Origin only — the session's URL is `https://shop.test/`, whose path is
+      // just the root, so nothing is named as dropped.
+      url: "https://shop.test",
       viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
       // The four things that are invisible on screen and decide everything
       // about how the pane looks.
@@ -93,12 +95,35 @@ describe("webmcp diagnostics", () => {
     expect(copied).not.toContain("secret");
     expect(copied).not.toContain("pw@");
     expect(copied).not.toContain("#frag");
-    // The page is still identifiable, and the reader is told something was
-    // dropped rather than left wondering why it does not match their address
+    // The PATH goes too: it carries reset tokens, share links and account ids
+    // just as routinely as a query string does. The origin is what a viewport
+    // bug report needs, and what was dropped is named rather than silently
+    // lost — otherwise a reader wonders why this does not match their address
     // bar.
     expect(JSON.parse(copied).url).toBe(
-      "https://shop.test/checkout [query redacted]",
+      "https://shop.test [path, query, fragment, credentials redacted]",
     );
+  });
+
+  it("names only what it actually dropped", () => {
+    // The note has to match the URL it describes, or it is one more thing to
+    // second-guess in a bug report.
+    const url = (value: string) =>
+      buildWebMcpDiagnostics({
+        session: { ...SESSION, url: value },
+        frameTransport: TRANSPORT,
+      }).url;
+
+    expect(url("https://shop.test/")).toBe("https://shop.test");
+    expect(url("https://shop.test/checkout")).toBe(
+      "https://shop.test [path redacted]",
+    );
+    expect(url("https://shop.test/#frag")).toBe(
+      "https://shop.test [fragment redacted]",
+    );
+    // A non-default port is part of the origin, and worth keeping: "it only
+    // happens on my dev server" is a real report.
+    expect(url("http://localhost:3000/")).toBe("http://localhost:3000");
   });
 
   it("says so rather than guessing when the URL will not parse", () => {
