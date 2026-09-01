@@ -113,7 +113,10 @@ interface WebMcpInspectorState {
    * project's MCPJam computer and needs `projectId`, because that is the
    * computer being reserved and billed.
    */
-  startSession(url: string, options?: StartSessionOptions): Promise<void>;
+  startSession(
+    url: string,
+    options?: StartSessionOptions,
+  ): Promise<string | undefined>;
   closeSession(): Promise<void>;
   sendCommand(command: WebMcpCommand): Promise<unknown>;
   invokeTool(toolKey: string, input: Record<string, unknown>): Promise<void>;
@@ -499,10 +502,15 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         });
         if (!result.ok) {
           set({ starting: false, error: result.error });
-          return;
+          return undefined;
         }
         set({ session: result.data, starting: false });
         connect(result.data.sessionId);
+        // Returned so a caller can tell ITS session apart from whatever the
+        // store holds later. An async caller that reads `session` after its
+        // await sees whichever session is current, which is not necessarily
+        // the one it just created.
+        return result.data.sessionId;
       },
 
       async closeSession() {

@@ -172,12 +172,17 @@ export function WebmcpInspectorTab() {
    * await and closes what the cleanup could not have known about.
    */
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set in SETUP as well as cleared in cleanup. `<StrictMode>` — which this
+    // app really does use — mounts, unmounts and remounts every effect on the
+    // first commit, so an effect that only cleared this would leave it false
+    // for the life of the component, and every embedded start in development
+    // would close its own session the moment it arrived.
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
   /**
    * An error this screen produced rather than the server.
    *
@@ -410,7 +415,10 @@ export function WebmcpInspectorTab() {
     setWebviewMounted(true);
     try {
       const webContentsId = await nextWebviewId();
-      await startSession(url, { display: "in-app", webContentsId });
+      const startedId = await startSession(url, {
+        display: "in-app",
+        webContentsId,
+      });
       // WHAT CAME BACK decides whether our surface is the viewport, and the
       // test is POSITIVE: keep it only for a live session that actually
       // attached to it. Everything else takes the surface down.
@@ -427,9 +435,16 @@ export function WebmcpInspectorTab() {
       //
       // Read from the store rather than the `session` in scope, which is the
       // render-time value from before the await.
+      // Identified by ID, not just by kind. A continuation that outlived its
+      // screen reads whatever session the store holds NOW — and if a remounted
+      // tab already started a replacement, that is someone else's session.
+      // Acting on it would close a live session belonging to a screen that is
+      // on display.
       const started = useWebmcpInspectorStore.getState().session;
       const attached =
-        started?.viewportTransport.kind === "electron-webview" &&
+        startedId !== undefined &&
+        started?.sessionId === startedId &&
+        started.viewportTransport.kind === "electron-webview" &&
         started.status !== "closed";
       if (!attached) {
         setWebviewMounted(false);

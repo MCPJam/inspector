@@ -12,6 +12,7 @@
  * know the arm is load-bearing rather than decorative.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { StrictMode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
@@ -109,6 +110,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
   it("mounts the surface FIRST, then starts with the id it reports", async () => {
     const startSession = vi.fn(async () => {
       useWebmcpInspectorStore.setState({ session: webviewSession() });
+      return webviewSession().sessionId;
     });
     useWebmcpInspectorStore.setState({ startSession });
     render(<WebmcpInspectorTab />);
@@ -166,6 +168,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
   it("ignores a second Open browser click during the mount-and-attach wait", async () => {
     const startSession = vi.fn(async () => {
       useWebmcpInspectorStore.setState({ session: webviewSession() });
+      return webviewSession().sessionId;
     });
     useWebmcpInspectorStore.setState({ startSession });
     render(<WebmcpInspectorTab />);
@@ -198,6 +201,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
   it("takes the surface down when the session closes", async () => {
     const startSession = vi.fn(async () => {
       useWebmcpInspectorStore.setState({ session: webviewSession() });
+      return webviewSession().sessionId;
     });
     useWebmcpInspectorStore.setState({ startSession });
     render(<WebmcpInspectorTab />);
@@ -226,6 +230,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     // client must render what it was HANDED, not what it asked for.
     const startSession = vi.fn(async () => {
       useWebmcpInspectorStore.setState({ session: inAppSession() });
+      return inAppSession().sessionId;
     });
     useWebmcpInspectorStore.setState({
       startSession,
@@ -264,6 +269,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
         session: { ...webviewSession(), status: "closed" },
         error: { message: "The browser could not be opened." },
       });
+      return webviewSession().sessionId;
     });
     useWebmcpInspectorStore.setState({ startSession });
     render(<WebmcpInspectorTab />);
@@ -292,6 +298,7 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     const startSession = vi.fn(async () => {
       await startPending;
       useWebmcpInspectorStore.setState({ session: webviewSession() });
+      return webviewSession().sessionId;
     });
     useWebmcpInspectorStore.setState({ startSession, closeSession });
 
@@ -315,6 +322,81 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     });
 
     expect(closeSession).toHaveBeenCalled();
+  });
+
+  it("survives StrictMode's effect replay", async () => {
+    // The app really does render under `<StrictMode>` (client/src/main.tsx), and
+    // it mounts, unmounts and remounts every effect on the first commit. An
+    // effect that only sets a flag in its CLEANUP therefore leaves that flag
+    // set for the life of the component — and a mounted-ref built that way
+    // reads "unmounted" forever, closing every session the moment it starts.
+    // RTL's plain `render` does not replay effects, so only this test sees it.
+    const closeSession = vi.fn(async () => {});
+    const startSession = vi.fn(async () => {
+      useWebmcpInspectorStore.setState({ session: webviewSession() });
+      return webviewSession().sessionId;
+    });
+    useWebmcpInspectorStore.setState({ startSession, closeSession });
+
+    render(
+      <StrictMode>
+        <WebmcpInspectorTab />
+      </StrictMode>,
+    );
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open browser" }));
+    });
+    await act(async () => {
+      bringUpWebview();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(startSession).toHaveBeenCalled();
+    // The session belongs to a screen that is still on display.
+    expect(closeSession).not.toHaveBeenCalled();
+    expect(mountedWebview()).not.toBeNull();
+  });
+
+  it("does not close a replacement session created by a remounted tab", async () => {
+    // The stale-continuation case: instance #1's start is still in flight when
+    // the tab unmounts, remounts, and starts again. `closeSession()` closes
+    // whatever the store holds NOW — so an unguarded continuation reaches past
+    // its own session and closes the replacement.
+    let resolveFirst!: () => void;
+    const firstPending = new Promise<void>((resolve) => {
+      resolveFirst = () => resolve();
+    });
+    const closeSession = vi.fn(async () => {});
+    const startSession = vi.fn(async () => {
+      await firstPending;
+      return "session-mine";
+    });
+    useWebmcpInspectorStore.setState({ startSession, closeSession });
+
+    const view = render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open browser" }));
+    });
+    await act(async () => {
+      bringUpWebview();
+      await Promise.resolve();
+    });
+
+    view.unmount();
+    // A remounted tab got there first and owns the store now.
+    useWebmcpInspectorStore.setState({
+      session: { ...webviewSession(), sessionId: "session-theirs" },
+    });
+    await act(async () => {
+      resolveFirst();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(closeSession).not.toHaveBeenCalled();
   });
 
   it("hides the destination toggle in the packaged app", async () => {
