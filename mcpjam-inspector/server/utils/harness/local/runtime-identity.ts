@@ -24,7 +24,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, normalize, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { LocalHarnessCompatibility } from "./compatibility.js";
 import type { LocalPlatform, SupportedLocalHarnessId } from "./targets.js";
 
@@ -381,6 +381,51 @@ async function defaultProbe(
  * installations mean we cannot say which one the user meant, and guessing is
  * how consent ends up bound to a different binary than the one that runs.
  */
+/**
+ * The first ancestor directory of `path` that a non-system owner could write,
+ * or `null` when every one of them is system-owned and not group- or
+ * world-writable.
+ *
+ * Checking the executable alone is not enough: `unlink` and `rename` are
+ * authorized by the containing DIRECTORY's permissions, so a root-owned,
+ * mode-0755 binary sitting in a user-writable directory can be moved aside and
+ * replaced entirely. The file's uid and mode are unchanged by that — a new
+ * file simply takes its name.
+ *
+ * The sticky bit is the one exemption, and it is not a loophole: on a sticky
+ * directory only a file's owner may unlink or rename it, which is exactly the
+ * property being checked. `/tmp` is mode 1777 for this reason, and without the
+ * exemption every installation below it would be refused for a risk the sticky
+ * bit already removes.
+ *
+ * A directory that cannot be `stat`ed is treated as untrusted: this answers a
+ * security question, and "could not look" is not "safe".
+ */
+async function firstUntrustedAncestor(
+  path: string,
+  platform: NodeJS.Platform,
+): Promise<string | null> {
+  // Windows has no uid and its ACLs are not readable through `fs.Stats`;
+  // system-install is not offered there, and pretending to check would be
+  // worse than not claiming it.
+  if (platform === "win32") return null;
+  let dir = dirname(path);
+  for (;;) {
+    let info: Awaited<ReturnType<typeof stat>>;
+    try {
+      info = await stat(dir);
+    } catch {
+      return dir;
+    }
+    const looselyWritable =
+      (info.mode & 0o022) !== 0 && (info.mode & 0o1000) === 0;
+    if (info.uid !== 0 || looselyWritable) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 export async function resolveSystemInstall(
   opts: SystemDiscoveryOptions,
 ): Promise<RuntimeResolution> {
@@ -467,6 +512,27 @@ export async function resolveSystemInstall(
             `${candidate} is owned by uid ${info.uid} rather than a system ` +
             `owner, so the supervised agent — which runs as that user — could ` +
             `replace it between verification and launch`,
+        });
+        continue;
+      }
+
+      // A trusted file under an untrusted directory is not trusted. Unlink
+      // and rename are governed by the DIRECTORY's permissions, not the
+      // file's, so a root-owned binary in a user-writable directory can be
+      // moved aside and replaced wholesale by the very agent we are about to
+      // start — the file's own uid and mode say nothing about that.
+      const untrustedAncestor = await firstUntrustedAncestor(
+        canonical,
+        platform,
+      );
+      if (untrustedAncestor !== null) {
+        rejections.push({
+          status: "system-runtime-untrusted-path",
+          message:
+            `${candidate} lives under ${untrustedAncestor}, which is ` +
+            `writable by a non-system owner. Replacing the executable there ` +
+            `needs only directory permissions, so its verified identity ` +
+            `cannot be held between verification and launch`,
         });
         continue;
       }

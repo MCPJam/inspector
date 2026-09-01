@@ -155,6 +155,18 @@ bridge's own `bind`, which only a process already running as this user could
 win, and closing even that needs a handshake nonce the vendor bridges do not
 speak.
 
+### A trusted file under an untrusted directory is not trusted
+
+`unlink` and `rename` are authorized by the containing **directory's**
+permissions, not the file's. A root-owned, mode-0755 vendor binary sitting in a
+user-writable directory can therefore be moved aside and replaced wholesale by
+the very agent about to be launched — its uid and mode are unchanged, because a
+new file simply takes its name. System-install discovery walks the whole
+ancestor chain and refuses any directory that is not system-owned, or that is
+group- or world-writable without the sticky bit. Sticky is not a loophole: on a
+sticky directory only a file's owner may unlink or rename it, which is exactly
+the property being checked, and it is why `/tmp` is mode 1777.
+
 ### A dangling symlink is a link, not an absence
 
 `realpath` fails on a symlink whose target does not exist, so an ancestor walk

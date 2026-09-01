@@ -307,6 +307,60 @@ describe.skipIf(process.getuid?.() !== 0)("system installations", () => {
     );
   });
 
+  it("rejects a root-owned executable under a writable parent directory", async () => {
+    // Unlink and rename are authorized by the DIRECTORY's permissions, not the
+    // file's. A root-owned, mode-0755 binary in a user-writable directory can
+    // be moved aside and replaced wholesale — its own uid and mode say nothing
+    // about that, because a new file simply takes its name.
+    const dir = join(base, "loose-parent", "bin");
+    await installAt(dir);
+    await chmod(join(base, "loose-parent"), 0o777);
+    const result = await resolveSystemInstall({
+      manifest: systemManifest,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [dir],
+      probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+    });
+    expect(result).toMatchObject({ status: "system-runtime-untrusted-path" });
+    expect((result as { message: string }).message).toMatch(
+      /writable by a non-system owner/,
+    );
+  });
+
+  it("rejects an executable under a parent owned by the session user", async () => {
+    const { chown } = await import("node:fs/promises");
+    const dir = join(base, "user-parent", "bin");
+    await installAt(dir);
+    await chown(join(base, "user-parent"), 65534, 65534); // nobody
+    const result = await resolveSystemInstall({
+      manifest: systemManifest,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [dir],
+      probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+    });
+    expect(result).toMatchObject({ status: "system-runtime-untrusted-path" });
+  });
+
+  it("accepts a sticky world-writable ancestor, which /tmp relies on", async () => {
+    // Sticky is not a loophole: on a sticky directory only a file's owner may
+    // unlink or rename it, which is the exact property being checked. Without
+    // the exemption every installation below /tmp would be refused for a risk
+    // the sticky bit already removes.
+    const dir = join(base, "sticky-parent", "bin");
+    await installAt(dir);
+    await chmod(join(base, "sticky-parent"), 0o1777);
+    const result = await resolveSystemInstall({
+      manifest: systemManifest,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [dir],
+      probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects a world-writable executable, which cannot be held between probe and launch", async () => {
     const dir = join(base, "loose-bin");
     await installAt(dir, 0o777);
