@@ -125,9 +125,17 @@ export function buildMcpToolErrorResultMessage(input: {
   };
 }
 
-/** An `error-text` output part carrying `message`. */
+/**
+ * An `error-text` output part carrying `message`.
+ *
+ * `ToolResultPart` in the AI SDK describes the whole part (tool name, call id
+ * and all) rather than just its `output`, so the two do not structurally
+ * overlap and a direct cast is rejected. The double cast is the honest
+ * spelling of what the emulated engine already does inline at its own catch —
+ * this is the same value, named once.
+ */
 export function mcpToolErrorOutput(message: string): ToolResultPart {
-  return { type: "error-text", value: message } as ToolResultPart;
+  return { type: "error-text", value: message } as unknown as ToolResultPart;
 }
 
 /**
