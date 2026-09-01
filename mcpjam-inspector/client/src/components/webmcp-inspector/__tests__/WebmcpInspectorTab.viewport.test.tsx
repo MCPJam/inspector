@@ -333,135 +333,91 @@ describe("WebmcpInspectorTab — viewport", () => {
     ]);
   });
 
-  it("records a paint on the next animation frame, not on decode", async () => {
-    localStorage.setItem("webmcp:frame-stats", "1");
-    resetFrameStatsFlagForTests();
-    const frames: Array<() => void> = [];
-    const raf = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((cb) => {
-        frames.push(() => cb(0));
-        return frames.length;
-      });
-    try {
-      stubViewportActions({ screencastAccepted: true });
-      render(<WebmcpInspectorTab />);
-      await act(async () => {});
-      await act(async () => {
-        useWebmcpInspectorStore.setState({
-          liveFrame: liveFrame("data:image/jpeg;base64,paint"),
-        });
-      });
+  /**
+   * The three paint-recording tests differ only in their TAIL — what happens
+   * between the decode and the animation frame that would have shown it. The
+   * flag key, the stubbed `requestAnimationFrame` and the mount are stated
+   * once here so a change to any of them lands in one place.
+   */
+  describe("frame-stats paint recording", () => {
+    /** Callbacks the pane queued for the next frame, to run by hand. */
+    let queued: Array<() => void>;
 
-      const image = screen.getByAltText("Live view of the inspected page");
-      Object.defineProperty(image, "currentSrc", {
-        value: "data:image/jpeg;base64,paint",
-        configurable: true,
-      });
-      await act(async () => {
-        fireEvent.load(image);
-      });
-
-      // `load` means DECODED, not shown. Recording there reports a number
-      // consistently smaller than the thing being measured.
-      expect(frameStatsReport().captureToPaint.n).toBe(0);
-      await act(async () => {
-        frames.forEach((run) => run());
-      });
-      expect(frameStatsReport().captureToPaint.n).toBe(1);
-    } finally {
-      raf.mockRestore();
-      localStorage.removeItem("webmcp:frame-stats");
+    beforeEach(() => {
+      localStorage.setItem("webmcp:frame-stats", "1");
       resetFrameStatsFlagForTests();
-    }
-  });
+      queued = [];
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        queued.push(() => cb(0));
+        return queued.length;
+      });
+    });
 
-  it("does not record a frame superseded before it was shown", async () => {
-    localStorage.setItem("webmcp:frame-stats", "1");
-    resetFrameStatsFlagForTests();
-    const frames: Array<() => void> = [];
-    const raf = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((cb) => {
-        frames.push(() => cb(0));
-        return frames.length;
-      });
-    try {
-      stubViewportActions({ screencastAccepted: true });
-      render(<WebmcpInspectorTab />);
-      await act(async () => {});
-      await act(async () => {
-        useWebmcpInspectorStore.setState({
-          liveFrame: liveFrame("data:image/jpeg;base64,paint"),
-        });
-      });
-
-      const image = screen.getByAltText("Live view of the inspected page");
-      Object.defineProperty(image, "currentSrc", {
-        value: "data:image/jpeg;base64,paint",
-        configurable: true,
-      });
-      await act(async () => {
-        fireEvent.load(image);
-      });
-      // A newer frame replaced it before the compositor ever showed this one,
-      // so it never was a paint.
-      Object.defineProperty(image, "currentSrc", {
-        value: "data:image/jpeg;base64,newer",
-        configurable: true,
-      });
-      await act(async () => {
-        frames.forEach((run) => run());
-      });
-      expect(frameStatsReport().captureToPaint.n).toBe(0);
-    } finally {
-      raf.mockRestore();
+    afterEach(() => {
+      vi.restoreAllMocks();
       localStorage.removeItem("webmcp:frame-stats");
+      // Clears the cached flag AND the samples, so the next test starts empty.
       resetFrameStatsFlagForTests();
-    }
-  });
+    });
 
-  it("does not record a paint for a pane that unmounted before the frame", async () => {
-    localStorage.setItem("webmcp:frame-stats", "1");
-    resetFrameStatsFlagForTests();
-    const frames: Array<() => void> = [];
-    const raf = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((cb) => {
-        frames.push(() => cb(0));
-        return frames.length;
+    /** jsdom leaves `currentSrc` unset; the pane reads it to name the frame. */
+    function setCurrentSrc(image: HTMLElement, value: string) {
+      Object.defineProperty(image, "currentSrc", {
+        value,
+        configurable: true,
       });
-    try {
+    }
+
+    /** Mount the pane with one frame decoded but not yet shown. */
+    async function mountDecodedFrame(src = "data:image/jpeg;base64,paint") {
       stubViewportActions({ screencastAccepted: true });
       const view = render(<WebmcpInspectorTab />);
       await act(async () => {});
       await act(async () => {
-        useWebmcpInspectorStore.setState({
-          liveFrame: liveFrame("data:image/jpeg;base64,paint"),
-        });
+        useWebmcpInspectorStore.setState({ liveFrame: liveFrame(src) });
       });
-
       const image = screen.getByAltText("Live view of the inspected page");
-      Object.defineProperty(image, "currentSrc", {
-        value: "data:image/jpeg;base64,paint",
-        configurable: true,
-      });
+      setCurrentSrc(image, src);
       await act(async () => {
         fireEvent.load(image);
       });
+      return { view, image };
+    }
+
+    const runQueuedFrames = () =>
+      act(async () => {
+        queued.forEach((run) => run());
+      });
+
+    it("records a paint on the next animation frame, not on decode", async () => {
+      await mountDecodedFrame();
+
+      // `load` means DECODED, not shown. Recording there reports a number
+      // consistently smaller than the thing being measured.
+      expect(frameStatsReport().captureToPaint.n).toBe(0);
+      await runQueuedFrames();
+      expect(frameStatsReport().captureToPaint.n).toBe(1);
+    });
+
+    it("does not record a frame superseded before it was shown", async () => {
+      const { image } = await mountDecodedFrame();
+
+      // A newer frame replaced it before the compositor ever showed this one,
+      // so it never was a paint.
+      setCurrentSrc(image, "data:image/jpeg;base64,newer");
+      await runQueuedFrames();
+      expect(frameStatsReport().captureToPaint.n).toBe(0);
+    });
+
+    it("does not record a paint for a pane that unmounted before the frame", async () => {
+      const { view } = await mountDecodedFrame();
 
       // The screen goes away between the decode and the frame that would have
       // shown it. Nothing was painted, so nothing should be recorded.
       view.unmount();
-      await act(async () => {
-        frames.forEach((run) => run());
-      });
+      await runQueuedFrames();
       expect(frameStatsReport().captureToPaint.n).toBe(0);
-    } finally {
-      raf.mockRestore();
-      localStorage.removeItem("webmcp:frame-stats");
-      resetFrameStatsFlagForTests();
-    }
+    });
   });
 
   it("leaves a native-window session view-only", async () => {

@@ -259,19 +259,33 @@ test.describe("WebMCP viewport frame stream", () => {
       const latencies = socket.frames.map(
         (frame) => frame.receivedAt - frame.ts,
       );
+      // Fewer than two arrivals has no period to speak of, and `medianGap`
+      // answers Infinity there — which would make the bound below pass on a
+      // stream that never ran.
+      expect(
+        socket.frames.length,
+        "frames to measure a period from",
+      ).toBeGreaterThan(1);
+      const period = medianGap(socket.frames.map((frame) => frame.receivedAt));
       console.log(
         `[frame-stream] capture→arrival over ${latencies.length} frames: ` +
-          `p50 ${percentile(latencies, 50)}ms, p95 ${percentile(latencies, 95)}ms`,
+          `p50 ${percentile(latencies, 50)}ms, p95 ${percentile(latencies, 95)}ms ` +
+          `(frame period ${period}ms)`,
       );
-      // Logged, and bounded only loosely. This figure is encode + transport +
-      // decode on whatever box is running — a hardware measurement, by the
-      // same argument the rate test makes for comparing against its own
-      // baseline rather than an absolute. A tight cap here would turn a
-      // parked CI runner red for a reason that has nothing to do with the
-      // code. The bound that remains catches an order-of-magnitude
-      // regression, which is the only thing an absolute number can honestly
-      // claim; the p50/p95 above are the figures worth reading.
-      expect(percentile(latencies, 95)).toBeLessThan(5_000);
+      // Bounded against a baseline from the SAME run, for the reason the rate
+      // test gives: an absolute cap here is a claim about the hardware. Loose
+      // enough not to redden a parked runner, it would also pass the 10-20x
+      // regression this number exists to catch; tight enough to catch that,
+      // it reddens the runner.
+      //
+      // The pairing that survives both is the frame period itself. `ts` is
+      // stamped when a capture reaches the provider, BEFORE the throttle, so
+      // this latency is the throttle's hold plus encode, transport and decode
+      // — and a stream that is keeping up delivers a frame in less time than
+      // it takes to produce the next one. Past that it is backing up,
+      // whatever the box. Medians on both sides, so one stalled frame moves
+      // neither. On this machine the ratio is ~0.1; the bound is 1.
+      expect(percentile(latencies, 50)).toBeLessThan(period);
     } finally {
       socket?.close();
       if (sessionId) {
