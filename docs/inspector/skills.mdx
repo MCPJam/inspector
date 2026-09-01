@@ -49,7 +49,7 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
 
 ## Finding skill IDs
 
-Several CLI flags take a skill ID: `eval run --compose-skill`, `eval cases run --compose-skill`, and `environments ensure-adhoc --skill`. Use `mcpjam cloud skills list` to discover the IDs of the project-shared skills in your project:
+Several CLI flags take a skill ID: `eval run --compose-skill`, `eval cases run --compose-skill`, and `environments ensure-adhoc --skill`. Use `mcpjam cloud skills list` to discover the IDs of skills in your project library:
 
 ```bash
 mcpjam cloud skills list --project my-project
@@ -61,7 +61,7 @@ Each row includes a `pinnability` field that says whether the skill can be pinne
 mcpjam cloud skills get --skill <id> --project my-project
 ```
 
-Only `sharing: "project"` skills can be pinned. Personal drafts (`sharing: "user"`) are visible in the list but are not accepted by `--compose-skill` or `skillSelection`.
+Only `sharing: "project"` skills (library skills) can be pinned. Personal drafts (`sharing: "user"`) are visible in the list but are not accepted by `--compose-skill` or `skillSelection`.
 
 ## Uploading Skills
 
