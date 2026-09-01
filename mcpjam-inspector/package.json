@@ -246,7 +246,7 @@
     "cross-env": "^10.1.0",
     "electron": "^43.4.0",
     "eslint": "^9",
-    "jsdom": "^27.4.0",
+    "jsdom": "^30.0.1",
     "png-to-ico": "^2.1.8",
     "prettier": "^3.9.6",
     "run-script-os": "^1.1.6",
