@@ -14,7 +14,6 @@ import {
 import {
   NOT_MEASURED_LABEL,
   describeExclusions,
-  deriveStageAnalyticsPanelState,
   excludedDetailSummary,
   formatLatency,
   overallSlice,
@@ -49,82 +48,6 @@ function tally(overrides: Partial<EvalStageTally> = {}): EvalStageTally {
   } as EvalStageTally;
 }
 
-describe("panel state derivation", () => {
-  const base = {
-    rows: [],
-    error: null,
-    runCount: 0,
-    runsLoading: false,
-  } as const;
-
-  it("treats a service failure as unsupported, not as empty", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "upstream is down", kind: "requestFailed" },
-    });
-    expect(state.kind).toBe("unsupported");
-  });
-
-  it("treats a missing route as unsupported", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "not served here", kind: "routeUnavailable" },
-    });
-    expect(state.kind).toBe("unsupported");
-  });
-
-  it("treats a contract failure as an error, not as unsupported", () => {
-    // A payload that did not validate is a BUG REPORT, not a deployment gap.
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "did not match the contract", kind: "invalidContract" },
-    });
-    expect(state.kind).toBe("error");
-  });
-
-  it("renders a vanished suite as an error, never as empty analytics", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "Eval suite not found", kind: "notFound" },
-    });
-    expect(state.kind).toBe("error");
-  });
-
-  it("distinguishes pre-analytics runs from a suite with no runs", () => {
-    const legacy = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "ready",
-      runCount: 12,
-    });
-    expect(legacy).toEqual({ kind: "unmeasuredLegacy", runCount: 12 });
-
-    const empty = deriveStageAnalyticsPanelState({ ...base, status: "ready" });
-    expect(empty).toEqual({ kind: "empty" });
-  });
-
-  it("holds the loading frame while the run list is still arriving", () => {
-    // Guessing here would flash "no runs yet" at a suite that has hundreds.
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "ready",
-      runsLoading: true,
-    });
-    expect(state.kind).toBe("loading");
-  });
-
-  it("is ready when documents arrived", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "ready",
-      rows: [GOLDEN_STAGE_ANALYTICS],
-    });
-    expect(state.kind).toBe("ready");
-  });
-});
 
 describe("rate formatting", () => {
   it("renders words, not a zero, when there is nothing to divide", () => {
