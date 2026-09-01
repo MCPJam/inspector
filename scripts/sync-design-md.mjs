@@ -363,7 +363,7 @@ function buildContrastTable(modes) {
   return [
     CONTRAST_BEGIN,
     "",
-    "| Pair (`X` / `X-foreground`) | Light | Dark |",
+    "| Surface / text pair | Light | Dark |",
     "| --- | --- | --- |",
     ...rows.map(
       (r) =>

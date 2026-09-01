@@ -60,11 +60,12 @@ function endOfCssString(block, i) {
 /**
  * `--name: value;` declarations in a rule body, in source order.
  *
- * A scanner rather than `split(";")`, and quote-aware rather than a blind
- * comment strip, because both shortcuts fail SILENTLY on values this palette
- * could plausibly grow: a font family containing a semicolon truncates at the
- * quote, and a `/*` sequence inside a string swallows everything to the next
- * close marker. A truncated value does not throw — it just repaints a mirrored
+ * A scanner rather than `split(";")`, and quote- and paren-aware rather than a
+ * blind comment strip, because each shortcut fails SILENTLY on values this
+ * palette could plausibly grow: a font family containing a semicolon truncates
+ * at the quote, a `/*` sequence inside a string swallows everything to the next
+ * close marker, and an unquoted `url(data:image/svg+xml;base64,...)` — where the
+ * semicolon is ordinary content — truncates at the media type. A truncated value does not throw — it just repaints a mirrored
  * surface in a color nobody chose, which is the failure mode this module
  * exists to prevent.
  *
@@ -83,6 +84,8 @@ export function parseVars(block) {
     decl = "";
   };
 
+  let parens = 0;
+
   for (let i = 0; i < block.length; i++) {
     const ch = block[i];
 
@@ -100,10 +103,16 @@ export function parseVars(block) {
       continue;
     }
 
-    if (ch === ";") {
+    // Only a top-level `;` ends a declaration; inside url()/calc()/oklch() it
+    // is content.
+    if (ch === ";" && parens === 0) {
       flush();
+      parens = 0;
       continue;
     }
+
+    if (ch === "(") parens++;
+    else if (ch === ")" && parens > 0) parens--;
 
     decl += ch;
   }
