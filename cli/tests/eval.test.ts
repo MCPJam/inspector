@@ -10,150 +10,45 @@ import {
   EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
   evalRunDecisionSummarySchema,
 } from "@mcpjam/sdk";
+import { evalStageAnalyticsSchema } from "@mcpjam/sdk/contract";
 import { main } from "../src/index.js";
 
-/** One materialized stage-analytics document, trimmed to what the CLI routes. */
+/**
+ * One materialized stage-analytics document, read from the SHARED golden
+ * fixture rather than hand-written here.
+ *
+ * A trimmed copy was the first attempt and it did not validate: it dropped
+ * `sourceIterationCount` and the per-stage `reasons`, and its document totals
+ * disagreed with the `overall` slice it kept. Serving a document the contract
+ * would reject means the CLI test proves the command routes SOMETHING, not
+ * that it routes the document callers actually get. The ids are the only
+ * override, so the fixture matches this file's run and suite.
+ */
 const STAGE_ANALYTICS_DOCUMENT = {
-  "schemaVersion": 1,
-  "measurementUnit": "trial",
-  "runId": "run-failed",
-  "suiteId": "suite-1",
-  "stageAnalyzerVersion": 8,
-  "measurementsSchemaVersion": 1,
-  "materializationState": "final",
-  "createdAt": 1,
-  "updatedAt": 2,
-  "includedTrials": 1,
-  "excludedTrials": {},
-  "totalTrials": 1,
-  "excludedTrialDetail": {},
-  "slices": [
-    {
-      "slice": {
-        "dimension": "overall"
-      },
-      "includedTrials": 4,
-      "excludedTrials": {
-        "lifecycle": 1,
-        "integrity": 1,
-        "version": 1
-      },
-      "failureCategories": [
-        {
-          "category": "selection",
-          "count": 1
-        }
-      ],
-      "stages": [
-        {
-          "stage": "connection",
-          "applicable": 4,
-          "reached": 4,
-          "notReached": 0,
-          "reachUnknown": 0,
-          "measured": 4,
-          "passed": 4,
-          "failed": 0,
-          "notMeasured": 0,
-          "notApplicable": 0,
-          "excluded": {},
-          "reasons": []
-        },
-        {
-          "stage": "discovery",
-          "applicable": 4,
-          "reached": 4,
-          "notReached": 0,
-          "reachUnknown": 0,
-          "measured": 4,
-          "passed": 4,
-          "failed": 0,
-          "notMeasured": 0,
-          "notApplicable": 0,
-          "excluded": {},
-          "reasons": []
-        },
-        {
-          "stage": "selection",
-          "applicable": 4,
-          "reached": 4,
-          "notReached": 0,
-          "reachUnknown": 0,
-          "measured": 4,
-          "passed": 3,
-          "failed": 1,
-          "notMeasured": 0,
-          "notApplicable": 0,
-          "excluded": {},
-          "reasons": [
-            {
-              "reason": "missingToolCall",
-              "count": 1
-            }
-          ],
-          "latency": {
-            "unit": "ms",
-            "basis": "evidence_span_union",
-            "sampleCount": 1,
-            "totalMs": 800,
-            "minMs": 800,
-            "maxMs": 800
-          }
-        },
-        {
-          "stage": "call",
-          "applicable": 4,
-          "reached": 3,
-          "notReached": 1,
-          "reachUnknown": 0,
-          "measured": 3,
-          "passed": 3,
-          "failed": 0,
-          "notMeasured": 0,
-          "notApplicable": 0,
-          "excluded": {},
-          "reasons": []
-        },
-        {
-          "stage": "response",
-          "applicable": 4,
-          "reached": 3,
-          "notReached": 1,
-          "reachUnknown": 0,
-          "measured": 3,
-          "passed": 3,
-          "failed": 0,
-          "notMeasured": 0,
-          "notApplicable": 0,
-          "excluded": {},
-          "reasons": []
-        },
-        {
-          "stage": "userValue",
-          "applicable": 3,
-          "reached": 2,
-          "notReached": 1,
-          "reachUnknown": 0,
-          "measured": 1,
-          "passed": 1,
-          "failed": 0,
-          "notMeasured": 1,
-          "notApplicable": 1,
-          "excluded": {
-            "notMeasured": 1,
-            "notApplicable": 1
-          },
-          "reasons": [
-            {
-              "reason": "judgePending",
-              "count": 1
-            }
-          ]
-        }
-      ]
-    }
-  ]
+  ...(JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL("../../sdk/tests/fixtures/stage-analytics-golden.json", import.meta.url)
+      ),
+      "utf8"
+    )
+  ) as Record<string, unknown>),
+  runId: "run-failed",
+  suiteId: "suite-1",
 };
+
+// The guard the trimmed copy lacked: a fixture that stops satisfying the
+// contract fails HERE, not silently at whatever reads it.
+{
+  const parsed = evalStageAnalyticsSchema.safeParse(STAGE_ANALYTICS_DOCUMENT);
+  if (!parsed.success) {
+    throw new Error(
+      `STAGE_ANALYTICS_DOCUMENT does not satisfy evalStageAnalyticsSchema: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`
+    );
+  }
+}
 
 const telemetryDisabled = {
   env: {

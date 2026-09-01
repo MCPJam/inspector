@@ -789,6 +789,29 @@ describe("the human renderer", () => {
     expect(lines[first]).toContain("earliest of 6 stages that broke");
   });
 
+  it("never calls a partial page the RUN's first break", () => {
+    // `earliest in chain order` is a claim about the rows in hand. On an
+    // incomplete page an unlisted trial can have broken further up the chain,
+    // so a reader told "First break: Response" would act on a stage the run
+    // may not have stopped at. The diagnostics headline directly above already
+    // refuses to present a page as the whole failure set; this line must not
+    // undo that one line later.
+    const partial = rendered.find(
+      (row) => row.name === "partial-diagnostics-page"
+    )!.text;
+    expect(partial).toContain("PARTIAL");
+    if (partial.includes("First break")) {
+      expect(partial).toContain("First break ON THIS PAGE");
+      expect(partial).not.toMatch(/ {2}First break: /);
+    }
+    // And the complete pages keep the unqualified claim.
+    const complete = rendered.find(
+      (row) => row.name === "measured-failure-at-every-stage"
+    )!.text;
+    expect(complete).toContain("  First break: Connection");
+    expect(complete).not.toContain("ON THIS PAGE");
+  });
+
   it("names the bucket when no measured trial reached a stage at all", () => {
     // A setup abort and an evaluator error carry a category and no stage. The
     // line must not invent a location for a run that never reached one.

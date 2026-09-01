@@ -555,7 +555,12 @@ export function formatEvalRunDecisionSummary(
 
   if (summary.undecided) {
     lines.push(
-      `  Why: ${EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS[summary.undecided.reason]}`
+      `  Why: ${
+        labelFor(
+          EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
+          summary.undecided.reason
+        ) ?? ""
+      }`
     );
     if (summary.undecided.detail) {
       lines.push(`  Detail: ${summary.undecided.detail}`);
@@ -563,7 +568,8 @@ export function formatEvalRunDecisionSummary(
   }
 
   for (const reason of summary.decision?.reasons ?? []) {
-    lines.push(`  Why: ${EVAL_VERDICT_DECISION_REASON_LABELS[reason]}`);
+    const label = labelFor(EVAL_VERDICT_DECISION_REASON_LABELS, reason);
+    if (label !== undefined) lines.push(`  Why: ${label}`);
   }
 
   lines.push(formatDiagnosticsHeadline(summary));
@@ -585,10 +591,11 @@ export function formatEvalRunDecisionSummary(
  * clause on a falsy label instead prints
  * `function Object() { [native code] }` at a human.
  *
- * Used by EVERY label lookup in this file. Hardening only the lines this
- * change added would have left the per-diagnostic rows two lines below still
- * printing the same function source, from the same payload — a half-guarded
- * renderer is not a smaller change, it is a confusing one.
+ * Used by EVERY label lookup in this file — the chain rows, the per-diagnostic
+ * rows, the verdict headline, its source, and both kinds of "Why" line.
+ * Hardening a subset would leave the same payload class leaking function
+ * source from whichever lookup was left out, which is a more confusing change
+ * than either extreme rather than a smaller one.
  */
 function labelFor<TMember extends string>(
   labels: Readonly<Record<TMember, string>>,
@@ -610,6 +617,13 @@ function labelFor<TMember extends string>(
  * nine user-value failures reports `1 of 10`, and says so again by naming how
  * many distinct stages broke.
  *
+ * ON A PARTIAL PAGE the line says so, because "earliest" is then a claim about
+ * the rows in hand rather than about the run: an unlisted trial can have broken
+ * at a stage further up the chain, and a reader told "First break: Response"
+ * would act on a stage the run may not have stopped at. Same discipline as the
+ * diagnostics headline directly above it, which already refuses to present a
+ * page as the whole failure set.
+ *
  * The denominator is the READABLE population these diagnostics carry — trials
  * whose chain validated — and never a stage-analytics denominator: that is a
  * different document, computed over a different population, and mixing the two
@@ -629,7 +643,11 @@ function formatFirstBreakLine(
   const readable = items.filter((item) => item.chain.status === "verified");
   if (readable.length === 0) {
     return (
-      "  First break: not established — none of the " +
+      `  ${
+        summary.diagnostics.complete
+          ? "First break"
+          : "First break ON THIS PAGE"
+      }: not established — none of the ` +
       `${items.length} ${measurementUnitLabel("trial", items.length)} ` +
       "below recorded a chain that could be read"
     );
@@ -664,7 +682,11 @@ function formatFirstBreakLine(
     const categories = [...new Set(grouped)];
     const ungrouped = readable.length - grouped.length;
     return categories.length > 0
-      ? `  First break: no stage was reached — grouped under ${categories.join(
+      ? `  ${
+          summary.diagnostics.complete
+            ? "First break"
+            : "First break ON THIS PAGE"
+        }: no stage was reached — grouped under ${categories.join(
           ", "
         )} (${grouped.length} of ${readable.length} measured ${measurementUnitLabel(
           "trial",
@@ -692,6 +714,11 @@ function formatFirstBreakLine(
   // not already know eight of the others stopped somewhere else.
   const spread =
     brokeAt.size > 1 ? `; earliest of ${brokeAt.size} stages that broke` : "";
+  // A page is not the run. `complete` is false when trials went unexamined, and
+  // one of them may have broken further up the chain.
+  const scope = summary.diagnostics.complete
+    ? "First break"
+    : "First break ON THIS PAGE";
   // And whenever some chains could not be read at all, because otherwise the
   // denominator quietly shrinks to the trials that happened to validate and
   // "1 of 1" is read as "all of them".
@@ -699,15 +726,18 @@ function formatFirstBreakLine(
   const unreadable =
     withheld > 0 ? `; ${withheld} more had no readable chain` : "";
   return (
-    `  First break: ${stageLabel}${because} ` +
+    `  ${scope}: ${stageLabel}${because} ` +
     `(${brokeAt.get(stage)} of ${readable.length} measured ${unit}` +
     `${spread}${unreadable})`
   );
 }
 
 function formatDecisionHeadline(summary: EvalRunDecisionSummary): string {
-  const verdict = EVAL_RUN_DECISION_VERDICT_LABELS[summary.verdict];
-  const source = EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS[summary.verdictSource];
+  const verdict =
+    labelFor(EVAL_RUN_DECISION_VERDICT_LABELS, summary.verdict) ?? "";
+  const source =
+    labelFor(EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS, summary.verdictSource) ??
+    "";
   const counts = summary.counts;
   if (counts === undefined) {
     return summary.verdictSource === "none"

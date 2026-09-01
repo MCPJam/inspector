@@ -169,8 +169,7 @@ export const CHAIN_REASON_LABELS = Object.freeze({
  * @returns {string | undefined}
  */
 function labelFor(map, member) {
-	return typeof member === "string" &&
-		Object.prototype.hasOwnProperty.call(map, member)
+	return typeof member === "string" && Object.hasOwn(map, member)
 		? map[member]
 		: undefined;
 }
