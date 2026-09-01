@@ -29,6 +29,7 @@ import {
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { hasSelectedMcpServersForAdmission } from "../evals/harness-admission.js";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
@@ -523,10 +524,11 @@ async function runJourneyFanOut(
         //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
         //     policy out of it for the MCP manager — this feeds the same value to
         //     the harness gate.
-        //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
-        //     host-executed tools but NOT tools delivered through `.mcp.json`, so
-        //     `requireToolApproval` + selected servers is a hole the adapter
-        //     declares it cannot close (`supportsMcpToolApproval: false`).
+        //   - APPROVAL vs MCP TOOLS. Whether a harness can pause on the surface
+        //     its MCP tools actually run on. Claude Code now can, on all three
+        //     (`supportsMcpToolApproval: true`, via the bridge's `canUseTool`
+        //     under "allow-reads"); Codex cannot pause at all, so
+        //     `requireToolApproval` still refuses a Codex target outright.
         //
         // Deliberately NOT re-derived as a local subset: a rule added to the chat
         // preflight later must apply here too, and the only way to guarantee that
@@ -545,9 +547,12 @@ async function runJourneyFanOut(
                 // this is an admission decision, and over-counting refuses a host
                 // that advertises an approval gate it cannot enforce — the
                 // fail-closed direction.
-                hasSelectedMcpServers:
-                  (target.serverIds ?? []).length > 0 ||
-                  (target.pluginServerIds ?? []).length > 0,
+                hasSelectedMcpServers: hasSelectedMcpServersForAdmission({
+                  ...(target.serverIds ? { serverIds: target.serverIds } : {}),
+                  ...(target.pluginServerIds
+                    ? { pluginServerIds: target.pluginServerIds }
+                    : {}),
+                }),
                 // The RESOLVED definition — the SAME one the turn runs on. The
                 // gate derives eligibility and the canonical id from it, so this
                 // cannot disagree with what `resolveTurnRuntime` decides. Passing
