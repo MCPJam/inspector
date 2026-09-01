@@ -1890,22 +1890,6 @@ export async function runHarnessTurn(
               mcpJson,
             });
           }
-          // DELIVERY STAMP for the external-account credential.
-          //
-          // Here rather than where `auth` was resolved, for the same reason the
-          // provider stamps on first USE and not at construction: resolving the
-          // value only put it in a local object, and setup can still throw
-          // before anything receives it. By this point a sandbox session
-          // exists and the runtime is about to be started holding the
-          // credential — the "reached an execution surface" the stamp means.
-          //
-          // It has to be stamped explicitly at all because this path took the
-          // credential OUT of the session env bag, so the provider's own
-          // `onSessionEnvUsed` can never fire for it: for a project whose only
-          // secret is this one the bag is empty and nothing would ever stamp,
-          // making a live credential read as dormant to whoever is deciding
-          // whether it is safe to delete.
-          if (externalAccountAuth) onSecretEnvDelivered?.();
           // VERSION CANARY. For an adapter whose CLI version is not pinned by
           // the package pin (Cursor bootstraps `curl … | bash`, which always
           // fetches the current build), ask the box what it actually installed
@@ -2186,6 +2170,23 @@ export async function runHarnessTurn(
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
+
+      // DELIVERY STAMP for the external-account credential — HERE, because this
+      // is the first point at which the runtime has actually taken it: the
+      // adapter starts the CLI and completes its handshake inside
+      // `createSession`, so a session that resolved is a process that accepted
+      // the credential. Earlier points looked plausible and were not: resolving
+      // `auth` only puts the value in a local object, and `onSandboxSession`
+      // fires before the process exists at all — both would report a delivery
+      // that setup could still have thrown before making.
+      //
+      // It has to be stamped explicitly at all because this path took the
+      // credential OUT of the box's session env bag, so the provider's own
+      // `onSessionEnvUsed` can never fire for it: for a project whose only
+      // secret is this one the bag is empty and nothing would ever stamp,
+      // making a live credential read as dormant to whoever is deciding whether
+      // it is safe to delete.
+      if (externalAccountAuth) onSecretEnvDelivered?.();
 
       // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
       // license / …) for skills that carry it. The adapter's `skills` param
@@ -2554,10 +2555,7 @@ export async function runHarnessTurn(
                   input,
                   keyToServerId: harnessKeyToServerId,
                 })
-              : harnessAdapter.parseToolName(
-                  rawToolName,
-                  harnessKeyToServerId,
-                );
+              : harnessAdapter.parseToolName(rawToolName, harnessKeyToServerId);
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
               toolName,

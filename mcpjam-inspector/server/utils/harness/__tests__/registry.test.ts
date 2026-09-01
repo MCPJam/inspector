@@ -679,6 +679,43 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     expect(runtime.harnessId).toBe("cursor");
   });
 
+  it("shell-quotes the workdir so a metacharacter path cannot execute", () => {
+    // The workdir is host-configured. `resolveWorkingDirectory` confines it to
+    // /home/user but does NOT reject shell metacharacters, so this command is
+    // the injection surface: it is built as a string and handed to a shell in
+    // the box during session setup.
+    //
+    // These assert the EMITTED BYTES, not the intent. The first version of this
+    // used a template literal — where `\'` is just `'`, so the escape silently
+    // collapsed to three quotes, closing the quoted word and leaving the rest
+    // of the path unquoted. It read correctly and did nothing.
+    const cmd = (dir: string) =>
+      getHarnessAdapter("cursor").runtimeVersionCommand!(dir);
+
+    // A plain path is wrapped in single quotes and otherwise untouched.
+    expect(cmd("/home/user")).toBe(
+      "'/home/user/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version",
+    );
+
+    // Command substitution stays INSIDE the quotes, so the shell never runs it.
+    for (const dangerous of [
+      "/home/user/$(id)",
+      "/home/user/`id`",
+      "/home/user/$IFS",
+    ]) {
+      const out = cmd(dangerous);
+      expect(out.startsWith("'" + dangerous + "/")).toBe(true);
+      // Balanced quoting, and nothing outside it but the flag.
+      expect(out.endsWith("agent' --version")).toBe(true);
+      expect((out.match(/'/g) ?? []).length % 2).toBe(0);
+    }
+
+    // An apostrophe is closed, escaped and reopened — never three bare quotes.
+    const withQuote = cmd("/home/user/it's");
+    expect(withQuote).toContain("it'\\''s");
+    expect(withQuote).not.toContain("it'''s");
+  });
+
   it("names a runtime-version command (its CLI is NOT pinned by the package pin)", () => {
     // The bootstrap installs via `curl https://cursor.com/install | bash`,
     // which always fetches the current build — so what ran is only knowable by
@@ -749,19 +786,36 @@ describe("bootstrap recipes are auth-independent", () => {
     OPENAI_BASE_URL: `https://${suffix}.invalid`,
   });
 
-  for (const id of ["claude-code", "codex"] as const) {
+  /**
+   * Construct any adapter, satisfying whichever arm it declares.
+   *
+   * Mirrors the narrowing `runHarnessTurn` does at its own construction site:
+   * a `session-config` adapter's `createHarness` REQUIRES `mcpJson`, so a test
+   * that called every adapter with the same argument shape would not typecheck
+   * — which is the invariant doing its job, not an obstacle to route around.
+   */
+  const makeHarness = (
+    adapter: ReturnType<typeof getHarnessAdapter>,
+    args: { modelId: string; auth: ReturnType<typeof auth> },
+  ) =>
+    adapter.mcpDelivery === "native" &&
+    adapter.mcpNativeDelivery === "session-config"
+      ? adapter.createHarness({ ...args, mcpJson: { mcpServers: {} } })
+      : adapter.createHarness(args);
+
+  // cursor included: its bootstrap fetches the CLI with `curl … | bash`, so an
+  // auth-dependent recipe there would re-run that install on every resume.
+  for (const id of ["claude-code", "codex", "cursor"] as const) {
     it(`${id}: two different credentials produce byte-identical files`, async () => {
       const adapter = getHarnessAdapter(id);
-      const a = adapter.createHarness({
-        modelId:
-          id === "codex" ? "openai/gpt-5-nano" : "anthropic/claude-haiku-4.5",
-        auth: auth("one"),
-      });
-      const b = adapter.createHarness({
-        modelId:
-          id === "codex" ? "openai/gpt-5-nano" : "anthropic/claude-haiku-4.5",
-        auth: auth("two"),
-      });
+      const modelId =
+        id === "codex"
+          ? "openai/gpt-5-nano"
+          : id === "cursor"
+          ? "cursor/auto"
+          : "anthropic/claude-haiku-4.5";
+      const a = makeHarness(adapter, { modelId, auth: auth("one") });
+      const b = makeHarness(adapter, { modelId, auth: auth("two") });
 
       const ra = await a.getBootstrap!();
       const rb = await b.getBootstrap!();
@@ -780,7 +834,7 @@ describe("bootstrap recipes are auth-independent", () => {
     // different hash than the turn does. This test is what makes that
     // divergence visible if anyone reaches for the bare constructor.
     // Dual-`ai` boundary cast, as everywhere else this constructor is used.
-    const patched = getHarnessAdapter("claude-code").createHarness({
+    const patched = makeHarness(getHarnessAdapter("claude-code"), {
       modelId: "anthropic/claude-haiku-4.5",
       auth: auth("patched"),
     });

@@ -69,10 +69,18 @@ export type HarnessId = Harness;
 export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 
 /** Escape a value for safe interpolation INSIDE a single-quoted shell word.
+ *
  *  A single quote is the only character with meaning there, and the standard
- *  `'\''` dance is how it is closed, escaped and reopened. */
+ *  close-escape-reopen dance is the replacement: `'` becomes `'\''` — end the
+ *  quoted word, an escaped literal quote, start a new quoted word.
+ *
+ *  A REGULAR string, not a template literal. In a template literal `\'` is just
+ *  `'` (JS drops the backslash), so the obvious-looking `` `'\''` `` silently
+ *  produces three quotes — which CLOSES the quoted word and leaves the rest of
+ *  the path unquoted, restoring the very `$(…)` execution this exists to
+ *  prevent. `__tests__/registry.test.ts` pins the emitted bytes. */
 function shellSingleQuote(value: string): string {
-  return value.replaceAll("'", `'\''`);
+  return value.replaceAll("'", "'\\''");
 }
 
 /** Placeholder credential value handed to the in-sandbox CLI on the broker path.
