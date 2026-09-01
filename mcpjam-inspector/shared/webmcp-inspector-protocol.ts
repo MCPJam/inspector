@@ -144,6 +144,16 @@ export interface WebMcpSessionPublic {
   /** Hard stop, regardless of activity. */
   hardExpiresAt: number;
   viewportTransport: WebMcpViewportTransport;
+  /**
+   * JPEG quality the viewport stream is currently encoding at, when the
+   * provider has an adaptive one.
+   *
+   * Reported so the picture getting worse is a fact the UI can show rather
+   * than a mystery the viewer has to guess at — "the link is struggling" and
+   * "the page is broken" look identical otherwise. Absent for a provider whose
+   * stream is not adaptive, and for every server older than the field.
+   */
+  streamQuality?: number;
   protocolVersion: typeof WEBMCP_INSPECTOR_PROTOCOL_VERSION;
   /** Present when status is `unsupported` or `error`. */
   detail?: string;
@@ -480,6 +490,39 @@ export const WEBMCP_SETTLE_QUIET_MS = 800;
  * costing four wakeups a second on an idle session.
  */
 export const WEBMCP_HOUSEKEEPING_INTERVAL_MS = 250;
+
+/**
+ * How far back the governor looks for evidence that the link cannot carry the
+ * stream.
+ *
+ * One dropped frame is not evidence: the pacer holds the newest frame while a
+ * send is outstanding, and a single overwrite happens on any link the moment
+ * two paints land inside one round trip. A RUN of them inside a couple of
+ * seconds is a consumer that is not keeping up.
+ */
+export const WEBMCP_QUALITY_PRESSURE_WINDOW_MS = 2_000;
+
+/** Drops inside that window before the stream steps down a rung. */
+export const WEBMCP_QUALITY_PRESSURE_DROPS = 3;
+
+/**
+ * How long a rung is held before the governor may move again.
+ *
+ * A step costs a stop/start of the encoder, and the frames already in flight
+ * when it lands are still the old size — so a governor without a hold would
+ * read its own transition as more pressure and walk to the bottom of the
+ * ladder in one burst.
+ */
+export const WEBMCP_QUALITY_STEP_HOLD_MS = 3_000;
+
+/**
+ * How long the link must be free of drops before quality climbs back.
+ *
+ * Deliberately much longer than the step-down window. Stepping down is a
+ * response to something a person is watching happen; stepping up is an
+ * experiment, and an experiment that fails costs them another stall.
+ */
+export const WEBMCP_QUALITY_RECOVER_QUIET_MS = 10_000;
 
 /**
  * Hard cap on one streamed frame.

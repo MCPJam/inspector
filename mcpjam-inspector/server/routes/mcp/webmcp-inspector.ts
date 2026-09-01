@@ -449,6 +449,22 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
    */
   const framesSuppressed = c.req.query("frames") === "off";
 
+  /**
+   * The session this stream belongs to, resolved once.
+   *
+   * Held so a frame this consumer could not take can be reported back to the
+   * provider, which is the only thing that can act on it. Looked up here
+   * rather than per frame: `get` throws for a reaped session, and doing that
+   * inside a send would turn a dead session into an exception in the middle of
+   * the stream.
+   */
+  let runtime: ReturnType<typeof webMcpSessions.get> | undefined;
+  try {
+    runtime = webMcpSessions.get(sessionId);
+  } catch {
+    // Already gone; `subscribe` below reports it to the client properly.
+  }
+
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   /** Set by `start`, called by `pull`. See `pendingFrame`. */
@@ -510,6 +526,17 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
         if (isFrame) {
           const room = controller.desiredSize;
           if (room !== null && room <= 0) {
+            // Replacing a held frame means a second one arrived before this
+            // consumer read the first: the same "could not take it" signal the
+            // socket's pacer reports, through the same funnel. The first hold
+            // is not a drop — that is the mechanism working.
+            if (pendingFrame !== undefined) {
+              try {
+                runtime?.noteFramePressure();
+              } catch {
+                /* a diagnostic must never break the stream */
+              }
+            }
             pendingFrame = chunk;
             return;
           }

@@ -21,6 +21,10 @@ import {
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
   WEBMCP_HOUSEKEEPING_INTERVAL_MS,
+  WEBMCP_QUALITY_PRESSURE_DROPS,
+  WEBMCP_QUALITY_PRESSURE_WINDOW_MS,
+  WEBMCP_QUALITY_RECOVER_QUIET_MS,
+  WEBMCP_QUALITY_STEP_HOLD_MS,
   WEBMCP_SETTLE_QUIET_MS,
   WEBMCP_SETTLE_STILL_QUALITIES,
   WEBMCP_STREAM_QUALITY_LADDER,
@@ -186,6 +190,23 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * holding the newest one until the next arrives costs a delayed collection.
    */
   private lastFrameData: string | undefined;
+  /**
+   * Which rung of {@link WEBMCP_STREAM_QUALITY_LADDER} the stream is on.
+   *
+   * PERSISTS across `setScreencast` cycles, deliberately. The client withdraws
+   * the stream whenever its tab is hidden and asks for it again on return, and
+   * a rung reset per cycle would make a session on a slow link re-discover the
+   * same pressure at full quality every time somebody switched tabs.
+   */
+  private rungIndex = 0;
+  /** Recent drops, for the "3 inside 2 seconds" test. */
+  private dropTimestamps: number[] = [];
+  /** The last drop of any kind, for the much longer recovery quiet window. */
+  private lastDropAt = -Infinity;
+  /** When the rung last moved, for the hold that keeps steps apart. */
+  private lastRungChangeAt = -Infinity;
+  /** A stop/start cycle is in flight; a second one would race it. */
+  private restartInFlight = false;
   /**
    * Monotonic count of frames ACCEPTED from the browser, for a still's
    * staleness check.
@@ -591,6 +612,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
 
   private housekeepingTick(): void {
     if (!this.screencasting || this.disposed) return;
+    // The governor first: a rung change decides whether the settle still is
+    // worth taking at all, and reading a stale rung here would spend a big
+    // capture on a link that has just told us it cannot carry one.
+    this.governorTick();
     this.settleTick();
   }
 
@@ -620,10 +645,147 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     if (this.stillInFlight) return;
     const quietSince = Math.max(this.lastPaintAt, this.lastInputAt);
     if (Date.now() - quietSince < WEBMCP_SETTLE_QUIET_MS) return;
+    // A link that is already dropping frames does not want a 200 KiB still on
+    // top of the stream it cannot carry. Latched all the same, so the still is
+    // SKIPPED for this quiet page rather than retried every tick until the
+    // governor recovers.
+    if (this.rungIndex > 0) {
+      this.settleGeneration = this.paintsSeen;
+      return;
+    }
     // Latched BEFORE the await, so an idle page gets ONE still per paint
     // generation rather than one per tick.
     this.settleGeneration = this.paintsSeen;
     void this.publishStill(WEBMCP_SETTLE_STILL_QUALITIES, "settle");
+  }
+
+  /** The quality the stream is encoding at right now. */
+  private rungQuality(): number {
+    return (
+      WEBMCP_STREAM_QUALITY_LADDER[this.rungIndex] ??
+      WEBMCP_STREAM_QUALITY_LADDER[WEBMCP_STREAM_QUALITY_LADDER.length - 1]!
+    );
+  }
+
+  /**
+   * A viewer's transport could not take a frame.
+   *
+   * The one thing this provider cannot observe for itself: it publishes into a
+   * fan-out and never learns what became of a frame. Three of these inside two
+   * seconds is a link that cannot carry the stream at this quality — one is
+   * just two paints landing inside one round trip, which happens on any link.
+   *
+   * Called on the hot path, from inside a socket's send callback, so it does
+   * arithmetic and returns; the restart it may schedule is not awaited here.
+   */
+  noteFramePressure(): void {
+    const now = Date.now();
+    this.lastDropAt = now;
+    this.dropTimestamps.push(now);
+    this.dropTimestamps = this.dropTimestamps.filter(
+      (at) => now - at <= WEBMCP_QUALITY_PRESSURE_WINDOW_MS,
+    );
+    if (this.dropTimestamps.length < WEBMCP_QUALITY_PRESSURE_DROPS) return;
+    // The frames already in flight when a step lands are still the old size,
+    // so a governor without this hold would read its own transition as more
+    // pressure and fall to the bottom of the ladder in one burst.
+    if (now - this.lastRungChangeAt < WEBMCP_QUALITY_STEP_HOLD_MS) return;
+    if (this.rungIndex >= WEBMCP_STREAM_QUALITY_LADDER.length - 1) return;
+    if (!this.screencasting || this.disposed || this.restartInFlight) return;
+    this.rungIndex += 1;
+    this.lastRungChangeAt = now;
+    // Cleared, not kept: the drops that justified this step must not also
+    // justify the next one.
+    this.dropTimestamps = [];
+    void this.restartScreencast();
+  }
+
+  /**
+   * Climb back toward the baseline once the link has been quiet for a while.
+   *
+   * Much more patient than the way down, and asymmetric on purpose: stepping
+   * down answers something a person is watching happen, while stepping up is
+   * an experiment whose failure costs them another stall.
+   */
+  private governorTick(): void {
+    if (this.rungIndex === 0 || this.restartInFlight) return;
+    const now = Date.now();
+    if (now - this.lastDropAt < WEBMCP_QUALITY_RECOVER_QUIET_MS) return;
+    if (now - this.lastRungChangeAt < WEBMCP_QUALITY_STEP_HOLD_MS) return;
+    this.rungIndex -= 1;
+    this.lastRungChangeAt = now;
+    void this.restartScreencast();
+  }
+
+  /**
+   * Re-encode at the current rung, without ever changing whether we are
+   * streaming.
+   *
+   * The screencast's quality is fixed when it starts, so a rung change is a
+   * stop and a start. Everything about that is a race with the client's own
+   * enable/disable, so the flags are re-read after every await and a start that
+   * lost the race is compensated with a stop — the alternative is a browser
+   * left encoding frames for a pane that has gone.
+   *
+   * `frameThrottle` is deliberately untouched: an in-flight boost belongs to
+   * the person's gesture, not to the encoder's settings, and resetting it here
+   * would drop the rate back to 10fps in the middle of a scroll.
+   */
+  private async restartScreencast(): Promise<void> {
+    if (this.restartInFlight || this.disposed || !this.screencasting) return;
+    this.restartInFlight = true;
+    try {
+      await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
+      // The first frame of the restarted cast is the current picture again,
+      // and it must not be dropped as a duplicate of the last frame of the
+      // previous one — that frame is what the pane is waiting for.
+      this.lastFrameData = undefined;
+      if (this.disposed || !this.screencasting) return;
+      // No compensating stop after this: CDP commands reach the browser in the
+      // order they are SENT, and there is no await between the check above and
+      // the send inside — so a disable racing this either arrives before the
+      // check (and is caught by it) or after the start (and stops it). The
+      // browser cannot end up streaming into a pane that has gone.
+      await this.sendStartScreencast();
+    } finally {
+      this.restartInFlight = false;
+    }
+  }
+
+  /**
+   * Ask the browser to start painting at the current rung.
+   *
+   * Reports failure by clearing `screencasting` rather than throwing, which is
+   * what lets the client fall back to polling screenshots on a browser that
+   * cannot screencast at all.
+   */
+  private async sendStartScreencast(): Promise<void> {
+    const quality = this.rungQuality();
+    await this.cdp
+      .send(
+        "Page.startScreencast" as never,
+        {
+          format: "jpeg",
+          quality,
+          // Not multiplied by the session's device pixel ratio: Chromium
+          // clamps a screencast to the CSS size of the surface, so asking for
+          // more is a no-op that only makes this line look like a promise.
+          maxWidth: WEBMCP_VIEWPORT.width,
+          maxHeight: WEBMCP_VIEWPORT.height,
+        } as never,
+      )
+      .catch((error) => {
+        // Reported, not thrown. The caller turns `false` into the screenshot
+        // fallback; a throw would be an error banner on a session whose only
+        // problem is that this browser cannot screencast.
+        this.screencasting = false;
+        logger.debug("[webmcp] could not start the screencast", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    if (this.screencasting && !this.disposed) {
+      this.callbacks.onStreamQualityChanged?.(quality);
+    }
   }
 
   private wirePage(): void {
@@ -949,25 +1111,13 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       //
       // Page-target-level, so it survives navigations: the pane keeps painting
       // across a page load without anything re-arming it.
-      await this.cdp
-        .send(
-          "Page.startScreencast" as never,
-          {
-            format: "jpeg",
-            quality: WEBMCP_STREAM_QUALITY_LADDER[0],
-            maxWidth: WEBMCP_VIEWPORT.width,
-            maxHeight: WEBMCP_VIEWPORT.height,
-          } as never,
-        )
-        .catch((error) => {
-          // Reported, not thrown. The caller turns `false` into the screenshot
-          // fallback; a throw would be an error banner on a session whose only
-          // problem is that this browser cannot screencast.
-          this.screencasting = false;
-          logger.debug("[webmcp] could not start the screencast", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
+      await this.sendStartScreencast();
+      // A fresh audience, and the replay burst that comes with it, is not
+      // evidence about the link: the drops that pressured the PREVIOUS stream
+      // are stale, and the hold keeps the first seconds of this one from being
+      // read as more of them. The RUNG itself survives — see the field.
+      this.dropTimestamps = [];
+      this.lastRungChangeAt = Date.now();
       // AFTER the start resolves, and only if the stream survived it. A stop
       // that lands mid-start wins (see `setScreencast(false)` below), and an
       // interval armed unconditionally here would outlive it — capturing

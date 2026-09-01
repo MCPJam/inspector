@@ -556,6 +556,34 @@ describe("webmcp-inspector routes", () => {
     return buffered;
   }
 
+  it("reports a frame this consumer could not take", async () => {
+    const started = await openSession(provider);
+    const session = provider.sessions[0];
+    // Replay fills the stream's queue before anything is read: the route's
+    // `start()` runs synchronously and enqueues every replayed event into a
+    // count-based queue with a high-water mark of 1, so `desiredSize` is
+    // already at or below zero by the time a live frame is offered.
+    session.emitTools([fakeTool({ origin: "https://example.test" })]);
+    const res = await app.request(
+      `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50`,
+    );
+    expect(res.ok).toBe(true);
+
+    // The body is deliberately NOT read yet. The first frame is HELD, which is
+    // the mechanism working rather than a loss.
+    session.emitFrame({ data: "Zmlyc3Q=" });
+    expect(session.pressureEvents).toBe(0);
+
+    // The second replaces it: a frame nobody will ever see.
+    session.emitFrame({ data: "c2Vjb25k" });
+    expect(session.pressureEvents).toBe(1);
+
+    // And the newest one still arrives once the consumer drains — a pane on a
+    // slow link converges on the current paint rather than freezing.
+    const drained = await drainSse(res);
+    expect(drained).toContain("c2Vjb25k");
+  });
+
   it("suppresses frames — live and replayed — for frames=off", async () => {
     const started = await openSession(provider);
     // Published BEFORE the connect, so this covers the REPLAYED path too: the

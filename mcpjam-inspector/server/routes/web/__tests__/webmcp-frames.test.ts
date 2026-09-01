@@ -323,6 +323,28 @@ describe("webmcp frames WS — the stream", () => {
     expect(plain!.scale).toBe(1);
   });
 
+  it("tells the session when this socket cannot keep up", async () => {
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+    const browser = provider.sessions[0];
+
+    // Stop READING on the client. Writes keep succeeding until the kernel
+    // buffers fill, so this needs real frames and enough of them — which is
+    // also what makes it the honest version of this test: the pacer's own
+    // contract is asserted as a unit above, and what is under test HERE is
+    // that a socket the OS has stopped taking bytes from reaches the session.
+    ws.ws.pause();
+    const big = Buffer.alloc(200_000, 0x41).toString("base64");
+    for (let i = 0; i < 60 && browser.pressureEvents === 0; i += 1) {
+      browser.emitFrame({ data: big, ts: 1_000 + i });
+      await ws.settle(10);
+    }
+
+    expect(browser.pressureEvents).toBeGreaterThan(0);
+    ws.ws.resume();
+  });
+
   it("replays the current paint to a socket that connects after it", async () => {
     const session = await openSession();
     // Published BEFORE anyone is listening: the hub holds exactly one frame,
@@ -614,6 +636,30 @@ describe("frame pacer", () => {
 
     settle();
     expect(sent.map((b) => b[0])).toEqual([1, 4]);
+  });
+
+  it("reports a REPLACED frame, and never the first one it holds", () => {
+    const { settle, sink } = handSettledSink();
+    const drops: number[] = [];
+    const pacer = createFramePacer(sink, () => drops.push(1));
+
+    pacer.push(bytes(1));
+    // Held while the first send is outstanding. That is the pacer working —
+    // one frame of kernel-side buffering — and reporting it as pressure would
+    // step the quality down on every link the moment two paints landed inside
+    // one round trip.
+    pacer.push(bytes(2));
+    expect(drops).toHaveLength(0);
+
+    // THIS is the loss: a frame nobody will ever see, replaced before the
+    // socket took the one ahead of it.
+    pacer.push(bytes(3));
+    pacer.push(bytes(4));
+    expect(drops).toHaveLength(2);
+
+    settle();
+    settle();
+    expect(drops).toHaveLength(2);
   });
 
   it("keeps self-clocking across several drains", () => {

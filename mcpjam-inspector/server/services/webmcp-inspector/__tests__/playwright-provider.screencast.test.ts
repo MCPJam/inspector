@@ -11,6 +11,9 @@ import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import { PlaywrightWebMcpSession } from "../playwright-provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
+  WEBMCP_QUALITY_PRESSURE_DROPS,
+  WEBMCP_QUALITY_RECOVER_QUIET_MS,
+  WEBMCP_QUALITY_STEP_HOLD_MS,
   WEBMCP_SETTLE_QUIET_MS,
   WEBMCP_SETTLE_STILL_QUALITIES,
   WEBMCP_STREAM_QUALITY_LADDER,
@@ -131,6 +134,8 @@ function harness(
   /** ONE ordered log, so "ack came first" is a real assertion, not two counts. */
   const log: string[] = [];
   const frames: WebMcpFrame[] = [];
+  /** Every quality the session announced, in order. */
+  const qualities: number[] = [];
   // Typed with the options argument Playwright's `page.screenshot` takes, so a
   // test can assert on it — the substitute path's geometry is the whole point
   // of one of them.
@@ -180,6 +185,7 @@ function harness(
       log.push("frame");
       frames.push(frame);
     },
+    onStreamQualityChanged: (quality) => qualities.push(quality),
   };
 
   /** Every mouse/keyboard call Playwright would have made, in order. */
@@ -223,7 +229,17 @@ function harness(
   );
 
   sessions.push(session);
-  return { session, cdp, log, frames, screenshots, stills, driven, page };
+  return {
+    session,
+    cdp,
+    log,
+    frames,
+    qualities,
+    screenshots,
+    stills,
+    driven,
+    page,
+  };
 }
 
 /**
@@ -1250,5 +1266,225 @@ describe("PlaywrightWebMcpSession frame geometry", () => {
       deviceHeight: 800,
       scale: 1,
     });
+  });
+});
+
+/**
+ * The adaptive governor.
+ *
+ * The stream's quality is fixed when the encoder starts, so this is the only
+ * thing that can answer a link that cannot carry it — and the failure it exists
+ * to prevent is not "the picture is grainy" but "the pane stops moving", which
+ * is what a viewer on a tunnel or a remote dev box sees today.
+ *
+ * Fake clock BEFORE the session, as everywhere in this file: the windows are
+ * measured off `Date.now`.
+ */
+describe("PlaywrightWebMcpSession stream governor", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The quality of every `Page.startScreencast` the session has sent. */
+  function starts(h: Awaited<ReturnType<typeof started>>): number[] {
+    return h.cdp.sent
+      .filter((call) => call.method === "Page.startScreencast")
+      .map((call) => (call.params as { quality: number }).quality);
+  }
+
+  async function pressure(
+    h: Awaited<ReturnType<typeof started>>,
+    times = WEBMCP_QUALITY_PRESSURE_DROPS,
+  ) {
+    for (let i = 0; i < times; i += 1) h.session.noteFramePressure();
+    // The restart is scheduled, not awaited, by the hot path that reports the
+    // drop — so let its awaits run before asserting on the ledger.
+    await vi.advanceTimersByTimeAsync(10);
+  }
+
+  it("starts at the top of the ladder and says so", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+
+    expect(starts(h)).toEqual([WEBMCP_STREAM_QUALITY_LADDER[0]]);
+    expect(h.qualities).toEqual([WEBMCP_STREAM_QUALITY_LADDER[0]]);
+  });
+
+  it("steps down after a run of drops, and not before", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+
+    // One drop is two paints landing inside one round trip, which happens on
+    // any link; a run of them inside two seconds is a consumer falling behind.
+    await pressure(h, WEBMCP_QUALITY_PRESSURE_DROPS - 1);
+    expect(starts(h)).toEqual([WEBMCP_STREAM_QUALITY_LADDER[0]]);
+
+    await pressure(h, 1);
+    expect(starts(h)).toEqual([
+      WEBMCP_STREAM_QUALITY_LADDER[0],
+      WEBMCP_STREAM_QUALITY_LADDER[1],
+    ]);
+    // Stopped before it was restarted: one encoder, in the order asked for.
+    expect(
+      h.cdp
+        .methods()
+        .filter(
+          (method) =>
+            method === "Page.startScreencast" ||
+            method === "Page.stopScreencast",
+        ),
+    ).toEqual([
+      "Page.startScreencast",
+      "Page.stopScreencast",
+      "Page.startScreencast",
+    ]);
+    expect(h.qualities).toEqual([
+      WEBMCP_STREAM_QUALITY_LADDER[0],
+      WEBMCP_STREAM_QUALITY_LADDER[1],
+    ]);
+  });
+
+  it("holds a rung against the pressure its own step produced", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+    await pressure(h);
+    expect(starts(h)).toHaveLength(2);
+
+    // The frames already in flight when a step lands are still the old size,
+    // so without the hold the governor reads its own transition as more
+    // pressure and walks to the bottom of the ladder in one burst.
+    await pressure(h);
+    await pressure(h);
+    expect(starts(h)).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+    await pressure(h);
+    expect(starts(h)).toEqual([
+      WEBMCP_STREAM_QUALITY_LADDER[0],
+      WEBMCP_STREAM_QUALITY_LADDER[1],
+      WEBMCP_STREAM_QUALITY_LADDER[2],
+    ]);
+  });
+
+  it("climbs back a rung at a time once the link goes quiet", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+    await pressure(h);
+    expect(starts(h).at(-1)).toBe(WEBMCP_STREAM_QUALITY_LADDER[1]);
+
+    // Not yet: recovery is deliberately far more patient than the way down,
+    // because stepping up is an experiment whose failure costs another stall.
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_RECOVER_QUIET_MS - 1_000);
+    expect(starts(h)).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(starts(h).at(-1)).toBe(WEBMCP_STREAM_QUALITY_LADDER[0]);
+    expect(h.qualities.at(-1)).toBe(WEBMCP_STREAM_QUALITY_LADDER[0]);
+  });
+
+  it("stops at the bottom of the ladder", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    for (let i = 0; i < WEBMCP_STREAM_QUALITY_LADDER.length + 2; i += 1) {
+      await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+      await pressure(h);
+    }
+    expect(starts(h).at(-1)).toBe(
+      WEBMCP_STREAM_QUALITY_LADDER[WEBMCP_STREAM_QUALITY_LADDER.length - 1],
+    );
+    // One start per rung and no more: a link that never recovers must not
+    // restart the encoder every two seconds for the life of the session.
+    expect(starts(h)).toHaveLength(WEBMCP_STREAM_QUALITY_LADDER.length);
+  });
+
+  it("keeps its rung across a disable and re-enable", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+    await pressure(h);
+    expect(starts(h).at(-1)).toBe(WEBMCP_STREAM_QUALITY_LADDER[1]);
+
+    // The client withdraws the stream whenever its tab is hidden and asks
+    // again on return. Resetting the rung there would make a session on a slow
+    // link re-discover the same pressure at full quality every time somebody
+    // switched tabs.
+    await h.session.setScreencast(false);
+    await h.session.setScreencast(true);
+    expect(starts(h).at(-1)).toBe(WEBMCP_STREAM_QUALITY_LADDER[1]);
+  });
+
+  it("does not step a stream that is not running", async () => {
+    const h = await startedWithFakeClock();
+    await pressure(h, 10);
+    expect(starts(h)).toEqual([]);
+    expect(h.cdp.methods()).not.toContain("Page.stopScreencast");
+  });
+
+  it("skips the settle still while the link is already struggling", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+    await pressure(h);
+
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+    await vi.advanceTimersByTimeAsync(WEBMCP_SETTLE_QUIET_MS + 500);
+    // A link dropping frames does not want a big still on top of the stream it
+    // cannot carry — and the skip is LATCHED, so it is not retried every tick
+    // until the governor recovers.
+    expect(h.stills).not.toHaveBeenCalled();
+
+    // Back at the baseline, the sharp still is worth taking again.
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_RECOVER_QUIET_MS + 1_000);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("moved"));
+    await vi.advanceTimersByTimeAsync(WEBMCP_SETTLE_QUIET_MS + 500);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a disable that lands mid-restart win", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+
+    // Hold the restart's own start command open, then withdraw the stream
+    // underneath it — the pane unmounting while the governor was stepping.
+    let releaseStart: (() => void) | undefined;
+    const originalSend = h.cdp.send.bind(h.cdp);
+    h.cdp.send = async (method: string, params?: unknown) => {
+      const sent = originalSend(method, params);
+      if (
+        method === "Page.startScreencast" &&
+        h.cdp.sent.filter((c) => c.method === "Page.startScreencast").length > 1
+      ) {
+        await new Promise<void>((resolve) => {
+          releaseStart = resolve;
+        });
+      }
+      return sent;
+    };
+
+    for (let i = 0; i < WEBMCP_QUALITY_PRESSURE_DROPS; i += 1) {
+      h.session.noteFramePressure();
+    }
+    await vi.waitFor(() => expect(releaseStart).toBeTypeOf("function"));
+    const stopping = h.session.setScreencast(false);
+    releaseStart!();
+    await stopping;
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Chromium must end STOPPED. A restart that finished after the disable and
+    // left the browser encoding would paint into a pane nobody is watching,
+    // for as long as the session lived.
+    const screencastCalls = h.cdp
+      .methods()
+      .filter(
+        (method) =>
+          method === "Page.startScreencast" || method === "Page.stopScreencast",
+      );
+    expect(screencastCalls.at(-1)).toBe("Page.stopScreencast");
+    h.cdp.emit("Page.screencastFrame", screencastFrame("after"));
+    expect(h.frames).toHaveLength(0);
   });
 });

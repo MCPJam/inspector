@@ -152,6 +152,11 @@ export class WebMcpSessionRuntime {
   private readonly invokeTimeoutMs: number;
   private readonly queueLimit: number;
   private readonly onActivity: () => void;
+  /**
+   * The quality the provider's stream is encoding at, when it has an adaptive
+   * one. Reported, never decided here: the provider owns the ladder.
+   */
+  private streamQuality: number | undefined;
   /** Set by the registry; the runtime reports it but does not own it. */
   expiresAt = 0;
   hardExpiresAt = 0;
@@ -201,6 +206,14 @@ export class WebMcpSessionRuntime {
         }),
       onActivityObserved: () => this.onActivity(),
       onFrame: (frame) => this.publishFrame(frame),
+      onStreamQualityChanged: (quality) => {
+        // Republished only on a real change: the provider may re-report the
+        // same rung after a restart, and a session event per frame-rate wobble
+        // would be chatter on a stream the timeline shares.
+        if (this.streamQuality === quality) return;
+        this.streamQuality = quality;
+        this.publishSession();
+      },
       onCrashed: (message) => {
         this.setStatus("error", message);
         this.pushActivity({ kind: "session_error", message });
@@ -237,6 +250,11 @@ export class WebMcpSessionRuntime {
       viewportTransport: this.session?.viewportTransport() ?? {
         kind: "native-window",
       },
+      // Spread rather than sent as undefined, so a provider with no adaptive
+      // stream reports a session shaped exactly as it always has been.
+      ...(this.streamQuality !== undefined
+        ? { streamQuality: this.streamQuality }
+        : {}),
       protocolVersion: WEBMCP_INSPECTOR_PROTOCOL_VERSION,
       ...(this.statusDetail ? { detail: this.statusDetail } : {}),
     };
@@ -589,6 +607,18 @@ export class WebMcpSessionRuntime {
       seq: this.nextSeq(),
       session: this.toPublic(),
     });
+  }
+
+  /**
+   * A viewer's transport could not take a frame and dropped one.
+   *
+   * Forwarded straight to the provider, which owns the quality ladder, and
+   * NOT treated as activity: a struggling link is not somebody using the
+   * session, and ticking the idle clock from it would keep an abandoned tab
+   * alive for as long as its network stayed bad.
+   */
+  noteFramePressure(): void {
+    this.session?.noteFramePressure?.();
   }
 
   /** Re-publish the session (used when the registry moves its clocks). */

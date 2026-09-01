@@ -168,7 +168,18 @@ export interface FramePacer {
  * frame and the hub's coalesced slot. A queue would make a slow consumer
  * watch an ever-older page; one slot converges it on the current paint.
  */
-export function createFramePacer(sink: CallbackSocket): FramePacer {
+export function createFramePacer(
+  sink: CallbackSocket,
+  /**
+   * Called when a held frame is REPLACED — the only unambiguous "this socket
+   * could not take a frame" event this transport produces.
+   *
+   * Deliberately not called on the first deferral: holding one frame while a
+   * send is outstanding is the pacer working, not the link failing. It is the
+   * overwrite that means a second frame arrived before the first was taken.
+   */
+  onDrop?: () => void,
+): FramePacer {
   let inFlight = false;
   let pending: Uint8Array | undefined;
   let closed = false;
@@ -189,6 +200,7 @@ export function createFramePacer(sink: CallbackSocket): FramePacer {
       if (closed) return;
       if (inFlight) {
         // Newest wins: an older frame nobody has seen yet is worth nothing.
+        if (pending !== undefined) onDrop?.();
         pending = bytes;
         return;
       }
@@ -324,7 +336,16 @@ export function createWebMcpFramesWsHandler(
         webMcpSessions.touch(runtime);
 
         liveSockets.add(ws);
-        const framePacer = createFramePacer(toCallbackSocket(ws));
+        const framePacer = createFramePacer(toCallbackSocket(ws), () => {
+          // Reported to the session so it can encode smaller, and swallowed on
+          // the way: this runs per dropped frame inside a send callback, where
+          // a throw would take the socket down over a diagnostic.
+          try {
+            runtime.noteFramePressure();
+          } catch {
+            /* the session went away between the send and its callback */
+          }
+        });
         pacer = framePacer;
 
         unsubscribe = runtime.hub.subscribe((event) => {
