@@ -12,6 +12,149 @@ import {
 } from "@mcpjam/sdk";
 import { main } from "../src/index.js";
 
+/** One materialized stage-analytics document, trimmed to what the CLI routes. */
+const STAGE_ANALYTICS_DOCUMENT = {
+  "schemaVersion": 1,
+  "measurementUnit": "trial",
+  "runId": "run-failed",
+  "suiteId": "suite-1",
+  "stageAnalyzerVersion": 8,
+  "measurementsSchemaVersion": 1,
+  "materializationState": "final",
+  "createdAt": 1,
+  "updatedAt": 2,
+  "includedTrials": 1,
+  "excludedTrials": {},
+  "totalTrials": 1,
+  "excludedTrialDetail": {},
+  "slices": [
+    {
+      "slice": {
+        "dimension": "overall"
+      },
+      "includedTrials": 4,
+      "excludedTrials": {
+        "lifecycle": 1,
+        "integrity": 1,
+        "version": 1
+      },
+      "failureCategories": [
+        {
+          "category": "selection",
+          "count": 1
+        }
+      ],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 4,
+          "reached": 4,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 4,
+          "passed": 4,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 4,
+          "reached": 4,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 4,
+          "passed": 4,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 4,
+          "reached": 4,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 4,
+          "passed": 3,
+          "failed": 1,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": [
+            {
+              "reason": "missingToolCall",
+              "count": 1
+            }
+          ],
+          "latency": {
+            "unit": "ms",
+            "basis": "evidence_span_union",
+            "sampleCount": 1,
+            "totalMs": 800,
+            "minMs": 800,
+            "maxMs": 800
+          }
+        },
+        {
+          "stage": "call",
+          "applicable": 4,
+          "reached": 3,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 3,
+          "passed": 3,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 4,
+          "reached": 3,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 3,
+          "passed": 3,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 3,
+          "reached": 2,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 1,
+          "notApplicable": 1,
+          "excluded": {
+            "notMeasured": 1,
+            "notApplicable": 1
+          },
+          "reasons": [
+            {
+              "reason": "judgePending",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+};
+
 const telemetryDisabled = {
   env: {
     ...process.env,
@@ -246,6 +389,17 @@ interface EvalFixtureOptions {
   /** Stamp the fixture's `run-case` as decided under verdict policy 2. */
   runCasePolicyVersion2?: boolean;
   runCaseIterationFetchError?: boolean;
+  /**
+   * The run exists and has NO stage-analytics document — an enveloped 404,
+   * which is the only footing on which "unmeasured" is honest.
+   */
+  stageAnalyticsAbsent?: boolean;
+  /**
+   * The DEPLOYMENT does not serve the route — a bare 404 with no envelope.
+   * A different fact from the one above, and it must never render as
+   * unmeasured.
+   */
+  stageAnalyticsRouteMissing?: boolean;
   /** Like `runCaseIterationFetchError`, but the wire code is UNAUTHORIZED. */
   runCaseIterationFetchAuthError?: boolean;
   runOneResult?: "passed" | "failed" | "inconclusive";
@@ -356,6 +510,8 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   }>;
   /** Every path the CLI asked for, so a test can pin WHICH read happened. */
   requests: string[];
+  requestUrls: string[];
+  stageAnalyticsListQueries: string[];
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
@@ -380,6 +536,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
    * with what they pin. Paging is asserted against this one.
    */
   const requestUrls: string[] = [];
+  const stageAnalyticsListQueries: string[] = [];
   const UNAUTHORIZED_BODY = JSON.stringify({
     code: "UNAUTHORIZED",
     message: "token expired",
@@ -590,6 +747,41 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       (req.method ?? "GET") === "GET"
     ) {
       res.end(JSON.stringify({ items: [SETUP_ABORT_ITERATION] }));
+      return;
+    }
+    // Stage analytics: one run's funnel, and the suite listing of them. Both
+    // routes are additive and newer than most deployments, which is what the
+    // `--suite`/`--run` XOR and the absence tests below exercise.
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-failed/stage-analytics" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      if (options.stageAnalyticsAbsent) {
+        res.statusCode = 404;
+        res.end(
+          JSON.stringify({ code: "NOT_FOUND", message: "no analytics row" })
+        );
+        return;
+      }
+      if (options.stageAnalyticsRouteMissing) {
+        // A BARE 404 — no v1 envelope at all, which is what a router that
+        // never learned this path answers.
+        res.statusCode = 404;
+        res.setHeader("content-type", "text/plain");
+        res.end("Not Found");
+        return;
+      }
+      res.end(JSON.stringify(STAGE_ANALYTICS_DOCUMENT));
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-1/stage-analytics" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      stageAnalyticsListQueries.push(url.search);
+      res.end(JSON.stringify({ items: [STAGE_ANALYTICS_DOCUMENT] }));
       return;
     }
     if (
@@ -1499,6 +1691,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     disclosureRequests,
     requests,
     requestUrls,
+    stageAnalyticsListQueries,
     close: () =>
       new Promise<void>((resolve, reject) => {
         for (const socket of sockets) socket.destroy();
@@ -2565,6 +2758,186 @@ test("eval status prefers the decision-summary endpoint when the API has one", a
     assert.doesNotMatch(run.stdout, /Decision summary: failed/);
   } finally {
     await fixture.close();
+  }
+});
+
+test("eval stage-analytics reads one run's funnel", async () => {
+  // Stage analytics was reachable from the web app and from nowhere else: the
+  // route and the client method both existed and no CLI command wrapped them.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "stage-analytics",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-failed",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const document = JSON.parse(run.stdout.trim());
+    assert.equal(document.analyticsState, "measured");
+    assert.equal(document.runId, "run-failed");
+    assert.equal(document.suiteId, "suite-1");
+    // VERBATIM: reshaping the funnel here would be a second reading of it.
+    assert.deepEqual(document.analytics, STAGE_ANALYTICS_DOCUMENT);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval stage-analytics lists a suite's runs and forwards paging", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "stage-analytics",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "Smoke",
+          "--limit",
+          "5",
+          "--cursor",
+          "page-2",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const page = JSON.parse(run.stdout.trim());
+    // ONE DOCUMENT PER RUN. A listing is a trend series, never an aggregate,
+    // so the shape a caller gets back is a list of complete documents.
+    assert.deepEqual(page.items, [STAGE_ANALYTICS_DOCUMENT]);
+    assert.deepEqual(page.suite, { id: "suite-1", name: "Smoke" });
+    const query = fixture.stageAnalyticsListQueries[0] ?? "";
+    assert.match(query, /[?&]limit=5(&|$)/);
+    assert.match(query, /[?&]cursor=page-2(&|$)/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval stage-analytics refuses both selectors and neither", async () => {
+  // `--run` and `--suite` address two genuinely different reads. "Neither" has
+  // nothing to fetch; "both" would silently pick one and answer a question the
+  // caller did not ask.
+  const fixture = await startEvalFixture();
+  try {
+    for (const args of [
+      [] as string[],
+      ["--run", "run-failed", "--suite", "Smoke"],
+    ]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "stage-analytics",
+            "--project",
+            "proj-alpha",
+            ...args
+          ),
+          { telemetry: telemetryDisabled }
+        )
+      );
+      assert.equal(run.result.exitCode, 2, JSON.stringify(args));
+    }
+    // Paging flags belong to the listing: a single run has ONE document, and
+    // accepting them there would imply pages that do not exist.
+    const paged = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "stage-analytics",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-failed",
+          "--limit",
+          "5"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(paged.result.exitCode, 2);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval stage-analytics tells an absent document from an absent route", async () => {
+  // THE WHOLE RISK OF THIS COMMAND, in one test. Both arrive as 404 and only
+  // one of them is a fact about the run.
+  const absent = await startEvalFixture({ stageAnalyticsAbsent: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          absent.baseUrl,
+          "stage-analytics",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-failed",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0, "an unmeasured run is not an error");
+    const document = JSON.parse(run.stdout.trim());
+    assert.equal(document.analyticsState, "unmeasured");
+    assert.equal(document.analytics, null);
+    // Still addressable: a reader told "unmeasured" can still open the run.
+    assert.equal(document.runId, "run-failed");
+  } finally {
+    await absent.close();
+  }
+
+  const missing = await startEvalFixture({ stageAnalyticsRouteMissing: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          missing.baseUrl,
+          "stage-analytics",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-failed",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    // An ERROR, not a document. Rendering this as "never measured" would
+    // report every run on the deployment as unmeasured — a claim about our
+    // rollout dressed up as a claim about their evals.
+    assert.notEqual(run.result.exitCode, 0);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]!);
+    assert.match(failure.error.message, /does not serve eval stage analytics/);
+    assert.match(failure.error.message, /not about the run/);
+    assert.equal(run.stdout.includes("unmeasured"), false);
+  } finally {
+    process.exitCode = 0;
+    await missing.close();
   }
 });
 

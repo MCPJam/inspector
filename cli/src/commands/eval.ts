@@ -18,6 +18,8 @@ import {
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
@@ -3698,6 +3700,86 @@ export function registerEvalCommands(program: Command): void {
         suiteId: result.run.suiteId,
         runId: result.run.id,
       });
+    }
+  );
+
+      addProjectOption(
+      evals
+      .command("stage-analytics")
+      .description(
+        "Read the user-value chain funnel for one run (--run) or a suite's runs as a trend series (--suite)"
+      )
+      )
+      .option("--run <id>", "Eval run ID — one run's funnel")
+      .option(
+        "--suite <id-or-name>",
+        "Eval suite name or ID — one page of runs, newest first"
+      )
+      .option(
+        "--cursor <cursor>",
+        "Pagination cursor from a previous response (--suite only)"
+      )
+      .option("--limit <n>", "Documents per page, 1-100 (--suite only)").action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run?: string;
+        suite?: string;
+        cursor?: string;
+        limit?: string;
+      },
+      command
+    ) => {
+      // XOR, and both halves refused explicitly. `--run` and `--suite` address
+      // two genuinely different reads — one document, or a page of them — so
+      // "neither" has nothing to fetch and "both" would silently pick one and
+      // answer a question the caller did not ask.
+      if ((options.run === undefined) === (options.suite === undefined)) {
+        throw usageError(
+          "Provide either --run <id> or --suite <id-or-name>, not both."
+        );
+      }
+      const suiteMode = options.suite !== undefined;
+      if (
+        !suiteMode &&
+        (options.cursor !== undefined || options.limit !== undefined)
+      ) {
+        // A single run has ONE document. Accepting paging flags there would
+        // imply pages that do not exist.
+        throw usageError("--cursor and --limit apply to --suite only.");
+      }
+      const operation = suiteMode
+        ? listEvalSuiteStageAnalyticsOperation
+        : getEvalRunStageAnalyticsOperation;
+      // `projectOptional` is load-bearing: both schemas REQUIRE `project` (a
+      // run id alone is ambiguous across projects), and the cloud CLI fills it
+      // from --project/env/link/automatic AFTER this point. Without the flag,
+      // omitting --project would be a usage error on a command that should
+      // resolve a project the way every sibling does.
+      const input = validateOpInput(
+        operation as PlatformOperation<Record<string, unknown>, unknown>,
+        {
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(suiteMode
+            ? {
+                suite: options.suite,
+                ...(options.cursor !== undefined
+                  ? { cursor: options.cursor }
+                  : {}),
+                ...(options.limit !== undefined
+                  ? { limit: parsePositiveInteger(options.limit, "--limit") }
+                  : {}),
+              }
+            : { runId: options.run }),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        operation as PlatformOperation<Record<string, unknown>, unknown>,
+        input,
+        options,
+        command
+      );
     }
   );
 

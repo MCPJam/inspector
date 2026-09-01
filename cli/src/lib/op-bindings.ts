@@ -178,6 +178,14 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_check_repos: { command: "cloud eval checks list" },
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },
+  // BOTH bound to one command, addressed by `--run` XOR `--suite`. They are
+  // the same document read two ways — one run, or a suite's runs as a trend
+  // series — and two commands would leave a reader guessing which one
+  // answers "has this stage got worse".
+  get_eval_run_stage_analytics: { command: "cloud eval stage-analytics" },
+  list_eval_suite_stage_analytics: {
+    command: "cloud eval stage-analytics",
+  },
   compare_eval_run: { command: "cloud eval compare" },
   waive_eval_gate: { command: "cloud eval gate waive" },
   revoke_eval_gate_waiver: { command: "cloud eval gate unwaive" },
