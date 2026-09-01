@@ -1,5 +1,6 @@
 import {
   HOST_CONFIG_FIELDS,
+  type HostComparisonSubject,
   type HostConfigFieldDef,
   type SupportLevel,
 } from "@/lib/host-config-field-schema";
@@ -106,6 +107,37 @@ export function isPublicCaniuseCapabilityField(
 export const PUBLIC_CAN_I_USE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
   HOST_CONFIG_FIELDS.filter(isPublicCaniuseCapabilityField);
 
+/**
+ * Whether any published host actually carries a value for this field.
+ *
+ * A row whose every column reads "Not yet tested" answers nothing — it
+ * advertises a question we have not asked yet. Fields added ahead of their
+ * measurements therefore stay hidden until the first real host value lands,
+ * and appear on their own the moment one does. No allowlist to maintain: the
+ * data decides.
+ *
+ * Only public presets (Claude, ChatGPT, Copilot, Cursor, Slack, VS Code) reach
+ * these surfaces, so "a host that is not MCPJam" holds by construction — the
+ * emulator's own defaults can never light a row on their own.
+ */
+export function caniuseFieldHasPresetData(
+  field: HostConfigFieldDef,
+  subjects: Record<string, HostComparisonSubject>,
+): boolean {
+  return Object.values(subjects).some(
+    (subject) => field.read(subject.config) !== undefined,
+  );
+}
+
+/** {@link PUBLIC_CAN_I_USE_FIELDS} minus the rows nobody has measured yet. */
+export function publicCaniuseFieldsWithData(
+  subjects: Record<string, HostComparisonSubject>,
+): ReadonlyArray<HostConfigFieldDef> {
+  return PUBLIC_CAN_I_USE_FIELDS.filter((field) =>
+    caniuseFieldHasPresetData(field, subjects),
+  );
+}
+
 export const CANIUSE_CAPABILITIES: ReadonlyArray<CaniuseCapability> =
   PUBLIC_CAN_I_USE_FIELDS.map((field) => ({
     slug: slugForField(field),
@@ -170,7 +202,11 @@ export function getCaniuseSupportLevel(
       // Enum rather than boolean, so it resolves to "neutral" rather than
       // undefined when unset — and "neutral" renders as "Not supported".
       // Without this an unprobed host publicly claims it cannot paginate.
-      field.id === "paginationTraversal") &&
+      field.id === "paginationTraversal" ||
+      // Same reasoning: once one host is measured the row appears, and the
+      // hosts still queued behind it must read "Not yet tested" rather than
+      // be published as silently abandoning every cancelled call.
+      field.id === "toolCallCancellation") &&
     field.read(config) === undefined
   ) {
     return "unknown";

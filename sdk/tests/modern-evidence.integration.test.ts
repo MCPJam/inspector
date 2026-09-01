@@ -522,3 +522,81 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
     expect(headers["mcp-name"]).toBe("tool-1");
   });
 });
+
+/**
+ * `MCPServerConfig.suppressRequestCancellation` — the host-config knob
+ * (`mcpProfile.requestCancellation: "none"`) that models a host which ends the
+ * turn locally and tells the server nothing.
+ *
+ * Driven through `getToolsForAiSdk`, because that is the seam a chat turn's
+ * stop button actually travels: the AI SDK hands the turn's `abortSignal` to
+ * the tool's `execute`, and the manager decides there whether it reaches the
+ * wire.
+ */
+describe("suppressRequestCancellation (host cancels nothing)", () => {
+  let served: ServedMultiPageFixture | undefined;
+  let manager: MCPClientManager | undefined;
+
+  afterEach(async () => {
+    await manager?.disconnectAllServers().catch(() => {});
+    await served?.close();
+    served = undefined;
+    manager = undefined;
+  });
+
+  async function abortSlowToolThroughAiSdk(suppress: boolean) {
+    served = await serveMultiPageFixtureOnPort({ listSlowTool: true });
+    manager = new MCPClientManager();
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      timeout: 10_000,
+      ...(suppress ? { suppressRequestCancellation: true } : {}),
+    });
+
+    const tools = await manager.getToolsForAiSdk("fixture");
+    const slowTool = tools["slow-tool"];
+    expect(slowTool?.execute).toBeTypeOf("function");
+
+    const controller = new AbortController();
+    const callPromise = slowTool!.execute!(
+      { delayMs: 60_000 },
+      { toolCallId: "call-1", messages: [], abortSignal: controller.signal }
+    );
+    await served.waitForToolCall("slow-tool");
+    controller.abort();
+
+    // Either way the caller is released promptly — a host that cancels nothing
+    // still ends its own turn. What differs is whether the server hears it.
+    const outcome = await Promise.resolve(callPromise).then(
+      () => "resolved" as const,
+      (error: unknown) => error
+    );
+    expect(outcome).not.toBe("resolved");
+
+    // Let any cancellation the client chose to send actually land.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return served.exchanges.map((e) => getWireField(e.request.json, "method"));
+  }
+
+  it("leaves the server running the tool: no cancelled notification, no terminated call", async () => {
+    const methods = await abortSlowToolThroughAiSdk(true);
+
+    // Nothing was said. Not the 2026 signal (the held-open `tools/call`
+    // exchange never completes, so it never appears here) and not the 2025 one
+    // either — withholding the signal withholds both, which is the point:
+    // the simulated host is silent, not non-conforming.
+    expect(methods).not.toContain("notifications/cancelled");
+    expect(methods).not.toContain("tools/call");
+  }, 30_000);
+
+  it("still cancels on the wire when the knob is off (control)", async () => {
+    const methods = await abortSlowToolThroughAiSdk(false);
+
+    // Same abort, same seam, opposite outcome: the stream is aborted, so the
+    // exchange terminates and lands in the log. Without this control the test
+    // above would pass on a client that had simply stopped calling tools.
+    expect(methods).toContain("tools/call");
+    expect(methods).not.toContain("notifications/cancelled");
+  }, 30_000);
+});

@@ -43,6 +43,12 @@ export interface HostConnectionProfile {
    */
   supportsMrtr?: false;
   /**
+   * `true` = cancelling an in-flight request never reaches the server. The
+   * client abandons the call locally; the server runs the tool to
+   * completion. Maps onto `MCPServerConfig.suppressRequestCancellation`.
+   */
+  suppressRequestCancellation?: true;
+  /**
    * `true` = the client never opens the server→client notification channel
    * (legacy: the standalone GET SSE stream; 2026-07-28:
    * `subscriptions/listen`). ChatGPT measures this way — prober saw it never
@@ -120,6 +126,8 @@ export function hostConnectionProfile(
       : undefined;
   const supportsMrtr =
     mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+  const suppressRequestCancellation =
+    mcpProfile?.toolCallCancellation === false ? (true as const) : undefined;
   // A nested record rather than an enum, but the same discipline: only an
   // explicit `false` leaf degrades, and absent stays absent. Narrowed like
   // `initialize` above — `mcpProfile` is an untyped record here.
@@ -150,6 +158,7 @@ export function hostConnectionProfile(
       : {}),
     ...(firstPageOnly ? { firstPageOnly } : {}),
     ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(suppressRequestCancellation ? { suppressRequestCancellation } : {}),
     ...(suppressListenChannel ? { suppressListenChannel } : {}),
     ...(dropToolListChanged ? { dropToolListChanged } : {}),
     respectToolVisibility,

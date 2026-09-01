@@ -227,10 +227,11 @@ type ProtocolDoc = {
    * back as absence for the same hash reason as the mirroring knob above:
    * a host that never touches the control must keep hashing exactly as it
    * did before the field existed. Map onto `mcpProfile.paginationTraversal`
-   * / `mcpProfile.mrtrSupport`.
+   * / `mcpProfile.mrtrSupport` / `mcpProfile.toolCallCancellation`.
    */
   paginationTraversal?: PaginationTraversalMode;
   mrtrSupport?: MrtrSupport;
+  toolCallCancellation?: boolean;
   /**
    * How the client handles `notifications/tools/list_changed`. `listens` is
    * whether it opens the server→client channel at all; `refetches` is whether
@@ -311,6 +312,9 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   }
   if (draft.mcpProfile?.mrtrSupport !== undefined) {
     doc.mrtrSupport = draft.mcpProfile.mrtrSupport;
+  }
+  if (draft.mcpProfile?.toolCallCancellation !== undefined) {
+    doc.toolCallCancellation = draft.mcpProfile.toolCallCancellation;
   }
 
   const toolListChanged = draft.mcpProfile?.toolListChanged;
@@ -561,6 +565,9 @@ export function applyJsonToDraft(
   const rawMrtr = parsed.mrtrSupport;
   const mrtrSupport: MrtrSupport | undefined =
     rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
+  const rawCancellation = parsed.toolCallCancellation;
+  const toolCallCancellation =
+    typeof rawCancellation === "boolean" ? rawCancellation : undefined;
 
   let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
   if (isPlainObject(parsed.toolListChanged)) {
@@ -643,6 +650,7 @@ export function applyJsonToDraft(
       toolParamHeaderMirroring,
       paginationTraversal,
       mrtrSupport,
+      toolCallCancellation,
       toolListChanged: toolListChangedParsed,
       extensions: profileExtensions,
       // `apps` is owned by the Apps tab (including the widget tool-result
@@ -808,12 +816,39 @@ export function ProtocolTab({
     });
   };
 
-  // Client-conformance knobs (siblings of the mirroring control above). Both
+  // Client-conformance knobs (siblings of the mirroring control above). All
   // model how REAL hosts differ, so the default is written back as ABSENCE
   // and only the degraded value is stored.
   const storedPagination = draft.mcpProfile?.paginationTraversal;
   const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
-  const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
+  const storedToolCallCancellation = draft.mcpProfile?.toolCallCancellation;
+  // Cancellation is ONE knob whose label names the era, because the era picks
+  // the mechanism and nothing else: closing the response stream on 2026-07-28
+  // Streamable HTTP, `notifications/cancelled` on every 2025 revision (all
+  // three are identical here) and on stdio. Auto negotiates at connect time
+  // and can land on either, so it names both rather than guessing one.
+  const pinnedVersion = draft.mcpProfile?.mcpProtocolVersion;
+  const cancellationEra =
+    pinnedVersion === undefined || pinnedVersion === "auto"
+      ? "both"
+      : isStatelessProtocolVersion(pinnedVersion)
+        ? "modern"
+        : "legacy";
+  const cancellationLabel =
+    cancellationEra === "modern"
+      ? "Tool cancellation (2026)"
+      : cancellationEra === "legacy"
+        ? "Tool cancellation (2025)"
+        : "Tool cancellation (2025 + 2026)";
+  const cancellationMechanism =
+    cancellationEra === "modern"
+      ? "closing the response stream for that request"
+      : cancellationEra === "legacy"
+        ? "sending notifications/cancelled"
+        : "closing the response stream on 2026-07-28, or sending notifications/cancelled on 2025";
+  const setConformanceKnob = <
+    K extends "paginationTraversal" | "mrtrSupport" | "toolCallCancellation",
+  >(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined
   ) => {
@@ -1105,6 +1140,39 @@ export function ProtocolTab({
           >
             <SelectTrigger
               aria-label="Multi-round tool results"
+              className="h-9 w-[220px] flex-shrink-0 text-xs"
+            >
+              <SelectValue placeholder="Supported" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="full">Supported (default)</SelectItem>
+              <SelectItem value="none">Not supported</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">{cancellationLabel}</span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {storedToolCallCancellation === false
+                ? `Stopping a tool call ends the turn here and tells the server nothing — it keeps running the tool to completion, side effects and cost included. Real hosts behave this way, which is why a server cannot assume a vanished client means a cancelled call.`
+                : `Stopping a tool call reaches the server by ${cancellationMechanism}. Switch to Not supported to see what your server does when a host abandons the call without saying so.`}
+            </p>
+          </div>
+          <Select
+            value={storedToolCallCancellation === false ? "none" : "full"}
+            onValueChange={(next) => {
+              // Absence is the conforming answer, so only `false` is stored —
+              // an untouched host must keep hashing as it did before the field.
+              setConformanceKnob(
+                "toolCallCancellation",
+                next === "none" ? false : undefined
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger
+              aria-label={cancellationLabel}
               className="h-9 w-[220px] flex-shrink-0 text-xs"
             >
               <SelectValue placeholder="Supported" />

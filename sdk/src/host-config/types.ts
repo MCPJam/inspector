@@ -241,6 +241,7 @@ export const MRTR_SUPPORT_MODES = [
   "none",
 ] as const satisfies readonly MrtrSupport[];
 
+
 /**
  * The conformance-knob keys shared verbatim between the public `HostMcp`
  * authoring shape and the internal `mcpProfile` (same names on both sides),
@@ -285,6 +286,17 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
+  // Whether cancelling an in-flight tool call reaches the server, or only ends
+  // the turn locally while the server runs it to completion.
+  //
+  // Boolean rather than an enum, and only an explicit `false` is ever written
+  // — absent is the conforming answer, like the `toolListChanged` leaves. One
+  // field for every era: the negotiated revision picks the MECHANISM (closing
+  // the response stream on 2026-07-28 Streamable HTTP, `notifications/cancelled`
+  // on all of 2025 and on stdio), never whether the host bothers. A host
+  // cannot be right on one era and wrong on the other by its own choice, so
+  // splitting this in two would model a state the spec does not allow.
+  toolCallCancellation?: boolean;
   // How the client handles `notifications/tools/list_changed` (probe-measured;
   // MCP spec "List Changed Notification" under server/tools, every revision
   // since 2024-11-05). Two independently-measured facts, not one flag:

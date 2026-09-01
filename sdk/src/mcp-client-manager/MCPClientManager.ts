@@ -1003,58 +1003,64 @@ export class MCPClientManager {
             includeAppOnly: options.includeAppOnly,
             modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
             readResource: async ({ uri, options: readOptions }) => {
-              const requestOptions = readOptions?.abortSignal
-                ? { signal: readOptions.abortSignal }
-                : undefined;
-              return this.readResource(id, { uri }, requestOptions);
+              const { requestOptions, settle } = this.applyCancellationPolicy(
+                id,
+                readOptions?.abortSignal
+              );
+              return settle(this.readResource(id, { uri }, requestOptions));
             },
             callTool: async ({ name, args, options: callOptions }) => {
-              const requestOptions = callOptions?.abortSignal
-                ? { signal: callOptions.abortSignal }
-                : undefined;
+              const { requestOptions, settle } = this.applyCancellationPolicy(
+                id,
+                callOptions?.abortSignal
+              );
               const toolArgs = (args ?? {}) as ExecuteToolArguments;
               if (!options.tasks) {
-                const result = await this.executeTool(
-                  id,
-                  name,
-                  toolArgs,
-                  requestOptions
+                const result = await settle(
+                  this.executeTool(id, name, toolArgs, requestOptions)
                 );
                 return assertCallToolResult(result, `Tool "${name}" result`);
               }
               // `id` is captured per server, so the wire is resolved per call:
               // a mixed tool set does the right thing for each server without
               // any caller knowing mixed sets exist.
-              return runToolTaskSeam(
-                {
-                  serverId: id,
-                  toolName: name,
-                  wire: this.getTasksSupport(id).wire,
-                  callPlain: () =>
-                    this.executeTool(id, name, toolArgs, requestOptions),
-                  callEligible: () =>
-                    this.executeTool(id, name, toolArgs, {
-                      ...(requestOptions ? { request: requestOptions } : {}),
-                      allowTaskResult: true,
-                    }),
-                  getTask: async (taskId) =>
-                    extensionTaskToObservation(
-                      await this.getTaskExt(id, taskId, requestOptions)
-                    ),
-                  updateTask: async (taskId, inputResponses) => {
-                    // The await driver is wire-neutral and types responses as
-                    // plain JSON; on this branch the wire is known to be the
-                    // extension, whose `InputResponses` is the narrower shape
-                    // `collectTaskInputResponses` already validated against.
-                    await this.updateTask(
-                      id,
-                      taskId,
-                      inputResponses as TaskExtInputResponses,
-                      requestOptions
-                    );
+              //
+              // The whole seam is settled, not just its first leg: a task-wire
+              // call polls across several requests, and a host that cancels
+              // nothing must abandon the polling loop locally rather than
+              // cancel any one leg on the wire.
+              return settle(
+                runToolTaskSeam(
+                  {
+                    serverId: id,
+                    toolName: name,
+                    wire: this.getTasksSupport(id).wire,
+                    callPlain: () =>
+                      this.executeTool(id, name, toolArgs, requestOptions),
+                    callEligible: () =>
+                      this.executeTool(id, name, toolArgs, {
+                        ...(requestOptions ? { request: requestOptions } : {}),
+                        allowTaskResult: true,
+                      }),
+                    getTask: async (taskId) =>
+                      extensionTaskToObservation(
+                        await this.getTaskExt(id, taskId, requestOptions)
+                      ),
+                    updateTask: async (taskId, inputResponses) => {
+                      // The await driver is wire-neutral and types responses as
+                      // plain JSON; on this branch the wire is known to be the
+                      // extension, whose `InputResponses` is the narrower shape
+                      // `collectTaskInputResponses` already validated against.
+                      await this.updateTask(
+                        id,
+                        taskId,
+                        inputResponses as TaskExtInputResponses,
+                        requestOptions
+                      );
+                    },
                   },
-                },
-                options.tasks
+                  options.tasks
+                )
               );
             },
           });
@@ -4131,6 +4137,52 @@ export class MCPClientManager {
       return undefined;
     }
     return this.mrtrInputCollectors.get(serverId);
+  }
+
+  /**
+   * Applies `suppressRequestCancellation` to one caller-supplied abort signal.
+   *
+   * The signal is the ONLY thing that reaches the wire: the protocol layer
+   * hangs both cancellation mechanisms off it — aborting the per-request
+   * response stream on `2026-07-28` Streamable HTTP, POSTing
+   * `notifications/cancelled` on every other era and on stdio. So a host that
+   * cancels nothing is modeled by withholding the signal from the request and
+   * racing the caller against it locally instead.
+   *
+   * That split is the whole point. Dropping the signal outright would leave a
+   * cancelled turn hanging until the tool finished; passing it through would
+   * cancel on the wire. `awaitWithAbort` gives the caller its prompt rejection
+   * while the server hears nothing — which is exactly what these hosts do.
+   *
+   * Deliberately NOT implemented by hiding the transport's
+   * `hasPerRequestStream`: that would make a modern connection fall back to
+   * POSTing `notifications/cancelled`, a message no conforming client sends on
+   * `2026-07-28`. The simulated host must be silent, not wrong.
+   */
+  private applyCancellationPolicy(
+    serverId: string,
+    abortSignal: AbortSignal | undefined
+  ): {
+    requestOptions: { signal: AbortSignal } | undefined;
+    settle: <T>(promise: Promise<T>) => Promise<T>;
+  } {
+    const suppressed =
+      this.registeredServers.get(serverId)?.config
+        .suppressRequestCancellation === true;
+
+    if (abortSignal === undefined) {
+      return { requestOptions: undefined, settle: (promise) => promise };
+    }
+    if (!suppressed) {
+      return {
+        requestOptions: { signal: abortSignal },
+        settle: (promise) => promise,
+      };
+    }
+    return {
+      requestOptions: undefined,
+      settle: (promise) => this.awaitWithAbort(promise, abortSignal),
+    };
   }
 
   /**

@@ -741,6 +741,30 @@ const PAGINATION_FIELD: HostConfigFieldDef = {
   read: (cfg) => mcpProfile(cfg)?.paginationTraversal,
 };
 
+/**
+ * `mcpProfile.toolCallCancellation` — whether stopping an in-flight tool call
+ * reaches the server, or only ends the turn inside the host.
+ *
+ * The label carries no era here, unlike the editor in `ProtocolTab`. This one
+ * feeds the comparison matrix and caniuse.dev, where adjacent columns are hosts
+ * pinned to DIFFERENT revisions, and a single "(2026)" over that row would be
+ * wrong for half of it. The era decides the mechanism — closing the response
+ * stream on 2026-07-28 Streamable HTTP, `notifications/cancelled` on 2025 and
+ * on stdio — never the answer, so the question still compares across eras even
+ * though its wire form does not.
+ */
+const TOOL_CALL_CANCELLATION_FIELD: HostConfigFieldDef = {
+  id: "toolCallCancellation",
+  section: "protocol",
+  subsection: "Cancellation",
+  label: "Tool cancellation",
+  path: "mcpProfile.toolCallCancellation",
+  description:
+    "Client tells the server when the user stops an in-flight tool call, instead of ending the turn locally and leaving the server to run it to completion.",
+  kind: { kind: "boolean" },
+  read: (cfg) => mcpProfile(cfg)?.toolCallCancellation,
+};
+
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
   // Agent · Agent tooling
@@ -1150,6 +1174,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   ...TOOL_RESULT_WIDGET_FIELDS,
   ...TOOL_LIST_CHANGED_FIELDS,
   PAGINATION_FIELD,
+  TOOL_CALL_CANCELLATION_FIELD,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",

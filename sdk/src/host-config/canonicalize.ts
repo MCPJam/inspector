@@ -755,6 +755,20 @@ function canonicalizeMcpProfile(
     out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
   }
 
+  // Boolean sibling of the enum knobs below: absent is the conforming answer
+  // (the client cancels), so only an explicit `false` is ever emitted, and a
+  // non-boolean is rejected rather than coerced — the backend validates the
+  // same field the same way, and a coerced value would hash differently on
+  // the two sides.
+  if (input.toolCallCancellation !== undefined) {
+    if (typeof input.toolCallCancellation !== "boolean") {
+      throw new Error(
+        "hostConfigV2: mcpProfile.toolCallCancellation must be a boolean"
+      );
+    }
+    out.toolCallCancellation = input.toolCallCancellation;
+  }
+
   // Client-conformance knobs (siblings of toolParamHeaderMirroring). Same
   // omit-when-absent discipline: absent → spec-conforming, hashes stable.
   // One validation loop; the top-level re-key below sorts every emitted

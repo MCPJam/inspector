@@ -8,9 +8,14 @@ import {
   getCaniuseCapabilityBySlug,
   getCaniuseSupportLabel,
   getCaniuseSupportLevel,
+  caniuseFieldHasPresetData,
+  publicCaniuseFieldsWithData,
 } from "../caniuse-capability-catalog";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
-import { hostConfigField } from "@/lib/host-config-field-schema";
+import {
+  hostConfigField,
+  type HostComparisonSubject,
+} from "@/lib/host-config-field-schema";
 
 describe("caniuse capability catalog", () => {
   it("includes stable public capability slugs", () => {
@@ -120,5 +125,48 @@ describe("caniuse capability catalog", () => {
 
   it("uses a static latest verification date for v1", () => {
     expect(CANIUSE_LAST_VERIFIED_DATE).toBe("2026-08-14");
+  });
+});
+
+describe("unmeasured rows stay off the public surface", () => {
+  const field = hostConfigField("toolCallCancellation");
+
+  const subjectWith = (
+    toolCallCancellation?: boolean
+  ): Record<string, HostComparisonSubject> => ({
+    "preset:claude": {
+      hostName: "Claude",
+      config: {
+        ...emptyHostConfigInputV2(),
+        id: "preset:claude",
+        schemaVersion: 2,
+        mcpProfile: {
+          profileVersion: 1,
+          ...(toolCallCancellation !== undefined
+            ? { toolCallCancellation }
+            : {}),
+        },
+      },
+    } as HostComparisonSubject,
+  });
+
+  it("hides a field no published host carries a value for", () => {
+    expect(caniuseFieldHasPresetData(field, subjectWith())).toBe(false);
+    expect(publicCaniuseFieldsWithData(subjectWith())).not.toContain(field);
+  });
+
+  it("shows it as soon as one host has a value", () => {
+    // One real host is the whole bar — the row exists to be compared, and a
+    // single measured column already answers the question for that host.
+    expect(caniuseFieldHasPresetData(field, subjectWith(false))).toBe(true);
+    expect(publicCaniuseFieldsWithData(subjectWith(false))).toContain(field);
+  });
+
+  it("reads an unmeasured host as not-yet-tested rather than unsupported", () => {
+    // The enum would otherwise resolve to "neutral", which renders as "Not
+    // supported" — publishing a claim about a host nobody probed.
+    const config = subjectWith()["preset:claude"]!.config;
+    expect(getCaniuseSupportLevel(field, config)).toBe("unknown");
+    expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
   });
 });

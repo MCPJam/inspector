@@ -117,20 +117,31 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "firstPageOnly",
           mrtrSupport: "none",
+          toolCallCancellation: false,
         },
       });
       expect(p.firstPageOnly).toBe(true);
       expect(p.supportsMrtr).toBe(false);
+      expect(p.suppressRequestCancellation).toBe(true);
     });
 
     it("collapses default literals AND absent fields to no wire field", () => {
       for (const mcpProfile of [
-        { profileVersion: 1, paginationTraversal: "full", mrtrSupport: "full" },
+        {
+          profileVersion: 1,
+          paginationTraversal: "full",
+          mrtrSupport: "full",
+          toolCallCancellation: true,
+        },
         { profileVersion: 1 },
         undefined,
       ]) {
         const p = hostConnectionProfile(mcpProfile ? { mcpProfile } : {});
-        for (const key of ["firstPageOnly", "supportsMrtr"]) {
+        for (const key of [
+          "firstPageOnly",
+          "supportsMrtr",
+          "suppressRequestCancellation",
+        ]) {
           expect(key in p).toBe(false);
         }
       }
@@ -182,8 +193,10 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "everyOtherPage",
           mrtrSupport: "partial",
+          toolCallCancellation: true,
         },
       });
+      expect("suppressRequestCancellation" in p).toBe(false);
       expect("firstPageOnly" in p).toBe(false);
       expect("supportsMrtr" in p).toBe(false);
     });
