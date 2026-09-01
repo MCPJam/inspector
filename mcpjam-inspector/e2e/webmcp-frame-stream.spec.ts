@@ -28,6 +28,17 @@ const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:6274";
 /** The inspector serves its token only to a localhost Origin. */
 const ORIGIN = BASE;
 
+/**
+ * The WebMCP Inspector is LOCAL-ONLY by construction: `/api/mcp/*` is not
+ * mounted in hosted mode, the browser would have to run on the machine
+ * serving the page, and the session token is served to localhost alone. So
+ * against a deployed target — the post-deploy staging lane sets
+ * `PLAYWRIGHT_BASE_URL` — there is nothing here to test, and running anyway
+ * would report a product failure for a surface that is correctly absent.
+ */
+const LOCAL_TARGET =
+  /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(BASE);
+
 async function sessionToken(): Promise<string> {
   const res = await fetch(`${BASE}/api/session-token`, {
     headers: { Origin: ORIGIN },
@@ -161,6 +172,10 @@ function percentile(values: number[], p: number): number {
 }
 
 test.describe("WebMCP viewport frame stream", () => {
+  test.skip(
+    !LOCAL_TARGET,
+    "The WebMCP Inspector is not mounted on a hosted deployment.",
+  );
   // Serial, because each test opens a real browser and the registry caps
   // concurrent sessions at two — parallel workers would race each other into a
   // capacity refusal that has nothing to do with what is under test.
