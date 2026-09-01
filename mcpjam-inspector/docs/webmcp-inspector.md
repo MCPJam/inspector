@@ -263,8 +263,17 @@ running two at once would interleave their effects.
 ## Running the tests
 
 ```bash
-npx vitest run --project server server/services/webmcp-inspector/
-npx vitest run --project client client/src/lib/webmcp-inspector/
+# The session service, the shared WebMCP state machine, and the routes.
+npx vitest run --project server \
+  server/services/webmcp-inspector/ \
+  server/services/browserd/daemon/__tests__/webmcp-bridge \
+  server/routes/mcp/__tests__/webmcp-inspector
+
+# The store, the surface, and the input forwarder.
+npx vitest run --project client \
+  client/src/lib/webmcp-inspector/ \
+  client/src/components/webmcp-inspector/ \
+  client/src/stores/__tests__/webmcp-inspector-store
 ```
 
 The CDP and provider suites need Chromium. They skip locally when it is missing
