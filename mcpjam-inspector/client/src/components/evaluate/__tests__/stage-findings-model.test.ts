@@ -439,6 +439,47 @@ describe("population honesty", () => {
     expect(state.byStage.response!.unattributedNote).toBeNull();
   });
 
+  it("withholds BOTH notes unless the scan is complete on both signals", () => {
+    // `serverComplete` is the server's claim; `walkExhausted` is this client's
+    // own fact. In production they cannot disagree in this direction — the
+    // contract refuses a `complete` page carrying a `nextCursor`, so a complete
+    // page one offers nothing to walk — but this function is exported and pure,
+    // and both notes below are claims about a POPULATION. Requiring both is
+    // strictly more conservative and can never be wrong.
+    const gapAnalytics = analyticsFor({
+      response: stageTally("response", { measured: 5, passed: 2, failed: 3 }),
+      connection: stageTally("connection", {
+        measured: 6,
+        passed: 6,
+        failed: 0,
+      }),
+    });
+    const halfComplete = ready(
+      build({
+        analytics: gapAnalytics,
+        serverComplete: true,
+        walkExhausted: false,
+      }),
+    );
+    expect(halfComplete.byStage.response!.unattributedNote).toBeNull();
+    expect(halfComplete.byStage.connection!.reconciliationNote).toBeNull();
+
+    // Both signals agreeing is what licenses the claims.
+    const complete = ready(
+      build({
+        analytics: gapAnalytics,
+        serverComplete: true,
+        walkExhausted: true,
+      }),
+    );
+    expect(complete.byStage.response!.unattributedNote).toContain(
+      "trials whose cases passed",
+    );
+    expect(complete.byStage.connection!.reconciliationNote).toContain(
+      "worth reporting",
+    );
+  });
+
   it("TRAP 2: reports a disagreement rather than overwriting the tally", () => {
     // More attributed trials than the tally counted cannot be explained by
     // policy v2. The materializer counted the whole run and this counted a

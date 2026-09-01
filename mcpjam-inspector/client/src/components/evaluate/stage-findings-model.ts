@@ -251,6 +251,19 @@ export function buildStageFindings(
     serverComplete: input.serverComplete,
     walkExhausted: input.walkExhausted,
   });
+  /**
+   * BOTH signals, before any note claims a population.
+   *
+   * `serverComplete` is the server's claim that `items` is the whole
+   * non-passing set; `walkExhausted` is this client's separate fact that every
+   * offered cursor was followed. In production they cannot disagree in this
+   * direction — the contract refuses a `complete` page that carries a
+   * `nextCursor`, so a complete page one offers nothing to walk — but this
+   * function is exported and pure, and the two notes below are claims about a
+   * POPULATION. Requiring both is strictly more conservative and can never be
+   * wrong; requiring one leans on an invariant a caller could fail to hold.
+   */
+  const completeScan = input.serverComplete && input.walkExhausted;
 
   for (const [stage, tally] of tallyByStage) {
     const trials: {
@@ -285,7 +298,7 @@ export function buildStageFindings(
       // A stage with a failing tally and no attributable trial still gets a
       // section, because the gap is itself the finding. A stage with neither
       // gets nothing.
-      const note = unattributedNote(tally, 0, input.serverComplete);
+      const note = unattributedNote(tally, 0, completeScan);
       if (note === null) continue;
       byStage[stage] = {
         stage,
@@ -304,15 +317,11 @@ export function buildStageFindings(
       groups,
       headline: stageHeadline(stage, tally),
       scopeLine,
-      unattributedNote: unattributedNote(
-        tally,
-        trials.length,
-        input.serverComplete,
-      ),
+      unattributedNote: unattributedNote(tally, trials.length, completeScan),
       reconciliationNote: reconciliationNote(
         tally,
         trials.length,
-        input.serverComplete,
+        completeScan,
       ),
     };
   }
@@ -375,9 +384,9 @@ function stageHeadline(stage: UserValueStage, tally: EvalStageTally): string {
 function unattributedNote(
   tally: EvalStageTally,
   attributed: number,
-  serverComplete: boolean,
+  completeScan: boolean,
 ): string | null {
-  if (!serverComplete) return null;
+  if (!completeScan) return null;
   const gap = tally.failed - attributed;
   if (gap <= 0) return null;
   return (
@@ -396,9 +405,9 @@ function unattributedNote(
 function reconciliationNote(
   tally: EvalStageTally,
   attributed: number,
-  serverComplete: boolean,
+  completeScan: boolean,
 ): string | null {
-  if (!serverComplete) return null;
+  if (!completeScan) return null;
   if (attributed <= tally.failed) return null;
   return (
     `${attributed} trials are listed here while the run's own tally counts ` +

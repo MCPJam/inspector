@@ -31,12 +31,16 @@ import {
 /**
  * Human copy for each way the read can come back without diagnostics.
  *
+ * Exported so its test asserts the MAPPING rather than a second copy of the
+ * strings — the same "the words live in one place" rule the rest of this work
+ * follows. A test that restated the copy would pass while the two drifted.
+ *
  * The same discipline `FAILURE_COPY` uses on the decision card: name what could
  * not be read and say what that means for what is on screen. None of these is
  * a finding about the server, and none of them may read as one — the stage
  * rates above are unaffected and stay rendered.
  */
-const FINDINGS_FAILURE_COPY: Record<
+export const FINDINGS_FAILURE_COPY: Record<
   EvalRunDecisionSummaryError["kind"],
   { title: string; detail: string }
 > = {

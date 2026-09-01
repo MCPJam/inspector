@@ -8,7 +8,7 @@
  * run as something the reader had switched off.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 
 const { decisionFetchMock } = vi.hoisted(() => ({
   decisionFetchMock: vi.fn(),
@@ -21,7 +21,8 @@ vi.mock("@/lib/apis/eval-run-decision-summary-api", async (importOriginal) => {
   return { ...actual, fetchEvalRunDecisionSummary: decisionFetchMock };
 });
 
-import { useStageFindings } from "../use-stage-findings";
+import { FINDINGS_FAILURE_COPY, useStageFindings } from "../use-stage-findings";
+import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { evalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
 import { GOLDEN_STAGE_ANALYTICS } from "@/test/stage-analytics-fixtures";
 
@@ -88,5 +89,43 @@ describe("useStageFindings gating", () => {
     const { result } = renderFindings();
     expect(result.current.kind).toBe("loading");
     expect(decisionFetchMock).toHaveBeenCalled();
+  });
+});
+
+describe("the read's failure copy", () => {
+  // Every way the read can come back without diagnostics gets its OWN words.
+  // The mapping is asserted against the exported map rather than restated here,
+  // so a test cannot pass while the copy it claims to pin drifts away from it.
+  const kinds = [
+    "notFound",
+    "routeUnavailable",
+    "invalidContract",
+    "requestFailed",
+  ] as const;
+
+  for (const kind of kinds) {
+    it(`renders the ${kind} copy, and never as a finding about the server`, async () => {
+      decisionFetchMock.mockRejectedValue(
+        new EvalRunDecisionSummaryError(kind, `synthetic ${kind}`),
+      );
+      const { result } = renderFindings();
+
+      await waitFor(() => expect(result.current.kind).toBe("unavailable"));
+      const state = result.current;
+      if (state.kind !== "unavailable") throw new Error("expected unavailable");
+
+      expect(state.title).toBe(FINDINGS_FAILURE_COPY[kind].title);
+      expect(state.detail).toBe(FINDINGS_FAILURE_COPY[kind].detail);
+      // The stage rates above are unaffected by this read, so the copy must
+      // never read as a measurement about the server under test.
+      expect(`${state.title} ${state.detail}`).not.toMatch(
+        /\b(no failures|0 failures|passed|healthy)\b/i,
+      );
+    });
+  }
+
+  it("gives each kind DIFFERENT words, so the four are told apart", () => {
+    const titles = kinds.map((kind) => FINDINGS_FAILURE_COPY[kind].title);
+    expect(new Set(titles).size).toBe(kinds.length);
   });
 });
