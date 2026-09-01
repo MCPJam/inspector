@@ -850,6 +850,13 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
       Object.values(profile.toolListChanged).every(
         (value) => value === undefined
       )) &&
+    // Same per-leaf emptiness as `toolListChanged`. Omitting this collapsed
+    // the whole profile the moment cancellation was the ONLY thing set, so
+    // turning an era off silently wrote nothing.
+    (profile.toolCallCancellation === undefined ||
+      Object.values(profile.toolCallCancellation).every(
+        (value) => value === undefined
+      )) &&
     !profile.apps &&
     !profile.extensions
   );

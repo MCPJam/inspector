@@ -96,13 +96,14 @@ export type ConnectionDefaults = {
   suppressListenChannel?: true;
   dropToolListChanged?: true;
   /**
-   * Resolved from `mcpProfile.toolCallCancellation === false`: the host ends
-   * a stopped tool call locally and never signals the server. Same
-   * only-the-non-default rule, and like the pagination/MRTR knobs it is not
-   * HTTP-only — withholding the caller's abort signal suppresses whichever
-   * cancellation mechanism the negotiated era would have used.
+   * Resolved from `mcpProfile.toolCallCancellation.{legacy,modern} === false`:
+   * on that era's connections the host ends a stopped tool call locally and
+   * never signals the server. Same only-the-non-default rule, and like the
+   * pagination/MRTR knobs neither is HTTP-only — withholding the caller's
+   * abort signal suppresses whichever mechanism that era would have used.
    */
-  suppressRequestCancellation?: true;
+  suppressLegacyRequestCancellation?: true;
+  suppressModernRequestCancellation?: true;
   /**
    * The host's enterprise-managed authorization policy, resolved client-side
    * via `readXaaEnterprisePolicy(hostConfig.mcpProfile)`. Present only when

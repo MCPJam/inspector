@@ -43,11 +43,18 @@ export interface HostConnectionProfile {
    */
   supportsMrtr?: false;
   /**
-   * `true` = cancelling an in-flight request never reaches the server. The
-   * client abandons the call locally; the server runs the tool to
-   * completion. Maps onto `MCPServerConfig.suppressRequestCancellation`.
+   * `true` = cancelling an in-flight request never reaches the server on that
+   * era's connections. The client abandons the call locally; the server runs
+   * the tool to completion.
+   *
+   * Two flat flags rather than a record, because that is how the sibling
+   * nested knob already reduces: `toolListChanged: {listens, refetches}` →
+   * `suppressListenChannel` + `dropToolListChanged`. Map onto the matching
+   * `MCPServerConfig` fields; a connection negotiates exactly one era, and the
+   * manager consults the flag for the era it actually landed on.
    */
-  suppressRequestCancellation?: true;
+  suppressLegacyRequestCancellation?: true;
+  suppressModernRequestCancellation?: true;
   /**
    * `true` = the client never opens the server→client notification channel
    * (legacy: the standalone GET SSE stream; 2026-07-28:
@@ -126,8 +133,16 @@ export function hostConnectionProfile(
       : undefined;
   const supportsMrtr =
     mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
-  const suppressRequestCancellation =
-    mcpProfile?.toolCallCancellation === false ? (true as const) : undefined;
+  // Nested record, but the same discipline as the enum knobs: only an explicit
+  // `false` leaf degrades, and an absent or malformed leaf stays conforming.
+  const toolCallCancellation =
+    mcpProfile && isRecord(mcpProfile.toolCallCancellation)
+      ? mcpProfile.toolCallCancellation
+      : undefined;
+  const suppressLegacyRequestCancellation =
+    toolCallCancellation?.legacy === false ? (true as const) : undefined;
+  const suppressModernRequestCancellation =
+    toolCallCancellation?.modern === false ? (true as const) : undefined;
   // A nested record rather than an enum, but the same discipline: only an
   // explicit `false` leaf degrades, and absent stays absent. Narrowed like
   // `initialize` above — `mcpProfile` is an untyped record here.
@@ -158,7 +173,12 @@ export function hostConnectionProfile(
       : {}),
     ...(firstPageOnly ? { firstPageOnly } : {}),
     ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
-    ...(suppressRequestCancellation ? { suppressRequestCancellation } : {}),
+    ...(suppressLegacyRequestCancellation
+      ? { suppressLegacyRequestCancellation }
+      : {}),
+    ...(suppressModernRequestCancellation
+      ? { suppressModernRequestCancellation }
+      : {}),
     ...(suppressListenChannel ? { suppressListenChannel } : {}),
     ...(dropToolListChanged ? { dropToolListChanged } : {}),
     respectToolVisibility,

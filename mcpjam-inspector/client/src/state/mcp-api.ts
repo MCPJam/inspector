@@ -118,8 +118,11 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.dropToolListChanged === true
       ? { dropToolListChanged: true }
       : {}),
-    ...(options.connectionDefaults?.suppressRequestCancellation === true
-      ? { suppressRequestCancellation: true }
+    ...(options.connectionDefaults?.suppressLegacyRequestCancellation === true
+      ? { suppressLegacyRequestCancellation: true }
+      : {}),
+    ...(options.connectionDefaults?.suppressModernRequestCancellation === true
+      ? { suppressModernRequestCancellation: true }
       : {}),
   };
 }

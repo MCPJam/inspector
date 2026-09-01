@@ -240,7 +240,8 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
   supportsMrtr: false | undefined;
   suppressListenChannel: true | undefined;
   dropToolListChanged: true | undefined;
-  suppressRequestCancellation: true | undefined;
+  suppressLegacyRequestCancellation: true | undefined;
+  suppressModernRequestCancellation: true | undefined;
 } {
   const profile =
     mcpProfile !== null && typeof mcpProfile === "object"
@@ -261,6 +262,16 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
           refetches?: unknown;
         })
       : undefined;
+  // Same narrowing for the sibling per-era record; a non-object reads as
+  // conforming rather than throwing.
+  const toolCallCancellation =
+    profile?.toolCallCancellation !== null &&
+    typeof profile?.toolCallCancellation === "object"
+      ? (profile.toolCallCancellation as {
+          legacy?: unknown;
+          modern?: unknown;
+        })
+      : undefined;
   return {
     firstPageOnly:
       profile?.paginationTraversal === "firstPageOnly" ? true : undefined,
@@ -269,8 +280,10 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
       toolListChanged?.listens === false ? true : undefined,
     dropToolListChanged:
       toolListChanged?.refetches === false ? true : undefined,
-    suppressRequestCancellation:
-      profile?.toolCallCancellation === false ? true : undefined,
+    suppressLegacyRequestCancellation:
+      toolCallCancellation?.legacy === false ? true : undefined,
+    suppressModernRequestCancellation:
+      toolCallCancellation?.modern === false ? true : undefined,
   };
 }
 
@@ -297,7 +310,8 @@ export function applyHostConformanceKnobs<
     supportsMrtr?: boolean;
     suppressListenChannel?: boolean;
     dropToolListChanged?: boolean;
-    suppressRequestCancellation?: boolean;
+    suppressLegacyRequestCancellation?: boolean;
+    suppressModernRequestCancellation?: boolean;
   }
 >(
   pins: T | undefined,
@@ -306,7 +320,8 @@ export function applyHostConformanceKnobs<
     supportsMrtr: false | undefined;
     suppressListenChannel: true | undefined;
     dropToolListChanged: true | undefined;
-    suppressRequestCancellation: true | undefined;
+    suppressLegacyRequestCancellation: true | undefined;
+  suppressModernRequestCancellation: true | undefined;
   }
 ): T | undefined {
   let next = pins;
@@ -334,10 +349,16 @@ export function applyHostConformanceKnobs<
     const { dropToolListChanged: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
-  if (host.suppressRequestCancellation === true) {
-    next = { ...((next ?? {}) as T), suppressRequestCancellation: true };
-  } else if (next?.suppressRequestCancellation !== undefined) {
-    const { suppressRequestCancellation: _hostOverrides, ...rest } = next;
+  if (host.suppressLegacyRequestCancellation === true) {
+    next = { ...((next ?? {}) as T), suppressLegacyRequestCancellation: true };
+  } else if (next?.suppressLegacyRequestCancellation !== undefined) {
+    const { suppressLegacyRequestCancellation: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.suppressModernRequestCancellation === true) {
+    next = { ...((next ?? {}) as T), suppressModernRequestCancellation: true };
+  } else if (next?.suppressModernRequestCancellation !== undefined) {
+    const { suppressModernRequestCancellation: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
   return next;

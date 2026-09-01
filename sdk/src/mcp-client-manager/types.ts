@@ -350,7 +350,8 @@ export type BaseServerConfig = {
    */
   supportsMrtr?: boolean;
   /**
-   * Whether cancelling an in-flight request reaches the server.
+   * Whether cancelling an in-flight request reaches the server, per negotiated
+   * era.
    *
    * `undefined` (the default) and `false` both signal it. `true` simulates a
    * host that ends the turn locally and tells the server nothing: the caller's
@@ -358,18 +359,22 @@ export type BaseServerConfig = {
    * completion — side effects, cost and all — because it never learns the user
    * pressed stop.
    *
-   * Applies on every era and every transport, because the caller's signal is
-   * the single input to both mechanisms: on `2026-07-28` Streamable HTTP the
-   * protocol layer aborts that request's response stream, and everywhere else
-   * (all of 2025, and stdio on any revision) it POSTs
-   * `notifications/cancelled`. Withholding the signal withholds whichever one
-   * the negotiated revision would have used, which is exactly the host
-   * behavior being modeled.
+   * Split by era because hosts really are split: MCPJam cancelled correctly on
+   * 2025 while never aborting the stream on 2026. A connection negotiates
+   * exactly one era, so the manager reads the flag for the era it landed on
+   * and ignores the other.
+   *
+   * The era selects the flag, not the transport. A 2026 stdio connection reads
+   * `suppressModernRequestCancellation` even though its mechanism is
+   * `notifications/cancelled` — withholding the caller's signal withholds
+   * whichever mechanism that era would have used, because the signal is the
+   * single input to both.
    *
    * Wired into the inspector via
-   * `hostConfig.mcpProfile.toolCallCancellation === false`.
+   * `hostConfig.mcpProfile.toolCallCancellation.{legacy,modern} === false`.
    */
-  suppressRequestCancellation?: boolean;
+  suppressLegacyRequestCancellation?: boolean;
+  suppressModernRequestCancellation?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */

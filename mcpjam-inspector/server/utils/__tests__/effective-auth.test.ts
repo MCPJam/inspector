@@ -264,7 +264,8 @@ describe("applyHostConformanceKnobs — toolListChanged", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
-    suppressRequestCancellation: undefined,
+    suppressLegacyRequestCancellation: undefined,
+    suppressModernRequestCancellation: undefined,
   } as const;
 
   it("adds the host's knobs to a body that carried none", () => {
@@ -300,7 +301,8 @@ describe("conformanceKnobsFromMcpProfile", () => {
       supportsMrtr: false,
       suppressListenChannel: undefined,
       dropToolListChanged: undefined,
-      suppressRequestCancellation: undefined,
+      suppressLegacyRequestCancellation: undefined,
+    suppressModernRequestCancellation: undefined,
     });
   });
 
@@ -319,25 +321,44 @@ describe("conformanceKnobsFromMcpProfile", () => {
         supportsMrtr: undefined,
         suppressListenChannel: undefined,
         dropToolListChanged: undefined,
-        suppressRequestCancellation: undefined,
+        suppressLegacyRequestCancellation: undefined,
+    suppressModernRequestCancellation: undefined,
       });
     }
   });
 });
 
 describe("conformanceKnobsFromMcpProfile — toolCallCancellation", () => {
-  it("reads only an explicit stored false as the suppression", () => {
-    expect(
-      conformanceKnobsFromMcpProfile({ toolCallCancellation: false })
-        .suppressRequestCancellation
-    ).toBe(true);
-    // `true`, junk and absence are all the conforming client — the knob is a
-    // suppression switch with no positive state, like its siblings.
-    for (const value of [true, "false", 0, null, undefined]) {
-      expect(
-        conformanceKnobsFromMcpProfile({ toolCallCancellation: value })
-          .suppressRequestCancellation
-      ).toBeUndefined();
+  it("reads each era's leaf independently", () => {
+    // The point of the record: a host measured as broken on 2026 must leave
+    // 2025 untouched, and vice versa.
+    const legacyBroken = conformanceKnobsFromMcpProfile({
+      toolCallCancellation: { legacy: false },
+    });
+    expect(legacyBroken.suppressLegacyRequestCancellation).toBe(true);
+    expect(legacyBroken.suppressModernRequestCancellation).toBeUndefined();
+
+    const modernBroken = conformanceKnobsFromMcpProfile({
+      toolCallCancellation: { modern: false },
+    });
+    expect(modernBroken.suppressModernRequestCancellation).toBe(true);
+    expect(modernBroken.suppressLegacyRequestCancellation).toBeUndefined();
+  });
+
+  it("treats `true`, junk and a non-record as the conforming client", () => {
+    for (const value of [
+      { legacy: true, modern: true },
+      { legacy: "false" },
+      {},
+      "nope",
+      null,
+      undefined,
+    ]) {
+      const knobs = conformanceKnobsFromMcpProfile({
+        toolCallCancellation: value,
+      });
+      expect(knobs.suppressLegacyRequestCancellation).toBeUndefined();
+      expect(knobs.suppressModernRequestCancellation).toBeUndefined();
     }
   });
 });
@@ -348,86 +369,31 @@ describe("applyHostConformanceKnobs — toolCallCancellation", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
-    suppressRequestCancellation: undefined,
+    suppressLegacyRequestCancellation: undefined,
+    suppressModernRequestCancellation: undefined,
   } as const;
 
-  it("adds the host's suppression to a body that carried none", () => {
+  it("adds only the era the host actually suppresses", () => {
     expect(
       applyHostConformanceKnobs(undefined, {
         ...conforming,
-        suppressRequestCancellation: true,
+        suppressModernRequestCancellation: true,
       })
-    ).toEqual({ suppressRequestCancellation: true });
+    ).toEqual({ suppressModernRequestCancellation: true });
   });
 
-  it("REMOVES a body-supplied suppression when the host cancels normally", () => {
+  it("REMOVES body-supplied suppression when the host cancels normally", () => {
     // Same security property as the sibling knobs: a share-link body must not
-    // be able to make a conforming host silently abandon every cancelled
-    // call, leaving servers running tools nobody wants.
-    expect(
-      applyHostConformanceKnobs(
-        { suppressRequestCancellation: true },
-        conforming
-      )
-    ).toEqual({});
-  });
-});
-
-describe("applyHostConformanceKnobs", () => {
-  // Every knob is required on the host argument on purpose: adding one must
-  // break every call site rather than silently default to "conforming".
-  const off = {
-    firstPageOnly: undefined,
-    supportsMrtr: undefined,
-    suppressListenChannel: undefined,
-    dropToolListChanged: undefined,
-    suppressRequestCancellation: undefined,
-  } as const;
-
-  it("forces the pins on when the host asks for the degraded client", () => {
-    expect(
-      applyHostConformanceKnobs(undefined, {
-        ...off,
-        firstPageOnly: true,
-        supportsMrtr: false,
-      })
-    ).toEqual({ firstPageOnly: true, supportsMrtr: false });
-    expect(
-      applyHostConformanceKnobs(
-        { protocolVersion: "2026-07-28" } as Record<string, unknown>,
-        { ...off, firstPageOnly: true }
-      )
-    ).toEqual({ protocolVersion: "2026-07-28", firstPageOnly: true });
-  });
-
-  it("strips caller pins when the host wants the full behavior", () => {
-    // The security-relevant direction: a share-link body must not be able to
-    // degrade a conforming host into one that hides tools from the model or
-    // silently drops MRTR rounds.
+    // be able to make a conforming host silently abandon cancelled calls,
+    // leaving servers running tools nobody wants.
     expect(
       applyHostConformanceKnobs(
         {
-          protocolVersion: "2026-07-28",
-          firstPageOnly: true,
-          supportsMrtr: false,
-        } as Record<string, unknown>,
-        off
+          suppressLegacyRequestCancellation: true,
+          suppressModernRequestCancellation: true,
+        },
+        conforming
       )
-    ).toEqual({ protocolVersion: "2026-07-28" });
-  });
-
-  it("strips only the knob the host reclaims, keeping the other", () => {
-    expect(
-      applyHostConformanceKnobs(
-        { firstPageOnly: true, supportsMrtr: false } as Record<string, unknown>,
-        { ...off, supportsMrtr: false }
-      )
-    ).toEqual({ supportsMrtr: false });
-  });
-
-  it("leaves untouched pins alone", () => {
-    const pins = { protocolVersion: "2026-07-28" };
-    expect(applyHostConformanceKnobs(pins, off)).toBe(pins);
-    expect(applyHostConformanceKnobs(undefined, off)).toBeUndefined();
+    ).toEqual({});
   });
 });

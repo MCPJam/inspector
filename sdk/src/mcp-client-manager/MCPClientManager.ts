@@ -4140,7 +4140,8 @@ export class MCPClientManager {
   }
 
   /**
-   * Applies `suppressRequestCancellation` to one caller-supplied abort signal.
+   * Applies the era's cancellation-suppression flag to one caller-supplied
+   * abort signal.
    *
    * The signal is the ONLY thing that reaches the wire: the protocol layer
    * hangs both cancellation mechanisms off it — aborting the per-request
@@ -4166,9 +4167,21 @@ export class MCPClientManager {
     requestOptions: { signal: AbortSignal } | undefined;
     settle: <T>(promise: Promise<T>) => Promise<T>;
   } {
+    const config = this.registeredServers.get(serverId)?.config;
+    // The era this connection actually negotiated decides which flag applies;
+    // a host that cancels on 2025 but not on 2026 must behave differently on
+    // the two, which is the whole reason the knob has two leaves.
+    //
+    // Unknown era (not yet negotiated) is treated as conforming. By the time a
+    // tool call is in flight the era is always known, so this only guards the
+    // window before that — where suppressing would be a guess.
+    const era = this.getManagedClient(serverId)?.getProtocolEra?.();
     const suppressed =
-      this.registeredServers.get(serverId)?.config
-        .suppressRequestCancellation === true;
+      era === "modern"
+        ? config?.suppressModernRequestCancellation === true
+        : era === "legacy"
+          ? config?.suppressLegacyRequestCancellation === true
+          : false;
 
     if (abortSignal === undefined) {
       return { requestOptions: undefined, settle: (promise) => promise };

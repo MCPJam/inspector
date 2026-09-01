@@ -3613,8 +3613,12 @@ export default function App() {
       activeMcpProfile?.toolListChanged?.refetches === false
         ? (true as const)
         : undefined;
-    const suppressRequestCancellation =
-      activeMcpProfile?.toolCallCancellation === false
+    const suppressLegacyRequestCancellation =
+      activeMcpProfile?.toolCallCancellation?.legacy === false
+        ? (true as const)
+        : undefined;
+    const suppressModernRequestCancellation =
+      activeMcpProfile?.toolCallCancellation?.modern === false
         ? (true as const)
         : undefined;
 
@@ -3630,7 +3634,8 @@ export default function App() {
       supportsMrtr,
       suppressListenChannel,
       dropToolListChanged,
-      suppressRequestCancellation,
+      suppressLegacyRequestCancellation,
+      suppressModernRequestCancellation,
       xaaPolicy,
     };
   }, [

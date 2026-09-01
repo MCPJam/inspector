@@ -1455,10 +1455,13 @@ export function useServerState({
       if (mcpProfile?.toolListChanged?.refetches === false) {
         defaults.dropToolListChanged = true;
       }
-      // Tool cancellation: only an explicit stored `false` (the host never
-      // signals the server) travels, as `suppressRequestCancellation: true`.
-      if (mcpProfile?.toolCallCancellation === false) {
-        defaults.suppressRequestCancellation = true;
+      // Tool cancellation, per era: only an explicit stored `false` leaf (the
+      // host never signals the server on that era) travels.
+      if (mcpProfile?.toolCallCancellation?.legacy === false) {
+        defaults.suppressLegacyRequestCancellation = true;
+      }
+      if (mcpProfile?.toolCallCancellation?.modern === false) {
+        defaults.suppressModernRequestCancellation = true;
       }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy

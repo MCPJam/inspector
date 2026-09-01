@@ -478,8 +478,11 @@ export function parseConnectionDefaults(
   if (input.supportsMrtr === false) {
     out.supportsMrtr = false;
   }
-  if (input.suppressRequestCancellation === true) {
-    out.suppressRequestCancellation = true;
+  if (input.suppressLegacyRequestCancellation === true) {
+    out.suppressLegacyRequestCancellation = true;
+  }
+  if (input.suppressModernRequestCancellation === true) {
+    out.suppressModernRequestCancellation = true;
   }
 
   // Enterprise-managed authorization policy. UNLIKE every field above, this
@@ -622,7 +625,8 @@ export function toMCPServerConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
-    suppressRequestCancellation?: boolean;
+    suppressLegacyRequestCancellation?: boolean;
+    suppressModernRequestCancellation?: boolean;
     /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
@@ -698,8 +702,10 @@ export function toMCPServerConfig(
     // unlike the mirroring flag they are forwarded here as well as on HTTP.
     if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
     if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
-    if (options?.suppressRequestCancellation === true)
-      stdio.suppressRequestCancellation = true;
+    if (options?.suppressLegacyRequestCancellation === true)
+      stdio.suppressLegacyRequestCancellation = true;
+    if (options?.suppressModernRequestCancellation === true)
+      stdio.suppressModernRequestCancellation = true;
     return stdio as MCPServerConfig;
   }
 
@@ -779,8 +785,10 @@ export function toMCPServerConfig(
     http.mirrorToolParamHeaders = false;
   if (options?.firstPageOnly === true) http.firstPageOnly = true;
   if (options?.supportsMrtr === false) http.supportsMrtr = false;
-  if (options?.suppressRequestCancellation === true)
-    http.suppressRequestCancellation = true;
+  if (options?.suppressLegacyRequestCancellation === true)
+    http.suppressLegacyRequestCancellation = true;
+  if (options?.suppressModernRequestCancellation === true)
+    http.suppressModernRequestCancellation = true;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -1076,6 +1084,8 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions?: string[];
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressLegacyRequestCancellation?: boolean;
+    suppressModernRequestCancellation?: boolean;
     xaaPolicy?: XaaEnterprisePolicy;
     /**
      * Secret-reveal scope + delegated identity, threaded from
@@ -1135,7 +1145,8 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions: options?.supportedProtocolVersions,
     firstPageOnly: options?.firstPageOnly,
     supportsMrtr: options?.supportsMrtr,
-    suppressRequestCancellation: options?.suppressRequestCancellation,
+    suppressLegacyRequestCancellation: options?.suppressLegacyRequestCancellation,
+    suppressModernRequestCancellation: options?.suppressModernRequestCancellation,
     // Advertises the EMA extension host-wide on stdio too, matching the
     // /api/mcp path; stdio never gets OAuth/XAA hooks, so no
     // refreshContext / xaaUnauthorizedHandler here.
@@ -1418,7 +1429,10 @@ export async function resolveLocalServerForConnect(
     // Same path again for the sibling conformance knobs.
     firstPageOnly: options?.defaults?.firstPageOnly,
     supportsMrtr: options?.defaults?.supportsMrtr,
-    suppressRequestCancellation: options?.defaults?.suppressRequestCancellation,
+    suppressLegacyRequestCancellation:
+      options?.defaults?.suppressLegacyRequestCancellation,
+    suppressModernRequestCancellation:
+      options?.defaults?.suppressModernRequestCancellation,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,

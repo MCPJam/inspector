@@ -117,12 +117,13 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "firstPageOnly",
           mrtrSupport: "none",
-          toolCallCancellation: false,
+          toolCallCancellation: { legacy: false, modern: false },
         },
       });
       expect(p.firstPageOnly).toBe(true);
       expect(p.supportsMrtr).toBe(false);
-      expect(p.suppressRequestCancellation).toBe(true);
+      expect(p.suppressLegacyRequestCancellation).toBe(true);
+      expect(p.suppressModernRequestCancellation).toBe(true);
     });
 
     it("collapses default literals AND absent fields to no wire field", () => {
@@ -131,7 +132,7 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "full",
           mrtrSupport: "full",
-          toolCallCancellation: true,
+          toolCallCancellation: { legacy: true, modern: true },
         },
         { profileVersion: 1 },
         undefined,
@@ -140,7 +141,8 @@ describe("hostConnectionProfile", () => {
         for (const key of [
           "firstPageOnly",
           "supportsMrtr",
-          "suppressRequestCancellation",
+          "suppressLegacyRequestCancellation",
+          "suppressModernRequestCancellation",
         ]) {
           expect(key in p).toBe(false);
         }
@@ -185,6 +187,28 @@ describe("hostConnectionProfile", () => {
       }
     });
 
+    it("reduces each cancellation leaf independently", () => {
+      // The reason this knob is a record: a host that cancels on 2025 but not
+      // on 2026 must produce exactly one flag, never both.
+      const legacyOnly = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          toolCallCancellation: { modern: false },
+        },
+      });
+      expect(legacyOnly.suppressModernRequestCancellation).toBe(true);
+      expect("suppressLegacyRequestCancellation" in legacyOnly).toBe(false);
+
+      const modernOnly = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          toolCallCancellation: { legacy: false },
+        },
+      });
+      expect(modernOnly.suppressLegacyRequestCancellation).toBe(true);
+      expect("suppressModernRequestCancellation" in modernOnly).toBe(false);
+    });
+
     it("fails closed on unrecognized literals", () => {
       // A future mode this SDK build does not know must not read as the
       // non-default value.
@@ -193,10 +217,13 @@ describe("hostConnectionProfile", () => {
           profileVersion: 1,
           paginationTraversal: "everyOtherPage",
           mrtrSupport: "partial",
-          toolCallCancellation: true,
+          // Not a record at all, and a record with an unknown leaf: neither
+          // may read as the degraded value.
+          toolCallCancellation: "sometimes",
         },
       });
-      expect("suppressRequestCancellation" in p).toBe(false);
+      expect("suppressLegacyRequestCancellation" in p).toBe(false);
+      expect("suppressModernRequestCancellation" in p).toBe(false);
       expect("firstPageOnly" in p).toBe(false);
       expect("supportsMrtr" in p).toBe(false);
     });

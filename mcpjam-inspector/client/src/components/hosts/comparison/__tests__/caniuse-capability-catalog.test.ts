@@ -129,10 +129,11 @@ describe("caniuse capability catalog", () => {
 });
 
 describe("unmeasured rows stay off the public surface", () => {
-  const field = hostConfigField("toolCallCancellation");
+  const legacyField = hostConfigField("toolCallCancellation.legacy");
+  const modernField = hostConfigField("toolCallCancellation.modern");
 
   const subjectWith = (
-    toolCallCancellation?: boolean
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean }
   ): Record<string, HostComparisonSubject> => ({
     "preset:claude": {
       hostName: "Claude",
@@ -151,22 +152,35 @@ describe("unmeasured rows stay off the public surface", () => {
   });
 
   it("hides a field no published host carries a value for", () => {
-    expect(caniuseFieldHasPresetData(field, subjectWith())).toBe(false);
-    expect(publicCaniuseFieldsWithData(subjectWith())).not.toContain(field);
+    for (const field of [legacyField, modernField]) {
+      expect(caniuseFieldHasPresetData(field, subjectWith())).toBe(false);
+      expect(publicCaniuseFieldsWithData(subjectWith())).not.toContain(field);
+    }
   });
 
   it("shows it as soon as one host has a value", () => {
     // One real host is the whole bar — the row exists to be compared, and a
     // single measured column already answers the question for that host.
-    expect(caniuseFieldHasPresetData(field, subjectWith(false))).toBe(true);
-    expect(publicCaniuseFieldsWithData(subjectWith(false))).toContain(field);
+    const measured = subjectWith({ legacy: false });
+    expect(caniuseFieldHasPresetData(legacyField, measured)).toBe(true);
+    expect(publicCaniuseFieldsWithData(measured)).toContain(legacyField);
+  });
+
+  it("gates the two eras independently", () => {
+    // A 2025-only measurement must not publish a 2026 row nobody has probed:
+    // the eras are separate questions with separate evidence.
+    const legacyOnly = subjectWith({ legacy: false });
+    expect(caniuseFieldHasPresetData(modernField, legacyOnly)).toBe(false);
+    expect(publicCaniuseFieldsWithData(legacyOnly)).not.toContain(modernField);
   });
 
   it("reads an unmeasured host as not-yet-tested rather than unsupported", () => {
     // The enum would otherwise resolve to "neutral", which renders as "Not
     // supported" — publishing a claim about a host nobody probed.
     const config = subjectWith()["preset:claude"]!.config;
-    expect(getCaniuseSupportLevel(field, config)).toBe("unknown");
+    for (const field of [legacyField, modernField]) {
+      expect(getCaniuseSupportLevel(field, config)).toBe("unknown");
+    }
     expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
   });
 });

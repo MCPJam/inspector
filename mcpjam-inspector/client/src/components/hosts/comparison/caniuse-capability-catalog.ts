@@ -205,8 +205,9 @@ export function getCaniuseSupportLevel(
       field.id === "paginationTraversal" ||
       // Same reasoning: once one host is measured the row appears, and the
       // hosts still queued behind it must read "Not yet tested" rather than
-      // be published as silently abandoning every cancelled call.
-      field.id === "toolCallCancellation") &&
+      // be published as silently abandoning every cancelled call. Per era,
+      // because the two are measured independently.
+      field.id.startsWith("toolCallCancellation.")) &&
     field.read(config) === undefined
   ) {
     return "unknown";

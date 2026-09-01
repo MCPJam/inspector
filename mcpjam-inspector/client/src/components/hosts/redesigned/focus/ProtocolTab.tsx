@@ -231,7 +231,7 @@ type ProtocolDoc = {
    */
   paginationTraversal?: PaginationTraversalMode;
   mrtrSupport?: MrtrSupport;
-  toolCallCancellation?: boolean;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /**
    * How the client handles `notifications/tools/list_changed`. `listens` is
    * whether it opens the server→client channel at all; `refetches` is whether
@@ -565,9 +565,21 @@ export function applyJsonToDraft(
   const rawMrtr = parsed.mrtrSupport;
   const mrtrSupport: MrtrSupport | undefined =
     rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
+  // Same closed-shape collapse as `toolListChanged`: an unknown leaf or a
+  // non-boolean must not reach the canonicalizer, which throws and rejects the
+  // whole save.
   const rawCancellation = parsed.toolCallCancellation;
-  const toolCallCancellation =
-    typeof rawCancellation === "boolean" ? rawCancellation : undefined;
+  let toolCallCancellation: HostConfigMcpProfileV1["toolCallCancellation"];
+  if (rawCancellation && typeof rawCancellation === "object") {
+    const parsedCancellation: { legacy?: boolean; modern?: boolean } = {};
+    for (const key of ["legacy", "modern"] as const) {
+      const value = (rawCancellation as Record<string, unknown>)[key];
+      if (typeof value === "boolean") parsedCancellation[key] = value;
+    }
+    if (Object.keys(parsedCancellation).length > 0) {
+      toolCallCancellation = parsedCancellation;
+    }
+  }
 
   let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
   if (isPlainObject(parsed.toolListChanged)) {
@@ -822,33 +834,34 @@ export function ProtocolTab({
   const storedPagination = draft.mcpProfile?.paginationTraversal;
   const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
   const storedToolCallCancellation = draft.mcpProfile?.toolCallCancellation;
-  // Cancellation is ONE knob whose label names the era, because the era picks
-  // the mechanism and nothing else: closing the response stream on 2026-07-28
-  // Streamable HTTP, `notifications/cancelled` on every 2025 revision (all
-  // three are identical here) and on stdio. Auto negotiates at connect time
-  // and can land on either, so it names both rather than guessing one.
-  const pinnedVersion = draft.mcpProfile?.mcpProtocolVersion;
-  const cancellationEra =
-    pinnedVersion === undefined || pinnedVersion === "auto"
-      ? "both"
-      : isStatelessProtocolVersion(pinnedVersion)
-        ? "modern"
-        : "legacy";
-  const cancellationLabel =
-    cancellationEra === "modern"
-      ? "Tool cancellation (2026)"
-      : cancellationEra === "legacy"
-        ? "Tool cancellation (2025)"
-        : "Tool cancellation (2025 + 2026)";
-  const cancellationMechanism =
-    cancellationEra === "modern"
-      ? "closing the response stream for that request"
-      : cancellationEra === "legacy"
-        ? "sending notifications/cancelled"
-        : "closing the response stream on 2026-07-28, or sending notifications/cancelled on 2025";
-  const setConformanceKnob = <
-    K extends "paginationTraversal" | "mrtrSupport" | "toolCallCancellation",
-  >(
+  // Delete-on-default per leaf, exactly like `toolListChanged`: absent is the
+  // conforming answer (the client cancels), so re-enabling a switch must leave
+  // no trace rather than write `true`.
+  const setToolCallCancellationPart = (
+    key: "legacy" | "modern",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const toolCallCancellation = { ...(base.toolCallCancellation ?? {}) };
+      if (enabled) delete toolCallCancellation[key];
+      else toolCallCancellation[key] = false;
+      const updated: HostConfigMcpProfileV1 = { ...base };
+      if (Object.keys(toolCallCancellation).length > 0) {
+        updated.toolCallCancellation = toolCallCancellation;
+      } else {
+        delete updated.toolCallCancellation;
+      }
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined
   ) => {
@@ -1150,38 +1163,45 @@ export function ProtocolTab({
             </SelectContent>
           </Select>
         </div>
-        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+        <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
-            <span className="text-[12px] font-medium">{cancellationLabel}</span>
+            <span className="text-[12px] font-medium">Tool cancellation</span>
             <p className="text-[11px] leading-snug text-muted-foreground">
-              {storedToolCallCancellation === false
-                ? `Stopping a tool call ends the turn here and tells the server nothing — it keeps running the tool to completion, side effects and cost included. Real hosts behave this way, which is why a server cannot assume a vanished client means a cancelled call.`
-                : `Stopping a tool call reaches the server by ${cancellationMechanism}. Switch to Not supported to see what your server does when a host abandons the call without saying so.`}
+              Whether stopping an in-flight tool call reaches the server, or
+              only ends the turn here while the server runs the tool to
+              completion. Measured per era because a client can be right on one
+              and wrong on the other; each connection reads only the era it
+              negotiated.
             </p>
           </div>
-          <Select
-            value={storedToolCallCancellation === false ? "none" : "full"}
-            onValueChange={(next) => {
-              // Absence is the conforming answer, so only `false` is stored —
-              // an untouched host must keep hashing as it did before the field.
-              setConformanceKnob(
-                "toolCallCancellation",
-                next === "none" ? false : undefined
-              );
-            }}
-            disabled={readOnly}
-          >
-            <SelectTrigger
-              aria-label={cancellationLabel}
-              className="h-9 w-[220px] flex-shrink-0 text-xs"
-            >
-              <SelectValue placeholder="Supported" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="full">Supported (default)</SelectItem>
-              <SelectItem value="none">Not supported</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Cancels on 2025 (notifications/cancelled)
+              </span>
+              <Switch
+                checked={storedToolCallCancellation?.legacy !== false}
+                onCheckedChange={(checked) =>
+                  setToolCallCancellationPart("legacy", checked)
+                }
+                disabled={readOnly}
+                aria-label="Tool cancellation (2025)"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Cancels on 2026 (closes the response stream)
+              </span>
+              <Switch
+                checked={storedToolCallCancellation?.modern !== false}
+                onCheckedChange={(checked) =>
+                  setToolCallCancellationPart("modern", checked)
+                }
+                disabled={readOnly}
+                aria-label="Tool cancellation (2026)"
+              />
+            </div>
+          </div>
         </div>
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="min-w-0">

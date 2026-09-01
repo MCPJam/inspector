@@ -252,6 +252,7 @@ export const MRTR_SUPPORT_MODES = [
 export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
+  "toolCallCancellation",
 ] as const;
 
 export type CspDomainSet = {
@@ -289,14 +290,25 @@ export type HostConfigMcpProfileV1 = {
   // Whether cancelling an in-flight tool call reaches the server, or only ends
   // the turn locally while the server runs it to completion.
   //
-  // Boolean rather than an enum, and only an explicit `false` is ever written
-  // — absent is the conforming answer, like the `toolListChanged` leaves. One
-  // field for every era: the negotiated revision picks the MECHANISM (closing
-  // the response stream on 2026-07-28 Streamable HTTP, `notifications/cancelled`
-  // on all of 2025 and on stdio), never whether the host bothers. A host
-  // cannot be right on one era and wrong on the other by its own choice, so
-  // splitting this in two would model a state the spec does not allow.
-  toolCallCancellation?: boolean;
+  // Measured PER ERA, because a host really can be right on one and wrong on
+  // the other: MCPJam sent `notifications/cancelled` correctly on 2025 while
+  // never aborting the stream on 2026 (inspector#4474). Through the 2026
+  // migration that split is common, and one boolean cannot say it.
+  //
+  // A record of independently measured leaves, like `toolListChanged` — absent
+  // per leaf is the conforming answer, so a fully cancelling client writes
+  // nothing and only an explicit `false` is ever stored.
+  //
+  // The era selects the leaf, not the transport: a 2026 stdio connection is
+  // `modern` even though its mechanism is `notifications/cancelled`. What is
+  // modeled is whether the host cancels on that era's connections, not which
+  // message it sends.
+  toolCallCancellation?: {
+    /** Every 2025 revision. */
+    legacy?: boolean;
+    /** `2026-07-28`. */
+    modern?: boolean;
+  };
   // How the client handles `notifications/tools/list_changed` (probe-measured;
   // MCP spec "List Changed Notification" under server/tools, every revision
   // since 2024-11-05). Two independently-measured facts, not one flag:
