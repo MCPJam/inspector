@@ -15137,7 +15137,7 @@
           },
           "stageResults": {
             "type": "array",
-            "description": "Verified D1 user-value chain rows, in chain order.",
+            "description": "The user-value chain rows for this trial, in chain order, from a derivation that validated.",
             "items": {
               "$ref": "#/components/schemas/StageResultRow"
             }
@@ -15151,7 +15151,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Where the chain stopped — A LOCATION, NOT A CAUSE. It names the first link that failed, never why it failed: the why is `reason` on that stage's row (see `StageResultRow.reason`), and neither this nor the `failureCategory` bucket on its own authorizes proposing a change to the server. Absent when nothing failed — and absent on a trial that never reached a stage at all, such as a setup abort or an evaluator error, which still carries a `failureCategory`. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "failureCategory": {
             "type": "string",
@@ -15163,7 +15164,8 @@
               "serverData",
               "userValue",
               "evaluator"
-            ]
+            ],
+            "description": "The bucket this trial is grouped under — A BUCKET, NOT A DIAGNOSIS. Present without `firstFailedStage` for a trial that never reached a stage. `setup` — setup: the harness or environment never got to the test. `metadata` — tool metadata: tool names, descriptions or schemas misled the model. `selection` — tool selection: the model picked the wrong tool, or none. `arguments` — call arguments: the right tool, called wrongly. `serverData` — server data: the server answered, with data the model could not use. `userValue` — user value: everything mechanical worked and the user still was not served. `evaluator` — evaluator: the grader itself failed, so the run says nothing about the server — never folded into the others, because counting a broken judge as a server defect poisons every rate derived from it."
           },
           "stageAnalyzerVersion": {
             "type": "integer",
@@ -15177,7 +15179,7 @@
       },
       "StageResultRow": {
         "type": "object",
-        "description": "One verified D1 user-value stage verdict, in chain order.",
+        "description": "One user-value stage's verdict for one trial, from a derivation that validated. Six of these make a chain, always in chain order, and the order is normative: `notReached` is derived from position, so re-ordering them changes which stages a failure is said to have blocked.",
         "required": ["stage", "state"],
         "properties": {
           "stage": {
@@ -15189,7 +15191,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Which link of the user-value chain this row is a verdict on. The order is NORMATIVE: a run walks the six in sequence, and `notReached` is derived from position — every stage after the first failed one never ran. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "state": {
             "type": "string",
@@ -15199,7 +15202,8 @@
               "notReached",
               "notMeasured",
               "notApplicable"
-            ]
+            ],
+            "description": "What this stage did. The three non-verdicts stay three different facts on purpose: collapsing them is how \"we never checked\" gets read as \"it passed\". `passed` — measured, and it passed. `failed` — measured, and it failed. `notReached` — it never ran (an earlier stage failed), so there was nothing to decide. `notMeasured` — this run captured nothing that could decide it, so the stage is not measured. `notApplicable` — the stage is not applicable to this case at all."
           },
           "reason": {
             "type": "string",
@@ -15211,6 +15215,7 @@
               "executorEmitsNoSpans",
               "blockedByPolicy",
               "evaluatorError",
+              "providerError",
               "setupAborted",
               "connectFailed",
               "toolsListFailed",
@@ -15226,8 +15231,14 @@
               "renderFailed",
               "predicateFailed",
               "observed",
-              "impliedByLaterEvidence"
-            ]
+              "impliedByLaterEvidence",
+              "judgeObserved",
+              "judgePartial",
+              "judgeFailed",
+              "judgePending",
+              "judgeNotRequested"
+            ],
+            "description": "Why this stage landed where it did. A CLOSED vocabulary — render what arrives, never widen it. Each entry completes \"…because <reason>\". `noSpanChannel` — this run captures no evidence channel for that stage. `noEvidenceCaptured` — nothing eligible for that stage was captured. `matchVerdictUnavailable` — extra tool calls were captured but the run did not report whether its match options tolerate them. `traceAbsent` — the iteration recorded no trace. `executorEmitsNoSpans` — the executor emitted no spans. `blockedByPolicy` — a policy blocked the run before it could be measured. `evaluatorError` — the evaluator itself failed, so the run says nothing about the server. `providerError` — the model provider failed the call, so this stage was never measured. `setupAborted` — the environment was never prepared, so the test never began. `connectFailed` — the configured server was reached and initialize failed there. `toolsListFailed` — initialize succeeded and listing tools failed. `egressUnverified` — the connection failed with no evidence that our own network egress works. `lifecycleStopped` — the run was stopped mid-flight. `notAuthored` — the case asserts nothing this stage could decide. `earlierStageFailed` — an earlier stage failed. `missingToolCall` — an expected tool call was never made. `unexpectedToolCall` — a tool call was made that the case did not expect. `argumentMismatch` — the call arguments did not match what the case expects. `toolError` — the server reported a tool error. `protocolError` — the call never produced a result. `renderFailed` — the widget did not render. `predicateFailed` — a check on the result did not hold. `observed` — the evidence was inspected and the stage held. `impliedByLaterEvidence` — a later stage's success implies it. `judgeObserved` — the LLM judge scored at or above the threshold. `judgePartial` — the LLM judge scored inside the partial band — at or above the floor, below the threshold. `judgeFailed` — the LLM judge scored below the partial floor. `judgePending` — an LLM judge verdict is owed and has not arrived. `judgeNotRequested` — no LLM judge verdict was ever owed."
           },
           "evidence": {
             "type": "object",
@@ -15563,7 +15574,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Which link of the user-value chain these counts are for. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied. Counts are per stage and are never summed across stages: one trial is counted in every stage's tally, so adding the six together counts the same trial six times."
           },
           "applicable": {
             "type": "integer",
@@ -23732,7 +23744,8 @@
                   "call",
                   "response",
                   "userValue"
-                ]
+                ],
+                "description": "Where the chain stopped — A LOCATION, NOT A CAUSE. It names the first link that failed, never why it failed: the why is `reason` on that stage's row (see `StageResultRow.reason`), and neither this nor the `failureCategory` bucket on its own authorizes proposing a change to the server. Absent when nothing failed — and absent on a trial that never reached a stage at all, such as a setup abort or an evaluator error, which still carries a `failureCategory`. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
               },
               "failureCategory": {
                 "type": "string",
@@ -23745,7 +23758,7 @@
                   "userValue",
                   "evaluator"
                 ],
-                "description": "The bucket this trial is grouped under. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error — both are real answers about a run that never reached a stage."
+                "description": "The bucket this trial is grouped under — A BUCKET, NOT A DIAGNOSIS. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error — both are real answers about a run that never reached a stage. `setup` — setup: the harness or environment never got to the test. `metadata` — tool metadata: tool names, descriptions or schemas misled the model. `selection` — tool selection: the model picked the wrong tool, or none. `arguments` — call arguments: the right tool, called wrongly. `serverData` — server data: the server answered, with data the model could not use. `userValue` — user value: everything mechanical worked and the user still was not served. `evaluator` — evaluator: the grader itself failed, so the run says nothing about the server — never folded into the others, because counting a broken judge as a server defect poisons every rate derived from it."
               },
               "analyzerVersion": {
                 "type": "integer",
@@ -23834,7 +23847,7 @@
               "response",
               "userValue"
             ],
-            "description": "The stage this evidence was read from. Absent when none was established."
+            "description": "The stage this evidence was read from, and the only stage it is evidence ABOUT. Absent when none was established. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "spanIds": {
             "type": "array",
