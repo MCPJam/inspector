@@ -7,6 +7,7 @@ import {
   resolveIterationModelValue,
   resolveInitialCompareModelValues,
   resolveLatestCompareRunId,
+  resolveTraceModel,
 } from "../compare-playground-helpers";
 import type { CompareRunRecord } from "../types";
 
@@ -850,5 +851,105 @@ describe("compare-playground-helpers", () => {
     });
 
     expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe("suite-only");
+  });
+});
+
+/**
+ * `resolveTraceModel` decides what a run's trace header SAYS was used. It is
+ * the single copy for both the compare playground and the iteration detail
+ * pane (which imports it from here), so these cases cover both surfaces.
+ *
+ * The failure mode worth guarding is quiet: an unrecognized provider name is
+ * cast down to `custom` rather than rejected, so a half-registered provider
+ * mislabels every run it serves and nothing errors.
+ */
+describe("resolveTraceModel", () => {
+  const iterationWith = (snapshot?: { provider?: string; model?: string }) =>
+    ({
+      testCaseSnapshot: snapshot
+        ? {
+            title: "t",
+            query: "q",
+            provider: snapshot.provider,
+            model: snapshot.model,
+            expectedToolCalls: [],
+          }
+        : undefined,
+    } as any);
+
+  const caseWith = (models: Array<{ provider: string; model: string }>) =>
+    ({ models } as any);
+
+  it("keeps cursor/auto on the cursor provider", () => {
+    // The Cursor CLI sentinel. Before `cursor` joined the list this normalized
+    // to `custom`, and an eval of a Cursor host reported a provider that never
+    // served the turn.
+    const model = resolveTraceModel(
+      iterationWith({ provider: "cursor", model: "auto" }),
+      null,
+    );
+    expect(model.provider).toBe("cursor");
+    expect(model.id).toBe("cursor/auto");
+    expect(model.name).toBe("auto");
+  });
+
+  it("keeps cursor when the snapshot model is already prefixed", () => {
+    // `model.startsWith(`${provider}/`)` — the id must not become
+    // `cursor/cursor/auto`.
+    const model = resolveTraceModel(
+      iterationWith({ provider: "cursor", model: "cursor/auto" }),
+      null,
+    );
+    expect(model.id).toBe("cursor/auto");
+    expect(model.provider).toBe("cursor");
+    expect(model.name).toBe("auto");
+  });
+
+  it("falls back to the case's first model when the snapshot has none", () => {
+    const model = resolveTraceModel(
+      iterationWith(),
+      caseWith([{ provider: "cursor", model: "auto" }]),
+    );
+    expect(model.provider).toBe("cursor");
+    expect(model.id).toBe("cursor/auto");
+  });
+
+  it("prefers the snapshot over the case, so an edited case cannot rewrite a past run", () => {
+    const model = resolveTraceModel(
+      iterationWith({ provider: "cursor", model: "auto" }),
+      caseWith([{ provider: "openai", model: "gpt-5" }]),
+    );
+    expect(model.provider).toBe("cursor");
+  });
+
+  it("normalizes a provider name that is not a provider at all", () => {
+    // The cast is guarded for a reason: whatever this string is, it must not
+    // end up typed as a `ModelProvider`.
+    const model = resolveTraceModel(
+      iterationWith({ provider: "not-a-provider", model: "mystery" }),
+      null,
+    );
+    expect(model.provider).toBe("custom");
+    expect(model.id).toBe("not-a-provider/mystery");
+  });
+
+  it("falls all the way back when neither snapshot nor case names anything", () => {
+    const model = resolveTraceModel(iterationWith(), null);
+    expect(model).toEqual({
+      id: "openai/unknown-model",
+      name: "unknown-model",
+      provider: "openai",
+    });
+  });
+
+  it("resolves a catalog model to its curated entry rather than the fallback", () => {
+    // The fallback shape is only for ids the catalog does not know; a catalog
+    // hit carries a display name and context length no string parsing recovers.
+    const model = resolveTraceModel(
+      iterationWith({ provider: "anthropic", model: "claude-sonnet-4-5" }),
+      null,
+    );
+    expect(model.provider).toBe("anthropic");
+    expect(model.name).not.toBe("claude-sonnet-4-5");
   });
 });
