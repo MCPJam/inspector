@@ -16,10 +16,12 @@ import { FakeBrowserSession, fakeTool } from "./fake-provider";
 function makeRuntime(
   options: { invokeTimeoutMs?: number; queueLimit?: number } = {},
 ) {
+  const onActivity = vi.fn();
   const runtime = new WebMcpSessionRuntime("https://example.test/", {
     sessionId: "session-1",
     invokeTimeoutMs: options.invokeTimeoutMs ?? 60_000,
     queueLimit: options.queueLimit,
+    onActivity,
   });
   const session = new FakeBrowserSession(
     runtime.callbacks(),
@@ -35,7 +37,7 @@ function makeRuntime(
           e.type === "activity",
       )
       .map((e) => e.entry);
-  return { runtime, session, events, activity };
+  return { runtime, session, events, activity, onActivity };
 }
 
 function entryOfKind<K extends WebMcpActivityEntry["kind"]>(
@@ -470,5 +472,62 @@ describe("session lifecycle events", () => {
     // A dead browser can never settle this; leaving it pending would hang the
     // caller forever.
     await expect(settled).rejects.toThrow();
+  });
+});
+
+describe("viewport frames", () => {
+  it("publishes a frame event with the session's own seq", () => {
+    const { session, events } = makeRuntime();
+    session.emitFrame({ data: "paint-1", deviceWidth: 800, deviceHeight: 600 });
+
+    const frames = events.filter(
+      (e): e is Extract<WebMcpEvent, { type: "frame" }> => e.type === "frame",
+    );
+    expect(frames).toHaveLength(1);
+    expect(frames[0].frame).toMatchObject({
+      data: "paint-1",
+      deviceWidth: 800,
+      deviceHeight: 600,
+    });
+    // Stamped from the same counter as everything else, so a replayed frame
+    // sorts into place beside the events around it rather than to one end.
+    expect(frames[0].seq).toBeGreaterThan(0);
+    expect(events.every((e, i) => i === 0 || e.seq > events[i - 1].seq)).toBe(
+      true,
+    );
+  });
+
+  it("writes no timeline entry for a frame", () => {
+    const { session, activity } = makeRuntime();
+    const before = activity().length;
+    for (let i = 0; i < 10; i++) session.emitFrame();
+    // Frames are transient. The timeline is the record the session exists to
+    // produce, and it must not be a filmstrip.
+    expect(activity()).toHaveLength(before);
+  });
+
+  it("does not tick the idle clock for a frame", () => {
+    const { session, onActivity } = makeRuntime();
+    onActivity.mockClear();
+    for (let i = 0; i < 10; i++) session.emitFrame();
+    // A page with a CSS spinner paints forever. Ticking the idle clock from a
+    // paint would make every abandoned animated page unreapable.
+    expect(onActivity).not.toHaveBeenCalled();
+  });
+
+  it("passes setScreencast to the browser and DOES tick the idle clock", async () => {
+    const { runtime, session, onActivity } = makeRuntime();
+    onActivity.mockClear();
+    await runtime.setScreencast(true);
+    await runtime.setScreencast(false);
+    expect(session.screencastCalls).toEqual([true, false]);
+    // Asking for frames is a person opening the pane — interest worth
+    // postponing a reap for, unlike the frames themselves.
+    expect(onActivity).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses setScreencast before a browser is attached", async () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/");
+    await expect(runtime.setScreencast(true)).rejects.toThrow(/not ready/i);
   });
 });

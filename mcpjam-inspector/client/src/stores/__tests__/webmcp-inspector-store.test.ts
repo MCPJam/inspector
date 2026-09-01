@@ -105,6 +105,7 @@ describe("webmcp inspector store", () => {
       pending: [],
       starting: false,
       error: undefined,
+      liveFrame: undefined,
       lastScreenshot: undefined,
       chatEnabled: false,
     });
@@ -316,5 +317,115 @@ describe("webmcp inspector store", () => {
     source.emit({ type: "tools", seq: 2, tools: [TOOL] });
     source.emit({ type: "tools", seq: 3, tools: [] });
     expect(useWebmcpInspectorStore.getState().tools).toEqual([]);
+  });
+
+  it("keeps the newest frame, and keeps it out of the timeline", async () => {
+    const source = await openSession();
+    source.emit({
+      type: "frame",
+      seq: 2,
+      frame: { data: "one", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    source.emit({
+      type: "frame",
+      seq: 3,
+      frame: { data: "two", deviceWidth: 640, deviceHeight: 400, ts: 2 },
+    });
+
+    const state = useWebmcpInspectorStore.getState();
+    expect(state.liveFrame).toMatchObject({ data: "two", deviceWidth: 640 });
+    // Frames are transient. The timeline is what the session exists to
+    // produce, and it must not turn into a filmstrip.
+    expect(state.activity).toEqual([]);
+  });
+
+  it("keeps the live frame separate from the manual screenshot", async () => {
+    const source = await openSession();
+    useWebmcpInspectorStore.setState({ lastScreenshot: "manual-capture" });
+    source.emit({
+      type: "frame",
+      seq: 2,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    // Two slots on purpose: one is the live picture, the other a snapshot
+    // someone asked for. Collapsing them would make the invoke pane's thumbnail
+    // flicker with every paint.
+    const state = useWebmcpInspectorStore.getState();
+    expect(state.lastScreenshot).toBe("manual-capture");
+    expect(state.liveFrame?.data).toBe("paint");
+  });
+
+  it("ignores an event type it does not know, without losing the stream", async () => {
+    const source = await openSession();
+    source.emit({ type: "invented_later", seq: 2, payload: { a: 1 } });
+    // The old shape fell through to the activity branch for anything that was
+    // not `session` or `tools`, so a newer server's first new event type threw
+    // on `event.entry` — swallowed by onmessage's catch, which turns "your
+    // client is older than your server" into an unexplained gap.
+    source.emit({ type: "tools", seq: 3, tools: [TOOL] });
+    expect(useWebmcpInspectorStore.getState().tools).toHaveLength(1);
+    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
+  });
+
+  it("drops the live frame when the session goes away", async () => {
+    const source = await openSession();
+    source.emit({
+      type: "frame",
+      seq: 2,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    source.emit({ type: "session_gone", error: "That session is gone." });
+    // Nothing is going to correct that picture now, so showing it would be a
+    // page the viewer believes is current and is not.
+    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+  });
+
+  it("reports an old server's 400 as a screencast the client must fall back from", async () => {
+    await openSession();
+    useWebmcpInspectorStore.setState({
+      liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Invalid command." }), {
+        status: 400,
+      }),
+    );
+
+    const accepted = await useWebmcpInspectorStore
+      .getState()
+      .setScreencast(true);
+
+    expect(accepted).toBe(false);
+    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+    // NOT surfaced in the error banner: the pane is about to start working via
+    // the poll fallback, and "Invalid command." in front of someone whose
+    // server is simply older is a bug report we would rather not receive.
+    expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
+  });
+
+  it("reports an accepted screencast, and clears the frame when it is turned off", async () => {
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    expect(await useWebmcpInspectorStore.getState().setScreencast(true)).toBe(
+      true,
+    );
+
+    useWebmcpInspectorStore.setState({
+      liveFrame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    expect(await useWebmcpInspectorStore.getState().setScreencast(false)).toBe(
+      true,
+    );
+    expect(useWebmcpInspectorStore.getState().liveFrame).toBeUndefined();
+  });
+
+  it("does not ask for a screencast with no session open", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect(await useWebmcpInspectorStore.getState().setScreencast(true)).toBe(
+      false,
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@
  * at once.
  */
 import type {
+  WebMcpFrame,
   WebMcpToolAnnotations,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
@@ -55,6 +56,15 @@ export interface WebMcpSessionCallbacks {
    */
   onActivityObserved(): void;
   onCrashed(message: string): void;
+  /**
+   * A painted frame of the page, for the `frame-stream` viewport.
+   *
+   * Deliberately NOT routed through `onActivityObserved`. A page with a CSS
+   * spinner paints forever, so a frame that ticked the idle clock would make an
+   * abandoned session unreapable — the browser would sit open until its hard
+   * lifetime ran out, holding a capacity slot nobody is using.
+   */
+  onFrame(frame: WebMcpFrame): void;
 }
 
 export interface WebMcpInvokeRequest {
@@ -74,6 +84,17 @@ export interface WebMcpBrowserSession {
   captureScreenshot(): Promise<string | undefined>;
   currentUrl(): string;
   viewportTransport(): WebMcpViewportTransport;
+  /**
+   * Start or stop streaming frames. Idempotent: the client asks on every pane
+   * mount and every visibility change, so "already on" must be a no-op rather
+   * than a second encoder.
+   *
+   * A provider with no screencast (the hosted one drives its own stream) logs
+   * and returns. It must NEVER throw: the client asks unconditionally, and a
+   * throw here would surface as a failed command on a session that is working
+   * perfectly well through a different viewport.
+   */
+  setScreencast(enabled: boolean): Promise<void>;
   /** Idempotent, and must not hang: teardown races a timeout internally. */
   dispose(): Promise<void>;
 }

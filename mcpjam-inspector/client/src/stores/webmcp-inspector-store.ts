@@ -13,6 +13,7 @@ import type {
   WebMcpActivityEntry,
   WebMcpCommand,
   WebMcpEvent,
+  WebMcpFrame,
   WebMcpSessionPublic,
   WebMcpToolDescriptor,
 } from "@/shared/webmcp-inspector-protocol";
@@ -59,6 +60,16 @@ interface WebMcpInspectorState {
   /** True between "user asked to open" and the server answering. */
   starting: boolean;
   error: WebMcpRequestError | undefined;
+  /**
+   * The last frame the viewport stream delivered.
+   *
+   * Deliberately separate from `lastScreenshot`, which is the MANUAL capture
+   * the Screenshot button fills and the thumbnail beside the invoke pane reads.
+   * They have different budgets, different lifetimes and different meanings —
+   * one is the live picture, the other is a snapshot someone asked for — and
+   * collapsing them would make the thumbnail flicker with every paint.
+   */
+  liveFrame: WebMcpFrame | undefined;
   lastScreenshot: string | undefined;
   /**
    * Whether chat turns may use this page's tools. Off by default and reset when
@@ -95,6 +106,14 @@ interface WebMcpInspectorState {
   ): Promise<PageToolInvocationResult>;
   cancelInvocation(invokeId: string): Promise<void>;
   captureScreenshot(): Promise<void>;
+  /**
+   * Ask the server to start or stop streaming the viewport.
+   *
+   * Reports whether the server took it. `false` means this server predates
+   * `set_screencast` (it 400s an unknown command), which is the client's cue to
+   * fall back to polling screenshots rather than showing an empty pane.
+   */
+  setScreencast(enabled: boolean): Promise<boolean>;
   clearError(): void;
   /**
    * Re-attach the event stream to the session that is still running, e.g. after
@@ -229,6 +248,18 @@ let sessionGeneration = 0;
 
 export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
   (set, get) => {
+    /**
+     * Apply one server event.
+     *
+     * An explicit ALLOWLIST of known types, with anything else ignored by
+     * design. The previous shape fell through to the activity branch for
+     * everything that was not `session` or `tools`, so the first new event type
+     * a server learned to send would throw on `event.entry` — and that throw
+     * was swallowed by `onmessage`'s catch, which turns "this client is older
+     * than this server" into a silent, unexplained gap. Ignoring an unknown
+     * type is the same outcome without the mystery, and it is the behaviour a
+     * newer server is entitled to expect from an older client.
+     */
     function applyEvent(event: WebMcpEvent) {
       if (event.type === "session") {
         set({ session: event.session });
@@ -238,6 +269,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         set({ tools: event.tools });
         return;
       }
+      if (event.type === "frame") {
+        set({ liveFrame: event.frame });
+        return;
+      }
+      if (event.type !== "activity") return;
       const entry = event.entry;
       if (seenActivityIds.has(entry.id)) return;
       seenActivityIds.add(entry.id);
@@ -306,6 +342,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               session: undefined,
               tools: [],
               pending: [],
+              // The stream that fed it is gone, so the picture is a lie the
+              // moment we stop being told it is current.
+              liveFrame: undefined,
             });
             failOutstandingWaiters(
               "The browser session went away before this tool finished.",
@@ -337,6 +376,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       pending: [],
       starting: false,
       error: undefined,
+      liveFrame: undefined,
       lastScreenshot: undefined,
       chatEnabled: false,
 
@@ -365,6 +405,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           activity: [],
           tools: [],
           pending: [],
+          liveFrame: undefined,
         });
         const result = await request<WebMcpSessionPublic>("/sessions", {
           method: "POST",
@@ -399,6 +440,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           tools: [],
           pending: [],
           chatEnabled: false,
+          liveFrame: undefined,
         });
         if (sessionId) {
           const result = await request(`/sessions/${sessionId}`, {
@@ -507,6 +549,25 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           type: "capture_screenshot",
         })) as { screenshotBase64?: string } | undefined;
         set({ lastScreenshot: result?.screenshotBase64 });
+      },
+
+      async setScreencast(enabled) {
+        const sessionId = get().session?.sessionId;
+        if (!sessionId) return false;
+        // Not routed through `sendCommand`: a server that does not know this
+        // command answers 400, and that is a compatibility fact for the caller
+        // to act on rather than an error to show the user. Surfacing it in the
+        // banner would put "Invalid command" in front of someone whose pane is
+        // about to start working anyway, via the poll fallback.
+        const result = await request(`/sessions/${sessionId}/command`, {
+          method: "POST",
+          body: JSON.stringify({ type: "set_screencast", enabled }),
+        });
+        // Nothing is arriving from here on either way: the stream stopped, or
+        // it never started. Holding the last frame would leave the pane showing
+        // a page that has since moved on, with nothing left to correct it.
+        if (!enabled || !result.ok) set({ liveFrame: undefined });
+        return result.ok;
       },
 
       clearError() {

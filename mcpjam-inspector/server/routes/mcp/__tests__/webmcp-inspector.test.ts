@@ -212,6 +212,52 @@ describe("webmcp-inspector routes", () => {
     expect(body).toEqual({ ok: true, cancelled: false });
   });
 
+  it("starts and stops the viewport stream", async () => {
+    const started = await openSession(provider);
+    const session = provider.sessions[0];
+
+    expect(
+      await call(
+        `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+        json({ type: "set_screencast", enabled: true }),
+      ),
+    ).toEqual({ status: 200, body: { ok: true } });
+    expect(
+      (
+        await call(
+          `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+          json({ type: "set_screencast", enabled: false }),
+        )
+      ).status,
+    ).toBe(200);
+
+    expect(session.screencastCalls).toEqual([true, false]);
+  });
+
+  it("rejects a set_screencast with no enabled flag", async () => {
+    const started = await openSession(provider);
+    // `enabled` is the whole command. Defaulting it either way would make a
+    // malformed client silently start or stop a stream it did not ask about.
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "set_screencast" }),
+    );
+    expect(status).toBe(400);
+  });
+
+  it("rejects a command this server does not know", async () => {
+    const started = await openSession(provider);
+    // The contract a NEWER client depends on: an unknown command is a 400, not
+    // a 500 and not a silent success. That is what lets the client tell "this
+    // server is older than me" from "something broke" and fall back to polling
+    // screenshots instead of showing an empty pane.
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "set_something_invented_later", enabled: true }),
+    );
+    expect(status).toBe(400);
+  });
+
   it("rejects a malformed command", async () => {
     const started = await openSession(provider);
     const { status } = await call(

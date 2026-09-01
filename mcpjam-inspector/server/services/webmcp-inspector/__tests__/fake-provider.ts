@@ -5,7 +5,10 @@
  * these fakes are free to be simple, and the suites that use them are free to
  * be fast and deterministic.
  */
-import type { WebMcpViewportTransport } from "@/shared/webmcp-inspector-protocol";
+import type {
+  WebMcpFrame,
+  WebMcpViewportTransport,
+} from "@/shared/webmcp-inspector-protocol";
 import {
   WebMcpInvocationCancelledError,
   type CreateWebMcpSessionOptions,
@@ -51,6 +54,8 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
   disposed = false;
   navigations: string[] = [];
   screenshots = 0;
+  /** Every `setScreencast` call, in order, so idempotence is observable. */
+  screencastCalls: boolean[] = [];
   /** Resolve/reject to settle an in-flight invocation from a test. */
   pending: Deferred<{ output: unknown }> | undefined;
   /** When set, invokeTool hangs until the test settles `pending`. */
@@ -69,6 +74,17 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
 
   emitTools(tools: ProviderToolDescriptor[]): void {
     this.callbacks.onToolsChanged(tools);
+  }
+
+  /** Push a painted frame at the runtime, as a screencast would. */
+  emitFrame(frame: Partial<WebMcpFrame> = {}): void {
+    this.callbacks.onFrame({
+      data: "ZmFrZS1mcmFtZQ==",
+      deviceWidth: 1280,
+      deviceHeight: 800,
+      ts: 1_000,
+      ...frame,
+    });
   }
 
   async navigate(url: string): Promise<void> {
@@ -115,6 +131,10 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
 
   viewportTransport(): WebMcpViewportTransport {
     return { kind: "native-window" };
+  }
+
+  async setScreencast(enabled: boolean): Promise<void> {
+    this.screencastCalls.push(enabled);
   }
 
   async dispose(): Promise<void> {

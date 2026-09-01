@@ -13,11 +13,24 @@ import {
   buildSessionExport,
   exportFilename,
 } from "@/lib/webmcp-inspector/session-export";
+import { WEBMCP_VIEWPORT } from "@/shared/webmcp-inspector-protocol";
 import type {
   WebMcpActivityEntry,
+  WebMcpFrame,
   WebMcpSessionStatus,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
+
+/**
+ * Cadence of the FALLBACK screenshot poll.
+ *
+ * Only reached when the viewport stream is unavailable: a server too old to
+ * know `set_screencast`, or a hosted session whose picture comes from somewhere
+ * else entirely. A second is deliberately slow — this path costs a full
+ * round-trip screenshot per tick, and it exists to keep the pane honest rather
+ * than to look live.
+ */
+const SCREENSHOT_POLL_MS = 1_000;
 
 /**
  * The WebMCP workspace: a URL bar, the live tool registry, one tool's schema
@@ -45,12 +58,14 @@ export function WebmcpInspectorTab() {
     starting,
     error,
     lastScreenshot,
+    liveFrame,
     startSession,
     closeSession,
     sendCommand,
     invokeTool,
     cancelInvocation,
     captureScreenshot,
+    setScreencast,
     clearError,
     reconnect,
     disconnect,
@@ -65,6 +80,18 @@ export function WebmcpInspectorTab() {
    * session rather than a preference that quietly persists.
    */
   const [hosted, setHosted] = useState(false);
+  /**
+   * Whether the pane should be showing the page at all.
+   *
+   * On by default: seeing the page you are inspecting is the point of the
+   * screen, and the stream is demand-driven precisely so that having it on by
+   * default costs nothing once nobody is looking. Off is for someone who wants
+   * the tool registry without a browser encoding JPEGs behind it.
+   */
+  const [liveView, setLiveView] = useState(true);
+  const [documentVisible, setDocumentVisible] = useState(
+    () => typeof document === "undefined" || document.visibilityState !== "hidden",
+  );
   const activeProjectId = useHostContextStore(
     (state) => state.activeProjectId,
   );
@@ -78,6 +105,61 @@ export function WebmcpInspectorTab() {
     reconnect();
     return () => disconnect();
   }, [reconnect, disconnect]);
+
+  // A backgrounded tab is not watching anything. Tracked as state rather than
+  // read inside the streaming effect so that becoming visible again RE-RUNS
+  // that effect, which is what restarts the stream.
+  useEffect(() => {
+    const onChange = () =>
+      setDocumentVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+
+  const live = Boolean(session) && session?.status !== "closed";
+  const transportKind = session?.viewportTransport.kind;
+  /** The hosted browser paints somewhere else; there is no screencast to ask for. */
+  const hostedViewport = transportKind === "remote-interactive-url";
+  const streaming = live && liveView && documentVisible;
+
+  /**
+   * Keep the pane fed while it is being looked at, and stop the moment it is
+   * not.
+   *
+   * Two sources, one pane. The viewport STREAM is the primary path — frames
+   * arrive as the page paints. The screenshot POLL is the fallback, for a
+   * server too old to know `set_screencast` and for a hosted session whose
+   * picture comes from the Browser panel instead. The fallback engages on its
+   * own, silently: someone running an older server should see their page, not
+   * an error explaining why they cannot.
+   */
+  useEffect(() => {
+    if (!streaming) return;
+    let cancelled = false;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const startPolling = () => {
+      if (cancelled || poll !== undefined) return;
+      void captureScreenshot();
+      poll = setInterval(() => void captureScreenshot(), SCREENSHOT_POLL_MS);
+    };
+
+    if (hostedViewport) {
+      startPolling();
+    } else {
+      void setScreencast(true).then((accepted) => {
+        if (!accepted) startPolling();
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      if (poll !== undefined) clearInterval(poll);
+      // Asked for unconditionally, including when the stream was never running:
+      // it is idempotent on the server, and a session left encoding frames for
+      // a pane nobody is looking at is exactly what demand-driving avoids.
+      if (!hostedViewport) void setScreencast(false);
+    };
+  }, [streaming, hostedViewport, setScreencast, captureScreenshot]);
 
   const selectedTool = tools.find((tool) => tool.toolKey === selectedToolKey);
   const pendingForSelected = pending.find(
@@ -95,8 +177,6 @@ export function WebmcpInspectorTab() {
         entry.kind === "invocation_settled" &&
         entry.toolKey === selectedToolKey,
     );
-
-  const live = Boolean(session) && session?.status !== "closed";
 
   /**
    * Hand the session's evidence to the developer as a file.
@@ -169,6 +249,19 @@ export function WebmcpInspectorTab() {
               onClick={() => void captureScreenshot()}
             >
               Screenshot
+            </Button>
+            <Button
+              size="sm"
+              variant={liveView ? "default" : "outline"}
+              aria-pressed={liveView}
+              onClick={() => setLiveView((on) => !on)}
+              title={
+                liveView
+                  ? "Streaming the page here. Turn it off to stop the browser encoding frames."
+                  : "Not streaming. Turn it on to watch the page here."
+              }
+            >
+              Live view
             </Button>
             <Button
               size="sm"
@@ -257,7 +350,15 @@ export function WebmcpInspectorTab() {
       ) : null}
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col border-r">
+        <div className="flex min-w-0 flex-1 flex-col overflow-auto border-r">
+          {live ? (
+            <ViewportPane
+              frame={liveFrame}
+              fallbackScreenshot={lastScreenshot}
+              streaming={streaming}
+              transportKind={transportKind}
+            />
+          ) : null}
           <ToolInvokePane
             tool={selectedTool}
             lastResult={lastResultForSelected}
@@ -318,6 +419,72 @@ export function WebmcpInspectorTab() {
         </aside>
       </div>
     </div>
+  );
+}
+
+/**
+ * The page, as a picture.
+ *
+ * Three sources in strict order, because they degrade rather than compete: the
+ * live frame if one has arrived, the last manual/polled screenshot if not, and
+ * a line of text if neither. The middle rung is what makes an older server, a
+ * hosted session, and the first few hundred milliseconds of a new one all show
+ * something rather than a hole.
+ *
+ * The frame carries its own device dimensions, so the box is sized from the
+ * frame rather than from a viewport constant: the two would only ever disagree
+ * during a resize, and that is exactly when a stale aspect ratio would letterbox
+ * the picture wrongly.
+ */
+function ViewportPane({
+  frame,
+  fallbackScreenshot,
+  streaming,
+  transportKind,
+}: {
+  frame: WebMcpFrame | undefined;
+  fallbackScreenshot: string | undefined;
+  streaming: boolean;
+  transportKind: WebMcpViewportTransport["kind"] | undefined;
+}) {
+  const source = frame?.data ?? fallbackScreenshot;
+  const aspect = frame
+    ? `${frame.deviceWidth} / ${frame.deviceHeight}`
+    : `${WEBMCP_VIEWPORT.width} / ${WEBMCP_VIEWPORT.height}`;
+
+  return (
+    <figure className="m-0 border-b bg-muted/20 p-3">
+      <div
+        className="relative mx-auto w-full max-w-3xl overflow-hidden rounded border bg-black/80"
+        style={{ aspectRatio: aspect }}
+      >
+        {source ? (
+          <img
+            // Distinct from the manual-capture thumbnail's alt below: two
+            // images described identically would give a screen reader no way
+            // to tell the live view from a snapshot someone took.
+            src={`data:image/jpeg;base64,${source}`}
+            alt="Live view of the inspected page"
+            className="h-full w-full object-contain"
+            // Frames arrive faster than a decode; letting the browser paint the
+            // previous one until this decodes is what keeps the pane from
+            // flashing black between frames.
+            decoding="async"
+          />
+        ) : (
+          <p className="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
+            {streaming
+              ? "Waiting for the first frame…"
+              : "Live view is off. Turn it on to watch the page here."}
+          </p>
+        )}
+      </div>
+      <figcaption className="pt-1 text-center text-[11px] text-muted-foreground">
+        {transportKind === "remote-interactive-url"
+          ? "Snapshots of your MCPJam computer's browser. Open the Browser panel to interact with it."
+          : "A live view of the page. Interact with it in the browser window."}
+      </figcaption>
+    </figure>
   );
 }
 

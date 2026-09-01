@@ -14,7 +14,11 @@ import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpToolGoneError } from "../provider";
-import type { WebMcpActivityEntry } from "@/shared/webmcp-inspector-protocol";
+import {
+  WEBMCP_FRAME_MAX_BYTES,
+  type WebMcpActivityEntry,
+  type WebMcpFrame,
+} from "@/shared/webmcp-inspector-protocol";
 import { startWebMcpFixtureServer, type WebMcpFixture } from "./fixture-page";
 import { buildWebMcpLaunchArgs } from "../launch-args";
 
@@ -85,10 +89,12 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
+    const frames: WebMcpFrame[] = [];
     runtime.hub.subscribe((event) => {
       if (event.type === "activity") activity.push(event.entry);
+      if (event.type === "frame") frames.push(event.frame);
     }, 0);
-    return { session, runtime, activity };
+    return { session, runtime, activity, frames };
   }
 
   it("discovers the page's tools with stable keys and provenance", async () => {
@@ -258,6 +264,54 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     const shot = await runtime.screenshotNow();
     expect(typeof shot).toBe("string");
     expect((shot ?? "").length).toBeGreaterThan(100);
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("streams the page, keeps its ack loop turning, and stops on demand", async () => {
+    const { runtime, frames, activity } = await open();
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
+
+    await runtime.setScreencast(true);
+    // A frame at all proves the whole chain: Playwright's new headless answers
+    // `Page.startScreencast`, the session's existing CDPSession carries the
+    // events, and the runtime publishes them.
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    const first = frames.at(-1)!;
+    expect(first.data.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(first.data, "base64")).toBeLessThanOrEqual(
+      WEBMCP_FRAME_MAX_BYTES,
+    );
+    expect(first.deviceWidth).toBeGreaterThan(0);
+    expect(first.deviceHeight).toBeGreaterThan(0);
+
+    // Chromium gates the next frame on our ack, so a wedged ack loop shows up
+    // as a stream that delivers one frame and then goes quiet forever. Repaint
+    // the page and require another frame to prove it is still turning.
+    const before = frames.length;
+    await runtime.navigateCommand({ type: "reload" });
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(before), {
+      timeout: 15_000,
+    });
+
+    await runtime.setScreencast(false);
+    // Let anything already in flight land, then require quiet.
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const afterStop = frames.length;
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(frames.length).toBe(afterStop);
+
+    // The point of keeping frames out of the ring: after a stream's worth of
+    // paints, the timeline the session exists to produce is still all there.
+    expect(activity.some((entry) => entry.kind === "tools_added")).toBe(true);
+    expect(activity.some((entry) => entry.kind === "session_started")).toBe(
+      true,
+    );
+
     await registry.disposeAll();
   }, 60_000);
 });

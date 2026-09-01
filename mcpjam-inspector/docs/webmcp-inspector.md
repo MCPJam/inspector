@@ -39,10 +39,50 @@ hosted stage can run the browser elsewhere without reaching into tool identity,
 queueing, activity or lifecycle. `playwright-provider.ts` is the only module in
 the repo that speaks CDP.
 
-`viewportTransport` on the session is the same seam for the viewer. V1 reports
-`native-window` (the browser opens on the developer's machine and they drive it)
-or `headless`; a remote provider will report an interactive URL, and the client
-renders whichever it is handed.
+`viewportTransport` on the session is the same seam for the viewer. A local
+session reports `native-window` (the browser opens on the developer's machine
+and they drive it) or `headless`; the hosted provider reports an interactive
+URL; and a session whose picture comes from the CDP screencast reports
+`frame-stream`. The client renders whichever it is handed.
+
+## Watching the page inside the product
+
+The inspector's left pane shows the page as it paints, over the same session
+that carries tools and invocations:
+
+```
+Page.screencastFrame → ack FIRST → oversize drop → 10fps throttle (with a
+mandatory trailing frame) → runtime publishFrame → hub's coalesced slot → SSE
+→ store liveFrame → the pane
+```
+
+Four properties hold this together, and each one is a bug if it is dropped:
+
+- **Ack before anything else.** Chromium sends the next frame only once the
+  current one is acknowledged. Acking after consumption lets a slow consumer
+  starve the stream into stillness.
+- **Frames never enter the replay ring.** They live in a single coalesced slot
+  beside the latest tool snapshot, so a page animating at 10fps cannot flush the
+  timeline the session exists to produce. A reconnecting client replays exactly
+  one frame: the current one.
+- **The throttle's trailing frame is mandatory.** The last paint of a burst is
+  the one that shows what the page ended up looking like; drop it and a settled
+  page leaves the pane stale forever.
+- **Frames do not tick the idle clock.** A CSS spinner paints forever, and a
+  session that could not be reaped while animating would hold a capacity slot
+  nobody is using. Asking for the stream *does* tick it — that is a person
+  opening the pane.
+
+Streaming is demand-driven through the `set_screencast` command, sent when the
+pane is visible and withdrawn when it is not. A server that predates the command
+answers 400, and the client silently falls back to a 1s screenshot poll — which
+is also the path for a hosted session, whose viewport lives in the Browser
+panel.
+
+Frames are TRANSIENT and deliberately distinct from the screenshots on
+invocation entries: those are persisted evidence at a 64 KiB budget, exported
+with the session; a frame is a 256 KiB picture that the next paint replaces and
+that nothing keeps. Never source one from the other.
 
 ## Three gates
 

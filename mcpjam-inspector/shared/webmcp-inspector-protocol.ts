@@ -123,7 +123,13 @@ export type WebMcpCommand =
       source: WebMcpInvocationSource;
     }
   | { type: "cancel_invocation"; invokeId: string }
-  | { type: "capture_screenshot" };
+  | { type: "capture_screenshot" }
+  /**
+   * Turn the viewport stream on or off. DEMAND-DRIVEN on purpose: a page
+   * nobody is looking at should not be encoding JPEGs, so the client asks for
+   * frames when its pane is visible and stops asking when it is not.
+   */
+  | { type: "set_screencast"; enabled: boolean };
 
 export type WebMcpCommandResult =
   | { ok: true }
@@ -197,6 +203,33 @@ export type WebMcpActivityEntry =
   | { id: string; ts: number; kind: "session_error"; message: string }
   | { id: string; ts: number; kind: "unsupported"; message: string };
 
+/**
+ * One painted frame of the inspected page, for the `frame-stream` viewport.
+ *
+ * TRANSIENT, and deliberately not an activity entry. Frames never enter the
+ * replay ring, never appear in an export, and carry no history worth keeping:
+ * the only interesting frame is the current one. That is also why they are
+ * distinct from the `screenshotBase64` on an invocation entry, which is
+ * PERSISTED EVIDENCE at a much smaller budget — a frame may even predate the
+ * settle it appears beside, because coalescing keeps the last *paint* rather
+ * than the paint at any particular moment. Never source one from the other.
+ *
+ * The device dimensions ride on every frame rather than being read from
+ * {@link WEBMCP_VIEWPORT}: the client scales pointer coordinates against them,
+ * and a frame whose dimensions came from somewhere other than the frame itself
+ * would put clicks in the wrong place the moment the two disagreed.
+ */
+export interface WebMcpFrame {
+  /** Base64 JPEG, capped at {@link WEBMCP_FRAME_MAX_BYTES}. */
+  data: string;
+  /** Width of the captured surface, in device pixels. */
+  deviceWidth: number;
+  /** Height of the captured surface, in device pixels. */
+  deviceHeight: number;
+  /** Wall-clock capture time. */
+  ts: number;
+}
+
 export type WebMcpEvent =
   | { type: "session"; seq: number; session: WebMcpSessionPublic }
   /**
@@ -205,7 +238,14 @@ export type WebMcpEvent =
    * correct on arrival no matter what it missed.
    */
   | { type: "tools"; seq: number; tools: WebMcpToolDescriptor[] }
-  | { type: "activity"; seq: number; entry: WebMcpActivityEntry };
+  | { type: "activity"; seq: number; entry: WebMcpActivityEntry }
+  /**
+   * Coalesced, not queued: the hub keeps ONE of these per session and replaces
+   * it, so a page animating at 10fps cannot flush the activity ring. `seq` is
+   * still stamped from the session's own counter so a replayed frame sorts into
+   * place beside the events around it.
+   */
+  | { type: "frame"; seq: number; frame: WebMcpFrame };
 
 /**
  * Cap on a result, both for what we persist in the timeline and what a model
@@ -233,6 +273,25 @@ export const WEBMCP_TOOL_DESCRIPTION_MAX_CHARS = 512;
 export const WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8 * 1024;
 
 export const WEBMCP_VIEWPORT = { width: 1280, height: 800 } as const;
+
+/** JPEG quality for streamed frames. Legible text, roughly a tenth the bytes. */
+export const WEBMCP_FRAME_QUALITY = 50;
+
+/**
+ * Hard cap on one streamed frame.
+ *
+ * Four times the 64 KiB budget the timeline's screenshots live under, and
+ * deliberately so: a frame is TRANSIENT — it is replaced by the next paint and
+ * never persisted — so the cost of a big one is one SSE write, not a permanent
+ * entry in an export. An oversized frame is DROPPED rather than re-encoded in
+ * the hot path; the provider converges the pane by publishing one budgeted
+ * screenshot instead, so a page whose final paint never fits still stops being
+ * stale.
+ */
+export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
+
+/** Floor on the gap between published frames: 10fps. */
+export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
 
 /** Marker appended to a truncated string result. */
 export function truncationMarker(totalBytes: number): string {

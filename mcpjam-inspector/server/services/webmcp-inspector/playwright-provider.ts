@@ -16,9 +16,15 @@ import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import { existsSync } from "node:fs";
 import { ensureLocalChromiumInstalled } from "../../utils/browser-rendering-setup";
 import {
+  WEBMCP_FRAME_MAX_BYTES,
+  WEBMCP_FRAME_MIN_INTERVAL_MS,
+  WEBMCP_FRAME_QUALITY,
   WEBMCP_VIEWPORT,
+  type WebMcpFrame,
   type WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
+import { createFrameThrottle, type FrameThrottle } from "./frame-throttle";
+import { logger } from "../../utils/logger.js";
 import {
   buildWebMcpLaunchArgs,
   PAGE_API_PROBE,
@@ -78,6 +84,15 @@ interface CdpToolInvoked {
   invocationId: string;
   input: string;
 }
+interface CdpScreencastFrame {
+  data: string;
+  sessionId: number;
+  metadata?: {
+    deviceWidth?: number;
+    deviceHeight?: number;
+    timestamp?: number;
+  };
+}
 
 /** As in the widget harness: a hung close must not block shutdown. */
 async function waitForClose(promise: Promise<unknown> | undefined) {
@@ -96,7 +111,14 @@ function originOf(url: string): string {
   }
 }
 
-class PlaywrightWebMcpSession implements WebMcpBrowserSession {
+/**
+ * Exported for `__tests__/playwright-provider.screencast.test.ts`, which drives
+ * the CDP wiring with fakes. The screencast path is the one part of this file
+ * whose ordering (ack before anything else) cannot be observed from the
+ * provider's public surface, and the Chromium-gated integration suite only runs
+ * where a WebMCP-capable build exists.
+ */
+export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
   private readonly tools = new Map<string, CdpTool>();
   /** frameId to last known URL, for origin labelling and subframe detection. */
@@ -120,6 +142,11 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   private url: string;
   private mainFrameId = "";
   private disposed = false;
+  /** Whether the browser is currently painting frames at us. */
+  private screencasting = false;
+  private readonly frameThrottle: FrameThrottle<WebMcpFrame>;
+  /** One in-flight budgeted substitute at a time; see `substituteFrame`. */
+  private substituting = false;
 
   constructor(
     private readonly browser: Browser,
@@ -131,6 +158,10 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     private readonly headless: boolean,
   ) {
     this.url = startUrl;
+    this.frameThrottle = createFrameThrottle<WebMcpFrame>({
+      minIntervalMs: WEBMCP_FRAME_MIN_INTERVAL_MS,
+      emit: (frame) => this.callbacks.onFrame(frame),
+    });
   }
 
   async start(url: string): Promise<void> {
@@ -247,6 +278,79 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       this.dropToolsForFrame(frameId);
       this.emitTools();
     });
+
+    this.cdp.on("Page.screencastFrame", (event) => {
+      const frame = event as CdpScreencastFrame;
+      // ACK FIRST, before any size check, throttling or publishing. Chromium
+      // sends the NEXT frame only once the current one is acknowledged, so an
+      // ack that waits on consumption lets a slow consumer starve the stream
+      // into stillness — and the pane would then show a page frozen at whatever
+      // it looked like when the consumer fell behind.
+      void this.cdp
+        .send(
+          "Page.screencastFrameAck" as never,
+          {
+            sessionId: frame.sessionId,
+          } as never,
+        )
+        .catch(() => {});
+
+      // A frame already in flight when the stream was stopped. Publishing it
+      // would repaint a pane the client has just cleared, with a picture
+      // nothing is going to correct afterwards.
+      if (!this.screencasting || this.disposed) return;
+
+      // A frame is transient — the next paint replaces it — so an oversized one
+      // is dropped rather than re-encoded in the hot path. But the throttle's
+      // trailing-frame guarantee does not cover THIS drop, so a complex page
+      // whose final paint never fits would leave the pane stale forever.
+      // Converge it with one budgeted screenshot instead: lower fidelity, but
+      // the current paint.
+      const bytes = Buffer.byteLength(frame.data, "base64");
+      if (bytes > WEBMCP_FRAME_MAX_BYTES) {
+        void this.substituteFrame();
+        return;
+      }
+
+      this.frameThrottle.push({
+        data: frame.data,
+        deviceWidth: frame.metadata?.deviceWidth ?? WEBMCP_VIEWPORT.width,
+        deviceHeight: frame.metadata?.deviceHeight ?? WEBMCP_VIEWPORT.height,
+        ts: Date.now(),
+      });
+    });
+  }
+
+  /**
+   * Publish one frame through the BUDGETED screenshot path, for a paint the
+   * screencast could not deliver under the frame cap.
+   *
+   * Reuses `captureScreenshot()` rather than re-encoding here: that path is
+   * already the tested one (64 KiB, q50 then q30@640 on retry), and having two
+   * shrink policies would mean two things to keep in step.
+   *
+   * Single-flight, because the frames that trigger it arrive in bursts and a
+   * screenshot per oversized frame would queue CDP round trips behind a page
+   * that is already expensive to encode.
+   */
+  private async substituteFrame(): Promise<void> {
+    if (this.substituting || this.disposed || !this.screencasting) return;
+    this.substituting = true;
+    try {
+      const data = await this.captureScreenshot();
+      if (!data || this.disposed || !this.screencasting) return;
+      this.frameThrottle.push({
+        data,
+        // The budgeted retry may have clipped to a narrower crop, but the
+        // client scales by the frame's own dimensions, so reporting the
+        // viewport it was captured from keeps the picture in the right box.
+        deviceWidth: WEBMCP_VIEWPORT.width,
+        deviceHeight: WEBMCP_VIEWPORT.height,
+        ts: Date.now(),
+      });
+    } finally {
+      this.substituting = false;
+    }
   }
 
   private wirePage(): void {
@@ -459,6 +563,38 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     return this.url;
   }
 
+  async setScreencast(enabled: boolean): Promise<void> {
+    if (this.disposed || enabled === this.screencasting) return;
+    this.screencasting = enabled;
+    if (enabled) {
+      // Rides the session's existing CDPSession — the same one `Page.enable`
+      // and the WebMCP domain are on. A second session would double every
+      // event this class already handles.
+      //
+      // Page-target-level, so it survives navigations: the pane keeps painting
+      // across a page load without anything re-arming it.
+      await this.cdp
+        .send(
+          "Page.startScreencast" as never,
+          {
+            format: "jpeg",
+            quality: WEBMCP_FRAME_QUALITY,
+            maxWidth: WEBMCP_VIEWPORT.width,
+            maxHeight: WEBMCP_VIEWPORT.height,
+          } as never,
+        )
+        .catch((error) => {
+          this.screencasting = false;
+          logger.debug("[webmcp] could not start the screencast", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+    this.frameThrottle.reset();
+    await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
+  }
+
   viewportTransport(): WebMcpViewportTransport {
     // V1 runs the browser on the developer's own machine, so the viewport IS
     // the window in front of them — unless it was launched headless, where
@@ -471,6 +607,13 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    // Before the context closes, so the browser stops encoding immediately
+    // rather than painting into a teardown that is racing a timeout.
+    this.frameThrottle.reset();
+    if (this.screencasting) {
+      this.screencasting = false;
+      await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
+    }
     for (const [, waiter] of this.pending) {
       waiter.reject(new Error("The browser session was closed."));
     }

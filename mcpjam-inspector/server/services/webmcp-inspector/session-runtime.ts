@@ -17,6 +17,7 @@ import {
   WEBMCP_INVOKE_QUEUE_LIMIT,
   WEBMCP_INVOKE_TIMEOUT_MS,
   type WebMcpActivityEntry,
+  type WebMcpFrame,
   type WebMcpInvocationSource,
   type WebMcpInvocationState,
   type WebMcpSessionPublic,
@@ -193,6 +194,7 @@ export class WebMcpSessionRuntime {
             : undefined,
         }),
       onActivityObserved: () => this.onActivity(),
+      onFrame: (frame) => this.publishFrame(frame),
       onCrashed: (message) => {
         this.setStatus("error", message);
         this.pushActivity({ kind: "session_error", message });
@@ -306,6 +308,18 @@ export class WebMcpSessionRuntime {
     const shot = await this.requireSession().captureScreenshot();
     this.onActivity();
     return shot;
+  }
+
+  /**
+   * Start or stop the viewport stream.
+   *
+   * Ticks the idle clock, unlike the frames it produces: ASKING for frames is a
+   * person opening the pane, which is exactly the kind of interest that should
+   * postpone reaping. The frames themselves are the page painting, which is not.
+   */
+  async setScreencast(enabled: boolean): Promise<void> {
+    await this.requireSession().setScreencast(enabled);
+    this.onActivity();
   }
 
   private requireSession(): WebMcpBrowserSession {
@@ -547,6 +561,22 @@ export class WebMcpSessionRuntime {
       seq: this.nextSeq(),
       session: this.toPublic(),
     });
+  }
+
+  /**
+   * Publish one painted frame.
+   *
+   * Its own path rather than an activity entry, for two independent reasons.
+   * A frame is not a protocol happening, so it does not belong on the timeline
+   * or in an export — and `pushActivity` writes to the replay ring, which a
+   * 10fps stream would empty of everything else within seconds.
+   *
+   * It also does NOT call `onActivity()`. A page with a CSS spinner paints
+   * forever; ticking the idle clock from a paint would make every abandoned
+   * animated page unreapable.
+   */
+  private publishFrame(frame: WebMcpFrame): void {
+    this.publish({ type: "frame", seq: this.nextSeq(), frame });
   }
 
   private pushActivity(entry: WebMcpActivityDraft): void {

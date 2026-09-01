@@ -29,7 +29,8 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
  *   POST   /api/mcp/webmcp/sessions              open a browser at a URL
  *   GET    /api/mcp/webmcp/sessions/:id          session + current tool set
  *   GET    /api/mcp/webmcp/sessions/:id/events   SSE: session/tools/activity
- *   POST   /api/mcp/webmcp/sessions/:id/command  navigate / invoke / cancel
+ *   POST   /api/mcp/webmcp/sessions/:id/command  navigate / invoke / cancel /
+ *                                                 stream the viewport
  *   DELETE /api/mcp/webmcp/sessions/:id          close + dispose
  *
  * LOCAL ONLY, by construction rather than by check: `/api/mcp/*` is mounted
@@ -100,6 +101,7 @@ const commandSchema = z.discriminatedUnion("type", [
     invokeId: z.string().min(1),
   }),
   z.object({ type: z.literal("capture_screenshot") }),
+  z.object({ type: z.literal("set_screencast"), enabled: z.boolean() }),
 ]);
 
 /**
@@ -371,6 +373,9 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           ok: true,
           screenshotBase64: await runtime.screenshotNow(),
         });
+      case "set_screencast":
+        await runtime.setScreencast(command.enabled);
+        return c.json({ ok: true });
     }
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not run that command.");
