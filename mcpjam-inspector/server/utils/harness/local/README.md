@@ -253,15 +253,64 @@ becomes exactly such an entry under a `hidepid` mount, and exempting the error
 then reports the tree gone while it is running.
 
 The trade is a fail-OPEN safety hole against a fail-CLOSED functional one. On a
-`hidepid` mount the probe will answer `unknown` often, so stops report unproven
-and the janitor retains records — noisy, but the termination itself is
-unaffected: an unprovable group escalates to `SIGKILL` exactly as a live one
-does, and only the reporting and the record retention change. That last part was
-briefly untrue — the `unknown` branch returned _above_ the escalation, so a
-child ignoring `SIGTERM` was never force-killed — which is why it is now pinned
-by a test rather than asserted in a comment. Given that this file exists
-because the same trade kept being made the wrong way round, it is made the other
-way here.
+`hidepid` mount the probe answers `unknown` often, so stops report unproven and
+the janitor retains records rather than reclaiming them. Given that this file
+exists because the same trade kept being made the wrong way round, it is made
+the other way here.
+
+An unprovable group is **not** force-killed either, and the reason is narrow.
+Every caller of `settleGroup` has already proven the ROOT is gone, so its pid is
+free for reuse; what makes `kill(-pid)` safe anyway is that a pid serving as a
+process-GROUP id is not reissued _while that group has members_ — a guarantee
+about a non-empty group, and `unknown` is exactly the failure to establish it.
+So the general rule that `unknown` gates reporting rather than action does not
+reach this signal: the action needs the very fact `unknown` is missing.
+
+`live` is necessary but not sufficient, and the first version of this paragraph
+got that wrong — it read the rule as making a non-empty group's id proof that
+the group was ours. It is not. The rule is about the FUTURE of a group that
+still has a member: from that moment its id cannot be reissued underneath us. It
+says nothing about a group that emptied. Once ours emptied its id went free, and
+any unrelated process could have taken that pid, made itself a group leader and
+exited, leaving a live group wearing our recorded id with nothing of ours in it
+— which is what an ordinary shell pipeline whose first stage exits early, or a
+double-forking daemon, leaves behind. So `live` says a group with this id
+exists, not that it is ours.
+
+What makes it ours is an **anchor**: a moment at which the group was known to be
+ours _and_ non-empty. A stranger's group carrying our id can only have been
+created after ours emptied, so it cannot predate the anchor. Inside a single
+termination call there is one — the root was verified alive and carrying its
+recorded birth identity just before being signalled, and a leader belongs to its
+own group — and only the grace window separates it from the probe.
+
+Two paths have no anchor at all, and neither signals now:
+
+- `settleGroup` reached with the root already gone on its FIRST look. Nothing in
+  that call ever saw the tree; the group is reported, not signalled.
+- The janitor's dead-root branch. It only runs for a record whose owning
+  supervisor has provably exited, so arbitrary time has passed since anything of
+  ours was in that group. It reports `escaped` and keeps the record.
+
+That costs a real capability: a stray left behind by a harness that exited on
+its own is no longer swept at `stopSession`. It is reported and its record
+retained instead, which an operator can act on — the trade being that an
+unswept survivor you can see beats a `SIGKILL` delivered to whoever now holds
+the id. Restoring the sweep soundly needs per-MEMBER identity rather than a
+group signal: enumerate the group once at the instant the root exits, while its
+id provably still belongs to us, record each member's pid and birth identity,
+and then verify each with `isSameProcess` before signalling it individually.
+That is immune to pid reuse; it is also a new platform primitive plus supervisor
+plumbing, and is not implemented yet.
+
+Even the anchored signal is bounded rather than airtight: our group could empty
+and its id be reissued inside the grace window. That needs the pid space to wrap
+within a few seconds, and ruling it out needs the same per-member identity proof.
+It is stated here rather than papered over.
+
+These lines have been written both ways, so every direction is pinned by tests,
+and each was checked to fail against the opposite behaviour rather than merely
+to pass against the current one.
 
 ### "Gone" and "cannot tell" are different answers
 

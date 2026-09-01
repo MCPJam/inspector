@@ -31,7 +31,6 @@ import { createLocalStateMutationLock } from "./local-state-lock.js";
 import {
   probeProcess,
   probeProcessGroup,
-  signalProcessGroup,
   supportsOwnershipProof,
   terminateOwnedProcessGroup,
   type ProcessBirthIdentity,
@@ -329,34 +328,36 @@ export function reclaimAbandonedProcesses(args: {
       }
       if (rootProbe.state === "gone") {
         // The ROOT is gone, but a descendant it spawned can still be running:
-        // the process group outlives its leader. Signal the recorded group
-        // before dropping the record, otherwise this is the moment the only
-        // durable handle on those survivors is thrown away.
+        // the process group outlives its leader. Look before dropping the
+        // record, otherwise this is the moment the only durable handle on
+        // those survivors is thrown away.
         //
-        // Safe despite the root's pid being free: a pid still in use as a
-        // process-group id is not handed out as a new process's pid while the
-        // group has members, so this can only reach the group we recorded. If
-        // the group is already empty the signal is a harmless ESRCH.
-        // Only signal a group the record itself vouches for: a malformed
-        // `processGroupIdentity` is not a licence to signal an arbitrary pid.
-        const vouched = record.processGroupIdentity === String(record.rootPid);
-        if (vouched) {
-          signalProcessGroup(record.rootPid, "SIGKILL", platform);
-          // Give the survivors a moment before confirming.
-          await new Promise((r) => setTimeout(r, 200));
-        }
-        // Confirmed in BOTH cases. Being unable to vouch for the group is a
-        // reason not to SIGNAL it; it is an even stronger reason not to throw
-        // away the only durable handle on a tree nobody has looked at. (This
-        // path is unreachable on win32, where the group probe always answers
-        // `unknown` — ownership proof gates it above.)
+        // LOOK, but do not signal. An earlier version sent SIGKILL to the
+        // recorded group here, on the grounds that a pid in use as a
+        // process-group id is not reissued while that group has members, so
+        // the signal "can only reach the group we recorded". That rule is
+        // about the FUTURE of a non-empty group; it says nothing about a group
+        // that emptied. This record was written by a supervisor that has since
+        // exited — that is the precondition for reaching this line — so
+        // arbitrary time has passed, and if the tree finished normally its id
+        // went free long ago. Any unrelated process could then have taken that
+        // pid, led a new group with it and exited, leaving a live group under
+        // our recorded id: an ordinary shell pipeline does exactly that. There
+        // is no observation left that ties this group to our tree, so the
+        // honest move is to report the survivors and keep the handle rather
+        // than SIGKILL a stranger's process group.
+        //
+        // `terminateOwnedProcessGroup` below still signals, because it gets
+        // its anchor by proving the root alive and ours first; see the note on
+        // `settleGroup`. (This path is unreachable on win32, where the group
+        // probe always answers `unknown` — ownership proof gates it above.)
         const group = await probeProcessGroup(record.rootPid, platform);
         if (group === "live") {
           survivors.push(record);
           results.push({ sessionId: record.sessionId, outcome: "escaped" });
           logger.warn(
             "[local-harness] descendants outlived their root; record kept",
-            { sessionId: record.sessionId, vouched },
+            { sessionId: record.sessionId },
           );
           continue;
         }
