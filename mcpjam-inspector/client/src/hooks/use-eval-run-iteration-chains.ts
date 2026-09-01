@@ -127,7 +127,8 @@ export function useEvalRunIterationChains({
             },
             controller.signal,
           );
-          for (const item of page.items) chains.set(item.iterationId, item.chain);
+          for (const item of page.items)
+            chains.set(item.iterationId, item.chain);
           cursor = page.nextCursor;
           pages += 1;
         } while (cursor && pages < ITERATION_CHAIN_PAGE_CAP);

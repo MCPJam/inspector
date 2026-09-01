@@ -222,6 +222,7 @@ export function IterationDetails({
   layoutMode = "compact",
   caseInsightSlot,
   judgeCase = null,
+  trialChainSlot,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -231,6 +232,17 @@ export function IterationDetails({
   caseInsightSlot?: ReactNode;
   /** Advisory judge verdict for this case+run; surfaced on the Results tab. */
   judgeCase?: JudgeCase | null;
+  /**
+   * This trial's user-value chain — where value stopped travelling, and why.
+   *
+   * A SLOT, not a read this component performs. It has five hosts and knows
+   * only its iteration: not the run it belongs to, not the project, not
+   * whether the Evaluate opt-in is on — and the chain read needs all three.
+   * The one host that holds them builds the node; the other four pass nothing
+   * and issue no request, which is what keeps this shared component free of a
+   * fetch four of its callers never asked for.
+   */
+  trialChainSlot?: ReactNode;
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -1020,6 +1032,16 @@ export function IterationDetails({
       )}
     >
       {previewTraceToolbar}
+      {/* WHERE VALUE STOPPED, above the transcript.
+          A reader who opened this trial is asking why it did not deliver, and
+          the answer is six cards wide — putting it under the trace would make
+          them scroll a transcript to reach the summary of it. Absent for the
+          hosts that pass no slot, which is most of them. */}
+      {trialChainSlot ? (
+        <div className="shrink-0 px-3" data-testid="iteration-trial-chain">
+          {trialChainSlot}
+        </div>
+      ) : null}
       {/* Advisory judge verdict — pinned under the tab row so it's visible on
           every tab (Steps/Chat/Results/Trace/App/Raw), not buried in one. */}
       {layoutMode === "full" && judgeCase ? (

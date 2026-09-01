@@ -1183,6 +1183,12 @@ export function SuiteIterationsView({
                   availableModels={availableModels}
                   suiteIterations={allIterations}
                   suiteRuns={runs}
+                  // The same opt-in and project gate the decision card beside
+                  // it rides. With this false the trace pane issues no chain
+                  // request at all.
+                  trialChainEnabled={Boolean(
+                    evaluateDecisionSummary && projectId,
+                  )}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}

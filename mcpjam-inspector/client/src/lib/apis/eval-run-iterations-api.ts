@@ -40,10 +40,7 @@ import { PlatformApiClient, isPlatformApiError } from "@mcpjam/sdk/platform";
 import { authFetch } from "@/lib/session-token";
 
 export type EvalRunIterationsFailureKind =
-  | "notFound"
-  | "routeUnavailable"
-  | "invalidContract"
-  | "requestFailed";
+  "notFound" | "routeUnavailable" | "invalidContract" | "requestFailed";
 
 export class EvalRunIterationsError extends Error {
   readonly kind: EvalRunIterationsFailureKind;
