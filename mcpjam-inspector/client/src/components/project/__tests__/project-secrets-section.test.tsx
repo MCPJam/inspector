@@ -224,6 +224,82 @@ describe("ProjectSecretsSection — rotate dialog", () => {
   });
 });
 
+describe("ProjectSecretsSection — delete confirmation", () => {
+  /** Open the delete confirmation for one row, by the button's title. */
+  const openDelete = (name: string) => {
+    const rows = screen.getAllByTitle("Delete this secret");
+    const index = [STRIPE.name, GITHUB.name].indexOf(name);
+    fireEvent.click(rows[index]!);
+  };
+
+  const clickConfirm = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+  const pressEscape = () =>
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+
+  /**
+   * Abandon a pending delete of STRIPE and open GH_TOKEN's confirmation in its
+   * place, returning the settle function for the abandoned request.
+   *
+   * Only the Cancel BUTTON is disabled while a delete is in flight — Esc still
+   * closes the dialog, and the row buttons behind it are gated on permission,
+   * not on `busy` — so this sequence is reachable by an ordinary user, not just
+   * in principle.
+   */
+  const abandonStripeDeleteThenOpenGithub = () => {
+    let settle!: (outcome: { ok: true } | { error: Error }) => void;
+    mocks.remove.mockReturnValueOnce(
+      new Promise((resolve, reject) => {
+        settle = (outcome) =>
+          "error" in outcome ? reject(outcome.error) : resolve(outcome);
+      }),
+    );
+    renderSection();
+
+    openDelete("STRIPE_API_KEY");
+    clickConfirm();
+    pressEscape();
+
+    openDelete("GH_TOKEN");
+    expect(screen.getByText("Delete GH_TOKEN?")).toBeInTheDocument();
+    return settle;
+  };
+
+  it("does not close another secret's confirmation when a stale delete succeeds", async () => {
+    const settle = abandonStripeDeleteThenOpenGithub();
+
+    await act(async () => {
+      settle({ ok: true });
+      await Promise.resolve();
+    });
+
+    // The abandoned STRIPE request must not reach in and dismiss the dialog the
+    // user is now looking at — which would read as the delete having happened.
+    expect(screen.getByText("Delete GH_TOKEN?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+  });
+
+  it("does not report a stale delete's failure against another secret", async () => {
+    const settle = abandonStripeDeleteThenOpenGithub();
+
+    await act(async () => {
+      settle({ error: new Error("stripe key is still in use") });
+      await Promise.resolve();
+    });
+
+    // STRIPE's failure shown under GH_TOKEN's name is worse than showing
+    // nothing: it invites the user to act on the wrong credential.
+    expect(
+      screen.queryByText("stripe key is still in use"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Delete GH_TOKEN?")).toBeInTheDocument();
+  });
+});
+
 describe("ProjectSecretsSection — create dialog", () => {
   const openCreate = () =>
     fireEvent.click(screen.getByRole("button", { name: /new secret/i }));

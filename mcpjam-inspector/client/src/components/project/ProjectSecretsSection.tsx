@@ -103,19 +103,48 @@ export function ProjectSecretsSection({
     );
   }, [deleting, environments]);
 
+  /**
+   * Which delete attempt is current. Bumped by every close, captured by every
+   * confirm — the same token `CreateSecretDialog` uses below, for the same
+   * reason.
+   *
+   * Only the Cancel BUTTON is disabled while a delete is in flight; Esc and the
+   * overlay still close the dialog, and the row buttons behind it are gated on
+   * permission rather than on `busy`. So the user can abandon a pending delete
+   * and open the confirmation for a DIFFERENT secret before the first request
+   * settles. Without this token that request's late writes land on a dialog it
+   * no longer owns: its success would silently close the new confirmation, and
+   * its failure would report the first secret's error against the second one.
+   */
+  const deleteAttempt = useRef(0);
+
+  const closeDelete = () => {
+    deleteAttempt.current += 1;
+    // Cleared HERE rather than in the abandoned request's `finally`, which is
+    // gated on still owning the attempt — otherwise `busy` would stay true and
+    // disable Delete and Cancel on every subsequent confirmation.
+    setBusy(false);
+    setDeleteError(null);
+    setDeleting(null);
+  };
+
   const confirmDelete = async () => {
     if (!deleting) return;
+    const attempt = deleteAttempt.current;
+    const owned = () => deleteAttempt.current === attempt;
     setBusy(true);
     setDeleteError(null);
     try {
       await deleteSecret({ projectId, secretId: deleting.secretId });
+      if (!owned()) return;
       setDeleting(null);
     } catch (error) {
+      if (!owned()) return;
       setDeleteError(
         error instanceof Error ? error.message : "Failed to delete the secret.",
       );
     } finally {
-      setBusy(false);
+      if (owned()) setBusy(false);
     }
   };
 
@@ -220,7 +249,7 @@ export function ProjectSecretsSection({
       <AlertDialog
         open={deleting !== null}
         onOpenChange={(open) => {
-          if (!open) setDeleting(null);
+          if (!open) closeDelete();
         }}
       >
         <AlertDialogContent>

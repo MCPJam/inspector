@@ -246,6 +246,44 @@ describe("scrubDeep", () => {
     expect(scrubbed).not.toContain("abcdefgh");
   });
 
+  it("scrubs a credential nested past any fixed escape depth", () => {
+    // The depth-3 cap was a cliff, not a limit. Each escaped form is a distinct
+    // string that contains none of the shallower ones — re-escaping DOUBLES the
+    // backslash run in front of the quote, so the depth-3 needle does not line
+    // up inside the depth-4 form. A credential wrapped one level past the cap
+    // therefore survived whole and came back out the moment a consumer decoded
+    // the nesting.
+    //
+    // Driven over a RANGE rather than at depth 4 alone: a test pinned to the
+    // first depth past the old cap would pass again for any new constant, which
+    // is the bug rather than a fix.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+
+    for (let depth = 1; depth <= 6; depth++) {
+      // `depth` rounds of serialization, exactly what a chain of tools each
+      // returning the previous one's JSON as a string produces.
+      let carrier: string = quoted.value;
+      for (let i = 0; i < depth; i++) carrier = JSON.stringify({ v: carrier });
+
+      // Precondition: this really is escaped `depth` times over, so the case
+      // being claimed is the case being run.
+      const runOfBackslashes = "\\".repeat(2 ** depth - 1);
+      expect(carrier).toContain(`abcdefgh${runOfBackslashes}"i`);
+
+      const scrubbed = scrubber.scrubSerializedJson(carrier);
+
+      // Decoded back through every level: the credential must not be
+      // recoverable from what we persisted.
+      let decoded: unknown = JSON.parse(scrubbed);
+      for (let i = 1; i < depth; i++) {
+        decoded = JSON.parse((decoded as { v: string }).v);
+      }
+      expect((decoded as { v: string }).v).toBe("[secret:ODD_KEY]");
+      expect(scrubbed).not.toContain("abcdefgh");
+    }
+  });
+
   it("scrubs backslash- and newline-bearing values at nesting depth two", () => {
     const pem = { name: "PEM_KEY", value: "-----BEGIN-----\nab\\c\n" };
     const scrubber = createSecretScrubber([pem])!;
