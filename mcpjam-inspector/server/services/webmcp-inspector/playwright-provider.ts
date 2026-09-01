@@ -151,6 +151,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * them is refused by the single-flight guard. Without this the pane would
    * settle on the picture that happened to be current when the first of the
    * burst arrived, which is the oldest of them.
+   *
+   * Drained by `oversizeTick` rather than by the capture that set it, so that
+   * a page painting continuously above the cap is paced at the housekeeping
+   * cadence instead of spinning captures back to back.
    */
   private oversizePending = false;
   /**
@@ -448,6 +452,15 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // current paint.
       const bytes = Buffer.byteLength(frame.data, "base64");
       if (bytes > WEBMCP_FRAME_MAX_BYTES) {
+        // Pressure, and the STRONGEST kind: a frame over the cap reached no
+        // viewer at all, where a transport drop means one of them fell behind.
+        // The governor is also the cure for it — a rung down is a smaller
+        // encode, which is exactly what brings these frames back under the cap
+        // — and without this it never hears about them, because they are
+        // refused here rather than in a socket's send callback. A page that
+        // paints above the cap would otherwise sit at the baseline quality
+        // forever, publishing nothing but substitutes.
+        this.noteFramePressure();
         void this.publishStill(WEBMCP_SUBSTITUTE_QUALITY_LADDER, "oversize");
         return;
       }
@@ -624,14 +637,16 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       }
     } finally {
       this.stillInFlight = false;
-      const rerun = this.oversizePending;
-      this.oversizePending = false;
-      // One trailing re-capture, not one per refused frame: a burst of
-      // oversize paints converges on the LAST of them with exactly two
-      // captures, however many arrived in between.
-      if (rerun) {
-        void this.publishStill(WEBMCP_SUBSTITUTE_QUALITY_LADDER, "oversize");
-      }
+      // `oversizePending` is deliberately LEFT SET, for `oversizeTick` to
+      // drain on the next housekeeping tick. Re-capturing from here instead
+      // looks like it converges — a burst of refused paints reaching the last
+      // of them in two captures — but only for a burst that ENDS. A page
+      // repainting continuously above the cap lands at least one refused frame
+      // inside every capture, so each `finally` would start the next one: an
+      // unpaced `Page.captureScreenshot` loop, running as fast as the browser
+      // will serve it, on top of an encode that is already too expensive.
+      // Draining from the timer bounds substitutes to the housekeeping
+      // cadence, and costs a terminating burst one tick of latency.
     }
   }
 
@@ -664,7 +679,23 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     // worth taking at all, and reading a stale rung here would spend a big
     // capture on a link that has just told us it cannot carry one.
     this.governorTick();
+    this.oversizeTick();
     this.settleTick();
+  }
+
+  /**
+   * Take the substitute a refused frame asked for while one was in flight.
+   *
+   * Ahead of `settleTick` on purpose. This is the only picture the pane gets
+   * of a page whose own paints do not fit, where a settle still is a luxury
+   * for a page that has already been carried — and `publishStill` takes the
+   * single-flight latch synchronously, so the settle tick below sees it and
+   * stands down for this tick rather than racing for the same slot.
+   */
+  private oversizeTick(): void {
+    if (!this.oversizePending || this.stillInFlight) return;
+    this.oversizePending = false;
+    void this.publishStill(WEBMCP_SUBSTITUTE_QUALITY_LADDER, "oversize");
   }
 
   /**
@@ -716,15 +747,21 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   }
 
   /**
-   * A viewer's transport could not take a frame.
+   * A frame did not reach the pane.
    *
-   * The one thing this provider cannot observe for itself: it publishes into a
-   * fan-out and never learns what became of a frame. Three of these inside two
-   * seconds is a link that cannot carry the stream at this quality — one is
+   * Two callers, and the first is the one this provider cannot observe for
+   * itself: it publishes into a fan-out and never learns what became of a
+   * frame, so a viewer whose transport dropped one reports it here. The
+   * second is local — a frame refused by the byte cap, which reached nobody.
+   * Both mean the same thing to the governor, which is that the stream is
+   * being encoded larger than something in the path can carry.
+   *
+   * Three inside two seconds is a link that cannot carry this quality; one is
    * just two paints landing inside one round trip, which happens on any link.
    *
-   * Called on the hot path, from inside a socket's send callback, so it does
-   * arithmetic and returns; the restart it may schedule is not awaited here.
+   * Called on hot paths — a socket's send callback, and the screencast handler
+   * — so it does arithmetic and returns; the restart it may schedule is not
+   * awaited here.
    */
   noteFramePressure(): void {
     const now = Date.now();
@@ -1189,6 +1226,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // The retry belonged to the stream that was refused, and that stream is
       // over.
       this.restartPending = false;
+      // Likewise the substitute owed to a frame of the PREVIOUS stream: it
+      // describes a picture this one has not sent, and the timer draining it
+      // is armed below.
+      this.oversizePending = false;
       // A capture from the previous stream describes a picture this one has
       // not sent yet.
       this.captureGeneration += 1;
@@ -1209,6 +1250,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     // The retry belonged to the stream being stopped; carrying it forward
     // would stop and start the NEXT one for no reason.
     this.restartPending = false;
+    this.oversizePending = false;
     this.captureGeneration += 1;
     this.frameThrottle.reset();
     // The next stream is a fresh picture. Keeping the old bytes would let the

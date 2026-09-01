@@ -141,14 +141,26 @@ never arrives while somebody is typing into one. The still fires when focus
 leaves. That is accepted rather than worked around — suppressing caret paints
 means telling the page not to draw a caret.
 
-In the other direction, both transports report a frame they could NOT hand over
-(the WS pacer replacing a held frame, the SSE route replacing its held one).
-Three of those inside two seconds steps the stream down a quality rung; ten
+In the other direction, three sources report a frame that could NOT be handed
+over: the WS pacer replacing a held frame, the SSE route replacing its held one,
+and the provider itself refusing a frame over the 256 KiB cap. The last one
+matters most and is the easiest to miss — it never reaches a transport, so
+nothing downstream is in a position to report it, and a smaller encode is
+exactly the cure. Three of those inside two seconds steps the stream down a
+quality rung; ten
 seconds without one climbs it back, a rung at a time, with a three-second hold
 between moves so the frames still in flight from the old rung are not read as
 fresh pressure. The current quality rides on the session as `streamQuality`, so
 a struggling link is visible as a fact rather than a mystery — and while the
 stream is below its baseline the settle still is skipped entirely.
+
+A refused frame also asks for a budgeted substitute still, so the pane converges
+on the current paint rather than freezing on whatever last fitted. That retry is
+drained by the housekeeping timer rather than by the capture that preceded it: a
+page repainting continuously above the cap lands another refused frame inside
+every capture, and a self-scheduled retry would turn that into an unpaced
+`Page.captureScreenshot` loop on top of an encode already too expensive to
+carry.
 
 The session's render scale is the VIEWER's: the client sends its
 `devicePixelRatio` (clamped to 2) at session start and it becomes the browser

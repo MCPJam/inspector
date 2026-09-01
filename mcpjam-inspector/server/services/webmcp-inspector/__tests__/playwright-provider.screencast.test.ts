@@ -11,6 +11,7 @@ import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import { PlaywrightWebMcpSession } from "../playwright-provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
+  WEBMCP_HOUSEKEEPING_INTERVAL_MS,
   WEBMCP_QUALITY_PRESSURE_DROPS,
   WEBMCP_QUALITY_RECOVER_QUIET_MS,
   WEBMCP_QUALITY_STEP_HOLD_MS,
@@ -518,10 +519,57 @@ describe("PlaywrightWebMcpSession screencast", () => {
     // ONE trailing re-capture for the whole burst, however many frames were
     // refused while the first was in flight. Without it the pane would settle
     // on the picture that was current when the burst STARTED — the oldest of
-    // them — on a page whose every paint exceeds the cap.
+    // them — on a page whose every paint exceeds the cap. It arrives on the
+    // next housekeeping tick rather than immediately, which is what bounds a
+    // page that never stops being oversize — see the pacing test below.
     await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(h.stills).toHaveBeenCalledTimes(2);
+  });
+
+  it("paces substitute captures on a page that never fits", async () => {
+    // Fake clock, because the whole claim is about a rate: with a real one,
+    // "how many captures happened before the next tick" is whatever the
+    // machine managed to run.
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+
+    // The page repaints, above the cap again, WHILE the capture is in flight.
+    // Not a contrived race — it is simply what a continuously busy page does,
+    // and it means every capture ends with another substitute owed.
+    let repaints = 0;
+    h.stills.mockImplementation(async () => {
+      if (repaints < 4) {
+        repaints += 1;
+        h.cdp.emit(
+          "Page.screencastFrame",
+          screencastFrame(
+            base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1, 0x61 + repaints),
+            10 + repaints,
+          ),
+        );
+      }
+      return SMALL_STILL;
+    });
+
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1), 1),
+    );
+    // Every microtask the capture queues, and NOT ONE timer — because a
+    // re-capture started by the capture before it needs neither. A page whose
+    // every paint is refused would otherwise drive `Page.captureScreenshot` as
+    // fast as the browser answers, on top of an encode already too expensive
+    // to carry, and the refused frames never reach a transport that could
+    // report the pressure.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    // One per housekeeping tick from here, however fast the page repaints.
+    await vi.advanceTimersByTimeAsync(WEBMCP_HOUSEKEEPING_INTERVAL_MS);
+    expect(h.stills).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(WEBMCP_HOUSEKEEPING_INTERVAL_MS);
+    expect(h.stills).toHaveBeenCalledTimes(3);
   });
 
   it("drops a frame whose bytes repeat the one before it", async () => {
@@ -1432,6 +1480,35 @@ describe("PlaywrightWebMcpSession stream governor", () => {
 
     expect(starts(h)).toEqual([WEBMCP_STREAM_QUALITY_LADDER[0]]);
     expect(h.qualities).toEqual([WEBMCP_STREAM_QUALITY_LADDER[0]]);
+  });
+
+  it("counts a frame refused by the byte cap as pressure", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+
+    // Distinct bytes per paint: identical ones are dropped as redundant
+    // BEFORE the size check, so a run built from one payload is a run of one.
+    for (let i = 0; i < WEBMCP_QUALITY_PRESSURE_DROPS; i += 1) {
+      h.cdp.emit(
+        "Page.screencastFrame",
+        screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1, 0x41 + i), i),
+      );
+    }
+    await vi.advanceTimersByTimeAsync(10);
+
+    // A frame over the cap reached NO viewer, so nothing downstream is in a
+    // position to report it — and a smaller encode is precisely what brings it
+    // back under the cap. Deaf to these, the governor sits at the baseline
+    // while the page publishes nothing but low-quality substitutes.
+    expect(starts(h)).toEqual([
+      WEBMCP_STREAM_QUALITY_LADDER[0],
+      WEBMCP_STREAM_QUALITY_LADDER[1],
+    ]);
+    expect(h.qualities).toEqual([
+      WEBMCP_STREAM_QUALITY_LADDER[0],
+      WEBMCP_STREAM_QUALITY_LADDER[1],
+    ]);
   });
 
   it("steps down after a run of drops, and not before", async () => {
