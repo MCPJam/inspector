@@ -210,6 +210,16 @@ exited. That answered "the tree survived" for a tree that was entirely dead —
 turning a completed stop into a reported escape and stopping the janitor ever
 reclaiming the record. Members are enumerated and their states read instead.
 
+And that enumeration is itself tri-state, `live` / `empty` / `unknown`, for the
+same reason the single-process probe is. The first version returned a boolean
+and mapped every failure to `false`, reasoning that the value "only gates
+escalation, never a kill" — which was simply wrong about its own callers:
+`false` is what reports the tree gone and what makes the janitor DROP a record.
+An unreadable `/proc` or a `ps` timeout therefore announced a stopped session
+over live descendants and discarded the only handle on them. Worth stating
+because it is the third appearance of one mistake in this directory: **a check
+that could not look must never answer "nothing there".**
+
 ### "Gone" and "cannot tell" are different answers
 
 A liveness probe can fail three ways, and collapsing them is a safety bug in

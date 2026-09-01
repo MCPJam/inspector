@@ -30,7 +30,7 @@ import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
 import {
   probeProcess,
-  processGroupHasLiveMembers,
+  probeProcessGroup,
   signalProcessGroup,
   supportsOwnershipProof,
   terminateOwnedProcessGroup,
@@ -502,15 +502,27 @@ export function reclaimAbandonedProcesses(args: {
         // Confirmed in BOTH cases. Being unable to vouch for the group is a
         // reason not to SIGNAL it; it is an even stronger reason not to throw
         // away the only durable handle on a tree nobody has looked at. (This
-        // path is unreachable on win32, where the group check always answers
-        // false — ownership proof gates it above.)
-        if (await processGroupHasLiveMembers(record.rootPid, platform)) {
+        // path is unreachable on win32, where the group probe always answers
+        // `unknown` — ownership proof gates it above.)
+        const group = await probeProcessGroup(record.rootPid, platform);
+        if (group === "live") {
           survivors.push(record);
           results.push({ sessionId: record.sessionId, outcome: "escaped" });
           logger.warn(
             "[local-harness] descendants outlived their root; record kept",
             { sessionId: record.sessionId, vouched },
           );
+          continue;
+        }
+        if (group === "unknown") {
+          // The enumeration itself failed. That is not an empty group, and
+          // dropping the record on it would discard the only durable handle on
+          // whatever is still down there.
+          survivors.push(record);
+          results.push({
+            sessionId: record.sessionId,
+            outcome: "skipped-unprovable",
+          });
           continue;
         }
         await removeSessionState(record.sessionStateDir);

@@ -4,6 +4,8 @@ import {
   parseDarwinPsLine,
   parseLinuxProcStat,
   readProcessBirthIdentity,
+  parseProcStatGroup,
+  probeProcessGroup,
   supportsOwnershipProof,
   terminateOwnedProcessGroup,
 } from "../process-identity.js";
@@ -219,4 +221,55 @@ describe("terminating a tree we own", () => {
       expect(outcome.outcome).toBe("not-owned");
     },
   );
+});
+
+describe("probing a process GROUP", () => {
+  it("says 'unknown' where it cannot enumerate at all", async () => {
+    // The bug this replaced: a boolean that mapped every failure to `false`,
+    // which is what makes `terminateOwnedProcessGroup` report the tree gone
+    // and what makes the janitor DROP a durable record. A platform with no
+    // enumeration must not read as "the group is empty".
+    await expect(probeProcessGroup(4_242, "win32")).resolves.toBe("unknown");
+  });
+
+  it("rejects an implausible pid without claiming the group is empty", async () => {
+    await expect(probeProcessGroup(0)).resolves.toBe("unknown");
+    await expect(probeProcessGroup(-1)).resolves.toBe("unknown");
+  });
+
+  it.skipIf(!supportsOwnershipProof())(
+    "finds a live detached group, and an unused group id empty",
+    async () => {
+      // A detached child is its own group leader, so its pid IS the group id —
+      // the shape the supervisor actually creates. (This test process is not:
+      // its group leader is some ancestor.)
+      const { spawn } = await import("node:child_process");
+      const child = spawn(
+        process.execPath,
+        ["-e", "setInterval(()=>{},1000)"],
+        { detached: true, stdio: "ignore" },
+      );
+      const pid = child.pid!;
+      try {
+        await expect(probeProcessGroup(pid)).resolves.toBe("live");
+      } finally {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      // A pid far above any plausible allocation: nothing is in that group.
+      await expect(probeProcessGroup(2_147_479_100)).resolves.toBe("empty");
+    },
+  );
+
+  it("reads the group id and state out of a /proc stat line", () => {
+    // Field order after `comm`: state, ppid, pgrp. A comm containing spaces
+    // and parens is why the split point is the LAST ')'.
+    expect(
+      parseProcStatGroup("77 (my proc) S 4 99 99 0 -1 4194304 100"),
+    ).toEqual({ state: "S", pgrp: 99 });
+    expect(parseProcStatGroup("garbage")).toBeNull();
+  });
 });

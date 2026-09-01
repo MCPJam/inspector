@@ -267,6 +267,22 @@ export async function isSameProcess(
 export type TreeSignal = "SIGTERM" | "SIGKILL";
 
 /**
+ * What a process-GROUP probe actually learned.
+ *
+ * Three answers, for the same reason `ProcessProbe` has three: an enumeration
+ * that could not run is not an empty group. An earlier version of this
+ * function returned a boolean and mapped every failure to `false`, on the
+ * stated grounds that the value "only gates escalation, never a kill". That
+ * was simply wrong about its own callers — `false` is what makes
+ * `terminateOwnedProcessGroup` report the tree gone and what makes the janitor
+ * DROP a durable record. So a `ps` timeout or an unreadable `/proc` announced a
+ * stopped session over live vendor descendants and threw away the only handle
+ * on them: the exact bug this file already fixes twice elsewhere, reintroduced
+ * in the fix for it.
+ */
+export type GroupProbe = "live" | "empty" | "unknown";
+
+/**
  * Does a process GROUP still have LIVE members?
  *
  * `kill(-pgid, 0)` is not the answer, and the difference is the same one that
@@ -276,20 +292,19 @@ export type TreeSignal = "SIGTERM" | "SIGKILL";
  * yes for a tree that was entirely dead, which turns a completed stop into a
  * reported escape and stops the janitor ever reclaiming the record.
  *
- * So the members are enumerated and their states read. `false` means every
- * member is gone or a zombie; `true` means something is genuinely still there.
- * A platform that cannot enumerate answers `false`, because this value only
- * ever gates ESCALATION and retention — never a kill — and a check that
- * cannot look must not manufacture survivors.
+ * So the members are enumerated and their states read: `empty` when every one
+ * is gone or a zombie, `live` when something is genuinely still there, and
+ * `unknown` when the enumeration itself could not be performed — including on
+ * a platform with no way to do it at all.
  */
-export async function processGroupHasLiveMembers(
+export async function probeProcessGroup(
   pid: number,
   platform: NodeJS.Platform = process.platform,
-): Promise<boolean> {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  if (platform === "linux") return linuxGroupHasLiveMembers(pid);
-  if (platform === "darwin") return darwinGroupHasLiveMembers(pid);
-  return false;
+): Promise<GroupProbe> {
+  if (!Number.isInteger(pid) || pid <= 0) return "unknown";
+  if (platform === "linux") return probeLinuxGroup(pid);
+  if (platform === "darwin") return probeDarwinGroup(pid);
+  return "unknown";
 }
 
 /** `state ppid pgrp` are the three fields after `comm` in `/proc/<pid>/stat`. */
@@ -308,12 +323,13 @@ export function parseProcStatGroup(
   return { state, pgrp };
 }
 
-async function linuxGroupHasLiveMembers(pgid: number): Promise<boolean> {
+async function probeLinuxGroup(pgid: number): Promise<GroupProbe> {
   let entries: string[];
   try {
     entries = await readdir("/proc");
   } catch {
-    return false;
+    // The enumeration itself failed. Nothing was learned about the group.
+    return "unknown";
   }
   for (const entry of entries) {
     if (!/^\d+$/.test(entry)) continue;
@@ -321,18 +337,22 @@ async function linuxGroupHasLiveMembers(pgid: number): Promise<boolean> {
     try {
       raw = await readFile(`/proc/${entry}/stat`, "utf8");
     } catch {
-      continue; // exited between readdir and read
+      // This ONE process vanished between readdir and read, which is ordinary
+      // and says nothing about the rest of the scan.
+      continue;
     }
     const parsed = parseProcStatGroup(raw);
     if (parsed === null) continue;
     if (parsed.pgrp !== pgid) continue;
-    if (!isDeadState(parsed.state.charAt(0))) return true;
+    if (!isDeadState(parsed.state.charAt(0))) return "live";
   }
-  return false;
+  return "empty";
 }
 
-async function darwinGroupHasLiveMembers(pgid: number): Promise<boolean> {
-  const stdout = await new Promise<string | null>((resolve) => {
+async function probeDarwinGroup(pgid: number): Promise<GroupProbe> {
+  const result = await new Promise<
+    { ok: true; stdout: string } | { ok: false; empty: boolean }
+  >((resolve) => {
     execFile(
       "/bin/ps",
       ["-o", "state=", "-g", String(pgid)],
@@ -342,18 +362,28 @@ async function darwinGroupHasLiveMembers(pgid: number): Promise<boolean> {
         encoding: "utf8",
         env: {},
       },
-      (error, out) =>
-        resolve(error ? null : typeof out === "string" ? out : null),
+      (error, out) => {
+        if (!error) {
+          resolve({ ok: true, stdout: typeof out === "string" ? out : "" });
+          return;
+        }
+        const err = error as Error & {
+          code?: number | string;
+          killed?: boolean;
+        };
+        // Exit 1 means `ps` ran and matched nothing — a real answer. A kill
+        // (timeout) or a spawn failure is not.
+        resolve({ ok: false, empty: err.killed !== true && err.code === 1 });
+      },
     );
   });
-  // `ps` exits 1 with no rows when the group is empty, which reads as `null`
-  // here and is the same answer as "no live members".
-  if (stdout === null) return false;
-  return stdout
+  if (!result.ok) return result.empty ? "empty" : "unknown";
+  const states = result.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .some((line) => !isDeadState(line.charAt(0)));
+    .filter((line) => line.length > 0);
+  if (states.some((state) => !isDeadState(state.charAt(0)))) return "live";
+  return "empty";
 }
 
 /**
@@ -431,14 +461,27 @@ export async function terminateOwnedProcessGroup(args: {
     | { outcome: "graceful" }
     | { outcome: "forced" }
     | { outcome: "escaped" }
+    | { outcome: "unknown"; reason: string }
   > => {
-    if (!(await processGroupHasLiveMembers(args.pid, platform))) {
-      return { outcome: goneOutcome };
+    const before = await probeProcessGroup(args.pid, platform);
+    if (before === "empty") return { outcome: goneOutcome };
+    if (before === "unknown") {
+      return {
+        outcome: "unknown",
+        reason:
+          "the process group could not be enumerated, so survivors " +
+          "could be neither ruled out nor cleaned up",
+      };
     }
     signalProcessGroup(args.pid, "SIGKILL", platform);
     await new Promise((r) => setTimeout(r, Math.min(args.graceMs, 500)));
-    if (!(await processGroupHasLiveMembers(args.pid, platform))) {
-      return { outcome: "forced" };
+    const after = await probeProcessGroup(args.pid, platform);
+    if (after === "empty") return { outcome: "forced" };
+    if (after === "unknown") {
+      return {
+        outcome: "unknown",
+        reason: "the process group could not be enumerated after SIGKILL",
+      };
     }
     return { outcome: "escaped" };
   };
