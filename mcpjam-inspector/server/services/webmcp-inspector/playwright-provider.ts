@@ -32,16 +32,15 @@ import {
   PAGE_API_PROBE,
   webMcpHeadlessRequested,
 } from "./launch-args";
+import { WebMcpBridge, type CdpLike } from "../browserd/daemon/webmcp-bridge";
 import {
-  WebMcpBridge,
-  WebMcpBridgeError,
-  type CdpLike,
-} from "../browserd/daemon/webmcp-bridge";
+  SCREENSHOT_MAX_BYTES,
+  SCREENSHOT_WIDTH,
+  translateBridgeError,
+} from "./provider-shared";
 import {
   WebMcpChromiumNotInstalledError,
-  WebMcpInvocationCancelledError,
   WebMcpNoDisplayError,
-  WebMcpToolGoneError,
   WebMcpUnsupportedError,
   type CreateWebMcpSessionOptions,
   type WebMcpBrowserProvider,
@@ -53,9 +52,6 @@ import {
 
 /** Cap on how long a browser teardown may block shutdown. */
 const CLOSE_TIMEOUT_MS = 5_000;
-/** Thumbnail width; small enough that a timeline of them stays cheap. */
-const SCREENSHOT_WIDTH = 640;
-const SCREENSHOT_MAX_BYTES = 64 * 1024;
 /** The modifier keys a pointer event's snapshot can name, in Playwright's spelling. */
 const MODIFIER_KEYS = ["Alt", "Control", "Meta", "Shift"] as const;
 
@@ -90,38 +86,6 @@ function originOf(url: string): string {
     return new URL(url).origin;
   } catch {
     return "about:blank";
-  }
-}
-
-/**
- * Turn a bridge failure into the error this interface's callers handle.
- *
- * The two that carry meaning are named; everything else becomes a plain Error
- * with the page's own message, which is what the timeline shows. Kept at module
- * scope rather than inline so the mapping is one readable table instead of a
- * `catch` block with four branches in the middle of an invocation.
- */
-function translateBridgeError(error: unknown, toolName: string): Error {
-  if (!(error instanceof WebMcpBridgeError)) {
-    return error instanceof Error ? error : new Error(String(error));
-  }
-  switch (error.failure) {
-    case "webmcp_tool_gone":
-      return new WebMcpToolGoneError(
-        `The page no longer offers a tool named "${toolName}".`,
-      );
-    case "webmcp_cancelled":
-      // The reason is the point: the browser answers every cancel `Canceled`,
-      // so without carrying it a timed-out invocation is recorded as a user
-      // cancellation — the one place the difference matters to whoever reads
-      // the timeline later.
-      return new WebMcpInvocationCancelledError(
-        error.message,
-        error.cancelReason ?? "cancelled",
-      );
-    case "webmcp_unsupported":
-    case "webmcp_error":
-      return new Error(error.message);
   }
 }
 
