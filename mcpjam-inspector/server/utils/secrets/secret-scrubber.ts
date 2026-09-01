@@ -88,6 +88,40 @@ function replacementFor(name: string): string {
  * makes "this turn has secrets" visible in the code rather than hidden inside a
  * function that usually does nothing.
  */
+const ESCAPE_DEPTH_CEILING = 32;
+
+/**
+ * The deepest JSON escaping an input could be carrying, read off its own bytes.
+ *
+ * Re-escaping doubles the backslash run in front of an escaped character, so
+ * depth `d` cannot be present unless the payload holds a run of at least
+ * 2^(d-1) backslashes — measured, a quote reaches 1, 3, 7, 15 … and a newline
+ * 1, 2, 4, 8 …. Reading the longest run is therefore a direct upper bound on
+ * how deeply anything here could be escaped, and it does not grow with the
+ * payload: a megabyte of prose carrying no escaping at all is depth 1.
+ *
+ * Exported for tests. The alternative is asserting on wall time, and the
+ * property this guards — that scrub work follows the escaping present and not
+ * the payload size — has already been undone once by a well-meaning edit that
+ * every correctness test still passed.
+ */
+export function escapeDepthOf(input: string): number {
+  let longestRun = 0;
+  let run = 0;
+  for (let i = 0; i < input.length; i++) {
+    if (input.charCodeAt(i) === 0x5c /* backslash */) {
+      run += 1;
+      if (run > longestRun) longestRun = run;
+    } else {
+      run = 0;
+    }
+  }
+  if (longestRun === 0) return 1;
+  // `+ 2` rather than `+ 1`: one for the depth the run itself proves, one of
+  // slack so the bound is never the thing that misses a form.
+  return Math.min(ESCAPE_DEPTH_CEILING, Math.floor(Math.log2(longestRun)) + 2);
+}
+
 export function createSecretScrubber(
   secrets: readonly SecretRegistryEntry[]
 ): SecretScrubber | null {
@@ -134,47 +168,42 @@ export function createSecretScrubber(
   // could possibly be escaped. Unescaped text yields depth 1 no matter how
   // large it is, and a deeply nested document pays only for the depth it really
   // contains.
-  const ESCAPE_DEPTH_CEILING = 32;
   /**
-   * Guard for the pathological case — a payload that is mostly backslashes —
-   * where the run is long but no genuine secret is escaped that deeply. Forms
-   * double in length, so this caps the total per secret at roughly twice this.
+   * TWO bounds, and both are needed — each alone has been shipped and each
+   * alone was wrong.
+   *
+   * `maxDepth` comes from the input's longest backslash run. Without it the
+   * work scales with payload size, so a megabyte of prose carrying no escaping
+   * at all still builds twenty-odd forms per secret.
+   *
+   * `maxFormLength` is the input's own length. Without it a form that WOULD
+   * have matched is skipped once it grows past whatever fixed cutoff is in
+   * play, and the credential survives — a 64 KiB cutoff dropped the depth-17
+   * needle a 640 KiB nested body actually contained.
+   *
+   * Neither is a policy number: one reads how deeply this payload could be
+   * escaped, the other that a needle longer than its haystack cannot occur in
+   * it. A payload genuinely carrying megabyte-scale escaping does force
+   * megabyte-scale needles, which is inherent to matching escaped forms at
+   * all — but it has to really contain them to pay for them.
    */
-  const MAX_FORM_LENGTH = 1 << 16;
-
-  function escapedForms(value: string, maxDepth: number): string[] {
+  function escapedForms(
+    value: string,
+    maxDepth: number,
+    maxFormLength: number,
+  ): string[] {
     const forms: string[] = [];
     let current = value;
     for (let depth = 0; depth < maxDepth; depth++) {
       const next = JSON.stringify(current).slice(1, -1);
       // Escaping is identity for this value: the raw form is the only form.
       if (next === current) break;
-      if (next.length > MAX_FORM_LENGTH) break;
+      // Longer than anything it could be found inside.
+      if (next.length > maxFormLength) break;
       forms.push(next);
       current = next;
     }
     return forms;
-  }
-
-  /** The deepest escaping this input could contain, read off its own bytes. */
-  function escapeDepthOf(input: string): number {
-    let longestRun = 0;
-    let run = 0;
-    for (let i = 0; i < input.length; i++) {
-      if (input.charCodeAt(i) === 0x5c /* backslash */) {
-        run += 1;
-        if (run > longestRun) longestRun = run;
-      } else {
-        run = 0;
-      }
-    }
-    if (longestRun === 0) return 1;
-    // `+ 2` rather than `+ 1`: one for the depth the run itself proves, one of
-    // slack so the bound is never the thing that misses a form.
-    return Math.min(
-      ESCAPE_DEPTH_CEILING,
-      Math.floor(Math.log2(longestRun)) + 2,
-    );
   }
 
   type Needle = { search: string; replace: string };
@@ -187,7 +216,10 @@ export function createSecretScrubber(
   const byLongestSearch = (a: Needle, b: Needle): number =>
     b.search.length - a.search.length;
 
-  function buildNeedleLists(maxDepth: number): {
+  function buildNeedleLists(
+    maxDepth: number,
+    maxFormLength: number,
+  ): {
     all: Needle[];
     /**
      * The escaped-only set, for scrubbing a document that is ALREADY serialized
@@ -211,7 +243,7 @@ export function createSecretScrubber(
         json.push({ search: entry.value, replace });
         continue;
       }
-      for (const form of escapedForms(entry.value, maxDepth)) {
+      for (const form of escapedForms(entry.value, maxDepth, maxFormLength)) {
         json.push({ search: form, replace });
         all.push({ search: form, replace });
       }
@@ -225,16 +257,22 @@ export function createSecretScrubber(
   // memoised rather than rebuilt per call. Keying on the DEPTH rather than on
   // anything about the input's size means the whole cache is at most a few
   // entries: almost every payload resolves to depth 1.
-  const listCache = new Map<number, { all: Needle[]; json: Needle[] }>();
+  const listCache = new Map<string, { all: Needle[]; json: Needle[] }>();
   function needleListsFor(input: string): {
     all: Needle[];
     json: Needle[];
   } {
-    const depth = escapeDepthOf(input);
-    const cached = listCache.get(depth);
+    const maxDepth = escapeDepthOf(input);
+    // Rounded UP to a power of two so the key stays coarse: a form between the
+    // real length and the rounded one is merely a needle too long to match,
+    // never a missing one.
+    const lengthExponent =
+      input.length <= 1 ? 0 : Math.ceil(Math.log2(input.length));
+    const key = `${maxDepth}:${lengthExponent}`;
+    const cached = listCache.get(key);
     if (cached) return cached;
-    const built = buildNeedleLists(depth);
-    listCache.set(depth, built);
+    const built = buildNeedleLists(maxDepth, 2 ** lengthExponent);
+    listCache.set(key, built);
     return built;
   }
 

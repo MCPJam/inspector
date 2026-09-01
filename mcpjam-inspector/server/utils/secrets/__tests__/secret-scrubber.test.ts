@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSecretScrubber,
+  escapeDepthOf,
   MIN_SCRUBBABLE_LENGTH,
 } from "../secret-scrubber";
 
@@ -244,6 +245,53 @@ describe("scrubDeep", () => {
     const inner = JSON.parse(JSON.parse(scrubbed).output);
     expect(inner.apiKey).toBe("[secret:ODD_KEY]");
     expect(scrubbed).not.toContain("abcdefgh");
+  });
+
+  it("reads escape depth off the payload's escaping, not off its size", () => {
+    // The bound that keeps scrub work proportional to the escaping a payload
+    // actually carries. Asserted directly because it is otherwise visible only
+    // as a timing difference — and it has already been undone once by an edit
+    // that every correctness test still passed.
+    const megabyteOfProse = "lorem ipsum dolor sit amet. ".repeat(40_000);
+    expect(megabyteOfProse.length).toBeGreaterThan(1_000_000);
+    expect(escapeDepthOf(megabyteOfProse)).toBe(1);
+
+    // A run of 2^(d-1) backslashes is what depth d costs, so the bound has to
+    // rise with the run and stay above the depth that run proves.
+    expect(escapeDepthOf("no backslashes here")).toBe(1);
+    expect(escapeDepthOf("a\\b")).toBe(2);
+    let carrier: string = 'abcdefgh"i';
+    for (let depth = 1; depth <= 8; depth++) {
+      carrier = JSON.stringify({ v: carrier });
+      expect(escapeDepthOf(carrier)).toBeGreaterThanOrEqual(depth);
+    }
+  });
+
+  it("scrubs a credential whose escaped form outgrows any fixed byte cutoff", () => {
+    // The second cliff, in the guard added to close the first one. Forms double
+    // in length, so a fixed byte cutoff is a depth cutoff wearing a disguise: a
+    // 64 KiB cap stopped at depth 16, and a body nested 17 deep — 640 KiB, well
+    // under what the ingest path will persist — contained only the depth-17
+    // form. None of the fifteen generated needles matched it, and the
+    // credential came back out by decoding the layers.
+    //
+    // The bound has to be the haystack, which cannot be outgrown by definition.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+
+    let carrier: string = quoted.value;
+    for (let i = 0; i < 17; i++) carrier = JSON.stringify({ v: carrier });
+    // Precondition: big enough that a byte cutoff bites, and really 17 deep.
+    expect(carrier.length).toBeGreaterThan(600_000);
+
+    const scrubbed = scrubber.scrubSerializedJson(carrier);
+    expect(scrubbed).not.toContain("abcdefgh");
+
+    let decoded: unknown = JSON.parse(scrubbed);
+    for (let i = 1; i < 17; i++) {
+      decoded = JSON.parse((decoded as { v: string }).v);
+    }
+    expect((decoded as { v: string }).v).toBe("[secret:ODD_KEY]");
   });
 
   it("leaves a large UNESCAPED payload untouched, and cheaply", () => {
