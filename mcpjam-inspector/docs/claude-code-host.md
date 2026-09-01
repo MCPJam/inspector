@@ -74,6 +74,33 @@ shutoff, never a bypass.
   into `llmUsageRecord` against your org — the same accounting as chat — and
   spend caps and empty-wallet rejections apply before the stream starts.
 
+## Codex transports
+
+Codex runs over one of two transports, selected by
+`MCPJAM_CODEX_APPSERVER_TRANSPORT` (off by default). It is one host either way —
+same harness id, same lane, same model rules, same host-executed MCP delivery —
+and the difference is what the runtime can be asked to do.
+
+| | `codex exec` (default) | `codex app-server` |
+|---|---|---|
+| Adapter | `@ai-sdk/harness-codex` | `server/utils/harness/codex-appserver/` (ours) |
+| Tool approval | Impossible. The bridge hardcodes `approvalPolicy: "never"` and `doStart` rejects any permission mode but `allow-all`, so no `tool-approval-request` is ever emitted and an approval host is refused pre-flight. | Supported on native and host-executed surfaces. `allow-reads` maps to Codex's `untrusted` policy; a declined command reports `declined` and does not run. |
+| Attributable actions | `shell`, `web_search`. | `exec_command`, `apply_patch`, `web_search`, each with the real command and Codex's own read/list/search classification. |
+| Usage | Totals. | Per turn, with cache-read, cache-write and reasoning components. |
+| Interrupt / manual compaction | Neither. | `turn/interrupt` yes; manual compaction no (the shared bridge protocol has no command for it, so `doCompact` throws rather than silently doing nothing). |
+
+Flipping the flag forks the session lane — the runtime fingerprint folds the
+transport in — because a conversation started on one transport has no thread the
+other can resume. Flipping back lands on the original lane.
+
+MCP delivery stays host-executed on both. The app-server protocol has no
+approval request for an individual MCP `tools/call`, so native delivery would
+leave a Strict-mode host unable to gate one; that is the blocker for native
+delivery, not the transport.
+
+Protocol facts here were measured against the pinned binary rather than assumed
+— see `.spike-codex-appserver/RESULTS.md`, which is rerunnable.
+
 ## Failure modes you may see
 
 None of these fall back to the emulated engine — a turn that says it ran the
@@ -83,7 +110,7 @@ real runtime did. All fail closed; a failed start spends nothing.
 |---|---|
 | Broker delivery kill-switched (`MCPJAM_HARNESS_BROKER_DELIVERY=false`) | Pre-flight error naming the kill switch — harness runs are unavailable on that server. |
 | Enterprise-managed authorization policy on the host | Pre-flight error — the harness MCP proxy can't carry the policy, so the combination is rejected rather than silently bypassed. |
-| Require tool approval + selected MCP servers | Pre-flight error — the runtime can't pause for approval of MCP-server tools; turn approval off or remove the servers. |
+| Require tool approval + selected MCP servers | Claude Code: honored. Codex on the default `exec` transport: pre-flight error — the runtime cannot pause at all; turn approval off or switch transports. Codex on `app-server`: honored, with MCPJam gating the host-executed tools. |
 | Computers data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. |
 | Computer at daily start cap | Start-limit dialog with upgrade CTA. |

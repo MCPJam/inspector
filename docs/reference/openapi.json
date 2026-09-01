@@ -305,6 +305,101 @@
         }
       }
     },
+    "/harness/{harnessId}/capabilities": {
+      "get": {
+        "operationId": "getHarnessCapabilities",
+        "tags": [
+          "Harness"
+        ],
+        "summary": "Read what a harness runtime can be asked to do",
+        "description": "Which tool surfaces this deployment's harness runtime can PAUSE on for interactive approval, and how it reaches MCP servers. Read by the host editor so the approval switch reflects the runtime actually installed: the answers are a property of the transport, not of the harness name (Codex has two, and only one of them can pause). Static registry metadata; no project scope. Deployment-dependent \u2014 a value here describes this server, so treat it as a UI signal rather than a stable contract to pin.",
+        "parameters": [
+          {
+            "name": "harnessId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "claude-code",
+                "codex",
+                "cursor"
+              ]
+            },
+            "description": "The harness id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The harness runtime's approval and MCP-delivery capabilities.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "harnessId",
+                    "supportsNativeToolApproval",
+                    "supportsHostExecutedToolApproval",
+                    "supportsMcpToolApproval",
+                    "mcpDelivery"
+                  ],
+                  "properties": {
+                    "harnessId": {
+                      "type": "string",
+                      "enum": [
+                        "claude-code",
+                        "codex",
+                        "cursor"
+                      ]
+                    },
+                    "transport": {
+                      "type": "string",
+                      "description": "Which runtime transport serves this harness, when it has more than one. Absent for a single-transport harness.",
+                      "enum": [
+                        "exec",
+                        "app-server"
+                      ]
+                    },
+                    "supportsNativeToolApproval": {
+                      "type": "boolean",
+                      "description": "Whether the runtime can pause on its own built-in tools (shell, file edits, \u2026)."
+                    },
+                    "supportsHostExecutedToolApproval": {
+                      "type": "boolean",
+                      "description": "Whether tools MCPJam runs in its own process on the runtime's behalf can be approval-gated."
+                    },
+                    "supportsMcpToolApproval": {
+                      "type": "boolean",
+                      "description": "Whether the runtime can pause on MCP tools its own client calls in-sandbox. Only meaningful under `native` delivery; under `host-executed` the host-executed flag is the one that governs."
+                    },
+                    "mcpDelivery": {
+                      "type": "string",
+                      "description": "How the harness reaches the host's selected MCP servers: `native` (its own client dials them from the sandbox) or `host-executed` (MCPJam runs them in-process and relays the calls).",
+                      "enum": [
+                        "native",
+                        "host-executed"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/images": {
       "get": {
         "operationId": "listSandboxImages",

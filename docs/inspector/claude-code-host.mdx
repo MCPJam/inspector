@@ -45,7 +45,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 |---|---|
 | Model | Honored — must be an MCPJam-provided OpenAI gpt-5 family model. Other models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
-| Require tool approval | Not supported — the Codex runtime does not pause for tool approval. The toggle is disabled. |
+| Require tool approval | Depends on the transport (see below). On the default `codex exec` transport it is not supported and the toggle is disabled. On the `codex app-server` transport it is honored — Codex pauses before each command or patch and waits for your decision. |
 | Selected MCP servers | Honored, via a host-executed relay rather than a native MCP client. Tools are named identically to Claude Code (`mcp__<server>__<tool>`), so traces and eval assertions match across the two harnesses. See the fidelity caveat below. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Codex runtime owns its own sampling. These controls are grayed out in the UI. |
@@ -56,6 +56,32 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
   for harness runs. Controls the runtime cannot honor are disabled in the UI
   rather than silently ignored.
 </Note>
+
+## Codex transports
+
+Codex hosts can run over either of two transports. It is one host either way —
+same id, same history, same model rules — but what the runtime can be asked to
+do differs, so the host editor asks the server which one is active rather than
+assuming.
+
+| | `codex exec` (default) | `codex app-server` |
+|---|---|---|
+| Tool approval | Not possible. The runtime is started with its approval policy fixed to `never` and has no channel to interrupt, so a host that requires approval is refused up front. | Supported. Codex raises an approval request before each command or patch; declining it means the command does not run at all. |
+| Attributable actions | Two (`shell`, `web_search`). | Shell commands, patches and web searches, each reported as a typed action with the real command and its classification. |
+| Token usage | Totals only. | Per turn, with the cached and reasoning breakdown. |
+| Interrupt | Not available. | Supported. |
+
+The app-server transport is opt-in while it goes through parity testing
+(`MCPJAM_CODEX_APPSERVER_TRANSPORT`). Switching it starts a fresh Codex session
+rather than resuming an existing one, because a conversation started on one
+transport has nothing for the other to resume; switching back returns you to the
+session you had.
+
+MCP delivery is host-executed on **both** transports, and the fidelity caveat
+below applies to both. That is a deliberate limit rather than an oversight: the
+app-server protocol has no approval request for an individual MCP tool call, so
+delivering your servers natively would mean a host that requires approval could
+not gate one.
 
 ## Codex MCP fidelity caveat
 
