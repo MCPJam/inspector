@@ -737,12 +737,38 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   displayName: "Claude Code",
   requiresComputer: true,
   defaultPermissionMode: "allow-all",
-  // WS3: the CLI pauses on a tool-approval-request for side-effecting
-  // built-ins under "allow-edits"; the turn suspends and resumes with the
-  // user's decision (see run-harness-turn's approval-continuation path).
+  // WS3: the CLI pauses on a tool-approval-request for side-effecting tools;
+  // the turn suspends and resumes with the user's decision (see
+  // run-harness-turn's approval-continuation path).
   supportsNativeToolApproval: true,
-  approvalPermissionMode: "allow-edits",
-  supportsMcpToolApproval: false,
+  // "allow-reads", NOT "allow-edits" — and the difference is what makes MCP
+  // tools approvable at all.
+  //
+  // The adapter's in-sandbox bridge routes EVERY tool call through a
+  // `canUseTool` callback before the CLI may run it, MCP tools included: it
+  // emits `tool-approval-request` over the bridge socket and awaits the host's
+  // `submitToolApproval`. Which calls reach that pause is decided by the
+  // bridge's `nativeToolRequiresApproval`, and the load-bearing line is its
+  // default: a tool name it does not recognize is treated as kind "edit".
+  // An external MCP tool (`mcp__<server>__<tool>`) is never in that table, so
+  //   - "allow-all"   → never pauses.
+  //   - "allow-edits" → pauses only on kind "bash", so MCP tools run free.
+  //   - "allow-reads" → pauses on "edit" and "bash", so MCP tools pause.
+  // "allow-reads" is therefore the only mode under which an approval host can
+  // honestly claim to gate a Claude Code MCP call.
+  //
+  // The cost is a wider prompt surface: native edit-class built-ins (Write,
+  // Edit, NotebookEdit, TodoWrite, the Task* family) now prompt too, where
+  // "allow-edits" let them through. That is the right trade for a host that
+  // explicitly asked for approval — reads still stay free, which keeps the
+  // faithful mapping to the emulated engine (it gates tool CALLS, never reads).
+  approvalPermissionMode: "allow-reads",
+  // True because of the mechanism above, verified against the vendored bridge
+  // rather than assumed. This was previously false on the belief that the CLI's
+  // own MCP client called those tools from inside the sandbox with nothing for
+  // MCPJam to interpose on; `canUseTool` IS that interposition point, and it
+  // runs before the call is dispatched.
+  supportsMcpToolApproval: true,
   // WS3 wires host-executed tools through `toolApproval` (the agent pauses on
   // tool-approval-request and resumes with the decision), same path as native.
   supportsHostExecutedToolApproval: true,
@@ -812,10 +838,23 @@ const codexAdapter: HarnessRuntimeAdapter = {
   requiresComputer: true,
   // Codex doesn't support built-in tool approval requests — use allow-all.
   defaultPermissionMode: "allow-all",
+  // Unlike Claude Code (see `claudeCodeAdapter`, where the pause was available
+  // all along under the right permission mode), this one is a real upstream
+  // wall, not a mode we failed to select. `@ai-sdk/harness-codex`'s bridge
+  // builds its thread with `approvalPolicy: "never"` and
+  // `sandboxMode: "danger-full-access"` HARDCODED, so Codex is never asked to
+  // pause and no `tool-approval-request` is ever emitted. The adapter drives
+  // `codex exec` (upstream's own `doCompact` docs say so), a batch mode with no
+  // channel to interrupt; the interactive `codex app-server` transport that
+  // could carry approvals is not what the AI SDK adapter speaks. Reaching it
+  // would mean authoring our own adapter, so this stays false on evidence.
   supportsNativeToolApproval: false,
   // Never honored while supportsNativeToolApproval is false; keep it the
   // same as the default mode so a future flip is an explicit decision.
   approvalPermissionMode: "allow-all",
+  // Inert for Codex either way: its MCP servers are HOST-EXECUTED (see
+  // `mcpDelivery` below), so `harnessToolApprovalRefusalReason` reads
+  // `supportsHostExecutedToolApproval` for this harness, never this flag.
   supportsMcpToolApproval: false,
   // Codex docs say host-executed AI SDK approvals can work, but it's not wired/
   // tested in MCPJam yet — keep false for v1; flip without code churn later.
