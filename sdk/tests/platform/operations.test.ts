@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DECISION_LABEL_VOCABULARIES } from "../../src/contract/index.js";
 import {
   callServerToolOperation,
   closeTunnelOperation,
@@ -1284,6 +1285,39 @@ describe("createEvalSuiteOperation", () => {
 });
 
 describe("eval run polling operations", () => {
+  it("defines the chain vocabulary IN BAND, not by reference", () => {
+    // An MCP client sees the tool description and nothing else. The stage
+    // order, the three-way chain discriminant and the five states used to live
+    // only in the hosted agent's promptNotes, so every other MCP surface — the
+    // public worker included — handed a model ~36 bare enum members with no
+    // definitions and no way to look them up mid-turn.
+    const description = getEvalRunOperation.description;
+
+    // The order is normative: `notReached` is derived from position.
+    expect(description).toContain(
+      "connection → discovery → selection → call → response → userValue"
+    );
+    // The discriminant, and which of the three carries rows.
+    for (const status of ["verified", "unverified", "absent"]) {
+      expect(description).toContain(`\`${status}\``);
+    }
+    // Every state, each said as its own fact.
+    for (const state of DECISION_LABEL_VOCABULARIES.stageStates) {
+      expect(description).toContain(`\`${state}\``);
+    }
+    // THE claim this whole vocabulary exists to protect.
+    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain(
+      "authorizes proposing a change to the server under test"
+    );
+    // And the phrase that would make a client render a spend warning on a
+    // read-only operation (mcp/tests/platformTools.test.ts ties it to
+    // `risk: "spend"`, which a read must never declare).
+    expect(description).not.toContain("COSTS MONEY");
+    expect(getEvalRunOperation.risk).toBeUndefined();
+    expect(getEvalRunOperation.readOnly).toBe(true);
+  });
+
   it("returns the run from the project the caller addressed", async () => {
     const { client, fetchMock } = makeClient();
 
