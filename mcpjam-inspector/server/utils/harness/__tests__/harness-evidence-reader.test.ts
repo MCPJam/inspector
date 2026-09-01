@@ -6,13 +6,17 @@
  * complete is indistinguishable from a turn with fewer tool calls, and that is
  * the one confusion the whole protocol is built to avoid.
  */
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   readTurnEvidence,
   type EvidenceReadTransport,
 } from "../harness-evidence-reader";
 
 const scope = { iterationId: "iter_1", turnId: "turn_1" };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function page(
   rows: Array<Record<string, unknown>>,
@@ -208,5 +212,122 @@ describe("row parsing", () => {
 
     expect(result.rows.map((r) => r.requestId)).toEqual(["req-1"]);
     expect(result.exhausted).toBe(true);
+  });
+
+  test("asks for a page the backend will actually serve", async () => {
+    // The backend caps a page at 25 because a row can carry two inline
+    // payloads. Asking for more just gets silently clamped.
+    const transport = vi
+      .fn<EvidenceReadTransport>()
+      .mockResolvedValue(page([]));
+
+    await readTurnEvidence({ ...scope, transport });
+
+    expect(transport.mock.calls[0][0].pageSize).toBeLessThanOrEqual(25);
+  });
+});
+
+describe("payloads the backend spilled to storage", () => {
+  const spilledRow = {
+    ...settledRow,
+    requestId: "spilled",
+    argumentsJson: null,
+    argumentsUrl: "https://storage.example/args",
+    responseJson: null,
+    responseUrl: "https://storage.example/response",
+  };
+
+  test("fetches a spilled payload and hands the merge an inline one", async () => {
+    // The merge never learns a payload was spilled: it reads `argumentsJson`
+    // either way, which is what keeps digest matching identical on both sides
+    // of the size threshold.
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith("/args")
+        ? new Response('{"q":"x"}')
+        : new Response('{"content":[]}'),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const transport: EvidenceReadTransport = async () => page([spilledRow]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    expect(result.exhausted).toBe(true);
+    expect(result.rows[0]).toMatchObject({
+      argumentsJson: '{"q":"x"}',
+      responseJson: '{"content":[]}',
+      payloadsReadable: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("a payload that will not come back is UNREADABLE, never empty", async () => {
+    // Reading a failed fetch as an empty payload would be the silent version
+    // of exactly the loss this protocol exists to make visible.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("nope", { status: 404 })),
+    );
+    const transport: EvidenceReadTransport = async () => page([spilledRow]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    expect(result.rows[0].payloadsReadable).toBe(false);
+    expect(result.rows[0].argumentsJson).toBeNull();
+  });
+
+  test("a thrown fetch degrades the row rather than the read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ETIMEDOUT");
+      }),
+    );
+    const transport: EvidenceReadTransport = async () =>
+      page([settledRow, spilledRow]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    // The read itself still completed — one bad blob must not turn a whole
+    // page into a short read, because the OTHER rows are still trustworthy.
+    expect(result.exhausted).toBe(true);
+    expect(result.rows[0].payloadsReadable).toBe(true);
+    expect(result.rows[1].payloadsReadable).toBe(false);
+  });
+
+  test("does not refetch a payload that already travelled inline", async () => {
+    // A row can carry a URL alongside an inline copy; the inline one wins,
+    // because it is already the same bytes without a round trip.
+    const fetchMock = vi.fn(async () => new Response("from-storage"));
+    vi.stubGlobal("fetch", fetchMock);
+    const transport: EvidenceReadTransport = async () =>
+      page([{ ...settledRow, argumentsUrl: "https://storage.example/args" }]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    expect(result.rows[0].argumentsJson).toBe('{"q":"x"}');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a started row's absent response is not mistaken for a spill", async () => {
+    // An in-flight call has no response and no URL. Nothing to fetch, and the
+    // row stays readable — it is INCOMPLETE, which the caller judges, not
+    // unreadable, which is a different failure.
+    const fetchMock = vi.fn(async () => new Response("x"));
+    vi.stubGlobal("fetch", fetchMock);
+    const transport: EvidenceReadTransport = async () =>
+      page([
+        {
+          ...settledRow,
+          status: "started",
+          outcomeKind: null,
+          responseJson: null,
+          settledAtMs: null,
+        },
+      ]);
+
+    const result = await readTurnEvidence({ ...scope, transport });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.rows[0].payloadsReadable).toBe(true);
   });
 });

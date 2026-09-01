@@ -19,7 +19,14 @@ import type { EvidenceRow } from "../../services/evals/harness-evidence-merge.js
 
 /** Pages, not rows: a bound on requests for a turn with pathological fan-out. */
 const MAX_PAGES = 50;
-const PAGE_SIZE = 200;
+/**
+ * Matches the backend's page ceiling. A page is sized against the RESPONSE
+ * limit — a row can carry two inline payloads — so asking for more than the
+ * backend will give just wastes a round trip.
+ */
+const PAGE_SIZE = 25;
+/** A spilled payload's fetch, bounded so one huge blob cannot hang a turn. */
+const PAYLOAD_FETCH_TIMEOUT_MS = 15_000;
 
 export type EvidenceReadResult = {
   rows: EvidenceRow[];
@@ -93,6 +100,8 @@ function readRows(payload: Record<string, unknown> | null): EvidenceRow[] {
         toolName: row.toolName,
         argumentsJson:
           typeof row.argumentsJson === "string" ? row.argumentsJson : null,
+        argumentsUrl:
+          typeof row.argumentsUrl === "string" ? row.argumentsUrl : null,
         status: row.status,
         outcomeKind:
           row.outcomeKind === "success" ||
@@ -102,6 +111,8 @@ function readRows(payload: Record<string, unknown> | null): EvidenceRow[] {
             : null,
         responseJson:
           typeof row.responseJson === "string" ? row.responseJson : null,
+        responseUrl:
+          typeof row.responseUrl === "string" ? row.responseUrl : null,
         startedAtMs: row.startedAtMs,
         settledAtMs:
           typeof row.settledAtMs === "number" ? row.settledAtMs : null,
@@ -109,6 +120,59 @@ function readRows(payload: Record<string, unknown> | null): EvidenceRow[] {
       },
     ];
   });
+}
+
+/**
+ * Fetch a payload the backend spilled to storage.
+ *
+ * Large payloads travel as URLs rather than inline because a page is bounded
+ * by row count: inlining them made a turn with a few multi-megabyte tool
+ * results exceed the response ceiling and become unreadable at ANY page size.
+ * Fetching here is the cost of that, and it is bounded — a stalled blob must
+ * degrade the turn to narration grading, not hang it.
+ *
+ * A failed fetch returns null, which the caller turns into
+ * `payloadsReadable: false`: a payload that cannot be read back is not
+ * complete evidence, and reading it as empty would be the silent version of
+ * exactly the loss this protocol makes visible.
+ */
+async function fetchSpilledPayload(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(PAYLOAD_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve every row's payloads, fetching the spilled ones.
+ *
+ * Sequential on purpose: the alternative is opening one connection per
+ * payload for a turn that may hold dozens, and this runs after the turn has
+ * already produced its answer — it is worth a little latency to not stampede
+ * storage from every concurrent iteration at once.
+ */
+async function resolveSpilledPayloads(
+  rows: EvidenceRow[],
+): Promise<EvidenceRow[]> {
+  const resolved: EvidenceRow[] = [];
+  for (const row of rows) {
+    let { argumentsJson, responseJson, payloadsReadable } = row;
+    if (argumentsJson === null && row.argumentsUrl) {
+      argumentsJson = await fetchSpilledPayload(row.argumentsUrl);
+      if (argumentsJson === null) payloadsReadable = false;
+    }
+    if (responseJson === null && row.responseUrl) {
+      responseJson = await fetchSpilledPayload(row.responseUrl);
+      if (responseJson === null) payloadsReadable = false;
+    }
+    resolved.push({ ...row, argumentsJson, responseJson, payloadsReadable });
+  }
+  return resolved;
 }
 
 /**
@@ -154,7 +218,7 @@ export async function readTurnEvidence(args: {
       return { rows, exhausted: false };
     }
 
-    rows.push(...readRows(response.body));
+    rows.push(...(await resolveSpilledPayloads(readRows(response.body))));
 
     if (response.body?.isDone === true) return { rows, exhausted: true };
     const nextCursor = response.body?.cursor;
