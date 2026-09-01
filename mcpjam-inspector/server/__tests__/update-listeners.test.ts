@@ -591,10 +591,11 @@ describe("update-listeners", () => {
     }
   });
 
-  it("stays quiet when the windows close instead of before-quit firing", async () => {
-    // The macOS path: quitAndInstall() closes every window itself and bypasses
-    // Browser::Quit(), so `before-quit` never arrives even though the install
-    // is proceeding. Windows going away is the signal there.
+  it("still catches a silent refusal that happens after the windows close", async () => {
+    // The macOS sequence: quitAndInstall() closes every window and only then
+    // reaches Squirrel, so `window-all-closed` fires on the refusing path too.
+    // Treating it as an all-clear would disarm the watchdog one step before
+    // the refusal it exists to catch.
     vi.useFakeTimers();
     try {
       const window = createWindow();
@@ -607,10 +608,41 @@ describe("update-listeners", () => {
       emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
       ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
 
+      // Electron closes the windows, then Squirrel silently refuses.
       emitAppEvent("window-all-closed");
+      windows.splice(0, windows.length);
+      vi.advanceTimersByTime(1_000);
+
+      // Nobody left to toast, but the session must not go dark: this line
+      // plus a still-running process is the whole fingerprint of the bug.
+      expect(logWarnMock).toHaveBeenCalledWith(
+        expect.stringContaining("no window remains"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not toast a slow shutdown that already closed its windows", async () => {
+    // The false positive the warn-level path buys us: a working macOS install
+    // is mid-shutdown with its windows gone. No error, no toast.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      windows.splice(0, windows.length);
       vi.advanceTimersByTime(5_000);
 
       expect(errorBroadcastCount(window)).toBe(0);
+      expect(logErrorMock).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

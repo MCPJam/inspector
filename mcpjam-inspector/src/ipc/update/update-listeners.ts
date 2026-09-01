@@ -22,14 +22,15 @@ let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
 // Watchdog for an install that never starts. `quitAndInstall()` can return
 // without quitting AND without throwing: Squirrel.Mac no-ops when it can't
 // swap in the staged build (Team ID mismatch, unwritable staging dir). No
-// event follows, so the shutdown that never begins is the only evidence.
+// event follows, so a process that is still alive is the only evidence.
 //
-// What counts as "begun" differs by platform. On Windows `quitAndInstall()`
-// calls `app.quit()`, so `before-quit` arrives. On macOS it closes every
-// window itself and bypasses `Browser::Quit()` entirely, so `before-quit`
-// may never fire even on a install that works perfectly — there, windows
-// going away is the signal. We clear on both, and if our windows are still
-// up after this long, the request did not take.
+// Nothing earlier in the sequence discriminates. On macOS `quitAndInstall()`
+// closes every window first and only reaches Squirrel once the last one is
+// gone — so the windows closing, and `window-all-closed` with them, happens
+// on the failing path exactly as it does on the working one, one step before
+// the refusal. `before-quit` is no better: that path bypasses `Browser::Quit()`
+// entirely, so on macOS the event may never arrive even for an install that
+// works. Only still being here after the deadline separates the two.
 export const DEFAULT_INSTALL_QUIT_TIMEOUT_MS = 5_000;
 let installQuitTimeoutMs = DEFAULT_INSTALL_QUIT_TIMEOUT_MS;
 
@@ -104,16 +105,34 @@ function requestQuitAndInstall(): void {
   }
   installQuitTimer = setTimeout(() => {
     installQuitTimer = null;
-    log.error(
-      `quitAndInstall() returned without starting a quit within ${installQuitTimeoutMs}ms — treating the install as failed`,
-    );
-    // Let the user click Update again, and tell them it didn't work so they
-    // can fall back to a manual download. Status stays "downloaded" because
-    // the build really is staged — it's the swap-in that failed.
+    // Let the user click Update again. Status stays "downloaded" because the
+    // build really is staged — it's the swap-in that didn't happen.
     isQuittingForUpdate = false;
     installFailureReported = true;
-    broadcastUpdateError();
+    if (hasLiveWindow()) {
+      // A window is still up, so the shutdown never even got as far as
+      // closing it. Tell the user, who is the one watching the pill: the
+      // toast offers the manual download.
+      log.error(
+        `quitAndInstall() returned without starting a quit within ${installQuitTimeoutMs}ms — treating the install as failed`,
+      );
+      broadcastUpdateError();
+      return;
+    }
+    // No window left to tell. Squirrel may have refused after Electron closed
+    // them — the same silent failure, just invisible until the user reopens
+    // from the dock — or a working install may still be shutting down. We
+    // can't tell the two apart, so don't cry wolf at error level, but leave a
+    // line above `info`: a session that logs this and then keeps running is
+    // the fingerprint of the bug this watchdog exists for.
+    log.warn(
+      `quitAndInstall() has not quit after ${installQuitTimeoutMs}ms and no window remains — install may have been refused silently`,
+    );
   }, installQuitTimeoutMs);
+}
+
+function hasLiveWindow(): boolean {
+  return BrowserWindow.getAllWindows().some((win) => !win.isDestroyed());
 }
 
 function isTrustedSender(senderId: number): boolean {
@@ -165,15 +184,14 @@ function setStatus(next: UpdateStatus): void {
 }
 
 export function setupAutoUpdaterEvents(): void {
-  // A shutdown actually starting is what tells us `quitAndInstall()` took
-  // effect. `window-all-closed` covers macOS, where Electron closes the
-  // windows itself and no `before-quit` follows; `before-quit` covers Windows
-  // and any ordinary quit. Deliberately NOT `before-quit-for-update`: that one
-  // is emitted as the first line of `quitAndInstall()`, before Squirrel is
-  // consulted at all, so it fires just as readily for the silent refusal this
-  // watchdog exists to catch.
+  // `before-quit` means a real quit began — on Windows `quitAndInstall()`
+  // routes through `app.quit()`, so this is the success signal there. It is
+  // only ever an early all-clear: the paths that skip it are handled when the
+  // watchdog fires. Deliberately NOT `window-all-closed` or
+  // `before-quit-for-update`; both fire on the refusing path too, so clearing
+  // on either would disarm the watchdog just before the refusal it exists to
+  // catch.
   app.on("before-quit", clearInstallQuitWatchdog);
-  app.on("window-all-closed", clearInstallQuitWatchdog);
 
   autoUpdater.on("checking-for-update", () => {
     isCheckingOrDownloading = true;
