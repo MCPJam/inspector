@@ -83,13 +83,25 @@ function lockPath(): string {
 }
 
 /**
- * A lock whose holder is provably dead is broken immediately; the age bound
- * below is the fallback for a holder we cannot probe (another user, a
- * platform with no signal). The timeout is deliberately LONGER than the
- * staleness bound: an earlier draft had it shorter, which meant a lock left by
- * a crashed Inspector could never be broken by the waiters that needed it —
- * every mutation, including the crash-recovery sweep itself, would time out
- * while the lock sat under the staleness threshold.
+ * A lock whose holder is provably dead is broken immediately. The age bound is
+ * NOT a second way to break a live holder's lock — that was the hole: a
+ * janitor sweep can exceed thirty seconds all on its own (each abandoned tree
+ * costs up to ~10s in `terminateOwnedProcessGroup`), so an age-only break let
+ * a second Inspector into the critical section while the first was still
+ * inside, and one of them lost its record write. It applies only to a lock
+ * whose body names nobody: a truncated write, or a lock from a build that did
+ * not record a holder, which no probe can ever resolve.
+ *
+ * A valid lock naming a holder we cannot prove dead is therefore waited out
+ * and then FAILED rather than stolen. That is the safe direction: a refused
+ * mutation makes the supervisor tear down the tree it just spawned, whereas a
+ * lost record leaves a live tree with no durable handle on it at all.
+ *
+ * The timeout is deliberately LONGER than the staleness bound: an earlier
+ * draft had it shorter, which meant a lock left by a crashed Inspector could
+ * never be broken by the waiters that needed it — every mutation, including
+ * the crash-recovery sweep itself, would time out while the lock sat under the
+ * staleness threshold.
  */
 const LOCK_STALE_MS = 30_000;
 const LOCK_POLL_MS = 25;
@@ -174,17 +186,26 @@ async function acquireFileLock(): Promise<() => Promise<void>> {
         (info) => Date.now() - info.mtimeMs,
         () => 0,
       );
-      if (lockHolderProvablyGone(body) || age > LOCK_STALE_MS) {
+      const holderGone = lockHolderProvablyGone(body);
+      // `body === null` is a lock that names nobody — truncated, or written by
+      // a build that recorded no holder. Nothing can ever prove it dead, so
+      // age is the only recovery it has.
+      const unattributable = body === null && age > LOCK_STALE_MS;
+      if (holderGone || unattributable) {
         logger.warn("[local-harness] breaking an abandoned registry lock", {
           age,
-          holderGone: lockHolderProvablyGone(body),
+          holderGone,
+          unattributable,
         });
         await rm(file, { force: true }).catch(() => {});
         continue;
       }
       if (Date.now() > deadline) {
         throw new Error(
-          "timed out waiting for the local harness process registry lock",
+          "timed out waiting for the local harness process registry lock" +
+            (body === null ? "" : ` (held by pid ${body.pid})`) +
+            ". Its holder could not be proven gone, and taking it over would " +
+            "put two writers in the registry at once.",
         );
       }
       await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
@@ -462,20 +483,25 @@ export function reclaimAbandonedProcesses(args: {
         // the group is already empty the signal is a harmless ESRCH.
         // Only signal a group the record itself vouches for: a malformed
         // `processGroupIdentity` is not a licence to signal an arbitrary pid.
-        if (record.processGroupIdentity === String(record.rootPid)) {
+        const vouched = record.processGroupIdentity === String(record.rootPid);
+        if (vouched) {
           signalProcessGroup(record.rootPid, "SIGKILL", platform);
-          // Give the survivors a moment, then confirm. The record is the only
-          // durable handle on them, so it is not dropped on a hope.
+          // Give the survivors a moment before confirming.
           await new Promise((r) => setTimeout(r, 200));
-          if (processGroupExists(record.rootPid, platform)) {
-            survivors.push(record);
-            results.push({ sessionId: record.sessionId, outcome: "escaped" });
-            logger.warn(
-              "[local-harness] descendants outlived their root; record kept",
-              { sessionId: record.sessionId },
-            );
-            continue;
-          }
+        }
+        // Confirmed in BOTH cases. Being unable to vouch for the group is a
+        // reason not to SIGNAL it; it is an even stronger reason not to throw
+        // away the only durable handle on a tree nobody has looked at. (This
+        // path is unreachable on win32, where `processGroupExists` always
+        // answers false — ownership proof gates it above.)
+        if (processGroupExists(record.rootPid, platform)) {
+          survivors.push(record);
+          results.push({ sessionId: record.sessionId, outcome: "escaped" });
+          logger.warn(
+            "[local-harness] descendants outlived their root; record kept",
+            { sessionId: record.sessionId, vouched },
+          );
+          continue;
         }
         await removeSessionState(record.sessionStateDir);
         results.push({ sessionId: record.sessionId, outcome: "already-gone" });

@@ -159,7 +159,15 @@ export function hashGrantBinding(binding: HarnessGrantBinding): string {
       binding.runtimeId,
       binding.permissionProfile,
       binding.policyVersion,
-      binding.isolationPolicyVersion ?? null,
+      // Only isolated bindings carry one, and only they hash it. A native
+      // binding has no isolation policy to be bound to, so folding a constant
+      // `null` into its hash would change every native hash for a value that
+      // means nothing there — invalidating consents that the local policy
+      // never touched. A native binding that carries one anyway is refused
+      // outright by `verifyLocalHarnessGrant`, not admitted by the hash.
+      ...(binding.targetKind === "local-isolated"
+        ? [binding.isolationPolicyVersion ?? null]
+        : []),
     ]),
   );
 }

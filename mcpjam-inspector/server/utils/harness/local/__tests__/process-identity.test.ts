@@ -5,6 +5,7 @@ import {
   parseLinuxProcStat,
   readProcessBirthIdentity,
   supportsOwnershipProof,
+  terminateOwnedProcessGroup,
 } from "../process-identity.js";
 
 /**
@@ -147,4 +148,51 @@ describe.skipIf(!supportsOwnershipProof())("readProcessBirthIdentity", () => {
       );
     },
   );
+});
+
+describe("terminating a tree we own", () => {
+  // These drive the real primitive against a real child so the outcomes are
+  // the ones a session would actually see.
+  it("reports the tree gone only when it is PROVABLY gone", async () => {
+    const { spawn } = await import("node:child_process");
+    const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const pid = child.pid!;
+    const identity = await readProcessBirthIdentity(pid);
+    expect(identity).not.toBeNull();
+    const outcome = await terminateOwnedProcessGroup({
+      pid,
+      birthIdentity: identity!,
+      graceMs: 400,
+      pollMs: 25,
+    });
+    expect(["graceful", "forced"]).toContain(outcome.outcome);
+  });
+
+  it("says 'unknown', not 'graceful', when the platform cannot be asked", async () => {
+    // A platform with no liveness primitive answers `unknown` at every probe.
+    // The old post-grace re-check went through `isSameProcess`, which folds
+    // "gone", "not ours" and "could not look" into one `false` — so a probe
+    // failure reported the tree as gracefully stopped.
+    const outcome = await terminateOwnedProcessGroup({
+      pid: 4_242,
+      birthIdentity: "win32:whatever",
+      graceMs: 10,
+      pollMs: 5,
+      platform: "win32",
+    });
+    expect(outcome.outcome).toBe("unknown");
+  });
+
+  it("refuses to signal a pid that is no longer the process we recorded", async () => {
+    const outcome = await terminateOwnedProcessGroup({
+      pid: process.pid,
+      birthIdentity: "linux:definitely-not-this-process",
+      graceMs: 50,
+      pollMs: 10,
+    });
+    expect(outcome.outcome).toBe("not-owned");
+  });
 });

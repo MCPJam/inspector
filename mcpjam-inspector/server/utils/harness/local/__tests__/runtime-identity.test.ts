@@ -229,9 +229,11 @@ describe("re-verification immediately before spawn", () => {
  * `resolveSystemInstall` rejects a non-root-owned executable before it reaches
  * provenance, identity, or version checks — deliberately, since the session
  * user could otherwise rewrite it between the probe and the launch. That makes
- * every test here root-only: as an ordinary user the fixtures under a
- * `mkdtemp` directory are rejected on ownership first, and the assertions
- * below would be measuring the wrong refusal.
+ * every test that PLANTS a fixture root-only: as an ordinary user the files
+ * under a `mkdtemp` directory are rejected on ownership first, and the
+ * assertions would be measuring the wrong refusal. Cases that never reach the
+ * ownership check live in the unskipped describe below instead, so an ordinary
+ * CI run does not silently lose them.
  */
 describe.skipIf(process.getuid?.() !== 0)("system installations", () => {
   const systemManifest: LocalHarnessCompatibility = {
@@ -348,17 +350,6 @@ describe.skipIf(process.getuid?.() !== 0)("system installations", () => {
       probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
     });
     expect(result).toMatchObject({ status: "system-runtime-ambiguous" });
-  });
-
-  it("reports nothing installed when nothing is there", async () => {
-    const result = await resolveSystemInstall({
-      manifest: systemManifest,
-      platform: "linux",
-      forbiddenRoots: [],
-      searchPaths: [join(base, "empty-bin")],
-      probe: async () => ({ stdout: "", exitCode: 1 }),
-    });
-    expect(result).toMatchObject({ status: "system-runtime-not-installed" });
   });
 
   it("fails closed when the manifest requires provenance we cannot verify", async () => {
@@ -506,5 +497,45 @@ describe("system install search paths", () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+describe("system install search paths", () => {
+  // Runs as any user: an empty search path returns before `resolveSystemInstall`
+  // looks at ownership at all, so this case needs none of the root-only setup.
+  const searchManifest: LocalHarnessCompatibility = {
+    ...LOCAL_HARNESS_MANIFEST["claude-code"],
+    runtime: {
+      source: "system-install",
+      executableNames: ["claude"],
+      executableVersionRange: ">=1.0.0",
+      vendorIdentityPolicy: {
+        probeArgs: ["--version"],
+        stdoutPattern: "^claude \\d+\\.\\d+",
+        requirePlatformProvenance: false,
+      },
+    },
+  };
+
+  it("reports nothing installed when nothing is there", async () => {
+    const result = await resolveSystemInstall({
+      manifest: searchManifest,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [join(base, "empty-bin")],
+      probe: async () => ({ stdout: "", exitCode: 1 }),
+    });
+    expect(result).toMatchObject({ status: "system-runtime-not-installed" });
+  });
+
+  it("reports nothing installed when no search path is given at all", async () => {
+    const result = await resolveSystemInstall({
+      manifest: searchManifest,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [],
+      probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+    });
+    expect(result).toMatchObject({ status: "system-runtime-not-installed" });
   });
 });

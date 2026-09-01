@@ -280,6 +280,33 @@ describe("harness consent", () => {
     };
     expect(hashGrantBinding(a)).toBe(hashGrantBinding(b));
   });
+
+  it("does not fold an isolation policy version into a NATIVE hash", () => {
+    // A native binding has no isolation policy to be bound to, so hashing a
+    // constant `null` for it would change every native hash whenever the field
+    // was introduced — invalidating consents the local policy never touched.
+    // A native binding that carries one anyway is refused by verification, not
+    // admitted by the hash.
+    const native = binding();
+    expect(native.targetKind).toBe("local-native");
+    expect(
+      hashGrantBinding({
+        ...native,
+        isolationPolicyVersion: "whatever",
+      } as HarnessGrantBinding),
+    ).toBe(hashGrantBinding(native));
+  });
+
+  it("binds an ISOLATED hash to the isolation policy version", () => {
+    const isolated: HarnessGrantBinding = {
+      ...binding(),
+      targetKind: "local-isolated",
+      isolationPolicyVersion: "iso-1",
+    };
+    expect(
+      hashGrantBinding({ ...isolated, isolationPolicyVersion: "iso-2" }),
+    ).not.toBe(hashGrantBinding(isolated));
+  });
 });
 
 describe("machine identity", () => {

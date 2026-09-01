@@ -263,8 +263,14 @@ export function createSupervisedLocalHarnessProvider(
      */
     const resolveForRead = async (path: string): Promise<string> => {
       const target = classifyBootstrapPath(path, translationContext);
+      // The bundle is digest-verified and read-only to the session, and its
+      // path came from the translator's own containment check — `confine`
+      // would reject it, since the bundle is not one of the session's writable
+      // roots. The overlay IS under a session root, so it goes through the
+      // same symlink-aware check everything else does: a symlink planted at
+      // the marker's name would otherwise redirect a read out of session state.
       if (target.kind === "bundle-asset") return target.bundlePath;
-      if (target.kind === "session-overlay") return target.overlayPath;
+      if (target.kind === "session-overlay") return confine(target.overlayPath);
       return confine(path);
     };
 
@@ -283,7 +289,9 @@ export function createSupervisedLocalHarnessProvider(
       bytes: Uint8Array,
     ): Promise<string | null> => {
       const target = classifyBootstrapPath(path, translationContext);
-      if (target.kind === "session-overlay") return target.overlayPath;
+      if (target.kind === "session-overlay") {
+        return confine(target.overlayPath);
+      }
       if (target.kind === "workspace") return confine(path);
 
       let existing: Buffer;

@@ -368,8 +368,18 @@ export async function terminateOwnedProcessGroup(args: {
   }
 
   // Re-prove before escalating: during the grace window the pid could have
-  // exited and been reused.
-  if (!(await isSameProcess(args.pid, args.birthIdentity, platform))) {
+  // exited and been reused. Probed on the TRI-STATE, not through
+  // `isSameProcess`, which folds "gone", "not ours" and "could not look" into
+  // one `false` — and a probe failure reported here as `graceful` is a caller
+  // announcing a stopped session over a tree that may still be running.
+  const afterGrace = await probeProcess(args.pid, platform);
+  if (afterGrace.state === "gone") return { outcome: "graceful" };
+  if (afterGrace.state === "unknown") {
+    return { outcome: "unknown", reason: afterGrace.reason };
+  }
+  if (afterGrace.identity !== args.birthIdentity) {
+    // Our root exited during the grace window and the number was reused. The
+    // tree is gone; the stranger now holding the pid is not ours to signal.
     return { outcome: "graceful" };
   }
   signalProcessGroup(args.pid, "SIGKILL", platform);
@@ -381,7 +391,15 @@ export async function terminateOwnedProcessGroup(args: {
       return { outcome: "forced" };
     }
   }
-  // SIGKILL was delivered and the root is still there: uninterruptible sleep,
-  // or something we do not understand. Say so rather than reporting stopped.
+  // The polls above only ever conclude "gone". Ask once more so the difference
+  // between "SIGKILL was delivered and the root is STILL there" and "the last
+  // few probes could not look" survives into the answer.
+  const settled = await probeProcess(args.pid, platform);
+  if (settled.state === "gone") return { outcome: "forced" };
+  if (settled.state === "unknown") {
+    return { outcome: "unknown", reason: settled.reason };
+  }
+  // Uninterruptible sleep, or something we do not understand. Say so rather
+  // than reporting stopped.
   return { outcome: "escaped" };
 }

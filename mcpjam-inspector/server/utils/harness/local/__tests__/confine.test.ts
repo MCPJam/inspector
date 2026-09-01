@@ -140,3 +140,50 @@ describe("confinePath", () => {
     }
   });
 });
+
+describe("dangling symlinks are links, not absences", () => {
+  it("refuses a link whose target does not exist outside the root", async () => {
+    // The case a `realpath`-only walk gets wrong: `realpath` FAILS on a link
+    // with no target, so the link was classified as "a name that is not there
+    // yet" and re-attached literally — landing back inside the root and
+    // passing. `open(…, "w")` then follows it and CREATES the target outside.
+    // No race is involved; the model can plant this link itself.
+    await symlink(join(outside, "not-yet.txt"), join(workspace, "dangling"));
+    await expect(
+      confinePath(join(workspace, "dangling"), { roots }),
+    ).rejects.toThrow(PathConfinementError);
+  });
+
+  it("still allows a dangling link that stays inside the root", async () => {
+    await symlink(
+      join(workspace, "src", "later.ts"),
+      join(workspace, "inside"),
+    );
+    await expect(
+      confinePath(join(workspace, "inside"), { roots }),
+    ).resolves.toBe(join(workspace, "src", "later.ts"));
+  });
+
+  it("follows a dangling link used as a DIRECTORY component", async () => {
+    await symlink(join(outside, "nowhere"), join(workspace, "dangling-dir"));
+    await expect(
+      confinePath(join(workspace, "dangling-dir", "child.txt"), { roots }),
+    ).rejects.toThrow(PathConfinementError);
+  });
+
+  it("follows a chain of dangling links to where it actually lands", async () => {
+    await symlink(join(workspace, "hop2"), join(workspace, "hop1"));
+    await symlink(join(outside, "end.txt"), join(workspace, "hop2"));
+    await expect(
+      confinePath(join(workspace, "hop1"), { roots }),
+    ).rejects.toThrow(PathConfinementError);
+  });
+
+  it("refuses a symlink cycle rather than spinning", async () => {
+    await symlink(join(workspace, "loop-b"), join(workspace, "loop-a"));
+    await symlink(join(workspace, "loop-a"), join(workspace, "loop-b"));
+    await expect(
+      confinePath(join(workspace, "loop-a"), { roots }),
+    ).rejects.toThrow(/more than 8 symbolic links/);
+  });
+});

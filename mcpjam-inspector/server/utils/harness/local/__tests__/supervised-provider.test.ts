@@ -320,6 +320,34 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await session.stop();
   });
 
+  it("confines the bootstrap overlay like everything else", async () => {
+    // The marker name is already constrained, so the PATH cannot escape — but
+    // a symlink planted at that name could redirect the write, and the overlay
+    // is under a session root, so it goes through the same symlink-aware check
+    // the rest of the file API uses.
+    const sup = supervisor();
+    const { session, sessionStateDir } = await buildSession("bootlink", sup);
+    const marker = join(
+      workspace,
+      ".harness-bootstrap",
+      "claude-code",
+      ".bootstrap-linked.ok",
+    );
+    await mkdir(join(sessionStateDir, "bootstrap"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await symlink(
+      join(outside, "captured.ok"),
+      join(sessionStateDir, "bootstrap", ".bootstrap-linked.ok"),
+    ).catch(() => {});
+    await expect(
+      session.writeTextFile({ path: marker, content: "" }),
+    ).rejects.toThrow(/outside every directory/);
+    await expect(readFile(join(outside, "captured.ok"))).rejects.toThrow();
+    await session.stop();
+  });
+
   it("fails closed when the adapter's recipe and the bundle disagree", async () => {
     const sup = supervisor();
     const { session } = await buildSession("bootmismatch", sup);

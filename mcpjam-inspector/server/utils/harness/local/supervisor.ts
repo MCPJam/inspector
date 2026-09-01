@@ -238,6 +238,29 @@ export class LocalHarnessSupervisor {
     }
     assertArgvAllowed(request.args);
 
+    // Captured where it is proven non-null, because the field is mutable and
+    // the record below is built after several awaits.
+    let ownerBirthIdentity: ProcessBirthIdentity | undefined;
+    if (request.role === "root") {
+      // BEFORE the spawn, not after. Without our own identity the durable
+      // record cannot say whether its owner is alive, so the janitor would
+      // have to treat it as permanently live and never reclaim it — a tree
+      // nobody can ever clean up. Checking afterwards meant the refusal came
+      // with a process already running that we then had to abandon, and an
+      // abandon whose termination cannot be proven is exactly the outcome
+      // this refusal exists to avoid. Refusing here costs nothing: no process
+      // has been created yet.
+      await this.supervisorIdentityReady;
+      if (this.supervisorBirthIdentity === null) {
+        throw new SupervisorError(
+          "this Inspector could not read its own process identity, so a " +
+            "supervised root would be recorded without a reclaimable owner; " +
+            "refusing to start it",
+        );
+      }
+      ownerBirthIdentity = this.supervisorBirthIdentity;
+    }
+
     // ── Everything up to and including bucket registration is SYNCHRONOUS ──
     //
     // Two `spawnSupervised` calls for the same session interleave across the
@@ -375,24 +398,11 @@ export class LocalHarnessSupervisor {
     }
 
     if (request.role === "root") {
-      await this.supervisorIdentityReady;
-      if (this.supervisorBirthIdentity === null) {
-        // Without our own identity the record cannot say whether its owner is
-        // alive, so the janitor would have to treat it as permanently live and
-        // never reclaim it. A tree nobody can ever clean up is worse than a
-        // refused launch.
-        await abandon();
-        throw new SupervisorError(
-          "this Inspector could not read its own process identity, so a " +
-            "supervised root would be recorded without a reclaimable owner; " +
-            "refusing to start it",
-        );
-      }
       const record: LocalHarnessProcessRecord = {
         sessionId: request.sessionId,
         supervisorNonce: this.nonce,
         supervisorPid: process.pid,
-        supervisorBirthIdentity: this.supervisorBirthIdentity,
+        supervisorBirthIdentity: ownerBirthIdentity,
         runtimeId: request.runtimeId,
         rootPid: pid,
         processBirthIdentity: birthIdentity!,

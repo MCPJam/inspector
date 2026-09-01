@@ -1,4 +1,13 @@
-import { mkdtemp, mkdir, readdir, realpath, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -66,6 +75,82 @@ beforeEach(async () => {
   for (const r of await listProcessRecords()) await forgetProcess(r.sessionId);
 });
 
+describe("the cross-process lock", () => {
+  const lockFile = () =>
+    join(base, ".mcpjam", "harness-local", "processes.lock");
+
+  it("breaks a lock whose holder is provably gone", async () => {
+    await mkdir(join(base, ".mcpjam", "harness-local"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await writeFile(
+      lockFile(),
+      JSON.stringify({ pid: 2_147_479_001, nonce: "n", at: Date.now() }),
+    );
+    // No wait, no staleness: the pid cannot exist, so the lock is abandoned.
+    await expect(
+      recordProcess(record({ sessionId: "s-lock-dead" })),
+    ).resolves.toBeUndefined();
+  });
+
+  it("will not steal a lock from a holder that is still alive", async () => {
+    // The hole this closes: an age-only break let a second Inspector into the
+    // critical section while the first was still inside — and a janitor sweep
+    // can exceed the staleness bound on its own, since each abandoned tree
+    // costs up to ~10s to terminate. Waiting is the safe failure; a lost
+    // record leaves a live tree with no durable handle on it.
+    await mkdir(join(base, ".mcpjam", "harness-local"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await writeFile(
+      lockFile(),
+      // This process: unambiguously alive, and far older than the staleness
+      // bound, which on its own used to be enough to break it.
+      JSON.stringify({
+        pid: process.pid,
+        nonce: "someone-else",
+        at: Date.now() - 120_000,
+      }),
+    );
+
+    let settled = false;
+    const pending = recordProcess(record({ sessionId: "s-lock-live" })).then(
+      () => {
+        settled = true;
+      },
+    );
+    await new Promise((r) => setTimeout(r, 1_500));
+    // Still waiting — it did not take the lock, and the holder's lock file is
+    // untouched.
+    expect(settled).toBe(false);
+    expect(JSON.parse(await readFile(lockFile(), "utf8")).nonce).toBe(
+      "someone-else",
+    );
+
+    // Waiting, not wedged: once the holder lets go, the mutation proceeds.
+    await rm(lockFile(), { force: true });
+    await pending;
+    expect(settled).toBe(true);
+  });
+
+  it("recovers from a lock body that names nobody", async () => {
+    // Truncated, or written by a build that recorded no holder. No probe can
+    // ever resolve it, so age is the only recovery it has.
+    await mkdir(join(base, ".mcpjam", "harness-local"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await writeFile(lockFile(), "{not json");
+    const old = new Date(Date.now() - 120_000);
+    await utimes(lockFile(), old, old);
+    await expect(
+      recordProcess(record({ sessionId: "s-lock-garbage" })),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe("the durable record", () => {
   it("round-trips and updates lifecycle state", async () => {
     await recordProcess(record({ sessionId: "s-round" }));
@@ -88,6 +173,59 @@ describe("the durable record", () => {
 });
 
 describe("the janitor", () => {
+  it.skipIf(!canOwnProcesses)(
+    "keeps a record whose group it could not vouch for while survivors remain",
+    async () => {
+      // A malformed `processGroupIdentity` is a reason not to SIGNAL the
+      // group; it is an even stronger reason not to throw away the only
+      // durable handle on a tree nobody has looked at. The earlier version
+      // skipped the signal and then deleted the record anyway, leaving the
+      // survivors unreapable.
+      const { spawn } = await import("node:child_process");
+      // A group leader that spawns a grandchild, then dies: the group outlives
+      // it, which is exactly the case the check exists for.
+      const leader = spawn(
+        process.execPath,
+        [
+          "-e",
+          "const{spawn}=require('node:child_process');" +
+            "spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});" +
+            "setInterval(()=>{},1000);",
+        ],
+        { detached: true, stdio: "ignore" },
+      );
+      const pid = leader.pid!;
+      await new Promise((r) => setTimeout(r, 400));
+      process.kill(pid, "SIGKILL");
+      await new Promise((r) => setTimeout(r, 300));
+
+      await recordProcess(
+        record({
+          sessionId: "s-unvouched",
+          rootPid: pid,
+          processGroupIdentity: "not-the-root-pid",
+        }),
+      );
+      const results = await reclaimAbandonedProcesses({
+        liveNonce: "sup_live",
+      });
+      expect(results).toContainEqual({
+        sessionId: "s-unvouched",
+        outcome: "escaped",
+      });
+      expect(
+        (await listProcessRecords()).find((r) => r.sessionId === "s-unvouched"),
+      ).toBeDefined();
+
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+      await forgetProcess("s-unvouched");
+    },
+  );
+
   it.skipIf(!canOwnProcesses)(
     "will not reclaim records owned by a supervisor that is still alive",
     async () => {

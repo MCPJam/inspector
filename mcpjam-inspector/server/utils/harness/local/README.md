@@ -155,6 +155,20 @@ bridge's own `bind`, which only a process already running as this user could
 win, and closing even that needs a handshake nonce the vendor bridges do not
 speak.
 
+### A dangling symlink is a link, not an absence
+
+`realpath` fails on a symlink whose target does not exist, so an ancestor walk
+built only on it classifies such a link as "a name that is not there yet" and
+re-attaches it literally — landing back inside the root and passing. The link
+still redirects the write, and `open(…, "w")` follows it and creates the
+target. No race is involved: the model can plant
+`<workspace>/x -> ~/.ssh/authorized_keys` itself and then ask the Inspector
+file API to write `x`. Every not-yet-resolved segment is therefore `lstat`ed,
+and one that exists as a symlink is followed explicitly, with a hop cap so a
+chain or a cycle cannot spin.
+
+This is distinct from the TOCTOU below, which is a race and remains open.
+
 ### "Gone" and "cannot tell" are different answers
 
 A liveness probe can fail three ways, and collapsing them is a safety bug in

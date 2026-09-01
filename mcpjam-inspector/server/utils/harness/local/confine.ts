@@ -21,6 +21,17 @@
  * checks the result. A write that creates a new file inside the root is
  * allowed; a write through a link that leaves the root is not.
  *
+ * ── Dangling links are links, not absences ───────────────────────────────
+ * `realpath` FAILS on a symlink whose target does not exist, so an earlier
+ * version of the ancestor walk classified such a link as "a name that is not
+ * there yet" and re-attached it literally — landing back inside the root and
+ * passing. The link still redirects the write, and `open(…, "w")` follows it
+ * and creates the target. With no race at all, a link planted at
+ * `<workspace>/x -> /home/u/.ssh/authorized_keys` turned a granted write into
+ * a write outside the grant. So each not-yet-resolved segment is `lstat`ed:
+ * one that EXISTS as a symlink is followed explicitly (bounded, so a chain or
+ * a cycle cannot spin) and the result is what gets checked.
+ *
  * ── The remaining race, stated plainly ───────────────────────────────────
  * Validation and the filesystem operation are two steps, so a process running
  * as the same OS user can replace a resolved directory with a symlink in
@@ -36,7 +47,7 @@
  * on its own; a backend that relies on this check for its filesystem boundary
  * must supply its own enforcement rather than inherit this one.
  */
-import { realpath } from "node:fs/promises";
+import { lstat, readlink, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
 
 const MAX_PATH_LENGTH = 4096;
@@ -86,6 +97,59 @@ async function resolveExistingAncestor(
   }
 }
 
+/** A symlink chain longer than this is malice or a loop; either way, refuse. */
+const MAX_LINK_HOPS = 8;
+
+/**
+ * Walk the not-yet-resolved tail, following any segment that turns out to
+ * EXIST as a symlink.
+ *
+ * `realpath` already resolved everything up to `base`; what remains is
+ * segments it could not resolve. "Could not resolve" is not "is not there" —
+ * a dangling symlink is exactly the case where the two differ, and it is the
+ * one that redirects a write. Each segment is therefore `lstat`ed before being
+ * treated as a name to create.
+ */
+async function resolveDanglingLinks(
+  base: string,
+  tail: readonly string[],
+  requested: string,
+): Promise<string> {
+  let current = base;
+  for (let index = 0; index < tail.length; index += 1) {
+    let next = resolve(current, tail[index]!);
+    let hops = 0;
+    for (;;) {
+      let isLink: boolean;
+      try {
+        isLink = (await lstat(next)).isSymbolicLink();
+      } catch {
+        // Genuinely absent. Nothing below it can exist either, so the rest of
+        // the tail is a path to be created.
+        return resolve(next, ...tail.slice(index + 1));
+      }
+      if (!isLink) {
+        // It exists and is not a link; `realpath` it in case anything under it
+        // resolves differently, then move on to the next segment.
+        next = await realpath(next).catch(() => next);
+        break;
+      }
+      if ((hops += 1) > MAX_LINK_HOPS) {
+        throw new PathConfinementError(
+          `path passes through more than ${MAX_LINK_HOPS} symbolic links`,
+          requested,
+        );
+      }
+      const link = await readlink(next);
+      next = isAbsolute(link)
+        ? normalize(link)
+        : normalize(resolve(dirname(next), link));
+    }
+    current = next;
+  }
+  return current;
+}
+
 export interface ConfinementRoots {
   /** Canonical (already realpath'd) roots a path may resolve into. */
   roots: readonly string[];
@@ -131,7 +195,7 @@ export async function confinePath(
 
   const normalized = normalize(requested);
   const { base, tail } = await resolveExistingAncestor(normalized);
-  const canonical = tail.length === 0 ? base : resolve(base, ...tail);
+  const canonical = await resolveDanglingLinks(base, tail, requested);
 
   for (const root of roots) {
     if (isUnder(canonical, root)) return canonical;
