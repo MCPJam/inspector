@@ -357,9 +357,9 @@ async function probeLinuxGroup(pgid: number): Promise<GroupProbe> {
       // against a fail-CLOSED functional one (on a hidepid mount the probe
       // answers `unknown` a lot, so stops report unproven and the janitor
       // retains records) — and this file exists because that trade keeps being
-      // made the wrong way round. The termination itself is unaffected:
-      // `settleGroup` escalates to SIGKILL on `unknown` exactly as it does on
-      // `live`, so only the reporting and the record retention change.
+      // made the wrong way round. An unprovable group is not force-killed
+      // either, because that signal needs a fact `unknown` does not supply;
+      // see `settleGroup`.
       if (code !== "ENOENT" && code !== "ESRCH") blind = true;
       continue;
     }
@@ -501,14 +501,31 @@ export async function terminateOwnedProcessGroup(args: {
     const probeGroup = args.probeGroup ?? probeProcessGroup;
     const before = await probeGroup(args.pid, platform);
     if (before === "empty") return { outcome: goneOutcome };
-    // `live` AND `unknown` both escalate. Not knowing whether a descendant is
-    // still down there is a reason to MAKE SURE, not a reason to walk away:
-    // returning early on `unknown` left a child that ignored SIGTERM running
-    // with no SIGKILL ever sent, because the only escalation sat below this
-    // point. The signal is ownership-safe in both cases by the rule the
-    // janitor also relies on — a pid still serving as a process-GROUP id is
-    // not handed out as a new process's pid while that group has members, so
-    // it can only reach the group whose root we proved was ours.
+    if (before === "unknown") {
+      // No signal here, and the reason is narrow enough to be worth spelling
+      // out, because this line has been written both ways.
+      //
+      // Every caller of `settleGroup` has already proven the ROOT is gone, so
+      // its pid is free for reuse. What makes `kill(-pid)` safe anyway is that
+      // a pid serving as a process-GROUP id is not handed out to a new process
+      // WHILE THAT GROUP HAS MEMBERS — which is a guarantee about a non-empty
+      // group, and `unknown` is precisely the failure to establish that. An
+      // unprovable group may be empty and its id already reissued, so the
+      // signal could land on a stranger's group.
+      //
+      // So the general rule ("`unknown` gates reporting, not action") does not
+      // reach here: this action needs the very fact `unknown` is missing. The
+      // caller keeps the record, reports the tree unproven rather than
+      // stopped, and the janitor retries when the probe can see again.
+      return {
+        outcome: "unknown",
+        reason:
+          "the process group could not be enumerated, so a survivor could be " +
+          "neither ruled out nor signalled without risking a reused group id",
+      };
+    }
+    // `live` is different: it proves the group has a member, which is exactly
+    // the fact that makes the id un-reissuable and the signal ours to send.
     signalProcessGroup(args.pid, "SIGKILL", platform);
     await new Promise((r) => setTimeout(r, Math.min(args.graceMs, 500)));
     const after = await probeGroup(args.pid, platform);

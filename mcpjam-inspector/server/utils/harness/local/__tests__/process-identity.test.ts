@@ -224,45 +224,130 @@ describe("terminating a tree we own", () => {
   );
 });
 
-describe("escalating when the group cannot be read", () => {
+/**
+ * A root that exits on SIGTERM, with a descendant in its group that ignores it.
+ *
+ * The descendant announces itself only AFTER installing its handler, and the
+ * root relays its pid only after that — without the handshake, the SIGTERM
+ * that starts termination can land before the handler is registered and kill
+ * the descendant by default action, which quietly turns these tests into
+ * something that measures nothing.
+ */
+const DESERTING_ROOT = [
+  "const{spawn}=require('node:child_process');",
+  "const k=spawn(process.execPath,['-e',",
+  JSON.stringify(
+    "process.on('SIGTERM',function(){});console.log('ready');" +
+      "setInterval(()=>{},1000)",
+  ),
+  "],{stdio:['ignore','pipe','ignore']});",
+  "k.stdout.once('data',function(){console.log(k.pid)});",
+  "process.on('SIGTERM',function(){process.exit(0)});",
+  "setInterval(()=>{},1000);",
+].join("");
+
+/** Poll until `pid` is provably gone, or give up. */
+async function waitForGone(pid: number, timeoutMs = 6_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if ((await probeProcess(pid)).state === "gone") return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+describe("a group that cannot be enumerated", () => {
   it.skipIf(!supportsOwnershipProof())(
-    "still SIGKILLs a group it could not enumerate",
+    "reports unknown and does NOT signal a group it cannot prove",
     async () => {
-      // The regression: `settleGroup` returned `unknown` BEFORE the escalation,
-      // so a descendant that ignored SIGTERM survived with no SIGKILL ever
-      // sent whenever the group probe could not enumerate. Not knowing whether
-      // a survivor exists is a reason to make sure, not to walk away.
+      // Shaped so that ONLY `settleGroup` could do the killing: the root exits
+      // on SIGTERM, so the grace loop returns through `settleGroup("graceful")`
+      // before the main flow's own SIGKILL is ever reached. A descendant that
+      // ignores SIGTERM is therefore still alive at that point, and whether it
+      // dies tells us exactly what `settleGroup` did.
+      //
+      // It must NOT die here. Every caller of `settleGroup` has already proven
+      // the root gone, so its pid is reusable; `kill(-pid)` is only safe
+      // because a group id is not reissued while the group has members, and
+      // `unknown` is the failure to establish that. Signalling anyway risks a
+      // stranger's group.
       const { spawn } = await import("node:child_process");
-      const child = spawn(
-        process.execPath,
-        ["-e", "process.on('SIGTERM',function(){});setInterval(()=>{},1000)"],
-        { detached: true, stdio: "ignore" },
+      const root = spawn(process.execPath, ["-e", DESERTING_ROOT], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const pid = root.pid!;
+      const descendant = Number(
+        await new Promise<string>((resolve) => {
+          root.stdout!.once("data", (d: Buffer) =>
+            resolve(d.toString().trim()),
+          );
+        }),
       );
-      const pid = child.pid!;
+      expect(descendant).toBeGreaterThan(0);
       try {
         const identity = await readProcessBirthIdentity(pid);
         const outcome = await terminateOwnedProcessGroup({
           pid,
           birthIdentity: identity!,
-          graceMs: 200,
+          graceMs: 2_000,
           pollMs: 25,
           // Always unprovable, as an unreadable /proc would be.
           probeGroup: async () => "unknown",
         });
         expect(outcome.outcome).toBe("unknown");
-        // ...and the tree is gone anyway, because the kill still happened.
-        const deadline = Date.now() + 4_000;
-        let probe = await probeProcess(pid);
-        while (probe.state !== "gone" && Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 25));
-          probe = await probeProcess(pid);
-        }
-        expect(probe.state).toBe("gone");
+        // The root cooperated and is gone...
+        expect(await waitForGone(pid)).toBe(true);
+        // ...and the descendant was left alone rather than signalled on an
+        // unverifiable group id.
+        expect((await probeProcess(descendant)).state).toBe("alive");
       } finally {
-        try {
-          process.kill(-pid, "SIGKILL");
-        } catch {
-          /* already gone */
+        for (const victim of [descendant, pid]) {
+          try {
+            process.kill(victim, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+        }
+      }
+    },
+  );
+
+  it.skipIf(!supportsOwnershipProof())(
+    "DOES force-kill a group it can prove still has a member",
+    async () => {
+      // The counterpart: `live` proves the group is non-empty, which is exactly
+      // the fact that makes its id un-reissuable and the signal ours to send.
+      const { spawn } = await import("node:child_process");
+      const root = spawn(process.execPath, ["-e", DESERTING_ROOT], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const pid = root.pid!;
+      const descendant = Number(
+        await new Promise<string>((resolve) => {
+          root.stdout!.once("data", (d: Buffer) =>
+            resolve(d.toString().trim()),
+          );
+        }),
+      );
+      try {
+        const identity = await readProcessBirthIdentity(pid);
+        const outcome = await terminateOwnedProcessGroup({
+          pid,
+          birthIdentity: identity!,
+          graceMs: 2_000,
+          pollMs: 25,
+        });
+        expect(["forced", "graceful"]).toContain(outcome.outcome);
+        expect(await waitForGone(descendant)).toBe(true);
+      } finally {
+        for (const victim of [descendant, pid]) {
+          try {
+            process.kill(victim, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
         }
       }
     },

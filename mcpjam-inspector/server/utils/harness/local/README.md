@@ -253,15 +253,23 @@ becomes exactly such an entry under a `hidepid` mount, and exempting the error
 then reports the tree gone while it is running.
 
 The trade is a fail-OPEN safety hole against a fail-CLOSED functional one. On a
-`hidepid` mount the probe will answer `unknown` often, so stops report unproven
-and the janitor retains records — noisy, but the termination itself is
-unaffected: an unprovable group escalates to `SIGKILL` exactly as a live one
-does, and only the reporting and the record retention change. That last part was
-briefly untrue — the `unknown` branch returned _above_ the escalation, so a
-child ignoring `SIGTERM` was never force-killed — which is why it is now pinned
-by a test rather than asserted in a comment. Given that this file exists
-because the same trade kept being made the wrong way round, it is made the other
-way here.
+`hidepid` mount the probe answers `unknown` often, so stops report unproven and
+the janitor retains records rather than reclaiming them. Given that this file
+exists because the same trade kept being made the wrong way round, it is made
+the other way here.
+
+An unprovable group is **not** force-killed either, and the reason is narrow.
+Every caller of `settleGroup` has already proven the ROOT is gone, so its pid is
+free for reuse; what makes `kill(-pid)` safe anyway is that a pid serving as a
+process-GROUP id is not reissued _while that group has members_ — a guarantee
+about a non-empty group, and `unknown` is exactly the failure to establish it.
+So the general rule that `unknown` gates reporting rather than action does not
+reach this signal: the action needs the very fact `unknown` is missing. `live`
+is different, and does escalate.
+
+This line has been written both ways within a day, so both directions are now
+pinned by tests, and each was checked to fail against the opposite behaviour
+rather than merely to pass against the current one.
 
 ### "Gone" and "cannot tell" are different answers
 
