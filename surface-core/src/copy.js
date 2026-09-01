@@ -150,6 +150,32 @@ export const CHAIN_REASON_LABELS = Object.freeze({
 });
 
 /**
+ * A member's label, or `undefined` for anything the map does not OWN.
+ *
+ * `map[member]` on its own is NOT that check, and the difference is visible in
+ * somebody's channel. Every plain object inherits `constructor`, `toString`,
+ * `valueOf` and friends from `Object.prototype`, so a payload whose `reason`
+ * reads `"constructor"` resolves to a FUNCTION — truthy — and the callers
+ * below, which drop the sentence on a falsy label, instead render
+ * "First break: Selection — function Object() { [native code] }".
+ *
+ * Nothing on this path validates the payload against the vocabulary: the
+ * watcher fetches the decision summary and hands it straight here. So the
+ * own-property test is the whole guard, and it is what makes the maps' stated
+ * contract — an unknown member reads as ABSENT — actually true.
+ *
+ * @param {Record<string, string>} map
+ * @param {unknown} member
+ * @returns {string | undefined}
+ */
+function labelFor(map, member) {
+	return typeof member === "string" &&
+		Object.prototype.hasOwnProperty.call(map, member)
+		? map[member]
+		: undefined;
+}
+
+/**
  * WHERE THE CHAIN BROKE, in one sentence, from a run's decision summary.
  *
  * The second half of the answer a terminal non-pass owes a reader: the outcome
@@ -177,16 +203,12 @@ export function formatFirstBreak(summary) {
 	if (chain?.status !== "verified") return "";
 	const stage = chain.firstFailedStage;
 	if (typeof stage === "string") {
-		const stageLabel = /** @type {Record<string, string>} */ (
-			CHAIN_STAGE_LABELS
-		)[stage];
+		const stageLabel = labelFor(CHAIN_STAGE_LABELS, stage);
 		if (!stageLabel) return "";
 		const row = (Array.isArray(chain.stages) ? chain.stages : []).find(
 			(/** @type {any} */ candidate) => candidate?.stage === stage,
 		);
-		const reason = /** @type {Record<string, string>} */ (CHAIN_REASON_LABELS)[
-			row?.reason
-		];
+		const reason = labelFor(CHAIN_REASON_LABELS, row?.reason);
 		return reason
 			? `First break: ${stageLabel} — ${reason}`
 			: `First break: ${stageLabel}`;
@@ -195,9 +217,10 @@ export function formatFirstBreak(summary) {
 	// category — the derivation contract says so explicitly. Naming only the
 	// bucket is the honest thing to say about a run that never got to a stage;
 	// inventing a stage for it would put a location on a run that had none.
-	const category = /** @type {Record<string, string>} */ (
-		CHAIN_FAILURE_CATEGORY_LABELS
-	)[chain.failureCategory];
+	const category = labelFor(
+		CHAIN_FAILURE_CATEGORY_LABELS,
+		chain.failureCategory,
+	);
 	return category ? `No stage was reached — grouped under ${category}` : "";
 }
 

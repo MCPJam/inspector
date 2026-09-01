@@ -215,6 +215,69 @@ test("a member this build has no word for drops the sentence", () => {
 	);
 });
 
+test("a wire value naming an inherited property is NOT a member", () => {
+	// Every plain object inherits `constructor`, `toString`, `valueOf` and
+	// friends, so a bare `map[member]` resolves those to FUNCTIONS — truthy —
+	// and the "unknown member drops the sentence" contract above turns into
+	// "First break: Selection — function Object() { [native code] }" in
+	// somebody's channel. Nothing on this path validates the payload against
+	// the vocabulary, so the own-property test is the whole guard.
+	const inherited = [
+		"constructor",
+		"toString",
+		"valueOf",
+		"hasOwnProperty",
+		"__proto__",
+		"isPrototypeOf",
+	];
+	for (const member of inherited) {
+		// As a stage: no location this build has a word for, so no sentence.
+		assert.equal(
+			formatFirstBreak(summaryWithBreak(member, "missingToolCall")),
+			"",
+			`stage "${member}" must not resolve through the prototype chain`,
+		);
+		// As a reason: the stage is still a real location worth naming, but the
+		// reason clause must be dropped rather than printing a function.
+		assert.equal(
+			formatFirstBreak(summaryWithBreak("selection", member)),
+			"First break: Selection",
+			`reason "${member}" must not resolve through the prototype chain`,
+		);
+		// And as a failure category on a run that reached no stage.
+		assert.equal(
+			formatFirstBreak({
+				diagnostics: {
+					items: [
+						{
+							chain: {
+								status: "verified",
+								stages: [],
+								failureCategory: member,
+							},
+						},
+					],
+				},
+			}),
+			"",
+			`category "${member}" must not resolve through the prototype chain`,
+		);
+	}
+	// No output of this renderer ever contains native-code source text.
+	for (const member of inherited) {
+		const rendered = plainText(
+			formatRunOutcome(
+				{ status: "failed", result: null },
+				url,
+				"U1",
+				summaryWithBreak(member, member),
+			),
+		);
+		assert.ok(!rendered.includes("native code"), rendered);
+		assert.ok(!rendered.includes("function "), rendered);
+	}
+});
+
 test("the forked vocabulary is closed over its three maps", () => {
 	// Byte-sync with the SDK is asserted one package up, where `@mcpjam/sdk` is
 	// importable (slack-app/tests/user-value-chain-labels.test.js). What is

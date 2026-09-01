@@ -576,6 +576,31 @@ export function formatEvalRunDecisionSummary(
 }
 
 /**
+ * A member's label, or `undefined` for anything the map does not OWN.
+ *
+ * The type says these keys are closed; the RUNTIME value came off the wire and
+ * nothing on this path validates it against the vocabulary. A payload whose
+ * `reason` reads `"constructor"` therefore resolves through
+ * `Object.prototype` to a function — truthy — and a caller that drops the
+ * clause on a falsy label instead prints
+ * `function Object() { [native code] }` at a human.
+ *
+ * Used by EVERY label lookup in this file. Hardening only the lines this
+ * change added would have left the per-diagnostic rows two lines below still
+ * printing the same function source, from the same payload — a half-guarded
+ * renderer is not a smaller change, it is a confusing one.
+ */
+function labelFor<TMember extends string>(
+  labels: Readonly<Record<TMember, string>>,
+  member: TMember | undefined
+): string | undefined {
+  return typeof member === "string" &&
+    Object.prototype.hasOwnProperty.call(labels, member)
+    ? labels[member]
+    : undefined;
+}
+
+/**
  * WHERE THE CHAIN BROKE for this run, in one line, above the per-trial detail.
  *
  * The stage is the EARLIEST one in chain order at which any readable trial
@@ -627,7 +652,9 @@ function formatFirstBreakLine(
       ...new Set(
         readable.flatMap((item) =>
           item.chain.status === "verified" && item.chain.failureCategory
-            ? [FAILURE_CATEGORY_LABELS[item.chain.failureCategory]]
+            ? [
+                labelFor(FAILURE_CATEGORY_LABELS, item.chain.failureCategory),
+              ].filter((label): label is string => label !== undefined)
             : []
         )
       ),
@@ -642,6 +669,8 @@ function formatFirstBreakLine(
   // Chain ORDER, not insertion order and not a sort: `USER_VALUE_STAGES` is
   // normative and "earliest" is defined by its positions.
   const stage = USER_VALUE_STAGES.find((candidate) => brokeAt.has(candidate))!;
+  const stageLabel = labelFor(USER_VALUE_STAGE_LABELS, stage);
+  if (stageLabel === undefined) return undefined;
   const row = readable
     .flatMap((item) =>
       item.chain.status === "verified" && item.chain.firstFailedStage === stage
@@ -649,7 +678,8 @@ function formatFirstBreakLine(
         : []
     )
     .find((entry) => entry.reason !== undefined);
-  const because = row?.reason ? ` — ${STAGE_REASON_LABELS[row.reason]}` : "";
+  const reason = labelFor(STAGE_REASON_LABELS, row?.reason);
+  const because = reason ? ` — ${reason}` : "";
   // Said out loud whenever the breaks are spread, because "First break:
   // Connection (1 of 10)" reads as a connection problem to someone who does
   // not already know eight of the others stopped somewhere else.
@@ -662,7 +692,7 @@ function formatFirstBreakLine(
   const unreadable =
     withheld > 0 ? `; ${withheld} more had no readable chain` : "";
   return (
-    `  First break: ${USER_VALUE_STAGE_LABELS[stage]}${because} ` +
+    `  First break: ${stageLabel}${because} ` +
     `(${brokeAt.get(stage)} of ${readable.length} measured ${unit}` +
     `${spread}${unreadable})`
   );
@@ -718,15 +748,15 @@ function formatDecisionHeadline(summary: EvalRunDecisionSummary): string {
  * read as "it passed".
  */
 function formatStageRow(row: StageResultRow): string {
-  const state = STAGE_STATE_LABELS[row.state];
-  const reason = row.reason ? STAGE_REASON_LABELS[row.reason] : undefined;
+  const state = labelFor(STAGE_STATE_LABELS, row.state) ?? "";
+  const reason = labelFor(STAGE_REASON_LABELS, row.reason);
   // A `notReached` row's state already says "never ran (an earlier stage
   // failed)" and its reason says "an earlier stage failed" — the same sentence
   // twice on the four rows a reader sees most. Suppressed by CONTAINMENT
   // rather than by naming that pair, so a future state whose words absorb its
   // reason gets the same treatment without anyone remembering to add it.
   const because = reason && !state.includes(reason) ? ` — ${reason}` : "";
-  return `${USER_VALUE_STAGE_LABELS[row.stage]}: ${state}${because}`;
+  return `${labelFor(USER_VALUE_STAGE_LABELS, row.stage) ?? ""}: ${state}${because}`;
 }
 
 function formatDiagnosticsHeadline(summary: EvalRunDecisionSummary): string {
@@ -757,11 +787,12 @@ function formatDecisionDiagnostic(
     const stage = item.chain.firstFailedStage;
     if (stage) {
       const row = item.chain.stages.find((entry) => entry.stage === stage);
-      const because = row?.reason
-        ? ` — ${STAGE_REASON_LABELS[row.reason]}`
-        : "";
+      const rowReason = labelFor(STAGE_REASON_LABELS, row?.reason);
+      const because = rowReason ? ` — ${rowReason}` : "";
       lines.push(
-        `    First failed stage: ${USER_VALUE_STAGE_LABELS[stage]}${because}`
+        `    First failed stage: ${
+          labelFor(USER_VALUE_STAGE_LABELS, stage) ?? ""
+        }${because}`
       );
     } else {
       lines.push(
@@ -769,8 +800,11 @@ function formatDecisionDiagnostic(
       );
     }
     lines.push(
-      item.chain.failureCategory
-        ? `    Failure category: ${FAILURE_CATEGORY_LABELS[item.chain.failureCategory]}`
+      labelFor(FAILURE_CATEGORY_LABELS, item.chain.failureCategory)
+        ? `    Failure category: ${labelFor(
+            FAILURE_CATEGORY_LABELS,
+            item.chain.failureCategory
+          )}`
         : "    Failure category: not reported"
     );
     // THE DETAILED LAYER, and only inside `verified`: the other two states have
@@ -820,9 +854,11 @@ function formatDecisionDiagnostic(
     // Named with the stage it was read from, because that is the only stage it
     // is evidence ABOUT — the passing stages have their own spans and they are
     // not an explanation of this failure.
-    const stage = item.evidence.stage
-      ? ` at ${USER_VALUE_STAGE_LABELS[item.evidence.stage]}`
-      : "";
+    const evidenceStage = labelFor(
+      USER_VALUE_STAGE_LABELS,
+      item.evidence.stage
+    );
+    const stage = evidenceStage ? ` at ${evidenceStage}` : "";
     lines.push(`    Evidence${stage}: ${evidence.join("; ")}`);
   }
   lines.push(`    Trace: ${item.evidence.tracePath}`);

@@ -851,6 +851,64 @@ describe("the human renderer", () => {
     expect(detailed).not.toContain("earlierStageFailed");
   });
 
+  it("treats an inherited property name as an unknown member, not a label", () => {
+    // The TYPE says these keys are closed; the runtime value came off the wire
+    // and nothing on this path validates it. `labels[member]` alone resolves
+    // `constructor`/`toString`/`valueOf` through `Object.prototype` to a
+    // FUNCTION — truthy — and prints `function Object() { [native code] }` at
+    // a human, which is the raw-enum failure in a worse costume.
+    const withMember = (member: string): EvalRunDecisionSummary => ({
+      ...byName("measured-failure-at-every-stage").expected,
+      diagnostics: {
+        complete: true,
+        scannedIterations: 1,
+        items: [
+          {
+            iterationId: "it-1",
+            iterationNumber: 1,
+            status: "completed",
+            result: "failed",
+            chain: {
+              status: "verified",
+              analyzerVersion: STAGE_ANALYZER_VERSION,
+              stages: [
+                {
+                  stage: member,
+                  state: member,
+                  reason: member,
+                } as unknown as EvalRunDecisionSummary["diagnostics"]["items"][number]["chain"] extends {
+                  stages: (infer TRow)[];
+                }
+                  ? TRow
+                  : never,
+              ],
+              firstFailedStage: member as unknown as "connection",
+            },
+            evidence: {
+              runId: "run-1",
+              iterationId: "it-1",
+              tracePath: "/projects/p/eval-runs/run-1/iterations/it-1/trace",
+            },
+            nextAction:
+              "inspect the case trace; no failure category was recorded",
+          },
+        ],
+      },
+    });
+
+    for (const member of ["constructor", "toString", "valueOf", "__proto__"]) {
+      for (const options of [{}, { stages: true }]) {
+        const text = formatEvalRunDecisionSummary(withMember(member), options);
+        expect(text, `${member} ${JSON.stringify(options)}`).not.toContain(
+          "native code"
+        );
+        expect(text, `${member} ${JSON.stringify(options)}`).not.toContain(
+          "function "
+        );
+      }
+    }
+  });
+
   it("prints no chain rows for a chain that was withheld or never recorded", () => {
     // `unverified` had its rows refused at the boundary and `absent` never had
     // any. Six "not measured" rows for either would state as measured-and-empty
