@@ -122,8 +122,7 @@ describe("hostConnectionProfile", () => {
       });
       expect(p.firstPageOnly).toBe(true);
       expect(p.supportsMrtr).toBe(false);
-      expect(p.suppressLegacyRequestCancellation).toBe(true);
-      expect(p.suppressModernRequestCancellation).toBe(true);
+      expect(p.suppressRequestCancellation).toBe(true);
     });
 
     it("collapses default literals AND absent fields to no wire field", () => {
@@ -141,8 +140,7 @@ describe("hostConnectionProfile", () => {
         for (const key of [
           "firstPageOnly",
           "supportsMrtr",
-          "suppressLegacyRequestCancellation",
-          "suppressModernRequestCancellation",
+          "suppressRequestCancellation",
         ]) {
           expect(key in p).toBe(false);
         }
@@ -187,26 +185,51 @@ describe("hostConnectionProfile", () => {
       }
     });
 
-    it("reduces each cancellation leaf independently", () => {
-      // The reason this knob is a record: a host that cancels on 2025 but not
-      // on 2026 must produce exactly one flag, never both.
-      const legacyOnly = hostConnectionProfile({
+    it("picks the cancellation leaf from the version pin", () => {
+      // The knob is measured per era, but a connection speaks one — so the pin
+      // decides which leaf reaches the wire, and the other is ignored. This is
+      // the seam that used to ask the live client for its era, which silently
+      // did nothing on adapters that cannot report one.
+      const modernPin = (toolCallCancellation: Record<string, boolean>) =>
+        hostConnectionProfile({
+          mcpProfile: {
+            profileVersion: 1,
+            mcpProtocolVersion: "2026-07-28",
+            toolCallCancellation,
+          },
+        });
+      const legacyPin = (toolCallCancellation: Record<string, boolean>) =>
+        hostConnectionProfile({
+          mcpProfile: {
+            profileVersion: 1,
+            mcpProtocolVersion: "2025-11-25",
+            toolCallCancellation,
+          },
+        });
+
+      expect(modernPin({ modern: false }).suppressRequestCancellation).toBe(
+        true
+      );
+      expect("suppressRequestCancellation" in modernPin({ legacy: false })).toBe(
+        false
+      );
+      expect(legacyPin({ legacy: false }).suppressRequestCancellation).toBe(
+        true
+      );
+      expect("suppressRequestCancellation" in legacyPin({ modern: false })).toBe(
+        false
+      );
+    });
+
+    it("reads an unpinned host as modern (auto negotiates newest first)", () => {
+      const p = hostConnectionProfile({
         mcpProfile: {
           profileVersion: 1,
+          mcpProtocolVersion: "auto",
           toolCallCancellation: { modern: false },
         },
       });
-      expect(legacyOnly.suppressModernRequestCancellation).toBe(true);
-      expect("suppressLegacyRequestCancellation" in legacyOnly).toBe(false);
-
-      const modernOnly = hostConnectionProfile({
-        mcpProfile: {
-          profileVersion: 1,
-          toolCallCancellation: { legacy: false },
-        },
-      });
-      expect(modernOnly.suppressLegacyRequestCancellation).toBe(true);
-      expect("suppressModernRequestCancellation" in modernOnly).toBe(false);
+      expect(p.suppressRequestCancellation).toBe(true);
     });
 
     it("fails closed on unrecognized literals", () => {
@@ -222,8 +245,7 @@ describe("hostConnectionProfile", () => {
           toolCallCancellation: "sometimes",
         },
       });
-      expect("suppressLegacyRequestCancellation" in p).toBe(false);
-      expect("suppressModernRequestCancellation" in p).toBe(false);
+      expect("suppressRequestCancellation" in p).toBe(false);
       expect("firstPageOnly" in p).toBe(false);
       expect("supportsMrtr" in p).toBe(false);
     });

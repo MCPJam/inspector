@@ -533,10 +533,11 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
  * the tool's `execute`, and the manager decides there whether it reaches the
  * wire.
  *
- * The flags are read per NEGOTIATED era, so the load-bearing case is the
- * crossover: the flag for the other era must not touch this connection.
+ * One resolved flag reaches this layer — which era it came from was decided
+ * upstream from the version pin (see host-connection.test.ts). Here the only
+ * question is whether the flag is obeyed on each era's wire.
  */
-describe("per-era cancellation suppression", () => {
+describe("cancellation suppression", () => {
   let served: ServedMultiPageFixture | undefined;
   let manager: MCPClientManager | undefined;
 
@@ -587,7 +588,7 @@ describe("per-era cancellation suppression", () => {
 
   it("2026: the modern flag leaves the server running the tool", async () => {
     const methods = await abortSlowToolThroughAiSdk({
-      suppressModernRequestCancellation: true,
+      suppressRequestCancellation: true,
     });
 
     // Nothing was said. Not the 2026 signal (the held-open `tools/call`
@@ -608,20 +609,9 @@ describe("per-era cancellation suppression", () => {
     expect(methods).not.toContain("notifications/cancelled");
   }, 30_000);
 
-  it("2026: the LEGACY flag does not touch a modern connection", async () => {
-    // The crossover, and the reason the knob has two leaves. A host measured
-    // as never cancelling on 2025 must still cancel normally here.
-    const methods = await abortSlowToolThroughAiSdk({
-      suppressLegacyRequestCancellation: true,
-    });
-
-    expect(methods).toContain("tools/call");
-    expect(methods).not.toContain("notifications/cancelled");
-  }, 30_000);
-
-  it("2025: the legacy flag withholds notifications/cancelled", async () => {
+  it("2025: the flag withholds notifications/cancelled", async () => {
     const methods = await abortSlowToolThroughAiSdk(
-      { suppressLegacyRequestCancellation: true },
+      { suppressRequestCancellation: true },
       "2025-11-25"
     );
 
@@ -636,14 +626,4 @@ describe("per-era cancellation suppression", () => {
     expect(methods).toContain("notifications/cancelled");
   }, 30_000);
 
-  it("2025: the MODERN flag does not touch a legacy connection", async () => {
-    // Crossover in the other direction: MCPJam's own bug shape — correct on
-    // 2025, broken on 2026 — must leave 2025 fully working.
-    const methods = await abortSlowToolThroughAiSdk(
-      { suppressModernRequestCancellation: true },
-      "2025-11-25"
-    );
-
-    expect(methods).toContain("notifications/cancelled");
-  }, 30_000);
 });

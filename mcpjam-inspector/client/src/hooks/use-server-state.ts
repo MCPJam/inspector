@@ -10,6 +10,7 @@ import {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   readXaaEnterprisePolicy,
+  cancellationLeafForVersion,
 } from "@mcpjam/sdk/browser";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type {
@@ -1455,13 +1456,15 @@ export function useServerState({
       if (mcpProfile?.toolListChanged?.refetches === false) {
         defaults.dropToolListChanged = true;
       }
-      // Tool cancellation, per era: only an explicit stored `false` leaf (the
-      // host never signals the server on that era) travels.
-      if (mcpProfile?.toolCallCancellation?.legacy === false) {
-        defaults.suppressLegacyRequestCancellation = true;
-      }
-      if (mcpProfile?.toolCallCancellation?.modern === false) {
-        defaults.suppressModernRequestCancellation = true;
+      // Tool cancellation is measured per era, but THIS connection speaks one
+      // — and `resolvedProtocolVersion` above is exactly that version — so the
+      // leaf is picked here and a single flag travels.
+      if (
+        mcpProfile?.toolCallCancellation?.[
+          cancellationLeafForVersion(resolvedProtocolVersion)
+        ] === false
+      ) {
+        defaults.suppressRequestCancellation = true;
       }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy

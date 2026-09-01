@@ -24,6 +24,7 @@
  */
 
 import {
+  cancellationLeafForVersion,
   readXaaEnterprisePolicy,
   XAA_ENTERPRISE_POLICY_IDPS,
   XAA_MCP_EXTENSION,
@@ -240,8 +241,7 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
   supportsMrtr: false | undefined;
   suppressListenChannel: true | undefined;
   dropToolListChanged: true | undefined;
-  suppressLegacyRequestCancellation: true | undefined;
-  suppressModernRequestCancellation: true | undefined;
+  suppressRequestCancellation: true | undefined;
 } {
   const profile =
     mcpProfile !== null && typeof mcpProfile === "object"
@@ -250,6 +250,7 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
           mrtrSupport?: unknown;
           toolListChanged?: unknown;
           toolCallCancellation?: unknown;
+          mcpProtocolVersion?: unknown;
         })
       : undefined;
   // Nested record, so it is narrowed separately; an unreadable value falls
@@ -280,10 +281,18 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
       toolListChanged?.listens === false ? true : undefined,
     dropToolListChanged:
       toolListChanged?.refetches === false ? true : undefined,
-    suppressLegacyRequestCancellation:
-      toolCallCancellation?.legacy === false ? true : undefined,
-    suppressModernRequestCancellation:
-      toolCallCancellation?.modern === false ? true : undefined,
+    // One flag: the host's own version pin says which era its connections
+    // speak, so the leaf is resolved here rather than at request time.
+    suppressRequestCancellation:
+      toolCallCancellation?.[
+        cancellationLeafForVersion(
+          typeof profile?.mcpProtocolVersion === "string"
+            ? profile.mcpProtocolVersion
+            : undefined
+        )
+      ] === false
+        ? true
+        : undefined,
   };
 }
 
@@ -310,8 +319,7 @@ export function applyHostConformanceKnobs<
     supportsMrtr?: boolean;
     suppressListenChannel?: boolean;
     dropToolListChanged?: boolean;
-    suppressLegacyRequestCancellation?: boolean;
-    suppressModernRequestCancellation?: boolean;
+    suppressRequestCancellation?: boolean;
   }
 >(
   pins: T | undefined,
@@ -320,8 +328,7 @@ export function applyHostConformanceKnobs<
     supportsMrtr: false | undefined;
     suppressListenChannel: true | undefined;
     dropToolListChanged: true | undefined;
-    suppressLegacyRequestCancellation: true | undefined;
-  suppressModernRequestCancellation: true | undefined;
+    suppressRequestCancellation: true | undefined;
   }
 ): T | undefined {
   let next = pins;
@@ -349,16 +356,10 @@ export function applyHostConformanceKnobs<
     const { dropToolListChanged: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
-  if (host.suppressLegacyRequestCancellation === true) {
-    next = { ...((next ?? {}) as T), suppressLegacyRequestCancellation: true };
-  } else if (next?.suppressLegacyRequestCancellation !== undefined) {
-    const { suppressLegacyRequestCancellation: _hostOverrides, ...rest } = next;
-    next = rest as T;
-  }
-  if (host.suppressModernRequestCancellation === true) {
-    next = { ...((next ?? {}) as T), suppressModernRequestCancellation: true };
-  } else if (next?.suppressModernRequestCancellation !== undefined) {
-    const { suppressModernRequestCancellation: _hostOverrides, ...rest } = next;
+  if (host.suppressRequestCancellation === true) {
+    next = { ...((next ?? {}) as T), suppressRequestCancellation: true };
+  } else if (next?.suppressRequestCancellation !== undefined) {
+    const { suppressRequestCancellation: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
   return next;

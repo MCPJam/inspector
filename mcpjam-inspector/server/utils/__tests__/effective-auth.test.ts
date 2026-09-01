@@ -264,8 +264,7 @@ describe("applyHostConformanceKnobs — toolListChanged", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
-    suppressLegacyRequestCancellation: undefined,
-    suppressModernRequestCancellation: undefined,
+    suppressRequestCancellation: undefined,
   } as const;
 
   it("adds the host's knobs to a body that carried none", () => {
@@ -301,8 +300,7 @@ describe("conformanceKnobsFromMcpProfile", () => {
       supportsMrtr: false,
       suppressListenChannel: undefined,
       dropToolListChanged: undefined,
-      suppressLegacyRequestCancellation: undefined,
-    suppressModernRequestCancellation: undefined,
+      suppressRequestCancellation: undefined,
     });
   });
 
@@ -321,44 +319,52 @@ describe("conformanceKnobsFromMcpProfile", () => {
         supportsMrtr: undefined,
         suppressListenChannel: undefined,
         dropToolListChanged: undefined,
-        suppressLegacyRequestCancellation: undefined,
-    suppressModernRequestCancellation: undefined,
+        suppressRequestCancellation: undefined,
       });
     }
   });
 });
 
 describe("conformanceKnobsFromMcpProfile — toolCallCancellation", () => {
-  it("reads each era's leaf independently", () => {
-    // The point of the record: a host measured as broken on 2026 must leave
-    // 2025 untouched, and vice versa.
-    const legacyBroken = conformanceKnobsFromMcpProfile({
-      toolCallCancellation: { legacy: false },
-    });
-    expect(legacyBroken.suppressLegacyRequestCancellation).toBe(true);
-    expect(legacyBroken.suppressModernRequestCancellation).toBeUndefined();
+  it("picks the leaf named by the host's version pin", () => {
+    // The host config measures both eras; the pin says which one its
+    // connections speak, so exactly one flag comes out.
+    expect(
+      conformanceKnobsFromMcpProfile({
+        mcpProtocolVersion: "2025-11-25",
+        toolCallCancellation: { legacy: false },
+      }).suppressRequestCancellation
+    ).toBe(true);
 
-    const modernBroken = conformanceKnobsFromMcpProfile({
-      toolCallCancellation: { modern: false },
-    });
-    expect(modernBroken.suppressModernRequestCancellation).toBe(true);
-    expect(modernBroken.suppressLegacyRequestCancellation).toBeUndefined();
+    // The other era's leaf must be ignored, not leak through.
+    expect(
+      conformanceKnobsFromMcpProfile({
+        mcpProtocolVersion: "2025-11-25",
+        toolCallCancellation: { modern: false },
+      }).suppressRequestCancellation
+    ).toBeUndefined();
+
+    expect(
+      conformanceKnobsFromMcpProfile({
+        mcpProtocolVersion: "2026-07-28",
+        toolCallCancellation: { modern: false },
+      }).suppressRequestCancellation
+    ).toBe(true);
   });
 
   it("treats `true`, junk and a non-record as the conforming client", () => {
     for (const value of [
       { legacy: true, modern: true },
-      { legacy: "false" },
+      { modern: "false" },
       {},
       "nope",
       null,
       undefined,
     ]) {
-      const knobs = conformanceKnobsFromMcpProfile({
-        toolCallCancellation: value,
-      });
-      expect(knobs.suppressLegacyRequestCancellation).toBeUndefined();
-      expect(knobs.suppressModernRequestCancellation).toBeUndefined();
+      expect(
+        conformanceKnobsFromMcpProfile({ toolCallCancellation: value })
+          .suppressRequestCancellation
+      ).toBeUndefined();
     }
   });
 });
@@ -369,17 +375,16 @@ describe("applyHostConformanceKnobs — toolCallCancellation", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
-    suppressLegacyRequestCancellation: undefined,
-    suppressModernRequestCancellation: undefined,
+    suppressRequestCancellation: undefined,
   } as const;
 
-  it("adds only the era the host actually suppresses", () => {
+  it("adds the host's suppression to a body that carried none", () => {
     expect(
       applyHostConformanceKnobs(undefined, {
         ...conforming,
-        suppressModernRequestCancellation: true,
+        suppressRequestCancellation: true,
       })
-    ).toEqual({ suppressModernRequestCancellation: true });
+    ).toEqual({ suppressRequestCancellation: true });
   });
 
   it("REMOVES body-supplied suppression when the host cancels normally", () => {
@@ -388,10 +393,7 @@ describe("applyHostConformanceKnobs — toolCallCancellation", () => {
     // leaving servers running tools nobody wants.
     expect(
       applyHostConformanceKnobs(
-        {
-          suppressLegacyRequestCancellation: true,
-          suppressModernRequestCancellation: true,
-        },
+        { suppressRequestCancellation: true },
         conforming
       )
     ).toEqual({});

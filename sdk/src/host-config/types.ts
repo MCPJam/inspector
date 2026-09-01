@@ -22,7 +22,10 @@
  * Pure + browser-safe: no `convex/values`, no `ctx.db`, no Node-only APIs.
  */
 
-import type { McpProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
+import {
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "../mcp-client-manager/mcp-protocol-version.js";
 
 export type { McpProtocolVersion };
 
@@ -241,6 +244,25 @@ export const MRTR_SUPPORT_MODES = [
   "none",
 ] as const satisfies readonly MrtrSupport[];
 
+
+/**
+ * Which cancellation leaf a connection on `version` is governed by.
+ *
+ * The two leaves are measured per era, but a CONNECTION only ever speaks one,
+ * so the leaf is resolved once — where the version is already known — and the
+ * client is handed a single yes/no. It never has to ask the live connection
+ * what era it landed on.
+ *
+ * An unresolved version (`"auto"`, or absent) reads as `"modern"`: auto
+ * negotiates newest-first, so that is the era such a connection lands on
+ * against any server that supports it.
+ */
+export function cancellationLeafForVersion(
+  version: string | undefined,
+): "legacy" | "modern" {
+  if (version === undefined || version === "auto") return "modern";
+  return isStatelessProtocolVersion(version) ? "modern" : "legacy";
+}
 
 /**
  * The conformance-knob keys shared verbatim between the public `HostMcp`

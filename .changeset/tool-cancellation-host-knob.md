@@ -32,6 +32,13 @@ nothing and keeps its canonical hash; only an explicit `false` is stored. The
 field is validated by the same `canonicalBooleanCapabilityRecord` its sibling
 `toolListChanged` already uses, on both sides of the wire.
 
+Which leaf governs a connection is resolved where its protocol version is
+already known — `cancellationLeafForVersion(pin)` — and a single flag reaches the
+client, which simply obeys it. The client is never asked what era it negotiated:
+`getProtocolEra()` is optional on the managed-client interface, so on adapters
+that cannot report one the era reads as unknown and the suppression would
+silently never apply.
+
 A `false` leaf is enforced by withholding the caller's abort signal from the
 request and racing the caller against it locally instead. The signal is the only
 thing that reaches the wire, so withholding it withholds whichever mechanism that

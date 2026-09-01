@@ -825,8 +825,7 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
-    suppressLegacyRequestCancellation?: boolean;
-    suppressModernRequestCancellation?: boolean;
+    suppressRequestCancellation?: boolean;
   },
   /**
    * A plugin stdio component that IS reachable: a live shim, recorded in
@@ -876,11 +875,8 @@ export function toHttpConfig(
         ...(initializePins?.supportsMrtr === false
           ? { supportsMrtr: false }
           : {}),
-        ...(initializePins?.suppressLegacyRequestCancellation === true
-          ? { suppressLegacyRequestCancellation: true }
-          : {}),
-        ...(initializePins?.suppressModernRequestCancellation === true
-          ? { suppressModernRequestCancellation: true }
+        ...(initializePins?.suppressRequestCancellation === true
+          ? { suppressRequestCancellation: true }
           : {}),
       };
     }
@@ -963,11 +959,8 @@ export function toHttpConfig(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
-    ...(initializePins?.suppressLegacyRequestCancellation === true
-      ? { suppressLegacyRequestCancellation: true }
-      : {}),
-    ...(initializePins?.suppressModernRequestCancellation === true
-      ? { suppressModernRequestCancellation: true }
+    ...(initializePins?.suppressRequestCancellation === true
+      ? { suppressRequestCancellation: true }
       : {}),
   };
 }
@@ -989,8 +982,7 @@ function resolveEffectiveInitializePinsForServer(
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
-    suppressLegacyRequestCancellation?: boolean;
-    suppressModernRequestCancellation?: boolean;
+    suppressRequestCancellation?: boolean;
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -1004,8 +996,7 @@ function resolveEffectiveInitializePinsForServer(
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
-      suppressLegacyRequestCancellation?: boolean;
-      suppressModernRequestCancellation?: boolean;
+      suppressRequestCancellation?: boolean;
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -1039,11 +1030,8 @@ function resolveEffectiveInitializePinsForServer(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
-    ...(initializePins?.suppressLegacyRequestCancellation === true
-      ? { suppressLegacyRequestCancellation: true }
-      : {}),
-    ...(initializePins?.suppressModernRequestCancellation === true
-      ? { suppressModernRequestCancellation: true }
+    ...(initializePins?.suppressRequestCancellation === true
+      ? { suppressRequestCancellation: true }
       : {}),
   };
 
@@ -1113,8 +1101,7 @@ export async function createAuthorizedManager(
       /** Client-conformance knobs; host-level, so batch-uniform. */
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
-      suppressLegacyRequestCancellation?: boolean;
-      suppressModernRequestCancellation?: boolean;
+      suppressRequestCancellation?: boolean;
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
@@ -1982,8 +1969,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
-    suppressLegacyRequestCancellation?: boolean;
-    suppressModernRequestCancellation?: boolean;
+    suppressRequestCancellation?: boolean;
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -2019,10 +2005,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Same one-explicit-value rule for the sibling knobs.
   const truncatePagination = raw.firstPageOnly === true;
   const disableMrtr = raw.supportsMrtr === false;
-  const disableLegacyCancellation =
-    raw.suppressLegacyRequestCancellation === true;
-  const disableModernCancellation =
-    raw.suppressModernRequestCancellation === true;
+  const disableCancellation = raw.suppressRequestCancellation === true;
   const initializePins =
     initializeClientInfo ||
     initializeSupportedVersions ||
@@ -2030,8 +2013,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     suppressParamMirroring ||
     truncatePagination ||
     disableMrtr ||
-    disableLegacyCancellation ||
-    disableModernCancellation
+    disableCancellation
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -2042,11 +2024,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
-          ...(disableLegacyCancellation
-            ? { suppressLegacyRequestCancellation: true }
-            : {}),
-          ...(disableModernCancellation
-            ? { suppressModernRequestCancellation: true }
+          ...(disableCancellation
+            ? { suppressRequestCancellation: true }
             : {}),
           ...(suppressParamMirroring ? { mirrorToolParamHeaders: false } : {}),
         }

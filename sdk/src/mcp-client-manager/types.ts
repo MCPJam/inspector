@@ -350,8 +350,7 @@ export type BaseServerConfig = {
    */
   supportsMrtr?: boolean;
   /**
-   * Whether cancelling an in-flight request reaches the server, per negotiated
-   * era.
+   * Whether cancelling an in-flight request reaches the server.
    *
    * `undefined` (the default) and `false` both signal it. `true` simulates a
    * host that ends the turn locally and tells the server nothing: the caller's
@@ -359,22 +358,21 @@ export type BaseServerConfig = {
    * completion — side effects, cost and all — because it never learns the user
    * pressed stop.
    *
-   * Split by era because hosts really are split: MCPJam cancelled correctly on
-   * 2025 while never aborting the stream on 2026. A connection negotiates
-   * exactly one era, so the manager reads the flag for the era it landed on
-   * and ignores the other.
+   * ONE flag, though the host config measures cancellation per era: a
+   * connection speaks exactly one era, so the leaf is resolved upstream (see
+   * `cancellationLeafForVersion`) where the version pin is already known. This
+   * layer never asks the live connection what it negotiated — that answer is
+   * not always available, and a missing one would silently read as "cancels".
    *
-   * The era selects the flag, not the transport. A 2026 stdio connection reads
-   * `suppressModernRequestCancellation` even though its mechanism is
-   * `notifications/cancelled` — withholding the caller's signal withholds
-   * whichever mechanism that era would have used, because the signal is the
-   * single input to both.
+   * Withholding the caller's signal withholds whichever mechanism the
+   * connection would have used, because the signal is the single input to
+   * both: closing the response stream on 2026-07-28 Streamable HTTP, POSTing
+   * `notifications/cancelled` everywhere else.
    *
    * Wired into the inspector via
    * `hostConfig.mcpProfile.toolCallCancellation.{legacy,modern} === false`.
    */
-  suppressLegacyRequestCancellation?: boolean;
-  suppressModernRequestCancellation?: boolean;
+  suppressRequestCancellation?: boolean;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
