@@ -80,8 +80,74 @@ export interface WebMcpLiveFrame {
   src: string;
   deviceWidth: number;
   deviceHeight: number;
+  /**
+   * The same surface in CSS pixels — what the PAGE thinks its own coordinates
+   * are, and therefore what every forwarded click has to be expressed in.
+   *
+   * REQUIRED rather than derived at each use site. A session's frames need not
+   * all arrive at the same scale (a still captured at full device resolution
+   * can land between two streamed frames captured at CSS resolution), so a
+   * consumer that forgot to divide would be right for some frames of the same
+   * session and wrong for others — the hardest kind of coordinate bug to see.
+   */
+  cssWidth: number;
+  cssHeight: number;
   ts: number;
   seq: number;
+}
+
+/**
+ * The viewer's own device pixel ratio, as a request field — or nothing at all.
+ *
+ * OMITTED at 1, which is both the server's default and what every client older
+ * than this field sends, so the common case puts nothing new on the wire and an
+ * older server strips nothing. Clamped to the range the server accepts and
+ * rounded, because `devicePixelRatio` on a zoomed browser is a long float and
+ * the wire carries three decimals of it at most.
+ */
+function devicePixelRatioField(): { devicePixelRatio?: number } {
+  if (typeof window === "undefined") return {};
+  const raw = window.devicePixelRatio;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return {};
+  const ratio = Math.round(Math.min(2, Math.max(1, raw)) * 100) / 100;
+  return ratio === 1 ? {} : { devicePixelRatio: ratio };
+}
+
+/**
+ * Normalize a frame from either transport into what the pane renders.
+ *
+ * One function for both, because the CSS-pixel arithmetic is the part that
+ * must not differ between them: two copies is how the SSE path and the socket
+ * path end up disagreeing about where a click landed.
+ */
+function toLiveFrame(
+  src: string,
+  frame: {
+    deviceWidth: number;
+    deviceHeight: number;
+    ts: number;
+    scale?: number;
+  },
+  seq: number,
+): WebMcpLiveFrame {
+  // A missing, zero or nonsense scale reads as 1: an older server never sends
+  // one, and dividing by a bad number would put the pane's geometry somewhere
+  // no click could reach.
+  const scale =
+    typeof frame.scale === "number" &&
+    Number.isFinite(frame.scale) &&
+    frame.scale > 0
+      ? frame.scale
+      : 1;
+  return {
+    src,
+    deviceWidth: frame.deviceWidth,
+    deviceHeight: frame.deviceHeight,
+    cssWidth: Math.round(frame.deviceWidth / scale),
+    cssHeight: Math.round(frame.deviceHeight / scale),
+    ts: frame.ts,
+    seq,
+  };
 }
 
 /** Where a session's browser runs. See `startSession`. */
@@ -437,13 +503,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         if (event.seq <= lastAppliedFrameSeq) return;
         lastAppliedFrameSeq = event.seq;
         set({
-          liveFrame: {
-            src: `data:image/jpeg;base64,${event.frame.data}`,
-            deviceWidth: event.frame.deviceWidth,
-            deviceHeight: event.frame.deviceHeight,
-            ts: event.frame.ts,
-            seq: event.seq,
-          },
+          liveFrame: toLiveFrame(
+            `data:image/jpeg;base64,${event.frame.data}`,
+            event.frame,
+            event.seq,
+          ),
         });
         return;
       }
@@ -501,13 +565,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       if (frame.seq <= lastAppliedFrameSeq) return;
       lastAppliedFrameSeq = frame.seq;
       set({
-        liveFrame: {
-          src: presenter.present(frame.jpeg),
-          deviceWidth: frame.deviceWidth,
-          deviceHeight: frame.deviceHeight,
-          ts: frame.ts,
-          seq: frame.seq,
-        },
+        liveFrame: toLiveFrame(presenter.present(frame.jpeg), frame, frame.seq),
       });
     }
 
@@ -800,6 +858,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             ...(options?.webContentsId !== undefined
               ? { webContentsId: options.webContentsId }
               : {}),
+            // Only for a session whose page is rendered on the server and
+            // looked at here. A window session paints on a real display that
+            // already knows its own ratio, and a hosted one is watched from
+            // the Browser panel.
+            ...(options?.display === "in-app" ? devicePixelRatioField() : {}),
           }),
         });
         if (!result.ok) {

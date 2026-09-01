@@ -44,8 +44,18 @@ function session(
 }
 
 /** A `liveFrame` in the store's normalized shape. */
-function liveFrame(src: string, seq = 1) {
-  return { src, deviceWidth: 1280, deviceHeight: 800, ts: 1, seq };
+function liveFrame(src: string, seq = 1, scale = 1) {
+  return {
+    src,
+    deviceWidth: 1280 * scale,
+    deviceHeight: 800 * scale,
+    // The page's own coordinate space, which is what the pane lays out and
+    // scales clicks against however many device pixels the capture used.
+    cssWidth: 1280,
+    cssHeight: 800,
+    ts: 1,
+    seq,
+  };
 }
 
 /** Spies for the two store actions the pane drives. */
@@ -418,6 +428,48 @@ describe("WebmcpInspectorTab — viewport", () => {
       await runQueuedFrames();
       expect(frameStatsReport().captureToPaint.n).toBe(0);
     });
+  });
+
+  it("scales a click against the frame's CSS size, not its device pixels", async () => {
+    const sendInput = vi.fn<(events: WebMcpInputEvent[]) => Promise<void>>(
+      async () => {},
+    );
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    await act(async () => {
+      // A frame captured at two device pixels per CSS pixel: 2560x1600 of
+      // picture describing a 1280x800 page.
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("data:image/jpeg;base64,retina", 1, 2),
+      });
+    });
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    const image = screen.getByAltText("Live view of the inspected page");
+    image.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+
+    await act(async () => {
+      fireEvent.pointerDown(pane, { clientX: 640, clientY: 400, button: 0 });
+    });
+
+    // The middle of the pane is the middle of the PAGE — 640,400 — and not the
+    // middle of the picture's device pixels, which would be 1280,800: a
+    // coordinate outside the page entirely, and one that would put every click
+    // on a retina session at double where the person pointed.
+    expect(sendInput).toHaveBeenCalledTimes(1);
+    expect(sendInput.mock.calls[0]![0]).toEqual([
+      expect.objectContaining({ kind: "mouse_down", x: 640, y: 400 }),
+    ]);
   });
 
   it("leaves a native-window session view-only", async () => {

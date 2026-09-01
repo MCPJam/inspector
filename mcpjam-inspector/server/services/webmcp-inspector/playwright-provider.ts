@@ -20,13 +20,18 @@ import {
   WEBMCP_FRAME_BOOST_WINDOW_MS,
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
-  WEBMCP_FRAME_QUALITY,
+  WEBMCP_HOUSEKEEPING_INTERVAL_MS,
+  WEBMCP_SETTLE_QUIET_MS,
+  WEBMCP_SETTLE_STILL_QUALITIES,
+  WEBMCP_STREAM_QUALITY_LADDER,
+  WEBMCP_SUBSTITUTE_QUALITY_LADDER,
   WEBMCP_VIEWPORT,
   type WebMcpFrame,
   type WebMcpInputEvent,
   type WebMcpInputModifiers,
   type WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
+import { readJpegDimensions } from "@/shared/jpeg-dimensions";
 import { createFrameThrottle, type FrameThrottle } from "./frame-throttle";
 import { logger } from "../../utils/logger.js";
 import {
@@ -54,6 +59,15 @@ import {
 
 /** Cap on how long a browser teardown may block shutdown. */
 const CLOSE_TIMEOUT_MS = 5_000;
+/**
+ * How much of a frame's base64 to decode when reading its SOF marker.
+ *
+ * A prefix, because the answer is in the first few hundred bytes and decoding
+ * a 200 KiB base64 string per frame to read four of them would be a per-frame
+ * allocation the size of the frame. A multiple of 4 so the slice is a whole
+ * number of base64 groups.
+ */
+const JPEG_PROBE_BASE64_CHARS = 4_096;
 /** The modifier keys a pointer event's snapshot can name, in Playwright's spelling. */
 const MODIFIER_KEYS = ["Alt", "Control", "Meta", "Shift"] as const;
 
@@ -120,15 +134,65 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   /** Whether the browser is currently painting frames at us. */
   private screencasting = false;
   private readonly frameThrottle: FrameThrottle<WebMcpFrame>;
-  /** One in-flight budgeted substitute at a time; see `substituteFrame`. */
-  private substituting = false;
+  /** One in-flight still at a time; see `publishStill`. */
+  private stillInFlight = false;
   /**
-   * Monotonic count of frames ACCEPTED from the browser, for the substitute's
+   * An oversize frame arrived while a still was already being captured.
+   *
+   * Remembered rather than dropped, because oversize frames come in BURSTS: the
+   * page paints five times while one capture is in flight, and every one of
+   * them is refused by the single-flight guard. Without this the pane would
+   * settle on the picture that happened to be current when the first of the
+   * burst arrived, which is the oldest of them.
+   */
+  private oversizePending = false;
+  /**
+   * Every frame the browser has handed us, oversize ones INCLUDED.
+   *
+   * Distinct from `framesReceived` on purpose. This is the settle latch's
+   * clock, and it has to count paints the stream could not carry: a page whose
+   * every paint exceeds the cap never bumps `framesReceived`, so a latch keyed
+   * on that would take one settle still and then believe the page had gone
+   * quiet forever.
+   */
+  private paintsSeen = 0;
+  /** When the last paint arrived; the quiet window is measured from it. */
+  private lastPaintAt = -Infinity;
+  /**
+   * When input was last dispatched.
+   *
+   * Part of the same quiet window, because a gesture that changes nothing on
+   * screen — a click on dead space, a key the page swallows — produces no paint
+   * to reset the window with, and taking a full-quality still in the middle of
+   * someone typing spends a CDP round trip on a picture that is about to be
+   * wrong.
+   */
+  private lastInputAt = -Infinity;
+  /**
+   * The `paintsSeen` value the last settle still was taken for.
+   *
+   * The latch that makes it ONE still per quiet page rather than one every
+   * housekeeping tick: an idle page stays quiet indefinitely, and re-capturing
+   * it four times a second would be a screenshot loop nobody asked for.
+   */
+  private settleGeneration = -1;
+  /** Drives the settle window. Armed with the stream, cleared with it. */
+  private housekeeping?: ReturnType<typeof setInterval>;
+  /**
+   * The bytes of the last screencast frame, for the redundancy check in
+   * `wireScreencast`.
+   *
+   * One string reference, not a copy: the frame is allocated either way, and
+   * holding the newest one until the next arrives costs a delayed collection.
+   */
+  private lastFrameData: string | undefined;
+  /**
+   * Monotonic count of frames ACCEPTED from the browser, for a still's
    * staleness check.
    *
    * Counted on receipt rather than on publication, because the throttle holds
    * the newest frame of a burst in its trailing slot without emitting it yet.
-   * A substitute compared against a published count would sail past that check
+   * A still compared against a published count would sail past that check
    * and overwrite a newer frame that had simply not been flushed — and if no
    * later paint arrived, the pane would settle on the older picture.
    */
@@ -160,6 +224,13 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     startUrl: string,
     private readonly headless: boolean,
     private readonly viewportMode: WebMcpViewportMode = "window",
+    /**
+     * Device pixels per CSS pixel this session's context renders at.
+     *
+     * Read back onto every frame rather than trusted: what the browser
+     * actually hands over is what the client has to scale clicks against.
+     */
+    private readonly dpr: number = 1,
   ) {
     this.url = startUrl;
     this.frameThrottle = createFrameThrottle<WebMcpFrame>({
@@ -279,91 +350,280 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // nothing is going to correct afterwards.
       if (!this.screencasting || this.disposed) return;
 
+      // Counted BEFORE the size check, and that ordering is the whole reason
+      // this counter is not `framesReceived`. A paint the stream cannot carry
+      // is still a paint: it means the page is busy, and the settle window has
+      // to restart from it.
+      // A frame whose bytes are identical to the one before it carries no
+      // news, and dropping it is not an optimisation — it is what makes the
+      // settle still work at all.
+      //
+      // EVERY `Page.captureScreenshot` makes Chromium produce a compositor
+      // frame to satisfy the copy request, and the screencast then encodes and
+      // sends that frame: on an idle page it is byte-for-byte the frame before
+      // it (measured against Chromium 141 headless — one induced frame per
+      // capture, identical bytes, and none at all while merely idle). Publish
+      // it and the sharp still we just took is replaced a tenth of a second
+      // later by the same picture at streaming quality; count it as a paint and
+      // the settle clock restarts, so the next quiet window takes another
+      // still, which induces another frame — a capture loop on a page that is
+      // doing nothing.
+      //
+      // The comparison is exact rather than a heuristic window: JPEG encoding
+      // is deterministic, so identical bytes mean identical pixels. A page that
+      // really did paint something produces different bytes and is treated as
+      // the activity it is.
+      if (frame.data === this.lastFrameData) return;
+      this.lastFrameData = frame.data;
+
+      this.paintsSeen += 1;
+      this.lastPaintAt = Date.now();
+
       // A frame is transient — the next paint replaces it — so an oversized one
       // is dropped rather than re-encoded in the hot path. But the throttle's
       // trailing-frame guarantee does not cover THIS drop, so a complex page
       // whose final paint never fits would leave the pane stale forever.
-      // Converge it with one budgeted screenshot instead: lower fidelity, but
-      // the current paint.
+      // Converge it with one budgeted still instead: lower fidelity, but the
+      // current paint.
       const bytes = Buffer.byteLength(frame.data, "base64");
       if (bytes > WEBMCP_FRAME_MAX_BYTES) {
-        void this.substituteFrame();
+        void this.publishStill(WEBMCP_SUBSTITUTE_QUALITY_LADDER, "oversize");
         return;
       }
 
       this.framesReceived += 1;
       this.frameThrottle.push({
         data: frame.data,
-        deviceWidth: frame.metadata?.deviceWidth ?? WEBMCP_VIEWPORT.width,
-        deviceHeight: frame.metadata?.deviceHeight ?? WEBMCP_VIEWPORT.height,
+        // The metadata's dimensions are the surface in CSS pixels; the frame's
+        // own header says how many device pixels that came out as.
+        ...this.frameGeometry(
+          frame.data,
+          {
+            width: frame.metadata?.deviceWidth ?? WEBMCP_VIEWPORT.width,
+            height: frame.metadata?.deviceHeight ?? WEBMCP_VIEWPORT.height,
+          },
+          this.streamScale(),
+        ),
         ts: Date.now(),
       });
     });
   }
 
   /**
-   * Publish one screenshot as a frame, for a paint the screencast could not
-   * deliver under the frame cap.
+   * What a published frame should say about its own geometry.
    *
-   * Its own capture rather than `captureScreenshot()`, and the difference is
-   * geometric: that path's retry CLIPS to the top-left 640x400, which is
-   * correct for a timeline thumbnail (evidence, viewed as-is) and wrong for a
-   * frame (a surface the client scales pointer coordinates against). Publishing
-   * a crop as a full viewport would stretch a quarter of the page across the
-   * pane and put every click at up to twice its true coordinate. So this
-   * degrades QUALITY only, never geometry, and the frame's reported dimensions
-   * are always the real ones.
+   * Read from the JPEG's own frame header wherever possible, because every
+   * other source is a claim by something that is not the picture: CDP reports
+   * screencast metadata in DIP whatever the device scale factor is, a frame
+   * can still be in flight from a cast started with different bounds, and the
+   * `sessionId` on a screencast frame is a counter rather than an identity. The
+   * client scales pointer coordinates against what a frame reports, so a frame
+   * that misdescribes itself puts every click in the wrong place.
    *
-   * Single-flight, because the frames that trigger it arrive in bursts and a
-   * screenshot per oversized frame would queue CDP round trips behind a page
-   * that is already expensive to encode.
+   * `dip` is the surface in CSS pixels; `expectedScale` is what this capture
+   * path would produce if the bytes cannot be read. The fallback keeps the
+   * geometry self-consistent rather than exact — which is the property clicks
+   * actually depend on.
    */
-  private async substituteFrame(): Promise<void> {
-    if (this.substituting || this.disposed || !this.screencasting) return;
-    this.substituting = true;
-    // A screenshot takes long enough for the page to paint again, and a
-    // substitute that landed after a newer frame would drag the pane backwards
-    // to an older picture. Remember where we were and drop it if it did.
-    const generation = this.framesReceived;
+  private frameGeometry(
+    data: string,
+    dip: { width: number; height: number },
+    expectedScale: number,
+  ): { deviceWidth: number; deviceHeight: number; scale: number } {
+    const sof = readJpegDimensions(
+      Buffer.from(data.slice(0, JPEG_PROBE_BASE64_CHARS), "base64"),
+    );
+    if (sof && dip.width > 0) {
+      return {
+        deviceWidth: sof.width,
+        deviceHeight: sof.height,
+        // Three decimals: enough for the ratios a real display reports
+        // (1.25, 1.5, 1.75, 2) and for the wire's fixed-point field.
+        scale: Math.round((sof.width / dip.width) * 1_000) / 1_000,
+      };
+    }
+    return {
+      deviceWidth: Math.round(dip.width * expectedScale),
+      deviceHeight: Math.round(dip.height * expectedScale),
+      scale: expectedScale,
+    };
+  }
+
+  /**
+   * The scale the STREAM is currently producing.
+   *
+   * Chromium clamps a screencast to the CSS-pixel size of the surface —
+   * `Page.startScreencast`'s `maxWidth`/`maxHeight` can only ever scale a
+   * capture DOWN — so a session rendering at a device pixel ratio of 2 still
+   * receives 1280x800 frames, supersampled from a 2560x1600 raster. Measured
+   * against Chromium 141 headless, and the reason this is 1 rather than
+   * `this.dpr`: the frame's own bytes decide, and this is only the fallback
+   * when they cannot be read.
+   */
+  private streamScale(): number {
+    return 1;
+  }
+
+  /**
+   * One still of the current surface, as a base64 JPEG.
+   *
+   * Raw `Page.captureScreenshot` rather than Playwright's `page.screenshot()`,
+   * and the difference is not stylistic. Playwright's default `caret: "hide"`
+   * writes an inline `caret-color` onto every input, textarea and
+   * contenteditable in the document and restores it afterwards — two style
+   * mutations, which paint. Those paints reach the screencast handler, bump
+   * the counters this file's staleness checks read, and the still then
+   * discards ITSELF as overtaken. Reading the compositor surface instead
+   * touches no DOM at all.
+   *
+   * NO `clip`, ever. A clip is in document coordinates and goes through an
+   * emulation path that can relayout and paint — the same self-defeating
+   * mutation — and a cropped picture published as a full viewport would stretch
+   * part of the page across the pane and put every click at the wrong
+   * coordinate. This degrades QUALITY only, never geometry.
+   */
+  private async captureStill(quality: number): Promise<string | undefined> {
     try {
-      const data = await this.captureFullViewportFrame();
-      if (!data) return;
-      if (this.disposed || !this.screencasting) return;
-      if (this.framesReceived !== generation) return;
-      this.frameThrottle.push({
-        data,
-        deviceWidth: WEBMCP_VIEWPORT.width,
-        deviceHeight: WEBMCP_VIEWPORT.height,
-        ts: Date.now(),
-      });
-    } finally {
-      this.substituting = false;
+      const result = (await this.cdp.send(
+        "Page.captureScreenshot" as never,
+        {
+          format: "jpeg",
+          quality,
+          // The compositor's own surface: no relayout, no paint, and the
+          // picture the person is actually looking at.
+          fromSurface: true,
+        } as never,
+      )) as { data?: string };
+      return typeof result?.data === "string" ? result.data : undefined;
+    } catch {
+      return undefined;
     }
   }
 
   /**
-   * The whole viewport as a frame-budget JPEG, quality-degraded if need be.
+   * Publish one still as a frame, walking `qualities` until one fits the cap.
    *
-   * Undefined when even the low-quality pass does not fit: at that point the
-   * pane keeps the picture it has, which is the same outcome as before but
-   * without a wrong-geometry frame in between.
+   * TWO callers, ONE slot, deliberately. An oversize frame asks for a still
+   * because the page's own paint could not be carried; the settle timer asks
+   * for a sharp one because the page has stopped painting. Two independent
+   * single-flight captures would race — a low-quality substitute landing after
+   * a sharp settle still would overwrite the good picture with a worse one of
+   * the same frozen page — so both go through here and at most one is ever in
+   * flight.
+   *
+   * The generation check is against `framesReceived` (ACCEPTED frames), not
+   * `paintsSeen`: what makes a still stale is a real frame the pane is already
+   * showing, or one held in the throttle's trailing slot about to be shown.
+   *
+   * A capture that FAILS publishes nothing and does not fall down the ladder:
+   * the pane keeps the picture it has, which is the same outcome as before and
+   * strictly better than a wrong-geometry frame.
    */
-  private async captureFullViewportFrame(): Promise<string | undefined> {
-    for (const quality of [WEBMCP_FRAME_QUALITY, 25]) {
-      try {
-        const buffer = await this.page.screenshot({
-          type: "jpeg",
-          quality,
-          timeout: 5_000,
-        });
-        if (buffer.byteLength <= WEBMCP_FRAME_MAX_BYTES) {
-          return buffer.toString("base64");
+  private async publishStill(
+    qualities: readonly number[],
+    reason: "oversize" | "settle",
+  ): Promise<void> {
+    if (this.disposed || !this.screencasting) return;
+    if (this.stillInFlight) {
+      // Only the oversize path re-runs: the settle path has its own latch and
+      // its own timer, and will simply try again on the next tick.
+      if (reason === "oversize") this.oversizePending = true;
+      return;
+    }
+    this.stillInFlight = true;
+    const generation = this.framesReceived;
+    try {
+      for (const quality of qualities) {
+        const data = await this.captureStill(quality);
+        // Re-checked after EVERY await: a still that lands behind a real frame
+        // would drag the pane backwards to an older picture.
+        if (this.disposed || !this.screencasting) return;
+        if (this.framesReceived !== generation) return;
+        if (data === undefined) return;
+        if (Buffer.byteLength(data, "base64") > WEBMCP_FRAME_MAX_BYTES) {
+          continue;
         }
-      } catch {
-        return undefined;
+        this.frameThrottle.push({
+          data,
+          // A still is captured from the surface itself rather than through the
+          // screencast's scaling, so its expected scale is the session's own
+          // device pixel ratio — and, as everywhere else, the bytes win.
+          ...this.frameGeometry(data, WEBMCP_VIEWPORT, this.dpr),
+          ts: Date.now(),
+        });
+        return;
+      }
+    } finally {
+      this.stillInFlight = false;
+      const rerun = this.oversizePending;
+      this.oversizePending = false;
+      // One trailing re-capture, not one per refused frame: a burst of
+      // oversize paints converges on the LAST of them with exactly two
+      // captures, however many arrived in between.
+      if (rerun) {
+        void this.publishStill(WEBMCP_SUBSTITUTE_QUALITY_LADDER, "oversize");
       }
     }
-    return undefined;
+  }
+
+  /**
+   * Arm the housekeeping timer, which is what notices a page has gone quiet.
+   *
+   * Idempotent, and armed only while frames are actually flowing: a timer left
+   * running on a stopped stream would capture stills for a pane nobody is
+   * watching.
+   */
+  private armHousekeeping(): void {
+    if (this.housekeeping !== undefined) return;
+    this.housekeeping = setInterval(
+      () => this.housekeepingTick(),
+      WEBMCP_HOUSEKEEPING_INTERVAL_MS,
+    );
+    // Never a reason to hold the process open.
+    this.housekeeping.unref?.();
+  }
+
+  private clearHousekeeping(): void {
+    if (this.housekeeping === undefined) return;
+    clearInterval(this.housekeeping);
+    this.housekeeping = undefined;
+  }
+
+  private housekeepingTick(): void {
+    if (!this.screencasting || this.disposed) return;
+    this.settleTick();
+  }
+
+  /**
+   * Publish one SHARP still once the page has stopped painting.
+   *
+   * The stream is tuned for motion: 10fps of moderate-quality JPEG, which is
+   * the right trade while something is moving and the wrong one the moment it
+   * stops. What a person actually reads is the picture that is still there a
+   * second after they stopped scrolling, and this replaces it with one encoded
+   * well above the streaming baseline.
+   *
+   * KNOWN GAP: a focused text field blinks its caret at about 2Hz, so the
+   * quiet window never arrives while someone is typing into one. The still
+   * fires when focus leaves. Accepted rather than worked around — suppressing
+   * caret paints means telling the page not to draw a caret, which is a visible
+   * change to what the person is looking at.
+   */
+  private settleTick(): void {
+    // Nothing has ever painted, or nothing has painted since the last still.
+    if (this.paintsSeen === 0 || this.paintsSeen === this.settleGeneration) {
+      return;
+    }
+    // An oversize still is already running. Bailing BEFORE the latch is the
+    // point: latching here and then being refused by `publishStill`'s
+    // single-flight guard would lose the sharp still until the next paint.
+    if (this.stillInFlight) return;
+    const quietSince = Math.max(this.lastPaintAt, this.lastInputAt);
+    if (Date.now() - quietSince < WEBMCP_SETTLE_QUIET_MS) return;
+    // Latched BEFORE the await, so an idle page gets ONE still per paint
+    // generation rather than one per tick.
+    this.settleGeneration = this.paintsSeen;
+    void this.publishStill(WEBMCP_SETTLE_STILL_QUALITIES, "settle");
   }
 
   private wirePage(): void {
@@ -493,6 +753,11 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    */
   async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
     if (this.disposed) return;
+    // Part of the settle window, and stamped even when nothing is streaming:
+    // a gesture that changes nothing on screen produces no paint to push the
+    // window out with, and a still taken mid-gesture is a round trip spent on
+    // a picture that is about to be wrong.
+    this.lastInputAt = Date.now();
     // BEFORE the first awaited operation, not after it. The paint caused by
     // the very first event of a batch can reach the screencast handler while
     // this method is still awaiting, and a boost applied afterwards would
@@ -689,7 +954,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           "Page.startScreencast" as never,
           {
             format: "jpeg",
-            quality: WEBMCP_FRAME_QUALITY,
+            quality: WEBMCP_STREAM_QUALITY_LADDER[0],
             maxWidth: WEBMCP_VIEWPORT.width,
             maxHeight: WEBMCP_VIEWPORT.height,
           } as never,
@@ -703,9 +968,20 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
             error: error instanceof Error ? error.message : String(error),
           });
         });
+      // AFTER the start resolves, and only if the stream survived it. A stop
+      // that lands mid-start wins (see `setScreencast(false)` below), and an
+      // interval armed unconditionally here would outlive it — capturing
+      // stills for a stream nobody restarted.
+      if (this.screencasting && !this.disposed) this.armHousekeeping();
       return this.screencasting;
     }
+    this.clearHousekeeping();
     this.frameThrottle.reset();
+    // The next stream is a fresh picture. Keeping the old bytes would let the
+    // first frame of a restarted cast be dropped as a duplicate of the last
+    // frame of the previous one — which is exactly the frame the pane is
+    // waiting for.
+    this.lastFrameData = undefined;
     await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
     return false;
   }
@@ -731,6 +1007,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     this.disposed = true;
     // Before the context closes, so the browser stops encoding immediately
     // rather than painting into a teardown that is racing a timeout.
+    this.clearHousekeeping();
     this.frameThrottle.reset();
     if (this.screencasting) {
       this.screencasting = false;
@@ -793,7 +1070,12 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
       });
       context = await browser.newContext({
         viewport: { ...WEBMCP_VIEWPORT },
-        deviceScaleFactor: 1,
+        // The VIEWER's ratio, so the page rasterises the way it would on their
+        // own screen: text at 2x is laid out and hinted for 2x and reaches the
+        // pane supersampled rather than merely upscaled. Set once, at context
+        // creation, rather than emulated per navigation — see the option's
+        // documentation for why a second override is the wrong instrument.
+        deviceScaleFactor: options.devicePixelRatio ?? 1,
         acceptDownloads: false,
         permissions: [],
       });
@@ -808,6 +1090,7 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
         options.url,
         headless,
         viewportMode,
+        options.devicePixelRatio ?? 1,
       );
       await session.start(options.url);
       return session;

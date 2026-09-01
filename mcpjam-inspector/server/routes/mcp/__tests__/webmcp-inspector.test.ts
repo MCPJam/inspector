@@ -407,6 +407,36 @@ describe("webmcp-inspector routes", () => {
     configState.hostedBrowser = false;
   });
 
+  it("bounds the device pixel ratio it will render at", async () => {
+    for (const devicePixelRatio of [0.5, 3, 0]) {
+      const { status } = await call(
+        "/api/mcp/webmcp/sessions",
+        json({ url: "https://a.test/", devicePixelRatio }),
+      );
+      // Below 1 is a client asking for a picture smaller than the page, and
+      // above 2 is bytes growing faster than anyone can see. Both are refused
+      // at the boundary rather than clamped silently.
+      expect(status, `devicePixelRatio ${devicePixelRatio}`).toBe(400);
+    }
+  });
+
+  it("accepts the ratios a real display reports", async () => {
+    // Filling the registry first is what makes this land without launching a
+    // browser: `reserve()` runs after the schema, so a 429 proves the request
+    // got past validation — which is the half under test here. The forwarding
+    // half is asserted against a fake provider in session-registry.test.ts.
+    await openSession(new FakeProvider());
+    await openSession(new FakeProvider());
+    for (const devicePixelRatio of [1, 1.5, 2]) {
+      const { status, body } = await call(
+        "/api/mcp/webmcp/sessions",
+        json({ url: "https://a.test/", display: "in-app", devicePixelRatio }),
+      );
+      expect(status, `devicePixelRatio ${devicePixelRatio}`).toBe(429);
+      expect(body.code).toBe("capacity");
+    }
+  });
+
   it("rejects a display this server does not know", async () => {
     const { status } = await call(
       "/api/mcp/webmcp/sessions",
@@ -513,7 +543,9 @@ describe("webmcp-inspector routes", () => {
       for (let i = 0; i < 50; i += 1) {
         const chunk = await Promise.race([
           reader.read(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), quietMs)),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), quietMs),
+          ),
         ]);
         if (!chunk || chunk.done) break;
         buffered += decoder.decode(chunk.value, { stream: true });
@@ -531,7 +563,9 @@ describe("webmcp-inspector routes", () => {
     // client on the binary socket would otherwise pay the base64-in-JSON tax
     // once per connect.
     provider.sessions[0].emitFrame({ data: "cmVwbGF5ZWQ=" });
-    provider.sessions[0].emitTools([fakeTool({ origin: "https://example.test" })]);
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+    ]);
 
     const res = await app.request(
       `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50&frames=off`,

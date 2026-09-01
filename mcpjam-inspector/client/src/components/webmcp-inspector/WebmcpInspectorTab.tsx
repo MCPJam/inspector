@@ -837,7 +837,11 @@ function ViewportPane({
    * it appears scales any click landing in that moment against the wrong box.
    */
   const surface = frame
-    ? { width: frame.deviceWidth, height: frame.deviceHeight }
+    ? // CSS pixels, not the frame's device pixels: the aspect ratio is the same
+      // either way, but this box is also what pointer coordinates are scaled
+      // against, and the page's own coordinate space is CSS pixels. A frame
+      // captured at 2x reported in device pixels would double every click.
+      { width: frame.cssWidth, height: frame.cssHeight }
     : transportSurface(transport);
 
   const frameSizeRef = useRef(surface);

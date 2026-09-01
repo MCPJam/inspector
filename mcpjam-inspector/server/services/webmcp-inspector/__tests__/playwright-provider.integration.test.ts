@@ -24,9 +24,11 @@ import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
+  WEBMCP_VIEWPORT,
   type WebMcpActivityEntry,
   type WebMcpFrame,
 } from "@/shared/webmcp-inspector-protocol";
+import { readJpegDimensions } from "@/shared/jpeg-dimensions";
 import {
   FIXTURE_INPUT_TARGETS,
   startWebMcpFixtureServer,
@@ -91,7 +93,12 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await registry?.disposeAll();
   });
 
-  async function open(options: { viewportMode?: "window" | "embedded" } = {}) {
+  async function open(
+    options: {
+      viewportMode?: "window" | "embedded";
+      devicePixelRatio?: number;
+    } = {},
+  ) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
     const session = await startWebMcpSession({
       url: fixture.url,
@@ -99,6 +106,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       registry,
       headless: true,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
+      ...(options.devicePixelRatio !== undefined
+        ? { devicePixelRatio: options.devicePixelRatio }
+        : {}),
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
@@ -399,6 +409,76 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       .map((event) => event.entry.id);
     expect(stoppedIds.slice(0, streamingIds.length)).toEqual(streamingIds);
 
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("describes every frame by its own bytes, at the viewer's pixel ratio", async () => {
+    // THE GATE for the one thing about this that cannot be reasoned out: what
+    // a real Chromium actually hands over when the context renders at two
+    // device pixels per CSS pixel. Measured against 141 headless, a screencast
+    // is clamped to the CSS size of the surface — `maxWidth` can only scale a
+    // capture DOWN — so the frames come back 1280x800, supersampled from a
+    // 2560x1600 raster rather than delivered at it.
+    //
+    // Which is exactly why nothing here asserts a NUMBER of pixels. What must
+    // hold, on any build and at any ratio, is that a frame's reported geometry
+    // matches the picture inside it: that is the property every forwarded click
+    // is scaled by, and the one that turns a wrong assumption into a wrong
+    // coordinate.
+    const { session, frames } = await open({
+      viewportMode: "embedded",
+      devicePixelRatio: 2,
+    });
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    for (const frame of frames) {
+      const bytes = Buffer.from(frame.data, "base64");
+      expect(bytes.byteLength).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
+      const sof = readJpegDimensions(bytes);
+      expect(sof, "a published frame should be a decodable JPEG").toBeDefined();
+      // The picture and the label agree…
+      expect(frame.deviceWidth).toBe(sof!.width);
+      expect(frame.deviceHeight).toBe(sof!.height);
+      // …and the scale is the ratio between the picture and the page's own
+      // coordinate space, whatever this browser chose to give us.
+      expect(frame.scale).toBeCloseTo(sof!.width / WEBMCP_VIEWPORT.width, 2);
+    }
+    expect(session.viewportTransport).toEqual({
+      kind: "frame-stream",
+      ...WEBMCP_VIEWPORT,
+    });
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("sharpens the picture once the page stops painting", async () => {
+    // The fixture paints on load and then stops, which is the case the settle
+    // still exists for: what a person reads is the picture still on screen a
+    // second after everything stopped moving, and the stream is encoded for
+    // motion.
+    const { frames } = await open({ viewportMode: "embedded" });
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    // Long enough for the page's own paints to stop and for the quiet window
+    // to elapse. The LAST frame after that can only be the still: an unchanged
+    // repaint is dropped as redundant, which is what stops the capture's own
+    // induced frame from inducing another capture.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(frames.length, "a still after the paints").toBeGreaterThanOrEqual(2);
+
+    const settled = frames.at(-1)!;
+    const streamed = frames.at(-2)!;
+    // Same picture, more bytes: the still is encoded well above the streaming
+    // baseline, which is the entire point of taking it.
+    expect(Buffer.byteLength(settled.data, "base64")).toBeGreaterThan(
+      Buffer.byteLength(streamed.data, "base64"),
+    );
+    expect(Buffer.byteLength(settled.data, "base64")).toBeLessThanOrEqual(
+      WEBMCP_FRAME_MAX_BYTES,
+    );
     await registry.disposeAll();
   }, 60_000);
 

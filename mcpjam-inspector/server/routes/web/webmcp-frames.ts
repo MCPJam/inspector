@@ -337,6 +337,12 @@ export function createWebMcpFramesWsHandler(
               encodeWebMcpBinaryFrame({
                 deviceWidth: event.frame.deviceWidth,
                 deviceHeight: event.frame.deviceHeight,
+                // Forwarded rather than defaulted here: a frame captured at
+                // two device pixels per CSS pixel and reported as one would
+                // put every click at double its true coordinate.
+                ...(event.frame.scale !== undefined
+                  ? { scale: event.frame.scale }
+                  : {}),
                 ts: event.frame.ts,
                 seq: event.seq,
                 jpeg: Buffer.from(event.frame.data, "base64"),

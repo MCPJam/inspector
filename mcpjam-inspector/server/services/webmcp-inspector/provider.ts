@@ -140,6 +140,21 @@ export interface CreateWebMcpSessionOptions {
    * behaviour. `embedded` implies headless regardless of the flag above.
    */
   viewportMode?: WebMcpViewportMode;
+  /**
+   * Device pixels per CSS pixel the page should be RENDERED at.
+   *
+   * The viewer's own ratio, forwarded by the client, because that is the only
+   * place it is known: a browser running headless on a server has no display to
+   * ask. Omitted means 1, which is what every caller older than this field
+   * gets and what a provider with no notion of it can ignore.
+   *
+   * Fixed for the life of the session on purpose. It is the browser context's
+   * `deviceScaleFactor`, set once at creation rather than emulated later — a
+   * second device-metrics override fights the one Playwright re-applies on
+   * every navigation, and last-writer-wins between two of them is a session
+   * whose scale depends on timing.
+   */
+  devicePixelRatio?: number;
   callbacks: WebMcpSessionCallbacks;
 }
 

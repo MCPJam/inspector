@@ -155,6 +155,10 @@ function liveFrame(data: string, seq = 2) {
     src: `data:image/jpeg;base64,${data}`,
     deviceWidth: 1280,
     deviceHeight: 800,
+    // Same numbers at scale 1, and deliberately still stated: the pane lays
+    // out and scales clicks against these, not the device ones.
+    cssWidth: 1280,
+    cssHeight: 800,
     ts: 1,
     seq,
   };
@@ -658,6 +662,58 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().session).toEqual(SESSION);
   });
 
+  it("tells the server the viewer's pixel ratio, and only for an in-app session", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => new Response(JSON.stringify(SESSION), { status: 201 }),
+      );
+    const original = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", {
+      configurable: true,
+      value: 2,
+    });
+    try {
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/", { display: "in-app" });
+      // The browser runs headless on the server, with no display to ask.
+      expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
+        url: "https://shop.test/",
+        display: "in-app",
+        devicePixelRatio: 2,
+      });
+
+      // A window session paints on a real display that already knows its own
+      // ratio, so the field is left off entirely.
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/");
+      expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
+        url: "https://shop.test/",
+      });
+
+      Object.defineProperty(window, "devicePixelRatio", {
+        configurable: true,
+        value: 1,
+      });
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/", { display: "in-app" });
+      // Omitted at 1: the server's own default, so the common case puts
+      // nothing new on the wire and an older server strips nothing.
+      expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toEqual({
+        url: "https://shop.test/",
+        display: "in-app",
+      });
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+
   it("sends an input batch as one command, and nothing for an empty one", async () => {
     await openSession();
     const fetchSpy = vi
@@ -1103,8 +1159,62 @@ describe("webmcp inspector store — frame transport", () => {
       src: "blob:frame-0",
       deviceWidth: 1024,
       deviceHeight: 640,
+      cssWidth: 1024,
+      cssHeight: 640,
       ts: 5_000,
       seq: 7,
+    });
+  });
+
+  it("reports a scaled frame's CSS size, so clicks stay in the page's units", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.emitFrame(
+      binaryFrame(7, { deviceWidth: 2560, deviceHeight: 1600, scale: 2 }),
+    );
+
+    const frame = useWebmcpInspectorStore.getState().liveFrame;
+    // The picture is 2560 pixels wide and the page is 1280 CSS pixels wide.
+    // Scaling a click against the former sends it to twice the coordinate the
+    // person pointed at.
+    expect(frame).toMatchObject({
+      deviceWidth: 2560,
+      deviceHeight: 1600,
+      cssWidth: 1280,
+      cssHeight: 800,
+    });
+  });
+
+  it("reads a missing or nonsense scale as 1", async () => {
+    const { sse, ws } = await openFrameSession();
+    ws.open();
+    // No scale at all: every server older than the field, and every provider
+    // that does not capture above CSS resolution.
+    ws.emitFrame(binaryFrame(7, { deviceWidth: 1280, deviceHeight: 800 }));
+    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
+      cssWidth: 1280,
+      cssHeight: 800,
+    });
+
+    // Zero would divide the geometry into infinity and put the pane's box
+    // somewhere no click could reach.
+    ws.emitFrame(
+      binaryFrame(8, { deviceWidth: 1280, deviceHeight: 800, scale: 0 }),
+    );
+    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
+      cssWidth: 1280,
+      cssHeight: 800,
+    });
+
+    sse.emit({
+      type: "frame",
+      seq: 9,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
+      src: "data:image/jpeg;base64,paint",
+      cssWidth: 1280,
+      cssHeight: 800,
     });
   });
 

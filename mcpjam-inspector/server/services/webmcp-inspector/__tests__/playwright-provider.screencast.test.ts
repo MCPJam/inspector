@@ -11,7 +11,10 @@ import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import { PlaywrightWebMcpSession } from "../playwright-provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
-  WEBMCP_FRAME_QUALITY,
+  WEBMCP_SETTLE_QUIET_MS,
+  WEBMCP_SETTLE_STILL_QUALITIES,
+  WEBMCP_STREAM_QUALITY_LADDER,
+  WEBMCP_SUBSTITUTE_QUALITY_LADDER,
   WEBMCP_VIEWPORT,
   type WebMcpFrame,
 } from "@/shared/webmcp-inspector-protocol";
@@ -41,16 +44,87 @@ class FakeCdp {
   }
 }
 
-/** Base64 of `bytes` raw bytes, for exercising the oversize cap. */
-function base64OfSize(bytes: number): string {
-  return Buffer.alloc(bytes, 0x41).toString("base64");
+/**
+ * A base64 JPEG whose FRAME HEADER declares `width` x `height`.
+ *
+ * Built by hand rather than encoded, because what the provider reads is the
+ * SOF marker and nothing else: SOI, a short APP0, then a baseline SOF0.
+ */
+function jpegBase64(width: number, height: number): string {
+  return Buffer.from([
+    0xff,
+    0xd8,
+    0xff,
+    0xe0,
+    0x00,
+    0x04,
+    0x00,
+    0x00,
+    0xff,
+    0xc0,
+    0x00,
+    0x11,
+    0x08,
+    (height >> 8) & 0xff,
+    height & 0xff,
+    (width >> 8) & 0xff,
+    width & 0xff,
+    0x03,
+  ]).toString("base64");
+}
+
+/**
+ * Base64 of `bytes` raw bytes, for exercising the oversize cap.
+ *
+ * `fill` distinguishes one oversized frame from the next: consecutive frames
+ * with identical bytes are dropped as redundant, so a burst built from one
+ * payload would be a burst of exactly one frame.
+ */
+function base64OfSize(bytes: number, fill = 0x41): string {
+  return Buffer.alloc(bytes, fill).toString("base64");
+}
+
+/** What `Page.captureScreenshot` answers with, unless a test says otherwise. */
+const SMALL_STILL = Buffer.from("tiny-still").toString("base64");
+
+/** Answer `Page.captureScreenshot` with a different payload per quality. */
+function stillAnswer(byQuality: Record<number, string | undefined>) {
+  return ({ quality }: { quality: number }) => byQuality[quality];
+}
+
+/**
+ * A capture pinned open until the test releases it.
+ *
+ * Pinned rather than made slow, for the reason the overtake tests give: the
+ * race only exists WHILE the capture is in flight, and a sleep long enough to
+ * make that window likely is also long enough to close early on a loaded
+ * machine and pass without testing anything.
+ */
+function heldStill(data = SMALL_STILL) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    still: async () => {
+      await gate;
+      return data;
+    },
+    release: () => release(),
+  };
 }
 
 function harness(
   options: {
     viewportMode?: WebMcpViewportMode;
-    onSend?: (method: string) => unknown;
+    onSend?: (method: string, params?: unknown) => unknown;
     screenshot?: (options?: Record<string, unknown>) => Promise<Buffer>;
+    /** Answers `Page.captureScreenshot` — the still path's only CDP call. */
+    still?: (params: {
+      quality: number;
+    }) => string | undefined | Promise<string | undefined>;
+    /** The context's device scale factor, as `createSession` passes it on. */
+    devicePixelRatio?: number;
   } = {},
 ) {
   const cdp = new FakeCdp();
@@ -63,12 +137,36 @@ function harness(
   const screenshots = vi.fn<
     (options?: Record<string, unknown>) => Promise<Buffer>
   >(options.screenshot ?? (async () => Buffer.from("tiny-screenshot")));
+  /**
+   * Every still the session asked the browser for.
+   *
+   * Its own spy rather than a filter over the CDP ledger, because the two
+   * things a still test wants to know — how many were taken, and what came
+   * back for a given quality — are a call count and a return value.
+   */
+  const stills = vi.fn<
+    (params: {
+      quality: number;
+    }) => string | undefined | Promise<string | undefined>
+  >(options.still ?? (() => SMALL_STILL));
 
   const originalSend = cdp.send.bind(cdp);
   cdp.send = async (method: string, params?: unknown) => {
     if (method === "Page.screencastFrameAck") log.push("ack");
     await originalSend(method, params);
-    return options.onSend?.(method) ?? {};
+    const answered = options.onSend?.(method, params);
+    if (answered !== undefined) return answered;
+    if (method === "Page.captureScreenshot") {
+      const quality = Number(
+        (params as { quality?: number } | undefined)?.quality ?? 0,
+      );
+      const data = await stills({ quality });
+      // Shaped like Chromium's answer, `data` and all: an undefined payload is
+      // a capture that failed, which the session must treat as "keep the
+      // picture we have" rather than publishing nothing-shaped-like-a-frame.
+      return data === undefined ? {} : { data };
+    }
+    return {};
   };
 
   const callbacks: WebMcpSessionCallbacks = {
@@ -121,9 +219,42 @@ function harness(
     "https://example.test/",
     true,
     options.viewportMode,
+    options.devicePixelRatio,
   );
 
-  return { session, cdp, log, frames, screenshots, driven, page };
+  sessions.push(session);
+  return { session, cdp, log, frames, screenshots, stills, driven, page };
+}
+
+/**
+ * Every session a test built, disposed between cases.
+ *
+ * `setScreencast(true)` now arms a real interval, and a real-timer test that
+ * left one running would fire stills into the next case's expectations.
+ */
+const sessions: PlaywrightWebMcpSession[] = [];
+
+afterEach(async () => {
+  const built = sessions.splice(0, sessions.length);
+  for (const session of built) await session.dispose();
+  // Faked in several suites below, and a clock left faked would freeze the
+  // next file's `vi.waitFor`.
+  vi.useRealTimers();
+});
+
+/**
+ * Fake timers BEFORE the session is built, deliberately.
+ *
+ * `createFrameThrottle` captures `Date.now` at construction, so faking the
+ * clock afterwards would leave the throttle reading real time while its timers
+ * ran on the fake one — and every timing assertion would be measuring whatever
+ * the machine happened to do. The settle timer has the same requirement.
+ */
+async function startedWithFakeClock(
+  options: Parameters<typeof harness>[0] = {},
+) {
+  vi.useFakeTimers();
+  return started(options);
 }
 
 /** Wire the CDP listeners the way `start()` does, without a browser. */
@@ -155,7 +286,7 @@ describe("PlaywrightWebMcpSession screencast", () => {
     expect(starts).toHaveLength(1);
     expect(starts[0].params).toEqual({
       format: "jpeg",
-      quality: WEBMCP_FRAME_QUALITY,
+      quality: WEBMCP_STREAM_QUALITY_LADDER[0],
       maxWidth: WEBMCP_VIEWPORT.width,
       maxHeight: WEBMCP_VIEWPORT.height,
     });
@@ -191,7 +322,7 @@ describe("PlaywrightWebMcpSession screencast", () => {
     });
   });
 
-  it("substitutes a budgeted screenshot for an oversized frame", async () => {
+  it("substitutes a budgeted still for an oversized frame", async () => {
     const h = await started();
     await h.session.setScreencast(true);
     const huge = base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1);
@@ -205,15 +336,31 @@ describe("PlaywrightWebMcpSession screencast", () => {
     // trailing-frame guarantee covers throttle drops and NOT this one: a
     // complex static page whose final paint exceeds the cap would otherwise
     // leave the pane stale forever.
-    expect(h.frames[0].data).toBe(
-      Buffer.from("tiny-screenshot").toString("base64"),
-    );
-    expect(h.screenshots).toHaveBeenCalledTimes(1);
+    expect(h.frames[0].data).toBe(SMALL_STILL);
+    // Taken through the CDP surface path at the substitute ladder's first
+    // rung — BELOW the streaming baseline, because the reason this still
+    // exists is that the page's own paint did not fit the cap.
+    expect(
+      h.cdp.sent.filter((call) => call.method === "Page.captureScreenshot"),
+    ).toEqual([
+      {
+        method: "Page.captureScreenshot",
+        params: {
+          format: "jpeg",
+          quality: WEBMCP_SUBSTITUTE_QUALITY_LADDER[0],
+          fromSurface: true,
+        },
+      },
+    ]);
+    // NOT Playwright's `page.screenshot()`: its default `caret: "hide"` writes
+    // an inline style onto every text field and restores it, which paints —
+    // and those paints make the still discard itself as overtaken.
+    expect(h.screenshots).not.toHaveBeenCalled();
     // Still acknowledged, before the size was even looked at.
     expect(h.log[0]).toBe("ack");
   });
 
-  it("substitutes a FULL-VIEWPORT capture, never the thumbnail's crop", async () => {
+  it("captures a FULL-VIEWPORT still, never the thumbnail's crop", async () => {
     const h = await started();
     await h.session.setScreencast(true);
     h.cdp.emit(
@@ -226,8 +373,11 @@ describe("PlaywrightWebMcpSession screencast", () => {
     // evidence viewed as-is, wrong for a surface the client scales clicks
     // against. A crop published as 1280x800 would stretch a quarter of the page
     // across the pane and put every click at up to twice its true coordinate.
-    for (const call of h.screenshots.mock.calls) {
-      expect(call[0]).not.toHaveProperty("clip");
+    // A clip is also the emulation path that can relayout and paint, which is
+    // the second reason never to send one from here.
+    for (const call of h.cdp.sent) {
+      if (call.method !== "Page.captureScreenshot") continue;
+      expect(call.params).not.toHaveProperty("clip");
     }
     expect(h.frames[0]).toMatchObject({
       deviceWidth: WEBMCP_VIEWPORT.width,
@@ -235,51 +385,31 @@ describe("PlaywrightWebMcpSession screencast", () => {
     });
   });
 
-  it("drops a substitute that a newer frame has already overtaken", async () => {
-    // The capture is pinned open rather than made slow: the race this test is
-    // about only exists WHILE the screenshot is in flight, and a sleep long
-    // enough to make that window likely is also long enough to close early on
-    // a loaded machine and pass without ever testing anything.
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const h = await started({
-      screenshot: async () => {
-        await held;
-        return Buffer.from("late-shot");
-      },
-    });
+  it("drops a still that a newer frame has already overtaken", async () => {
+    const late = heldStill("late-shot");
+    const h = await started({ still: late.still });
     await h.session.setScreencast(true);
     h.cdp.emit(
       "Page.screencastFrame",
       screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
     );
-    await vi.waitFor(() => expect(h.screenshots).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(1));
 
-    // A newer paint arrives while the screenshot is still being taken.
+    // A newer paint arrives while the still is still being taken.
     h.cdp.emit("Page.screencastFrame", screencastFrame("newer"));
-    release();
-    // Everything left in the substitute's path is microtasks, so one turn of
-    // the timer queue runs it to its decision — no wall-clock guess.
+    late.release();
+    // Everything left in the still's path is microtasks, so one turn of the
+    // timer queue runs it to its decision — no wall-clock guess.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // The substitute is now older than what the pane is showing. Publishing it
+    // The still is now older than what the pane is showing. Publishing it
     // would drag the picture backwards.
     expect(h.frames.map((frame) => frame.data)).toEqual(["newer"]);
   });
 
-  it("drops a substitute overtaken by a frame still held in the throttle", async () => {
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const h = await started({
-      screenshot: async () => {
-        await held;
-        return Buffer.from("late-shot");
-      },
-    });
+  it("drops a still overtaken by a frame still held in the throttle", async () => {
+    const late = heldStill("late-shot");
+    const h = await started({ still: late.still });
     await h.session.setScreencast(true);
     // Burn the throttle's leading edge, so the next real frame is HELD in the
     // trailing slot rather than published.
@@ -288,17 +418,17 @@ describe("PlaywrightWebMcpSession screencast", () => {
       "Page.screencastFrame",
       screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
     );
-    await vi.waitFor(() => expect(h.screenshots).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(1));
 
     h.cdp.emit("Page.screencastFrame", screencastFrame("newer"));
-    release();
+    late.release();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // Nothing new has been PUBLISHED yet — "newer" is inside the throttle,
     // waiting for the window to close. A staleness check counting publications
-    // would see no change, let the substitute through, and the throttle would
-    // then coalesce the older picture over the newer one: the pane settles on
-    // the stale paint and stays there until the page happens to repaint.
+    // would see no change, let the still through, and the throttle would then
+    // coalesce the older picture over the newer one: the pane settles on the
+    // stale paint and stays there until the page happens to repaint.
     expect(h.frames.map((frame) => frame.data)).toEqual(["first"]);
     await vi.waitFor(
       () =>
@@ -307,17 +437,83 @@ describe("PlaywrightWebMcpSession screencast", () => {
     );
   });
 
-  it("does not queue a screenshot per oversized frame", async () => {
+  it("re-captures at most once after a burst of oversized frames", async () => {
+    const late = heldStill();
+    const h = await started({ still: late.still });
+    await h.session.setScreencast(true);
+    for (let i = 0; i < 5; i++) {
+      // Distinct bytes per paint: five identical ones are five drops, not a
+      // burst — see the redundancy check.
+      h.cdp.emit(
+        "Page.screencastFrame",
+        screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1, 0x41 + i), i),
+      );
+    }
+    await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(1));
+    // Oversized frames arrive in bursts, and a capture each would queue CDP
+    // round trips behind a page that is already expensive to encode.
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    late.release();
+    // ONE trailing re-capture for the whole burst, however many frames were
+    // refused while the first was in flight. Without it the pane would settle
+    // on the picture that was current when the burst STARTED — the oldest of
+    // them — on a page whose every paint exceeds the cap.
+    await vi.waitFor(() => expect(h.stills).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(h.stills).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a frame whose bytes repeat the one before it", async () => {
+    // Fake clock, because the throttle HOLDS a second frame that arrives
+    // inside its window rather than dropping it: a same-tick assertion would
+    // pass with the redundancy check deleted and the duplicate merely late.
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 1));
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 2));
+    await vi.advanceTimersByTimeAsync(500);
+
+    // Chromium produces exactly this frame whenever anything asks it for a
+    // copy of the surface — a still, most of all — and it is byte-for-byte the
+    // frame before it. Published, it would replace a sharp still with the same
+    // picture at streaming quality a tenth of a second later; counted, it would
+    // restart the settle clock and take another still, and another.
+    expect(h.frames.map((frame) => frame.data)).toEqual(["paint"]);
+    // Acknowledged all the same: Chromium gates the next frame on the ack, so
+    // dropping one without acking wedges the stream.
+    expect(
+      h.cdp.sent.filter((call) => call.method === "Page.screencastFrameAck"),
+    ).toHaveLength(2);
+  });
+
+  it("publishes a frame again once the picture actually changes", async () => {
     const h = await started();
     await h.session.setScreencast(true);
-    const huge = base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1);
-    for (let i = 0; i < 5; i++) {
-      h.cdp.emit("Page.screencastFrame", screencastFrame(huge, i));
-    }
-    await vi.waitFor(() => expect(h.frames.length).toBeGreaterThan(0));
-    // Oversized frames arrive in bursts, and a screenshot each would queue CDP
-    // round trips behind a page that is already expensive to encode.
-    expect(h.screenshots).toHaveBeenCalledTimes(1);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 1));
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 2));
+    h.cdp.emit("Page.screencastFrame", screencastFrame("changed", 3));
+
+    // The check is bytes, not a time window: a page that really painted
+    // something produces different bytes and is treated as the activity it is.
+    await vi.waitFor(() =>
+      expect(h.frames.map((frame) => frame.data)).toEqual(["paint", "changed"]),
+    );
+  });
+
+  it("forgets the last frame when the stream stops, so a restart repaints", async () => {
+    const h = await started();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 1));
+    await h.session.setScreencast(false);
+
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint", 2));
+    // The first frame of a restarted cast is the one the pane is waiting for.
+    // Dropping it as a duplicate of the last frame of the PREVIOUS cast would
+    // leave a freshly-mounted pane blank until the page happened to repaint.
+    expect(h.frames.map((frame) => frame.data)).toEqual(["paint", "paint"]);
   });
 
   it("stops the cast and ignores a frame still in flight", async () => {
@@ -604,19 +800,6 @@ describe("PlaywrightWebMcpSession input rate", () => {
     vi.useRealTimers();
   });
 
-  /**
-   * Fake timers BEFORE the session is built, deliberately.
-   *
-   * `createFrameThrottle` captures `Date.now` at construction, so faking the
-   * clock afterwards would leave the throttle reading real time while its
-   * timers ran on the fake one — and every assertion below would be measuring
-   * whatever the machine happened to do.
-   */
-  async function startedWithFakeClock() {
-    vi.useFakeTimers();
-    return started();
-  }
-
   it("raises the frame rate while input is arriving", async () => {
     const h = await startedWithFakeClock();
     await h.session.setScreencast(true);
@@ -773,5 +956,299 @@ describe("PlaywrightWebMcpSession input rate", () => {
       "move(40,50)",
       "wheel(0,-120)",
     ]);
+  });
+});
+
+/**
+ * The sharp-at-rest still.
+ *
+ * The stream is tuned for motion — 10fps of moderate-quality JPEG — which is
+ * the wrong trade the moment a page stops moving, because the picture a person
+ * actually READS is the one still on screen a second after they stopped
+ * scrolling. This is the timer that notices the page went quiet and replaces
+ * that picture with a well-encoded one.
+ *
+ * Every case here fakes the clock BEFORE the session is built: the settle
+ * window and the frame throttle both capture `Date.now` at construction.
+ */
+describe("PlaywrightWebMcpSession settle still", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Advance past the quiet window and let the still's awaits run. */
+  async function goQuiet(extraMs = 0) {
+    await vi.advanceTimersByTimeAsync(WEBMCP_SETTLE_QUIET_MS + 500 + extraMs);
+  }
+
+  it("publishes one sharp still once the page stops painting", async () => {
+    const h = await startedWithFakeClock({
+      still: stillAnswer({ [WEBMCP_SETTLE_STILL_QUALITIES[0]]: "sharp" }),
+    });
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    await goQuiet();
+
+    // At the TOP of the still ladder, above the streaming baseline: motion
+    // hides compression artefacts and a still page does not.
+    expect(
+      h.cdp.sent
+        .filter((call) => call.method === "Page.captureScreenshot")
+        .map((call) => (call.params as { quality: number }).quality),
+    ).toEqual([WEBMCP_SETTLE_STILL_QUALITIES[0]]);
+    // Published AFTER the real frame, through the same throttle: the pane
+    // replaces the streamed picture with the sharp one, it does not race it.
+    expect(h.frames.map((frame) => frame.data)).toEqual(["paint", "sharp"]);
+  });
+
+  it("takes ONE still per quiet page, not one per tick", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    await goQuiet();
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    // Still quiet, ten seconds later. Without the latch this would be a
+    // screenshot loop for as long as the tab is open.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+  });
+
+  it("discards a still a paint overtook while it was in flight", async () => {
+    const late = heldStill("late-sharp");
+    const h = await startedWithFakeClock({ still: late.still });
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    await goQuiet();
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    // The page paints again while the capture is out. The still now describes
+    // an older moment than the pane is showing.
+    h.cdp.emit("Page.screencastFrame", screencastFrame("newer"));
+    late.release();
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(h.frames.map((frame) => frame.data)).toEqual(["paint", "newer"]);
+  });
+
+  it("counts an OVERSIZE paint as activity, so the settle keeps working", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    await goQuiet();
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    // A paint too big for the stream never bumps the ACCEPTED-frame counter.
+    // A settle latched on that counter would believe this page had gone quiet
+    // for good, and a page whose every paint exceeds the cap would get exactly
+    // one sharp still for the life of the session.
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    const afterOversize = h.stills.mock.calls.length;
+
+    await goQuiet();
+    expect(h.stills.mock.calls.length).toBeGreaterThan(afterOversize);
+    expect(h.stills.mock.calls.map(([params]) => params.quality)).toContain(
+      WEBMCP_SETTLE_STILL_QUALITIES[0],
+    );
+  });
+
+  it("counts INPUT as activity, even when the page paints nothing", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    // Most of the quiet window passes, then someone types. The keystroke the
+    // page swallowed produced no paint of its own, so only the input stamp can
+    // hold the window open — and a still taken now is a round trip spent on a
+    // picture that is about to be wrong.
+    await vi.advanceTimersByTimeAsync(WEBMCP_SETTLE_QUIET_MS - 100);
+    await h.session.dispatchInput([{ kind: "key_down", key: "a" }]);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.stills).not.toHaveBeenCalled();
+
+    await goQuiet();
+    expect(h.stills).toHaveBeenCalledTimes(1);
+  });
+
+  it("walks down the ladder when the sharp still does not fit", async () => {
+    const oversize = base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1);
+    const h = await startedWithFakeClock({
+      still: stillAnswer({
+        [WEBMCP_SETTLE_STILL_QUALITIES[0]]: oversize,
+        [WEBMCP_SETTLE_STILL_QUALITIES[1]]: "smaller",
+      }),
+    });
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    await goQuiet();
+    expect(h.stills.mock.calls.map(([params]) => params.quality)).toEqual([
+      ...WEBMCP_SETTLE_STILL_QUALITIES,
+    ]);
+    expect(h.frames.map((frame) => frame.data)).toEqual(["paint", "smaller"]);
+  });
+
+  it("publishes nothing when no rung fits", async () => {
+    const oversize = base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1);
+    const h = await startedWithFakeClock({ still: () => oversize });
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    await goQuiet();
+    // The pane keeps the picture it has. A frame over the cap is exactly what
+    // the client's transport is not allowed to carry.
+    expect(h.frames.map((frame) => frame.data)).toEqual(["paint"]);
+  });
+
+  it("stops capturing — and stops its timer — when the stream stops", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+    await goQuiet();
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    await h.session.setScreencast(false);
+    // Not just "no more captures": no timer either. A stream nobody is
+    // watching must not leave four wakeups a second behind it.
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves no timer behind on dispose", async () => {
+    const h = await startedWithFakeClock();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", screencastFrame("paint"));
+
+    await h.session.dispose();
+    // Advanced first, because teardown races each browser close against a
+    // five-second timeout of its own. Those are one-shots and are gone by now;
+    // an interval left armed would still be here — and would be capturing.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(h.stills).not.toHaveBeenCalled();
+  });
+
+  it("never arms the timer when a stop lands mid-start", async () => {
+    // The same race the start/stop ordering test covers, from the settle
+    // timer's side: arming unconditionally after the start resolves would
+    // leave an interval running on a stream that was withdrawn.
+    let releaseStart: (() => void) | undefined;
+    const h = await startedWithFakeClock();
+    const originalSend = h.cdp.send.bind(h.cdp);
+    h.cdp.send = async (method: string, params?: unknown) => {
+      const sent = originalSend(method, params);
+      if (method === "Page.startScreencast") {
+        await new Promise<void>((resolve) => {
+          releaseStart = resolve;
+        });
+      }
+      return sent;
+    };
+
+    const starting = h.session.setScreencast(true);
+    await vi.waitFor(() => expect(releaseStart).toBeTypeOf("function"));
+    const stopping = h.session.setScreencast(false);
+    releaseStart!();
+    await starting;
+    await stopping;
+
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.stills).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What a frame says about its own geometry.
+ *
+ * The client scales every pointer coordinate against these numbers, so a frame
+ * that misdescribes itself is not a cosmetic bug: it is every click landing
+ * somewhere else. The rule is that the PICTURE decides — the JPEG's own frame
+ * header — and that everything else is a fallback for when it cannot be read.
+ */
+describe("PlaywrightWebMcpSession frame geometry", () => {
+  it("reports the dimensions the JPEG itself declares", async () => {
+    const h = await started({ devicePixelRatio: 2 });
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", {
+      // A capture that came out at two device pixels per CSS pixel…
+      data: jpegBase64(2560, 1600),
+      sessionId: 1,
+      // …while CDP's metadata reports the surface in CSS pixels, as it always
+      // does. Publishing the metadata's numbers would describe a 2560-wide
+      // picture as 1280 wide and halve every coordinate the client sent back.
+      metadata: { deviceWidth: 1280, deviceHeight: 800 },
+    });
+
+    expect(h.frames[0]).toMatchObject({
+      deviceWidth: 2560,
+      deviceHeight: 1600,
+      scale: 2,
+    });
+  });
+
+  it("falls back to the metadata when the bytes cannot be read", async () => {
+    const h = await started({ devicePixelRatio: 2 });
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", {
+      data: Buffer.from("not-a-jpeg").toString("base64"),
+      sessionId: 1,
+      metadata: { deviceWidth: 900, deviceHeight: 500 },
+    });
+
+    // Chromium clamps a screencast to the CSS size of the surface, so the
+    // stream's fallback scale is 1 even on a 2x session — and the fallback's
+    // job is to stay self-consistent, which is the property clicks depend on.
+    expect(h.frames[0]).toMatchObject({
+      deviceWidth: 900,
+      deviceHeight: 500,
+      scale: 1,
+    });
+  });
+
+  it("describes a still by its own bytes too", async () => {
+    const h = await started({
+      devicePixelRatio: 2,
+      still: () => jpegBase64(2560, 1600),
+    });
+    await h.session.setScreencast(true);
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1)),
+    );
+    await vi.waitFor(() => expect(h.frames).toHaveLength(1));
+
+    // A still is captured from the surface rather than through the screencast's
+    // scaling, so it can arrive at a different scale from the frames around it
+    // — which is exactly why the scale rides on the FRAME and not the session.
+    expect(h.frames[0]).toMatchObject({
+      deviceWidth: 2560,
+      deviceHeight: 1600,
+      scale: 2,
+    });
+  });
+
+  it("reports scale 1 for an ordinary session", async () => {
+    const h = await started();
+    await h.session.setScreencast(true);
+    h.cdp.emit("Page.screencastFrame", {
+      data: jpegBase64(1280, 800),
+      sessionId: 1,
+      metadata: { deviceWidth: 1280, deviceHeight: 800 },
+    });
+    expect(h.frames[0]).toMatchObject({
+      deviceWidth: 1280,
+      deviceHeight: 800,
+      scale: 1,
+    });
   });
 });

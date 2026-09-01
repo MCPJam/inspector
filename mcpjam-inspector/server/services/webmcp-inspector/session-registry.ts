@@ -288,6 +288,8 @@ export interface StartWebMcpSessionOptions {
   headless?: boolean;
   /** Omitted means `window` — exactly what every existing caller gets. */
   viewportMode?: WebMcpViewportMode;
+  /** The viewer's device pixel ratio; omitted means 1. See the provider. */
+  devicePixelRatio?: number;
 }
 
 /**
@@ -313,6 +315,11 @@ export async function startWebMcpSession(
       url: options.url,
       headless: options.headless,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
+      // Spread rather than passed as `undefined`: a provider that never heard
+      // of the field should see a request that does not mention it.
+      ...(options.devicePixelRatio !== undefined
+        ? { devicePixelRatio: options.devicePixelRatio }
+        : {}),
       callbacks: runtime.callbacks(),
     });
     runtime.attach(session);

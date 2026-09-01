@@ -121,6 +121,17 @@ const startSchema = z.object({
    * checks below refuse it anywhere it could not be true.
    */
   webContentsId: z.number().int().positive().optional(),
+  /**
+   * The VIEWER's device pixel ratio, for a session whose page is rendered
+   * server-side and looked at here.
+   *
+   * Sent by the client because nothing on this side can know it: the browser
+   * runs headless, with no display to ask. Bounded at 2 — beyond that the
+   * bytes grow faster than the perceived sharpness, and this is a stream, not
+   * a print job — and optional, so every existing caller keeps the 1 it has
+   * always had.
+   */
+  devicePixelRatio: z.number().min(1).max(2).optional(),
 });
 
 /**
@@ -287,7 +298,14 @@ webmcpInspector.post("/sessions", async (c) => {
       400,
     );
   }
-  const { url, transport, projectId, display, webContentsId } = parsed.data;
+  const {
+    url,
+    transport,
+    projectId,
+    display,
+    webContentsId,
+    devicePixelRatio,
+  } = parsed.data;
 
   if (display === "in-app" && transport === "hosted") {
     // Refused rather than silently downgraded. A hosted browser already has a
@@ -351,7 +369,8 @@ webmcpInspector.post("/sessions", async (c) => {
     if (!projectId) {
       return c.json(
         {
-          error: "Pick a project first — a hosted browser runs on that project's computer.",
+          error:
+            "Pick a project first — a hosted browser runs on that project's computer.",
           code: "hosted-project-required",
         },
         400,
@@ -392,6 +411,9 @@ webmcpInspector.post("/sessions", async (c) => {
       // Omitted means `window`, so a caller that never heard of this field gets
       // the behaviour it has always had.
       ...(display === "in-app" ? { viewportMode: "embedded" as const } : {}),
+      // Omitted when the client did not say, so a session started by any
+      // older caller renders exactly as it does today.
+      ...(devicePixelRatio !== undefined ? { devicePixelRatio } : {}),
     });
     return c.json(session, 201);
   } catch (error) {

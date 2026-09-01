@@ -170,12 +170,16 @@ export interface WebMcpInputModifiers {
 }
 
 /**
- * One thing a person did to the pane, in the FRAME's device pixels.
+ * One thing a person did to the pane, in the page's CSS pixels.
  *
  * Coordinates are scaled on the client, because only the client knows the
  * rendered size of its pane and how the picture is letterboxed inside it. It
- * scales against the dimensions of the frame it is looking at, so the mapping
- * is exact even mid-resize.
+ * scales against the dimensions of the frame it is looking at — DIVIDED by
+ * that frame's {@link WebMcpFrame.scale}, so a frame captured at two device
+ * pixels per CSS pixel still maps onto the coordinate space the page itself
+ * uses. CSS pixels rather than device pixels is what keeps a session whose
+ * frames arrive at more than one scale from dispatching half its clicks at
+ * double coordinates.
  */
 export type WebMcpInputEvent =
   | {
@@ -355,6 +359,21 @@ export interface WebMcpFrame {
   deviceHeight: number;
   /** Wall-clock capture time. */
   ts: number;
+  /**
+   * Device pixels per CSS pixel in THIS frame. Absent means 1.
+   *
+   * The frame's dimensions are physical; everything a person points at is in
+   * CSS pixels, and the two stop being the same number the moment a session
+   * captures at a device pixel ratio above 1. Carried per frame rather than per
+   * session because a session's frames need not agree: a still captured at full
+   * device resolution can arrive between two streamed frames captured at CSS
+   * resolution, and a client that assumed one ratio for the session would put
+   * clicks in the wrong place for the other.
+   *
+   * Optional so an older server's frames — which have no notion of this — read
+   * as the 1 they have always implicitly been.
+   */
+  scale?: number;
 }
 
 export type WebMcpEvent =
@@ -401,8 +420,66 @@ export const WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8 * 1024;
 
 export const WEBMCP_VIEWPORT = { width: 1280, height: 800 } as const;
 
-/** JPEG quality for streamed frames. Legible text, roughly a tenth the bytes. */
-export const WEBMCP_FRAME_QUALITY = 50;
+/**
+ * JPEG quality rungs for the streamed frames themselves, best first.
+ *
+ * Index 0 is the BASELINE every stream starts at. 75 rather than the 50 this
+ * ladder replaces because the artefact people actually notice is mosquito
+ * noise around text: at q50 a paragraph of 14px body copy is legible but
+ * visibly dirty, and the whole picture is being resampled by the pane on top
+ * of that. The lower rungs exist for a link that cannot carry the baseline,
+ * and the governor — not this file — decides when to walk down them.
+ */
+export const WEBMCP_STREAM_QUALITY_LADDER = [75, 60, 45, 30] as const;
+
+/**
+ * Qualities tried for the still that replaces an OVERSIZE frame.
+ *
+ * Deliberately below the stream's baseline: this still exists because the
+ * page's own paint did not fit the cap, so trying to publish it at the same
+ * quality would mostly reproduce the same failure a round trip later.
+ */
+export const WEBMCP_SUBSTITUTE_QUALITY_LADDER = [50, 25] as const;
+
+/**
+ * Qualities tried for the SETTLE still — the sharp picture published once a
+ * page has stopped painting.
+ *
+ * ABOVE the stream's baseline, which is the entire point. Motion hides
+ * compression artefacts and a still page does not: the frame a person actually
+ * reads is the one that is still on screen a second after they stopped
+ * scrolling, and that one can afford bytes the 10fps stream cannot.
+ */
+export const WEBMCP_SETTLE_STILL_QUALITIES = [
+  85,
+  // The floor is the STREAM's own baseline, never below it: this still exists
+  // to improve on the picture already on screen, and publishing a worse one
+  // because the good one did not fit would be a downgrade dressed up as a
+  // feature. When neither rung fits, nothing is published and the pane keeps
+  // what it has.
+  75,
+] as const;
+
+/**
+ * How long a page must go without painting (or being driven) before the sharp
+ * still is taken.
+ *
+ * Long enough that a scroll's momentum, a hover transition or a page reflow
+ * does not spend a capture; short enough that "stopped scrolling" and "the
+ * text sharpened" feel like the same moment.
+ */
+export const WEBMCP_SETTLE_QUIET_MS = 800;
+
+/**
+ * Cadence of the provider's housekeeping timer, which is what notices the
+ * quiet window has passed.
+ *
+ * A timer rather than a per-frame `setTimeout`, because the interesting case is
+ * the ABSENCE of frames — there is no event to hang a deadline off. 250ms puts
+ * at most a quarter-second of slop on {@link WEBMCP_SETTLE_QUIET_MS} while
+ * costing four wakeups a second on an idle session.
+ */
+export const WEBMCP_HOUSEKEEPING_INTERVAL_MS = 250;
 
 /**
  * Hard cap on one streamed frame.
@@ -412,8 +489,8 @@ export const WEBMCP_FRAME_QUALITY = 50;
  * never persisted — so the cost of a big one is one SSE write, not a permanent
  * entry in an export. An oversized frame is DROPPED rather than re-encoded in
  * the hot path; the provider converges the pane by publishing one budgeted
- * screenshot instead, so a page whose final paint never fits still stops being
- * stale.
+ * STILL instead (see {@link WEBMCP_SUBSTITUTE_QUALITY_LADDER}), so a page whose
+ * final paint never fits still stops being stale.
  */
 export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
 
@@ -456,6 +533,8 @@ const WEBMCP_FRAME_WIRE_KIND_JPEG = 1;
 export interface WebMcpBinaryFrame {
   deviceWidth: number;
   deviceHeight: number;
+  /** Device pixels per CSS pixel; see {@link WebMcpFrame.scale}. */
+  scale?: number;
   /** Wall-clock capture time, from the publishing server. */
   ts: number;
   /** The session's monotonic event counter, shared with the SSE stream. */
@@ -473,7 +552,7 @@ export interface WebMcpBinaryFrame {
  *   1       u8    kind (1 = JPEG)
  *   2       u16   deviceWidth
  *   4       u16   deviceHeight
- *   6       u16   reserved (0)
+ *   6       u16   scale x 1000 (0 = 1.0)
  *   8       f64   ts
  *   16      u32   seq
  *   20      u32   jpegByteLength
@@ -499,7 +578,10 @@ export function encodeWebMcpBinaryFrame(frame: WebMcpBinaryFrame): Uint8Array {
   // page never had.
   view.setUint16(2, clampU16(frame.deviceWidth), true);
   view.setUint16(4, clampU16(frame.deviceHeight), true);
-  view.setUint16(6, 0, true);
+  // Fixed point in the byte pair V1 reserved, so this is an ADDITIVE change:
+  // an old decoder reads the two bytes it always ignored, and a new decoder
+  // reads an old server's 0 as the 1.0 it means.
+  view.setUint16(6, clampU16(Math.round((frame.scale ?? 1) * 1_000)), true);
   view.setFloat64(8, frame.ts, true);
   view.setUint32(16, frame.seq >>> 0, true);
   view.setUint32(20, frame.jpeg.length, true);
@@ -543,9 +625,14 @@ export function decodeWebMcpBinaryFrame(
   // exists to prevent. Rejected HERE, at the one boundary where wire data is
   // validated, rather than guarded again at every consumer.
   if (jpegLength === 0) return undefined;
+  const scaleMilli = view.getUint16(6, true);
   return {
     deviceWidth: view.getUint16(2, true),
     deviceHeight: view.getUint16(4, true),
+    // Zero is what every server older than this field writes, and what
+    // `encodeWebMcpBinaryFrame` wrote as "reserved" — it means 1, not a frame
+    // of zero size.
+    scale: scaleMilli === 0 ? 1 : scaleMilli / 1_000,
     ts: view.getFloat64(8, true),
     seq: view.getUint32(16, true),
     // A copy, not a view onto the socket's buffer: the caller holds this while

@@ -299,6 +299,30 @@ describe("webmcp frames WS — the stream", () => {
     expect(ws.text).toHaveLength(0);
   });
 
+  it("carries the capture scale, and reads an absent one as 1", async () => {
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+
+    provider.sessions[0].emitFrame({
+      data: jpegBase64(0x43),
+      deviceWidth: 2560,
+      deviceHeight: 1600,
+      scale: 2,
+    });
+    const scaled = decodeWebMcpBinaryFrame(await ws.waitForBinary());
+    // Dropped here, a 2560-wide frame would arrive claiming to be its own CSS
+    // size and the client would send back every click at double coordinates.
+    expect(scaled!.scale).toBe(2);
+    expect(scaled!.deviceWidth).toBe(2560);
+
+    provider.sessions[0].emitFrame({ data: jpegBase64(0x44) });
+    const plain = decodeWebMcpBinaryFrame(await ws.waitForBinary(2));
+    // A provider that has no notion of scale — the electron surface, an older
+    // one — publishes frames without it, and 1 is what those have always meant.
+    expect(plain!.scale).toBe(1);
+  });
+
   it("replays the current paint to a socket that connects after it", async () => {
     const session = await openSession();
     // Published BEFORE anyone is listening: the hub holds exactly one frame,
