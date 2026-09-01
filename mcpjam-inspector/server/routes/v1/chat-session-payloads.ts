@@ -191,12 +191,22 @@ export function joinToolCalls(
     // one tool now truncate at different offsets depending on whether a secret
     // appeared. That is cosmetic, and arguably more honest — the redacted
     // payload really is shorter.
+    //
+    // AND AGAIN AFTER, because neither pass alone is sufficient and they catch
+    // different things. `scrubDeep` returns a non-plain object (a Date, a class
+    // instance, a BigInt holder) by identity — rebuilding it as a plain object
+    // would corrupt the payload worse than a missed scrub — but `boundPayload`
+    // NORMALIZES exactly those into plain data. A credential reachable only
+    // through such an object therefore first becomes a scrubbable string
+    // during bounding, i.e. after the pre-pass has already run. The second pass
+    // is idempotent on everything the first one already replaced: the needles
+    // are the raw values, and those are gone.
     const input = boundPayload(scrub(call.input));
     if (!result) {
       return {
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        input: input.value,
+        input: scrub(input.value),
         status: "error" as const,
         // Not "the tool failed" — "no result reached us". The distinction
         // matters: an aborted turn and a tool that returned an error payload
@@ -210,11 +220,11 @@ export function joinToolCalls(
     return {
       toolCallId: call.toolCallId,
       toolName: call.toolName ?? result.toolName ?? "unknown",
-      input: input.value,
+      input: scrub(input.value),
       status: isErrorOutput(result.output)
         ? ("error" as const)
         : ("ok" as const),
-      output: output.value,
+      output: scrub(output.value),
       ...(input.truncated || output.truncated
         ? { truncated: true as const }
         : {}),

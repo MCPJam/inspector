@@ -187,19 +187,49 @@ export function createSecretScrubber(
     return applyNeedles(input, jsonNeedles);
   }
 
-  function scrubDeep<T>(value: T): T {
+  /**
+   * Depth cap and cycle guard, so this is safe on a RAW payload.
+   *
+   * It did not need them while it only ever ran on a value that
+   * `boundPayload` had already depth-capped — that pass turned a cycle into a
+   * marker before the scrubber saw it. Once scrubbing moved BEFORE bounding
+   * (so a credential cannot straddle the truncation cut), that protection was
+   * gone and a cyclic or pathologically deep payload from a third-party MCP
+   * server would recurse until the stack blew, turning a turn that used to
+   * succeed into a 500.
+   *
+   * The cap matches `chat-session-payloads`'s `MAX_DEPTH` deliberately: the two
+   * passes now run back to back on the same value, and a scrubber that gave up
+   * shallower would leave string leaves unscrubbed that bounding would happily
+   * keep.
+   */
+  const MAX_SCRUB_DEPTH = 8;
+
+  function scrubDeepInner<T>(value: T, depth: number, seen: Set<object>): T {
     if (typeof value === "string") {
       return scrubString(value) as unknown as T;
     }
+    // Beyond the cap, hand the value back untouched rather than descending.
+    // Bounding runs next and replaces anything this deep with its own marker,
+    // so nothing unscrubbed survives into the response.
+    if (depth >= MAX_SCRUB_DEPTH) return value;
     if (Array.isArray(value)) {
-      return value.map((item) => scrubDeep(item)) as unknown as T;
+      if (seen.has(value)) return value;
+      seen.add(value);
+      const out = value.map((item) =>
+        scrubDeepInner(item, depth + 1, seen),
+      ) as unknown as T;
+      seen.delete(value);
+      return out;
     }
     if (value && typeof value === "object") {
+      if (seen.has(value as object)) return value;
       // Preserve non-plain objects (Date, Uint8Array, …) by identity: they hold
       // no string leaves worth rewriting, and rebuilding them as plain objects
       // would corrupt the payload far more than a missed scrub would.
       const proto = Object.getPrototypeOf(value);
       if (proto !== Object.prototype && proto !== null) return value;
+      seen.add(value as object);
       const out: Record<string, unknown> = {};
       for (const [key, item] of Object.entries(
         value as Record<string, unknown>,
@@ -228,15 +258,20 @@ export function createSecretScrubber(
         // the `proto !== Object.prototype` guard above skip it wholesale on any
         // later pass. `defineProperty` treats every key as data.
         Object.defineProperty(out, scrubString(key), {
-          value: scrubDeep(item),
+          value: scrubDeepInner(item, depth + 1, seen),
           enumerable: true,
           writable: true,
           configurable: true,
         });
       }
+      seen.delete(value as object);
       return out as unknown as T;
     }
     return value;
+  }
+
+  function scrubDeep<T>(value: T): T {
+    return scrubDeepInner(value, 0, new Set<object>());
   }
 
   return { scrubString, scrubSerializedJson, scrubDeep, size: entries.length };

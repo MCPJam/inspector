@@ -981,35 +981,79 @@ describe("payload bounding", () => {
   });
 
   it("scrubs a credential that STRADDLES the truncation boundary", () => {
-    // Bounding used to run first, which cut the serialized payload at a fixed
-    // offset. A credential spanning that cut left a partial value in the
-    // retained prefix — no needle matches a fragment, so those bytes went out
-    // in a response that crosses the trust boundary. A partial credential is
-    // not safe; it is a shorter one.
+    // Bounding used to run first, cutting the serialized payload at a fixed
+    // offset. A credential spanning that cut left a fragment in the retained
+    // prefix — no needle matches a fragment — and those bytes went out in a
+    // response that crosses the trust boundary. A partial credential is not
+    // safe; it is a shorter one.
+    //
+    // THE SHAPE HERE IS LOAD-BEARING and took two attempts to get right. The
+    // obvious payload (filler + secret) has no filler length that works: the
+    // window where the cut lands inside the value under the OLD ordering is
+    // exactly the window where the NEW ordering, having shrunk the value to
+    // `[secret:…]`, drops back under the cap and never truncates at all. The
+    // test then passes for the wrong reason, proving only the untruncated
+    // path. The trailing field is what fixes it — it keeps the payload over
+    // the cap after redaction, so BOTH orderings truncate and the only
+    // difference left is whether a fragment survives.
     const value = `sk_live_${"a".repeat(64)}`;
     const scrubber = createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!;
+    const input = {
+      filler: "x".repeat(15_940),
+      key: value,
+      tail: "y".repeat(200),
+    };
 
-    // Position the credential so the 16k serialization cap lands INSIDE it —
-    // verified empirically: at this filler length the full value does not
-    // survive bounding but a usable prefix of it does.
-    const filler = "x".repeat(15_940);
     const joined = joinToolCalls(
-      [{ toolCallId: "t1", toolName: "run", input: { filler, key: value } }],
-      [
-        {
-          toolCallId: "t1",
-          output: { type: "json", value: { filler, key: value } },
-        },
-      ],
+      [{ toolCallId: "t1", toolName: "run", input }],
+      [{ toolCallId: "t1", output: { type: "json", value: input } }],
       scrubber,
     );
 
+    // Truncation really happened — without this the assertions below could
+    // pass on a payload that was never cut.
+    expect(joined[0]!.truncated).toBe(true);
+
     const serialized = JSON.stringify(joined);
-    // The prefix is the assertion that matters: the whole value never survived
-    // bounding, so asserting only on it would pass under the broken ordering
-    // too. A 20-character run of a live key is the actual disclosure.
+    // The FRAGMENT is the assertion that matters. The whole value never
+    // survives bounding under either ordering, so asserting only on it would
+    // pass while the bug was live.
     expect(serialized).not.toContain(value.slice(0, 20));
     expect(serialized).not.toContain(value);
+  });
+
+  it("survives a CYCLIC payload now that scrubbing runs first", () => {
+    // The regression the reordering could have introduced. `boundPayload`'s
+    // depth cap is what turns a cycle into a marker, and it used to run before
+    // the scrubber — so the scrubber never saw one. Scrubbing first removed
+    // that shield, and an unguarded recursive rebuild would blow the stack and
+    // turn a turn that used to succeed into a 500.
+    const value = "sk_live_cyclictest_value";
+    const cyclic: Record<string, unknown> = { key: value };
+    cyclic.self = cyclic;
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: cyclic }],
+      [{ toolCallId: "t1", output: { type: "json", value: cyclic } }],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+
+    expect(joined).toHaveLength(1);
+    expect(JSON.stringify(joined)).not.toContain(value);
+  });
+
+  it("survives a pathologically DEEP payload", () => {
+    // The other half of the same shield: depth, not just cycles.
+    const value = "sk_live_deeptest_value_here";
+    let deep: Record<string, unknown> = { key: value };
+    for (let i = 0; i < 2_000; i++) deep = { nested: deep };
+
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: deep }],
+      [],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+    expect(joined).toHaveLength(1);
   });
 
   it("still scrubs when nothing is truncated", () => {
