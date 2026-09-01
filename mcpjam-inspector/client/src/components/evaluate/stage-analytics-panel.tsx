@@ -53,6 +53,26 @@ import {
 import { StageChainCards } from "./stage-chain-cards";
 import { StageDetailCard } from "./stage-detail-card";
 import { defaultSelectedStage, toStageCardViews } from "./stage-chain-model";
+import { RunLevelFindingsLine, StageFindingsCard } from "./stage-findings-card";
+import { useStageFindings } from "./use-stage-findings";
+import type { EvalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
+
+/**
+ * The bits of a run row the findings read needs.
+ *
+ * Structural rather than `EvalSuiteRun`, so this panel does not take a
+ * dependency on the whole run projection to read six fields off it — and so a
+ * caller holding a narrower row can still pass one.
+ */
+export interface StageAnalyticsRunRow {
+  _id: string;
+  status: string;
+  result?: string | null;
+  completedAt?: number | null;
+  verdictPolicyVersion?: unknown;
+  verdictSummary?: unknown;
+  goalCompletionStatus?: string | null;
+}
 
 function formatCompletedAt(epochMs: number | null): string {
   if (epochMs === null) return "no completion stamp";
@@ -239,6 +259,7 @@ function SliceGroup({ title, slices }: { title: string; slices: SliceView[] }) {
 export function RunDocument({
   row,
   renderFindings,
+  runLevelFindings,
 }: {
   row: EvalStageAnalyticsV1;
   /**
@@ -251,6 +272,15 @@ export function RunDocument({
    * above is true whether or not that read landed.
    */
   renderFindings?: (stage: UserValueStage) => ReactNode;
+  /**
+   * A line under the cards for the non-passing trials no stage accounts for.
+   *
+   * Its own slot rather than part of `renderFindings`, because it is a
+   * different claim about a different population: these trials did not pass
+   * and the chain does not say where, so they sit under the row rather than
+   * inside any one stage.
+   */
+  runLevelFindings?: ReactNode;
 }) {
   const header = toRunHeaderView(row);
   const overall = overallSlice(row);
@@ -391,6 +421,7 @@ export function RunDocument({
                 )
               }
             />
+            {runLevelFindings ?? null}
             {selectedRow ? (
               <StageDetailCard
                 stage={selectedRow}
@@ -468,12 +499,34 @@ export function StageAnalyticsPanel({
   suiteId,
   runCount,
   runsLoading,
+  runs = [],
+  onRunClick,
+  decisionSummaryEnabled = false,
+  decisionStore,
 }: {
   projectId: string | null | undefined;
   suiteId: string | null | undefined;
   /** How many runs this suite has — the legacy/empty distinction. */
   runCount: number;
   runsLoading: boolean;
+  /**
+   * The suite's run rows, for the SELECTED document only.
+   *
+   * The diagnostics read needs the run's status and revision, which the
+   * analytics document does not carry. Only the selected row is ever read: one
+   * document is on screen and reading D9 for every run in the list would spend
+   * a request per row to fill a card nobody opened.
+   */
+  runs?: StageAnalyticsRunRow[];
+  /** Open a run. The suite page has no deep trace focus; the run page does. */
+  onRunClick?: (runId: string) => void;
+  /**
+   * Read D9's per-trial diagnostics for the selected run. OFF by default: with
+   * it false this panel issues no decision-summary requests at all.
+   */
+  decisionSummaryEnabled?: boolean;
+  /** Test seam, threaded to the shared LRU store. */
+  decisionStore?: EvalDecisionSummaryStore;
 }) {
   const {
     status,
@@ -504,6 +557,21 @@ export function StageAnalyticsPanel({
   // leaves the list (a filter change, a fresh walk).
   const selected =
     rows.find((row) => row.runId === selectedRunId) ?? rows[0] ?? null;
+
+  // The run row behind the selected document. `null` when this surface was not
+  // given the run list, which keeps the findings read off rather than guessing
+  // a status the analytics document does not carry.
+  const selectedRun = selected
+    ? (runs.find((run) => run._id === selected.runId) ?? null)
+    : null;
+  const findings = useStageFindings({
+    projectId,
+    analytics: selected,
+    run: selectedRun,
+    enabled: decisionSummaryEnabled,
+    canOpenTrial: Boolean(onRunClick),
+    ...(decisionStore ? { store: decisionStore } : {}),
+  });
 
   return (
     <section
@@ -600,7 +668,23 @@ export function StageAnalyticsPanel({
               </div>
             ) : null}
 
-            <RunDocument row={selected} />
+            <RunDocument
+              row={selected}
+              renderFindings={(stage) => (
+                <StageFindingsCard
+                  state={findings}
+                  stage={stage}
+                  // "Open run", not "View trace": deep trace focus exists only
+                  // on the run page, and a button promising it here would land
+                  // a reader on a page with nothing opened.
+                  openLabel="Open run"
+                  {...(onRunClick
+                    ? { onOpenTrial: (target) => onRunClick(target.runId) }
+                    : {})}
+                />
+              )}
+              runLevelFindings={<RunLevelFindingsLine state={findings} />}
+            />
 
             {pageError ? (
               // A later page failing never clears the pages already read.

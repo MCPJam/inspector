@@ -18,13 +18,26 @@ import {
   GOLDEN_STAGE_ANALYTICS,
   stageAnalyticsVariation,
 } from "@/test/stage-analytics-fixtures";
+import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
+import { evalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
+import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 
-const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }));
+const { fetchMock, decisionFetchMock } = vi.hoisted(() => ({
+  fetchMock: vi.fn(),
+  decisionFetchMock: vi.fn(),
+}));
 vi.mock("@/lib/apis/eval-stage-analytics-api", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/apis/eval-stage-analytics-api")
   >("@/lib/apis/eval-stage-analytics-api");
   return { ...actual, fetchEvalSuiteStageAnalytics: fetchMock };
+});
+vi.mock("@/lib/apis/eval-run-decision-summary-api", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/apis/eval-run-decision-summary-api")
+    >();
+  return { ...actual, fetchEvalRunDecisionSummary: decisionFetchMock };
 });
 
 const SUITE_ID = GOLDEN_STAGE_ANALYTICS.suiteId;
@@ -45,7 +58,34 @@ function renderPanel(
 
 beforeEach(() => {
   fetchMock.mockReset();
+  decisionFetchMock.mockReset();
+  evalDecisionSummaryStore.reset();
 });
+
+/**
+ * A run row for the selected document, and a decision summary about it.
+ *
+ * The corpus's summary names `run-1`, so the analytics document is retitled
+ * onto it — the join asserts on IDENTITY first, and two documents about two
+ * different runs would render as nothing.
+ */
+const DECISION = readDecisionSummaryFixture("measured-failure-at-every-stage");
+
+function joinedAnalytics() {
+  return stageAnalyticsVariation({
+    ...structuredClone(GOLDEN_STAGE_ANALYTICS),
+    runId: DECISION.runId,
+  });
+}
+
+function runRow(status = "completed") {
+  return {
+    _id: DECISION.runId,
+    status,
+    result: "failed",
+    completedAt: 1_700_000_010_000,
+  };
+}
 
 describe("StageAnalyticsPanel", () => {
   it("renders the populated document from the golden corpus", async () => {
@@ -460,5 +500,120 @@ describe("StageAnalyticsPanel", () => {
     );
     // Still showing the newest run's document, with the older one selectable.
     expect(screen.getByTestId("stage-analytics-document")).toBeTruthy();
+  });
+});
+
+describe("stage findings — the evidence behind a stage's failures", () => {
+  it("joins D9's trials onto the selected stage, with the trial's own error text", async () => {
+    fetchMock.mockResolvedValue({ rows: [joinedAnalytics()] });
+    decisionFetchMock.mockResolvedValue(DECISION);
+    renderPanel({
+      runs: [runRow()],
+      decisionSummaryEnabled: true,
+      onRunClick: () => {},
+    });
+
+    const findings = await screen.findByTestId("stage-findings");
+    // Population before anything else, and the tally's own denominator.
+    expect(findings.textContent).toMatch(/failed in \d+ of \d+ measured/);
+    // The corpus's selection trial, its reason, and its observed failure.
+    const group = within(findings).getByTestId("stage-finding-group");
+    expect(group.dataset.reason).toBeTruthy();
+    expect(
+      within(findings).getByTestId("stage-finding-observed").textContent,
+    ).toContain("the selection stage did not hold");
+    // The loop closes: the diagnostic's own nextAction, no new vocabulary.
+    expect(
+      within(findings).getByTestId("stage-finding-next-action").textContent,
+    ).toContain("Next:");
+  });
+
+  it("moves the evidence when another stage is selected", async () => {
+    fetchMock.mockResolvedValue({ rows: [joinedAnalytics()] });
+    decisionFetchMock.mockResolvedValue(DECISION);
+    renderPanel({
+      runs: [runRow()],
+      decisionSummaryEnabled: true,
+      onRunClick: () => {},
+    });
+
+    await screen.findByTestId("stage-findings");
+    await userEvent.click(screen.getByTestId("stage-chain-card-connection"));
+
+    expect(screen.getByTestId("stage-finding-observed").textContent).toContain(
+      "the connection stage did not hold",
+    );
+  });
+
+  it("offers OPEN RUN on the suite page, where no deep trace focus exists", async () => {
+    const opened: string[] = [];
+    fetchMock.mockResolvedValue({ rows: [joinedAnalytics()] });
+    decisionFetchMock.mockResolvedValue(DECISION);
+    renderPanel({
+      runs: [runRow()],
+      decisionSummaryEnabled: true,
+      onRunClick: (runId: string) => opened.push(runId),
+    });
+
+    const open = await screen.findByTestId("stage-finding-open");
+    // NOT "View trace": a button promising deep focus here would land a reader
+    // on a page with nothing opened.
+    expect(open.textContent).toContain("Open run");
+    await userEvent.click(open);
+    expect(opened).toEqual([DECISION.runId]);
+  });
+
+  it("issues NO decision request when the flag is off", async () => {
+    fetchMock.mockResolvedValue({ rows: [joinedAnalytics()] });
+    renderPanel({ runs: [runRow()], decisionSummaryEnabled: false });
+
+    await screen.findByTestId("stage-chain-cards");
+    expect(decisionFetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("stage-findings")).toBeNull();
+  });
+
+  it("issues NO decision request for a run that has not finished", async () => {
+    fetchMock.mockResolvedValue({ rows: [joinedAnalytics()] });
+    renderPanel({
+      runs: [runRow("running")],
+      decisionSummaryEnabled: true,
+    });
+
+    await screen.findByTestId("stage-chain-cards");
+    expect(decisionFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("says an unreadable page is unreadable, and keeps the rates on screen", async () => {
+    fetchMock.mockResolvedValue({ rows: [joinedAnalytics()] });
+    decisionFetchMock.mockRejectedValue(
+      new EvalRunDecisionSummaryError("requestFailed", "upstream down"),
+    );
+    renderPanel({ runs: [runRow()], decisionSummaryEnabled: true });
+
+    const unavailable = await screen.findByTestId("stage-findings-unavailable");
+    expect(unavailable.textContent).toMatch(/couldn't load/i);
+    // A stage's measured rates are true whether or not a diagnostics page
+    // arrived, so they stay.
+    expect(screen.getByTestId("stage-detail-card").textContent).toMatch(
+      /Measured pass/,
+    );
+    // And it never reads as a finding about the server.
+    expect(unavailable.textContent).not.toMatch(/0 failures|no failures/i);
+  });
+
+  it("renders nothing at all when the two documents describe different runs", async () => {
+    // A mid-navigation frame, which resolves itself on the next tick.
+    fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
+    decisionFetchMock.mockResolvedValue(DECISION);
+    renderPanel({
+      runs: [{ ...runRow(), _id: GOLDEN_STAGE_ANALYTICS.runId }],
+      decisionSummaryEnabled: true,
+    });
+
+    await screen.findByTestId("stage-chain-cards");
+    await waitFor(() =>
+      expect(screen.queryByTestId("stage-findings")).toBeNull(),
+    );
+    expect(screen.queryByTestId("stage-findings-unavailable")).toBeNull();
   });
 });
