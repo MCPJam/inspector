@@ -23,22 +23,43 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
     groups:
+      # The desktop packaging chain gets its own groups. dependabot-auto-merge
+      # holds any PR that TOUCHES electron/sharp/@electron*, so leaving these
+      # packages inside the general groups holds the entire group hostage: the
+      # first weekly sync's 29-update dev group (#4558) was held for one
+      # packaging package while 28 auto-mergeable bumps sat behind it. Carving
+      # them out keeps the hold blast radius to exactly the packages it is for.
+      desktop-packaging:
+        applies-to: version-updates
+        patterns: ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+        update-types: [minor, patch]
+      desktop-packaging-security:
+        applies-to: security-updates
+        patterns: ["electron", "sharp", "@electron/*", "@electron-forge/*"]
       production-dependencies:
         applies-to: version-updates
         dependency-type: production
         update-types: [minor, patch]
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
       development-dependencies:
         applies-to: version-updates
         dependency-type: development
         update-types: [minor, patch]
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
       # Security updates group separately so an advisory PR is never queued
       # behind a routine version bump.
       security-production:
         applies-to: security-updates
         dependency-type: production
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
       security-development:
         applies-to: security-updates
         dependency-type: development
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
     # Deliberately NO `ignore` rules for electron / sharp majors. `ignore`
     # suppresses SECURITY updates as well as version updates, so such a rule
     # would have hidden the Electron 37 → 43 bump (#4081) that cleared 31
