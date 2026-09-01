@@ -678,6 +678,34 @@ export interface MCPJamHandlerOptions {
    */
   harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
   /**
+   * The eval ITERATION this harness turn is executing, when there is one.
+   *
+   * Present ⇒ the turn mints proxy tokens carrying an authorized iteration
+   * claim and puts its turn id on each `.mcp.json` entry, which is what lets
+   * the proxy record firsthand tool-call evidence. Absent ⇒ playground
+   * traffic, a quick run, or any turn with no run to attach evidence to — all
+   * of which mint and execute exactly as they did before evidence existed.
+   *
+   * An explicit typed field rather than a metadata bag: what it selects is a
+   * durable, purgeable record keyed on this id, and a caller that misspells a
+   * bag key should get a compile error, not a run that silently records
+   * nothing.
+   */
+  evalIterationId?: string;
+  /**
+   * Sink for the evidence decision the MINT reported for that iteration.
+   *
+   * The mint is the first place the run's FROZEN decision is visible to the
+   * turn, so this hands it back to the driver — which needs it to decide
+   * whether to read evidence at all, and whether to grade from it. It is a
+   * report, never a request: the runner cannot turn capture on with it.
+   */
+  onHarnessEvidenceDecision?: (decision: {
+    captureEnabled: boolean;
+    gradingSource: "narration" | "evidence";
+    turnId: string;
+  }) => void;
+  /**
    * Sink for the calls the proxy refused, reported on THIS replica off the
    * results the harness streams back. The eval driver hands them to
    * `finalize-iteration` as the same policy blocks the in-process gate yields.

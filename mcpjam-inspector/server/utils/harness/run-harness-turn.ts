@@ -137,6 +137,7 @@ import {
   type HarnessMcpProxyStrategy,
 } from "./harness-proxy-strategy.js";
 import { fetchHarnessProxyTokens } from "./harness-proxy-token-client.js";
+import type { HarnessEvidenceDecision } from "./harness-proxy-token-client.js";
 import {
   isSealedHarnessProxyToken,
   sealHarnessProxyToken,
@@ -199,6 +200,17 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   toolPolicy?: Record<string, ToolPolicySnapshot>;
   /** Seal expiry for the sealed envelope (unix ms). */
   toolPolicySealExpiresAtMs?: number;
+  /**
+   * The eval iteration and turn this `.mcp.json` is being built for.
+   *
+   * Present only for a harness eval turn on a run that froze evidence capture
+   * on. It makes the mint ask for tokens carrying an AUTHORIZED iteration
+   * claim, and puts the turn id on every server entry's headers — the two
+   * halves the proxy needs before it will record anything. Absent for
+   * playground traffic and for capture-off runs, which mint and build exactly
+   * as they did before evidence existed.
+   */
+  evidenceScope?: { iterationId: string; turnId: string };
 }) {
   const {
     manager,
@@ -209,6 +221,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
     pluginOrigins,
     scopeStepUpCorrelationId,
     toolPolicy,
+    evidenceScope,
   } = args;
   const configured = selectDeliverableServerIds({
     selectedServerIds,
@@ -221,6 +234,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   });
 
   const inputs: HarnessProxyServerInput[] = [];
+  let mintedHarnessEvidence: HarnessEvidenceDecision | undefined;
   if (configured.length > 0 && strategy.plane === "web-authorized") {
     // HOSTED plane: servers are persisted Convex rows, and the harness-mcp route
     // rebuilds the connection per-request via acting-as. Convex mints a signed
@@ -230,12 +244,19 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
       projectId,
       serverIds: configured,
       bearer: authHeader,
+      // All-or-nothing on the scope too: a 422 here fails the turn rather than
+      // quietly minting claimless tokens, which would run the whole iteration
+      // recording nothing.
+      ...(evidenceScope
+        ? { evalScope: { iterationId: evidenceScope.iterationId } }
+        : {}),
     });
     if (!minted.ok) {
       throw new Error(
         `Couldn't mint harness MCP proxy tokens (${minted.status}): ${minted.error}`
       );
     }
+    mintedHarnessEvidence = minted.harnessEvidence;
     // Hard-fail, never skip: the harness must run with every selected server or
     // none — a silently-dropped server means the agent runs with missing MCP
     // tools, which is far worse to debug than a clear up-front failure. (The
@@ -275,6 +296,12 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
             }
           : { proxyToken: token }),
         scopeStepUpCorrelationId,
+        // Only when the MINT confirmed capture: the run's frozen decision is
+        // the authority, and sending a turn id for a run that froze capture
+        // off would arm nothing while still changing the sandbox's config.
+        ...(evidenceScope && minted.harnessEvidence?.captureEnabled
+          ? { evidenceTurnId: evidenceScope.turnId }
+          : {}),
       });
     }
   } else if (configured.length > 0) {
@@ -322,6 +349,12 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
     // tool names map back to a serverId for eval matching / spans / MCP App
     // rendering (which all key off serverId + the un-namespaced tool name).
     keyToServerId: harnessServerKeyToName(inputs),
+    // What the MINT said this run froze, when a scope was asked for. The
+    // caller reads it rather than the flag: this is the run's decision as the
+    // control plane recorded it at creation, not today's flag value.
+    ...(mintedHarnessEvidence
+      ? { harnessEvidence: mintedHarnessEvidence }
+      : {}),
   };
 }
 
@@ -510,6 +543,8 @@ export async function runHarnessTurn(
     harness,
     harnessMcpProxy,
     harnessToolPolicy,
+    evalIterationId,
+    onHarnessEvidenceDecision,
     onHarnessPolicyBlocks,
     builtInTools,
     computerWorkdir,
@@ -1013,7 +1048,7 @@ export async function runHarnessTurn(
       const pluginServerOrigins = effectiveCapabilities
         ? pluginOriginByServerId(effectiveCapabilities)
         : undefined;
-      const { mcpJson, keyToServerId } = nativeMcpDelivery
+      const proxyConfig = nativeMcpDelivery
         ? await buildHarnessProxyMcpJsonFromManager({
             manager: mcpClientManager,
             selectedServerIds: selectedServers ?? [],
@@ -1021,6 +1056,14 @@ export async function runHarnessTurn(
             projectId,
             strategy: harnessMcpProxy ?? { plane: "local-mcp" },
             scopeStepUpCorrelationId: turnId,
+            // The SAME per-turn id the scope-step-up correlation uses. It is
+            // already minted fresh for every turn attempt, which is exactly
+            // what evidence needs: a retry or resume files its calls under a
+            // new turn, so a stale attempt's rows stay addressable but out of
+            // the current turn's completeness check.
+            ...(evalIterationId
+              ? { evidenceScope: { iterationId: evalIterationId, turnId } }
+              : {}),
             // Policied servers get a SEALED token instead of a bare one, so
             // the sandbox's own MCP calls are enforced at the proxy.
             ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
@@ -1032,6 +1075,20 @@ export async function runHarnessTurn(
               : {}),
           })
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
+      const { mcpJson, keyToServerId } = proxyConfig;
+
+      // Report the run's frozen decision as the mint saw it. The driver reads
+      // this to decide whether to read evidence for the turn at all — and it
+      // is a REPORT: a turn cannot turn capture on, only observe what the run
+      // froze at creation.
+      if (onHarnessEvidenceDecision) {
+        const decision = (
+          proxyConfig as { harnessEvidence?: HarnessEvidenceDecision }
+        ).harnessEvidence;
+        if (decision) {
+          onHarnessEvidenceDecision({ ...decision, turnId });
+        }
+      }
 
       // HOST-EXECUTED delivery (COMP-39): the runtime can't make an MCP tool
       // model-callable, so MCPJam enumerates each selected server's tools NOW

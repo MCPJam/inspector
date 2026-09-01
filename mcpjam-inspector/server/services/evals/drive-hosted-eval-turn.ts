@@ -187,6 +187,17 @@ export interface DriveHostedEvalTurnParams {
    * iteration. Absent on the emulated path, which is gated in process.
    */
   harnessToolPolicy?: RunAssistantTurnOptions["harnessToolPolicy"];
+  /**
+   * The eval iteration this turn belongs to. Threaded to the harness turn,
+   * where it becomes the authorized claim on the proxy tokens that lets
+   * firsthand tool-call evidence be recorded against this iteration.
+   *
+   * Absent for a quick run (no run row, so nothing evidence could attach to)
+   * and for the emulated engine, which records firsthand results already.
+   */
+  evalIterationId?: RunAssistantTurnOptions["evalIterationId"];
+  /** Reports what the run FROZE about evidence, as the mint saw it. */
+  onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
   /**
    * The run's PINNED skills, delivered to the harness verbatim.
@@ -552,6 +563,14 @@ export async function driveHostedEvalTurn(
               : {}),
             // Policied harness run: the sealed snapshot rides the `.mcp.json`
             // proxy token, and refusals come back through this sink.
+            ...(params.evalIterationId
+              ? { evalIterationId: params.evalIterationId }
+              : {}),
+            ...(params.onHarnessEvidenceDecision
+              ? {
+                  onHarnessEvidenceDecision: params.onHarnessEvidenceDecision,
+                }
+              : {}),
             ...(params.harnessToolPolicy
               ? { harnessToolPolicy: params.harnessToolPolicy }
               : {}),
