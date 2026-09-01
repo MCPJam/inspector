@@ -83,12 +83,28 @@ export interface SandboxNoticeDataPart {
 
 export const SANDBOX_NOTICE_DATA_PART_TYPE = "data-sandbox-notice" as const;
 
-const SANDBOX_NOTICE_REASONS: ReadonlySet<SandboxNoticeReason> = new Set([
-  "sandbox_reset",
-  "stale_image",
-  "sandbox_unavailable",
-  "secrets_undelivered",
-]);
+/**
+ * Derived from an EXHAUSTIVE record so the compiler, not a reviewer, catches a
+ * reason that was added to the union and forgotten here.
+ *
+ * A plain `new Set([...])` typed as `ReadonlySet<SandboxNoticeReason>` accepts
+ * a short list happily, and the omission surfaces only at runtime as
+ * `isSandboxNoticeReason` rejecting a reason the server legitimately emitted —
+ * which drops the notice silently, on exactly the paths that exist to explain
+ * something surprising to the user. `Record<SandboxNoticeReason, true>` makes
+ * the same omission a type error.
+ */
+const SANDBOX_NOTICE_REASON_KEYS: Record<SandboxNoticeReason, true> = {
+  sandbox_reset: true,
+  stale_image: true,
+  sandbox_unavailable: true,
+  secrets_unavailable: true,
+  secrets_undelivered: true,
+};
+
+const SANDBOX_NOTICE_REASONS: ReadonlySet<SandboxNoticeReason> = new Set(
+  Object.keys(SANDBOX_NOTICE_REASON_KEYS) as SandboxNoticeReason[],
+);
 
 export function isSandboxNoticeReason(
   value: unknown,

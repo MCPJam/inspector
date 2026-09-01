@@ -610,6 +610,14 @@ export function readScenarioEnvironment(
         name: typeof ref.name === "string" ? ref.name : "",
         revision: ref.revision,
       },
+      // Copied through explicitly. This parser builds its result field by
+      // field rather than spreading `raw`, so a new field on the backend
+      // contract is INVISIBLE here until it is named — and an optional boolean
+      // that silently stays `undefined` reads exactly like "this environment
+      // has no secrets", which is the safe-looking half of the answer.
+      ...(typeof raw.selectsMaterializedSecrets === "boolean"
+        ? { selectsMaterializedSecrets: raw.selectsMaterializedSecrets }
+        : {}),
       servers: {
         effectiveServerIds,
         ...(connectable ? { connectable } : {}),

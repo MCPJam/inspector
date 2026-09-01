@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   planScenarioSandbox,
   readComputerSandboxMode,
+  readScenarioEnvironment,
   shouldWarnSecretsUndelivered,
 } from "../scenario-runtime-config.js";
+import { isSandboxNoticeReason } from "@/shared/sandbox-notice";
 
 /**
  * The `computerSandbox` marker has THREE states, and the third one — absence —
@@ -254,5 +256,106 @@ describe("shouldWarnSecretsUndelivered", () => {
     expect(shouldWarnSecretsUndelivered({ ...base, secretCount: -1 })).toBe(
       false,
     );
+  });
+});
+
+/**
+ * The wiring between the backend's flag and the decision that reads it.
+ *
+ * These exist because the suppression shipped INERT once: `planScenarioSandbox`
+ * was unit-tested by handing it `environmentSelectsSecrets` directly, which
+ * proved the decision and nothing about whether the value ever arrives.
+ * `readScenarioEnvironment` builds its result field by field rather than
+ * spreading the raw payload, so the new flag was silently dropped and read as
+ * `undefined` — indistinguishable from "this environment has no secrets", the
+ * safe-looking half of the answer. Nothing failed; the guard just never fired.
+ */
+describe("selectsMaterializedSecrets survives the parser", () => {
+  // The parser reads `config.environment`, so the fixture is a whole runtime
+  // config rather than the environment alone.
+  const rawEnvironment = (extra: Record<string, unknown>) =>
+    ({
+      environment: {
+        environmentRef: { environmentId: "env-1", name: "prod", revision: 3 },
+        servers: { effectiveServerIds: ["srv-1"] },
+        ...extra,
+      },
+    } as never);
+
+  it("carries `true` through to the parsed environment", () => {
+    const parsed = readScenarioEnvironment(
+      rawEnvironment({ selectsMaterializedSecrets: true }),
+    );
+    expect(parsed.kind).toBe("present");
+    if (parsed.kind !== "present") return;
+    expect(parsed.environment.selectsMaterializedSecrets).toBe(true);
+  });
+
+  it("carries `false` through as false, not as absent", () => {
+    const parsed = readScenarioEnvironment(
+      rawEnvironment({ selectsMaterializedSecrets: false }),
+    );
+    if (parsed.kind !== "present") throw new Error("expected present");
+    expect(parsed.environment.selectsMaterializedSecrets).toBe(false);
+  });
+
+  it("omits it for an older backend rather than inventing a value", () => {
+    const parsed = readScenarioEnvironment(rawEnvironment({}));
+    if (parsed.kind !== "present") throw new Error("expected present");
+    expect(parsed.environment.selectsMaterializedSecrets).toBeUndefined();
+    // Absent must read as "do not suppress" — a deploy skew cannot start
+    // taking shells away.
+    expect(
+      planScenarioSandbox({
+        mode: "ephemeral",
+        bashRequested: true,
+        ephemeralCloudAvailable: true,
+        hasChatSessionId: true,
+        secretsUnavailable: true,
+        environmentSelectsSecrets:
+          parsed.environment.selectsMaterializedSecrets === true,
+      }),
+    ).toEqual({ action: "provision" });
+  });
+
+  it("end to end: a parsed flag actually reaches the suppression", () => {
+    // The assertion the original unit test could not make, because it fed the
+    // flag straight in.
+    const parsed = readScenarioEnvironment(
+      rawEnvironment({ selectsMaterializedSecrets: true }),
+    );
+    if (parsed.kind !== "present") throw new Error("expected present");
+    expect(
+      planScenarioSandbox({
+        mode: "ephemeral",
+        bashRequested: true,
+        ephemeralCloudAvailable: true,
+        hasChatSessionId: true,
+        secretsUnavailable: true,
+        environmentSelectsSecrets:
+          parsed.environment.selectsMaterializedSecrets === true,
+      }),
+    ).toEqual({
+      action: "suppress",
+      suppressReason: "secrets_unavailable",
+      notice: "secrets_unavailable",
+    });
+  });
+
+  it("ignores a non-boolean rather than coercing it", () => {
+    const parsed = readScenarioEnvironment(
+      rawEnvironment({ selectsMaterializedSecrets: "yes" }),
+    );
+    if (parsed.kind !== "present") throw new Error("expected present");
+    expect(parsed.environment.selectsMaterializedSecrets).toBeUndefined();
+  });
+
+  it("the notice the plan mints is one the client will accept", () => {
+    // The second half of the same inert-shipping bug: `isSandboxNoticeReason`
+    // is an allowlist, and a reason missing from it is dropped on the wire —
+    // so a notice can be minted correctly and still never reach the user.
+    expect(isSandboxNoticeReason("secrets_unavailable")).toBe(true);
+    expect(isSandboxNoticeReason("secrets_undelivered")).toBe(true);
+    expect(isSandboxNoticeReason("not_a_real_reason")).toBe(false);
   });
 });
