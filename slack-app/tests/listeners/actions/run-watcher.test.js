@@ -230,7 +230,12 @@ describe('watchRunUntilDone', () => {
       { complete: true, items: [{ chain: { status: 'unverified', analyzerVersion: 4 } }] },
     ],
     ['an absent chain, which never stored rows', { complete: true, items: [{ chain: { status: 'absent' } }] }],
-    ['no diagnostics at all', { complete: true, items: [] }],
+    // An empty LIST, not an absent key: `diagnostics` is required by
+    // `evalRunDecisionSummarySchema`, so a summary without it is not a shape
+    // the wire can send. A summary malformed enough to omit it is covered
+    // where fail-soft tolerance belongs — surface-core's copy.test.js drives
+    // `null`, `undefined` and `{}` through the renderer.
+    ['an empty diagnostics list', { complete: true, items: [] }],
   ];
 
   for (const [shape, diagnostics] of NOTHING_TO_ADD) {
