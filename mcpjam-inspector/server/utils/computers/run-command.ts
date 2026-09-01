@@ -117,7 +117,14 @@ export const e2bRunner: BashRunner = async ({
     const carriesEnvs = !!envs && Object.keys(envs).length > 0;
     // Immediately before the call that carries them, so a connect or makeDir
     // failure above does not count as a delivery while a timeout below does.
-    if (carriesEnvs) onEnvsDispatched?.();
+    //
+    // Skipped when the turn is ALREADY cancelled. Neither `connect` nor
+    // `makeDir` is given the signal, so an abort arriving during either sits
+    // unnoticed until here — and `commands.run` will then reject on it without
+    // handing the environment over. Checking narrows that window from the whole
+    // connect-and-mkdir span to the gap before the call itself, which is as
+    // close as this can get without an acknowledgement from the vendor SDK.
+    if (carriesEnvs && !signal?.aborted) onEnvsDispatched?.();
     const result = await sandbox.commands.run(command, {
       ...(workdir ? { cwd: workdir } : {}),
       timeoutMs,

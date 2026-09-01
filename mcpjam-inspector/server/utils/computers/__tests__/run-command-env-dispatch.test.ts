@@ -39,12 +39,14 @@ const envs = { STRIPE_API_KEY: "sk_live_abcdefgh" };
 const call = (
   onEnvsDispatched: () => void,
   withEnvs: Record<string, string> | "omit" = envs,
+  signal?: AbortSignal,
 ) =>
   e2bRunner({
     sandboxId: "sbx",
     command: "stripe balance retrieve",
     timeoutMs: 1000,
     ...(withEnvs === "omit" ? {} : { envs: withEnvs }),
+    ...(signal ? { signal } : {}),
     onEnvsDispatched,
   });
 
@@ -73,6 +75,20 @@ describe("e2bRunner env dispatch boundary", () => {
     runMock.mockRejectedValue(new Error("timed out"));
     await expect(call(onEnvsDispatched)).rejects.toThrow();
     expect(onEnvsDispatched).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent when the turn was already cancelled", async () => {
+    // Neither `connect` nor `makeDir` is handed the signal, so an abort during
+    // either arrives here unnoticed — and `commands.run` then rejects on it
+    // without sending anything.
+    const onEnvsDispatched = vi.fn();
+    runMock.mockRejectedValue(new Error("aborted"));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      call(onEnvsDispatched, envs, controller.signal),
+    ).rejects.toThrow();
+    expect(onEnvsDispatched).not.toHaveBeenCalled();
   });
 
   it("stays silent when connecting to the box fails", async () => {
