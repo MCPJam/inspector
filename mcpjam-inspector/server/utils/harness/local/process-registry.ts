@@ -236,6 +236,30 @@ export interface JanitorResult {
 }
 
 /**
+ * Report an unsettled termination in the janitor's own vocabulary.
+ *
+ * `unknown` is "could not prove", not "somebody else's pid". Folding it into
+ * `not-owned` announces a pid-reuse mismatch that was never established, and
+ * the two want opposite follow-ups: a real mismatch is terminal and the record
+ * should stay put for a human to look at, while an unprovable answer is
+ * transient and the next sweep should simply try again. Every other place the
+ * janitor cannot see already says `skipped-unprovable`; this one did not.
+ *
+ * Exported because the `unknown` arm cannot be produced from the janitor's own
+ * entry point — reaching `terminateOwnedProcessGroup` at all requires the root
+ * to probe alive and match its recorded identity, and there is no seam to make
+ * the group probe fail from there. A named function is the only way to assert
+ * the mapping rather than assume it.
+ */
+export function janitorOutcomeForUnsettled(
+  outcome: "not-owned" | "escaped" | "unknown",
+): JanitorOutcome {
+  if (outcome === "escaped") return "escaped";
+  if (outcome === "unknown") return "skipped-unprovable";
+  return "not-owned";
+}
+
+/**
  * Delete a session's disposable state directory.
  *
  * Re-checks containment under the local harness state root before removing
@@ -406,7 +430,7 @@ export function reclaimAbandonedProcesses(args: {
       survivors.push(record);
       results.push({
         sessionId: record.sessionId,
-        outcome: outcome.outcome === "escaped" ? "escaped" : "not-owned",
+        outcome: janitorOutcomeForUnsettled(outcome.outcome),
       });
     }
 
