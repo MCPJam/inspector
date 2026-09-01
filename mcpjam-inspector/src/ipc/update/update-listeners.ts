@@ -22,10 +22,14 @@ let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
 // Watchdog for an install that never starts. `quitAndInstall()` can return
 // without quitting AND without throwing: Squirrel.Mac no-ops when it can't
 // swap in the staged build (Team ID mismatch, unwritable staging dir). No
-// event follows, so the quit that never arrives is the only evidence — a
-// successful call reaches `before-quit` almost immediately, so if we're still
-// running after this long the install didn't take. Without this the user
-// clicks Update, nothing happens, and nothing is logged or reported.
+// event follows, so the shutdown that never begins is the only evidence.
+//
+// What counts as "begun" differs by platform. On Windows `quitAndInstall()`
+// calls `app.quit()`, so `before-quit` arrives. On macOS it closes every
+// window itself and bypasses `Browser::Quit()` entirely, so `before-quit`
+// may never fire even on a install that works perfectly — there, windows
+// going away is the signal. We clear on both, and if our windows are still
+// up after this long, the request did not take.
 export const DEFAULT_INSTALL_QUIT_TIMEOUT_MS = 5_000;
 let installQuitTimeoutMs = DEFAULT_INSTALL_QUIT_TIMEOUT_MS;
 
@@ -36,6 +40,12 @@ let trustedWindow: BrowserWindow | null = null;
 let updateListenersRegistered = false;
 let stalledInstallTimer: ReturnType<typeof setTimeout> | null = null;
 let installQuitTimer: ReturnType<typeof setTimeout> | null = null;
+// Set when the quit watchdog has already told the user this install attempt
+// failed. Squirrel often follows its silent no-op with a late `error` of its
+// own, and in a packaged build that handler notifies unconditionally — two
+// toasts for one failure. Cleared when a new attempt or a new check begins,
+// so a genuinely unrelated later error still reaches the user.
+let installFailureReported = false;
 
 function clearStalledInstallWatchdog(): void {
   if (stalledInstallTimer !== null) {
@@ -80,6 +90,7 @@ function requestQuitAndInstall(): void {
   // armed from a previous call would then fire against a request that already
   // reported its failure.
   clearInstallQuitWatchdog();
+  installFailureReported = false;
   try {
     autoUpdater.quitAndInstall();
   } catch (error) {
@@ -100,6 +111,7 @@ function requestQuitAndInstall(): void {
     // can fall back to a manual download. Status stays "downloaded" because
     // the build really is staged — it's the swap-in that failed.
     isQuittingForUpdate = false;
+    installFailureReported = true;
     broadcastUpdateError();
   }, installQuitTimeoutMs);
 }
@@ -153,11 +165,21 @@ function setStatus(next: UpdateStatus): void {
 }
 
 export function setupAutoUpdaterEvents(): void {
-  // A quit actually starting is what tells us `quitAndInstall()` took effect.
+  // A shutdown actually starting is what tells us `quitAndInstall()` took
+  // effect. `window-all-closed` covers macOS, where Electron closes the
+  // windows itself and no `before-quit` follows; `before-quit` covers Windows
+  // and any ordinary quit. Deliberately NOT `before-quit-for-update`: that one
+  // is emitted as the first line of `quitAndInstall()`, before Squirrel is
+  // consulted at all, so it fires just as readily for the silent refusal this
+  // watchdog exists to catch.
   app.on("before-quit", clearInstallQuitWatchdog);
+  app.on("window-all-closed", clearInstallQuitWatchdog);
 
   autoUpdater.on("checking-for-update", () => {
     isCheckingOrDownloading = true;
+    // A fresh check starts a new cycle: whatever Squirrel reports from here
+    // on is its own failure, not an echo of the install we already reported.
+    installFailureReported = false;
     log.info("Checking for updates...");
   });
 
@@ -211,10 +233,16 @@ export function setupAutoUpdaterEvents(): void {
     // Always notify users in packaged builds — Bug 2: previously we only
     // broadcast when the user had clicked, so download failures before any
     // click silently swallowed the error and the button kept inviting clicks.
+    // A late error arriving after the quit watchdog already reported is
+    // Squirrel explaining the failure we surfaced seconds ago. Log it, but
+    // don't toast the same dead install twice.
+    const alreadyReported = installFailureReported;
+    installFailureReported = false;
     const shouldNotifyUser =
-      app.isPackaged ||
-      (currentStatus.kind === "pending" && currentStatus.installRequested) ||
-      isQuittingForUpdate;
+      !alreadyReported &&
+      (app.isPackaged ||
+        (currentStatus.kind === "pending" && currentStatus.installRequested) ||
+        isQuittingForUpdate);
 
     if (currentStatus.kind === "pending") {
       setStatus({ ...currentStatus, installRequested: false });

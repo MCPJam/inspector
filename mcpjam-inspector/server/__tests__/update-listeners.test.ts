@@ -508,6 +508,66 @@ describe("update-listeners", () => {
     }
   });
 
+  it("does not toast twice when Squirrel reports the failure after the watchdog", async () => {
+    // The mirror of the case below: the watchdog reports first, then Squirrel
+    // explains itself. In a packaged build the error handler notifies
+    // unconditionally, so without a guard the user gets two toasts for one
+    // dead install.
+    vi.useFakeTimers();
+    try {
+      appState.isPackaged = true;
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      vi.advanceTimersByTime(1_000);
+      expect(errorBroadcastCount(window)).toBe(1);
+
+      emitAutoUpdaterEvent("error", new Error("squirrel: Team ID mismatch"));
+
+      expect(errorBroadcastCount(window)).toBe(1);
+      expect(logErrorMock).toHaveBeenCalledWith(
+        "Auto-updater error:",
+        expect.any(Error),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still reports an unrelated error after a later check", async () => {
+    // The suppression above must not outlive the install attempt: a fresh
+    // check starts a new cycle, and its failure is the user's to see.
+    vi.useFakeTimers();
+    try {
+      appState.isPackaged = true;
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      vi.advanceTimersByTime(1_000);
+      expect(errorBroadcastCount(window)).toBe(1);
+
+      emitAutoUpdaterEvent("checking-for-update");
+      emitAutoUpdaterEvent("error", new Error("network died"));
+
+      expect(errorBroadcastCount(window)).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stays quiet when quitAndInstall actually starts the quit", async () => {
     vi.useFakeTimers();
     try {
@@ -526,6 +586,31 @@ describe("update-listeners", () => {
       vi.advanceTimersByTime(5_000);
 
       expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays quiet when the windows close instead of before-quit firing", async () => {
+    // The macOS path: quitAndInstall() closes every window itself and bypasses
+    // Browser::Quit(), so `before-quit` never arrives even though the install
+    // is proceeding. Windows going away is the signal there.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      emitAppEvent("window-all-closed");
+      vi.advanceTimersByTime(5_000);
+
+      expect(errorBroadcastCount(window)).toBe(0);
     } finally {
       vi.useRealTimers();
     }
