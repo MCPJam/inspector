@@ -91,6 +91,17 @@ describe("readJpegDimensions", () => {
     expect(readJpegDimensions(sos)).toBeUndefined();
   });
 
+  it("refuses a SOF whose declared length cannot hold its dimensions", () => {
+    // A segment that says it is 2 bytes long, followed by bytes that happen to
+    // sit where the dimensions would be. Reading them anyway would report the
+    // NEXT segment's contents as a picture size — and the caller trusts what
+    // comes back over its own fallback.
+    const short = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xc0, 0x00, 0x02, 0x08, 0x04, 0x00, 0x02, 0x80, 0x03,
+    ]);
+    expect(readJpegDimensions(short)).toBeUndefined();
+  });
+
   it("refuses a header that declares no pixels", () => {
     expect(readJpegDimensions(jpegHeader(0, 0))).toBeUndefined();
   });

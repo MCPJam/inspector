@@ -1443,6 +1443,45 @@ describe("PlaywrightWebMcpSession stream governor", () => {
     expect(h.stills).toHaveBeenCalledTimes(1);
   });
 
+  it("recovers when the restarted encoder refuses to start", async () => {
+    // The failure with nobody to report it to: a rung change stops the
+    // encoder, the start that should follow is refused, and the client — which
+    // asked for a stream once and was told yes — sits watching a pane that
+    // will never update again.
+    let refuse = false;
+    const h = await startedWithFakeClock({
+      onSend: (method) => {
+        if (method === "Page.startScreencast" && refuse) {
+          throw new Error("Protocol error: target closed");
+        }
+        return undefined;
+      },
+    });
+    await h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 100);
+
+    refuse = true;
+    for (let i = 0; i < WEBMCP_QUALITY_PRESSURE_DROPS; i += 1) {
+      h.session.noteFramePressure();
+    }
+    await vi.advanceTimersByTimeAsync(50);
+    expect(starts(h)).toEqual([
+      WEBMCP_STREAM_QUALITY_LADDER[0],
+      WEBMCP_STREAM_QUALITY_LADDER[1],
+    ]);
+
+    // The browser takes it on the retry.
+    refuse = false;
+    await vi.advanceTimersByTimeAsync(WEBMCP_QUALITY_STEP_HOLD_MS + 500);
+    // At the rung that WAS working, not the one the browser just refused: that
+    // rung is unproven, and the refusal may well have been about it.
+    expect(starts(h).at(-1)).toBe(WEBMCP_STREAM_QUALITY_LADDER[0]);
+    // And frames flow again — which is the whole point. Without the retry the
+    // pane stays frozen until somebody hides the tab and comes back.
+    h.cdp.emit("Page.screencastFrame", screencastFrame("after-recovery"));
+    expect(h.frames.map((frame) => frame.data)).toContain("after-recovery");
+  });
+
   it("lets a disable that lands mid-restart win", async () => {
     const h = await startedWithFakeClock();
     await h.session.setScreencast(true);

@@ -71,7 +71,12 @@ export function readJpegDimensions(
     if (length < 2) return undefined;
     if (isStartOfFrame(marker)) {
       // SOF payload: precision (1), height (2), width (2), components (1).
-      if (offset + 8 >= bytes.length) return undefined;
+      // The declared length has to COVER the dimensions, not merely be
+      // followed by bytes that look like them: a segment declaring less than
+      // that is malformed, and reading past its end would take the next
+      // segment's bytes for a picture size — which the caller would then trust
+      // over its own fallback.
+      if (length < 7 || offset + 8 >= bytes.length) return undefined;
       const height = (bytes[offset + 5]! << 8) | bytes[offset + 6]!;
       const width = (bytes[offset + 7]! << 8) | bytes[offset + 8]!;
       if (width <= 0 || height <= 0) return undefined;

@@ -74,6 +74,25 @@ describe("frame stats", () => {
     expect(report.byTransport.poll).toBeUndefined();
   });
 
+  it("keeps the active transport when the samples are cleared", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+
+    // This is `window.webmcpFrameStatsReset`, which a person runs mid-session
+    // to start a clean measurement. Clearing the rung with the samples would
+    // file every frame after it under `none` until the transport happened to
+    // change — which on a healthy session is never.
+    resetFrameStats();
+    notePainted({ ts: 999_980, seq: 2 });
+    const report = frameStatsReport();
+    expect(report.captureToPaint.n).toBe(1);
+    expect(report.byTransport.ws).toMatchObject({ n: 1 });
+    expect(report.byTransport.none).toBeUndefined();
+  });
+
   it("treats an empty string as set, since presence is the flag", () => {
     localStorage.setItem(FLAG, "");
     resetFrameStatsFlagForTests();

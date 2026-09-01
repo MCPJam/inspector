@@ -163,7 +163,11 @@ export function resetFrameStats(): void {
   captureToPaint.length = 0;
   inputToPaint.length = 0;
   awaitingPaint = [];
-  currentRung = "none";
+  // The RUNG is deliberately kept. This is also `window.webmcpFrameStatsReset`,
+  // which somebody runs mid-session to start a clean measurement — and a rung
+  // cleared here would tag every frame after it as `none` until the transport
+  // happened to change. Teardown re-tags it on its own: the store publishes the
+  // new transport straight after clearing.
 }
 
 /** Test seam: the flag is read once and cached for the tab's lifetime. */

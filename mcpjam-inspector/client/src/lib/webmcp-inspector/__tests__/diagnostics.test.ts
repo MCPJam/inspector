@@ -78,6 +78,37 @@ describe("webmcp diagnostics", () => {
     expect(typeof report.ts).toBe("number");
   });
 
+  it("strips the parts of a URL that carry secrets", async () => {
+    await copyWebMcpDiagnostics({
+      session: {
+        ...SESSION,
+        url: "https://user:pw@shop.test/checkout?access_token=secret#frag",
+      },
+      frameTransport: TRANSPORT,
+    });
+    const copied = String(clipboard.copy.mock.calls[0]![0]);
+
+    // This payload exists to be pasted into an issue, and a query string is
+    // where session tokens and magic-link codes live.
+    expect(copied).not.toContain("secret");
+    expect(copied).not.toContain("pw@");
+    expect(copied).not.toContain("#frag");
+    // The page is still identifiable, and the reader is told something was
+    // dropped rather than left wondering why it does not match their address
+    // bar.
+    expect(JSON.parse(copied).url).toBe(
+      "https://shop.test/checkout [query redacted]",
+    );
+  });
+
+  it("says so rather than guessing when the URL will not parse", () => {
+    const report = buildWebMcpDiagnostics({
+      session: { ...SESSION, url: "not a url" },
+      frameTransport: TRANSPORT,
+    });
+    expect(report.url).toBe("[unparseable url]");
+  });
+
   it("reports absent numbers rather than made-up ones", () => {
     const report = buildWebMcpDiagnostics({
       session: undefined,

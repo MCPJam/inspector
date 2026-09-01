@@ -103,14 +103,15 @@ export interface WebMcpLiveFrame {
  * OMITTED at 1, which is both the server's default and what every client older
  * than this field sends, so the common case puts nothing new on the wire and an
  * older server strips nothing. Clamped to the range the server accepts and
- * rounded, because `devicePixelRatio` on a zoomed browser is a long float and
- * the wire carries three decimals of it at most.
+ * rounded to THREE decimals, because `devicePixelRatio` on a zoomed browser is
+ * a long float and three decimals is what a frame's own `scale` carries — the
+ * two describe the same ratio and should not disagree in the third place.
  */
 function devicePixelRatioField(): { devicePixelRatio?: number } {
   if (typeof window === "undefined") return {};
   const raw = window.devicePixelRatio;
   if (typeof raw !== "number" || !Number.isFinite(raw)) return {};
-  const ratio = Math.round(Math.min(2, Math.max(1, raw)) * 100) / 100;
+  const ratio = Math.round(Math.min(2, Math.max(1, raw)) * 1_000) / 1_000;
   return ratio === 1 ? {} : { devicePixelRatio: ratio };
 }
 

@@ -199,6 +199,15 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * same pressure at full quality every time somebody switched tabs.
    */
   private rungIndex = 0;
+  /**
+   * The rung the encoder is actually RUNNING at, as opposed to the one the
+   * governor has decided on.
+   *
+   * They differ for exactly as long as a restart is in flight, which is also
+   * the only window in which a start can be refused — and when one is, this is
+   * the rung to fall back to: the one the browser has already accepted.
+   */
+  private appliedRungIndex = 0;
   /** Recent drops, for the "3 inside 2 seconds" test. */
   private dropTimestamps: number[] = [];
   /** The last drop of any kind, for the much longer recovery quiet window. */
@@ -207,6 +216,14 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   private lastRungChangeAt = -Infinity;
   /** A stop/start cycle is in flight; a second one would race it. */
   private restartInFlight = false;
+  /**
+   * A rung change stopped the encoder and then failed to start it again.
+   *
+   * Held so the governor can try once more. There is nobody else to tell: a
+   * restart is fire-and-forget, so unlike the client's own `set_screencast`
+   * there is no caller to hand a `false` to and no fallback to trigger.
+   */
+  private restartPending = false;
   /**
    * Monotonic count of frames ACCEPTED from the browser, for a still's
    * staleness check.
@@ -711,8 +728,18 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * an experiment whose failure costs them another stall.
    */
   private governorTick(): void {
-    if (this.rungIndex === 0 || this.restartInFlight) return;
+    if (this.restartInFlight) return;
     const now = Date.now();
+    if (this.restartPending) {
+      // A restart that failed leaves the browser stopped and the client still
+      // believing it is watching. Retried on the hold, at the rung that was
+      // working, until it takes.
+      if (now - this.lastRungChangeAt < WEBMCP_QUALITY_STEP_HOLD_MS) return;
+      this.restartPending = false;
+      void this.restartScreencast();
+      return;
+    }
+    if (this.rungIndex === 0) return;
     if (now - this.lastDropAt < WEBMCP_QUALITY_RECOVER_QUIET_MS) return;
     if (now - this.lastRungChangeAt < WEBMCP_QUALITY_STEP_HOLD_MS) return;
     this.rungIndex -= 1;
@@ -749,7 +776,20 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // the send inside — so a disable racing this either arrives before the
       // check (and is caught by it) or after the start (and stops it). The
       // browser cannot end up streaming into a pane that has gone.
-      await this.sendStartScreencast();
+      if (await this.sendStartScreencast()) return;
+      // The encoder is stopped and the client has no idea: it asked for a
+      // stream once, was told yes, and is watching a pane that will never
+      // update again. Nothing else is listening for this — a restart has no
+      // caller to answer.
+      //
+      // So: go back to the rung that WAS working (this one is unproven, and
+      // the refusal may well be about it), stay `screencasting` so the client
+      // is not lied to, and let the governor try again after its hold. A
+      // failure here is a transient refusal — the stream was running a moment
+      // ago — and the retry is what turns a frozen pane into a hiccup.
+      this.rungIndex = this.appliedRungIndex;
+      this.lastRungChangeAt = Date.now();
+      this.restartPending = true;
     } finally {
       this.restartInFlight = false;
     }
@@ -762,8 +802,9 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * what lets the client fall back to polling screenshots on a browser that
    * cannot screencast at all.
    */
-  private async sendStartScreencast(): Promise<void> {
+  private async sendStartScreencast(): Promise<boolean> {
     const quality = this.rungQuality();
+    let started = true;
     await this.cdp
       .send(
         "Page.startScreencast" as never,
@@ -778,17 +819,20 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         } as never,
       )
       .catch((error) => {
-        // Reported, not thrown. The caller turns `false` into the screenshot
-        // fallback; a throw would be an error banner on a session whose only
-        // problem is that this browser cannot screencast.
-        this.screencasting = false;
+        // Reported, not thrown. What the CALLER does with a refusal differs —
+        // see `setScreencast` and `restartScreencast` — and a throw here would
+        // be an error banner on a session whose only problem is that this
+        // browser cannot screencast.
+        started = false;
         logger.debug("[webmcp] could not start the screencast", {
           error: error instanceof Error ? error.message : String(error),
         });
       });
-    if (this.screencasting && !this.disposed) {
+    if (started) this.appliedRungIndex = this.rungIndex;
+    if (started && this.screencasting && !this.disposed) {
       this.callbacks.onStreamQualityChanged?.(quality);
     }
+    return started;
   }
 
   private wirePage(): void {
@@ -1114,7 +1158,9 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       //
       // Page-target-level, so it survives navigations: the pane keeps painting
       // across a page load without anything re-arming it.
-      await this.sendStartScreencast();
+      // A browser that cannot screencast reports it here, and the caller turns
+      // that `false` into the client's screenshot fallback.
+      if (!(await this.sendStartScreencast())) this.screencasting = false;
       // A fresh audience, and the replay burst that comes with it, is not
       // evidence about the link: the drops that pressured the PREVIOUS stream
       // are stale, and the hold keeps the first seconds of this one from being

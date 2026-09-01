@@ -694,6 +694,20 @@ describe("webmcp inspector store", () => {
         url: "https://shop.test/",
       });
 
+      // A ratio with more precision than the wire carries. Three decimals,
+      // because that is what a frame's own `scale` carries — the two describe
+      // the same ratio and should not disagree in the third place.
+      Object.defineProperty(window, "devicePixelRatio", {
+        configurable: true,
+        value: 1.3333333,
+      });
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/", { display: "in-app" });
+      expect(
+        JSON.parse(String(fetchSpy.mock.calls[2][1]?.body)).devicePixelRatio,
+      ).toBe(1.333);
+
       Object.defineProperty(window, "devicePixelRatio", {
         configurable: true,
         value: 1,
@@ -703,7 +717,7 @@ describe("webmcp inspector store", () => {
         .startSession("https://shop.test/", { display: "in-app" });
       // Omitted at 1: the server's own default, so the common case puts
       // nothing new on the wire and an older server strips nothing.
-      expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toEqual({
+      expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toEqual({
         url: "https://shop.test/",
         display: "in-app",
       });
