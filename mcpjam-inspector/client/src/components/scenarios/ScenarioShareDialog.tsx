@@ -28,18 +28,23 @@ export function ScenarioShareDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+        className="flex max-h-[85vh] flex-col sm:max-w-lg"
         aria-describedby={undefined}
         data-testid="user-testing-share-dialog"
       >
         <DialogHeader>
           <DialogTitle>Share this study with your users</DialogTitle>
         </DialogHeader>
-        <ScenarioShareSection
-          scenario={scenario}
-          showMembers={false}
-          allowRotate={false}
-        />
+        {/* Only the body scrolls. The dialog's close button is absolutely
+            positioned inside DialogContent, so scrolling that carries the X
+            off screen and leaves Esc as the only way out. */}
+        <div className="flex-1 overflow-y-auto">
+          <ScenarioShareSection
+            scenario={scenario}
+            showMembers={false}
+            allowRotate={false}
+          />
+        </div>
       </DialogContent>
     </Dialog>
   );
