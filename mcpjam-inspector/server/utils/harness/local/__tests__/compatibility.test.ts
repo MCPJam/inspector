@@ -271,6 +271,11 @@ describe("claude-code native resolution", () => {
   });
 
   it("refuses a harness with no manifest entry", () => {
+    // `cursor` is a REAL harness id now (it runs hosted), which is exactly why
+    // it belongs here: shipping a local adapter is a security-sensitive act, so
+    // a harness earns the local lane only with a reviewed manifest and
+    // conformance evidence — never by being added to the SDK's HARNESS_IDS.
+    // `SupportedLocalHarnessId` stays deliberately narrower for the same reason.
     expect(
       resolveLocalCompatibility(
         {

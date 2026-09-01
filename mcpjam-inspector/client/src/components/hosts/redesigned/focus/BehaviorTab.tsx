@@ -237,10 +237,15 @@ export function BehaviorTab({
 
   // A real harness (e.g. Claude Code) runs its own loop, so some knobs don't
   // cross into its runtime until the MCP proxy mediates them — and a few never
-  // can. Gray those out per-control (model + system prompt always apply, so
-  // they stay enabled) with an honest note, instead of letting the toggle look
+  // can. Gray those out per-control (the system prompt always applies, so it
+  // stays enabled) with an honest note, instead of letting the control look
   // live while doing nothing. Un-graying is a one-line change in
   // `harness-capabilities.ts` as each proxy phase lands.
+  //
+  // The MODEL is gated too, for one harness: Cursor authenticates with the
+  // customer's own Cursor account and that account picks the model, so a
+  // selection would persist onto the host and reach nothing.
+  const modelState = harnessControlState(draft.harness, "modelId");
   const tempState = harnessControlState(draft.harness, "temperature");
   const approvalState = harnessControlState(draft.harness, "requireToolApproval");
   const visibilityState = harnessControlState(
@@ -260,7 +265,11 @@ export function BehaviorTab({
       <FocusBlock title="Agent tooling">
         <FieldRow
           label={fModel.label}
-          description={fModel.description}
+          description={
+            modelState.enforced
+              ? fModel.description
+              : `${fModel.description} ${modelState.note}`
+          }
           control={
             <div
               className={
@@ -273,7 +282,7 @@ export function BehaviorTab({
                 currentModel={currentModel}
                 availableModels={availableModels}
                 onModelChange={(model) => update({ modelId: String(model.id) })}
-                disabled={readOnly}
+                disabled={readOnly || !modelState.enforced}
                 align="end"
                 analyticsLocation="client_builder"
               />
