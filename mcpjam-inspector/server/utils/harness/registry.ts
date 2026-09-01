@@ -1005,14 +1005,60 @@ function toClaudeCodeModel(modelId: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Model LINES the pinned Codex CLI resolves but equips with NO tools.
+ *
+ * Not a guess and not a forward guard — a measurement. Driving the pinned
+ * binary through every gpt-5-family id in MCPJam's hosted catalog
+ * (`.spike-codex-appserver`, gate P5) produced:
+ *
+ *   gpt-5, -chat, -codex, -mini, -nano, -pro ......... 10 tools
+ *   gpt-5.1-*, gpt-5.3-* ............................. 10 tools
+ *   gpt-5.2-*, gpt-5.4-*, gpt-5.5-* .................. 11 tools
+ *   gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra ......... 0 TOOLS
+ *
+ * The 5.6 line is the dangerous case precisely because the CLI KNOWS it: there
+ * is no "unknown model" warning to notice, the turn completes, and the model
+ * simply never gets a tool. The user sees a Codex host answer from chat alone
+ * and has no way to tell it never had the ability to act. All three are already
+ * in the hosted catalog, so this is a live defect, not a hypothetical.
+ *
+ * A LINE prefix rather than exact ids, because the failure is a property of the
+ * model line and OpenAI ships new members of a line (`-luna`, `-sol`, `-terra`)
+ * without our involvement.
+ *
+ * VERSION-KEYED to the pinned Codex CLI. Re-measure on a version bump
+ * (`node probe/run-gates.mjs --gate P5`) and move a line out of this list only
+ * with the matrix to show for it.
+ */
+const CODEX_TOOL_LESS_MODEL_LINES = ["gpt-5.6"] as const;
+
 /** Map a host model id to a Codex-native OpenAI model. ALLOWLIST, not a blanket
  *  `openai/` strip: only the gpt-5 family (what Codex CLI runs) passes through;
  *  anything else ⇒ undefined so Codex uses its own pinned default rather than
- *  being forced onto a model it can't run. */
+ *  being forced onto a model it can't run.
+ *
+ *  The tool-less lines above are refused on top of that, which is what turns a
+ *  silent chat-only turn into a `model-unsupported` pre-flight refusal the user
+ *  can act on.
+ *
+ *  Why a line DENYLIST inside the family allowlist rather than an exact-id
+ *  allowlist: the hosted catalog is dynamic (the backend can add models with no
+ *  inspector deploy — see `hosted-model-catalog.ts`), so an exact list would
+ *  refuse newly hosted models that work perfectly well, trading a silent-bad
+ *  turn for a loud-wrong refusal on the common path. The denylist targets
+ *  exactly the measured failure and nothing else. */
 function toCodexModel(modelId: string): string | undefined {
   if (!modelId.toLowerCase().startsWith("openai/")) return undefined;
   const slug = modelId.slice("openai/".length);
-  return /^gpt-5/i.test(slug) ? slug : undefined;
+  if (!/^gpt-5/i.test(slug)) return undefined;
+  const lower = slug.toLowerCase();
+  // Exact id or a `<line>-<variant>` member of it. Guarded on the separator so
+  // a future `gpt-5.60` line is NOT swallowed by the `gpt-5.6` entry.
+  const toolLess = CODEX_TOOL_LESS_MODEL_LINES.some(
+    (line) => lower === line || lower.startsWith(`${line}-`),
+  );
+  return toolLess ? undefined : slug;
 }
 
 /** Convert a built-in tool's input schema to JSON Schema, or omit on failure.
