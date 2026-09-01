@@ -13,7 +13,7 @@
  * Contract → E2B mapping (the whole reason reuse is feasible):
  *   file I/O (readTextFile/writeTextFile/…) → sandbox.files.read / .write
  *   exec (run) / spawn                      → sandbox.commands.run (+ background)
- *   getPortUrl({ port })                    → sandbox.getHost(port)   ← bridge
+ *   getPortEndpoint / getPortUrl ({ port }) → sandbox.getHost(port)   ← bridge
  *   id / defaultWorkingDirectory / ports    → native E2B
  *   stop / destroy                          → no-op (control plane owns teardown)
  */
@@ -26,6 +26,20 @@ import { confineToHome } from "../computers/path-confine.js";
 import { logger } from "../logger.js";
 
 export interface E2BHarnessSandboxProviderOptions {
+  /**
+   * Fired the first time `sessionEnv` is actually merged into a command's
+   * environment — i.e. when the box really receives the values, not when the
+   * provider is constructed holding them.
+   *
+   * The distinction is what `lastDeliveredAt` is read for. Constructing this
+   * provider only puts the values in a local object; harness setup can still
+   * throw before any command runs (the model broker install is the usual one),
+   * and stamping there would mark an unused credential active for whoever is
+   * deciding whether it is safe to delete.
+   *
+   * Called at most once per provider, and never when there is no session env.
+   */
+  onSessionEnvUsed?: () => void;
   /** E2B sandbox id of the host's computer — resolved via the control plane
    *  (`ensureComputerReady` → `getComputerSandboxInfo.providerComputerId`, see
    *  `resolve-sandbox.ts`). The box must already be AWAKE: `ensureComputerReady`
@@ -47,6 +61,25 @@ export interface E2BHarnessSandboxProviderOptions {
    *  ~60s — too short for the harness bootstrap (`pnpm install`) on a larger
    *  dep tree. Background `spawn` is not subject to the foreground cap. */
   commandTimeoutMs?: number;
+  /**
+   * SESSION-WIDE environment merged into every `run` and `spawn`.
+   *
+   * This is how a MATERIALIZED project secret reaches a CLI in the box: the
+   * agent runs `stripe customers list`, and `STRIPE_API_KEY` has to be in that
+   * process's environment. Per-command `env` already existed, but the harness
+   * composes its own commands — nothing upstream of a `run` call knows to add a
+   * credential to it — so the bag has to live with the session.
+   *
+   * A CALLER-SUPPLIED `env` WINS on collision. The session bag is ambient
+   * configuration; a per-command value is a deliberate override at the call
+   * site, and ambient config silently beating an explicit argument is the
+   * surprise nobody debugs successfully.
+   *
+   * Secrets travel in `envs`, never in the command line — the rule
+   * `plugin-box.ts` already states, for the same reason: argv is visible to
+   * every process in the box through `/proc` and lands in shell history.
+   */
+  sessionEnv?: Record<string, string>;
 }
 
 const enc = new TextEncoder();
@@ -153,6 +186,33 @@ export function createE2BHarnessSandboxProvider(
   // from the sandbox's own lifetime — too short for the harness bootstrap
   // (`pnpm install`). Background `spawn` is not subject to this cap.
   const commandTimeoutMs = opts.commandTimeoutMs ?? 10 * 60_000;
+  // Frozen at provider construction. The session's env is fixed for its
+  // lifetime by design: a harness session that changed its environment
+  // mid-flight would hand different commands different credentials, and the
+  // runtime fingerprint exists precisely so a change forks a NEW session
+  // instead.
+  const sessionEnv = opts.sessionEnv;
+  // Latched: several commands in one session must not stamp several times, and
+  // the question the stamp answers ("did anything receive this?") is answered
+  // by the first one.
+  let sessionEnvUsed = false;
+  const markSessionEnvUsed = (): void => {
+    if (!sessionEnv || sessionEnvUsed) return;
+    sessionEnvUsed = true;
+    // Best-effort by contract: failing to RECORD a delivery must never fail
+    // the delivery itself, and this sits directly in the command path.
+    try {
+      opts.onSessionEnvUsed?.();
+    } catch {
+      // ignore
+    }
+  };
+  const mergeEnv = (
+    env: Record<string, string> | undefined
+  ): Record<string, string> | undefined => {
+    if (!sessionEnv) return env;
+    return { ...sessionEnv, ...(env ?? {}) };
+  };
 
   // Connect to the host's persistent computer and build a session bound to it.
   // Shared by createSession (fresh) and resumeSession (reattach): for our E2B
@@ -273,10 +333,14 @@ export function createE2BHarnessSandboxProvider(
         try {
           const res = await sandbox.commands.run(command, {
             cwd: workingDirectory ?? cwd,
-            envs: env,
+            envs: mergeEnv(env),
             timeoutMs: commandTimeoutMs,
             ...signalOpt(abortSignal),
           });
+          // E2B accepted and completed the command, so the session env was
+          // actually handed to the box. A transport rejection before
+          // acceptance must not mark delivery.
+          markSessionEnvUsed();
           return {
             exitCode: res.exitCode,
             stdout: res.stdout,
@@ -286,6 +350,8 @@ export function createE2BHarnessSandboxProvider(
           // E2B throws on non-zero exit; the contract wants the result
           // (exitCode + streams) surfaced, not a rejection.
           if (err instanceof CommandExitError) {
+            // A CommandExitError means the command was accepted and ran.
+            markSessionEnvUsed();
             return {
               exitCode: err.exitCode,
               stdout: err.stdout,
@@ -324,7 +390,7 @@ export function createE2BHarnessSandboxProvider(
         const handle = await sandbox.commands.run(command, {
           background: true,
           cwd: workingDirectory ?? cwd,
-          envs: env,
+          envs: mergeEnv(env),
           ...signalOpt(abortSignal),
           // Guard against enqueue-after-close once the process ends/is killed.
           onStdout: (d: string) => {
@@ -334,6 +400,8 @@ export function createE2BHarnessSandboxProvider(
             if (!streamsClosed) errCtl.enqueue(enc.encode(d));
           },
         });
+        // A background handle is returned only after E2B accepted the process.
+        markSessionEnvUsed();
         // Observe exit exactly once; normalize E2B's throw-on-nonzero into an
         // exit code so wait() resolves (contract) instead of rejecting.
         const exitPromise: Promise<{ exitCode: number }> = handle
@@ -371,6 +439,18 @@ export function createE2BHarnessSandboxProvider(
 
       // ── infra surface ─────────────────────────────────────────────────
       ports,
+      // The claude-code adapter leases its bridge port from `ports` and calls
+      // this to open its WebSocket. E2B's `getHost` URL is directly reachable,
+      // so no scoped headers are needed on the endpoint. IMPORTANT for the
+      // broker model: this URL is the in-sandbox bridge, NOT a model endpoint —
+      // model traffic leaves the box through the E2B egress transform that
+      // injects the broker lease outside the VM (see harness-model-broker.ts).
+      getPortEndpoint: async ({ port, protocol }) => {
+        const host = sandbox.getHost(port);
+        const scheme = protocol === "ws" ? "wss" : protocol ?? "https";
+        return { url: `${scheme}://${host}` };
+      },
+      // Deprecated in the stable contract but still required; same resolution.
       getPortUrl: async ({ port, protocol }) => {
         const host = sandbox.getHost(port);
         const scheme = protocol === "ws" ? "wss" : protocol ?? "https";
@@ -383,7 +463,15 @@ export function createE2BHarnessSandboxProvider(
       stop: async () => {
         /* no-op — control-plane-owned box */
       },
-      // destroy intentionally omitted (undefined) for the same reason.
+      // `destroy` is now REQUIRED by the stable contract ("stop, then delete
+      // the backing resource; implementations with no cleanup beyond stopping
+      // may delegate to stop()"). The framework calls it when a harness session
+      // is destroyed and it considers the sandbox harness-owned — but this box
+      // is NOT harness-owned: it is the host's parked computer, kept alive for
+      // resume between turns. So destroy, like stop, must leave it running.
+      destroy: async () => {
+        /* no-op — control-plane-owned box; parked between turns for resume */
+      },
       setPorts: async (next) => {
         // Mutate in place so `session.ports` (same reference) reflects it.
         ports.splice(0, ports.length, ...next);
@@ -400,8 +488,10 @@ export function createE2BHarnessSandboxProvider(
   return {
     specificationVersion: "harness-sandbox-v1",
     providerId: "mcpjam-e2b",
-    // Single-port pool — the bridge leases this one port.
-    bridgePorts: [bridgePort],
+    // The canary-era provider-level `bridgePorts` pool is gone from the stable
+    // contract: adapters now lease the bridge port from the SESSION's `ports`
+    // array (claude-code's resolveBridgePort reads ports[0]) and resolve it
+    // via `getPortEndpoint`. Our sessions already expose `[bridgePort]`.
 
     // `identity` and `onFirstCreate` are deliberately unused: they exist for
     // providers that CREATE and snapshot boxes, and this one only ever attaches

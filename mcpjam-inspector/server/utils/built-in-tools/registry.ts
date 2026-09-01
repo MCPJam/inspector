@@ -46,6 +46,8 @@
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
+import { hostedBrowserEnabled } from "../../config.js";
+import { isHostedBrowserExposable } from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
   buildExaWebSearchTool,
@@ -59,6 +61,12 @@ import {
 } from "../computers/engine.js";
 import { buildSandboxBashTool } from "./sandbox-bash.js";
 import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
+import {
+  buildBrowserTools,
+  BROWSER_BUILT_IN_TOOL_ID,
+  type BrowserApprovalDelivery,
+} from "./browser.js";
+import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -157,6 +165,22 @@ export interface BuiltInToolContext {
    * no wire shape that can inject one.
    */
   sandboxBinding?: TrustedSandboxBinding;
+  /**
+   * MATERIALIZED project secrets for this turn, exported into every `bash`
+   * command's environment.
+   *
+   * Delivered ONLY alongside {@link sandboxBinding}, and the pairing is the
+   * policy rather than a coincidence of wiring: a sandbox is a disposable box
+   * the project provisioned, while the two other bash paths run somewhere a
+   * project's credential has no business being — `localBashRunner` on the
+   * user's own machine (behind an env allowlist), and `execViaRemoteDataPlane`
+   * through a request body to a plane that is not this box's. The gate below
+   * reads `secretEnv` only inside the `sandboxBinding` branch, so an
+   * accidentally-set value on another path is inert rather than dangerous.
+   */
+  secretEnv?: Record<string, string>;
+  /** Fired when `secretEnv` actually reaches a command. See `sandbox-bash`. */
+  onSecretEnvDelivered?: () => void;
   /** Host's approval policy — a root shell must honor it like MCP tools do. */
   requireToolApproval?: boolean;
   /**
@@ -173,6 +197,32 @@ export interface BuiltInToolContext {
    * workspace tools.
    */
   mcpjamPlatformClient?: PlatformApiClient;
+  /**
+   * How approval reaches the user for `browser_*` tools this turn. ABSENT ⇒
+   * the browser capability is NOT advertised, whatever the host config says
+   * (see `built-in-tools/browser.ts`): approval on the hosted engines is
+   * classified by name, and a surface that threads nothing would let a model
+   * drive a real browser ungated. Interactive surfaces pass `attested` and
+   * thread the returned classification; unattended runs pass their declared
+   * policy.
+   */
+  browserApprovalDelivery?: BrowserApprovalDelivery;
+  /**
+   * Receives the approval classification for the browser tools that were
+   * built, so the caller can merge it into the engine's single
+   * `uiToolApprovals` slot. Absent on surfaces that do not advertise them.
+   */
+  onBrowserApprovals?: (approvals: UiToolApprovalClassification) => void;
+  /**
+   * Accept the bash/browser co-tenancy trust boundary for this turn. Both
+   * drive the SAME computer as the same uid, so a shell can read the driven
+   * browser's cookies and its daemon token out of the process environment —
+   * which turns a page-injected prompt into a credential-theft path. Default
+   * (absent) suppresses `browser` when `bash` is also present; the backend
+   * refuses to PERSIST the pair at all, so this only covers runtime drift and
+   * deployments that have accepted the boundary.
+   */
+  allowComputerToolCoTenancy?: boolean;
 }
 
 /** The host-config fields this resolver consumes. */
@@ -210,7 +260,7 @@ export interface HostComputerResource {
  * registration — and worse, would point the tool at the caller's own machine.
  */
 export function narrowHostComputer(
-  value: unknown
+  value: unknown,
 ): HostComputerResource | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as { kind?: unknown; workdir?: unknown };
@@ -243,14 +293,14 @@ function normalizeAuthHeader(raw: string): string {
  */
 export function resolveHostTools(
   config: HostToolsConfig,
-  ctx: BuiltInToolContext | null
+  ctx: BuiltInToolContext | null,
 ): ToolSet | undefined {
   const ids = config.builtInToolIds ?? [];
   if (ids.length === 0) return undefined;
   if (!ctx) {
     logger.debug(
       "[built-in-tools] builtInToolIds requested without Convex auth context; omitting",
-      { ids: [...ids] }
+      { ids: [...ids] },
     );
     return undefined;
   }
@@ -292,6 +342,15 @@ export function resolveHostTools(
           ...(ctx.sandboxBinding.lifetime
             ? { lifetime: ctx.sandboxBinding.lifetime }
             : {}),
+          // Read INSIDE this branch on purpose — see `secretEnv`'s own comment.
+          // A project secret reaches a box the project provisioned, and nothing
+          // else.
+          ...(ctx.onSecretEnvDelivered
+            ? { onSecretEnvDelivered: ctx.onSecretEnvDelivered }
+            : {}),
+          ...(ctx.secretEnv && Object.keys(ctx.secretEnv).length > 0
+            ? { secretEnv: ctx.secretEnv }
+            : {}),
           requireToolApproval: ctx.requireToolApproval,
         });
         continue;
@@ -329,7 +388,7 @@ export function resolveHostTools(
       if (!computer) {
         logger.warn(
           "[built-in-tools] bash requested without a computer attached; skipping",
-          { projectId: ctx.projectId }
+          { projectId: ctx.projectId },
         );
         continue;
       }
@@ -342,7 +401,7 @@ export function resolveHostTools(
       if (ctx.isGuest && ctx.executionScope?.kind !== "swarm") {
         logger.debug(
           "[built-in-tools] bash not advertised to guest actor without a host-funded swarm scope; skipping",
-          { projectId: ctx.projectId }
+          { projectId: ctx.projectId },
         );
         continue;
       }
@@ -369,7 +428,7 @@ export function resolveHostTools(
             engine,
             isGuest: Boolean(ctx.isGuest),
             isScenarioSession: Boolean(ctx.isScenarioSession),
-          }
+          },
         );
       }
       out[BASH_TOOL_NAME] = buildBashTool({
@@ -388,18 +447,106 @@ export function resolveHostTools(
       });
       continue;
     }
+    if (id === BROWSER_BUILT_IN_TOOL_ID) {
+      // Dark switch: the runtime ships behind an env flag so staging can drive
+      // it before the durable backend exposure gate opens (W7). Absent ⇒ the
+      // capability simply is not advertised.
+      if (!hostedBrowserEnabled()) {
+        logger.debug(
+          "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
+          { projectId: ctx.projectId },
+        );
+        continue;
+      }
+      // The backend's own gate (catalog entry + desktop template + desktop
+      // credit rate). An explicit `false` is honored even with the env flag
+      // on: the likeliest reason is an unset desktop rate, which would meter
+      // every hosted browser hour at the terminal rate. Silence (an older
+      // backend, or bootstrap not yet run) is not a refusal — the env flag
+      // above is already dark by default and is what staging drives with.
+      if (isHostedBrowserExposable() === false) {
+        logger.warn(
+          "[built-in-tools] browser suppressed: the backend reports it is not exposable",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not available on this deployment yet: the backend reports " +
+            "the hosted browser runtime is not fully configured.",
+        });
+        continue;
+      }
+      // Co-tenancy: a shell and a driven browser on ONE box, as one uid. Keep
+      // `bash` (behavior-preserving for hosts that already have it) and drop
+      // `browser`, unless this deployment accepted the boundary.
+      if (ids.includes(BASH_TOOL_NAME) && !ctx.allowComputerToolCoTenancy) {
+        const reason =
+          "browser is not advertised alongside bash: both drive the same computer as " +
+          "the same user, so a shell can read the browser's cookies and its daemon " +
+          "token out of the process environment.";
+        logger.warn("[built-in-tools] browser suppressed for bash co-tenancy", {
+          projectId: ctx.projectId,
+        });
+        ctx.onToolSuppressed?.({ id, reason });
+        continue;
+      }
+      if (ctx.isJourneySession && !ctx.sandboxBinding) {
+        // Same reasoning as bash: every session in a run would otherwise share
+        // the LAUNCHER's single computer — and therefore one browser profile.
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is disabled in simulated (swarm) sessions without a disposable " +
+            "sandbox of their own: sessions would share one browser profile.",
+        });
+        continue;
+      }
+      if (!computer) {
+        logger.warn(
+          "[built-in-tools] browser requested without a computer attached; skipping",
+          { projectId: ctx.projectId },
+        );
+        continue;
+      }
+      if (ctx.isGuest) {
+        logger.debug(
+          "[built-in-tools] browser not advertised to guest actors; skipping",
+          { projectId: ctx.projectId },
+        );
+        continue;
+      }
+      const browser = buildBrowserTools({
+        authHeader,
+        projectId: ctx.projectId,
+        ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
+        // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
+        // every surface which threads no approval safe without editing it.
+        ...(ctx.browserApprovalDelivery
+          ? { approvalDelivery: ctx.browserApprovalDelivery }
+          : {}),
+        ...(ctx.onToolSuppressed
+          ? { onToolSuppressed: ctx.onToolSuppressed }
+          : {}),
+      });
+      if (browser) {
+        Object.assign(out, browser.tools);
+        ctx.onBrowserApprovals?.(browser.approvals);
+      }
+      continue;
+    }
     if (isMcpjamToolId(id)) {
       if (ctx.isGuest || ctx.isScenarioSession) {
         logger.debug(
           "[built-in-tools] workspace tools not advertised to guest/scenario actors; skipping",
-          { id }
+          { id },
         );
         continue;
       }
       if (!ctx.mcpjamPlatformClient) {
         logger.debug(
           "[built-in-tools] workspace tool id without a platform client; skipping",
-          { id }
+          { id },
         );
         continue;
       }

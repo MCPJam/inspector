@@ -255,3 +255,28 @@ describe("WebMcpSessionRegistry — shutdown", () => {
     ).resolves.toBeTruthy();
   });
 });
+
+describe("WebMcpSessionRegistry — viewport mode", () => {
+  it("passes no viewport mode when the caller omits one", async () => {
+    const { registry } = makeRegistry();
+    const provider = new FakeProvider();
+    await startWebMcpSession({ url: "https://a.test/", provider, registry });
+    // Absent, not `"window"`: a provider written before this field existed sees
+    // exactly the options it has always seen.
+    expect(provider.createOptions[0]).not.toHaveProperty("viewportMode");
+    await registry.disposeAll();
+  });
+
+  it("passes the embedded mode straight through to the provider", async () => {
+    const { registry } = makeRegistry();
+    const provider = new FakeProvider();
+    await startWebMcpSession({
+      url: "https://a.test/",
+      provider,
+      registry,
+      viewportMode: "embedded",
+    });
+    expect(provider.createOptions[0].viewportMode).toBe("embedded");
+    await registry.disposeAll();
+  });
+});

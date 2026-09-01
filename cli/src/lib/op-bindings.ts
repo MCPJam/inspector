@@ -44,6 +44,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_project_server_connection_status: {
     command: "cloud projects servers connect-status",
   },
+  cancel_project_server_connection: {
+    command: "cloud projects servers connect-cancel",
+  },
   get_project_server: { command: "cloud projects servers get" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
@@ -84,6 +87,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_persona: { command: "cloud personas update" },
   delete_persona: { command: "cloud personas delete" },
   generate_personas: { command: "cloud personas generate" },
+
+  // ── Project secrets ─────────────────────────────────────────────────────
+  // `set`/`update` take the value from --value-file, --value-env, or stdin.
+  // A positional value would be written to shell history and visible in `ps`
+  // for the life of the command, which is why the CLI does not offer one.
+  list_secrets: { command: "cloud secrets list" },
+  get_secret: { command: "cloud secrets show" },
+  create_secret: { command: "cloud secrets set" },
+  update_secret: { command: "cloud secrets update" },
+  delete_secret: { command: "cloud secrets rm" },
   list_swarms: { command: "cloud swarms list" },
   get_swarm: { command: "cloud swarms get" },
   create_swarm: { command: "cloud swarms create" },
@@ -165,6 +178,21 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_check_repos: { command: "cloud eval checks list" },
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },
+  // BOTH bound to one command, addressed by `--run` XOR `--suite`. They are
+  // the same document read two ways — one run, or a suite's runs as a trend
+  // series — and two commands would leave a reader guessing which one
+  // answers "has this stage got worse".
+  //
+  // FLAG-QUALIFIED, following the `registry install --card` precedent above:
+  // the binding test resolves the flag against the real Commander tree, so
+  // these entries prove each shelf exists. Unqualified, both would resolve to
+  // the bare command and the test would still pass with `--run` deleted.
+  get_eval_run_stage_analytics: {
+    command: "cloud eval stage-analytics --run",
+  },
+  list_eval_suite_stage_analytics: {
+    command: "cloud eval stage-analytics --suite",
+  },
   compare_eval_run: { command: "cloud eval compare" },
   waive_eval_gate: { command: "cloud eval gate waive" },
   revoke_eval_gate_waiver: { command: "cloud eval gate unwaive" },

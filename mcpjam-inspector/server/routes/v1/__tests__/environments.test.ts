@@ -649,6 +649,7 @@ describe("v1 project environment routes", () => {
         "projectEnvironments:getCapabilities": {
           modelOverrides: true,
           modelMatrix: true,
+          skillVersionPins: true,
         },
       });
       const res = await request(
@@ -659,7 +660,27 @@ describe("v1 project environment routes", () => {
       expect(await res.json()).toMatchObject({
         modelOverrides: true,
         modelMatrix: true,
+        skillVersionPins: true,
       });
+    });
+
+    it("reports skillVersionPins false when the backend predates version pins", async () => {
+      // A backend that HAS getCapabilities but not this flag is the ordinary
+      // skew case: every flag is normalized with `=== true`, so an absent one
+      // reads false rather than undefined and a client that probes it gets a
+      // usable answer instead of a falsy-but-unknown.
+      mockQuery({
+        "projectEnvironments:getCapabilities": {
+          modelOverrides: true,
+          modelMatrix: true,
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities",
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ skillVersionPins: false });
     });
 
     it("answers false — not an error — when the deployment is too OLD", async () => {

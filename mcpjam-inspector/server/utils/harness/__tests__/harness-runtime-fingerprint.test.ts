@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { harnessRuntimeFingerprint, toToolResultOutput } from "../run-harness-turn";
+import {
+  harnessRuntimeFingerprint,
+  toToolResultOutput,
+} from "../run-harness-turn";
 
 // Regression: the fingerprint must be STABLE across turns of one chat so the
 // session resumes. App/widget chats mutate the system prompt every turn (live
@@ -133,7 +136,9 @@ describe("toToolResultOutput", () => {
   });
 
   it("passes an already-typed json output through (no double-nest)", () => {
-    expect(toToolResultOutput({ type: "json", value: { ok: true } }, false)).toEqual({
+    expect(
+      toToolResultOutput({ type: "json", value: { ok: true } }, false),
+    ).toEqual({
       type: "json",
       value: { ok: true },
     });
@@ -163,5 +168,58 @@ describe("toToolResultOutput", () => {
       type: "json",
       value: { type: "json" },
     });
+  });
+});
+
+/**
+ * The THIRD state of the secrets fetch.
+ *
+ * `secretsHash` present  ⇒ these exact secrets were delivered.
+ * `secretsHash` absent   ⇒ the caller established there are none; resume.
+ * `secretsHash` sentinel ⇒ the caller could not find out.
+ *
+ * The third must not collapse into the second. Resuming there reattaches to a
+ * bridge that may still hold previously delivered values — which the turn cannot
+ * enumerate and so cannot scrub out of the transcript. Forking gives a fresh
+ * bridge holding nothing.
+ */
+describe("harnessRuntimeFingerprint — the secrets dimension", () => {
+  const base = {
+    harnessId: "claude-code",
+    modelId: "anthropic/claude-opus-4-6",
+    selectedServers: ["srv-a"],
+    permissionMode: "allow-all",
+  };
+
+  it("forks a session that HAD secrets when they can no longer be resolved", () => {
+    const delivered = harnessRuntimeFingerprint({
+      ...base,
+      secretsHash: "abc123",
+    });
+    const unresolvable = harnessRuntimeFingerprint({
+      ...base,
+      secretsHash: "unavailable",
+    });
+    expect(unresolvable).not.toBe(delivered);
+  });
+
+  it("does not read as 'the secrets were removed'", () => {
+    // A turn that legitimately has none omits the dimension and resumes. The
+    // unresolved case must differ from that too, or a failed fetch would
+    // silently resume onto the bridge it was supposed to leave behind.
+    const none = harnessRuntimeFingerprint(base);
+    const unresolvable = harnessRuntimeFingerprint({
+      ...base,
+      secretsHash: "unavailable",
+    });
+    expect(unresolvable).not.toBe(none);
+  });
+
+  it("is stable across consecutive unresolved turns", () => {
+    // The sentinel is a constant on purpose: two failed turns in a row resume
+    // onto each other, which is right — neither delivered anything.
+    expect(
+      harnessRuntimeFingerprint({ ...base, secretsHash: "unavailable" }),
+    ).toBe(harnessRuntimeFingerprint({ ...base, secretsHash: "unavailable" }));
   });
 });
