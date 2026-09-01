@@ -175,18 +175,28 @@ export function joinToolCalls(
     scrubber ? scrubber.scrubDeep(value) : value;
   return toolCalls.map((call) => {
     const result = resultsById.get(call.toolCallId);
-    // Scrubbed AFTER bounding, not before. Bounding is measured on the
-    // serialized payload, and `[secret:NAME]` is almost always shorter than the
-    // credential it replaces — so scrubbing first would let a payload that the
-    // caller should see truncated slip in under the cap, and two runs of the
-    // same tool would truncate at different points depending on whether a
-    // secret happened to appear.
-    const input = boundPayload(call.input);
+    // Scrubbed BEFORE bounding. This was the other way round, and the reason
+    // given — deterministic truncation points, since `[secret:NAME]` is
+    // usually shorter than the credential it replaces — was a real property
+    // but the wrong trade.
+    //
+    // Bounding first cuts the serialized payload at a fixed offset, and a
+    // credential STRADDLING that cut survives: the retained prefix holds only
+    // part of the value, so no needle matches it and those bytes go out in a
+    // response that crosses the trust boundary. Partial is not safe — it is a
+    // shorter secret. Scrubbing first means the cut can only ever land inside
+    // `[secret:NAME]`.
+    //
+    // What that costs is the consistency the old ordering bought: two runs of
+    // one tool now truncate at different offsets depending on whether a secret
+    // appeared. That is cosmetic, and arguably more honest — the redacted
+    // payload really is shorter.
+    const input = boundPayload(scrub(call.input));
     if (!result) {
       return {
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        input: scrub(input.value),
+        input: input.value,
         status: "error" as const,
         // Not "the tool failed" — "no result reached us". The distinction
         // matters: an aborted turn and a tool that returned an error payload
@@ -196,15 +206,15 @@ export function joinToolCalls(
         ...(input.truncated ? { truncated: true as const } : {}),
       };
     }
-    const output = boundPayload(readToolOutput(result.output));
+    const output = boundPayload(scrub(readToolOutput(result.output)));
     return {
       toolCallId: call.toolCallId,
       toolName: call.toolName ?? result.toolName ?? "unknown",
-      input: scrub(input.value),
+      input: input.value,
       status: isErrorOutput(result.output)
         ? ("error" as const)
         : ("ok" as const),
-      output: scrub(output.value),
+      output: output.value,
       ...(input.truncated || output.truncated
         ? { truncated: true as const }
         : {}),

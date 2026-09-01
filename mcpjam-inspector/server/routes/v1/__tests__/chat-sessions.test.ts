@@ -57,6 +57,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 
 import chatSessions from "../chat-sessions.js";
+import { createSecretScrubber } from "../../../utils/secrets/secret-scrubber.js";
 import { v1OnError } from "../envelope.js";
 import { __testing } from "../chat-session-turn.js";
 import {
@@ -729,9 +730,9 @@ describe("skills capability on the agent turn", () => {
     // dispatch gate uses, rather than against a hand-written object: a
     // declaration the gate does not accept is not a declaration. `true` or a
     // misspelled id would satisfy a shape check and fail this.
-    expect(clientDeclaresSkillsExtension(withSkillsExtensionCapability({}))).toBe(
-      true,
-    );
+    expect(
+      clientDeclaresSkillsExtension(withSkillsExtensionCapability({})),
+    ).toBe(true);
   });
 
   it("MERGES with the SDK defaults instead of replacing them", () => {
@@ -977,6 +978,50 @@ describe("payload bounding", () => {
     expect(joined[0]!.output).toEqual({ temp: 12 });
     expect(joined[0]!.status).toBe("ok");
     expect(joined[1]!.status).toBe("error");
+  });
+
+  it("scrubs a credential that STRADDLES the truncation boundary", () => {
+    // Bounding used to run first, which cut the serialized payload at a fixed
+    // offset. A credential spanning that cut left a partial value in the
+    // retained prefix — no needle matches a fragment, so those bytes went out
+    // in a response that crosses the trust boundary. A partial credential is
+    // not safe; it is a shorter one.
+    const value = `sk_live_${"a".repeat(64)}`;
+    const scrubber = createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!;
+
+    // Position the credential so the 16k serialization cap lands INSIDE it —
+    // verified empirically: at this filler length the full value does not
+    // survive bounding but a usable prefix of it does.
+    const filler = "x".repeat(15_940);
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: { filler, key: value } }],
+      [
+        {
+          toolCallId: "t1",
+          output: { type: "json", value: { filler, key: value } },
+        },
+      ],
+      scrubber,
+    );
+
+    const serialized = JSON.stringify(joined);
+    // The prefix is the assertion that matters: the whole value never survived
+    // bounding, so asserting only on it would pass under the broken ordering
+    // too. A 20-character run of a live key is the actual disclosure.
+    expect(serialized).not.toContain(value.slice(0, 20));
+    expect(serialized).not.toContain(value);
+  });
+
+  it("still scrubs when nothing is truncated", () => {
+    // The guard on the guard: reordering must not break the ordinary path.
+    const value = "sk_live_shortbutlongenough";
+    const joined = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: { key: value } }],
+      [{ toolCallId: "t1", output: { type: "json", value: { key: value } } }],
+      createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!,
+    );
+    expect(joined[0]!.input).toEqual({ key: "[secret:STRIPE_API_KEY]" });
+    expect(joined[0]!.output).toEqual({ key: "[secret:STRIPE_API_KEY]" });
   });
 
   it("keeps absolute message indices when projecting a page", () => {
