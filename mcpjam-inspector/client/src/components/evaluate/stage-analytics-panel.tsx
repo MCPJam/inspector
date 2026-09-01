@@ -24,7 +24,7 @@
  * the SDK on purpose. So this lists the runs and renders the SELECTED one.
  * Paging browses further back; it never accumulates into a combined funnel.
  */
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
@@ -313,12 +313,21 @@ export function RunDocument({
   const [chosenStage, setChosenStage] = useState<
     UserValueStage | null | undefined
   >(undefined);
-  const documentIdentity = row.runId;
-  const previousIdentity = useRef(documentIdentity);
-  if (previousIdentity.current !== documentIdentity) {
+  /**
+   * The run the current selection belongs to, held in STATE rather than a ref.
+   *
+   * React's own "adjusting state when a prop changes" pattern, and the reason
+   * it is state matters under concurrent rendering: a ref mutation during
+   * render is a side effect that SURVIVES a discarded render, while the
+   * `setChosenStage` beside it does not. The retry would then see the identity
+   * already updated, skip the reset, and open the previous run's stage on the
+   * new run. Two state updates are discarded or committed together.
+   */
+  const [selectionRunId, setSelectionRunId] = useState(row.runId);
+  if (selectionRunId !== row.runId) {
     // A different run is a different chain. Carrying a selection across would
     // open a stage the new run may not have broken at.
-    previousIdentity.current = documentIdentity;
+    setSelectionRunId(row.runId);
     if (chosenStage !== undefined) setChosenStage(undefined);
   }
 

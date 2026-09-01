@@ -445,6 +445,44 @@ describe("StageAnalyticsPanel", () => {
     expect(row.textContent).not.toContain("Usable response returned");
   });
 
+  it("resets the open stage when the reader switches to another run", async () => {
+    // A different run is a different chain, so a selection must not survive the
+    // switch and open a stage the new run may not have broken at. The identity
+    // that guards this is held in STATE rather than a ref: a ref mutation
+    // during render survives a discarded render while the state reset beside
+    // it does not, and the retry would then skip the reset.
+    const older = stageAnalyticsVariation({
+      runId: "run_older",
+      runCompletedAt: 1600000000000,
+    });
+    fetchMock.mockResolvedValue({
+      rows: [GOLDEN_STAGE_ANALYTICS, older],
+    });
+    renderPanel();
+
+    // The golden run auto-selects its first break, then the reader moves off it.
+    await screen.findByTestId("stage-detail-card");
+    await userEvent.click(screen.getByTestId("stage-chain-card-connection"));
+    expect(screen.getByTestId("stage-detail-card").dataset.stage).toBe(
+      "connection",
+    );
+
+    // Switching runs drops that choice and re-derives from the new document.
+    const runList = screen.getByTestId("stage-analytics-run-list");
+    await userEvent.click(within(runList).getAllByRole("button")[1]!);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("stage-detail-card").dataset.stage).toBe(
+        "selection",
+      ),
+    );
+    expect(
+      screen
+        .getByTestId("stage-chain-card-connection")
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+
   it("states the D9/D5c boundary in the UI's own words", async () => {
     fetchMock.mockResolvedValue({ rows: [GOLDEN_STAGE_ANALYTICS] });
     renderPanel();
