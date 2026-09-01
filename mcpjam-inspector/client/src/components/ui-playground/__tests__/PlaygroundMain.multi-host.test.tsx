@@ -320,6 +320,12 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   MultiModelPlaygroundCard: (props: any) => {
     mockMultiModelPlaygroundCard(props);
+    // Stand in for the real card reporting its live transcript upward.
+    // `onTranscriptSync` only writes a parent ref, so calling it during
+    // render is safe. Tests that need a column to hold a conversation put
+    // it in `cardTranscripts`.
+    const transcript = multiHostFixture.cardTranscripts[props.compareId];
+    if (transcript) props.onTranscriptSync?.(props.compareId, transcript);
     return (
       <div
         data-testid="multi-host-card"
@@ -452,6 +458,11 @@ const multiHostFixture = {
   selectedHostIds: [] as string[],
   hostList: [] as { hostId: string; name: string }[],
   hosts: {} as Record<string, HostDetail>,
+  // Host ids whose per-slot Convex query is in flight. Empty by default so
+  // every existing test keeps its synchronous resolution.
+  pendingSlotHostIds: new Set<string>(),
+  // Per-column transcripts the card stub reports upward, keyed by compareId.
+  cardTranscripts: {} as Record<string, unknown[]>,
 };
 
 // Track the project id `PlaygroundMain` passes to `usePersistedHost`
@@ -486,13 +497,18 @@ vi.mock("@/hooks/use-playground-host-slots", () => ({
     _isAuthenticated: boolean,
     ids: (string | null | undefined)[]
   ) => {
-    const resolve = (id: string | null | undefined) =>
-      id ? multiHostFixture.hosts[id] ?? null : null;
-    return [
-      { host: resolve(ids[0]), isLoading: false },
-      { host: resolve(ids[1]), isLoading: false },
-      { host: resolve(ids[2]), isLoading: false },
-    ];
+    // Each slot is its own Convex `useQuery`, which reports `undefined`
+    // (→ `host: null`) whenever its ARGUMENTS change, until the new query
+    // lands. Tests that re-point a slot put the id in `pendingSlotHostIds`
+    // to get that window; the default empty set resolves synchronously.
+    const slotFor = (id: string | null | undefined) => {
+      if (!id) return { host: null, isLoading: false };
+      if (multiHostFixture.pendingSlotHostIds.has(id)) {
+        return { host: null, isLoading: true };
+      }
+      return { host: multiHostFixture.hosts[id] ?? null, isLoading: false };
+    };
+    return [slotFor(ids[0]), slotFor(ids[1]), slotFor(ids[2])];
   },
 }));
 
@@ -669,6 +685,8 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = [];
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
+    multiHostFixture.pendingSlotHostIds = new Set();
+    multiHostFixture.cardTranscripts = {};
     // Reset shared-app-state to the default project; the shared-project
     // test mutates this to force `convexProjectId !== activeProjectId`.
     mockSharedAppState.projects = {};
@@ -1229,6 +1247,39 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-host-style")).toBe("chatgpt");
     expect(cards[1].getAttribute("data-host-style")).toBe("claude");
     expect(cards[0].getAttribute("data-compare-kind")).toBe("host");
+  });
+
+  // BB-135: a row click switches clients by collapsing the lineup to the one
+  // the user picked. That exits compare, and the exit path replays the LEAD
+  // column's transcript into the single pane — so picking Host B has to leave
+  // Host B's conversation behind, not the outgoing lead's.
+  it("collapsing the lineup to one client replays THAT client's transcript", () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    multiHostFixture.cardTranscripts = {
+      "h-A": [{ id: "a-1", role: "user", parts: [] }],
+      "h-B": [{ id: "b-1", role: "user", parts: [] }],
+    };
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+
+    // Switch to Host B: the lineup collapses to just B, and slot 0 re-points.
+    multiHostFixture.selectedHostIds = ["h-B"];
+    multiHostFixture.pendingSlotHostIds = new Set(["h-B"]);
+    rerender(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "b-1" }),
+    ]);
   });
 
   it("shares selectedServers across all columns (project-scoped invariant)", () => {

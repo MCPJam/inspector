@@ -1826,14 +1826,26 @@ export function PlaygroundMain({
     const prev = prevCompareModeRef.current;
     if (prev === currentCompareMode) return;
 
-    const harvestLeadTranscript = (): UIMessage[] | null => {
-      const leadId = lastCompareLeadIdRef.current;
-      if (!leadId) return null;
-      const transcript = compareTranscriptsRef.current[leadId];
-      const hasConversation =
-        transcript?.some((m) => m.role === "user" || m.role === "assistant") ??
-        false;
-      return hasConversation && transcript ? cloneUiMessages(transcript) : null;
+    // `preferredCompareId` is the column the user is LANDING on.
+    // `lastCompareLeadIdRef` only advances while the compare grid is up, so on
+    // the commit that leaves it still names the outgoing lead — harvesting
+    // that alone hands the user the previous client's conversation after they
+    // picked a different one. It stays the fallback for exits nobody chose
+    // (a host that stopped resolving, mutual exclusion firing).
+    const harvestLeadTranscript = (
+      preferredCompareId: string | null,
+    ): UIMessage[] | null => {
+      const candidates = [preferredCompareId, lastCompareLeadIdRef.current];
+      for (const compareId of candidates) {
+        if (!compareId) continue;
+        const transcript = compareTranscriptsRef.current[compareId];
+        const hasConversation =
+          transcript?.some(
+            (m) => m.role === "user" || m.role === "assistant",
+          ) ?? false;
+        if (hasConversation && transcript) return cloneUiMessages(transcript);
+      }
+      return null;
     };
 
     if (prev === "none" && currentCompareMode !== "none") {
@@ -1843,9 +1855,11 @@ export function PlaygroundMain({
       setMultiCompareEnterVersion((v) => v + 1);
       setMultiCompareEnterMessages(cloneUiMessages(messages));
     } else if (prev !== "none" && currentCompareMode === "none") {
-      // Exit compare to single-pane: replay the lead column's transcript
+      // Exit compare to single-pane: replay the surviving column's transcript
       // into the single chat so the user doesn't lose work.
-      const harvested = harvestLeadTranscript();
+      const harvested = harvestLeadTranscript(
+        prev === "host" ? leadHostId : null,
+      );
       if (harvested) startChatWithMessages(harvested);
       clearMultiModelUiState();
     } else if (prev !== "none" && currentCompareMode !== "none") {
@@ -1853,7 +1867,7 @@ export function PlaygroundMain({
       // one batched render). Harvest the outgoing lead and seed the
       // incoming columns with the same transcript. Reset the in-flight
       // per-column UI state so the new mode starts clean.
-      const harvested = harvestLeadTranscript();
+      const harvested = harvestLeadTranscript(null);
       clearMultiModelUiState();
       setMultiCompareEnterVersion((v) => v + 1);
       setMultiCompareEnterMessages(harvested ?? cloneUiMessages(messages));
@@ -1862,6 +1876,7 @@ export function PlaygroundMain({
     prevCompareModeRef.current = currentCompareMode;
   }, [
     currentCompareMode,
+    leadHostId,
     messages,
     startChatWithMessages,
     clearMultiModelUiState,
