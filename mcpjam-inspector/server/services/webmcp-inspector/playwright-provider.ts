@@ -566,9 +566,12 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         }
         this.frameThrottle.push({
           data,
-          // A still is captured from the surface itself rather than through the
-          // screencast's scaling, so its expected scale is the session's own
-          // device pixel ratio — and, as everywhere else, the bytes win.
+          // A still is captured from the surface itself rather than through
+          // the screencast's scaling, so if anything is going to come back at
+          // full device resolution it is this — measured Chromium hands back
+          // CSS resolution here too, and either way the bytes decide. The
+          // fallback only has to keep the geometry self-consistent, which is
+          // what the client divides by.
           ...this.frameGeometry(data, WEBMCP_VIEWPORT, this.dpr),
           ts: Date.now(),
         });
