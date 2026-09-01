@@ -240,6 +240,7 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
   supportsMrtr: false | undefined;
   suppressListenChannel: true | undefined;
   dropToolListChanged: true | undefined;
+  suppressRequestCancellation: true | undefined;
 } {
   const profile =
     mcpProfile !== null && typeof mcpProfile === "object"
@@ -247,6 +248,7 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
           paginationTraversal?: unknown;
           mrtrSupport?: unknown;
           toolListChanged?: unknown;
+          toolCallCancellation?: unknown;
         })
       : undefined;
   // Nested record, so it is narrowed separately; an unreadable value falls
@@ -267,6 +269,8 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
       toolListChanged?.listens === false ? true : undefined,
     dropToolListChanged:
       toolListChanged?.refetches === false ? true : undefined,
+    suppressRequestCancellation:
+      profile?.toolCallCancellation === false ? true : undefined,
   };
 }
 
@@ -293,6 +297,7 @@ export function applyHostConformanceKnobs<
     supportsMrtr?: boolean;
     suppressListenChannel?: boolean;
     dropToolListChanged?: boolean;
+    suppressRequestCancellation?: boolean;
   }
 >(
   pins: T | undefined,
@@ -301,6 +306,7 @@ export function applyHostConformanceKnobs<
     supportsMrtr: false | undefined;
     suppressListenChannel: true | undefined;
     dropToolListChanged: true | undefined;
+    suppressRequestCancellation: true | undefined;
   }
 ): T | undefined {
   let next = pins;
@@ -326,6 +332,12 @@ export function applyHostConformanceKnobs<
     next = { ...((next ?? {}) as T), dropToolListChanged: true };
   } else if (next?.dropToolListChanged !== undefined) {
     const { dropToolListChanged: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.suppressRequestCancellation === true) {
+    next = { ...((next ?? {}) as T), suppressRequestCancellation: true };
+  } else if (next?.suppressRequestCancellation !== undefined) {
+    const { suppressRequestCancellation: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
   return next;

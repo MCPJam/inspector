@@ -1455,6 +1455,11 @@ export function useServerState({
       if (mcpProfile?.toolListChanged?.refetches === false) {
         defaults.dropToolListChanged = true;
       }
+      // Tool cancellation: only an explicit stored `false` (the host never
+      // signals the server) travels, as `suppressRequestCancellation: true`.
+      if (mcpProfile?.toolCallCancellation === false) {
+        defaults.suppressRequestCancellation = true;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of

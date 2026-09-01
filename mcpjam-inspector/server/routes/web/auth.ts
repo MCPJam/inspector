@@ -825,6 +825,7 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressRequestCancellation?: boolean;
   },
   /**
    * A plugin stdio component that IS reachable: a live shim, recorded in
@@ -873,6 +874,9 @@ export function toHttpConfig(
           : {}),
         ...(initializePins?.supportsMrtr === false
           ? { supportsMrtr: false }
+          : {}),
+        ...(initializePins?.suppressRequestCancellation === true
+          ? { suppressRequestCancellation: true }
           : {}),
       };
     }
@@ -955,6 +959,9 @@ export function toHttpConfig(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressRequestCancellation === true
+      ? { suppressRequestCancellation: true }
+      : {}),
   };
 }
 
@@ -975,6 +982,7 @@ function resolveEffectiveInitializePinsForServer(
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressRequestCancellation?: boolean;
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -988,6 +996,7 @@ function resolveEffectiveInitializePinsForServer(
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressRequestCancellation?: boolean;
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -1021,6 +1030,9 @@ function resolveEffectiveInitializePinsForServer(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressRequestCancellation === true
+      ? { suppressRequestCancellation: true }
+      : {}),
   };
 
   return Object.keys(resolved).length > 0 ? resolved : undefined;
@@ -1089,6 +1101,7 @@ export async function createAuthorizedManager(
       /** Client-conformance knobs; host-level, so batch-uniform. */
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressRequestCancellation?: boolean;
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
@@ -1956,6 +1969,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressRequestCancellation?: boolean;
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -1991,13 +2005,15 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Same one-explicit-value rule for the sibling knobs.
   const truncatePagination = raw.firstPageOnly === true;
   const disableMrtr = raw.supportsMrtr === false;
+  const disableCancellation = raw.suppressRequestCancellation === true;
   const initializePins =
     initializeClientInfo ||
     initializeSupportedVersions ||
     initializeWireMode ||
     suppressParamMirroring ||
     truncatePagination ||
-    disableMrtr
+    disableMrtr ||
+    disableCancellation
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -2008,6 +2024,9 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
+          ...(disableCancellation
+            ? { suppressRequestCancellation: true }
+            : {}),
           ...(suppressParamMirroring ? { mirrorToolParamHeaders: false } : {}),
         }
       : undefined;

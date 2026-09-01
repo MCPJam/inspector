@@ -3613,6 +3613,10 @@ export default function App() {
       activeMcpProfile?.toolListChanged?.refetches === false
         ? (true as const)
         : undefined;
+    const suppressRequestCancellation =
+      activeMcpProfile?.toolCallCancellation === false
+        ? (true as const)
+        : undefined;
 
     return {
       clientInfo,
@@ -3626,6 +3630,7 @@ export default function App() {
       supportsMrtr,
       suppressListenChannel,
       dropToolListChanged,
+      suppressRequestCancellation,
       xaaPolicy,
     };
   }, [

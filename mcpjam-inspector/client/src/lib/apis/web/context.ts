@@ -50,6 +50,7 @@ export interface ApiContext {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  suppressRequestCancellation?: true;
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
@@ -448,6 +449,7 @@ function conformanceWireFields(apiContext: ApiContext): {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  suppressRequestCancellation?: true;
 } {
   return {
     ...(apiContext.mirrorToolParamHeaders === false
@@ -461,6 +463,9 @@ function conformanceWireFields(apiContext: ApiContext): {
       : {}),
     ...(apiContext.dropToolListChanged === true
       ? { dropToolListChanged: true as const }
+      : {}),
+    ...(apiContext.suppressRequestCancellation === true
+      ? { suppressRequestCancellation: true as const }
       : {}),
     ...(apiContext.supportsMrtr === false
       ? { supportsMrtr: false as const }
@@ -534,6 +539,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  suppressRequestCancellation?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -613,6 +619,7 @@ export function buildResolvedServerBatchRequest(input: {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  suppressRequestCancellation?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -660,6 +667,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  suppressRequestCancellation?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;

@@ -57,3 +57,21 @@ ChatGPT's measurement is unparked in the same change set: stopping a tool call
 ends its turn without telling the server, which keeps running the tool. That one
 value is what makes the row appear — every other host reads "Not yet tested"
 until it is probed.
+
+**Plumbing, which is where this originally failed.** The SDK enforces the knob,
+but nothing carried it to the SDK. `MCPServerConfig.suppressRequestCancellation`
+is only reachable if every layer between the stored `mcpProfile` and the
+connection copies it by hand, and each one had to learn the field: the shared
+`ConnectionDefaults`, the local resolver (both stdio and HTTP branches, plus its
+body parser), the hosted `initializePins` extractor and all four of its inline
+pin types, the host-config overlay in `effective-auth`, and the client senders in
+`App.tsx`, `use-server-state`, `mcp-api`, `use-hosted-api-context`, the web
+`context` and `servers-api`. Miss one and the UI saves the knob, the host
+persists it, and the connection silently ignores it — which is exactly what
+happened: a host set to "Not supported" still cancelled normally against a live
+server.
+
+The overlay follows the same security rule as its siblings: a host that cancels
+normally REMOVES a body-supplied `suppressRequestCancellation`, so a share-link
+body cannot degrade a conforming host into one that abandons every cancelled
+call and leaves servers running tools nobody wants.

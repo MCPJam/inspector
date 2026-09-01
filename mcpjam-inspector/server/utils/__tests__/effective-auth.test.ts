@@ -264,6 +264,7 @@ describe("applyHostConformanceKnobs — toolListChanged", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
+    suppressRequestCancellation: undefined,
   } as const;
 
   it("adds the host's knobs to a body that carried none", () => {
@@ -299,6 +300,7 @@ describe("conformanceKnobsFromMcpProfile", () => {
       supportsMrtr: false,
       suppressListenChannel: undefined,
       dropToolListChanged: undefined,
+      suppressRequestCancellation: undefined,
     });
   });
 
@@ -317,17 +319,75 @@ describe("conformanceKnobsFromMcpProfile", () => {
         supportsMrtr: undefined,
         suppressListenChannel: undefined,
         dropToolListChanged: undefined,
+        suppressRequestCancellation: undefined,
       });
     }
   });
 });
 
+describe("conformanceKnobsFromMcpProfile — toolCallCancellation", () => {
+  it("reads only an explicit stored false as the suppression", () => {
+    expect(
+      conformanceKnobsFromMcpProfile({ toolCallCancellation: false })
+        .suppressRequestCancellation
+    ).toBe(true);
+    // `true`, junk and absence are all the conforming client — the knob is a
+    // suppression switch with no positive state, like its siblings.
+    for (const value of [true, "false", 0, null, undefined]) {
+      expect(
+        conformanceKnobsFromMcpProfile({ toolCallCancellation: value })
+          .suppressRequestCancellation
+      ).toBeUndefined();
+    }
+  });
+});
+
+describe("applyHostConformanceKnobs — toolCallCancellation", () => {
+  const conforming = {
+    firstPageOnly: undefined,
+    supportsMrtr: undefined,
+    suppressListenChannel: undefined,
+    dropToolListChanged: undefined,
+    suppressRequestCancellation: undefined,
+  } as const;
+
+  it("adds the host's suppression to a body that carried none", () => {
+    expect(
+      applyHostConformanceKnobs(undefined, {
+        ...conforming,
+        suppressRequestCancellation: true,
+      })
+    ).toEqual({ suppressRequestCancellation: true });
+  });
+
+  it("REMOVES a body-supplied suppression when the host cancels normally", () => {
+    // Same security property as the sibling knobs: a share-link body must not
+    // be able to make a conforming host silently abandon every cancelled
+    // call, leaving servers running tools nobody wants.
+    expect(
+      applyHostConformanceKnobs(
+        { suppressRequestCancellation: true },
+        conforming
+      )
+    ).toEqual({});
+  });
+});
+
 describe("applyHostConformanceKnobs", () => {
-  const off = { firstPageOnly: undefined, supportsMrtr: undefined } as const;
+  // Every knob is required on the host argument on purpose: adding one must
+  // break every call site rather than silently default to "conforming".
+  const off = {
+    firstPageOnly: undefined,
+    supportsMrtr: undefined,
+    suppressListenChannel: undefined,
+    dropToolListChanged: undefined,
+    suppressRequestCancellation: undefined,
+  } as const;
 
   it("forces the pins on when the host asks for the degraded client", () => {
     expect(
       applyHostConformanceKnobs(undefined, {
+        ...off,
         firstPageOnly: true,
         supportsMrtr: false,
       })
@@ -335,7 +395,7 @@ describe("applyHostConformanceKnobs", () => {
     expect(
       applyHostConformanceKnobs(
         { protocolVersion: "2026-07-28" } as Record<string, unknown>,
-        { firstPageOnly: true, supportsMrtr: undefined }
+        { ...off, firstPageOnly: true }
       )
     ).toEqual({ protocolVersion: "2026-07-28", firstPageOnly: true });
   });
@@ -360,7 +420,7 @@ describe("applyHostConformanceKnobs", () => {
     expect(
       applyHostConformanceKnobs(
         { firstPageOnly: true, supportsMrtr: false } as Record<string, unknown>,
-        { firstPageOnly: undefined, supportsMrtr: false }
+        { ...off, supportsMrtr: false }
       )
     ).toEqual({ supportsMrtr: false });
   });

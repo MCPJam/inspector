@@ -20,6 +20,7 @@ interface UseApiContextOptions {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  suppressRequestCancellation?: true;
   // Active host's enterprise-managed authorization policy (validated `on`
   // value only) — rides ad-hoc chat/eval request bodies.
   xaaPolicy?: XaaEnterprisePolicy;
@@ -47,6 +48,7 @@ export function useApiContext({
   supportsMrtr,
   suppressListenChannel,
   dropToolListChanged,
+  suppressRequestCancellation,
   xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
@@ -79,6 +81,7 @@ export function useApiContext({
       supportsMrtr,
       suppressListenChannel,
       dropToolListChanged,
+      suppressRequestCancellation,
       xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
@@ -105,6 +108,7 @@ export function useApiContext({
     supportsMrtr,
     suppressListenChannel,
     dropToolListChanged,
+    suppressRequestCancellation,
     xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,
