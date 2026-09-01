@@ -44,24 +44,71 @@ export function extractBlock(css, selector) {
   return m[1];
 }
 
+/** Index of the closing quote of the CSS string starting at `i`. */
+function endOfCssString(block, i) {
+  const quote = block[i];
+  for (let j = i + 1; j < block.length; j++) {
+    if (block[j] === "\\") {
+      j++;
+      continue;
+    }
+    if (block[j] === quote) return j;
+  }
+  throw new Error("Unterminated string in tokens.css");
+}
+
 /**
  * `--name: value;` declarations in a rule body, in source order.
  *
- * Declaration-oriented rather than line-oriented, because tokens.css wraps
- * its longest values across lines: a line-based reader silently drops
- * `--font-sans`, `--font-mono`, `--font-code` and half the shadow scale, and
- * a mirror cannot notice a token it never saw. Comments are stripped first so
- * a `/* … *\/` note between declarations does not glue itself to the next
- * one, and wrapped values are collapsed to single-spaced text — which is what
- * every consumer of a font stack wants anyway.
+ * A scanner rather than `split(";")`, and quote-aware rather than a blind
+ * comment strip, because both shortcuts fail SILENTLY on values this palette
+ * could plausibly grow: a font family containing a semicolon truncates at the
+ * quote, and a `/*` sequence inside a string swallows everything to the next
+ * close marker. A truncated value does not throw — it just repaints a mirrored
+ * surface in a color nobody chose, which is the failure mode this module
+ * exists to prevent.
+ *
+ * Declaration-oriented rather than line-oriented for the same reason: tokens.css
+ * wraps its longest values across lines, and a line-based reader silently drops
+ * all four font stacks and half the shadow scale. Wrapped values collapse to
+ * single-spaced text, which is what every consumer of a font stack wants.
  */
 export function parseVars(block) {
   const out = new Map();
-  const withoutComments = block.replace(/\/\*[\s\S]*?\*\//g, "");
-  for (const decl of withoutComments.split(";")) {
+  let decl = "";
+
+  const flush = () => {
     const m = decl.match(/^\s*(--[a-z0-9-]+)\s*:\s*([\s\S]+)$/i);
     if (m) out.set(m[1], m[2].replace(/\s+/g, " ").trim());
+    decl = "";
+  };
+
+  for (let i = 0; i < block.length; i++) {
+    const ch = block[i];
+
+    if (ch === '"' || ch === "'") {
+      const close = endOfCssString(block, i);
+      decl += block.slice(i, close + 1);
+      i = close;
+      continue;
+    }
+
+    if (ch === "/" && block[i + 1] === "*") {
+      const end = block.indexOf("*/", i + 2);
+      if (end === -1) throw new Error("Unterminated comment in tokens.css");
+      i = end + 1;
+      continue;
+    }
+
+    if (ch === ";") {
+      flush();
+      continue;
+    }
+
+    decl += ch;
   }
+  flush();
+
   return out;
 }
 
@@ -196,8 +243,22 @@ function relativeLuminance({ r, g, b }) {
  * an agent told they are safe will put small body copy on them.
  */
 export function contrastRatio(valueA, valueB) {
-  const a = relativeLuminance(oklchToSrgb(valueA));
-  const b = relativeLuminance(oklchToSrgb(valueB));
+  const colorA = oklchToSrgb(valueA);
+  const colorB = oklchToSrgb(valueB);
+
+  // A translucent color has no contrast ratio of its own — it has one against
+  // whatever shows through. Ignoring alpha would report black-at-50%-on-white
+  // as 21:1 when the composited truth is nearer 4:1, so refuse rather than
+  // publish a confident wrong number into the accessibility table.
+  if (colorA.alpha !== 1 || colorB.alpha !== 1) {
+    throw new Error(
+      `contrastRatio needs opaque colors; got ${valueA} and ${valueB}. ` +
+        "Composite the translucent one over a known backdrop first.",
+    );
+  }
+
+  const a = relativeLuminance(colorA);
+  const b = relativeLuminance(colorB);
   const [hi, lo] = a > b ? [a, b] : [b, a];
   return (hi + 0.05) / (lo + 0.05);
 }

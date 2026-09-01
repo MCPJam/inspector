@@ -46,6 +46,7 @@ import { contrastRatio, readTokenModes } from "./lib/tokens-css.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const TOKENS = resolve(ROOT, "design-system/src/tokens.css");
+const INDEX_CSS = resolve(ROOT, "design-system/src/index.css");
 const DESIGN_MD = resolve(ROOT, "DESIGN.md");
 
 /** Tokens deliberately described in prose rather than emitted as schema. */
@@ -142,11 +143,24 @@ const yamlString = (value) => JSON.stringify(String(value));
  * roles, then status, then the specialised palettes, and an agent reading the
  * front matter benefits from the same grouping.
  */
-function classify(lightVars) {
+function classify(lightVars, darkVars) {
   const colors = [];
   const fonts = [];
   let radius = null;
   let spacing = null;
+
+  for (const cssVar of darkVars.keys()) {
+    // readTokenModes completes dark FROM light, so anything dark has that light
+    // lacks was declared only in `.dark`. classify() walks the light map, so
+    // such a token would never be emitted at all — and `--check` would keep
+    // passing, because regeneration reproduces the same omission.
+    if (!lightVars.has(cssVar)) {
+      throw new Error(
+        `Token ${cssVar} is declared only in the .dark block of tokens.css.\n` +
+          "Every token needs a :root value — DESIGN.md pairs each one with a -dark twin.",
+      );
+    }
+  }
 
   for (const [cssVar, value] of lightVars) {
     if (tokenName(cssVar).endsWith("-dark")) {
@@ -176,10 +190,22 @@ function classify(lightVars) {
 }
 
 /**
- * The `rounded` scale, derived exactly as design-system/src/index.css derives
- * its Tailwind radii (`calc(var(--radius) ± Npx)`), so the two cannot drift.
+ * The `rounded` scale, read from design-system/src/index.css.
+ *
+ * The offsets are PARSED rather than restated. An earlier version hard-coded
+ * the same ±px arithmetic and claimed the two could not drift; they could —
+ * they were independent copies, and editing index.css alone would have left
+ * this table stale while `design:check` still passed, because the check only
+ * compares against tokens.css. Reading the real declarations makes the claim
+ * true instead of merely asserted.
+ *
+ * Values are resolved to a static dimension because the DESIGN.md schema takes
+ * a number plus px/em/rem, not a `calc()` expression. That fixes 1rem at 16px,
+ * which is the browser default and what this repo ships; a consumer who
+ * changes the root font size gets radii that still track `--radius` at runtime
+ * but no longer match these literals.
  */
-function roundedScale(radius) {
+function roundedScale(radius, indexCss) {
   const m = radius.match(/^([\d.]+)(rem|px)$/);
   if (!m) throw new Error(`Cannot derive a radius scale from --radius: ${radius}`);
   const unit = m[2];
@@ -191,17 +217,29 @@ function roundedScale(radius) {
     return `${Number(n.toFixed(4))}${unit}`;
   };
 
-  return {
-    sm: format(basePx - 4),
-    md: format(basePx - 2),
-    lg: format(basePx),
-    xl: format(basePx + 4),
-  };
+  const offsets = new Map();
+  const declaration =
+    /--radius-(sm|md|lg|xl)\s*:\s*(?:var\(\s*--radius\s*\)|calc\(\s*var\(\s*--radius\s*\)\s*([+-])\s*([\d.]+)px\s*\))\s*;/g;
+  for (const [, level, sign, amount] of indexCss.matchAll(declaration)) {
+    offsets.set(level, amount === undefined ? 0 : (sign === "-" ? -1 : 1) * parseFloat(amount));
+  }
+
+  const scale = {};
+  for (const level of ["sm", "md", "lg", "xl"]) {
+    if (!offsets.has(level)) {
+      throw new Error(
+        `Could not read --radius-${level} from design-system/src/index.css. ` +
+          "The rounded scale in DESIGN.md is derived from those declarations.",
+      );
+    }
+    scale[level] = format(basePx + offsets.get(level));
+  }
+  return scale;
 }
 
 function buildFrontMatter(modes) {
-  const { colors, fonts, radius, spacing } = classify(modes.light);
-  const rounded = roundedScale(radius);
+  const { colors, fonts, radius, spacing } = classify(modes.light, modes.dark);
+  const rounded = roundedScale(radius, readFileSync(INDEX_CSS, "utf8"));
 
   const lines = [
     "---",
