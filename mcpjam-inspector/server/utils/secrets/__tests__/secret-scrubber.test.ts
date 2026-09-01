@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSecretScrubber,
   escapeDepthOf,
+  literalAnchorOf,
   MIN_SCRUBBABLE_LENGTH,
 } from "../secret-scrubber";
 
@@ -256,8 +257,12 @@ describe("scrubDeep", () => {
     expect(megabyteOfProse.length).toBeGreaterThan(1_000_000);
     expect(escapeDepthOf(megabyteOfProse)).toBe(1);
 
-    // A run of 2^(d-1) backslashes is what depth d costs, so the bound has to
-    // rise with the run and stay above the depth that run proves.
+    // Depth d costs a run of 2^d - 1 backslashes for a quote-bearing value
+    // (1, 3, 7, 15 …) and 2^(d-1) for a newline-bearing one (1, 2, 4, 8 …).
+    // The bound has to assume the CHEAPER of the two, or it would under-count
+    // the depth a newline-bearing value can reach — so it must rise with the
+    // run and stay at or above the depth that run proves, which for the
+    // quote-bearing value below leaves slack rather than cutting close.
     expect(escapeDepthOf("no backslashes here")).toBe(1);
     expect(escapeDepthOf("a\\b")).toBe(2);
     let carrier: string = 'abcdefgh"i';
@@ -294,6 +299,44 @@ describe("scrubDeep", () => {
     expect((decoded as { v: string }).v).toBe("[secret:ODD_KEY]");
   });
 
+  it("generates nothing for a payload that cannot contain the secret", () => {
+    // The depth bound alone is not enough. One pathological run of backslashes
+    // reports a deep escaping, and every registered secret would then be dragged
+    // out to twenty-odd exponentially growing forms — for a payload that plainly
+    // contains none of them. Measured at 1 MiB of solid backslashes, that was
+    // ~100 MiB of needles across 50 secrets, none of which could ever match.
+    //
+    // The precondition is exact rather than a heuristic: escaping never rewrites
+    // a value's ordinary characters, so its longest such run appears verbatim in
+    // every form at every depth.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    expect(literalAnchorOf(quoted.value)).toBe("abcdefgh");
+
+    const scrubber = createSecretScrubber([quoted])!;
+    const solidBackslashes = "\\".repeat(200_000);
+    // Precondition: this really does report a deep escaping.
+    expect(escapeDepthOf(solidBackslashes)).toBeGreaterThan(15);
+
+    // The gate is the point: without it this input's reported depth would build
+    // twenty exponentially growing forms for a secret it cannot contain.
+    expect(scrubber.needleCountFor(solidBackslashes)).toBe(0);
+    expect(scrubber.scrubString(solidBackslashes)).toBe(solidBackslashes);
+    // And the anchor being present still finds the value, so the gate is a
+    // precondition and not a second cliff.
+    const withSecret = `${solidBackslashes}${quoted.value}`;
+    expect(scrubber.needleCountFor(withSecret)).toBeGreaterThan(0);
+    expect(scrubber.scrubString(withSecret)).toContain("[secret:ODD_KEY]");
+  });
+
+  it("has no anchor for a value made only of escapable characters", () => {
+    // Then there is nothing to test against and generation proceeds as before,
+    // rather than the empty anchor matching everything or nothing by accident.
+    expect(literalAnchorOf('"\\\n"')).toBe("");
+    const oddball = { name: "WEIRD", value: '"""\\\\""""' };
+    const scrubber = createSecretScrubber([oddball])!;
+    expect(scrubber.scrubString(`x${oddball.value}y`)).toBe("x[secret:WEIRD]y");
+  });
+
   it("leaves a large UNESCAPED payload untouched, and cheaply", () => {
     // The depth bound is read off the input's own longest backslash run, not
     // off its size. Prose carrying no escaping at all resolves to depth 1 no
@@ -307,6 +350,9 @@ describe("scrubDeep", () => {
     const scrubber = createSecretScrubber([quoted])!;
     const prose = "lorem ipsum dolor sit amet. ".repeat(40_000);
 
+    // Unescaped prose is depth 1 however large, so one needle per secret.
+    expect(scrubber.needleCountFor(prose)).toBe(0); // anchor absent
+    expect(scrubber.needleCountFor(`${prose}${quoted.value}`)).toBe(2);
     expect(scrubber.scrubString(prose)).toBe(prose);
     // Still finds a genuine occurrence in a payload of that size.
     expect(scrubber.scrubString(`${prose}${quoted.value}`)).toBe(

@@ -73,6 +73,17 @@ export type SecretScrubber = {
   scrubSerializedJson(input: string): string;
   /** How many values are registered — for tests and diagnostics only. */
   readonly size: number;
+  /**
+   * How many needles this input would actually be searched with — for tests
+   * and diagnostics only.
+   *
+   * Exists because the two bounds that keep this cheap (the depth read off the
+   * input's escaping, and the anchor precondition) are PERFORMANCE properties:
+   * removing either changes no output, so no behavioural test can catch it.
+   * This file has already shipped one bound that a later edit undid while every
+   * correctness test still passed.
+   */
+  needleCountFor(input: string): number;
 };
 
 function replacementFor(name: string): string {
@@ -122,6 +133,39 @@ export function escapeDepthOf(input: string): number {
   return Math.min(ESCAPE_DEPTH_CEILING, Math.floor(Math.log2(longestRun)) + 2);
 }
 
+/**
+ * The longest run of characters in `value` that JSON escaping never rewrites.
+ *
+ * Escaping only ever touches the special characters and the backslashes in
+ * front of them, so this substring appears VERBATIM in every escaped form of
+ * the value, at every depth. An input that does not contain it therefore cannot
+ * contain any form of this secret — which makes it a sound and very cheap
+ * precondition for generating those forms at all.
+ *
+ * That matters because the depth bound alone is not enough: a payload holding
+ * one pathological run of backslashes reports a deep escaping and would drag
+ * every registered secret out to twenty-odd forms, even though the payload
+ * plainly contains none of them. Measured at 1 MiB of solid backslashes, that
+ * was ~100 MiB of needles across 50 secrets, for a payload where not one could
+ * ever match.
+ *
+ * Empty when the value is made entirely of escapable characters, in which case
+ * there is no anchor to test and generation proceeds as before.
+ */
+export function literalAnchorOf(value: string): string {
+  let longest = "";
+  let current = "";
+  for (const char of value) {
+    if (JSON.stringify(char).slice(1, -1) === char) {
+      current += char;
+      if (current.length > longest.length) longest = current;
+    } else {
+      current = "";
+    }
+  }
+  return longest;
+}
+
 export function createSecretScrubber(
   secrets: readonly SecretRegistryEntry[]
 ): SecretScrubber | null {
@@ -132,7 +176,8 @@ export function createSecretScrubber(
   const entries = secrets
     .filter((entry) => entry.value.length >= MIN_SCRUBBABLE_LENGTH)
     .slice()
-    .sort((a, b) => b.value.length - a.value.length);
+    .sort((a, b) => b.value.length - a.value.length)
+    .map((entry) => ({ ...entry, anchor: literalAnchorOf(entry.value) }));
   if (entries.length === 0) return null;
 
   // Each secret contributes its raw form plus one form per level of JSON
@@ -219,6 +264,7 @@ export function createSecretScrubber(
   function buildNeedleLists(
     maxDepth: number,
     maxFormLength: number,
+    possible: readonly boolean[],
   ): {
     all: Needle[];
     /**
@@ -230,7 +276,10 @@ export function createSecretScrubber(
   } {
     const all: Needle[] = [];
     const json: Needle[] = [];
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
+      // Its literal anchor is absent, so no form of it — raw or escaped, at any
+      // depth — can occur in this input. Building them would be pure waste.
+      if (!possible[index]) continue;
       const replace = replacementFor(entry.name);
       all.push({ search: entry.value, replace });
       // Whether escaping is IDENTITY for this value is a different question
@@ -263,15 +312,21 @@ export function createSecretScrubber(
     json: Needle[];
   } {
     const maxDepth = escapeDepthOf(input);
+    // Which secrets could occur here at all. Cheap next to form building, and
+    // it collapses to all-ones or all-zeros for virtually every real payload,
+    // so the cache stays a handful of entries.
+    const possible = entries.map(
+      (entry) => entry.anchor === "" || input.includes(entry.anchor),
+    );
     // Rounded UP to a power of two so the key stays coarse: a form between the
     // real length and the rounded one is merely a needle too long to match,
     // never a missing one.
     const lengthExponent =
       input.length <= 1 ? 0 : Math.ceil(Math.log2(input.length));
-    const key = `${maxDepth}:${lengthExponent}`;
+    const key = `${maxDepth}:${lengthExponent}:${possible.map((p) => (p ? "1" : "0")).join("")}`;
     const cached = listCache.get(key);
     if (cached) return cached;
-    const built = buildNeedleLists(maxDepth, 2 ** lengthExponent);
+    const built = buildNeedleLists(maxDepth, 2 ** lengthExponent, possible);
     listCache.set(key, built);
     return built;
   }
@@ -436,5 +491,11 @@ export function createSecretScrubber(
     return scrubDeepInner(value, 0, new Set<object>());
   }
 
-  return { scrubString, scrubSerializedJson, scrubDeep, size: entries.length };
+  return {
+    scrubString,
+    scrubSerializedJson,
+    scrubDeep,
+    size: entries.length,
+    needleCountFor: (input: string) => needleListsFor(input).all.length,
+  };
 }
