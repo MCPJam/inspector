@@ -123,24 +123,75 @@ async function resolveBridgeEndpoint(
 
 /** Connect, and resolve only once the socket is actually open — a channel that
  *  resolves on construction would send its first frame into a dead socket. */
-function openWebSocket({
-  url,
-  headers,
-}: HarnessV1PortEndpoint): Promise<WebSocket> {
+/** How long a bridge socket may take to finish its handshake. */
+const BRIDGE_SOCKET_OPEN_TIMEOUT_MS = 30_000;
+
+/**
+ * Open the bridge socket, BOUNDED.
+ *
+ * A promise that only settles on `open` or `error` never settles at all against
+ * a port that accepts the TCP connection and then says nothing — which is a
+ * sandbox that is up but wedged, not a hypothetical. That matters most on the
+ * ATTACH rung: it is the first thing `doStart` does when it has coordinates,
+ * and its `catch` (the respawn fallback) cannot run for a promise that never
+ * rejects, so a wedged socket would strand the session instead of respawning
+ * it. Every other sandbox call in `doStart` already takes the caller's signal;
+ * this one now does too.
+ */
+function openWebSocket(
+  { url, headers }: HarnessV1PortEndpoint,
+  opts: { timeoutMs?: number; abortSignal?: AbortSignal } = {},
+): Promise<WebSocket> {
+  const timeoutMs = opts.timeoutMs ?? BRIDGE_SOCKET_OPEN_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, {
       headers: headers == null ? undefined : { ...headers },
     });
-    const onOpen = () => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off("open", onOpen);
       socket.off("error", onError);
+      opts.abortSignal?.removeEventListener("abort", onAbort);
+    };
+    const onOpen = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve(socket);
     };
     const onError = (error: Error) => {
-      socket.off("open", onOpen);
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(error);
     };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.terminate();
+      reject(
+        opts.abortSignal?.reason instanceof Error
+          ? opts.abortSignal.reason
+          : new Error("Aborted while opening the codex app-server bridge socket."),
+      );
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.terminate();
+      reject(
+        new Error(
+          `codex app-server bridge socket did not open within ${timeoutMs}ms.`,
+        ),
+      );
+    }, timeoutMs);
+    timer.unref?.();
     socket.once("open", onOpen);
     socket.once("error", onError);
+    opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -254,7 +305,12 @@ export function createCodexAppServer(
             token: coords.token,
           });
           const attachChannel: Channel = new SandboxChannel({
-            connect: () => openWebSocket(endpoint),
+            connect: () =>
+              openWebSocket(endpoint, {
+                ...(startOpts.abortSignal
+                  ? { abortSignal: startOpts.abortSignal }
+                  : {}),
+              }),
             outboundSchema: outboundMessageSchema,
             initialLastSeenEventId: coords.lastSeenEventId,
             onDiagnostic,
@@ -390,7 +446,13 @@ export function createCodexAppServer(
         token,
       });
       const channel: Channel = new SandboxChannel({
-        connect: () => openWebSocket(endpoint),
+        connect: () =>
+          openWebSocket(endpoint, {
+            timeoutMs,
+            ...(startOpts.abortSignal
+              ? { abortSignal: startOpts.abortSignal }
+              : {}),
+          }),
         outboundSchema: outboundMessageSchema,
         onDiagnostic,
         onBridgeError,
@@ -451,6 +513,20 @@ function createCodexAppServerSession(input: {
 }): HarnessV1Session {
   const { channel, sessionId } = input;
   let stopped = false;
+
+  /**
+   * The turn a channel close should settle, if any.
+   *
+   * ONE handler for the session, not one per turn. `SandboxChannel.onClose`
+   * returns no unsubscribe, so a per-turn registration accumulated a closure —
+   * and with it that turn's whole settlement scope — for the lifetime of the
+   * channel. A long session leaked one per prompt, and every stale handler
+   * still ran on close.
+   */
+  let activeTurnOnClose: ((reason: string | undefined) => void) | undefined;
+  channel.onClose((_code?: number, reason?: string) => {
+    activeTurnOnClose?.(reason);
+  });
   let latestThreadId = input.resumeThreadId;
   let latestFingerprint = input.turnConfigurationFingerprint;
   let pendingResumeThreadId = input.seedResumeThreadOnFirstPrompt
@@ -596,13 +672,18 @@ function createCodexAppServerSession(input: {
     // the turn keeps running in the bridge and its tail is replayed to the next
     // process, so wind down cleanly rather than failing the turn. Any other
     // mid-turn close is a real drop.
-    channel.onClose((_code?: number, reason?: string) => {
+    // Claim the session's single close handler for the duration of this turn,
+    // and release it on settlement so nothing is retained afterwards.
+    activeTurnOnClose = (reason) => {
       if (settled) return;
       if (reason === "suspended") settleSuccess();
       else
         settleError(
           new Error("codex app-server bridge closed before the turn finished."),
         );
+    };
+    unsubscribes.push(() => {
+      activeTurnOnClose = undefined;
     });
 
     const onAbort = () => {
@@ -890,16 +971,20 @@ function createCodexAppServerSession(input: {
        * thread on the preserved workdir rather than resuming the conversation
        * inside Codex — but being able to continue at all beats throwing here.
        */
+      // NEVER throws out of the stop reply. `stopped` was latched above, so
+      // `doDestroy` returns early and cannot recover the process or the socket
+      // — a rejection here would leave both alive on a box the detach path
+      // deliberately keeps running, and the caller has no second handle to
+      // clean up with. The closed-channel arm one line up already prefers a
+      // lossy payload to a throw; a timeout and a failed send are the same
+      // situation, so they settle the same way. `threadId` survives either way
+      // (it comes from `lifecycleData`); only the bridge's own data is lost.
       const data: unknown = channel.isClosed()
         ? {}
-        : await new Promise<unknown>((resolve, reject) => {
+        : await new Promise<unknown>((resolve) => {
             const timer = setTimeout(() => {
               unsubscribe();
-              reject(
-                new Error(
-                  `codex app-server session ${sessionId} did not reply to stop within 5s.`,
-                ),
-              );
+              resolve({});
             }, 5_000);
             timer.unref?.();
             const unsubscribe = channel.on("bridge-stop", (message) => {
@@ -909,10 +994,10 @@ function createCodexAppServerSession(input: {
             });
             try {
               channel.send({ type: "stop" } as InboundMessage);
-            } catch (error) {
+            } catch {
               clearTimeout(timer);
               unsubscribe();
-              reject(error);
+              resolve({});
             }
           });
       await settleProcess();

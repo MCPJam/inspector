@@ -112,8 +112,32 @@ async function main(): Promise<void> {
       }
     | undefined;
   let catalog = buildHostToolCatalog([]);
+  /**
+   * The config that is baked into `CODEX_HOME` when the runtime starts, and
+   * therefore CANNOT be changed on a running one.
+   *
+   * `web_search` is written by `prepareCodexHome()` and is not a `thread/start`
+   * parameter, so reusing the process across a change would silently run the
+   * new turn under the FIRST turn's setting. The turn fingerprint already
+   * forces a new thread; this forces a new runtime, which is a strictly bigger
+   * hammer and only reached when one of these actually changes.
+   */
+  let runtimeConfig: string | undefined;
+  const runtimeConfigOf = (start: StartMessage): string =>
+    JSON.stringify({ webSearch: start.webSearch ?? false });
 
   const ensureRuntime = async (start: StartMessage): Promise<void> => {
+    const wanted = runtimeConfigOf(start);
+    if (client && runtimeConfig !== undefined && runtimeConfig !== wanted) {
+      // Tear the old one down before rebuilding: the relay holds a port and the
+      // child holds the stale CODEX_HOME.
+      await client.kill();
+      await relay?.close();
+      client = undefined;
+      relay = undefined;
+      threadId = undefined;
+    }
+    runtimeConfig = wanted;
     if (client) return;
 
     relay = await startHostToolRelay({

@@ -29,6 +29,11 @@ export type HarnessCapabilities = {
 // for the session rather than refetching on every host-editor mount.
 const CACHE = new Map<string, HarnessCapabilities>();
 
+/** Test seam: the module-level cache would otherwise leak across cases. */
+export function __resetHarnessCapabilitiesCacheForTests(): void {
+  CACHE.clear();
+}
+
 /**
  * Fetch a harness's capabilities by id. `null` for an emulated host.
  *
@@ -86,5 +91,18 @@ export function useHarnessCapabilities(harnessId: string | null): {
     };
   }, [harnessId]);
 
-  return { capabilities, loading };
+  // MATCHED SYNCHRONOUSLY, not left to the effect. `setCapabilities` runs in an
+  // effect, so the render that first sees a NEW `harnessId` still holds the
+  // previous harness's state. That render is enough to do damage: the Behavior
+  // tab enables the approval switch off `supportsNativeToolApproval`, so
+  // switching a host from Claude Code to Codex would briefly show the switch
+  // live and let an approval setting be saved that the exec transport refuses
+  // pre-flight. Reporting `undefined` for the mismatched frame falls back to the
+  // static map, which is the honest answer while the real one is in flight.
+  const matched =
+    capabilities && capabilities.harnessId === harnessId
+      ? capabilities
+      : undefined;
+
+  return { capabilities: matched, loading };
 }

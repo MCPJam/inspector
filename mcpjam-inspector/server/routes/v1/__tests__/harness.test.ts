@@ -165,6 +165,35 @@ describe("v1 harness routes", () => {
       const res = await request("GET", "/api/v1/harness/pi/capabilities");
       expect(res.status).toBe(404);
     });
+
+    it("reports the MCP-surface flag, which is not the host-executed one", async () => {
+      // The distinction the refusal logic turns on: for a `native` harness the
+      // MCP flag governs, for a `host-executed` one it says nothing and the
+      // host-executed flag governs. Reading the wrong one is the bypass the
+      // capability set exists to make unrepresentable, so both are asserted.
+      const claude = await capabilities("claude-code");
+      expect(claude.mcpDelivery).toBe("native");
+      expect(claude.supportsMcpToolApproval).toBe(true);
+
+      const codex = await capabilities("codex");
+      expect(codex.mcpDelivery).toBe("host-executed");
+      // False, and inert: nothing reads it for a host-executed harness.
+      expect(codex.supportsMcpToolApproval).toBe(false);
+    });
+
+    it("404s for an empty harness id rather than resolving a default", async () => {
+      const res = await request("GET", "/api/v1/harness//capabilities");
+      expect([404, 400]).toContain(res.status);
+    });
+
+    it("refuses a request with no bearer", async () => {
+      // `requireVerifiedAuth` covers this route because it never calls Convex,
+      // so nothing downstream would otherwise re-check the token.
+      const res = await request("GET", "/api/v1/harness/codex/capabilities", {
+        token: null,
+      });
+      expect(res.status).toBe(401);
+    });
   });
 
   describe("GET builtin-tools", () => {

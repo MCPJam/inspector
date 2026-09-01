@@ -37,7 +37,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { CODEX_APPSERVER_BRIDGE_SOURCE } from "../../bootstrap/generated/codex-appserver-bridge.bundled.js";
 
 const LIVE = process.env.MCPJAM_CODEX_APPSERVER_LIVE === "true";
 const CODEX_BIN = process.env.MCPJAM_CODEX_BIN;
@@ -54,7 +53,7 @@ type FakeServer = { listen(): Promise<string>; close(): Promise<void> };
  * (`<bootstrap>/node_modules/@openai/codex/bin/codex.js`), so a change to that
  * layout fails here instead of inside a sandbox.
  */
-function prepareBootstrap(codexBin: string): string {
+async function prepareBootstrap(codexBin: string): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "mcpjam-codex-live-"));
   const codexPackage = join(dir, "node_modules", "@openai", "codex");
   mkdirSync(join(codexPackage, "bin"), { recursive: true });
@@ -74,6 +73,13 @@ spawn(${JSON.stringify(codexBin)}, process.argv.slice(2), { stdio: "inherit" })
     dirname(require.resolve("ws/package.json")),
     join(dir, "node_modules", "ws"),
     "dir",
+  );
+  // Loaded HERE, not imported at module scope. The bundle is gitignored and
+  // produced by `pretest`, while `describe.skipIf` runs only AFTER module
+  // evaluation — so a static import would fail collection on a direct vitest
+  // run even though this suite is meant to skip.
+  const { CODEX_APPSERVER_BRIDGE_SOURCE } = await import(
+    "../../bootstrap/generated/codex-appserver-bridge.bundled.js"
   );
   writeFileSync(join(dir, "bridge.mjs"), CODEX_APPSERVER_BRIDGE_SOURCE);
   return dir;
@@ -109,7 +115,7 @@ async function runLiveTurn(options: {
 }): Promise<LiveTurn> {
   const fake = await startFakeModel(options.script);
   const baseUrl = await fake.listen();
-  const bootstrapDir = prepareBootstrap(CODEX_BIN!);
+  const bootstrapDir = await prepareBootstrap(CODEX_BIN!);
   const workdir = mkdtempSync(join(tmpdir(), "mcpjam-codex-live-work-"));
   const token = "live-test-token";
   const frames: Frame[] = [];
