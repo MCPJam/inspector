@@ -176,6 +176,44 @@ test("an unverified or absent chain establishes no break", () => {
 	}
 });
 
+test("a withheld chain is refused even when it carries rows", () => {
+	// The wire shape for `unverified` is `{ status, analyzerVersion }` and
+	// nothing else, so the case above cannot tell the guard from its absence:
+	// delete `status !== "verified"` and it still renders nothing, because
+	// there was nothing to render either way.
+	//
+	// THIS is the case that pins the guard. A payload carrying a full set of
+	// rows under a non-verified status would render a confident "First break:
+	// Selection" from claims the derivation explicitly refused to stand behind
+	// — a location invented from data marked untrustworthy. The status decides,
+	// never the presence of rows.
+	for (const status of ["unverified", "absent"]) {
+		assert.equal(
+			formatFirstBreak({
+				diagnostics: {
+					items: [
+						{
+							chain: {
+								status,
+								firstFailedStage: "selection",
+								stages: [
+									{
+										stage: "selection",
+										state: "failed",
+										reason: "toolNotCalled",
+									},
+								],
+							},
+						},
+					],
+				},
+			}),
+			"",
+			`a ${status} chain must not render a break from rows it withheld`,
+		);
+	}
+});
+
 test("a run that reached NO stage names its bucket, not a location", () => {
 	// A setup abort and an evaluator error carry a failure category with no
 	// first failed stage at all — the derivation contract says so explicitly.

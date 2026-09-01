@@ -215,42 +215,58 @@ describe('watchRunUntilDone', () => {
     assert.strictEqual(order.filter((entry) => entry === 'update').length, 2);
   });
 
-  it('spends no second edit when the chain adds nothing to read', async () => {
-    // An `unverified` chain withholds its rows and an `absent` one never
-    // stored any; both re-render byte-identical to the verdict already on
-    // screen. Editing again would spend a write against Slack's rate limit
-    // to change nothing.
-    stubRoutes(
-      { status: 'completed', result: 'failed' },
-      {
-        ...DECISION_SUMMARY,
-        chain: { status: 'unverified' },
-        diagnostics: { items: [], complete: true },
-      },
-    );
-    /** @type {string[]} */
-    const order = [];
-    const client = /** @type {any} */ ({
-      chat: {
-        update: async () => {
-          order.push('update');
-          return { ok: true };
+  // Every summary shape that arrives fine and still has nothing to add. The
+  // chain lives at `diagnostics.items[0].chain` — a `chain` key at the top of
+  // the summary is read by nothing, so a fixture that put one there would test
+  // the EMPTY-ITEMS path under a comment claiming to test `unverified`.
+  // The shapes are the ones the wire actually sends: an `unverified` chain
+  // carries `{ status, analyzerVersion }` and nothing else. That the GUARD
+  // holds even when rows ARE present is pinned where `formatFirstBreak` lives,
+  // in surface-core's copy.test.js — the subject here is the watcher's edit
+  // count, not the renderer's refusal.
+  const NOTHING_TO_ADD = [
+    [
+      'an unverified chain, whose rows were withheld',
+      { complete: true, items: [{ chain: { status: 'unverified', analyzerVersion: 4 } }] },
+    ],
+    ['an absent chain, which never stored rows', { complete: true, items: [{ chain: { status: 'absent' } }] }],
+    ['no diagnostics at all', { complete: true, items: [] }],
+  ];
+
+  for (const [shape, diagnostics] of NOTHING_TO_ADD) {
+    it(`spends no second edit on ${shape}`, async () => {
+      // All three re-render byte-identical to the verdict already on screen,
+      // so editing again would spend a write against Slack's rate limit to
+      // change nothing.
+      stubRoutes({ status: 'completed', result: 'failed' }, { ...DECISION_SUMMARY, diagnostics });
+      /** @type {string[]} */
+      const order = [];
+      const client = /** @type {any} */ ({
+        chat: {
+          update: async () => {
+            order.push('update');
+            return { ok: true };
+          },
         },
-      },
+      });
+      await firstPoll(
+        watchRunUntilDone(client, {
+          runId: 'run_1',
+          url: 'https://app.test/run_1',
+          ctx,
+          channelId: 'C1',
+          statusTs: '1.0',
+          userId: 'U1',
+          logger,
+        }),
+      );
+      assert.strictEqual(
+        order.filter((entry) => entry === 'update').length,
+        1,
+        `expected only the verdict edit, got ${JSON.stringify(order)}`,
+      );
     });
-    await firstPoll(
-      watchRunUntilDone(client, {
-        runId: 'run_1',
-        url: 'https://app.test/run_1',
-        ctx,
-        channelId: 'C1',
-        statusTs: '1.0',
-        userId: 'U1',
-        logger,
-      }),
-    );
-    assert.strictEqual(order.filter((entry) => entry === 'update').length, 1);
-  });
+  }
 
   it('a rejecting completion hook is logged, never thrown', async () => {
     // An unhandled rejection here would take down a watcher whose outcome
