@@ -45,6 +45,8 @@ import {
   compareEvalRunOperation,
   getEvalGateWaiverOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
@@ -255,6 +257,12 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  // The DENOMINATOR half of the chain story, beside the run read that is
+  // the numerator half. `get_eval_run` says what one trial did and where it
+  // stopped; these say how much of the run was measured at all — and until
+  // now nothing outside the web app could ask.
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already
   // carries `gateWaiver`, so withholding the dedicated read would hide nothing

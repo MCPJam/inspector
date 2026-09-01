@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
+  HARNESS_DISPLAY_NAME,
   harnessControlState,
   type HarnessGatedControl,
 } from "@/lib/harness-capabilities";
@@ -86,6 +87,7 @@ describe("harnessControlState — loop-owned controls", () => {
 describe("harnessControlState — emulated engine", () => {
   it("enforces every control when there is no harness", () => {
     const controls: HarnessGatedControl[] = [
+      "modelId",
       "temperature",
       "requireToolApproval",
       "respectToolVisibility",
@@ -101,10 +103,81 @@ describe("harnessControlState — emulated engine", () => {
   it("fails OPEN for an unknown harness id rather than graying a control out", () => {
     const unknown = "pi" as HostConfigHarnessV2;
     expect(harnessControlState(unknown, "temperature").enforced).toBe(true);
+    // The model is the most consequential control to gray out by accident — a
+    // future harness id must not lose its model selector on a guess.
+    expect(harnessControlState(unknown, "modelId").enforced).toBe(true);
     // The derived arm needs its own fail-open: an id with no delivery
     // declaration must not silently read as `native` and disable the switch.
     expect(harnessControlState(unknown, "respectToolVisibility").enforced).toBe(
       true,
     );
+  });
+});
+
+describe("harnessControlState — who chooses the MODEL", () => {
+  /**
+   * The distinction this control exists for. Claude Code and Codex run on model
+   * credentials MCPJam brokers, so the host's selection IS what launches. The
+   * Cursor CLI authenticates with the customer's own Cursor account and that
+   * account picks the model, so a selection persists onto the host, shows in
+   * the editor, and reaches nothing — a saved setting that lies about what ran.
+   */
+  it("is enforced exactly for the harnesses whose models MCPJam brokers", () => {
+    expect(harnessControlState("claude-code", "modelId")).toEqual({
+      enforced: true,
+    });
+    expect(harnessControlState("codex", "modelId")).toEqual({ enforced: true });
+
+    const cursor = harnessControlState("cursor", "modelId");
+    expect(cursor.enforced).toBe(false);
+    // The note is what a user reads beside the disabled selector, so it has to
+    // name the account that actually decides — not read as an MCPJam limit.
+    expect(cursor.enforced === false && cursor.note).toMatch(
+      /Cursor account.*chooses the model/i,
+    );
+  });
+
+  it("leaves the emulated host's selector alone", () => {
+    // The emulated `cursor` host style (the IDE chat panel) carries no harness
+    // and picks its model normally. Only the CLI runtime is gated.
+    expect(harnessControlState(undefined, "modelId")).toEqual({
+      enforced: true,
+    });
+  });
+});
+
+describe("harnessControlState — the Cursor CLI runtime", () => {
+  it("enforces tool approval on its native surface", () => {
+    // Not a formality: the ACP bridge routes every native call through
+    // `session/request_permission`, so unlike Codex the turn genuinely pauses.
+    // Reading this as unenforced would tell users approval does nothing here.
+    expect(harnessControlState("cursor", "requireToolApproval")).toEqual({
+      enforced: true,
+    });
+  });
+
+  it("cannot filter tool visibility, because it connects to MCP servers itself", () => {
+    const state = harnessControlState("cursor", "respectToolVisibility");
+    expect(state.enforced).toBe(false);
+    expect(state.enforced === false && state.note).toMatch(
+      /connects to MCP servers itself/i,
+    );
+  });
+});
+
+describe("HARNESS_DISPLAY_NAME", () => {
+  it("names the CLI runtime, never the bare product", () => {
+    // "Cursor" alone is the emulated IDE chat-panel host style, which is a
+    // different thing a user can also attach. A label that did not distinguish
+    // them would make the two indistinguishable in every picker.
+    expect(HARNESS_DISPLAY_NAME.cursor).toBe("Cursor CLI");
+  });
+
+  it("names every harness that has a delivery declaration", () => {
+    // The two maps are keyed by the same union; a harness added to one and not
+    // the other renders as a blank or an id somewhere in the host UI.
+    for (const harness of HARNESSES) {
+      expect(HARNESS_DISPLAY_NAME[harness], harness).toBeTruthy();
+    }
   });
 });

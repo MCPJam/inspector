@@ -8,6 +8,12 @@ import {
 } from "./goal-completion-presentation";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+// One copy, deliberately. This module used to carry a byte-identical
+// `resolveTraceModel` (plus its own hand-copied `KNOWN_MODEL_PROVIDERS`), so a
+// provider added to the union had to be remembered in two places or the trace
+// header silently labelled the run `custom` — which is exactly how `cursor`
+// nearly shipped half-registered.
+import { resolveTraceModel } from "./compare-playground-helpers";
 import {
   PredicatesList,
   parseIterationPredicates,
@@ -49,11 +55,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
-import {
-  getModelById,
-  type ModelDefinition,
-  type ModelProvider,
-} from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
 import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
@@ -87,24 +88,6 @@ function formatToolCallsSummary(
   if (s.length <= maxLen) return s;
   return `${s.slice(0, maxLen - 1)}…`;
 }
-const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
-  "anthropic",
-  "azure",
-  "bedrock",
-  "openai",
-  "ollama",
-  "deepseek",
-  "google",
-  "meta",
-  "xai",
-  "mistral",
-  "moonshotai",
-  "openrouter",
-  "z-ai",
-  "minimax",
-  "qwen",
-  "custom",
-];
 
 function tryParseStructuredArgumentString(value: string): unknown | null {
   const trimmed = value.trim();
@@ -178,38 +161,6 @@ export function resolveFormattedArgumentValue(
       textValue.length > TOOL_ARGUMENT_BLOCK_THRESHOLD ||
       textValue.includes("\n"),
   };
-}
-
-function normalizeModelProvider(provider?: string): ModelProvider {
-  return KNOWN_MODEL_PROVIDERS.includes(provider as ModelProvider)
-    ? (provider as ModelProvider)
-    : "custom";
-}
-
-function resolveTraceModel(
-  iteration: EvalIteration,
-  testCase: EvalCase | null,
-): ModelDefinition {
-  const snapshotProvider = iteration.testCaseSnapshot?.provider;
-  const snapshotModel = iteration.testCaseSnapshot?.model;
-  const fallbackProvider = testCase?.models[0]?.provider;
-  const fallbackModel = testCase?.models[0]?.model;
-
-  const provider = snapshotProvider || fallbackProvider || "openai";
-  const model = snapshotModel || fallbackModel || "unknown-model";
-  const providerModelId =
-    model.startsWith(`${provider}/`) || !provider
-      ? model
-      : `${provider}/${model}`;
-
-  return (
-    getModelById(providerModelId) ??
-    getModelById(model) ?? {
-      id: providerModelId,
-      name: model.includes("/") ? model.split("/").slice(1).join("/") : model,
-      provider: normalizeModelProvider(provider),
-    }
-  );
 }
 
 function TraceBlobLoadErrorPanel({

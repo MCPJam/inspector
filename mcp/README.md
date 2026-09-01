@@ -79,6 +79,8 @@ so results respect the caller's project access.
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
+| `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
+| `list_eval_suite_stage_analytics` | List a suite's chain funnels newest-first, one document per run — a trend series, never an aggregate. Partition on the parity fields before claiming a trend; runs that do not share them are separate observations. | — |
 | `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
 | `get_eval_gate_waiver` | Read the audited override in force over an eval run's release gate — who granted it, why, and until when — or null. Available to anyone who can view the run. | — |
 | `list_eval_run_iterations` | List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. | ✅ |

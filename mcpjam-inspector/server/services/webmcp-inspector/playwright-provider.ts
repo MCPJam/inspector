@@ -16,6 +16,8 @@ import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import { existsSync } from "node:fs";
 import { ensureLocalChromiumInstalled } from "../../utils/browser-rendering-setup";
 import {
+  WEBMCP_FRAME_BOOST_INTERVAL_MS,
+  WEBMCP_FRAME_BOOST_WINDOW_MS,
   WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
   WEBMCP_FRAME_QUALITY,
@@ -133,6 +135,21 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
   private framesReceived = 0;
   /** Modifier keys Playwright currently believes are down. See `syncModifiers`. */
   private readonly heldModifiers = new Set<string>();
+  /**
+   * Where Playwright's virtual pointer was last put, so a `mouse.move` that
+   * would change nothing can be skipped. Forgotten on navigation: a new
+   * document starts with no hover state, and skipping the move into it would
+   * leave the page believing the pointer had never arrived.
+   */
+  private pointerAt: { x: number; y: number } | undefined;
+  /**
+   * Bumped by every main-frame navigation, so a `mouse.move` still in flight
+   * when the page changes cannot write its coordinate back afterwards.
+   * Clearing `pointerAt` alone is not enough: the clear happens during the
+   * await, and the assignment after it would restore a coordinate that
+   * describes the previous document.
+   */
+  private pointerGeneration = 0;
 
   constructor(
     private readonly browser: Browser,
@@ -231,6 +248,11 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       };
       if (frame.parentId) return;
       this.url = frame.url;
+      // A new document has no hover state, so the remembered coordinate no
+      // longer describes anything. Keeping it would let the wheel path skip
+      // the move that first tells the new page where the pointer is.
+      this.pointerAt = undefined;
+      this.pointerGeneration += 1;
       this.callbacks.onNavigated(frame.url, originOf(frame.url));
     });
   }
@@ -471,6 +493,23 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    */
   async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
     if (this.disposed) return;
+    // BEFORE the first awaited operation, not after it. The paint caused by
+    // the very first event of a batch can reach the screencast handler while
+    // this method is still awaiting, and a boost applied afterwards would
+    // arrive too late to speed up the one frame the person is actually
+    // waiting to see.
+    //
+    // NOT gated on who is watching: input arriving IS the signal that a human
+    // wants to see the result, and that is as true for a client on the SSE
+    // stream — the ones that felt the lag — as for one on the socket. Gating
+    // it would need subscriber state plumbed from the transport down into the
+    // provider, which is a coupling this layering exists to avoid.
+    if (this.screencasting) {
+      this.frameThrottle.boost(
+        WEBMCP_FRAME_BOOST_INTERVAL_MS,
+        WEBMCP_FRAME_BOOST_WINDOW_MS,
+      );
+    }
     for (const event of events) {
       try {
         await this.applyInput(event);
@@ -480,6 +519,37 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+  }
+
+  /**
+   * Move the virtual pointer, remembering where it ended up.
+   *
+   * `skipIfUnchanged` is for the wheel path: a scroll is a run of wheels at
+   * one coordinate and each move is an awaited CDP round trip, so the ones
+   * after the first buy nothing.
+   */
+  private async moveTo(
+    x: number,
+    y: number,
+    skipIfUnchanged = false,
+  ): Promise<void> {
+    const [clampedX, clampedY] = this.clamp(x, y);
+    if (
+      skipIfUnchanged &&
+      this.pointerAt?.x === clampedX &&
+      this.pointerAt?.y === clampedY
+    ) {
+      return;
+    }
+    const generation = this.pointerGeneration;
+    await this.page.mouse.move(clampedX, clampedY);
+    // Only if the page is still the one this move was aimed at. A navigation
+    // during the await already cleared the remembered coordinate; writing it
+    // back here would let the next same-coordinate wheel skip the move that
+    // first tells the NEW document where the pointer is.
+    if (generation === this.pointerGeneration) {
+      this.pointerAt = { x: clampedX, y: clampedY };
     }
   }
 
@@ -500,24 +570,29 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     }
     switch (event.kind) {
       case "mouse_move":
-        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        await this.moveTo(event.x, event.y);
         return;
       case "mouse_down":
-        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        await this.moveTo(event.x, event.y);
         await this.page.mouse.down({
           button: event.button,
           ...(event.clickCount ? { clickCount: event.clickCount } : {}),
         });
         return;
       case "mouse_up":
-        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        await this.moveTo(event.x, event.y);
         await this.page.mouse.up({
           button: event.button,
           ...(event.clickCount ? { clickCount: event.clickCount } : {}),
         });
         return;
       case "wheel":
-        await this.page.mouse.move(...this.clamp(event.x, event.y));
+        // Skip the positioning move when the pointer is provably already
+        // there. A wheel costs TWO awaited CDP round trips, and a scroll is a
+        // run of wheels at one coordinate — so this halves the server-side
+        // cost of the most latency-sensitive input there is. Only the move is
+        // skipped; the wheel itself always goes.
+        await this.moveTo(event.x, event.y, true);
         await this.page.mouse.wheel(event.deltaX, event.deltaY);
         return;
       case "key_down":

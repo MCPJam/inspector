@@ -25,11 +25,12 @@ import {
 } from "@/lib/webmcp-inspector/input-forwarder";
 import type {
   WebMcpActivityEntry,
-  WebMcpFrame,
   WebMcpInputEvent,
   WebMcpSessionStatus,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
+import type { WebMcpLiveFrame } from "@/stores/webmcp-inspector-store";
+import { notePainted } from "@/lib/webmcp-inspector/frame-stats";
 
 /**
  * Cadence of the FALLBACK screenshot poll.
@@ -791,18 +792,32 @@ function ViewportPane({
   behaviour,
   onInput,
 }: {
-  frame: WebMcpFrame | undefined;
+  frame: WebMcpLiveFrame | undefined;
   fallbackScreenshot: string | undefined;
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
   behaviour: ViewportBehaviour;
-  onInput: (events: WebMcpInputEvent[]) => void;
+  /**
+   * RETURNS the store's promise, and that return value is load-bearing: the
+   * forwarder uses it as its in-flight clock for wheel flushing. Wrapping this
+   * in `void` would leave every scroll looking instantaneous to the forwarder
+   * and put one request on the wire per wheel event.
+   */
+  onInput: (events: WebMcpInputEvent[]) => void | Promise<void>;
 }) {
   // The screenshot is a FALLBACK for a stream that is meant to be running, not
   // a still to leave up once it stops. With Live view off, holding it would
   // freeze the pane on an old picture still labelled "live" — and the "Live
   // view is off" placeholder would never appear, because a source was present.
-  const source = frame?.data ?? (streaming ? fallbackScreenshot : undefined);
+  // The frame carries a ready-to-render `src` — a data URI when it came over
+  // SSE, a blob URL when it came over the socket — so the pane is indifferent
+  // to which transport delivered it. The screenshot fallback is still bare
+  // base64 and is wrapped here.
+  const source =
+    frame?.src ??
+    (streaming && fallbackScreenshot
+      ? `data:image/jpeg;base64,${fallbackScreenshot}`
+      : undefined);
   /**
    * Whether this pane drives the page. Read from the one exhaustive table
    * rather than re-derived here, so a new transport kind cannot answer this
@@ -1019,10 +1034,33 @@ function ViewportPane({
             // images described identically would give a screen reader no way
             // to tell the live view from a snapshot someone took.
             ref={imageRef}
-            src={`data:image/jpeg;base64,${source}`}
+            src={source}
             alt="Live view of the inspected page"
             className="pointer-events-none h-full w-full object-contain select-none"
             draggable={false}
+            // The one place a paint is observable. Dark unless the frame-stats
+            // flag is set; see lib/webmcp-inspector/frame-stats.
+            //
+            // Deferred to the next animation frame, because `load` fires when
+            // the image has DECODED, not when the compositor has shown it —
+            // recording there would report a number consistently smaller than
+            // the thing being measured. Re-checked after the wait, so a frame
+            // superseded before it was ever shown is not counted as one that
+            // was.
+            onLoad={(event) => {
+              const image = event.currentTarget;
+              if (!frame || image.currentSrc !== frame.src) return;
+              const painted = frame;
+              requestAnimationFrame(() => {
+                // `isConnected` as well as the src: the pane can unmount
+                // between the decode and this frame, and a detached element
+                // was never shown — recording it would put a paint that never
+                // happened into the percentiles.
+                if (image.isConnected && image.currentSrc === painted.src) {
+                  notePainted(painted);
+                }
+              });
+            }}
             // Frames arrive faster than a decode; letting the browser paint the
             // previous one until this decodes is what keeps the pane from
             // flashing black between frames.
