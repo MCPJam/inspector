@@ -1368,6 +1368,38 @@ describe("webmcp inspector store — frame transport", () => {
     expect(ws.sent).toHaveLength(1);
   });
 
+  it("does NOT ping while the document is hidden, and resumes when it shows", async () => {
+    vi.useFakeTimers();
+    // Shadows the prototype getter; the delete in `finally` restores it.
+    const setVisibility = (value: DocumentVisibilityState) =>
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => value,
+      });
+    try {
+      setVisibility("hidden");
+      const { ws } = await openFrameSession();
+      ws.open();
+
+      // The server refreshes the session's idle deadline on every ping, so a
+      // hidden tab that kept pinging would hold the session — a real Chromium,
+      // and one of the capacity slots — unreapable for as long as the tab
+      // existed anywhere in the browser. Hidden already means "not watching"
+      // to the rest of this feature: the pane stops the screencast on the very
+      // same signal.
+      vi.advanceTimersByTime(120_000);
+      expect(ws.sent).toHaveLength(0);
+
+      // The socket stayed open, so coming back needs no handshake and is at
+      // most one interval from telling the server someone is watching again.
+      setVisibility("visible");
+      vi.advanceTimersByTime(30_000);
+      expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
+    } finally {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+    }
+  });
+
   it("clears the frame and its blob when the stream stops", async () => {
     const revokedUrls: string[] = [];
     setFramePresenterForTests(
