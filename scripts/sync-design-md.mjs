@@ -299,12 +299,35 @@ function buildFrontMatter(modes) {
 const CONTRAST_BEGIN = "<!-- BEGIN GENERATED: contrast — run npm run design:sync -->";
 const CONTRAST_END = "<!-- END GENERATED: contrast -->";
 
+/*
+ * Reading pairs whose names do not follow the `X`/`X-foreground` convention.
+ *
+ * Discovery by suffix covers most of the palette, but not every surface names
+ * its text token that way — and a surface the audit cannot see is one the
+ * prose can keep making claims about after the values move. These are listed
+ * explicitly so they are audited like the rest.
+ */
+const EXPLICIT_PAIRS = [
+  ["--background", "--foreground"],
+  ["--code-bg", "--code-text"],
+];
+
 /**
- * Every `X` / `X-foreground` pair in the palette, discovered rather than
- * listed, so a new role cannot quietly skip the audit.
+ * Every surface/text pair in the palette: the `X`/`X-foreground` convention
+ * discovered rather than listed, plus the exceptions above. Discovery is the
+ * point — a new role cannot quietly skip the audit.
  */
 function foregroundPairs(lightVars) {
-  const pairs = [["--background", "--foreground"]];
+  const pairs = [];
+  for (const [surface, text] of EXPLICIT_PAIRS) {
+    if (!lightVars.has(surface) || !lightVars.has(text)) {
+      throw new Error(
+        `Contrast audit expects ${surface} and ${text} in tokens.css. ` +
+          "Update EXPLICIT_PAIRS in scripts/sync-design-md.mjs if a token was renamed.",
+      );
+    }
+    pairs.push([surface, text]);
+  }
   for (const cssVar of lightVars.keys()) {
     if (!cssVar.endsWith("-foreground")) continue;
     const base = cssVar.slice(0, -"-foreground".length);

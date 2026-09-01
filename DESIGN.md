@@ -257,6 +257,7 @@ solid fill.
 | `background` | 10.98 — AA, any text | 8.33 — AA, any text |
 | `popover` | 15.18 — AA, any text | 10.48 — AA, any text |
 | `accent` | 12.16 — AA, any text | 15.97 — AA, any text |
+| `code-bg` | 15.20 — AA, any text | 13.62 — AA, any text |
 | `card` | 17.50 — AA, any text | 14.39 — AA, any text |
 
 <!-- END GENERATED: contrast -->
