@@ -649,6 +649,36 @@ describe("PlaywrightWebMcpSession screencast", () => {
     expect(h.stills).toHaveBeenCalledTimes(2);
   });
 
+  it("still owes the substitute when another capture holds the slot", async () => {
+    // A timeline screenshot in flight — the invoke pane asks for one whenever
+    // a tool runs, and it goes through the same CDP command as a still.
+    const held = heldStill();
+    const h = await startedWithFakeClock({ still: held.still });
+    await h.session.setScreencast(true);
+    const timeline = h.session.captureScreenshot();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    // The page's LAST paint, over the cap, while that capture holds the slot.
+    // Nothing repaints after it, so no later frame comes back for this.
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1), 1),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.frames).toHaveLength(0);
+
+    held.release();
+    await timeline;
+    await vi.advanceTimersByTimeAsync(WEBMCP_HOUSEKEEPING_INTERVAL_MS);
+
+    // Refused for the slot is not refused for good. Read as a plain capture
+    // failure, this substitute is dropped and the pane keeps an older picture
+    // for as long as the page stays quiet — which, for a page that has stopped
+    // painting, is forever.
+    expect(h.frames.map((frame) => frame.data)).toEqual([SMALL_STILL]);
+  });
+
   it("paces substitute captures on a page that never fits", async () => {
     // Fake clock, because the whole claim is about a rate: with a real one,
     // "how many captures happened before the next tick" is whatever the

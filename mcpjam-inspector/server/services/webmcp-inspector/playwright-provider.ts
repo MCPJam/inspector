@@ -133,6 +133,22 @@ function withTimeout<T>(
   });
 }
 
+/**
+ * What one `Page.captureScreenshot` attempt produced.
+ *
+ * Three outcomes, not two, because "no picture" hides a distinction the
+ * callers need: a capture the browser REFUSED is final, while one this
+ * provider declined to send — because another was already outstanding, see
+ * `captureInFlight` — is a picture that is still owed. Collapsing them drops
+ * the substitute a refused frame asked for, on the one page that cannot
+ * recover from it: one whose last paint was over the cap and which then
+ * stopped painting, so no later frame and no timer comes back for it.
+ */
+type StillAttempt =
+  | { got: "picture"; data: string }
+  | { got: "busy" }
+  | { got: "failed" };
+
 /** As in the widget harness: a hung close must not block shutdown. */
 async function waitForClose(promise: Promise<unknown> | undefined) {
   if (!promise) return;
@@ -625,10 +641,10 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * part of the page across the pane and put every click at the wrong
    * coordinate. This degrades QUALITY only, never geometry.
    */
-  private async captureStill(quality: number): Promise<string | undefined> {
+  private async captureStill(quality: number): Promise<StillAttempt> {
     // Nothing to gain by asking a browser that has not answered the last one,
     // and something to lose — see `captureInFlight`.
-    if (this.captureInFlight) return undefined;
+    if (this.captureInFlight) return { got: "busy" };
     this.captureInFlight = true;
     const free = () => {
       this.captureInFlight = false;
@@ -654,12 +670,14 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       const result = (await withTimeout(sent, STILL_TIMEOUT_MS)) as
         | { data?: string }
         | undefined;
-      return typeof result?.data === "string" ? result.data : undefined;
+      return typeof result?.data === "string"
+        ? { got: "picture", data: result.data }
+        : { got: "failed" };
     } catch {
       // A `send` that threw synchronously registered nothing to release it.
       // Idempotent, so the settled-command path above may also have run.
       free();
-      return undefined;
+      return { got: "failed" };
     }
   }
 
@@ -698,7 +716,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     const generation = this.captureGeneration;
     try {
       for (const quality of qualities) {
-        const data = await this.captureStill(quality);
+        const attempt = await this.captureStill(quality);
         // Re-checked after EVERY await: a still that lands behind a real frame
         // would drag the pane backwards to an older picture, and one that
         // lands after a navigation or a stream restart would repaint it with a
@@ -706,7 +724,22 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         if (this.disposed || !this.screencasting) return;
         if (this.framesReceived !== frames) return;
         if (this.captureGeneration !== generation) return;
-        if (data === undefined) return;
+        if (attempt.got === "busy") {
+          // Not a refusal of this picture — another capture simply holds the
+          // slot — so it is still owed, and both callers leave a way back to
+          // it rather than dropping it.
+          //
+          // An oversize substitute is the ONLY picture its frame will ever
+          // produce: the frame itself was refused for its size, and a page
+          // that has stopped painting sends no other. The settle still
+          // un-latches instead, so the next quiet tick takes it — `-1` is the
+          // field's own "not taken yet".
+          if (reason === "oversize") this.oversizePending = true;
+          else this.settleGeneration = -1;
+          return;
+        }
+        if (attempt.got === "failed") return;
+        const data = attempt.data;
         if (Buffer.byteLength(data, "base64") > WEBMCP_FRAME_MAX_BYTES) {
           continue;
         }
@@ -1079,10 +1112,14 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    */
   async captureScreenshot(): Promise<string | undefined> {
     for (const quality of SCREENSHOT_QUALITY_LADDER) {
-      const data = await this.captureStill(quality);
-      if (data === undefined) return undefined;
-      if (Buffer.byteLength(data, "base64") <= SCREENSHOT_MAX_BYTES) {
-        return data;
+      const attempt = await this.captureStill(quality);
+      // Both non-pictures answer the same way here, and the caller reads them
+      // the same way: "no new picture", which the client holds its current one
+      // through. The poll comes back in a second, which is sooner than any
+      // retry this could arrange.
+      if (attempt.got !== "picture") return undefined;
+      if (Buffer.byteLength(attempt.data, "base64") <= SCREENSHOT_MAX_BYTES) {
+        return attempt.data;
       }
     }
     // Nothing fit. The timeline can say "no screenshot"; it must not carry a
