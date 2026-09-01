@@ -273,11 +273,17 @@ describe("scrubDeep", () => {
     expect(JSON.stringify(out)).not.toContain(STRIPE.value);
   });
 
-  it("preserves deeply nested PRIMITIVES instead of capping them", () => {
-    // The depth cap exists to stop descent, and a leaf is not a descent. A
-    // number, boolean or null cannot recurse and cannot hide a credential, so
-    // capping one replaced real tool data with the marker string — changing
-    // both the value and its type — at any nesting past the cap.
+  it("caps a deeply nested OBJECT at the depth frontier", () => {
+    // Note what this does and does not show. The leaves here sit 30 levels
+    // down, well past the cap, so they are never reached — the object above
+    // them becomes the marker and takes them with it. That is the correct
+    // behaviour and worth pinning, but it is a test of the FRONTIER, not of
+    // the primitive exemption; the leaves could be anything.
+    //
+    // The exemption itself is the test below, where the primitives sit at the
+    // boundary and are actually visited. Keeping the two apart matters: the
+    // mutation that broke the exemption failed only that one, which is the
+    // tell that this test never exercised it.
     let deep: Record<string, unknown> = {
       n: 42,
       b: true,
@@ -305,8 +311,12 @@ describe("scrubDeep", () => {
     expect(cursor).toBe("[truncated: max depth]");
   });
 
-  it("keeps a primitive at the cap boundary intact", () => {
-    // Directly: an object whose own leaves sit exactly at the cap depth.
+  it("preserves a PRIMITIVE at the cap boundary instead of marking it", () => {
+    // The exemption, exercised: these leaves are shallow enough to be visited,
+    // so the guard ordering in `scrubDeepInner` is what decides their fate. A
+    // leaf is not a descent — a number, boolean or null cannot recurse and
+    // cannot hide a credential — so capping one would replace real tool data
+    // with the marker string, changing both the value and its type.
     let deep: Record<string, unknown> = { n: 7, b: false, nil: null };
     for (let i = 0; i < 7; i++) deep = { nested: deep };
     const serialized = JSON.stringify(
