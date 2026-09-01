@@ -895,6 +895,28 @@ function uncategorisedNextAction(
     : DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION;
 }
 
+/**
+ * One iteration's stage rows, as the chain a reader may believe.
+ *
+ * EXPORTED because a second surface needs the SAME answer. D9's diagnostics
+ * cover non-passing trials only — the filter is deliberate and lives in
+ * `assembleDiagnostics` — so a reader that wants a PASSING trial's chain has
+ * to go to the iterations resource, and it must arrive at `verified` /
+ * `unverified` / `absent` by exactly this route.
+ *
+ * The whole DERIVATION is parsed, never the rows one at a time. Row-level
+ * validation accepts five rows, or six in the wrong order, and a renderer that
+ * numbers cards by position would then publish a different claim about which
+ * stages were blocked — `notReached` is derived from POSITION. The
+ * six-rows-in-order refinement lives in `stageDerivationSchema`, and this is
+ * the only client-reachable way to apply it.
+ */
+export function assembleEvalRunDecisionChain(
+  iteration: EvalRunDecisionIterationInput
+): EvalRunDecisionChain {
+  return assembleChain(iteration);
+}
+
 function assembleChain(
   iteration: EvalRunDecisionIterationInput
 ): EvalRunDecisionChain {
