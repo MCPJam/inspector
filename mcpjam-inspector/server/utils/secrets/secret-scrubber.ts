@@ -204,17 +204,34 @@ export function createSecretScrubber(
    * keep.
    */
   const MAX_SCRUB_DEPTH = 8;
+  /**
+   * Stand-ins for content this pass refuses to descend into. Deliberately
+   * spelled like the bounding pass's own markers, because that is exactly what
+   * they mean to a reader of the payload: something was here and was dropped.
+   */
+  const DEPTH_MARKER = "[truncated: max depth]";
+  const CYCLE_MARKER = "[truncated: circular reference]";
 
   function scrubDeepInner<T>(value: T, depth: number, seen: Set<object>): T {
     if (typeof value === "string") {
       return scrubString(value) as unknown as T;
     }
-    // Beyond the cap, hand the value back untouched rather than descending.
-    // Bounding runs next and replaces anything this deep with its own marker,
-    // so nothing unscrubbed survives into the response.
-    if (depth >= MAX_SCRUB_DEPTH) return value;
+    // THE INVARIANT: this function never returns content it did not scrub.
+    //
+    // Both of the guards below originally handed the RAW value back — the
+    // obvious way to stop recursing. That is wrong for a scrubber, and
+    // measurably so at the cycle guard: a back-reference sits at some depth
+    // below the cap, so returning the original object spliced an UNSCRUBBED
+    // subtree into the scrubbed result. Serialization then walked it, and a
+    // credential inside it reached the output. Relying on the caller's later
+    // pass to catch that is not enough either — if the payload is oversized,
+    // the cut can land mid-credential and no needle matches a fragment.
+    //
+    // Markers instead. They also make the result acyclic and shallow, so the
+    // bounding pass that runs next cannot rediscover either problem.
+    if (depth >= MAX_SCRUB_DEPTH) return DEPTH_MARKER as unknown as T;
     if (Array.isArray(value)) {
-      if (seen.has(value)) return value;
+      if (seen.has(value)) return CYCLE_MARKER as unknown as T;
       seen.add(value);
       const out = value.map((item) =>
         scrubDeepInner(item, depth + 1, seen),
@@ -223,7 +240,7 @@ export function createSecretScrubber(
       return out;
     }
     if (value && typeof value === "object") {
-      if (seen.has(value as object)) return value;
+      if (seen.has(value as object)) return CYCLE_MARKER as unknown as T;
       // Preserve non-plain objects (Date, Uint8Array, …) by identity: they hold
       // no string leaves worth rewriting, and rebuilding them as plain objects
       // would corrupt the payload far more than a missed scrub would.

@@ -250,6 +250,29 @@ describe("scrubDeep", () => {
     );
   });
 
+  it("never hands back UNSCRUBBED content at a cycle back-reference", () => {
+    // The guard that stops the recursion must not splice the original object
+    // into the result: a back-reference sits below the depth cap, so returning
+    // it verbatim reinserts a subtree the scrubber never touched. Whatever the
+    // caller does next — serialize, truncate, scrub again — a credential that
+    // got back in this way can survive, because a value cut mid-way matches no
+    // needle.
+    const cyclic: Record<string, unknown> = { key: STRIPE.value };
+    cyclic.self = cyclic;
+    const out = createSecretScrubber([STRIPE])!.scrubDeep(cyclic);
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain(STRIPE.value);
+    // And the result is acyclic, so a later pass cannot rediscover the cycle.
+    expect(() => JSON.stringify(out)).not.toThrow();
+  });
+
+  it("never hands back UNSCRUBBED content past the depth cap", () => {
+    let deep: Record<string, unknown> = { key: STRIPE.value };
+    for (let i = 0; i < 50; i++) deep = { nested: deep };
+    const out = createSecretScrubber([STRIPE])!.scrubDeep(deep);
+    expect(JSON.stringify(out)).not.toContain(STRIPE.value);
+  });
+
   it("passes non-plain objects through by identity", () => {
     // Rebuilding a Date or a typed array as a plain object would corrupt the
     // payload far more than a missed scrub would.

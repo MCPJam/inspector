@@ -173,6 +173,24 @@ export function joinToolCalls(
   }
   const scrub = <T>(value: T): T =>
     scrubber ? scrubber.scrubDeep(value) : value;
+  /**
+   * The scrub that runs AFTER bounding, dispatched on what bounding produced.
+   *
+   * `boundPayload` returns either structured data or, when it truncated, a
+   * SERIALIZED JSON PREFIX. Those need different needles, and using the wrong
+   * one is not merely ineffective: inside serialized JSON a value's real
+   * occurrences are escaped, so searching the raw form can only match by
+   * coincidence — including against the document's own punctuation — and
+   * replacing that rewrites structure in a payload which never held the
+   * secret. `scrubSerializedJson` exists for exactly this and the scrubber's
+   * own contract says so; the first version of this call site ignored it.
+   */
+  const scrubBounded = <T>(value: T): T => {
+    if (!scrubber) return value;
+    return typeof value === "string"
+      ? (scrubber.scrubSerializedJson(value) as unknown as T)
+      : scrubber.scrubDeep(value);
+  };
   return toolCalls.map((call) => {
     const result = resultsById.get(call.toolCallId);
     // Scrubbed BEFORE bounding. This was the other way round, and the reason
@@ -206,7 +224,7 @@ export function joinToolCalls(
       return {
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        input: scrub(input.value),
+        input: scrubBounded(input.value),
         status: "error" as const,
         // Not "the tool failed" — "no result reached us". The distinction
         // matters: an aborted turn and a tool that returned an error payload
@@ -220,11 +238,11 @@ export function joinToolCalls(
     return {
       toolCallId: call.toolCallId,
       toolName: call.toolName ?? result.toolName ?? "unknown",
-      input: scrub(input.value),
+      input: scrubBounded(input.value),
       status: isErrorOutput(result.output)
         ? ("error" as const)
         : ("ok" as const),
-      output: scrub(output.value),
+      output: scrubBounded(output.value),
       ...(input.truncated || output.truncated
         ? { truncated: true as const }
         : {}),
