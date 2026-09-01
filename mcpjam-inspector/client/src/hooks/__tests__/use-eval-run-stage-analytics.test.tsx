@@ -68,6 +68,79 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("a provisional document is re-asked for until it settles", () => {
+  // A document is materialized `provisional` while a judge fanout is pending
+  // and REPLACED by a `final` one when that settles. The effect keys on ids and
+  // the run's terminal status, neither of which moves at that instant, so a
+  // page open across the transition showed provisional numbers until reload.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const provisional = () =>
+    stageAnalyticsVariation({ materializationState: "provisional" });
+  const settled = () => stageAnalyticsVariation({ materializationState: "final" });
+
+  it("asks again while provisional, and serves the settled document", async () => {
+    fetchMock
+      .mockResolvedValueOnce(provisional())
+      .mockResolvedValue(settled());
+
+    const { latest } = renderHook();
+    await vi.waitFor(() => expect(latest().status).toBe("ready"));
+    expect(latest().document?.materializationState).toBe("provisional");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.waitFor(() =>
+      expect(latest().document?.materializationState).toBe("final"),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("STOPS once the document is final", async () => {
+    // The half that makes this a bounded re-ask rather than a poll. Without it
+    // every settled run would keep reading forever.
+    fetchMock.mockResolvedValue(settled());
+
+    const { latest } = renderHook();
+    await vi.waitFor(() => expect(latest().status).toBe("ready"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after the budget rather than polling forever", async () => {
+    // A fanout that never settles must cost a handful of reads, not one per
+    // interval until the tab is closed.
+    fetchMock.mockResolvedValue(provisional());
+
+    const { latest } = renderHook();
+    await vi.waitFor(() => expect(latest().status).toBe("ready"));
+
+    // Stepped one delay at a time: each re-ask is only SCHEDULED once React
+    // has processed the previous response, so a single large jump would fire
+    // one timer and then find nothing pending — and would have "passed" this
+    // test by measuring the wrong thing.
+    for (const [index, delay] of [3_000, 8_000, 20_000, 45_000].entries()) {
+      await vi.advanceTimersByTimeAsync(delay);
+      await vi.waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledTimes(index + 2),
+      );
+    }
+
+    // The initial read plus one per configured delay, and then nothing more,
+    // however long the fanout stays stuck.
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+});
+
 describe("useEvalRunStageAnalytics", () => {
   it("reads the run and reports ready with its document", async () => {
     fetchMock.mockResolvedValue(GOLDEN_STAGE_ANALYTICS);
