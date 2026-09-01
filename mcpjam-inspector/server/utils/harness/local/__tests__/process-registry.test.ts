@@ -12,11 +12,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  probeProcess,
   supportsOwnershipProof,
   readProcessBirthIdentity,
 } from "../process-identity.js";
 import {
   forgetProcess,
+  janitorOutcomeForUnsettled,
   listProcessRecords,
   mintSupervisorNonce,
   reclaimAbandonedProcesses,
@@ -54,6 +56,20 @@ function record(
     ...overrides,
   };
 }
+
+/**
+ * A detached group leader that spawns one long-lived grandchild, reports its
+ * pid and then idles. Killing the leader leaves the GROUP live with its leader
+ * gone — the shape that makes a recorded pgid unprovable.
+ */
+const LEADER_WITH_SURVIVOR = [
+  "const{spawn}=require('node:child_process');",
+  "const k=spawn(process.execPath,['-e',",
+  JSON.stringify("setInterval(()=>{},1000)"),
+  "],{stdio:'ignore'});",
+  "console.log(k.pid);",
+  "setInterval(()=>{},1000);",
+].join("");
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-registry-")));
@@ -172,15 +188,33 @@ describe("the durable record", () => {
   });
 });
 
+describe("reporting an unsettled termination", () => {
+  it("keeps 'could not prove' apart from 'not ours'", () => {
+    // The janitor said `not-owned` for both, which announces a pid-reuse
+    // mismatch that was never established. They want opposite follow-ups: a
+    // real mismatch is terminal and the record should stay for a human to look
+    // at, while an unprovable answer is transient and the next sweep should
+    // just try again. Every other blind spot in this file already says
+    // `skipped-unprovable`.
+    //
+    // This stopped being academic when the group signal was gated on an
+    // ownership anchor: `unknown` became a routine answer for a tree whose
+    // root exited on its own, not just a rare probe failure.
+    expect(janitorOutcomeForUnsettled("unknown")).toBe("skipped-unprovable");
+    expect(janitorOutcomeForUnsettled("not-owned")).toBe("not-owned");
+    expect(janitorOutcomeForUnsettled("escaped")).toBe("escaped");
+  });
+});
+
 describe("the janitor", () => {
   it.skipIf(!canOwnProcesses)(
     "keeps a record whose group it could not vouch for while survivors remain",
     async () => {
-      // A malformed `processGroupIdentity` is a reason not to SIGNAL the
-      // group; it is an even stronger reason not to throw away the only
-      // durable handle on a tree nobody has looked at. The earlier version
-      // skipped the signal and then deleted the record anyway, leaving the
-      // survivors unreapable.
+      // A record the janitor cannot make sense of must not lose its handle:
+      // an earlier version deleted it anyway, leaving the survivors
+      // unreapable. (The `processGroupIdentity` gate this once gated a signal
+      // on is gone — see the test below — but a malformed record still has to
+      // keep its survivors visible.)
       const { spawn } = await import("node:child_process");
       // A group leader that spawns a grandchild, then dies: the group outlives
       // it, which is exactly the case the check exists for.
@@ -223,6 +257,104 @@ describe("the janitor", () => {
         /* already gone */
       }
       await forgetProcess("s-unvouched");
+    },
+  );
+
+  it.skipIf(!canOwnProcesses)(
+    "reports survivors of a dead root without signalling their group",
+    async () => {
+      // The janitor reaches this branch only for a record whose owning
+      // supervisor has PROVABLY exited, so arbitrary time has passed since
+      // anything of ours was last in that group.
+      //
+      // A pid in use as a process-group id is not reissued while that group
+      // has members — but that is a promise about a group that still has one,
+      // not about one that emptied. If this tree finished normally its id went
+      // free, and any unrelated process could since have taken that pid, led a
+      // new group with it and exited, leaving a live group under our recorded
+      // id (an ordinary shell pipeline whose first stage exits early does
+      // exactly this). Nothing here can tell those apart, so the survivors are
+      // reported and the record kept, and NO signal is sent.
+      const { spawn } = await import("node:child_process");
+      const leader = spawn(process.execPath, ["-e", LEADER_WITH_SURVIVOR], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const pid = leader.pid!;
+      // Everything from here is guarded: a rejected handshake or a failed
+      // assertion outside the `try` would leak a detached leader and its
+      // child, and nothing reaps a detached group leader.
+      let survivor = 0;
+      try {
+        survivor = Number(
+          await new Promise<string>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("the fixture never announced its child")),
+              10_000,
+            );
+            leader.once("error", reject);
+            leader.stdout!.once("data", (d: Buffer) => {
+              clearTimeout(timer);
+              resolve(d.toString().trim());
+            });
+          }),
+        );
+        expect(survivor).toBeGreaterThan(0);
+        // Kill the ROOT only. The group outlives it.
+        process.kill(pid, "SIGKILL");
+        for (let i = 0; i < 200; i++) {
+          if ((await probeProcess(pid)).state === "gone") break;
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        expect((await probeProcess(pid)).state).toBe("gone");
+
+        // A WELL-FORMED record: the group id is exactly the recorded root pid,
+        // which is what the removed gate vouched for. That is what makes this
+        // discriminating — the old code signalled precisely here.
+        await recordProcess(
+          record({
+            sessionId: "s-live-group",
+            rootPid: pid,
+            processGroupIdentity: String(pid),
+          }),
+        );
+        const results = await reclaimAbandonedProcesses({
+          liveNonce: "sup_live",
+        });
+        expect(results).toContainEqual({
+          sessionId: "s-live-group",
+          outcome: "escaped",
+        });
+        expect(
+          (await listProcessRecords()).find(
+            (r) => r.sessionId === "s-live-group",
+          ),
+        ).toBeDefined();
+        // The point of the test: the group was not signalled.
+        expect((await probeProcess(survivor)).state).toBe("alive");
+      } finally {
+        if (survivor > 0) {
+          try {
+            process.kill(survivor, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+        } else {
+          // Never named: the root has not been signalled, so its group id is
+          // provably still ours and this is the only way to reach the child.
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+        }
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+        await forgetProcess("s-live-group");
+      }
     },
   );
 

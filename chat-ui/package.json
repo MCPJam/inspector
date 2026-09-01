@@ -58,7 +58,7 @@
   "devDependencies": {
     "@ai-sdk/react": "^3.0.156",
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.1",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "ai": "^6.0.154",
