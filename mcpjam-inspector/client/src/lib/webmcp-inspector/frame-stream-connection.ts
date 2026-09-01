@@ -36,7 +36,11 @@ export const FRAME_WS_CLOSE = {
   UNAVAILABLE: 4503,
 } as const;
 
-/** How often to ping, to keep an idle socket off any proxy's idle timer. */
+/**
+ * How often to ping. A ping keeps an idle socket off any proxy's idle timer
+ * AND refreshes the session's idle deadline server-side — which is why it is
+ * only sent while the document is visible (see the guard in `onopen`).
+ */
 export const FRAME_WS_PING_MS = 30_000;
 
 export interface FrameStreamConnection {
@@ -57,6 +61,11 @@ export interface OpenFrameStreamOptions {
   wsFactory?: (url: string, protocols: string[]) => WebSocket;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  /**
+   * Whether anyone can currently SEE the pane; defaults to the document's
+   * visibility. Injected for tests, like the timers.
+   */
+  isVisible?: () => boolean;
 }
 
 /**
@@ -103,10 +112,26 @@ export function openWebMcpFrameStream(
   const ws = factory(url, token ? [token] : []);
   ws.binaryType = "arraybuffer";
 
+  const isVisible =
+    opts.isVisible ??
+    (() =>
+      typeof document === "undefined" ||
+      document.visibilityState === "visible");
+
   let ping: unknown;
 
   ws.onopen = () => {
     ping = setTimer(() => {
+      // A ping tells the server "someone is still watching", and the server
+      // refreshes the session's idle deadline on it. So it is only sent while
+      // that is actually TRUE: a hidden tab already stops the screencast on
+      // the same signal, and a ping from it would hold the session — a real
+      // Chromium, and one of the capacity slots — unreapable for as long as
+      // the tab existed anywhere in the browser. Skipping the tick (rather
+      // than tearing the socket down) means a person coming back is at most
+      // one interval away from claiming the session again, and if the reaper
+      // won the wait the 4404 close tells the ladder the honest story.
+      if (!isVisible()) return;
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "ping" }));
       }
