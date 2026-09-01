@@ -20,13 +20,46 @@ import type { ProjectEnvironmentSkillSelection } from "@/hooks/useProjectEnviron
 export const MAX_ENVIRONMENT_SKILLS = 20;
 
 /**
- * Shared-skill multi-select for a project environment's `skillSelection`.
+ * Why a listed skill can't be pinned, in the reader's words.
  *
- * Only SHARED (`sharing === 'project'`) skills are selectable — the backend
- * rejects personal skills. Rows the backend flags as non-pinnable (P0.3
- * `pinnability` metadata: plugin_component skills, supporting files, extra
- * frontmatter) render disabled with the backend-aligned reason, so users
- * never pick a skill only to discover the restriction at save time.
+ * The backend `reason` is an enum meant for callers (`not_shared`,
+ * `plugin_component`), and it used to be rendered raw. That was survivable
+ * while only exotic rows were ineligible; now that every personal skill is
+ * listed, the most common disabled row in the picker would read "not_shared".
+ *
+ * Unknown reasons fall through to the generic line rather than leaking an
+ * identifier: this list grows on the backend, and a picker on an older client
+ * should say something true rather than something internal.
+ */
+function ineligibleReason(reason: string | undefined): string {
+  switch (reason) {
+    case "not_shared":
+      return "Personal skill — only skills in the project library can run in environments. An admin can publish it.";
+    case "plugin_component":
+      return "Delivered by its plugin, not pinned on its own. Pin the plugin version instead.";
+    default:
+      return "This skill can't be pinned to an environment.";
+  }
+}
+
+/**
+ * Library-skill multi-select for a project environment's `skillSelection`.
+ *
+ * Only skills in the project LIBRARY (`sharing === 'project'`) can be pinned —
+ * the backend rejects personal ones, because an environment a teammate runs
+ * must resolve to the same skills for them as for you.
+ *
+ * Personal skills are nonetheless LISTED, disabled, with the reason on the row.
+ * Filtering them out client-side made the picker lie by omission: a user who
+ * had just uploaded a skill and came here to pin it found no trace of it and
+ * no way to tell whether it had failed to upload, been named something else,
+ * or simply wasn't eligible. The backend already says which of those it is —
+ * every listed row carries P0.3 `pinnability` metadata — so the picker shows
+ * the row and quotes the reason.
+ *
+ * The same machinery covers every other ineligible row (plugin_component
+ * skills), so users never pick a skill only to discover the restriction at
+ * save time.
  *
  * Each selected skill also gets a VERSION control, defaulting to "Latest" —
  * the skill's current revision, resolved when the run starts, which is what an
@@ -62,7 +95,16 @@ export function ProjectEnvironmentSkillsPicker({
       try {
         const list = await listSkills({ kind: "cloud", projectId });
         if (!active) return;
-        setSkills(list.filter((s) => s.sharing === "project" && s.skillId));
+        // `skillId` is the only hard requirement — it is what a pin addresses.
+        // Library skills sort first: they are the ones that can be picked, and
+        // a picker that opens on a wall of disabled rows reads as broken.
+        const pinnable = list.filter((s) => s.skillId);
+        pinnable.sort((a, b) => {
+          const aLib = a.sharing === "project" ? 0 : 1;
+          const bLib = b.sharing === "project" ? 0 : 1;
+          return aLib - bLib;
+        });
+        setSkills(pinnable);
       } catch (err) {
         if (!active) return;
         setLoadError(
@@ -229,9 +271,11 @@ export function ProjectEnvironmentSkillsPicker({
               </TooltipTrigger>
               <TooltipContent side="right" className="max-w-[260px]">
                 <p className="text-xs leading-snug">
-                  {skill.pinnability && !skill.pinnability.ok
-                    ? skill.pinnability.reason
-                    : "This skill can't be pinned to an environment."}
+                  {ineligibleReason(
+                    skill.pinnability && !skill.pinnability.ok
+                      ? skill.pinnability.reason
+                      : undefined,
+                  )}
                 </p>
               </TooltipContent>
             </Tooltip>

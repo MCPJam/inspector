@@ -2,9 +2,11 @@
  * Orphaned-selection rows for both environment pickers.
  *
  * Both surfaces persist a list of ids and render rows from a LIVE query. An id
- * the query doesn't return — hard-deleted, unshared, or moved out of the
- * project — otherwise renders no row at all: invisible, unremovable, and still
- * shipped on every save. Each picker must surface those ids as detach-only
+ * the query doesn't return — hard-deleted, or moved out of the project —
+ * otherwise renders no row at all: invisible, unremovable, and still shipped
+ * on every save. (A skill that was merely UNSHARED is no longer one of these:
+ * the picker lists personal skills too, so it comes back as a checked,
+ * ineligible row that names its own reason.) Each picker must surface those ids as detach-only
  * rows. (The archived-but-present case was already handled; this covers the
  * genuinely-missing case.)
  */
