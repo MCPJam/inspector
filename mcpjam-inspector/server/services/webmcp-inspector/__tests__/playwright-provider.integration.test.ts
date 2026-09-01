@@ -195,10 +195,14 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       if (event.type === "activity") activity.push(event.entry);
     }, 0);
 
-    const { invokeId } = runtime.invoke(`${origin}::slow`, {}, "manual");
-    await expect(
-      runtime.invoke(`${origin}::slow`, {}, "manual").settled,
-    ).rejects.toThrow(/did not respond in time|cancel/i);
+    // ONE invocation, and its rejection is consumed exactly once. Starting a
+    // second `slow` to read an id from would queue behind this one's full
+    // timeout and leave the first promise rejecting with nobody listening —
+    // which vitest reports as an unhandled rejection and fails the run.
+    const hung = runtime.invoke(`${origin}::slow`, {}, "manual");
+    await expect(hung.settled).rejects.toThrow(
+      /did not respond in time|cancel/i,
+    );
 
     // END TO END, through the shared bridge: the RUNTIME owns the deadline, so
     // the browser's `Canceled` — which says nothing about why — must still be
@@ -208,7 +212,8 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await vi.waitFor(() => {
       const settled = activity.find(
         (entry) =>
-          entry.kind === "invocation_settled" && entry.invokeId === invokeId,
+          entry.kind === "invocation_settled" &&
+          entry.invokeId === hung.invokeId,
       );
       expect(settled && "state" in settled ? settled.state : undefined).toBe(
         "timeout",
@@ -339,12 +344,22 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await new Promise((resolve) => setTimeout(resolve, 750));
     expect(frames.length).toBe(afterStop);
 
-    // The point of keeping frames out of the ring: after a stream's worth of
-    // paints, the timeline the session exists to produce is still all there.
+    // The point of keeping frames out of the ring. This subscription started at
+    // session open with no replay, so it holds every entry published since —
+    // and after a stream's worth of paints they are all still here, with the
+    // navigation the reload produced among them.
     expect(activity.some((entry) => entry.kind === "tools_added")).toBe(true);
-    expect(activity.some((entry) => entry.kind === "session_started")).toBe(
-      true,
-    );
+    expect(activity.some((entry) => entry.kind === "navigated")).toBe(true);
+    // And the RING still holds them — `buffered()` is what a reconnecting client
+    // replays, so this is the property a viewer actually experiences.
+    const buffered = runtime.hub.buffered();
+    const replayedKinds = buffered
+      .filter((event) => event.type === "activity")
+      .map((event) => event.entry.kind);
+    expect(replayedKinds).toContain("session_started");
+    expect(replayedKinds).toContain("tools_added");
+    // Exactly one frame in it, however many were published into the stream.
+    expect(buffered.filter((event) => event.type === "frame")).toHaveLength(1);
 
     await registry.disposeAll();
   }, 60_000);
@@ -412,9 +427,11 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await registry.disposeAll();
   }, 90_000);
 
-  it("keeps a window session reporting native-window", async () => {
-    // The headless flag drives this, not the viewport mode: an ordinary local
-    // session is unchanged by everything above.
+  it("leaves a window session's transport to the headless flag", async () => {
+    // This whole suite runs headless (a headed session needs a display), so a
+    // WINDOW session here reports `headless` — which is the point: the viewport
+    // mode does not touch that path at all. A real window session on a machine
+    // with a display still reports `native-window`.
     const { session } = await open();
     expect(session.viewportTransport).toEqual({ kind: "headless" });
     await registry.disposeAll();
