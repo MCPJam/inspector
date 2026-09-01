@@ -47,15 +47,20 @@ describe("BehaviorTab harness gray-out", () => {
     ).not.toHaveAttribute("readonly");
   });
 
-  it("disables approval / visibility until their proxy phase lands", () => {
+  it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
+    // The adapter bridge's `canUseTool` gates every surface — built-ins,
+    // host-executed tools, and (under `approvalPermissionMode: "allow-reads"`)
+    // the MCP tools the in-sandbox client calls — so `requireToolApproval` is
+    // enforced for claude-code (#4531) and the switch must not gray out or
+    // carry the old "refused rather than run unapproved" note.
     renderBehaviorTab({ harness: "claude-code" });
 
     expect(
       screen.getByRole("switch", { name: /require tool approval/i }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(
-      screen.getByRole("switch", { name: /respect tool visibility/i }),
-    ).toBeDisabled();
+      screen.queryByText(/refused rather than run unapproved/i),
+    ).not.toBeInTheDocument();
   });
 
   it("shows progressive discovery as off for harness hosts even if an old draft says on", () => {

@@ -227,6 +227,14 @@ export interface RunAssistantTurnOptions {
    * unpoliced path.
    */
   harnessToolPolicy?: MCPJamHandlerOptions["harnessToolPolicy"];
+  /**
+   * The eval iteration this turn executes, when there is one. Threaded through
+   * to the harness turn, where it becomes the authorized claim on the proxy
+   * tokens that lets firsthand tool-call evidence be recorded.
+   */
+  evalIterationId?: MCPJamHandlerOptions["evalIterationId"];
+  /** Reports back what the run FROZE about evidence, as the mint saw it. */
+  onHarnessEvidenceDecision?: MCPJamHandlerOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
 
   /**
@@ -462,6 +470,12 @@ function buildHandlerOptions(
     // (runHarnessTurn REQUIRES harnessMcpProxy when servers are selected) and
     // (b) claim the correct owner lane (`swarm-chat` for swarm).
     ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
+    ...(opts.evalIterationId
+      ? { evalIterationId: opts.evalIterationId }
+      : {}),
+    ...(opts.onHarnessEvidenceDecision
+      ? { onHarnessEvidenceDecision: opts.onHarnessEvidenceDecision }
+      : {}),
     ...(opts.harnessToolPolicy
       ? { harnessToolPolicy: opts.harnessToolPolicy }
       : {}),

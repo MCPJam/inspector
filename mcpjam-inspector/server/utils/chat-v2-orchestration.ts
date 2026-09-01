@@ -40,9 +40,9 @@ import {
 import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import {
-  SERVER_SKILLS_PROMPT_SECTION,
   withServerSkills,
 } from "./server-skill-tools.js";
+import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
@@ -1351,8 +1351,8 @@ export async function prepareChatV2(
       (skillsSource.kind === "resolved" &&
         skillsSource.composeLiveServerSkills === true));
 
-  const finalSkillTools: Record<string, unknown> = !composeLiveServerSkills
-    ? approvalWrappedSkillTools
+  const serverSkills = !composeLiveServerSkills
+    ? { tools: approvalWrappedSkillTools, buildPromptSection: null }
     : withServerSkills(approvalWrappedSkillTools, {
         manager: mcpClientManager,
         // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
@@ -1374,6 +1374,30 @@ export async function prepareChatV2(
           serverLabel: serverLabels?.[serverId] ?? serverId,
         })),
       });
+  const finalSkillTools: Record<string, unknown> = serverSkills.tools;
+  // Level 1 of progressive disclosure: the catalog goes in the prompt so the
+  // model can decide which skill fits, and only bodies are fetched on demand.
+  // Drained here, sharing ONE `skills/list` with any `loadSkill` later in the
+  // same turn.
+  //
+  // The metadata budget is SHARED, not per-catalog, and the OTHER catalog has
+  // first claim on it — deliberately: a project's own skills should not be
+  // pushed out of the prompt by a connected third party's. Both stanzas are always in
+  // context, so giving each the full allowance would let discovery metadata
+  // take twice the share the cap exists to hold it to. The other catalog is
+  // already built, so what it spent comes off the top — measured on the
+  // rendered string, which over-counts by its framing and therefore errs
+  // toward leaving the model MORE room, never less.
+  const serverSkillsPromptSection = serverSkills.buildPromptSection
+    ? await serverSkills.buildPromptSection({
+        ...modelContextTokens,
+        budgetChars: Math.max(
+          0,
+          skillMetadataBudgetChars(modelContextTokens.modelContextTokens) -
+            (skillsPromptSection?.length ?? 0)
+        ),
+      })
+    : "";
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
@@ -1560,20 +1584,14 @@ export async function prepareChatV2(
 
   // 3. System prompt concatenation
   //
-  // The server-skills sentence is added ONLY when the wrapper actually
-  // attached (identity change ⇒ at least one selected server declares the
-  // extension). Advertising server skills to a turn that has none would invite
-  // the model to go looking for refs that cannot resolve.
-  const serverSkillsAttached = finalSkillTools !== approvalWrappedSkillTools;
+  // The server-skills stanza carries its own catalog and is empty unless a
+  // connected server both declares the extension AND listed something — so it
+  // can be concatenated unconditionally. It used to be gated on a tool-map
+  // identity comparison, which could only answer "a server declared it", not
+  // "there is anything to name".
   const enhancedSystemPrompt = [
     systemPrompt,
-    skillsPromptSection
-      ? serverSkillsAttached
-        ? `${skillsPromptSection}${SERVER_SKILLS_PROMPT_SECTION}`
-        : skillsPromptSection
-      : serverSkillsAttached
-        ? SERVER_SKILLS_PROMPT_SECTION
-        : skillsPromptSection,
+    `${skillsPromptSection ?? ""}${serverSkillsPromptSection}`,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
   ]
     .filter((section): section is string => Boolean(section?.trim()))

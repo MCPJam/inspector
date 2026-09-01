@@ -1,450 +1,776 @@
-diff --git a/.changeset/connector-bench-conformance-and-probe.md b/.changeset/connector-bench-conformance-and-probe.md
+diff --git a/.changeset/claude-code-mcp-tool-approval.md b/.changeset/claude-code-mcp-tool-approval.md
 deleted file mode 100644
-index 1ca9ee4dc..000000000
---- a/.changeset/connector-bench-conformance-and-probe.md
-+++ /dev/null
-@@ -1,15 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Connector Bench: the conformance and auth-probe children
--
--The bench worker gains the two children that cost no model credits, and runs both **before** the eval matrix — a cancellation or an exhausted budget should never be what throws away the cheapest, most reusable evidence.
--
--**The auth probe is an observation, not a receipt.** v1's auth evidence was `client_reported`: a number the submitter computed about their own server, which nobody outside MCPJam has any reason to believe. The probe child makes one bounded, unauthenticated request from our own infrastructure through the same `probeThroughEgressGuard` wiring the connection preflight uses — DNS-pinned, redirect-revalidating, refusal-ordered — and files what a stranger sees. A probe that could not run reports `failed` or `refused` with a reason and **no checks**, so the backend records the roster row unavailable rather than stamping it verified: a completed probe with nothing in it reads, downstream, as a server that had nothing wrong with it. `nonCompliantChallengeStatus` is recorded as the number it was, because a 403, a 200 and a 500 in place of the 401 the spec requires have three different remediations.
--
--**OAuth runs as a pinned headless exam instead of being excluded.** `executePersistedConformanceRun` accepts a `source: 'benchmark'` origin and an `oauth` config, and the definition pins — by id — exactly which OAuth checks the headless exam grades. A check that **applies but cannot run headlessly is recorded `could-not-run`, never `not-applicable`**: `not-applicable` means the requirement cannot apply to this server and a score drops it from the denominator entirely, so collapsing the two is precisely how a run that reached a third of the suite comes to print full marks. The one signal allowed to mean "the target genuinely does not advertise this" is the suite's own unauthenticated pre-flight — a server that serves without challenging has no authorization obligations, because authorization is OPTIONAL in every MCP revision. Checks outside the pinned scope keep their verdicts verbatim and are marked `pending`: reported, not graded. Interactive-flow support is a future track and is not faked.
--
--**Redaction happens before the write, not at projection time.** A completed OAuth run carries a live access token, a refresh token, the client secret and the `Authorization` header of every request it made. `redactConformanceReportForSharing` now runs inside the executor, before `upsertReportAction` persists any OAuth report — redacting when the report is later projected into benchmark evidence would mean the credentials were already at rest in `conformanceRuns`, readable by every surface that reads a run and un-recallable once written.
--
--Also: a requested OAuth suite with no auth strategy is now recorded as an explicit incomplete suite rather than being allowed to refuse the whole run, which used to take the protocol/apps/tasks reports down with it.
-diff --git a/.changeset/connector-bench-insights-scope.md b/.changeset/connector-bench-insights-scope.md
-deleted file mode 100644
-index c394f14a6..000000000
---- a/.changeset/connector-bench-insights-scope.md
-+++ /dev/null
-@@ -1,15 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Connector Bench: a third insights scope, and a flow diagram that waits to be asked
--
--`InsightsScope` gains a `benchmark` variant keyed on the run, because a benchmark's cohort is exactly the traces one exam produced. The dispatch is a `switch` over the union rather than the two-way ternaries it replaces: with three scopes, `kind === "swarm" ? … : …` silently sends a benchmark scope down the **scenario** arm and queries with `scenarioId: undefined`, answering about a cohort nobody asked for. Downstream components are untouched — same substrate, scope-blind.
--
--The benchmark scope is deliberately narrower than the other two, and each gap is a decision rather than an omission. It has **no thread list** (there is no benchmark Sessions browser). It has **no topic map** — a neighbour graph over one exam's repetitions draws "these two runs of the same case are similar" and nothing else, so the backend builds none and the client must not ask. And it has **no drill-down**: a benchmark node click is inert rather than pointed at the swarm query, which narrows a *project's* sessions and would present them as this run's traces. A query that was never issued also no longer reports as "still loading".
--
--Its rebuild is an **action, not a mutation** — the paid analyzer pass. A cached reading comes back as already-running rather than as a fresh queue, and a refusal throws instead of being dressed up as "rebuild queued", which is how a caller ends up waiting for a pass that was never started.
--
--**On a run detail, the free half and the paid half are offered differently.** The user-value-chain funnel is a rollup of verdicts the stage worker already derived, so it renders unasked. The flow diagram beside it is a model's reading of the same traces, bought per pass, and it issues **no query at all** until somebody clicks — not on mount, not on scroll. An insights panel that quietly queues an analysis the first time a tab is opened is how a bill arrives for something nobody asked for, and the fix is an affirmative click, not a cheaper model. Nothing the pass produces feeds a score.
--
--Benchmark-owned suites and runs are also dropped client-side before the Evaluate lists render them. The filtering is server-side and this is not a second implementation of it — it is the client refusing to put those rows back through one of the joins each list is assembled from. It matters because Evaluate's affordances (Edit, Re-run, Delete) are meaningless against an immutable exam whose runs are evidence for a published score. The check is structural rather than typed against `EvalSuite["source"]`: those unions describe what an Evaluate list may *contain*, and after this filter `"benchmark"` is not one of those things — widening them would push a dead `benchmark` case into every badge map downstream.
-diff --git a/.changeset/connector-bench-relay.md b/.changeset/connector-bench-relay.md
-deleted file mode 100644
-index b54d0e05b..000000000
---- a/.changeset/connector-bench-relay.md
-+++ /dev/null
-@@ -1,21 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Connector Bench: the relay in front of the backend's benchmark routes
--
--A new `/api/web/bench/*` router fronts `/internal/v1/bench/*` for the chrome-less score site. It is the edge and nothing else — the run worker, the UI and write enforcement are separate lanes, and none of them are in this change.
--
--**Two tokens on every call.** The service token says "this is the inspector"; the caller's own bearer says "on behalf of this user or guest". The backend derives the acting identity from the bearer and never from the body, so the relay sends no user id — the same contract `hostedTasksRoutes` already uses. The attested per-IP guest spend key rides along, hashed here so the raw address never reaches Convex.
--
--**A 404 is a deployment state, not a failure.** The backend halves sit behind `BENCHMARK_RUNS_ENABLED` and land later, so a 404 with no envelope of ours in it — a bare routing 404, a flag that is off — degrades to a clean "benchmark runs are not enabled" (503 `FEATURE_NOT_SUPPORTED`) instead of a 500. That is what lets this merge before the flag flips. An entity 404 (`{ ok: false, error: … }`) still reads as a genuinely missing run or result link, so a bad result URL says so rather than blaming the deployment.
--
--**Starting work is budgeted; continuing it is not.** `/preflight` and `/runs` dial a caller-named third party and commission paid work, so they carry a per-IP ceiling on top of the per-guest one. Polling and cancelling a run are deliberately exempt: charging them would let a start spend the last slot and then lock the caller out of the run they just paid for.
--
--Only an address the deployment can **vouch for** gets a budget of its own — `cf-connecting-ip` on the hosted edge, or whatever header an operator names in the new `MCPJAM_TRUSTED_CLIENT_IP_HEADER`. Everything else shares one pooled bucket at a looser ceiling. A key minted from a header the caller writes is a key the caller can rotate, and keying per value would let one actor fill the window table and then refuse every genuinely new caller until the entries expired.
--
--`POST /preflight` is the one route that does more than relay. It asks the backend whether benchmark runs exist at all **before** it opens anyone's server — until the flag flips, a preflight costs the target nothing, and a target that happens to be down can no longer mask the real answer with its own connection failure. It then resolves a **saved** `projectId + serverId` — never a URL, never caller-supplied auth headers — dials it through the ordinary hosted authorize-and-connect path, captures the full live tool surface, and asks the backend to upsert the stable target and return a classification receipt plus the runnable categories, tracks and per-actor prefill. The snapshot is bounded in UTF-8 bytes (the target chooses how many tools it lists, not us) and drops server-controlled `_meta`, which classification does not read and which would otherwise become durable backend state. `preferences` is bounded too — key count, key length, nesting depth and serialized bytes — because it is forwarded verbatim into state the backend may persist and price from.
--
--`GET /results/:secret` takes no bearer at all, on the same reasoning as `/score`: a result link has to open in an incognito window, the secret in the URL is the whole credential, and repeat reads are served from a short-lived cache so a shared link cannot be turned into an amplifier aimed at our own backend. The service token is refused over cleartext and redirects are never followed, so neither credential can be replayed to a host we did not vet.
--
--Ships `client/src/lib/apis/bench-api.ts` alongside it, shaped like `score-api.ts` — `authFetch` for the authed calls, a plain `fetch` for the result read, because a result page visitor may have no session to mint one from.
-diff --git a/.changeset/connector-bench-score-site.md b/.changeset/connector-bench-score-site.md
-deleted file mode 100644
-index 8685ee33f..000000000
---- a/.changeset/connector-bench-score-site.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Connector Bench: the score-site screens, driven entirely by the server's run row
--
--The chrome-less score surface gains the benchmark flow — classify, price, consent, run, read — at `/embed/bench` (`/embed/bench/:runId` to resume) with its own public result link at `/bench/results/:secret`.
--
--**The state machine is the backend's, and that is the whole design.** The conformance runner next door executes its suites in the browser, which is why it carries a `run-complete` phase to dodge a React commit race between `runAll` resolving and its results landing in state. None of that is carried over, because none of it applies: a benchmark runs on our infrastructure, every phase is a function of one `GET /runs/:runId` response, and the run id lives in the URL. Refresh, a second tab, and coming back tomorrow are all the same operation — read the run, render its status. Polling stops the moment the run is terminal, because a settled row cannot move.
--
--**A failed classifier is never a gate.** The category selector renders the receipt's ranking with its confidence and rationale, pre-filled from what this actor chose last time — and when the classifier produced nothing, it offers the full runnable list and says so. Unrunnable categories stay visible with their reason: a target that advertises nothing must not look identical to one whose category we do not offer yet.
--
--**The quote screen says the expensive things out loud.** The exam's identity and version, the estimate as a *ceiling* against what is available, the size of the matrix and the wall clock — and, when the exam writes, a preview of every write with an explicit tick that gates the start. A guest is told before the button, not after a cancel, that today's contribution is spent at admission and is not refundable. A `409 DEFINITION_CHANGED` refuses to start and offers a re-quote rather than silently re-pricing: the visitor consented to a specific manifest, and a new one is a new decision. (The relay now forwards the backend's own conflict code as `details`, since `CONFLICT` alone cannot tell "the exam moved" from "this run already finished".)
--
--**The report distinguishes claims from the absence of them.** Sections render when the read carries them and the v1 three-number view renders when it does not — `sections` being absent is the only honest signal, because `core` and `composite` are populated for v1 rows too. `partial` keeps its real section scores and withholds only the Overall; it is not a failure. A slice with `score: null` says "not measured", never `0` — "scores 0 for support agents" is a claim about the connector and "no case in this exam represents one" is not. Coverage travels with every section so `not_applicable` and `insufficient_evidence` stay apart. A deprecated or deleted result still resolves and is labelled, because a link somebody shared should explain itself rather than 404. A user-chosen category is badged **User-selected · not registry verified**. And the two reruns read differently: the same definition hash is another point on one comparison series, a new hash is a new exam and a new series.
--
--Cleanup status is reported either way — a visitor who let us write into their tenant is owed the answer even when the run failed.
-diff --git a/.changeset/connector-bench-worker.md b/.changeset/connector-bench-worker.md
-deleted file mode 100644
-index a4f82e984..000000000
---- a/.changeset/connector-bench-worker.md
-+++ /dev/null
-@@ -1,23 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Connector Bench: the run worker, and the eval children it launches
--
--A new `bench-worker.ts` claims hosted benchmark jobs from `/internal/v1/bench/jobs/claim` and drives the existing `prepareEvalRun()` → `execute()` pipeline once per matrix cell. Same pull/claim architecture as the scheduled-evals and GitHub-checks workers — the backend never calls the Inspector — gated on `BENCH_WORKER_ENABLED`, and a 404 with no envelope of ours in it still means "not enabled here" rather than "broken", so this can ship before the backend flag flips.
--
--**Two workers must never drive one job.** The lease is refreshed every 20s and `assertLeaseHeld()` runs between every step. A `leaseOk: false` heartbeat — and a 409 `lease_lost` from any write route — is definitive rather than transient: the worker stops and writes nothing further, no completion and no abort, because filing either would hand back a lease it no longer holds. A worker that keeps launching children after losing its lease charges the run twice for the same evidence.
--
--**A redelivered claim must not re-run anything.** Every child's idempotency key is `benchmarkRunId + evidenceKey`, both pure functions of the run and the pinned definition, so a resumed job joins the child it already started instead of paying for a second intrusive run against someone else's server. Rostered evidence that already reached a terminal status is not launched at all, and a child that does come back is adopted rather than driven — a non-terminal one included. `shouldSkipExecution` alone would drive that case, which is right for ordinary evals (a replayed non-terminal run is usually a crashed process worth resuming) and wrong here: a lease expires on a network partition as readily as on a dead worker, so driving it can mean two workers running the same exam against somebody else's server and billing the budget for both. A genuinely abandoned child degrades to a coverage gap instead, which is the cheaper mistake.
--
--**A child that ran is never traded for a tidy exit.** The execution phase is reported only once every child has been bound to its evidence row. A transient attach failure is retried; if it still will not land, the job is handed back for another attempt rather than reported complete — because `execution-complete` hands finalization to the backend and a scorecard is inserted once and never patched, so a child that ran but was never pointed at would be dropped from the result for good, showing as a coverage gap that never existed. The re-attempt adopts the same children rather than re-running them.
--
--Each cell runs at the repetition count its matrix pins, not the suite's `runs` default. `minimumRepetitionsPerRequiredCell` is a publication floor, so a cell declared at three that runs once cannot clear it — every hosted run of that definition would come out provisional.
--
--**The pins are checked before anything runs.** A job whose definition hash no longer matches the one the claim resolved is refused non-retryably: the quote, the consent and the roster all describe a different exam than the one that would run, and publishing a scorecard the payer never agreed to is worse than not running it.
--
--Concurrency is about the target's experience, not this process's capacity: at most two read-only cells in flight, write cells strictly one at a time and only after the read-only ones have settled. A cell whose side effects the claim does not declare is treated as a write cell — losing parallelism costs wall clock, guessing "read-only" costs someone else's data.
--
--Eval runs gain a `benchmark` source and a run-level `extraHeaders` channel, threaded from the run options through the iteration params and the step handlers to the per-step Convex request. That is how `x-mcpjam-benchmark-grant` reaches `/stream`, which is what tells the backend to bill the run's budget rather than the caller's own wallet. The header object travels by reference the whole way, so a grant the heartbeat reissues reaches the steps of a run that is already in flight.
--
--Eval children only. The conformance and auth-probe children, and the write-manifest enforcement a write cell needs, are separate changes.
-diff --git a/.changeset/connector-bench-write-enforcement.md b/.changeset/connector-bench-write-enforcement.md
-deleted file mode 100644
-index f03b71d20..000000000
---- a/.changeset/connector-bench-write-enforcement.md
+index 935848efa..000000000
+--- a/.changeset/claude-code-mcp-tool-approval.md
 +++ /dev/null
 @@ -1,19 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Connector Bench: write-manifest enforcement, the artifact ledger, and cleanup
+-Claude Code can now pause for approval on MCP-server tool calls, instead of the run being refused
 -
--A benchmark write case creates things on a server somebody else operates. The tool-policy gate could say which tools may be called; it could not say what they may be called **with**, and "may call `create_page`" is not a bound on anything — the same permission covers creating a page named for this run and overwriting the operator's homepage.
+-An approval host with any MCP server selected was refused outright on the Claude Code harness — in chat, in evals, and in swarms — with "the Claude Code harness can't pause for approval of MCP-server tools". That refusal rested on a belief that turned out to be wrong: that the CLI's own MCP client called those tools from inside the sandbox with nothing for MCPJam to interpose on.
 -
--**The gate now wraps allowed tools too**, with a per-call argument inspector driven by the pinned `caseMetadata` side-effect manifest. The manifest is resolved by `suiteHash + caseId` and verified against the definition's `caseMetadataHash` **before** anything launches: a manifest that cannot be tied to the generation the job was admitted under is not one we may enforce, because the write rules the payer consented to would not be the rules that ran. Three rules follow from it:
+-There is an interposition point, and it always covered MCP tools. The adapter's in-sandbox bridge routes **every** tool call through a `canUseTool` callback before the CLI may run it, emits `tool-approval-request` over the bridge socket, and waits for the host's decision. Which calls reach that pause is decided by the bridge's own tool-kind table, and the load-bearing detail is its default: a tool name it does not recognize is treated as kind `edit`. An external MCP tool (`mcp__<server>__<tool>`) is never in that table, so it pauses under the `allow-reads` permission mode and runs free under `allow-edits` — which is the mode MCPJam was selecting. The capability was one enum value away the whole time.
 -
--- **Prefix.** The value at `artifactNamePath` must start with `mcpjam-benchmark-<runId>-<iteration>`. Per-iteration, so a list-style case cannot observe its own sibling iterations' artifacts and grade a leak that is ours.
--- **Created-id harvesting.** Ids at `createdIdResultPaths` land in the run's artifact ledger as they are created.
--- **Mutation targets.** Every id at `mutationTargetPaths` must be one this run created. An update or a delete aimed at anything else is somebody else's data.
+-So `approvalPermissionMode` for Claude Code moves to `allow-reads` and `supportsMcpToolApproval` becomes true. Nothing changes for a host that has not asked for approval; that path still runs `allow-all`.
 -
--Violations are blocked **before** the MCP call, through the existing `recordBlock` + `TOOL_POLICY_BLOCK_MARKER` path, so both gate invariants hold unchanged: a block emits no tool span, and `isToolPolicyBlockResult` still recognizes it. A check after the fact would be a report about damage rather than a bound on it. The manifest's reason vocabulary is deliberately separate from the SDK's `ToolPolicyDecisionReason`: those reasons travel to the out-of-process harness proxy, which decides by tool name and never sees arguments.
+-**The trade-off worth knowing about.** `allow-reads` widens the prompt surface: native edit-class built-ins (Write, Edit, NotebookEdit, TodoWrite, the Task family) now prompt too, where `allow-edits` let them through and only Bash paused. Reads still never prompt, which keeps the faithful mapping to the emulated engine — it gates tool calls, never reads. There is no mode that pauses on MCP tools and not on native edits, so this is the price of the capability rather than a separate choice.
 -
--**A run tidies up after itself, whatever else happened.** Cleanup replays the ledger in a `finally`, after every cell has disconnected, over its own connection, with **no model call anywhere on the path** — a run that exhausted its budget still has to remove what it left behind, so the one thing cleanup must not depend on is the thing that ran out. It is idempotent and retried; an artifact that survives every attempt is counted as residue and reported for the scorecard rather than swallowed. Cleanup dials the target rather than the backend, which is why it also runs after a lost lease: the ids are in this worker's ledger and no other worker can see them.
+-**Codex is unchanged, and this is why.** Its adapter builds the Codex thread with `approvalPolicy: "never"` and `sandboxMode: "danger-full-access"` hardcoded, so Codex is never asked to pause on anything and no approval request is ever emitted. It drives `codex exec`, a batch mode with no channel to interrupt; the interactive `codex app-server` transport that could carry approvals is not what the AI SDK adapter speaks. An approval host on Codex is still refused, now with that reasoning recorded next to the flag.
 -
--The terminal sequence is now fixed and explicit: children → cleanup → execution-complete (carrying the cleanup status) → finalize → flow analyzer → job complete **last**. The analyzer produces an inferred artifact and can never delay or change a scorecard, and the job's lease deliberately outlives finalization so a worker lost mid-assembly is swept rather than leaving a run parked in `awaiting_evidence` with a complete roster.
-diff --git a/.changeset/doctor-skills-attribution.md b/.changeset/doctor-skills-attribution.md
+-**The gate itself is unchanged and still bites.** Claude Code satisfying it is a fact about the adapter, not a reason to stop checking: a native-delivery harness that cannot approve its MCP tools is still refused the moment a server is attached, and that is now asserted directly rather than through whichever harness happened to refuse.
+-
+-That last point cost some coverage elsewhere, and the fix is worth noting. Several tests asserted the rule "plugin-contributed servers count toward the approval gate" **through** the Claude Code refusal, so they went vacuous the moment the refusal did — one of them kept passing for the wrong reason. The rule was also inlined in three places. It is now one exported helper that all three call, unit-tested directly, and the swarm-level test proves the fail-closed direction with an adapter stub. Both plugin-counting tests were confirmed to fail when the rule is deliberately broken.
+diff --git a/.changeset/compose-runs-must-name-their-servers.md b/.changeset/compose-runs-must-name-their-servers.md
 deleted file mode 100644
-index e4ed38f0b..000000000
---- a/.changeset/doctor-skills-attribution.md
+index 91fa0e929..000000000
+--- a/.changeset/compose-runs-must-name-their-servers.md
 +++ /dev/null
-@@ -1,13 +0,0 @@
+@@ -1,21 +0,0 @@
 ----
--"@mcpjam/sdk": patch
+-"@mcpjam/cli": minor
+-"@mcpjam/sdk": minor
 ----
 -
--`server doctor` no longer blames the server when MCPJam is the reason skills went uninspected
+-A composed eval run now has to say which servers it is testing
 -
--The skills check reports `skipped` when Skills over MCP is not active on a connection, which is right — most servers serve no skills and calling that a failure would make the doctor cry wolf on almost every run. But `active` is the AND of two independent declarations, and the check read only that boolean, so one message covered both sides: "the server must declare the extension and the client must advertise it."
+-`--compose-host chatgpt` recorded only the CLIENT. The server half was resolved at run
+-time from that host's current list, so pointing the shared ChatGPT host at a different
+-server silently repointed every eval composed against it — a suite written for Vercel
+-would connect to Sentry, run its cases there, and report a real score for a server it
+-was never meant to test. Nothing errored, because nothing was wrong as far as the run
+-could tell.
 -
--That sentence is true and useless in the case that matters. `runServerDoctor` advertises the extension itself, so the only way to reach "server declared, client did not" is a caller who pinned an exact client-capability set — `--host cursor` and friends. That caller is asking "what would this host see", and the honest answer is that the host is the reason there is nothing to see. A server author running the doctor behind a host pin, against a server whose skills serving works perfectly, previously read "not active on this connection" as their own bug.
+-Composed runs now require `--compose-server <name>` (or `--compose-server-group <id>`).
+-Following the host's live list is still available as `--compose-host-servers`, which is
+-the same behaviour as before — the difference is that it is now something you ask for
+-rather than what you get by saying nothing.
 -
--The two cases now say which side withheld the declaration, and the whole-run status stays `skipped` in both: a host pin is a legitimate way to run the doctor, not a defect in the server being examined. This also settles an internal disagreement — the CLI's `skills` verbs already refuse this exact case by name, so the doctor was contradicting them on the same connection.
--
--The ok line also names its own sampling cap. The check verifies at most five skills, so a 200-skill server used to be summarized as "200 skills discovered. 5 verified against their manifests", which reads as "only 5 of them check out" — a much worse claim about the server than the true one. It now reads "5 of 200 sampled and verified" when the cap bit, and is unchanged when the whole catalog was verified.
-diff --git a/.changeset/evals-b5c-cli.md b/.changeset/evals-b5c-cli.md
+-Existing scripts that pass `--compose-host` alone will fail with a message naming both
+-flags. Saved environments, journeys and user-testing scenarios are unaffected.
+diff --git a/.changeset/connection-retries-stop-bricking.md b/.changeset/connection-retries-stop-bricking.md
 deleted file mode 100644
-index 3519209f2..000000000
---- a/.changeset/evals-b5c-cli.md
+index 477419b71..000000000
+--- a/.changeset/connection-retries-stop-bricking.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
+@@ -1,15 +0,0 @@
 ----
+-"@mcpjam/inspector": patch
 -"@mcpjam/cli": patch
-----
--
--Preserve eval case intent labels when syncing suite files to the platform and
--when exporting platform cases back to suite files.
-diff --git a/.changeset/evals-b5c-inspector.md b/.changeset/evals-b5c-inspector.md
-deleted file mode 100644
-index b3b477604..000000000
---- a/.changeset/evals-b5c-inspector.md
-+++ /dev/null
-@@ -1,6 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Carry eval case intent through the Inspector API and persist stage measurements
--while evaluation traces are still in memory.
-diff --git a/.changeset/evals-b5c-sdk.md b/.changeset/evals-b5c-sdk.md
-deleted file mode 100644
-index d672ef222..000000000
---- a/.changeset/evals-b5c-sdk.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
 -"@mcpjam/sdk": patch
 ----
 -
--Wire eval case intent labels and per-stage measurements through SDK reporting and
--suite-file contracts. Deploy the backend storage/ingest support before enabling
--these reporters against a production endpoint.
-diff --git a/.changeset/harness-pnpm-allow-builds-pnpm11.md b/.changeset/harness-pnpm-allow-builds-pnpm11.md
+-A failed server-connection attempt no longer burns the retry that would fix it
+-
+-Re-opening a `/connect/server/<token>` link said "This link has already been used" and left the user nowhere, each dead attempt held one of the account's five concurrent-connection slots for a full hour, and the CLI had no way to release one. Five interrupted attempts locked the account out of connecting that server at all — and cloud evals then failed with "requires OAuth authentication" against a server the UI showed as configured.
+-
+-**The link is single-use for a reason, and that reason is intact.** The first page load trades the handoff token for a continuation cookie, and clears the token's digest in the same write, so a leaked URL is spent the moment it is opened. What was missing is that the cookie the claim set is *still in the browser that claimed it*: the page had a valid credential in hand and never looked. It now falls back to `/state` when a claim reports the token spent, and resumes the flow if that cookie still resolves to a request. A browser with no cookie — someone else's, a fresh one, a link-preview crawler — still cannot resume, because for that browser the link genuinely is gone. That screen no longer says "This link has already been used": most people reading it are in incognito, on a second machine, or behind a chat client that spent the link with a preview fetch, and they did not use anything. It now says the link was opened somewhere else, and explains that connection links only work in the browser that first opened them.
+-
+-**Re-authorizing now supersedes.** `createRequest` with `reauthorize: true` already bypassed dedupe; it now also cancels the live requests for the same owner, project, and URL before the cap is counted — in the same serializable mutation, so the freed slots are visible to the check that would otherwise refuse. The retry that recovers a stuck server can no longer be the thing the cap blocks. Scope stays exact: `projectId` is part of the index tuple, so a project-less request only supersedes other project-less ones, and requests for other servers still count against the cap normally.
+-
+-**`mcpjam cloud projects servers connect-cancel --request <id>`** exposes the cancel that the backend, the REST route, and the SDK client already implemented. It is idempotent, and `connect` now prints it beside `connect-status` whenever it hands back a request id. The matching `cancel_project_server_connection` operation is a direct agent tool — cancelling stops an authorization nobody completed, so it needs no approval, and an agent that hits `ACTIVE_REQUEST_LIMIT` can now clear the abandoned requests itself.
+diff --git a/.changeset/engine-error-phase-emulated-path.md b/.changeset/engine-error-phase-emulated-path.md
 deleted file mode 100644
-index 09dfcfd5e..000000000
---- a/.changeset/harness-pnpm-allow-builds-pnpm11.md
+index 92c856191..000000000
+--- a/.changeset/engine-error-phase-emulated-path.md
 +++ /dev/null
-@@ -1,12 +0,0 @@
+@@ -1,15 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Fix the Claude Code harness bootstrap on pnpm 11.
+-The emulated engine says which side of the model handover it died on
 -
--The previous fix wrote only `.npmrc`, verified against pnpm 10 — but pnpm 11
--reads none of its settings from `.npmrc`, so every harness bootstrap failed
--with `ERR_PNPM_IGNORED_BUILDS` once the changed recipe hash stopped snapshots
--from hiding it. Both spellings are now written, plus a second layer that keeps
--a skipped build non-fatal so the adapter's own `install.cjs` step can repair
--the install if the allow-list setting is ever renamed again.
-diff --git a/.changeset/session-permalink-outruns-rollout-flag.md b/.changeset/session-permalink-outruns-rollout-flag.md
+-Provider-error attribution reads `MCPJamEngineErrorEvent.phase` to decide whether a failed turn was ours or the provider's. `runChatEngineLoop` set it at none of its three emit sites, so `failedLayerForEngineError`'s no-phase default answered for the entire emulated path: every failure on it resolved to `model`. On the hosted eval path `model` becomes a `providerError`, which WITHDRAWS the trial's failures — so an Inspector bug did not merely get mislabelled, it deleted the evidence of whatever else the trial had found.
+-
+-The outer catch is the one that matters. It opens before any preparation and covers the trace-payload `structuredClone`, message scrubbing, the guest-IP hash, tool narrowing, `emitTurnStart`, pending-approval processing and the MRTR resume pre-phase — all of which can throw without a model ever being contacted. It now reports from a `modelInvoked` flag mirroring the harness's, set at the handover rather than on a successful response, so a provider that rejects the request outright still reads as the model's failure while a preparation bug reads as ours. The two inner emitters are strictly post-response and say `"stream"` outright; neither needs a flag to know it.
+-
+-**Two comments were wrong, and both understated the gap.** `failedLayerForEngineError` claimed the over-broad-catch problem "holds for the chat engine and not for the harness" — the chat engine's catch is exactly as broad, it just had no phase to report — and justified its default with "every emitter that omits a phase today is a real stream failure", when this engine's three emitters were the counter-example. A test carried the same premise. The default is unchanged and still `model`, but it now governs only emitters outside the two in-repo engines, and the reason given for it is no longer a fiction.
+-
+-**The new test sits below the existing mock boundary, deliberately.** `provider-error-plumbing.test.ts` `vi.mock`s `driveHostedEvalTurn`, so it starts above the code this fixes and would pass with the bug fully present; `provider-error-attribution.test.ts` unit-tests the decision without ever running an engine. The new suite drives the real engine through its public entry point and reads the events it emits. Its first draft was itself vacuous — an incomplete `logger` mock threw inside the non-OK-response site, so that case fell through to the outer catch and asserted the right string from the wrong place — so it now pins the emitting site by `httpStatus`, not just the answer.
+-
+-Mutation-checked three ways: dropping the outer emitter's phase fails the three tests that route through it; dropping the response site's fails exactly the one that names it; and marking the handover on success instead of at the request flips the transport-failure case to `setup`, failing only the test that states the timing rule.
+diff --git a/.changeset/evals-judge-evidence-boundaries.md b/.changeset/evals-judge-evidence-boundaries.md
 deleted file mode 100644
-index b4d367ed5..000000000
---- a/.changeset/session-permalink-outruns-rollout-flag.md
+index e1a8e9942..000000000
+--- a/.changeset/evals-judge-evidence-boundaries.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Judge evidence names every boundary the band turned on, and never rounds onto one
+-
+-Two review findings, both about a line of evidence failing to support the claim beside it — which is the one job evidence has.
+-
+-**The partial floor was never named.** A `partial` or `fail` band is settled by the threshold *and* the partial floor together, but the evidence line mentioned only the threshold. A score of 0.5 against a 0.7 threshold with a 0.6 floor read as a plain miss and said nothing about why it failed rather than landing in the partial band. The floor is now included exactly when it is one of the numbers the decision turned on — and left out of a band it did not decide, so a passing row does not carry a number that had no part in its outcome.
+-
+-**Rounding could contradict the band.** Scores were rendered at two decimals, so 0.699 against a 0.7 threshold produced *"LLM judge scored 0.7 against a 0.7 threshold"* next to a `fail` band. The numbers argued with the label and a reader had no way to tell which was wrong.
+-
+-Precision now grows only as far as it must: two decimals whenever the values are already distinguishable there, and the first deeper precision that keeps every *different* pair looking different, capped at six — past that a judge score is float noise and an unreadable line explains nothing. Equal values still render equal, so a score exactly on its threshold reads that way, and float noise like `0.42000000000000004` is still trimmed to `0.42`, which is why the rounding existed in the first place.
+-
+-Mutation-checked: dropping the floor, naming it on every band, and reverting to fixed two-decimal rounding each fail exactly their intended tests.
+diff --git a/.changeset/evals-judge-precision-pairwise.md b/.changeset/evals-judge-precision-pairwise.md
+deleted file mode 100644
+index 4430041d7..000000000
+--- a/.changeset/evals-judge-precision-pairwise.md
 +++ /dev/null
 @@ -1,11 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--A session permalink opens the session instead of bouncing to Connect
+-The judge's displayed boundaries stay distinct from each other, not just from the score
 -
--`https://app.mcpjam.com/sessions?session=<id>&project=<id>` — the link every `/v1/sessions` item carries, and the only URL that opens one conversation — landed a viewer on `/p/<projectId>/servers` with the session id dropped and nothing to say why.
+-Follow-up to the precision fix. It chose a rendering precision by comparing each boundary with the **score** — and never the boundaries with each other. So a `fail` verdict with a 0.7001 threshold and a 0.6999 partial floor rendered both as `0.7` while the score sat far from either, collapsing the partial band's configured width in the one line whose job is to show it.
 -
--Neither the permalink builder nor the legacy `?project=` normalizer was at fault: the normalizer rewrote the URL correctly to `/p/<projectId>/sessions?session=<id>`, and `SessionsRoute` then threw it away, because the viewer's account resolved `unified-sessions-enabled` to `false`. The route guard bounced the whole visit to Connect.
+-Precision is now chosen so that every *pairwise-distinct* displayed value stays distinguishable. Equal values still render equal, and the six-decimal cap still holds — past that a judge score is float noise and an unreadable line explains nothing.
 -
--That flag is a ROLLOUT control over who DISCOVERS the feed — the sidebar item, a bare `/sessions` visit — not an authorization boundary. Row-level visibility is entirely server-side (`canViewSessionInProject`), so honouring a link somebody was handed exposes nothing the flag was protecting, and the route's dark-ship `ErrorBoundary` already covers a deployment whose `sessionsFeed:*` queries are not live yet. The guard now skips the redirect when the URL names a session, and is otherwise unchanged: `/sessions` with no id still bounces for a flagged-out viewer, and the pre-hydration `undefined` window still redirects nobody.
-diff --git a/.changeset/skill-toolcall-id-charset.md b/.changeset/skill-toolcall-id-charset.md
+-Mutation-checked: reverting to the score-only comparison fails exactly the new test.
+diff --git a/.changeset/evals-judge-provenance.md b/.changeset/evals-judge-provenance.md
 deleted file mode 100644
-index c1e66a8aa..000000000
---- a/.changeset/skill-toolcall-id-charset.md
+index 301c42142..000000000
+--- a/.changeset/evals-judge-provenance.md
++++ /dev/null
+@@ -1,18 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-A judged stage row says who judged it, and on what
+-
+-Two defects, both about a reader being unable to weigh an advisory verdict.
+-
+-**Every judged row shipped with no evidence.** `judgeEvidenceFromVerdict` never populated `reasons`, so `boundedJudgeReasons` returned `undefined` on the judge path and `judgeObserved` / `judgePartial` / `judgeFailed` reached every surface as a bare verdict — a stage marked failed by a model, with nothing at all to say why. Its D7 sibling `metadataAttributionEvidenceFromVerdict` had populated reasons all along, so the two judges disagreed about how much they owed a reader.
+-
+-The row now carries, in order of directness: the judge's own rationale when one exists, and otherwise the numbers the verdict was actually decided from — `LLM judge scored 0.42 against a 0.7 threshold`. The second is not a rationale and is not dressed up as one, but it tells a reader which side of the line the run fell and by how much, where before there was nothing.
+-
+-**A gap worth naming rather than hiding:** the backend does not persist a scored case's rationale. `goalCompletion.ts` writes `score`, `threshold`, `verdict` and — in the `error` band only — the failure text, and drops the per-case `reason` the judge produced. This reads `reason`/`reasons` anyway, so the day that changes the rationale appears with no second change on this side. Closing it properly is a backend write plus a deploy, and is recorded as follow-up rather than folded in here.
+-
+-**The provenance is now in the label.** These five reasons are the only ones in the vocabulary decided by a model rather than a deterministic rule, and "the judge scored inside the partial band" did not say so. They now read "the LLM judge …", and `judgePartial` spells out what the band means — above the floor, below the threshold. The labels live in `decision-labels.ts`, which all four surfaces already read from, so one edit moves the CLI, JSON, JUnit and HTML together; the D9 cross-surface corpus proves they stayed in step.
+-
+-The partial band's label is inclusive at the floor. The band is `>= partialFloor` and `< threshold`, so a score exactly on the floor is partial — but the label said "above the floor", putting the boundary score outside a band it is inside. These strings are the one place all four renderers read from, so that error would have been shown everywhere and stated nowhere else.
+diff --git a/.changeset/evals-observed-tool-error-reaches-response.md b/.changeset/evals-observed-tool-error-reaches-response.md
+deleted file mode 100644
+index 51f939b2d..000000000
+--- a/.changeset/evals-observed-tool-error-reaches-response.md
++++ /dev/null
+@@ -1,20 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-An observed tool error reaches `response`, even when the case authored nothing about tools
+-
+-A case can author only transcript predicates — nothing about tools at all — and still have a tool fail on the server during the run. `response` was `notApplicable` for such a case, because applicability was decided purely from what the case authored. So when `failOnToolError` failed the trial on exactly that tool error, the chain had **every applicable stage green and no row able to say why the verdict was red**.
+-
+-That is the shape of a disagreement class found in prod: the legacy verdict failing on a recovered tool error the chain could not represent. It was never a verdict bug — it was a chain that had no vocabulary for what happened.
+-
+-An observed errored tool call now makes `response` measurable on its own, filing `failed / toolError` under `serverData` like any other server-answered error. Applicability and the deriver share one predicate (`hasObservedToolFailure`) rather than two copies of the condition, so a stage cannot be switched on by one rule and then found empty by the other.
+-
+-Two boundaries are deliberate. A span carrying an `mcpErrorCode` never reached the server's handler, so it stays a setup fact and does **not** turn the stage on — attributing our own transport failure to the server is the mis-attribution this module exists to prevent. And a case with no tool failure at all is unchanged: `response` stays `notApplicable`, because there is still nothing for it to decide.
+-
+-This is the one evidence-driven entry in the applicability table, and it is a _positive observation_ rather than a gap, which is what keeps the surrounding rule intact: a stage turned on by observed evidence cannot then be reported as an evidence gap, because the deriver holds the very span that turned it on.
+-
+-The chain says this whether or not the policy agrees. Under `failOnToolError: false` the trial passes on the very run whose tool errored, and the `response` row is still red — the verdict answers "did policy fail this trial", the chain answers "what happened", and those are allowed to differ. Without that, a suite run entirely under that policy would report a clean funnel over servers that were failing calls.
+-
+-Analyzer 6 → 7. `STAGE_REASONS` does not move (`toolError` already existed), so the backend mirror needs no re-pin.
+diff --git a/.changeset/evals-provider-error-attribution.md b/.changeset/evals-provider-error-attribution.md
+deleted file mode 100644
+index fd455f172..000000000
+--- a/.changeset/evals-provider-error-attribution.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-A model-provider failure is attributed to us, not filed against the server
+-
+-20 trials in one audited prod window failed on "credit balance too low… Anthropic API". The step errored, the asserts were skipped, and the chain ended `userValue: notMeasured / noEvidenceCaptured` with **no failure category at all** — our provider's outage presented as an unattributed server failure, in a report card whose entire job is to say whose side broke.
+-
+-The layer that failed is now tagged at the catch site and carried into the chain. `providerError` marks the stages a model-call failure left blank, and `categoryFor` files the run under `setup` — the existing bucket for our own side breaking, so no new category was needed.
+-
+-**Classified structurally, never by reading the message.** `drive-hosted-eval-turn.ts` already knows which layer it is in: `failTurn` is the engine's stream, `mapThrownTurnError` names its own call site, and "pre-turn setup" is the one that never reached the model. A text classifier would be one provider's wording away from mis-attributing a whole class of run. The engine's `code` and `httpStatus` ride along as diagnostics for a reader, and are deliberately _not_ part of the decision.
+-
+-Three boundaries are deliberate:
+-
+-- **A stage with its own observation keeps its own row.** A provider dying at turn 4 does not un-observe turns 1–3. What is re-labelled is a stage that measured nothing, plus — see "withdraws the failures it made unknowable" below — a `failed` row whose verdict rests on an *absence* the outage could equally well explain. A verdict resting on something actually observed always stands.
+-- **Never `failed`.** A run that could not be attempted has measured nothing about the server, and inflating a server failure rate with our own outage is the mis-attribution this reason exists to prevent.
+-- **A broken grader still outranks it.** `evaluator` is never folded into another category.
+-
+-`providerError` is broader than its name: it covers a provider outage, an exhausted credit balance, a rate limit, and our own spend guardrails. What they share is that _our_ side of the call broke, which is the only distinction the chain needs to stop blaming the server. That is stated in the reason's own docblock.
+-
+-Analyzer 7 → 8. This bump moves `STAGE_REASONS`, and the backend mirror already carries the member — it shipped deliberately ahead of this change — so nothing quarantines during the deploy window.
+-
+-**Stated limitation, unchanged:** the legacy verdict still counts these trials failed. Changing verdict population is a customer gate change and remains deferred behind its own product decision and release note.
+diff --git a/.changeset/evals-provider-error-catch-sites.md b/.changeset/evals-provider-error-catch-sites.md
+deleted file mode 100644
+index dc0635de4..000000000
+--- a/.changeset/evals-provider-error-catch-sites.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Provider-error attribution reaches the local path, and stops over-claiming on the harness
+-
+-Two catch sites turned out to be broader than the comments above them claimed. Both were found in review, and both are the provider-error defect wearing a different coat — attributing to the model a failure that never reached it, which misleads a report card exactly as much as the original did.
+-
+-**The harness reports setup failures through the same callback as stream failures.** `runHarnessTurn` wraps its entire turn — preparation included — in one `try`, so a missing `projectId`, a missing auth bearer, or disabled broker credential delivery arrives at `onEngineError` looking precisely like a provider outage. `failTurn` tagged every one of them `model`, which files our own setup bug as the provider's.
+-
+-The engine now reports the **phase** it failed in, derived from the trace-started flag the emitter already holds to decide whether a turn happened at all — never from reading the message. `failTurn` reads that phase. An engine that reports none still means `model`: every emitter that omits it today is a real stream failure, and defaulting the other way would un-attribute the outages this work was built for.
+-
+-**The local path carried no source at all.** When `orgByokRuntime.kind === "local"`, execution goes to `runLocalIteration` rather than the hosted driver, and neither of its finish calls supplied a `stepError`. So local-BYOK trials that died on the model call still finalized with blank stage reasons and no failure category — the exact misattribution the original change removed, surviving untouched on the path it never covered.
+-
+-The local driver now records the layer at both of its error sites, and threads it through both finish paths:
+-
+-- **An empty model stream** is unambiguously the model call — no other layer reaches that branch.
+-- **A non-tool error span** is the model call **only when its category is `llm`**. That branch selects every non-tool error span, and `connection`, `discovery` and `oauth` spans are all reachable there; tagging those `model` would blame the provider for a server we could not reach.
+-
+-Anything else leaves the source unset. An absent source attributes nothing, which is the right floor — no attribution is strictly better than a confident wrong one.
+-
+-Both decisions are extracted as small pure functions (`failedLayerForEngineError`, `modelLayerForErrorSpan`) so the choice can be read and tested on its own rather than inferred from a call site's position. Mutation-checked: ignoring the phase, tagging every span, and tagging none each fail exactly their intended tests.
+diff --git a/.changeset/evals-provider-error-chain-consistency.md b/.changeset/evals-provider-error-chain-consistency.md
+deleted file mode 100644
+index ff18aad90..000000000
+--- a/.changeset/evals-provider-error-chain-consistency.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Withdrawing a provider-blocked failure no longer leaves the chain arguing with itself
+-
+-Two follow-ups on the withdrawal added in the previous round.
+-
+-**The cascade ran before the withdrawal.** The positional pass reads `failed` rows to decide which later stages "never ran". Withdrawing a provider-blocked failure *after* it had run left `call`, `response` and `userValue` still saying `earlierStageFailed` while no stage failed and no `firstFailedStage` existed — three rows citing a failure the chain no longer records.
+-
+-The withdrawal now happens first, so the cascade sees the rows as they will actually be reported: a provider outage marks the later stages `providerError`, which is *why* they were not measured, rather than blaming a stage that is no longer failed. A failure the provider did **not** explain still cascades exactly as before — `unexpectedToolCall` survives the withdrawal, stays the first failed row, and the stages after it still read `notReached`. The cascade is repaired, not disabled.
+-
+-**The reason's label spoke for the run.** It read *"the model provider failed the call, so the run never reached the server"* — but `providerError` is applied per row, so a multi-turn iteration whose provider died at turn 4 keeps its earlier measured rows. The run-level claim would sit directly beside a `call: passed` that disproves it, and send a reader after the wrong timeline. It now says *"…so this stage was never measured"*, which is true of the row it labels.
+-
+-Mutation-checked: restoring the old ordering reproduces the self-contradicting chain, and restoring the run-level wording fails the label's scope test.
+diff --git a/.changeset/evals-provider-error-reaches-the-runner.md b/.changeset/evals-provider-error-reaches-the-runner.md
+deleted file mode 100644
+index cecd0ed9c..000000000
+--- a/.changeset/evals-provider-error-reaches-the-runner.md
++++ /dev/null
+@@ -1,21 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Provider attribution actually reaches the runner — it was cut in three places
+-
+-Three breaks in the wire between a classified provider failure and an attributed chain. Together the first two meant `providerError` **never fired on the hosted path at all** — the path the audited Anthropic-credit trials ran on.
+-
+-**The hosted bridge copied only the message.** `buildHostedStepHandlers` converts a `HostedEvalTurnOutcome` into a `StepEngineOutcome`, and both of its sites copied `iterationError` / `iterationErrorDetails` and nothing else. `drive-hosted-eval-turn` classified the failure and `step-executor` was ready to propagate it, but the classification died one hop from where it was made, so `iterationStepError` was never built and no hosted run was ever attributed.
+-
+-**The widget follow-up loop reduced a full outcome to a bare string.** A turn that dies on the provider is the same event whether it was the prompt or a `ui/message` follow-up; reporting one and not the other made attribution depend on which turn the model happened to fail on.
+-
+-**The judge second pass re-derived without it.** `stepError` is transient runner state — an input to the first derivation, never persisted — so the moment a judge verdict landed, `providerError` and the `setup` category were silently dropped and the run went back to being filed against the server.
+-
+-That last one is recovered from the stored chain rather than a new persisted field: `providerError` is written **if and only if** the model layer was classified as the failure, so its presence in `stageResults` is a faithful witness of that input. Nothing is invented. Only `code` and `httpStatus` are lost, and those were explicitly diagnostics rather than part of the classification.
+-
+-## Why all three shipped green
+-
+-Every existing provider-error test builds a `StageEvidence` with `stepError` already on it and asserts what the analyzer does with it. **None exercised the plumbing that puts it there** — so a unit test of the analyzer could not fail when the wire was cut.
+-
+-This adds tests that drive the real `step-handlers` → `step-executor` path and the real judge payload builder. Each was verified to reproduce the exact bug it covers: restoring any of the three breaks fails its test and nothing else.
+diff --git a/.changeset/evals-provider-error-withdraws-absences.md b/.changeset/evals-provider-error-withdraws-absences.md
+deleted file mode 100644
+index f5d0bb34a..000000000
+--- a/.changeset/evals-provider-error-withdraws-absences.md
++++ /dev/null
+@@ -1,19 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-A provider outage withdraws the failures it made unknowable, and is dated from the handover
+-
+-Two further review findings, and the first is the one that mattered most: the provider-error fix was **inert on the shape it exists for**.
+-
+-**A missing tool call is not a selection defect when the provider never let us make it.** `applyProviderError` re-labelled only rows that measured *nothing*. But a case expecting a tool call whose provider died already has `selection: failed / missingToolCall` written by the matcher before the chain is derived — so `firstFailedStage` stayed `selection`, `categoryFor` returned `selection`, and the outage was filed as a model-selection defect. The exact misattribution this reason was built to remove, on the commonest case in the corpus.
+-
+-The fix turns on a distinction worth stating plainly:
+-
+-- An **absence** verdict — no call arrived, an assertion over the output did not hold, the judge scored a truncated transcript low — is only sound if the run was allowed to finish. When our own model call died first, "it did not happen" has a second explanation that outranks the accusation, and we cannot tell which is true. Those rows become `notMeasured / providerError`, and their evidence goes with the verdict it supported.
+-- A **presence** verdict stands: an unexpected call was really made, arguments really mismatched, a tool really errored, a render really failed. `connectFailed` and `toolsListFailed` matter most here — they happen *before* any model call, so a server that would not connect is never excused by a provider error that came later. Letting a provider blip launder a genuine server defect would be the worse bug of the two.
+-
+-**The phase flag was read too late.** It used `driver.traceStarted`, and the driver is only built after `agent.stream(...)` *resolves* — so an immediate provider rejection (auth, quota, a rate limit) was reported as our setup failing when the model had in fact been asked. The flag is now set immediately before the call, marking the handover itself rather than a successful one.
+-
+-Mutation-checked in both directions: never withdrawing a failed row reproduces the original bug; withdrawing every failed row launders the server defects; and keeping stale evidence on a withdrawn row leaves it arguing for a failure it no longer claims. SDK 6,894 passed; CLI gate suite 1,182 passed, 0 failed; server harness + evals 1,079 passed.
+diff --git a/.changeset/evals-run-analytics-absence-vs-unreadable.md b/.changeset/evals-run-analytics-absence-vs-unreadable.md
+deleted file mode 100644
+index de7a5cef7..000000000
+--- a/.changeset/evals-run-analytics-absence-vs-unreadable.md
 +++ /dev/null
 @@ -1,13 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Directly loading a server-served skill no longer breaks the rest of the conversation
+-The run-detail fallback stops claiming an absence it has not established, and `timed_out` counts as over
 -
--Attaching a skill from the picker injects a synthetic `loadSkill` tool call into the transcript, and that call's id is replayed to the provider on every later turn. The id was built as `skill-load-${skill.name}-${generateId()}`.
+-Two further review findings on the chain slot.
 -
--A server-served skill (SEP-2640) is addressed by a namespaced `<server>/<skill>` ref, so the id carried a `/`. Anthropic validates `tool_use.id` against `^[a-zA-Z0-9_-]+$` and rejects the whole request otherwise — so the next message failed with `messages.5.content.1.tool_use.id: String should match pattern '^[a-zA-Z0-9_-]+$'` and the conversation could not be continued at all. The load itself had already succeeded; it was the turn after it that died.
+-**"This run has no canonical stage analytics" was said for every fallback**, including a `requestFailed` or `invalidContract` read — reporting a transient outage as a permanent absence, directly contradicting the service note printed under it. Only a 404 establishes that the run *has* no document; every error kind establishes only that we could not read one, which is a different and recoverable claim. The label now distinguishes them, and the dark-ship window reads as unreadable too — the route not being deployed says nothing about whether a document exists.
 -
--Cloud and local skills are plain slugs, which is why the id survived unsanitized until server skills put a separator in the name.
+-**`timed_out` was missing from the terminal statuses.** The runner types its own terminal transitions as `"cancelled" | "timed_out"`, so a run that ran out of time is as over as one that was cancelled — but a page opened during such a run never re-asked and sat on the older rollup indefinitely. The set is now a superset of `use-run-group-quality.ts`'s, which has the same gap; reconciling that one is worth doing separately, since it answers a different question.
 -
--The name is in the id for debuggability only — `generateId()` supplies the uniqueness — so the offending characters are replaced rather than dropped, keeping the id readable. Sanitizing happens at the one place ids are minted, not by narrowing refs upstream: the ref's shape is the namespacing contract the picker and `loadSkill` both compute, and bending it to one provider's id rules would make two unrelated concerns share a format.
-diff --git a/.changeset/skills-connect-before-support.md b/.changeset/skills-connect-before-support.md
+-Mutation-checked: removing `timed_out` fails exactly the new terminal-status case, and the absence-vs-unreadable wording is pinned across all four read outcomes.
+diff --git a/.changeset/evals-run-analytics-refetch-and-notice.md b/.changeset/evals-run-analytics-refetch-and-notice.md
 deleted file mode 100644
-index b535fea3e..000000000
---- a/.changeset/skills-connect-before-support.md
-+++ /dev/null
-@@ -1,22 +0,0 @@
-----
--"@mcpjam/inspector": patch
--"@mcpjam/sdk": patch
-----
--
--Hosted skills routes connect before asking whether the extension is active
--
--Every hosted `/server-skills` request answered "this connection does not speak skills" — for every server, including ones that plainly do — and the Skills tab showed nothing.
--
--`getSkillsSupport` is a synchronous read of what a LIVE connection negotiated. A hosted manager is ephemeral: nothing has connected when the handler starts, so the read answered `active: false` before the extension had any chance to be declared. The route then returned its empty listing and the wrapper's `finally` tore the manager down — aborting the negotiation that was still in flight. The telemetry is unambiguous once you look for it:
--
--```
--[event] mcp.connection.negotiated { serverId: 'mn7…', configuredMode: 'auto',
--  outcome: 'failed', failureClass: 'AbortError' }
----> POST /api/web/server-skills/list 200 516ms
--```
--
--A `200` with no skills, an aborted connection, and a server that answers `skills/list` perfectly when asked directly. Every other route to that same server negotiated `connected` in the same log, because they all reach the wire through methods that `await ensureConnected` first — `listTools`, `readResource`, and the rest. Skills had no such method, so the route read the answer before there was one.
--
--`MCPClientManager.ensureSkillsSupport()` is that method: it awaits the connection, then answers `getSkillsSupport`. The shared route core (`/api/web/server-skills` and its `/api/v1` mirror) now uses it in all three handlers.
--
--Local mode was never affected and is unchanged — its manager is long-lived and already connected by the time anything asks, which is exactly why this survived local testing.
-diff --git a/.changeset/skills-consent-follows-spec.md b/.changeset/skills-consent-follows-spec.md
-deleted file mode 100644
-index 4d4aeee70..000000000
---- a/.changeset/skills-consent-follows-spec.md
+index dec0e8969..000000000
+--- a/.changeset/evals-run-analytics-refetch-and-notice.md
 +++ /dev/null
 @@ -1,17 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--A server-origin skill load follows the host's approval policy, as SEP-2640 asks
+-The canonical run analytics re-ask when the run finishes, and their failures stay visible
 -
--Loading a skill served over MCP forced its own approval prompt regardless of the host's policy. That was MCPJam policy, not conformance — and it made the feature unusable on every surface that is not one long-lived process.
+-Two review findings on the run-detail chain slot.
 -
--**Why it was broken.** The gate recorded the approved digest set in a `Map` inside the closure `withServerSkills` creates. `prepareChatV2` — and therefore that closure — is rebuilt per request. So the gate wrote its binding into one request's Map and `execute`, running after the approval round trip in the *next* request, looked in an empty one and refused with `manifest_unbound`. Local mode kept a single closure alive across the round trip and never saw it. In the hosted Playground the user was never even prompted, so the gate failed in both directions at once: it did not ask, and it did not load.
+-**A run opened mid-flight never got its document.** The document is materialized when a run terminalizes, so a page opened while the run is still going asks too early and gets a legitimate 404. The effect keyed only on the ids, so it never asked again: the run finished, the document appeared, and the page kept showing the older rollup until somebody reloaded it.
 -
--**Why deferring is correct.** SEP-2640 does not require approval to read a skill's text. Its consent obligations are narrower: host-side code execution (#2), `allowed-tools` (#5 — ignored outright here), activating a nested skill (#6 — never done here), and cross-origin reads (#3 — impossible, since the manifest is an allowlist confined to the skill's own directory). What the spec asks for a plain load is **origin tagging** — mark the content as untrusted third-party input — which is the banner, and it stays unconditional.
+-The run's status is now part of the read's identity — collapsed to *"is it over"* rather than carried through raw, so a run moving `pending` → `running` does not issue a request per status tick. Callers that track no status keep the old single-shot behaviour, so a status the hook never learns cannot turn into a read it never issues.
 -
--So the load now follows the host's policy like any other tool on the turn. Where a prompt does fire and the closure survives (local mode), the digest-set binding is still recorded and still compared, so the content-binding rule (#7) holds for the persistent-approval case it actually governs. `UNRESOLVED` — the gate ran and no manifest stood behind the prompt — still fails closed.
+-**A real read failure could be hidden by the gate meant to hide empty ones.** If the canonical read failed with `requestFailed` or `invalidContract` on a run with no legacy rollup and no other insight card, `hasStageFunnel` was false, and both the rail and the insight band suppressed the whole slot — including the service note written specifically to report that failure. The one case where the message is the only thing there is to say was the one case it did not appear.
 -
--Unchanged on every surface: size and digest verification, frontmatter drift, URI/name identity, the manifest as a read allowlist, and the origin banner.
+-A service note now counts as content. `absent` and the dark-ship window still report none, so a run that finished before the materializer shipped does not hold a rail open on a message about nothing being wrong.
 -
--Verified against live staging with no approval flow at all: the skill loads, the banner is present, an unlisted file is refused, and a file belonging to a *different* skill on the same server is refused.
-diff --git a/.changeset/skills-one-source-every-surface.md b/.changeset/skills-one-source-every-surface.md
+-Mutation-checked: removing the terminal-status refetch, refetching on every status tick, and dropping either note case each fail exactly their intended tests.
+diff --git a/.changeset/evals-run-detail-canonical-stage-analytics.md b/.changeset/evals-run-detail-canonical-stage-analytics.md
 deleted file mode 100644
-index d4d9c2360..000000000
---- a/.changeset/skills-one-source-every-surface.md
+index d18610a62..000000000
+--- a/.changeset/evals-run-detail-canonical-stage-analytics.md
++++ /dev/null
+@@ -1,46 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-A run's canonical stage analytics reach the run detail, behind a flag
+-
+-Two readings of the same six stages exist, and until now the eval run detail could only show the older one. The legacy rollup is a precomputed pass rate with no reach/measured distinction and no slices. The canonical `EvalStageAnalyticsV1` document carries three rates per stage, named exclusions, and the intent/model/host marginals — it is what the API publishes and what external readers cite. The run detail showed the rollup; the suite page showed the document; the same run therefore read differently depending on where you looked at it.
+-
+-**New: `GET /v1/projects/:projectId/eval-runs/:runId/stage-analytics`**, with `PlatformApiClient.getEvalRunStageAnalytics`.
+-
+-A separate read rather than a filter over the suite listing. That listing pages newest-first, so reaching a known run through it costs work proportional to how long ago the run finished, and cannot answer at all once the run falls outside the pages walked. A caller that already knows its run asks for its run.
+-
+-The route makes the same promises the listing does, and one more of its own:
+-
+-- The run is read and **project-matched first**, so a valid run id from another of the caller's projects reads as `NOT_FOUND` rather than relying on the backend's fail-soft null.
+-- The payload is validated with the **refined** schema. The structural one would admit a document with two `overall` slices, or an overall slice disagreeing with the row's own trial count — the invariants every rendered number rests on. A failure is a `502`, never a `200` carrying the bad row.
+-- The document's `runId` must be **the run that was asked for**. `runId` is only `string().min(1)` to the schema, so another run's document parses perfectly and would otherwise be served under this run's heading.
+-- **`404` is one answer for two facts** — "this run has no document" and "this run is not visible to you" — deliberately not distinguished. Both mean unmeasured to a reader, and separating them would confirm that a run exists in a project the caller cannot see.
+-
+-**The UI choice is exclusive: canonical document, or legacy rollup, never both.** The two disagree by construction because their denominators differ, so showing both would leave a reader unable to tell which one is the report card. The states:
+-
+-| State | Renders |
+-|---|---|
+-| flag off | legacy, unlabelled — today's page exactly, and no request is issued |
+-| in flight | nothing; legacy-then-canonical would flash one set of numbers and replace it with different ones |
+-| document read | canonical only |
+-| no document (404) | legacy, labelled as the older rollup |
+-| route not deployed | legacy, labelled, **silently** — this is the dark-ship window, not a malfunction |
+-| a real read failure | legacy, labelled, **plus a service note** — swapping quietly to older numbers would hide it |
+-
+-`notFound` is surfaced as its own `absent` status rather than an error, because otherwise every run that finished before the materializer shipped — most of them — would carry a red service message about nothing being wrong.
+-
+-The hook is called **once**, in the run detail, and its result passed to the renderer as props. The rail needs the same answer for its own emptiness check, and this wraps a plain `fetch` rather than a Convex subscription, so calling it in both places would issue two HTTP requests per run with nothing de-duplicating them. That emptiness check now counts a canonical document too: the existing probe answers only for the legacy rollup, and would have closed the rail over a run that has a document and no rollup.
+-
+-`RunDocument` is exported from the suite panel and reused as-is — pure props, no hooks, no queries. Reusing the panel instead would have dragged a suite listing, its paging and its run selector onto a page that has exactly one run.
+-
+-A run with no `projectId` still gets a funnel. `EvalSuiteRun.projectId` is optional, and with the flag on and the id absent the hook is never asked — it sits at `idle`, which used to read as in-flight and drew *nothing*: not the canonical funnel that was never going to arrive, and not the legacy one that renders fine today. "Never asked" is the flag-off state and now answers the same way — legacy, unlabelled, nothing attempted. Only `loading` suppresses, because that is the only state where legacy-then-canonical would flash one set of numbers and replace it with different ones.
+-
+-The route binds **both** halves of the document's identity, not one. `runId` and `suiteId` are each only `string().min(1)` to the schema, and the route already holds the authorized run's `suiteId` — which is what the client links on. An earlier revision checked `runId` and left a comment saying the Convex reader cross-checks the suite. It does, but that is the other side of the wire making its own guarantee, and asserting one half of an identity while delegating the other is how the delegated half stops being checked at all the day that reader is swapped. The suite comparison is skipped when the run itself carries no `suiteId`, so an older run shape cannot turn a good document into a `502`.
+-
+-The two 404s are now byte-identical, not just status-identical. The route promises that "no document" and "not visible to you" are indistinguishable — but `v1ErrorBody` returns its `message` to the caller, and the two paths sent different ones, so anyone holding a run id could read off the bit the matching status codes were hiding. The test that was supposed to catch this compared `body.error?.code`, and the envelope is `{ code, message }` with no `error` wrapper: it compared `undefined` with `undefined` and passed. It now compares the whole body, and asserts the body is non-empty so it cannot pass vacuously again.
+-
+-`idle` is two states, and only the hook can tell them apart. Making an inactive `idle` render legacy introduced a flash: `active` is computed during render, but the effect that sets `loading` runs after that render commits — so for one frame "never asked" and "asking right now" were the same value, and the run detail drew the legacy funnel before replacing it with canonical numbers. The hook now reports `loading` for an active `idle`, so the slot's branches keep meaning what they say.
+-
+-Dark until the backend reader is deployed and the flag is enabled.
+diff --git a/.changeset/evals-run-detail-funnel-visibility.md b/.changeset/evals-run-detail-funnel-visibility.md
+deleted file mode 100644
+index e58ab0ff8..000000000
+--- a/.changeset/evals-run-detail-funnel-visibility.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The user-value chain is visible on `/evals` run detail when it has data
+-
+-The chain funnel was mounted on run detail but could not be seen on the runs where it was the only thing to show. Two gates decide whether the insight rail exists at all — `run-insight-rail.tsx`'s emptiness check and `run-detail-view.tsx`'s `hasInsightContent` — and both counted only the triage, goal-completion and groundedness cards. A run with a derived chain and no judge or triage output rendered no rail, so the funnel it contained was never drawn.
+-
+-Adding the chain card to those checks would have traded one bug for another, which is why the exclusion was deliberate and documented: the card is a truthy fragment whose two halves each suppress themselves from the inside, so counting the NODE would keep an otherwise-empty rail alive as a full-height column of dead space on every run with no insight content at all.
+-
+-So the gates now read a fact about the DATA instead. A probe mounted above every layout branch asks the same rollup query the funnel itself uses — `undefined` while loading, `null` for a run with no rollup, which is exactly the panel's own render condition — and reports one boolean that both gates consume. Convex de-duplicates identical subscriptions, so asking twice costs one query, and the probe carries the same `ErrorBoundary` the panels do: `useQuery` throws when the query is not deployed or when there is no `ConvexProvider`, and a probe that took the page down with it would be worse than the empty rail it exists to prevent. Undeployed reads as "no funnel", which is correct.
+-
+-The state starts `false`, so a run without a funnel never flashes an empty rail on the way to finding out.
+-
+-The probe's boundary does not file the dark-ship window with Sentry or PostHog. Until the query is deployed it throws on every run-detail visit, so an unconditional report would turn a documented, intended state into one issue and one event per run viewed — noise indistinguishable from a real regression at the moment one would matter most. `ErrorBoundary` gains an opt-in `isExpectedError` predicate for that, deliberately not a boolean: a boundary that suppressed everything would swallow the real bug it exists to surface. Only the two shapes Convex actually throws for an unavailable query are matched, `onError` still fires so the rail still closes, and a predicate that throws reports as normal.
+diff --git a/.changeset/evals-tool-call-predicates-file-at-selection.md b/.changeset/evals-tool-call-predicates-file-at-selection.md
+deleted file mode 100644
+index fedd83176..000000000
+--- a/.changeset/evals-tool-call-predicates-file-at-selection.md
 +++ /dev/null
 @@ -1,28 +0,0 @@
 ----
--"@mcpjam/inspector": minor
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
 ----
 -
--Skills come from one catalog now, not four disconnected ones
+-A tool-call assertion that fails now files at `selection`, not `userValue`
 -
--A chat turn used to resolve its skills through an exclusive chain — project skills, or nothing, or the local filesystem — and which arm you got was decided by DEPLOYMENT rather than by what you had. That is why you could author a project skill in the Skills tab on desktop and then have no way to use it: authoring wrote to Convex, and the desktop turn only ever read the local filesystem.
+-`stepsToPromptTurns` promotes only `toolCalledWith` into `expectedToolCalls`, where the selection matcher grades it. The other three tool assertions — `toolCalledAtLeastOnce`, `toolNeverCalled`, `firstToolWas` — fall through to per-turn checks and arrive at the analyzer as predicate results, which `deriveUserValue` graded as user value.
 -
--Where a skill comes from is a property of the skill, not a mode the app switches between. A turn now merges every origin available to it into one ref-addressed catalog:
+-So a case asserting "tool `get_project` was never called" reported `userValue: failed / predicateFailed` with `selection: passed`. The chain said the user did not get what they asked for; what actually happened is the model picked the wrong tool. Across one audited prod window that single mis-routing is most of the gap between 2 selection failures and 12 user-value ones — the report card blaming the wrong stage on the failures operators most need to attribute.
 -
--| Origin | Reference |
--|---|---|
--| Your project | `code-review` |
--| A local file | `local/code-review` |
--| A connected MCP server | `<server>/code-review` |
--| A plugin | `<plugin>/code-review` |
+-The three kinds now route to `selection`, and they do **not** share applicability:
 -
--So a desktop turn signed into a project offers your local files **and** your project skills, and a skill you author is usable in the very next message. Signed out, it offers local files exactly as before.
+-| predicate | failure files as | expects a call? |
+-|---|---|---|
+-| `toolCalledAtLeastOnce` | `missingToolCall` | yes |
+-| `firstToolWas` | `unexpectedToolCall` | yes |
+-| `toolNeverCalled` | `unexpectedToolCall` | **no** |
 -
--Two skills sharing a name are no longer a conflict to resolve by luck. Both appear, both load by their own reference, and a bare name that more than one origin answers to is refused with the alternatives named rather than silently resolved to whichever was indexed first.
+-`toolNeverCalled` is the asymmetry that makes this a matrix rather than a set: a case whose only tool assertion forbids a call expects none, and turning `call` on for it would demand evidence of the very thing the case exists to rule out.
 -
--**The v1 agent turn — and `send_chat_message` with it — sees project skills for the first time.** It could already read a connected server's skills; its own project's pool was invisible, so an agent driving MCPJam could read somebody else's skills but not yours.
+-Passing rows route too, not just failing ones. A case whose only selection assertion is "never call the admin tool", which did not call it, has *measured* selection and found it sound — reporting that as `notMeasured` understates what the run established. And they are **routed, not copied**: a failure filed at both stages would double-count one defect and make `firstFailedStage` depend on which stage a reader looked at first. For the same reason `buildStageAuthoredCase` stops counting them in `assertionCount`, so a `toolNeverCalled`-only case no longer reports a permanent user-value gap that no author could close.
 -
--Two things worth knowing:
+-`toolCalledWith` is deliberately untouched: it is already matcher-graded, and re-reading its point-in-time predicate row here would let a raw residual contradict the adjudicated verdict.
 -
--The Skills tab's Local/Cloud switch now only changes what you are **browsing**; it does not decide what a turn can use. It is also gated on the Skills flag rather than `computers-enabled`, which was a leftover from when cloud skills lived on a Computer's filesystem — wrong in both directions, since it could offer a store the backend would refuse to write, or withhold one you had.
+-Two mechanical notes. The predicate discriminator was always present at runtime — `PredicateResult` carries the whole predicate — and was being erased by a cast in `finalize-iteration`; it now crosses with the row, and a row *without* one grades exactly as before, which is why the analyzer bump to 6 changed no recorded row in the historical-parity corpus. `STAGE_REASONS` does not move (the routing re-uses `missingToolCall` and `unexpectedToolCall`), so the backend mirror needs no re-pin.
 -
--Project skills stay lazily fetched: a turn costs one catalog query, and a skill's body is fetched only when the model actually loads it. A 200-skill project does not pay 200 fetches to build a listing.
-diff --git a/.changeset/skills-over-mcp-inspection.md b/.changeset/skills-over-mcp-inspection.md
+-Verdicts, gate exit codes and pass/fail counts are unchanged: nothing in `iteration-verdict.ts`, the gate layers or the tallies reads stage rows. This does widen the D7 metadata-attribution judge's candidate population, since it gates on `firstFailedStage === "selection"` — intended, and the reason more selection failures now reach it is that they were always selection failures.
+diff --git a/.changeset/evals-verdict-chain-disagreement.md b/.changeset/evals-verdict-chain-disagreement.md
 deleted file mode 100644
-index ee067651b..000000000
---- a/.changeset/skills-over-mcp-inspection.md
+index 9d45f99a0..000000000
+--- a/.changeset/evals-verdict-chain-disagreement.md
 +++ /dev/null
-@@ -1,29 +0,0 @@
+@@ -1,30 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-A verdict that disagrees with the chain is named as a disagreement, not as missing information
+-
+-When a case failed but the chain recorded no failure category, the decision summary said one thing: `inspect the case trace; no failure category was recorded`. That sentence covers two runs that are not alike, and it describes the more interesting one wrongly.
+-
+-If the chain never validated, or measured nothing, then information really is absent and there is nothing more to say. But if the chain validated, every applicable stage came back `passed`, and the recorded verdict still says failed — that is not an absence. It is two things we hold in conflict, and sending someone to look for a missing measurement is sending them after the wrong thing.
+-
+-That run now reads: `the recorded verdict disagrees with the measured chain; inspect the case trace`.
+-
+-**The claim is asserted only when it is structurally established.** Four conditions, each doing real work:
+-
+-- **The chain validated.** An unverified chain has no stage states to disagree with anything.
+-- **Something actually `passed`.** A policy-blocked run has all six stages `notMeasured / blockedByPolicy`, so nothing failed — but nothing was measured either, and there is nothing for a verdict to disagree _with_.
+-- **Every _applicable_ stage `passed`.** Not merely "nothing failed": a chain with `connection` and `discovery` green and `selection` at `notMeasured / noEvidenceCaptured` has a measurement gap, and the verdict may be failing on exactly the stage the chain could not read. Calling that a conflict sends someone after a contradiction that is not there. `notApplicable` is the one state that does not block the claim — a stage the case never exercises is out of scope rather than missing, and requiring it to pass would make the claim unreachable for any case that does not use all six stages. This also subsumes the `failed` case: `failureCategory` is read off the stored row and the derivation schema pins only `firstFailedStage` to the failed row, never the category, so a row can validate carrying a `failed` stage and no category — and "the chain found nothing wrong" would be contradicted by the row itself.
+-- **The verdict says `failed`.** A trial that recorded no verdict is still diagnosed, and its chain can be entirely green. Nothing was decided, so nothing is in conflict.
+-
+-**A legacy chain is dated, not diagnosed.** A chain derived before analyzer 7 was measuring strictly less than the current one, so re-deriving may attribute what it could not. Those rows say so and ask for a re-run:
+-
+-> the recorded verdict disagrees with the measured chain; this run's chain was derived by an older analyzer that measures less than the current one — re-run the case before investigating further
+-
+-The version proves what the analyzer was **able to see**; it is not evidence about what happened. An earlier draft named the specific cause analyzer 7 added — an errored tool call on a case that authored no tool expectation — which would have sent every legacy row with any other uncategorised disagreement after one particular finding. Read from the row's own `stageAnalyzerVersion`, never inferred from the shape of the failure.
+-
+-**Nothing else guesses at a cause.** The assembler cannot see one from here, and a guess dressed as a finding is exactly what this vocabulary exists to prevent.
+-
+-Both next-action strings are exported from `@mcpjam/sdk/contract`, alongside the fallback they replace — the diagnostics return them, so a published consumer has to be able to name them.
+-
+-Post-IN7 this fires rarely by design: it now serves legacy-analyzer rows and residual unknowns. Wording only — the contract stays `.strict()` at schemaVersion 1, no stage row, state, reason or category moves, and no verdict changes.
+diff --git a/.changeset/evaluate-chain-reads-carry-the-bearer.md b/.changeset/evaluate-chain-reads-carry-the-bearer.md
+deleted file mode 100644
+index 6d64213f8..000000000
+--- a/.changeset/evaluate-chain-reads-carry-the-bearer.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Evaluate (New) chain reads carry the user's bearer, so they stop 401ing as "could not be loaded"
+-
+-The decision summary and the stage-analytics funnel both rendered a service error on every run — "Couldn't load the decision summary", "Stage analytics could not be loaded … Bearer token required" — while the API answered those exact routes correctly to any client that sent a token.
+-
+-`authFetch` is the single owner of the `Authorization` header, and it attaches one only to paths named in `HOSTED_AUTH_PATH_PREFIXES` / `HOSTED_AUTH_PATH_PATTERNS`. That list grants `/api/v1/` **path by path on purpose**: the prefix that would cover these, `/api/v1/projects/`, would hand the user's bearer to every project-scoped public-API route that ever ships. Three eval-chain routes were never added to it, so their requests went out with no `Authorization` at all and the API returned its ordinary `401 Bearer token required` — which the clients map to `requestFailed`, whose copy reads as a backend outage rather than a missing header.
+-
+-Adds two anchored patterns covering `eval-runs/{id}/decision-summary`, `eval-runs/{id}/stage-analytics`, and `eval-suites/{id}/stage-analytics`.
+-
+-This is the third time this exact bug has shipped, and the second half of the fix is the tests. `/web/registry/*` shipped with no entry and every call went out unauthenticated; readiness needed a pattern because its scope sits mid-path; G4b's run-disclosure remembered, D9 and D5c did not. Nothing fails until runtime — no build error, no type error, no test — because the allowlist is a hand-maintained list that a new consumer has to remember to join.
+-
+-So the new suite spends 10 of its 14 cases proving the grant stayed narrow: sibling routes under the same project (`eval-runs/{id}`, `eval-runs/{id}/iterations`, `eval-suites/{id}`, `eval-suites/{id}/runs`, `eval-runs/{id}/insights`), paths that merely start the same way, one path segment too many, and a foreign origin on a chain path all still receive nothing. Verified load-bearing: reverting the patterns fails exactly the four positive cases and leaves the ten narrowness ones green.
+-
+-Not local-dev-specific — `shouldAttachHostedAuthorization` never branches on hosted mode and same-origin passes its origin check in production too, so both panels were broken wherever `evaluate-enabled` was on.
+diff --git a/.changeset/harness-adapters-stable-line.md b/.changeset/harness-adapters-stable-line.md
+deleted file mode 100644
+index b5aed7101..000000000
+--- a/.changeset/harness-adapters-stable-line.md
++++ /dev/null
+@@ -1,19 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Move the Claude Code and Codex harnesses off the AI SDK canary channel onto the stable `@ai-sdk/harness` 1.0 line
+-
+-The real-harness engine was pinned to `@ai-sdk/harness@1.0.0-canary.13` with both adapters on `canary.9`. Vercel has since shipped the line as stable, so the inspector now tracks `@ai-sdk/harness@^1.0.96`, `@ai-sdk/harness-claude-code@^1.0.100` and `@ai-sdk/harness-codex@^1.0.98`. The Claude Code CLI inside the sandbox moves from 2.1.146 to 2.1.245 as a consequence.
+-
+-**Two of the bridge patches are gone, because the adapter now does the work.** MCPJam rewrites the vendored bridge source before shipping it into the sandbox, and every rewrite is a liability that has to be re-verified on each bump. The patch that injected `parent_tool_use_id: null` into the outbound user message is retired — the adapter sets it itself, and re-applying ours would have written the key twice. The patch that wrote `CLAUDE_CODE_EFFORT_LEVEL=unset` into the bridge process is retired too: stable exposes a first-class `env` option, so the value is passed as configuration instead of injected as source. The remaining patches (the assistant-text fallback, and the AI Gateway model overrides) are re-anchored against the new bridge, because the conditions that motivated them are both still present upstream.
+-
+-The retired `parent_tool_use_id` write is now an assertion rather than a deletion. That key is what stops a subagent's stream from merging into the parent transcript, so if a future adapter drops it the bootstrap fails loudly instead of silently flattening subagent output.
+-
+-**The model-override patch no longer fights the adapter for the same key.** Claude Code puts its own native model id on the wire and the AI Gateway wants the provider-qualified one, which `settings.modelOverrides` bridges. On the stable line the adapter builds its own `settings` for permission ask-rules and spreads it last, so the previous injection point would have been silently clobbered whenever a run used a non-default permission mode. The overrides are now merged on top of the adapter's own settings at that spread.
+-
+-**Auth is an environment map now, and the broker model is unchanged.** `HarnessV1Authentication` replaced the structured `{ anthropic } | { openaiCompatible }` options with a flat env map, so `buildBrokerDummyAuth` returns `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` and `CODEX_API_KEY`/`OPENAI_BASE_URL` directly. Supplying that map explicitly is also what keeps the adapters from falling back to reading the *server's* own process environment for a model credential, which is the property COMP-23 depends on: the inspector still never holds a real model credential, and the lease is still injected by E2B outside the VM.
+-
+-**The sandbox-provider contract moved with it.** `bridgePorts` is gone from the provider — port discovery is the adapter's job now, reading the session's `ports` and resolving them through a new required `getPortEndpoint`. `destroy` became required as well, and is implemented as an explicit no-op: MCPJam's computers are owned by the control plane and parked between turns, so a harness-initiated destroy would delete a box we intend to resume. The optional `setRequestTransformations`/`addRequestTransformations` hooks are deliberately left unimplemented, so credential injection stays with the broker rather than moving inside the harness session.
+-
+-**The pnpm build-script workaround is half retired.** The adapter now ships its own `pnpm-workspace.yaml` pinning the `@anthropic-ai/claude-code` build by exact version, and has dropped the by-hand `install.cjs` rescue it no longer needs. MCPJam stops writing that file — appending a second one would have written the path twice with conflicting content — and keeps it only as a fallback for a future adapter that ships none. The `.npmrc` stays unconditionally: pnpm 10 does not read `allowBuilds` from `pnpm-workspace.yaml`, and the computer template still installs pnpm unpinned.
+diff --git a/.changeset/hosted-turn-records-what-it-sent.md b/.changeset/hosted-turn-records-what-it-sent.md
+deleted file mode 100644
+index c5f16d92e..000000000
+--- a/.changeset/hosted-turn-records-what-it-sent.md
++++ /dev/null
+@@ -1,11 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The hosted chat turn records the system prompt it actually sent
+-
+-`persistChatSessionToConvex` has two prompt fields, and they answer different questions: top-level `systemPrompt` is EVIDENCE of what the model was given, and `resumeConfig.systemPrompt` is what a RESUMED turn replays. The local route (`routes/mcp/chat-v2.ts`) and the agent-turn route both fill the first with the enhanced prompt. The hosted Playground route filled only the second — so the record of a hosted turn carried the bare host prompt and none of what the turn added: the server-skill catalog, widget model context, the environment block.
+-
+-That matters most for the thing skills over MCP just shipped. "Did the model even know that skill existed?" is the first question anyone asks when an agent ignores a skill, and it is answered by the catalog being in the prompt or not. A record that cannot show the catalog cannot answer it.
+-
+-The two fields stay separate, deliberately. Turn-injected content is true of the turn that happened and not of the next one — replaying "your sandbox was reset" long after the fact, or a skills catalog for servers no longer connected, is exactly the confabulation the raw resume prompt exists to prevent. Both fields already existed on the ingest contract; only the hosted writer was leaving one empty.
+diff --git a/.changeset/judge-case-iteration-id.md b/.changeset/judge-case-iteration-id.md
+deleted file mode 100644
+index 04dc9a126..000000000
+--- a/.changeset/judge-case-iteration-id.md
++++ /dev/null
+@@ -1,14 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-A judge case carries the iteration it graded
+-
+-`judges.goalCompletion.cases[]` and `judges.groundedness.cases[]` projected only `caseKey` — a random `ui_*` storage key that matches nothing any other route returns. Not the `id` or `declaredId` from the case routes, not the iteration ids from `eval iterations`. The field's own documentation says so, and correctly warns callers off joining it against case ids.
+-
+-Which left **array position** as the only way to pair a judge score with the iteration it graded: assume the judge's ordering matches the iterations' ordering and hope. Nothing in the contract guarantees that, and being wrong attributes a score to the wrong case without any signal that it happened.
+-
+-The join key was already persisted — `saveGoalCompletion` patches each iteration through the case's `iterationId`. This exposes it rather than inventing one, on both judges and on `PlatformEvalRunJudgeCase`.
+-
+-`iterationId` is **optional**: judge results written before it was persisted carry none, and a caller must be able to tell "this run predates the join key" from a value it can act on.
+diff --git a/.changeset/ollama-polling-backoff.md b/.changeset/ollama-polling-backoff.md
+deleted file mode 100644
+index 958e3f404..000000000
+--- a/.changeset/ollama-polling-backoff.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Stop the local Ollama model detection from polling `127.0.0.1:11434` every 30s forever. The probe now backs off while the daemon is unreachable (30s → 1m → 2m → 4m → 8m, capped at 10m, reset on the first success) and pauses entirely while the tab is hidden, resuming with whatever is left of the current delay. Users running Ollama keep the same 30s cadence; users without it no longer get a console full of connection errors they cannot suppress.
+diff --git a/.changeset/pagination-empty-string-cursor.md b/.changeset/pagination-empty-string-cursor.md
+deleted file mode 100644
+index 8df276c85..000000000
+--- a/.changeset/pagination-empty-string-cursor.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/cli": patch
+-"@mcpjam/inspector": patch
+-"@mcpjam/widget-react": patch
+----
+-
+-An empty-string `nextCursor` is a valid cursor, not the end of a listing
+-
+-MCP `2026-07-28` (and `draft`) added a client MUST NOT to `server/utilities/pagination`:
+-
+-> Clients MUST treat cursors as opaque tokens: ... Don't make any determination based on cursor value other than whether a non-null value was provided (e.g. an empty string is a valid cursor and thus MUST NOT be treated as the end of results)
+-
+-Every page walk over `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` and `skills/list` treated `nextCursor: ""` as "that was the last page", so a server that pages with an empty first cursor had everything past page one silently dropped — tools missing from the Tools tab, a declared MCP App reported as undeclared, a conformance check certifying a listing it never finished reading, and a valid eval suite rejected at import because the tool it references sits on a page the validator never read.
+-
+-Both halves are fixed. A walk now ends only when `nextCursor` is absent (or is not a string, which is not a cursor at all), and a cursor is forwarded on the next request by presence rather than truthiness — the second half matters on its own, because a dropped `""` did not end the walk so much as restart it at page one.
+-
+-This reaches the public surfaces too. The `/v1` tools, prompts and resources routes are a **passthrough** of the MCP server's cursor, not our own pagination, so the same rule applies to them: `v1Page` no longer strips an empty `nextCursor`, the platform operations forward and surface one in both directions, and the `list_server_*` input schema accepts `cursor: ""` instead of rejecting it as too short. Convex-backed routes are unaffected — they already normalize a spent cursor to `undefined` before building the envelope.
+-
+-The same clause also removes the repeated-cursor guards these walks carried. Comparing two cursors for equality is itself a determination based on cursor value: nothing requires a server to change its token between pages, a server holding its pagination state server-side may legally return one constant opaque handle, and the spec's own example of a valid cursor is `""` — so a cycle check would have broken the empty-string case at page two, which is the very case this fix exists for. The guards never bounded the adversarial server anyway (one that wants to spin a client emits distinct cursors forever), so what remains is the **page cap**: it bounds our own work instead of interpreting somebody else's token, it bounds both cases identically, and every walk reports a cap stop as an incomplete read rather than as a finished listing.
+-
+-One deliberate exception: the conformance checker still records a repeated cursor, because characterizing a server's behavior is its purpose. It reports it as its own non-complete terminal state, which callers turn into a "could not run" skip — never a pass, never a failure, and never a listing described as complete.
+diff --git a/.changeset/persist-the-model-layer-classification.md b/.changeset/persist-the-model-layer-classification.md
+deleted file mode 100644
+index ed8ea0461..000000000
+--- a/.changeset/persist-the-model-layer-classification.md
++++ /dev/null
+@@ -1,15 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The judge second pass reads the model-layer classification instead of guessing it
+-
+-`stepError` is transient runner state — an input to the first derivation, never persisted — so the judge second pass re-derived from strictly less evidence than the first, and dropped `providerError` and the `setup` category the moment a verdict landed. UVH-IN2 patched that by recovering the classification from the stored chain, on the stated grounds that the chain "already says it: `providerError` is written if and only if the model layer was classified as the failure".
+-
+-**That premise was false.** `categoryFor` returns `setup` for a model-call failure where *nothing* failed — "there was nothing to fail against" — and on that shape `applyProviderError` relabels no row at all. The witness was empty exactly when the fact was true, so the category vanished on the second pass with no missing row to point at.
+-
+-The classification is now written beside the chain that produced it, as a single `stageStepErrorSource` key, and read back directly. The chain scan stays as a fallback for iterations finalized before the marker shipped — it was always a faithful witness where it fired, only an incomplete one. `code` and `httpStatus` are still not recovered by either route: they are diagnostics, were never part of the classification, and persisting them would invite a reader to treat them as evidence.
+-
+-No contract or vocabulary change, and no backend change: iteration metadata is an open bag, and `REPORTED_STAGE_KEYS` gates only claim detection and quarantine stripping, not what may be stored.
+-
+-Mutation-checked on both halves, which took two passes. Removing the read fails the test that names it immediately; removing the *write* originally failed nothing, because the read-side tests hand the reader a metadata bag directly and pass whether or not anything ever writes one. `buildStageMetadata` is now asserted at the seam as well.
+diff --git a/.changeset/platform-api-header.md b/.changeset/platform-api-header.md
+deleted file mode 100644
+index 5a59e1a88..000000000
+--- a/.changeset/platform-api-header.md
++++ /dev/null
+@@ -1,28 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 -"@mcpjam/cli": minor
--"@mcpjam/inspector": minor
 ----
 -
--Skills over MCP is inspectable from every agent surface, not just the Skills tab
+-Let the CLI reach a deployment behind an edge authenticator.
 -
--MCPJam has sat on both sides of SEP-2640 for a while — the host consumes and verifies, the hosted worker and the CLI serve their own skills — but the only place anyone could *see* what a connected server serves was the Skills tab. `mcpjam --help` had no `skills` command, none of the hosted platform tools could list a server's skills even though `list_server_tools` / `list_server_resources` / `list_server_prompts` all existed, and the CLI's own MCP server exposed `list_resources` with no skills equivalent. Skills was the one primitive-shaped surface in MCPJam with no agent-reachable inspection path.
+-`PlatformApiClient` gains `extraHeaders`, and the CLI exposes it as a repeatable
+-`--api-header "Name: value"` plus `MCPJAM_API_HEADERS` (newline-separated). Until
+-now the platform client built its header set from scratch on every request and
+-accepted no additions, so `mcpjam cloud …` could not authenticate to anything
+-sitting behind Cloudflare Access, a WAF, or a corporate proxy — which is every
+-staging deployment, every PR preview, and self-hosted installs behind a company
+-egress. The existing `--header` flag never helped: it injects into the MCP
+-*target server* connection, not the MCPJam API.
 -
--The closest a developer could get was `mcpjam resources list`, which shows `skill://` URIs as ordinary resources. That proves the wire and shows nothing that makes a skill a skill: no manifest, no digest or size verification, no identity check, and no refusal reasons.
+-The headers the client derives from its own contract cannot be overridden.
+-`authorization`, `idempotency-key` and `content-type` are refused by name at the
+-CLI boundary, and the client additionally applies extras *before* its own
+-headers, so a caller reaching the transport another way still cannot swap the
+-credential or the retry key. Names are lower-cased so one header cannot arrive
+-under two spellings, and a value containing a line break is rejected as header
+-injection rather than passed to `fetch`.
 -
--**The refusals are the product.** A server author asking "why won't this skill load" needs to know *which* digest, *which* field, *which* URI — so every new surface answers with either verified content or a refusal naming the check that failed, as a result rather than an error. `mcpjam skills read` on an unlisted URI exits 0 with `unlisted_resource`; refusing to load an unverifiable skill is the tool working.
--
--What ships:
--
--- `mcpjam skills list | get | read` — connects directly, so it needs no project and no API key.
--- `list_server_skills` / `get_server_skill` / `read_server_skill_file` on the platform catalog, which places them on the hosted MCP worker, `/api/v1`, and the in-app assistant at once.
--- `POST /v1/projects/{p}/servers/{s}/skills{,/get,/read-file}`, documented in `openapi.json`.
--- `list_skills` / `get_skill` / `read_skill_file` on `mcpjam mcp`, which already *served* skills and could not read them.
--- A `skills` check in `server doctor` that verifies rather than counts — a listing looks identical whether or not the bytes behind it match their digests.
--
--The verified read path itself moved into `@mcpjam/sdk`. Its docblock always claimed to be the one module between every MCPJam surface and a `skills/*` call, naming the CLI as a consumer; living in the inspector, that was aspiration, and any skills surface the CLI or worker grew would have had to re-decide which server behaviours are refusals. It is now importable, and the inspector keeps its old import path.
--
--Two behaviours worth knowing:
--
--`mcpjam skills list --host cursor` **refuses** rather than advertising the extension anyway. Pinning a host persona means "advertise exactly what that host advertises", so quietly adding skills would answer "what can MCPJam see" while you asked "what would Cursor see". The refusal is the honest answer: that host would see nothing.
--
--The doctor's skills check samples at most 5 skills, because verification costs a `resources/read` each and a 200-skill server should not turn a doctor run into a bulk download. A manifest that disagrees with its bytes is almost never wrong for one skill alone.
-diff --git a/.changeset/skills-rows-carry-their-origin.md b/.changeset/skills-rows-carry-their-origin.md
+-Flag and environment combine rather than one winning: CI supplies a machine
+-credential through the environment (keeping it out of `ps` and shell history)
+-while a developer adds a one-off header on the command line. On a name given in
+-both, the flag wins.
+diff --git a/.changeset/route-404-and-provisional-refresh.md b/.changeset/route-404-and-provisional-refresh.md
 deleted file mode 100644
-index adc1863a2..000000000
---- a/.changeset/skills-rows-carry-their-origin.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Server-served skills re-list when the connection re-negotiates, and each row names the server it came from
--
--**The listing could answer for a handshake that had already changed.** `support.active` is `client advertised ∧ server declared`, and the client half comes from the hosted api-context, which hydrates from a Convex query. A listing issued on mount could go out before the host config landed — advertising the SDK defaults, which deliberately omit `io.modelcontextprotocol/skills` — and come back `active: false` for a reason that stopped being true a moment later. Nothing re-ran it, because the refetch key was the connected-server set, and a capability change is not a connection change to that key. The symptom was a row that appeared while loading and vanished when the answer arrived, with no way back: the only refresh button lived inside the row it had just hidden.
--
--The section now folds the api-context revision into that key, the same `useSyncExternalStore` subscription `useAggregatedTools` uses, for the same reason — a catalog is a fact about a *negotiated connection*, not about a server id.
--
--**Provenance moved onto the row.** The "From MCP servers" heading and the per-server group headers are gone; each skill row carries a server icon and its origin server's label instead. A skill's provenance is the reason its content is untrusted third-party input, and that stays true wherever the row is read — a heading only says it while you are underneath it. Refusals, rejected entries, duplicate URIs and the load-by-URI input keep their per-server wording inline.
--
--With the group headers went their refresh buttons, so the tab's single refresh control now re-reads both halves — and it stays visible when `skills-enabled` hides the project store, since the server skills are exactly what is on screen in that case.
-diff --git a/.changeset/skills-rows-say-only-what-distinguishes-them.md b/.changeset/skills-rows-say-only-what-distinguishes-them.md
-deleted file mode 100644
-index e8fc09010..000000000
---- a/.changeset/skills-rows-say-only-what-distinguishes-them.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Skills tab: the header count tells the truth, and a row only says what makes it different
--
--**"Skills 0" over a list of skills.** The header badge counted the project store alone. That was unambiguous while server-served skills sat under a heading of their own, and became a plain falsehood the moment both halves became one flat list — a signed-out user with a connected server saw `0` above a panel of visible rows. A badge next to a list is read as the length of that list, so it now counts both halves. The two really are different namespaces (a name here, a URI there); that distinction lives on the rows, which name their origin server, not in a number nobody reads that way.
--
--**A green shield with a bare number on every row.** The number was the file count of the skill's advertised manifest, and the shield meant the skill was digest-verified — which every listed skill is, because verification is mandatory rather than something a skill can win. So the badge distinguished nothing and the number had no reading. Both moved into the row's tooltip, next to the skill URI. What stays on the row is the amber `unverifiable — declined` badge: the one row that behaves differently is the one worth marking.
--
--**A block of dead space above the rows.** The project store's "No skills available / Upload your first skill" call to action rendered on the project store's own count, so it appeared — a centred hundred-odd pixels of it — between the header and server rows that were right there. Both placeholders now speak for the whole list: they render only when the whole list is empty, and below the rows rather than above them. The server section reports whether a listing is still outstanding, so an unanswered fetch no longer reads as an empty store and then flashes away when the rows land.
--
--**The per-server "load by URI" input is gone.** `skills/get` still answers for a URI a listing never mentioned — that capability has not moved, and the tab still uses it to open a row — but a text box under every server was a debugging tool priced as permanent furniture in a panel whose job is to show what a server serves. It is available on `mcpjam skills get` and on the `/v1/…/skills/get` REST endpoint.
-diff --git a/.changeset/skills-tab-releases-mcp-half.md b/.changeset/skills-tab-releases-mcp-half.md
-deleted file mode 100644
-index f9d248bd8..000000000
---- a/.changeset/skills-tab-releases-mcp-half.md
+index e8e9cb961..000000000
+--- a/.changeset/route-404-and-provisional-refresh.md
 +++ /dev/null
 @@ -1,18 +0,0 @@
 ----
+-"@mcpjam/sdk": patch
 -"@mcpjam/inspector": patch
 ----
 -
--The Skills tab's "From MCP servers" section works in hosted mode, and Skills over MCP releases on its own schedule
+-A missing route and a missing run stop looking the same, and a provisional funnel refreshes itself
 -
--Two changes to the same page, one of which the other depends on.
+-**`PlatformApiError` now records where its `code` came from.** `STATUS_FALLBACK_CODES` assumes a wire code when an error response carries no `{ code }` envelope, and for 404 that assumption erases a distinction callers need: an API answering `{ code: "NOT_FOUND" }` means the resource does not exist, while a bare 404 with no envelope is usually the route not being there at all. Both arrived as `code: "NOT_FOUND"`, so a caller wanting to fall back on an undeployed endpoint — rather than render "no such thing" — had nothing to branch on. A discriminator built on the code could not have worked.
 -
--**"From MCP servers" was empty on every hosted project.** `server-skills-api.ts` hand-assembled its hosted request body as `{ serverId, projectId }` instead of going through `buildServerRequest`, the builder every other per-server hosted route uses. Two of the fields it skipped were load-bearing:
+-`codeSource` is `"envelope"` or `"status"`, and it is one signal rather than a verdict: a proxy can strip a body from any status, so it is meant to be read alongside the status, not instead of it. Optional, so an error constructed anywhere else keeps its current shape.
 -
--- **`clientCapabilities`.** Without it the ephemeral connection falls back to the SDK defaults, which deliberately omit `io.modelcontextprotocol/skills` (SEP-2133 makes extension support opt-in, and the bare SDK ships no fulfiller). So the connection never advertised the extension, `support.active` was false for every server, and the section — which renders nothing rather than an empty catalog, because "this host never asked" and "this server has no skills" are different facts — showed a header with nothing under it.
--- **The resolved server id.** `serverId` travels to Convex `authorizeBatch`, which needs the `servers` table id. The display name fails argument validation there, before any MCP frame is sent, surfacing as `projectId or serverIds are invalid`.
+-**The stage-analytics reader uses it for the dark ship.** A bare 404 is now `routeUnavailable`, not `notFound`. During a dark ship this is not cosmetic: the run detail was rendering an undeployed route as "this run was never measured" instead of falling back to the legacy funnel it should still have been showing.
 -
--Both are now supplied by the builder, along with the host's `clientInfo`, protocol pins and enterprise-auth policy — so a skills listing initializes on the same wire as every other hosted read of that connection, which is the point of a debugger.
+-**A provisional document now refreshes itself.** A run's analytics are materialized `provisional` while a judge fanout is pending and replaced by a `final` document once it settles. The hook's effect keys on ids and the run's terminal status, neither of which moves at that instant, so a page open across the transition kept showing provisional numbers until someone reloaded.
 -
--**`skills-enabled` gated the whole tab; it now gates only the Cloud half.** Cloud Skills are an MCPJam feature whose authoring the backend gates separately, still rolling out. Skills over MCP is a different thing that shares the page: a protocol capability served by whatever the user connected, gated by mutual declaration, whose `/api/web/server-skills/*` routes carry no product flag. Redirecting `/skills` away on the Cloud flag held the protocol half hostage to an unrelated rollout. The flag is now passed down as `cloudSkillsEnabled`: with it off the tab renders, shows "From MCP servers", and hides the project store's tree, count, upload and refresh — and never calls the project-store API, which the backend would gate anyway.
+-This is the rule the hook already implements — ask again exactly when the answer can still change — applied to the one transition it did not cover. Bounded and self-terminating rather than a poll: it re-asks only while the document itself says it is unsettled, backs off across four attempts, and stops at `final` or when the budget is spent, so a fanout that never settles costs a handful of reads rather than one per interval forever. A manual `refetch` never consumes the budget, and a re-triggered judge pass gets a fresh one.
 -
--Pre-hydration (`undefined`) is treated as off, so the page paints its protocol half immediately and the Cloud store appears when PostHog resolves. Local mode reads a real filesystem and carries no such gate, so `cloudSkillsEnabled` defaults to true and nothing there changes.
+-Mutation-checked in three directions: dropping the bare-404 branch and forcing `codeSource` to `"envelope"` each fail exactly the test that names it — with the enveloped-404 test beside it as an unchanged control — and removing the refresh effect fails the two tests that assert re-asking.
+diff --git a/.changeset/sdk-dts-heap-ceiling.md b/.changeset/sdk-dts-heap-ceiling.md
+deleted file mode 100644
+index 9e9300164..000000000
+--- a/.changeset/sdk-dts-heap-ceiling.md
++++ /dev/null
+@@ -1,10 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Raise the SDK build's heap ceiling so the dts pass stops dying.
+-
+-tsup's dts worker peaks around 4.1GB, just over Node's 4192MB default on the
+-release runner, so the SDK build failed intermittently with an out-of-memory
+-abort. The build now runs under `cross-env` with an 8GB `max-old-space-size`,
+-which works on Windows runners too.
+diff --git a/.changeset/stale-analyzer-warning-and-precision-cap.md b/.changeset/stale-analyzer-warning-and-precision-cap.md
+deleted file mode 100644
+index 258aa64f1..000000000
+--- a/.changeset/stale-analyzer-warning-and-precision-cap.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Two claims that stayed on screen after they stopped being true
+-
+-**A chat session kept warning "Derived by a newer analyzer" forever.** `analyzerVersionAhead` is stamped by the backend at the moment a chain arrives, and raising a version constant does not rewrite stored rows — so a session derived during a window when this build lagged its producer carried that amber warning permanently, long after the build caught up.
+-
+-The version it was derived at sits on the same object, so the warning is now derived from it rather than read out of storage. Self-healing for any future window and needing no migration: the claim goes false the moment it stops being true. This mirrors what the SDK's own `assembleChain` already does for eval runs, and what `checkStageOutcomes` was fixed to do backend-side. The stored boolean survives only as a fallback for rows written before the version was recorded, so nothing that was flagged loses its warning.
+-
+-The existing test asserted the defect: its fixture is stamped at analyzer 5 with the stored flag set, and against a build at 8 it expected the warning to show. That is how the stale flag survived review, and it is why the replacement test now pins both directions — warns when genuinely ahead, stops warning once caught up.
+-
+-**The judge's score line could print two different numbers as equal.** `showAgainst` grows precision until every pairwise-distinct value is distinguishable, capped at six decimals — past that a judge score is float noise. But the cap fell through to the six-decimal rendering *anyway*, so values differing beyond it rendered identically: "scored 0.7 against a 0.7 threshold" for numbers that were never equal. That is the exact contradiction the function's own docblock says it exists to prevent, reintroduced at its boundary.
+-
+-Values still colliding at the cap are now marked approximate (`≈0.7`). Marked per value, not blanket — a number the reader can trust should not be made to look uncertain — and genuinely equal values are left unmarked, because they *are* equal and a marker would make a true statement look doubtful. The six-decimal policy is unchanged.
+-
+-Both mutation-checked: reverting the derivation fails the warn-when-ahead and stop-when-caught-up tests in opposite directions; reverting the cap fails only the test that names it, and a blanket marker fails only the test that says which values get one.
+diff --git a/.changeset/tasks-list-empty-string-cursor.md b/.changeset/tasks-list-empty-string-cursor.md
+deleted file mode 100644
+index b746eb6fe..000000000
+--- a/.changeset/tasks-list-empty-string-cursor.md
++++ /dev/null
+@@ -1,18 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-`tasks/list` also treats an empty-string cursor as a cursor, not the end of a listing
+-
+-The follow-up to the same fix for `tools`/`prompts`/`resources`/`resource templates`/`skills`. `tasks/list` belongs to the separately-versioned 2025-11-25 in-core tasks utility rather than to the core listing set, so it was left out of that change's scope; it carried the identical defect.
+-
+-MCP `2026-07-28` (and `draft`) `server/utilities/pagination`:
+-
+-> Clients MUST treat cursors as opaque tokens: ... Don't make any determination based on cursor value other than whether a non-null value was provided (e.g. an empty string is a valid cursor and thus MUST NOT be treated as the end of results)
+-
+-Two sites forwarded the cursor by truthiness — the SDK's `tasks/list` request params, and the hosted `/api/web/tasks/list` request body. A `""` handed back by the previous page was dropped on the way out, which does not end a caller's walk so much as silently restart it at page one. Both now forward by presence.
+-
+-No repeated-cursor guard was added anywhere on this path, and none exists to remove. Comparing two cursors for equality is itself a determination based on cursor value: nothing requires a server to change its token between pages, and `""` is the spec's own example of a valid one — so a cycle check would break the exact case the clause exists to protect. Bounding a walk is the caller's page cap, which limits our own work rather than interpreting somebody else's token.
+-
+-Nothing in this repo walks `tasks/list` — every caller reads a single page, and the Tasks tab issues it deliberately as one inseparable batch — so this changes no behaviour against a server that pages normally. It is what lets a caller that does walk, or a user passing `mcpjam tasks list --cursor ""`, reach page two.
 diff --git a/cli/package.json b/cli/package.json
-index 742cd76ad..bd881c01d 100644
+index bd881c01d..cc777dfd3 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "5.2.0",
-+  "version": "5.3.0",
+-  "version": "5.3.0",
++  "version": "5.4.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -452,46 +778,46 @@ index 742cd76ad..bd881c01d 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^8.2.0",
-+    "@mcpjam/sdk": "^8.3.0",
+-    "@mcpjam/sdk": "^8.3.0",
++    "@mcpjam/sdk": "^8.4.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index a0bb1021e..3b506c2e9 100644
+index 47107fab6..ec2cff65a 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.2.0",
-+  "version": "3.3.0",
+-  "version": "3.3.1",
++  "version": "3.3.2",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -133,7 +133,7 @@
+@@ -135,7 +135,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.2.0",
-+    "@mcpjam/sdk": "^8.3.0",
+-    "@mcpjam/sdk": "^8.3.1",
++    "@mcpjam/sdk": "^8.4.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index f40df03d0..2a69474f3 100644
+index d3c33d78a..4db222e4b 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -61,9 +61,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "5.2.0",
-+      "version": "5.3.0",
+-      "version": "5.3.0",
++      "version": "5.4.0",
        "dependencies": {
--        "@mcpjam/sdk": "^8.2.0",
-+        "@mcpjam/sdk": "^8.3.0",
+-        "@mcpjam/sdk": "^8.3.0",
++        "@mcpjam/sdk": "^8.4.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -499,21 +825,21 @@ index f40df03d0..2a69474f3 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.2.0",
-+      "version": "3.3.0",
+-      "version": "3.3.1",
++      "version": "3.3.2",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -432,7 +432,7 @@
+@@ -433,7 +433,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.2.0",
-+        "@mcpjam/sdk": "^8.3.0",
+-        "@mcpjam/sdk": "^8.3.1",
++        "@mcpjam/sdk": "^8.4.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -1022,7 +1022,7 @@
+@@ -1035,7 +1035,7 @@
        "version": "0.9.31",
        "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
        "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
@@ -522,7 +848,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/@adobe/css-tools": {
-@@ -1824,7 +1824,7 @@
+@@ -1845,7 +1845,7 @@
        "version": "4.1.2",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
        "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
@@ -531,7 +857,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "@csstools/css-calc": "^3.0.0",
-@@ -1838,7 +1838,7 @@
+@@ -1859,7 +1859,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -540,7 +866,7 @@ index f40df03d0..2a69474f3 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -1848,7 +1848,7 @@
+@@ -1869,7 +1869,7 @@
        "version": "6.8.1",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
        "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
@@ -549,7 +875,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "@asamuzakjp/nwsapi": "^2.3.9",
-@@ -1862,7 +1862,7 @@
+@@ -1883,7 +1883,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -558,7 +884,7 @@ index f40df03d0..2a69474f3 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -1872,7 +1872,7 @@
+@@ -1893,7 +1893,7 @@
        "version": "2.3.9",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
        "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
@@ -567,7 +893,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/@aws-crypto/crc32": {
-@@ -3213,7 +3213,7 @@
+@@ -3234,7 +3234,7 @@
        "version": "6.0.2",
        "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
        "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
@@ -576,7 +902,7 @@ index f40df03d0..2a69474f3 100644
        "funding": [
          {
            "type": "github",
-@@ -3233,7 +3233,7 @@
+@@ -3254,7 +3254,7 @@
        "version": "3.2.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
        "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
@@ -585,7 +911,7 @@ index f40df03d0..2a69474f3 100644
        "funding": [
          {
            "type": "github",
-@@ -3257,7 +3257,7 @@
+@@ -3278,7 +3278,7 @@
        "version": "4.1.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
        "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
@@ -594,7 +920,7 @@ index f40df03d0..2a69474f3 100644
        "funding": [
          {
            "type": "github",
-@@ -3285,7 +3285,7 @@
+@@ -3306,7 +3306,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
        "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
@@ -603,7 +929,7 @@ index f40df03d0..2a69474f3 100644
        "funding": [
          {
            "type": "github",
-@@ -3308,7 +3308,7 @@
+@@ -3329,7 +3329,7 @@
        "version": "1.1.3",
        "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
        "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
@@ -612,7 +938,7 @@ index f40df03d0..2a69474f3 100644
        "funding": [
          {
            "type": "github",
-@@ -3333,7 +3333,7 @@
+@@ -3354,7 +3354,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
        "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
@@ -621,7 +947,7 @@ index f40df03d0..2a69474f3 100644
        "funding": [
          {
            "type": "github",
-@@ -5722,7 +5722,7 @@
+@@ -5755,7 +5755,7 @@
        "version": "1.15.0",
        "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
        "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
@@ -630,7 +956,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "engines": {
          "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
-@@ -7246,7 +7246,7 @@
+@@ -7279,7 +7279,7 @@
        "version": "0.3.11",
        "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
        "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
@@ -639,31 +965,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "@jridgewell/gen-mapping": "^0.3.5",
-@@ -9480,23 +9480,6 @@
-         "url": "https://opencollective.com/pkgr"
-       }
-     },
--    "node_modules/@playwright/test": {
--      "version": "1.59.1",
--      "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
--      "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
--      "license": "Apache-2.0",
--      "optional": true,
--      "peer": true,
--      "dependencies": {
--        "playwright": "1.59.1"
--      },
--      "bin": {
--        "playwright": "cli.js"
--      },
--      "engines": {
--        "node": ">=18"
--      }
--    },
-     "node_modules/@poppinss/colors": {
-       "version": "4.1.6",
-       "resolved": "https://registry.npmjs.org/@poppinss/colors/-/colors-4.1.6.tgz",
-@@ -14983,6 +14966,7 @@
+@@ -14999,6 +14999,7 @@
        "version": "19.2.14",
        "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
        "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
@@ -671,7 +973,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "csstype": "^3.2.2"
-@@ -14992,7 +14976,7 @@
+@@ -15008,7 +15009,7 @@
        "version": "19.2.3",
        "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
        "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
@@ -680,7 +982,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "peerDependencies": {
          "@types/react": "^19.2.0"
-@@ -17648,7 +17632,7 @@
+@@ -17664,7 +17665,7 @@
        "version": "1.0.3",
        "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
        "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
@@ -689,7 +991,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "require-from-string": "^2.0.2"
-@@ -17876,7 +17860,7 @@
+@@ -17892,7 +17893,7 @@
        "version": "1.1.2",
        "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
        "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
@@ -698,7 +1000,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/bundle-name": {
-@@ -18959,7 +18943,7 @@
+@@ -18975,7 +18976,7 @@
        "version": "3.2.1",
        "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
        "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
@@ -707,7 +1009,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "mdn-data": "2.27.1",
-@@ -18980,7 +18964,7 @@
+@@ -18996,7 +18997,7 @@
        "version": "5.3.7",
        "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
        "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
@@ -716,7 +1018,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "@asamuzakjp/css-color": "^4.1.1",
-@@ -18996,7 +18980,7 @@
+@@ -19012,7 +19013,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -725,7 +1027,7 @@ index f40df03d0..2a69474f3 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -19567,7 +19551,7 @@
+@@ -19583,7 +19584,7 @@
        "version": "6.0.1",
        "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
        "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
@@ -734,7 +1036,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "whatwg-mimetype": "^5.0.0",
-@@ -19581,7 +19565,7 @@
+@@ -19597,7 +19598,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
        "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
@@ -743,7 +1045,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "engines": {
          "node": ">=20"
-@@ -19678,7 +19662,7 @@
+@@ -19694,7 +19695,7 @@
        "version": "10.6.0",
        "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
        "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
@@ -752,7 +1054,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/decimal.js-light": {
-@@ -21068,6 +21052,7 @@
+@@ -21084,6 +21085,7 @@
        "version": "0.1.13",
        "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
        "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
@@ -760,7 +1062,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "optional": true,
        "dependencies": {
-@@ -21078,6 +21063,7 @@
+@@ -21094,6 +21096,7 @@
        "version": "0.6.3",
        "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
        "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
@@ -768,7 +1070,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "optional": true,
        "dependencies": {
-@@ -23842,7 +23828,7 @@
+@@ -23858,7 +23861,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
        "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
@@ -777,7 +1079,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "@exodus/bytes": "^1.6.0"
-@@ -23909,7 +23895,7 @@
+@@ -23925,7 +23928,7 @@
        "version": "7.0.2",
        "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
        "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
@@ -786,7 +1088,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "agent-base": "^7.1.0",
-@@ -23923,7 +23909,7 @@
+@@ -23939,7 +23942,7 @@
        "version": "7.1.4",
        "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
@@ -795,7 +1097,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "engines": {
          "node": ">= 14"
-@@ -24735,7 +24721,7 @@
+@@ -24751,7 +24754,7 @@
        "version": "1.0.1",
        "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
        "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
@@ -804,7 +1106,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/is-promise": {
-@@ -26139,7 +26125,7 @@
+@@ -26155,7 +26158,7 @@
        "version": "27.4.0",
        "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
        "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
@@ -813,7 +1115,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "@acemir/cssom": "^0.9.28",
-@@ -26179,7 +26165,7 @@
+@@ -26195,7 +26198,7 @@
        "version": "7.1.4",
        "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
@@ -822,7 +1124,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "engines": {
          "node": ">= 14"
-@@ -26189,7 +26175,7 @@
+@@ -26205,7 +26208,7 @@
        "version": "7.0.6",
        "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
        "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
@@ -831,7 +1133,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "agent-base": "^7.1.2",
-@@ -26203,7 +26189,7 @@
+@@ -26219,7 +26222,7 @@
        "version": "8.20.0",
        "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
        "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
@@ -840,7 +1142,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "engines": {
          "node": ">=10.0.0"
-@@ -26597,7 +26583,7 @@
+@@ -26613,7 +26616,7 @@
        "version": "1.32.0",
        "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
        "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
@@ -849,7 +1151,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "dependencies": {
          "detect-libc": "^2.0.3"
-@@ -26630,12 +26616,12 @@
+@@ -26646,6 +26649,7 @@
        "cpu": [
          "arm64"
        ],
@@ -857,13 +1159,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "android"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26651,12 +26637,12 @@
+@@ -26666,6 +26670,7 @@
        "cpu": [
          "arm64"
        ],
@@ -871,13 +1167,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "darwin"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26672,12 +26658,12 @@
+@@ -26686,6 +26691,7 @@
        "cpu": [
          "x64"
        ],
@@ -885,13 +1175,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "darwin"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26693,12 +26679,12 @@
+@@ -26706,6 +26712,7 @@
        "cpu": [
          "x64"
        ],
@@ -899,13 +1183,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "freebsd"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26714,12 +26700,12 @@
+@@ -26726,6 +26733,7 @@
        "cpu": [
          "arm"
        ],
@@ -913,13 +1191,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26735,12 +26721,12 @@
+@@ -26746,6 +26754,7 @@
        "cpu": [
          "arm64"
        ],
@@ -927,13 +1199,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26756,12 +26742,12 @@
+@@ -26766,6 +26775,7 @@
        "cpu": [
          "arm64"
        ],
@@ -941,13 +1207,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26777,12 +26763,12 @@
+@@ -26786,6 +26796,7 @@
        "cpu": [
          "x64"
        ],
@@ -955,13 +1215,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26798,12 +26784,12 @@
+@@ -26806,6 +26817,7 @@
        "cpu": [
          "x64"
        ],
@@ -969,13 +1223,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26819,12 +26805,12 @@
+@@ -26826,6 +26838,7 @@
        "cpu": [
          "arm64"
        ],
@@ -983,13 +1231,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "win32"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26840,12 +26826,12 @@
+@@ -26846,6 +26859,7 @@
        "cpu": [
          "x64"
        ],
@@ -997,13 +1239,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-         "win32"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -27813,7 +27799,7 @@
+@@ -27818,7 +27832,7 @@
        "version": "2.27.1",
        "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
        "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
@@ -1012,7 +1248,7 @@ index f40df03d0..2a69474f3 100644
        "license": "CC0-1.0"
      },
      "node_modules/media-typer": {
-@@ -30623,7 +30609,7 @@
+@@ -30628,7 +30642,7 @@
        "version": "8.0.0",
        "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
        "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
@@ -1021,63 +1257,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "entities": "^6.0.0"
-@@ -30929,55 +30915,6 @@
-       "integrity": "sha512-fnWVljUchTro6RiCFvCXBbNhJc2NijN7oIQxbwsyL0buWJPG85v81ehlHI9fXrJsMNgTofEoWIQeClKpgxFLrg==",
-       "license": "MIT"
-     },
--    "node_modules/playwright": {
--      "version": "1.59.1",
--      "resolved": "https://registry.npmjs.org/playwright/-/playwright-1.59.1.tgz",
--      "integrity": "sha512-C8oWjPR3F81yljW9o5OxcWzfh6avkVwDD2VYdwIGqTkl+OGFISgypqzfu7dOe4QNLL2aqcWBmI3PMtLIK233lw==",
--      "license": "Apache-2.0",
--      "optional": true,
--      "peer": true,
--      "dependencies": {
--        "playwright-core": "1.59.1"
--      },
--      "bin": {
--        "playwright": "cli.js"
--      },
--      "engines": {
--        "node": ">=18"
--      },
--      "optionalDependencies": {
--        "fsevents": "2.3.2"
--      }
--    },
--    "node_modules/playwright-core": {
--      "version": "1.59.1",
--      "resolved": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.59.1.tgz",
--      "integrity": "sha512-HBV/RJg81z5BiiZ9yPzIiClYV/QMsDCKUyogwH9p3MCP6IYjUFu/MActgYAvK0oWyV9NlwM3GLBjADyWgydVyg==",
--      "license": "Apache-2.0",
--      "optional": true,
--      "peer": true,
--      "bin": {
--        "playwright-core": "cli.js"
--      },
--      "engines": {
--        "node": ">=18"
--      }
--    },
--    "node_modules/playwright/node_modules/fsevents": {
--      "version": "2.3.2",
--      "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.2.tgz",
--      "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
--      "hasInstallScript": true,
--      "license": "MIT",
--      "optional": true,
--      "os": [
--        "darwin"
--      ],
--      "peer": true,
--      "engines": {
--        "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
--      }
--    },
-     "node_modules/plist": {
-       "version": "3.1.0",
-       "resolved": "https://registry.npmjs.org/plist/-/plist-3.1.0.tgz",
-@@ -31503,7 +31440,7 @@
+@@ -31459,7 +31473,7 @@
        "version": "2.3.1",
        "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
        "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
@@ -1086,7 +1266,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "engines": {
          "node": ">=6"
-@@ -32926,7 +32863,7 @@
+@@ -32882,7 +32896,7 @@
        "version": "7.8.2",
        "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
        "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
@@ -1095,7 +1275,7 @@ index f40df03d0..2a69474f3 100644
        "license": "Apache-2.0",
        "dependencies": {
          "tslib": "^2.1.0"
-@@ -33017,7 +32954,7 @@
+@@ -32973,7 +32987,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
        "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
@@ -1104,7 +1284,7 @@ index f40df03d0..2a69474f3 100644
        "license": "ISC",
        "dependencies": {
          "xmlchars": "^2.2.0"
-@@ -33690,7 +33627,7 @@
+@@ -33646,7 +33660,7 @@
        "version": "0.6.1",
        "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
        "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
@@ -1113,7 +1293,7 @@ index f40df03d0..2a69474f3 100644
        "license": "BSD-3-Clause",
        "engines": {
          "node": ">=0.10.0"
-@@ -33709,7 +33646,7 @@
+@@ -33665,7 +33679,7 @@
        "version": "0.5.21",
        "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
        "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
@@ -1122,7 +1302,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "buffer-from": "^1.0.0",
-@@ -34406,7 +34343,7 @@
+@@ -34362,7 +34376,7 @@
        "version": "3.2.4",
        "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
        "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
@@ -1131,7 +1311,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/synckit": {
-@@ -34577,7 +34514,7 @@
+@@ -34533,7 +34547,7 @@
        "version": "5.46.1",
        "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
        "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
@@ -1140,7 +1320,7 @@ index f40df03d0..2a69474f3 100644
        "license": "BSD-2-Clause",
        "dependencies": {
          "@jridgewell/source-map": "^0.3.3",
-@@ -34661,7 +34598,7 @@
+@@ -34617,7 +34631,7 @@
        "version": "2.20.3",
        "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
        "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
@@ -1149,7 +1329,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/test-exclude": {
-@@ -34919,7 +34856,7 @@
+@@ -34875,7 +34889,7 @@
        "version": "7.0.28",
        "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
        "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
@@ -1158,7 +1338,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "tldts-core": "^7.0.28"
-@@ -34932,7 +34869,7 @@
+@@ -34888,7 +34902,7 @@
        "version": "7.0.28",
        "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
        "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
@@ -1167,7 +1347,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/tmp": {
-@@ -35036,7 +34973,7 @@
+@@ -34992,7 +35006,7 @@
        "version": "6.0.1",
        "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
        "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
@@ -1176,7 +1356,7 @@ index f40df03d0..2a69474f3 100644
        "license": "BSD-3-Clause",
        "dependencies": {
          "tldts": "^7.0.5"
-@@ -35049,7 +34986,7 @@
+@@ -35005,7 +35019,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
        "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
@@ -1185,7 +1365,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "punycode": "^2.3.1"
-@@ -35412,7 +35349,7 @@
+@@ -35368,7 +35382,7 @@
        "version": "4.21.0",
        "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
        "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
@@ -1194,7 +1374,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "esbuild": "~0.27.0",
-@@ -35595,7 +35532,7 @@
+@@ -35551,7 +35565,7 @@
        "version": "5.9.3",
        "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
        "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
@@ -1203,7 +1383,7 @@ index f40df03d0..2a69474f3 100644
        "license": "Apache-2.0",
        "bin": {
          "tsc": "bin/tsc",
-@@ -36617,7 +36554,7 @@
+@@ -36573,7 +36587,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
        "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
@@ -1212,7 +1392,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "xml-name-validator": "^5.0.0"
-@@ -36693,7 +36630,7 @@
+@@ -36649,7 +36663,7 @@
        "version": "8.0.1",
        "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
        "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
@@ -1221,7 +1401,7 @@ index f40df03d0..2a69474f3 100644
        "license": "BSD-2-Clause",
        "engines": {
          "node": ">=20"
-@@ -36798,7 +36735,7 @@
+@@ -36754,7 +36768,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
        "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
@@ -1230,7 +1410,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "engines": {
          "node": ">=18"
-@@ -36808,7 +36745,7 @@
+@@ -36764,7 +36778,7 @@
        "version": "15.1.0",
        "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
        "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
@@ -1239,7 +1419,7 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT",
        "dependencies": {
          "tr46": "^6.0.0",
-@@ -37679,7 +37616,7 @@
+@@ -37635,7 +37649,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
        "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
@@ -1248,7 +1428,7 @@ index f40df03d0..2a69474f3 100644
        "license": "Apache-2.0",
        "engines": {
          "node": ">=18"
-@@ -37699,7 +37636,7 @@
+@@ -37655,7 +37669,7 @@
        "version": "2.2.0",
        "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
        "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
@@ -1257,24 +1437,59 @@ index f40df03d0..2a69474f3 100644
        "license": "MIT"
      },
      "node_modules/xpath": {
-@@ -37932,7 +37869,7 @@
+@@ -37888,7 +37902,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.2.0",
-+      "version": "8.3.0",
+-      "version": "8.3.1",
++      "version": "8.4.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
+@@ -38336,11 +38350,11 @@
+     },
+     "widget-react": {
+       "name": "@mcpjam/widget-react",
+-      "version": "0.1.10",
++      "version": "0.1.11",
+       "license": "MIT",
+       "dependencies": {
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^8.1.0",
++        "@mcpjam/sdk": "^8.4.0",
+         "@modelcontextprotocol/client": "2.0.0",
+         "@modelcontextprotocol/ext-apps": "^1.7.4",
+         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index c457abb1d..23cb75f32 100644
+index f80d6c59c..f2539fcca 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.2.0",
-+  "version": "8.3.0",
+-  "version": "8.3.1",
++  "version": "8.4.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
+diff --git a/widget-react/package.json b/widget-react/package.json
+index f8c9b159e..5b88216aa 100644
+--- a/widget-react/package.json
++++ b/widget-react/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/widget-react",
+-  "version": "0.1.10",
++  "version": "0.1.11",
+   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
+   "license": "MIT",
+   "type": "module",
+@@ -34,7 +34,7 @@
+   },
+   "dependencies": {
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^8.1.0",
++    "@mcpjam/sdk": "^8.4.0",
+     "@modelcontextprotocol/client": "2.0.0",
+     "@modelcontextprotocol/ext-apps": "^1.7.4",
+     "lucide-react": "^0.525.0",

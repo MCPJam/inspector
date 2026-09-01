@@ -34,6 +34,7 @@ import {
   connectProjectServerOperation,
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
@@ -83,6 +84,8 @@ import {
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+  listSecretsOperation,
+  getSecretOperation,
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
@@ -133,6 +136,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // opens in the same browser they are already signed into.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -199,6 +203,24 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+
+  // ── Project secrets: the METADATA READS only ────────────────────────────
+  //
+  // This list has no drift test — it is hand-maintained — so the omission is
+  // stated rather than left to be noticed. `list_secrets` and `get_secret` are
+  // here because a workspace chat needs to answer "does this project already
+  // have a STRIPE_API_KEY, and is it brokered?"; both return metadata and are
+  // structurally incapable of returning a value.
+  //
+  // The three WRITES are deliberately absent. `create_secret` and
+  // `update_secret` carry the plaintext as an ARGUMENT, so it would transit
+  // model context and be written into this chat's transcript before anything
+  // could approve it; `delete_secret` hard-revokes a credential and belongs on
+  // a surface where the person meant it. All three stay on REST, the SDK and
+  // the CLI.
+  listSecretsOperation,
+  getSecretOperation,
+
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
@@ -266,6 +288,19 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   // looking at them.
   delete_persona:
     "Takes a persona off the roster; the Swarms tab shows what still references it before you do.",
+  // PROJECT SECRET WRITES. The first two are excluded for a reason unrelated to
+  // reversibility: the plaintext credential is an ARGUMENT, so it would transit
+  // model context and be written into this chat's transcript before anything
+  // could approve it. An approval that fires after the value is already logged
+  // is not an approval, so no gate fixes this — only keeping them off the chat
+  // surface does. `delete_secret` is the ordinary destructive case: the
+  // Secrets section names the environments that stop working before you revoke.
+  create_secret:
+    "The plaintext value is an argument, so it would reach model context and this chat's transcript before anything could approve it. Create secrets in project settings, or through the API/CLI where you choose where the value comes from.",
+  update_secret:
+    "Same as create_secret: a rotation carries the new plaintext as an argument, with the same exposure before any approval.",
+  delete_secret:
+    "Revokes a credential permanently; the Secrets section names the environments that stop delivering it before you do.",
   archive_journey:
     "Takes a journey off the roster. The tab shows its run history first, which is the thing you are deciding about.",
   archive_swarm:

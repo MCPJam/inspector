@@ -33,7 +33,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model. Bring-your-own-key models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
-| Require tool approval | The toggle is disabled for Claude Code hosts. A host that already had approval enabled before switching to Claude Code will have approval honored for native tools: side-effecting built-ins (Bash, Write, etc.) pause the turn for your decision; read-only tools run freely. Approval cannot be combined with selected MCP servers — that combination is rejected at pre-flight. |
+| Require tool approval | Honored — the toggle is enabled for Claude Code hosts. When on, side-effecting built-ins (Bash, Write, etc.) and MCP server tools pause the turn for your decision; read-only tools run freely. Approval cannot be combined with selected MCP servers — that combination is rejected at pre-flight. |
 | Selected MCP servers | Honored — delivered via the session's MCP config through MCPJam's proxy. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Claude Code runtime owns its own sampling. These controls are grayed out in the UI. |

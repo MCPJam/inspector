@@ -42,6 +42,7 @@ import {
   describeDiagnosticEvidence,
   describeDiagnosticsScope,
   diagnosticNextAction,
+  isDiagnosticTraceable,
   formatDecisionCounts,
   truncateUntrusted,
 } from "./run-decision-summary-presentation";
@@ -364,21 +365,10 @@ function DiagnosticRow({
   const evidence = describeDiagnosticEvidence(diagnostic);
   const title = truncateUntrusted(diagnostic.title) ?? "Untitled case";
   const observedFailure = truncateUntrusted(diagnostic.observed?.failure);
-  // Three conditions, and the third is the one that keeps this control honest.
-  //
-  // The evidence names its own run and iteration, so a locator that does not
-  // match the run on screen would navigate somewhere this view cannot answer
-  // for. And the app focuses an iteration THROUGH its case — that is the only
-  // path the viewer actually consumes — so without a case id there is nowhere
-  // to send the reader. A button that lands on the page it is already on,
-  // having opened nothing, reads as broken; not offering it is the honest
-  // answer, and the same rule that keeps this card from claiming span or
-  // prompt focus it cannot perform.
-  const traceable =
-    Boolean(onViewTrace) &&
-    diagnostic.evidence.runId === runId &&
-    diagnostic.evidence.iterationId === diagnostic.iterationId &&
-    Boolean(diagnostic.testCaseId);
+  // The three conditions now live in the presentation module, so the stage
+  // findings offering the same control get the same answer rather than a
+  // second, drifting copy of the rule.
+  const traceable = isDiagnosticTraceable(diagnostic, runId, onViewTrace);
 
   const detailId = `run-decision-diagnostic-${diagnostic.iterationId}`;
 

@@ -202,6 +202,25 @@ describe("error translation", () => {
     ]);
   });
 
+  it("carries the open request ids through an ACTIVE_REQUEST_LIMIT refusal", async () => {
+    convex.action.mockRejectedValue(
+      backendError("ACTIVE_REQUEST_LIMIT", {
+        activeRequests: ["scr_1", "scr_2"],
+      })
+    );
+
+    const res = await create({ url: "https://example.com/mcp" });
+
+    // Same reason as the candidates above: the refusal says to finish or
+    // cancel one, and these ids are what makes that possible for a caller
+    // whose scrollback no longer has them.
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      details?: { activeRequests?: string[] };
+    };
+    expect(body.details?.activeRequests).toEqual(["scr_1", "scr_2"]);
+  });
+
   it("falls back to 500 for a code it has never seen", async () => {
     // The drift case: a new backend code arrives as an opaque 500 rather than
     // as anything anyone notices. Pinned so the fallback stays deliberate.

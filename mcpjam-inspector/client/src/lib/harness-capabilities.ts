@@ -76,19 +76,15 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
       enforced: false,
       note: "Claude Code runs its own loop and ignores temperature.",
     },
-    // Claude Code CAN pause — on its own built-ins (`approvalPermissionMode:
-    // "allow-edits"`) and on host-executed tools. What it can't cover is its MCP
-    // tools: the CLI's own client lists and calls those from inside the sandbox,
-    // where MCPJam has nothing to interpose on. Rather than half-honor approval,
-    // `checkHarnessRuntimeAvailable` REFUSES a turn on an approval host with any
-    // server selected. So the note must not say "ignored" — that is the one
-    // outcome that never happens. (This entry stays gated because the state has
-    // no server-selection input to distinguish the two cases; see the PR
-    // discussion — widening it is a deliberate product change, not a copy fix.)
-    requireToolApproval: {
-      enforced: false,
-      note: "Claude Code can't pause for approval of MCP-server tools, so a turn on this host is refused rather than run unapproved.",
-    },
+    // Claude Code pauses on all three surfaces: its own built-ins, its
+    // host-executed tools, and — under `approvalPermissionMode: "allow-reads"`
+    // — the MCP tools its in-sandbox client calls. The interposition point is
+    // the adapter bridge's `canUseTool`, which every tool call passes through
+    // before the CLI may run it; MCP tool names fall into its "edit" default,
+    // which "allow-reads" gates. This entry previously read `enforced: false`
+    // on the belief that MCP tools were unreachable, and a turn on an approval
+    // host with any server selected was REFUSED outright. It isn't anymore.
+    requireToolApproval: ENFORCED,
     // The real Claude Code owns its own tool discovery; MCPJam's progressive
     // meta-tools are an emulated-loop mechanism and don't apply to a harness.
     progressiveToolDiscovery: {

@@ -156,6 +156,7 @@ export type {
   StageSetupPhaseSignal,
   StageSetupSignals,
   StageSpanLike,
+  StageStepErrorLike,
   StageToolErrorLike,
 } from "./stage-derivation.js";
 export {
@@ -165,6 +166,8 @@ export {
   STAGE_METADATA_KEYS,
   STAGE_REASONS,
   deriveStageResults,
+  isPositiveToolCallPredicateKind,
+  isSelectionPredicateKind,
   stageDerivationSchema,
   stageDerivationToMetadata,
   stageReasonSchema,
@@ -477,13 +480,20 @@ export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.genera
 export {
   DECISION_LABEL_VOCABULARIES,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   EVAL_VERDICT_DECISION_REASON_LABELS,
+  EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGE_OUTCOMES,
+  USER_VALUE_STAGE_QUESTIONS,
+  describeExcludedTrialDetail,
 } from "./decision-labels.js";
+export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
 
 // ── the canonical run decision summary ───────────────────────────────────────
 export type {

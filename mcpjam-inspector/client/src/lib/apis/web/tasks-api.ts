@@ -35,7 +35,10 @@ export async function listHostedTasks(request: {
 }): Promise<any> {
   return webPost("/api/web/tasks/list", {
     ...buildServerRequest(request.serverNameOrId),
-    ...(request.cursor ? { cursor: request.cursor } : {}),
+    // Presence, not truthiness: `""` is a valid continuation cursor (MCP
+    // 2026-07-28 `server/utilities/pagination`), so it has to reach the route
+    // verbatim rather than being dropped as if no cursor had been supplied.
+    ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
   });
 }
 
