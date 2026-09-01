@@ -37,6 +37,7 @@ import {
   LOCAL_HARNESS_MANIFEST,
 } from "./compatibility.js";
 import {
+  getLocalMachineId,
   resolveWorkspaceGrant,
   verifyLocalHarnessGrant,
   type HarnessGrantBinding,
@@ -49,7 +50,7 @@ import {
 } from "./runtime-identity.js";
 import {
   currentLocalPlatform,
-  LOCAL_HARNESS_POLICY_VERSION,
+  LOCAL_ISOLATION_POLICY_VERSION,
   type LocalHarnessExecutionTarget,
 } from "./targets.js";
 import { supportsOwnershipProof } from "./process-identity.js";
@@ -58,6 +59,7 @@ export type LocalHarnessUnavailableStatus =
   | "server-disabled"
   | "hosted"
   | "actor-not-eligible"
+  | "machine-mismatch"
   | "ownership-unprovable"
   | "workspace-grant-invalid"
   | "runtime-unavailable"
@@ -119,9 +121,11 @@ export interface LocalHarnessAvailabilityQuery {
   grantToken: string | null | undefined;
   /** Root holding per-harness managed bundles. */
   runtimeRoot: string;
-  /** Installed adapter version, read from the package at call time. */
-  installedAdapterVersion?: string;
+  /** Installed adapter version, read from the package at call time. Required:
+   *  a caller that cannot state it cannot be allowed to skip the exact pin. */
+  installedAdapterVersion: string;
   /** Test seams. */
+  localMachineId?: string;
   manifests?: Readonly<Record<string, LocalHarnessCompatibility>>;
   platform?: NodeJS.Platform;
   killSwitchEnabled?: boolean;
@@ -163,6 +167,19 @@ export async function resolveLocalHarnessAvailability(
         "run hosted."
     );
   }
+  // A target names the machine it was consented on. Without this check the
+  // gate would happily accept one minted for a different installation, and the
+  // consent binding below would then be compared against a machine id the
+  // caller chose rather than the one this Inspector actually is.
+  const localMachineId = query.localMachineId ?? (await getLocalMachineId());
+  if (query.target.machineId !== localMachineId) {
+    return unavailable(
+      "machine-mismatch",
+      "this local execution target was granted on a different machine; " +
+        "consent is per-installation and must be granted again here"
+    );
+  }
+
   if (!supportsOwnershipProof(platform)) {
     return unavailable(
       "ownership-unprovable",
@@ -180,9 +197,7 @@ export async function resolveLocalHarnessAvailability(
       targetKind: target.kind,
       permissionProfile: target.permissionProfile,
       ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
-      ...(query.installedAdapterVersion !== undefined
-        ? { installedAdapterVersion: query.installedAdapterVersion }
-        : {}),
+      installedAdapterVersion: query.installedAdapterVersion,
     },
     query.manifests ?? LOCAL_HARNESS_MANIFEST
   );
@@ -236,11 +251,28 @@ export async function resolveLocalHarnessAvailability(
     ...(target.kind === "local-isolated" ? { backend: target.backend } : {}),
     runtimeId: runtimeResolution.runtime.runtimeId,
     permissionProfile: target.permissionProfile,
+    // An isolated target's terms are its ISOLATION policy — the backend
+    // selection, mount and syscall rules, egress restriction. Binding the
+    // native policy version here instead would leave an isolation rule change
+    // unable to invalidate the grants that depend on it, which is exactly the
+    // separation `targets.ts` documents.
     policyVersion:
       target.kind === "local-native"
         ? target.policyVersion
-        : LOCAL_HARNESS_POLICY_VERSION,
+        : target.isolationPolicyVersion,
   };
+  if (
+    target.kind === "local-isolated" &&
+    target.isolationPolicyVersion !== LOCAL_ISOLATION_POLICY_VERSION
+  ) {
+    return unavailable(
+      "consent-required",
+      `this grant was minted under isolation policy ` +
+        `${target.isolationPolicyVersion}; the current isolation policy is ` +
+        `${LOCAL_ISOLATION_POLICY_VERSION}. The terms changed, so consent is ` +
+        `asked again.`
+    );
+  }
   const consent = await verifyLocalHarnessGrant(query.grantToken, binding);
   if (!consent.ok) {
     return unavailable("consent-required", consent.message);

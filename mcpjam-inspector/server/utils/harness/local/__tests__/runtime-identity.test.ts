@@ -139,6 +139,26 @@ describe("managed bundles", () => {
     expect(result).toMatchObject({ ok: false, status: "bundle-digest-mismatch" });
   });
 
+  it("refuses a launcher path that climbs out of the digested tree", async () => {
+    const root = await writeBundle("escape", { "bridge.mjs": "x" });
+    const manifest = manifestFor("escape", await computeTreeDigest(root));
+    const result = await resolveManagedBundle({
+      manifest: {
+        ...manifest,
+        runtime: {
+          ...manifest.runtime,
+          launcherRelativePath: "../outside.mjs",
+        },
+      } as LocalHarnessCompatibility,
+      runtimeRoot,
+      platform: "linux",
+    });
+    expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
+    expect((result as { message: string }).message).toMatch(
+      /outside the bundle whose digest was verified/
+    );
+  });
+
   it("reports a bundle with no launcher as corrupt", async () => {
     const root = await writeBundle("nolauncher", { "lib/x.js": "x" });
     const result = await resolveManagedBundle({
@@ -221,6 +241,29 @@ describe("system installations", () => {
     expect(result).toMatchObject({ status: "system-runtime-untrusted-path" });
   });
 
+  it.skipIf(process.getuid?.() !== 0)(
+    "rejects an executable owned by the session user rather than a system owner",
+    async () => {
+      // Mode alone is not enough: the owner can chmod it back. The agent we
+      // are about to start runs as that user.
+      const { chown } = await import("node:fs/promises");
+      const dir = join(base, "user-owned-bin");
+      const exe = await installAt(dir);
+      await chown(exe, 65534, 65534); // nobody
+      const result = await resolveSystemInstall({
+        manifest: systemManifest,
+        platform: "linux",
+        forbiddenRoots: [],
+        searchPaths: [dir],
+        probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+      });
+      expect(result).toMatchObject({ status: "system-runtime-untrusted-path" });
+      expect((result as { message: string }).message).toMatch(
+        /rather than a system owner/
+      );
+    }
+  );
+
   it("rejects a world-writable executable, which cannot be held between probe and launch", async () => {
     const dir = join(base, "loose-bin");
     await installAt(dir, 0o777);
@@ -273,6 +316,64 @@ describe("system installations", () => {
       probe: async () => ({ stdout: "", exitCode: 1 }),
     });
     expect(result).toMatchObject({ status: "system-runtime-not-installed" });
+  });
+
+  it("fails closed when the manifest requires provenance we cannot verify", async () => {
+    // The field is a promise the manifest makes. With no code-signature
+    // verifier, honouring it means refusing — not accepting an executable on
+    // the strength of its own --version output.
+    const dir = join(base, "provenance-bin");
+    await installAt(dir);
+    const result = await resolveSystemInstall({
+      manifest: {
+        ...systemManifest,
+        runtime: {
+          ...systemManifest.runtime,
+          vendorIdentityPolicy: {
+            probeArgs: ["--version"],
+            stdoutPattern: "^claude \\d+\\.\\d+",
+            requirePlatformProvenance: true,
+          },
+        },
+      } as LocalHarnessCompatibility,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [dir],
+      probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+    });
+    expect(result).toMatchObject({ status: "system-runtime-identity-mismatch" });
+    expect((result as { message: string }).message).toMatch(/provenance/);
+  });
+
+  it("enforces the manifest's version range, not just the identity pattern", async () => {
+    const dir = join(base, "old-bin");
+    await installAt(dir);
+    const result = await resolveSystemInstall({
+      manifest: {
+        ...systemManifest,
+        runtime: { ...systemManifest.runtime, executableVersionRange: ">=2.0.0" },
+      } as LocalHarnessCompatibility,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [dir],
+      probe: async () => ({ stdout: "claude 1.2.3\n", exitCode: 0 }),
+    });
+    expect(result).toMatchObject({ status: "system-runtime-identity-mismatch" });
+    expect((result as { message: string }).message).toMatch(/outside the manifest range/);
+  });
+
+  it("reports the rejection that actually happened, not a blanket one", async () => {
+    const dir = join(base, "wrong-identity-bin");
+    await installAt(dir);
+    const result = await resolveSystemInstall({
+      manifest: systemManifest,
+      platform: "linux",
+      forbiddenRoots: [],
+      searchPaths: [dir],
+      probe: async () => ({ stdout: "not-claude 9\n", exitCode: 0 }),
+    });
+    // A failed identity probe is not "the session can write this path".
+    expect(result).toMatchObject({ status: "system-runtime-identity-mismatch" });
   });
 
   it("searches only system-owned locations by default", () => {

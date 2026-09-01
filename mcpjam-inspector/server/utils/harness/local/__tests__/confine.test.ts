@@ -52,9 +52,30 @@ describe("confinePath", () => {
     );
   });
 
-  it("rejects traversal out of a root", async () => {
+  it("rejects a literal `..` segment, unnormalized", async () => {
+    // Built as a raw string on purpose: `path.join` collapses `..` before the
+    // value is ever passed, so the joined form only re-tests the plain
+    // outside-the-root case and says nothing about traversal.
     await expect(
-      confinePath(join(workspace, "..", "outside", "secret.txt"), { roots })
+      confinePath(`${workspace}/../outside/secret.txt`, { roots })
+    ).rejects.toThrow(PathConfinementError);
+    await expect(
+      confinePath(`${workspace}/src/../../outside/secret.txt`, { roots })
+    ).rejects.toThrow(PathConfinementError);
+  });
+
+  it("rejects an empty path", async () => {
+    await expect(confinePath("", { roots })).rejects.toThrow(
+      PathConfinementError
+    );
+  });
+
+  it("does not drop a character when the parent is the filesystem root", async () => {
+    // `/ttmp/x` must not be able to resolve to `/tmp/x`: the ancestor walk
+    // slices the segment off its parent, and adding a separator offset when
+    // the parent already ends in one eats the segment's first character.
+    await expect(
+      confinePath("/ttmp/definitely-not-here", { roots })
     ).rejects.toThrow(PathConfinementError);
   });
 

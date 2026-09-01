@@ -1,8 +1,17 @@
-import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
+import { nonLoopbackLocalAddresses } from "../bridge-endpoint.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import { readProcessBirthIdentity, supportsOwnershipProof } from "../process-identity.js";
@@ -30,9 +39,34 @@ const realHome = process.env.HOME;
  * differs only in what is inside it.
  */
 const FAKE_BRIDGE = [
+  "import net from 'node:net';",
   "const args = process.argv.slice(2);",
-  "const out = { args, home: process.env.HOME, cwd: process.cwd(), gateway: process.env.MCPJAM_GATEWAY_URL };",
-  "console.log(JSON.stringify(out));",
+  "const out = {",
+  "  args,",
+  "  home: process.env.HOME,",
+  "  cwd: process.cwd(),",
+  "  gateway: process.env.MCPJAM_GATEWAY_URL,",
+  "  token: process.env.BRIDGE_CHANNEL_TOKEN,",
+  "  leaked: process.env.ANTHROPIC_ADAPTER_SMUGGLED,",
+  "};",
+  // Bind LOOPBACK, like a correctly built bundle must: the provider's
+  // mandatory exposure probe waits for this and then proves it is not also
+  // reachable from the LAN.
+  "const port = Number(process.env.BRIDGE_WS_PORT || 0);",
+  "const server = net.createServer(function(){});",
+  "server.listen(port, '127.0.0.1', function(){",
+  "  console.log(JSON.stringify(out));",
+  "});",
+  "setInterval(function(){}, 1000);",
+].join("\n");
+
+/** A bridge that binds every interface — what the pinned vendor bridges
+ *  actually do, and what the probe must refuse on a host. */
+const LAN_BRIDGE = [
+  "import net from 'node:net';",
+  "const port = Number(process.env.BRIDGE_WS_PORT || 0);",
+  "const server = net.createServer(function(){});",
+  "server.listen(port, '0.0.0.0', function(){ console.log('up'); });",
   "setInterval(function(){}, 1000);",
 ].join("\n");
 
@@ -56,11 +90,19 @@ afterAll(() => {
   else process.env.HOME = realHome;
 });
 
+let nextPort = 39271;
+
 async function buildSession(
   sessionId: string,
   supervisor: LocalHarnessSupervisor,
-  onBridgeStarted?: (a: { pid: number; port: number }) => Promise<void>
-): Promise<{ session: HarnessV1NetworkSandboxSession; sessionStateDir: string }> {
+  onBridgeStarted?: (a: { pid: number; port: number }) => Promise<void>,
+  bridgeSource: string = FAKE_BRIDGE
+): Promise<{
+  session: HarnessV1NetworkSandboxSession;
+  sessionStateDir: string;
+  bridgePort: number;
+}> {
+  await writeFile(join(bundleRoot, "bridge.mjs"), bridgeSource);
   const digest = await computeTreeDigest(bundleRoot);
   const manifest = {
     ...LOCAL_HARNESS_MANIFEST["claude-code"],
@@ -78,6 +120,7 @@ async function buildSession(
 
   const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);
   await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
+  const bridgePort = nextPort++;
 
   const provider = createSupervisedLocalHarnessProvider({
     harnessId: "claude-code",
@@ -89,12 +132,13 @@ async function buildSession(
     workspaceGrantId: "ws_test",
     sessionStateDir,
     targetKind: "local-native",
-    bridgePort: 39271,
+    bridgePort,
+    bridgeReadinessTimeoutMs: 10_000,
     scopedEnv: { MCPJAM_GATEWAY_URL: "http://127.0.0.1:39400/gateway" },
     ...(onBridgeStarted ? { onBridgeStarted } : {}),
   });
   const session = await provider.createSession({ sessionId });
-  return { session, sessionStateDir };
+  return { session, sessionStateDir, bridgePort };
 }
 
 function supervisor() {
@@ -211,12 +255,17 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       session.spawn({
         command:
           "node /tmp/harness/claude-code/bridge.mjs --workdir " +
-          join(workspace, "escape-args", "work"),
+          join(workspace, "escape-args", "work") +
+          " --bridge-state-dir " +
+          join(workspace, "state"),
       })
     ).rejects.toThrow(/outside every directory/);
     await expect(
       session.spawn({
-        command: "node /tmp/harness/claude-code/bridge.mjs --workdir /etc",
+        command:
+          "node /tmp/harness/claude-code/bridge.mjs --workdir /etc " +
+          "--bridge-state-dir " +
+          join(workspace, "state"),
       })
     ).rejects.toThrow(/outside every directory/);
     await session.stop();
@@ -233,11 +282,19 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("resolves a port only on loopback, and only one it leased", async () => {
     const sup = supervisor();
-    const { session } = await buildSession("ports", sup);
-    await expect(session.getPortUrl({ port: 39271, protocol: "ws" })).resolves.toBe(
-      "ws://127.0.0.1:39271"
-    );
+    const { session, bridgePort } = await buildSession("ports", sup);
+    await expect(
+      session.getPortUrl({ port: bridgePort, protocol: "ws" })
+    ).resolves.toBe(`ws://127.0.0.1:${bridgePort}`);
     await expect(session.getPortUrl({ port: 22 })).rejects.toThrow(/not leased/);
+
+    // setPorts must be visible through `session.ports`, which holds the same
+    // array reference the provider mutates.
+    await session.setPorts!([bridgePort, 40000]);
+    expect([...session.ports]).toEqual([bridgePort, 40000]);
+    await expect(session.getPortUrl({ port: 40000 })).resolves.toBe(
+      "http://127.0.0.1:40000"
+    );
     await session.stop();
   });
 });
@@ -246,7 +303,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
   it("runs the verified bundle with a sanitized environment, and cleans up", async () => {
     const sup = supervisor();
     const started: Array<{ pid: number; port: number }> = [];
-    const { session, sessionStateDir } = await buildSession(
+    const { session, sessionStateDir, bridgePort } = await buildSession(
       "bridge",
       sup,
       async (a) => {
@@ -262,6 +319,14 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
       command:
         `node /tmp/harness/claude-code/bridge.mjs --workdir ${workDir} ` +
         `--bridge-state-dir ${bridgeStateDir}`,
+      // What the adapter actually passes: the bridge's own channel token and
+      // port, plus — here — a name outside the allowlist that must not reach
+      // the child.
+      env: {
+        BRIDGE_CHANNEL_TOKEN: "channel-token",
+        BRIDGE_WS_PORT: String(bridgePort),
+        ANTHROPIC_ADAPTER_SMUGGLED: "should-not-arrive",
+      },
     });
 
     const line = await new Promise<string>((resolve) => {
@@ -282,14 +347,18 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     ]);
     // Synthetic home, not the user's.
     expect(observed.home).toBe(join(sessionStateDir, "home"));
-    // The scoped gateway endpoint reached the child; nothing else did.
+    // The scoped gateway endpoint and the adapter's allowlisted names arrive…
     expect(observed.gateway).toBe("http://127.0.0.1:39400/gateway");
+    expect(observed.token).toBe("channel-token");
+    // …and a name the adapter offered outside the allowlist does not.
+    expect(observed.leaked).toBeUndefined();
     expect(observed.cwd).toBe(workspace);
 
-    // It is the session ROOT, so it is durably recorded for the janitor.
+    // It is the session ROOT, so it is durably recorded for the janitor, and
+    // the mandatory loopback probe ran before it was admitted.
     const record = (await listProcessRecords()).find((r) => r.sessionId === "bridge");
     expect(record?.rootPid).toBe(proc.pid);
-    expect(started).toEqual([{ pid: proc.pid!, port: 39271 }]);
+    expect(started).toEqual([{ pid: proc.pid!, port: bridgePort }]);
 
     await session.stop();
     expect(await readProcessBirthIdentity(proc.pid!)).toBeNull();
@@ -298,13 +367,65 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     ).toBeUndefined();
   }, 30_000);
 
-  it("destroy also takes the tree down", async () => {
+  it("refuses a bridge that publishes itself to the local network", async () => {
+    // The pinned vendor bridges bind 0.0.0.0. On a host that publishes an
+    // agent control channel to whatever network the machine is on, so the
+    // session must stop rather than proceed — and the process must not be left
+    // running behind the refusal.
     const sup = supervisor();
-    const { session } = await buildSession("destroy", sup);
+    const { session, bridgePort } = await buildSession(
+      "lan-bridge",
+      sup,
+      undefined,
+      LAN_BRIDGE
+    );
+    const hasLan = nonLoopbackLocalAddresses().some((a) => !a.includes(":"));
+    if (!hasLan) {
+      await session.stop();
+      return; // nothing to be exposed to on this machine
+    }
+    await expect(
+      session.spawn({
+        command:
+          `node /tmp/harness/claude-code/bridge.mjs --workdir ${workspace} ` +
+          `--bridge-state-dir ${join(workspace, "state")}`,
+        env: { BRIDGE_WS_PORT: String(bridgePort) },
+      })
+    ).rejects.toThrow(/reachable from the local network/);
+    expect(sup.liveProcessCount("lan-bridge")).toBe(0);
+  }, 30_000);
+
+  it("destroy takes the tree down and removes the session state", async () => {
+    const sup = supervisor();
+    const { session, sessionStateDir, bridgePort } = await buildSession(
+      "destroy",
+      sup
+    );
     const proc = await session.spawn({
-      command: `node /tmp/harness/claude-code/bridge.mjs --workdir ${workspace}`,
+      command:
+        `node /tmp/harness/claude-code/bridge.mjs --workdir ${workspace} ` +
+        `--bridge-state-dir ${join(workspace, "state")}`,
+      env: { BRIDGE_WS_PORT: String(bridgePort) },
     });
     await session.destroy!();
     expect(await readProcessBirthIdentity(proc.pid!)).toBeNull();
+    await expect(stat(sessionStateDir)).rejects.toThrow();
+  }, 30_000);
+
+  it("refuses to launch when the verified bundle changed after consent", async () => {
+    const sup = supervisor();
+    const { session, bridgePort } = await buildSession("swapped", sup);
+    // Replace the bundle AFTER the session resolved its runtime identity.
+    await writeFile(join(bundleRoot, "bridge.mjs"), "console.log('swapped')");
+    await expect(
+      session.spawn({
+        command:
+          `node /tmp/harness/claude-code/bridge.mjs --workdir ${workspace} ` +
+          `--bridge-state-dir ${join(workspace, "state")}`,
+        env: { BRIDGE_WS_PORT: String(bridgePort) },
+      })
+    ).rejects.toThrow(/changed after consent was granted/);
+    await writeFile(join(bundleRoot, "bridge.mjs"), FAKE_BRIDGE);
+    await session.stop();
   }, 30_000);
 });

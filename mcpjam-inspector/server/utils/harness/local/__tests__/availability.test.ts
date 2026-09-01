@@ -75,6 +75,8 @@ async function query(overrides: Record<string, unknown> = {}) {
     projectId: PROJECT,
     grantToken: null,
     runtimeRoot,
+    installedAdapterVersion: LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
+    localMachineId: MACHINE,
     manifests,
     platform: "linux",
     killSwitchEnabled: true,
@@ -117,6 +119,8 @@ beforeAll(async () => {
     projectId: PROJECT,
     grantToken: null,
     runtimeRoot,
+    installedAdapterVersion: LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
+    localMachineId: MACHINE,
     manifests,
     platform: "linux",
     killSwitchEnabled: true,
@@ -140,6 +144,14 @@ afterAll(() => {
 
 beforeEach(async () => {
   await revokeLocalHarnessGrants();
+});
+
+describe("the machine gate", () => {
+  it("refuses a target granted on a different installation", async () => {
+    await expect(
+      query({ target: target({ machineId: "mach_elsewhere" }) })
+    ).resolves.toMatchObject({ status: "machine-mismatch" });
+  });
 });
 
 describe("the gates, in order", () => {

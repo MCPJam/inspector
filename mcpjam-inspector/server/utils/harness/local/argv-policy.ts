@@ -42,6 +42,25 @@ const MAX_ARG_COUNT = 64;
  * Exported so a test can lock the list: adding an entry is free, REMOVING one
  * is a security-sensitive change that must show up in review.
  */
+/**
+ * Flag/value pairs denied in their SEPARATED form (`--flag value`).
+ *
+ * The single-argument denylist below catches `--flag=value`, but the same
+ * request spelled as two argv entries would slip past it: neither
+ * `--ask-for-approval` nor `never` is denied on its own, yet together they are
+ * exactly the bypass being refused. Checked across adjacent entries in
+ * `assertArgvAllowed`.
+ */
+export const DENIED_ARGV_FLAG_VALUES: Readonly<
+  Record<string, readonly string[]>
+> = {
+  "--ask-for-approval": ["never"],
+  "--sandbox": ["danger-full-access"],
+  "--sandbox-mode": ["danger-full-access"],
+  "--permission-mode": ["bypasspermissions"],
+  "--approval-policy": ["never"],
+};
+
 export const DENIED_ARGV_CAPABILITIES: readonly string[] = [
   // Claude Code
   "--dangerously-skip-permissions",
@@ -154,5 +173,19 @@ export function assertArgvAllowed(args: readonly string[]): readonly string[] {
     );
   }
   for (const arg of args) assertArgumentAllowed(arg);
+  // Then the separated `--flag value` spelling, which no single-entry check
+  // can see.
+  for (let i = 0; i < args.length - 1; i += 1) {
+    const flag = args[i]!.toLowerCase();
+    const denied = DENIED_ARGV_FLAG_VALUES[flag];
+    if (denied && denied.includes(args[i + 1]!.toLowerCase())) {
+      throw new ArgvPolicyViolation(
+        `argv requests ${JSON.stringify(`${args[i]} ${args[i + 1]}`)}, which ` +
+          `disables the vendor permission controls local execution depends on`,
+        "capability",
+        args[i]!
+      );
+    }
+  }
   return args;
 }

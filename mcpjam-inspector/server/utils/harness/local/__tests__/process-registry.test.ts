@@ -26,6 +26,11 @@ function record(
   return {
     sessionId: "s-x",
     supervisorNonce: "sup_dead",
+    // A pid that cannot be running, so the janitor can PROVE the owning
+    // supervisor is gone. A record without this is treated as still-owned,
+    // because "cannot prove the owner exited" never authorizes a kill.
+    supervisorPid: 2_147_479_000,
+    supervisorBirthIdentity: "linux:1",
     runtimeId: "rt_test",
     rootPid: 1,
     processBirthIdentity: "linux:0",
@@ -76,6 +81,45 @@ describe("the durable record", () => {
 });
 
 describe("the janitor", () => {
+  it("will not reclaim records owned by a supervisor that is still alive", async () => {
+    // A foreign nonce means "another supervisor made this", NOT "that
+    // supervisor is gone". A second Inspector window must not kill the first's
+    // live sessions.
+    await recordProcess(
+      record({
+        sessionId: "s-other-live",
+        supervisorPid: process.pid,
+        supervisorBirthIdentity:
+          (await readProcessBirthIdentity(process.pid)) ?? "linux:0",
+      })
+    );
+    const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
+    expect(results).toContainEqual({
+      sessionId: "s-other-live",
+      outcome: "skipped-live-supervisor",
+    });
+    expect(
+      (await listProcessRecords()).find((r) => r.sessionId === "s-other-live")
+    ).toBeDefined();
+    await forgetProcess("s-other-live");
+  });
+
+  it("treats a record with no recorded owner as still-owned", async () => {
+    // Written before supervisor liveness was recorded: we cannot prove the
+    // owner exited, so it is left alone rather than reclaimed on a guess.
+    const legacy = record({ sessionId: "s-legacy" });
+    delete (legacy as { supervisorPid?: number }).supervisorPid;
+    delete (legacy as { supervisorBirthIdentity?: string })
+      .supervisorBirthIdentity;
+    await recordProcess(legacy);
+    const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
+    expect(results).toContainEqual({
+      sessionId: "s-legacy",
+      outcome: "skipped-live-supervisor",
+    });
+    await forgetProcess("s-legacy");
+  });
+
   it("leaves the live supervisor's own sessions alone", async () => {
     const nonce = mintSupervisorNonce();
     await recordProcess(record({ sessionId: "s-mine", supervisorNonce: nonce }));
@@ -87,7 +131,9 @@ describe("the janitor", () => {
     expect(await listProcessRecords()).toHaveLength(1);
   });
 
-  it("drops a record whose process is simply gone, and cleans its state", async () => {
+  it.skipIf(!canOwnProcesses)(
+    "drops a record whose process is simply gone, and cleans its state",
+    async () => {
     const sessionStateDir = join(
       base,
       ".mcpjam",
@@ -105,11 +151,15 @@ describe("the janitor", () => {
         sessionStateDir,
       })
     );
-    const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
-    expect(results).toContainEqual({ sessionId: "s-gone", outcome: "already-gone" });
-    expect(await listProcessRecords()).toHaveLength(0);
-    await expect(readdir(sessionStateDir)).rejects.toThrow();
-  });
+      const results = await reclaimAbandonedProcesses({ liveNonce: "sup_live" });
+      expect(results).toContainEqual({
+        sessionId: "s-gone",
+        outcome: "already-gone",
+      });
+      expect(await listProcessRecords()).toHaveLength(0);
+      await expect(readdir(sessionStateDir)).rejects.toThrow();
+    }
+  );
 
   it.skipIf(!canOwnProcesses)(
     "REFUSES to kill a reused pid, and keeps the record so the mismatch stays visible",
@@ -178,6 +228,20 @@ describe("the janitor", () => {
         targetKind: "local-native",
         sessionStateDir: join(base, "state-orphan"),
         role: "root",
+      });
+
+      // Simulate that Inspector having EXITED. The supervisor above runs in
+      // this very process, so its recorded owner is alive and the janitor
+      // would rightly leave it alone; rewriting the owner to a pid that cannot
+      // be running is what makes this the abandoned-tree case it claims to be.
+      const stored = (await listProcessRecords()).find(
+        (r) => r.sessionId === "s-orphan"
+      );
+      expect(stored).toBeDefined();
+      await recordProcess({
+        ...stored!,
+        supervisorPid: 2_147_479_001,
+        supervisorBirthIdentity: "linux:1",
       });
 
       // A different Inspector instance starts up and sweeps.

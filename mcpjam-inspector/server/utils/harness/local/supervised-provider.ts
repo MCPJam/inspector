@@ -33,14 +33,15 @@
  * confine the vendor process, which runs as the OS user. Both facts must
  * survive into product copy.
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { logger } from "../../logger.js";
-import { localBridgeUrl } from "./bridge-endpoint.js";
+import { localHarnessStateRoot } from "./grants.js";
+import { assertBridgeLoopbackOnly, localBridgeUrl } from "./bridge-endpoint.js";
 import { confinePath } from "./confine.js";
 import {
   translateAdapterCommand,
@@ -49,8 +50,12 @@ import {
 } from "./command-translation.js";
 import type { LocalHarnessCompatibility } from "./compatibility.js";
 import type { NodeLauncher } from "./node-launcher.js";
-import type { ResolvedRuntime } from "./runtime-identity.js";
-import { buildLocalHarnessEnv, syntheticHomeDirectories } from "./session-env.js";
+import { revalidateRuntime, type ResolvedRuntime } from "./runtime-identity.js";
+import {
+  buildLocalHarnessEnv,
+  filterBridgeSuppliedEnv,
+  syntheticHomeDirectories,
+} from "./session-env.js";
 import type { LocalHarnessSupervisor } from "./supervisor.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
 
@@ -80,8 +85,10 @@ export interface SupervisedLocalHarnessProviderOptions {
    * accepts a private config file should be given one instead.
    */
   scopedEnv?: Readonly<Record<string, string>>;
-  /** Called once the bridge process is up, so the caller can run the
-   *  loopback-exposure probe before any model traffic flows. */
+  /** How long to wait for the bridge to start listening on loopback before
+   *  giving up on verifying its binding. */
+  bridgeReadinessTimeoutMs?: number;
+  /** Called once the bridge is up AND its binding has been verified. */
   onBridgeStarted?: (args: { pid: number; port: number }) => Promise<void>;
 }
 
@@ -104,13 +111,33 @@ function completedProcess(stdout: string, exitCode = 0) {
   };
 }
 
-async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+/**
+ * Collect a byte stream into bytes.
+ *
+ * The binary primitive, kept separate from the text one on purpose: decoding
+ * to a string and writing that back out replaces every byte sequence that is
+ * not valid UTF-8 with U+FFFD, so an image, an archive, or a compiled artifact
+ * written through `writeFile` would land on disk corrupted.
+ */
+async function collectStreamBytes(
+  stream: ReadableStream<Uint8Array>,
+  abortSignal?: AbortSignal
+): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) chunks.push(value);
+  try {
+    for (;;) {
+      if (abortSignal?.aborted) {
+        throw abortSignal.reason instanceof Error
+          ? abortSignal.reason
+          : new Error("aborted");
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
   }
   const total = chunks.reduce((n, c) => n + c.byteLength, 0);
   const merged = new Uint8Array(total);
@@ -119,7 +146,14 @@ async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string
     merged.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(merged);
+  return merged;
+}
+
+/** Text view of a byte stream — for process output, never for file content. */
+async function collectStream(
+  stream: ReadableStream<Uint8Array>
+): Promise<string> {
+  return new TextDecoder().decode(await collectStreamBytes(stream));
 }
 
 export function createSupervisedLocalHarnessProvider(
@@ -166,12 +200,44 @@ export function createSupervisedLocalHarnessProvider(
       confine,
     };
 
-    let ports: number[] = [opts.bridgePort];
-    let bridgeStarted = false;
+    // Mutated IN PLACE by setPorts. Rebinding a fresh array would leave
+    // `session.ports` — which holds this same reference — pointing at the old
+    // lease list, so a consumer would read stale ports while `getPortUrl`
+    // honoured the new ones.
+    const ports: number[] = [opts.bridgePort];
+    // Claimed synchronously, so two concurrent spawns cannot both register as
+    // the session root and have the second overwrite the first's durable
+    // record (the registry keys by session id).
+    let bridgeClaimed = false;
+
+    /**
+     * Prove the runtime is still what consent named, immediately before every
+     * launch.
+     *
+     * Availability checked it once, but a session outlives that check: a
+     * bundle replaced in between would otherwise be launched here under a
+     * grant that describes different bytes. Invariant 3 says "verified before
+     * consent AND re-verified before spawn", and spawn is here.
+     */
+    const assertRuntimeUnchanged = async (): Promise<void> => {
+      const result = await revalidateRuntime(opts.runtime);
+      if (!result.ok) {
+        throw new Error(
+          `refusing to launch: ${result.message}. Local execution is bound to ` +
+            `a runtime identity, so a changed runtime needs fresh consent.`
+        );
+      }
+    };
+
+    /** Session environment plus the adapter's allowlisted per-call additions. */
+    const envFor = (
+      supplied: Readonly<Record<string, string>> | undefined
+    ): Record<string, string> => ({ ...env, ...filterBridgeSuppliedEnv(supplied) });
 
     const runTranslated = async (
       translated: TranslatedCommand,
-      abort?: AbortSignal
+      abort?: AbortSignal,
+      suppliedEnv?: Readonly<Record<string, string>>
     ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
       switch (translated.kind) {
         case "reply":
@@ -188,12 +254,13 @@ export function createSupervisedLocalHarnessProvider(
           return { exitCode: 0, stdout: "", stderr: "" };
         }
         case "exec": {
+          await assertRuntimeUnchanged();
           const handle = await opts.supervisor.spawnSupervised({
             sessionId,
             executable: translated.executable,
             args: translated.args,
             workingDirectory: translated.workingDirectory,
-            env,
+            env: envFor(suppliedEnv),
             runtimeId: opts.runtime.runtimeId,
             workspaceGrantId: opts.workspaceGrantId,
             targetKind: opts.targetKind,
@@ -283,23 +350,24 @@ export function createSupervisedLocalHarnessProvider(
         await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
         await writeFile(canonical, content, { mode: 0o600 });
       },
-      writeFile: async ({ path, content }) => {
+      writeFile: async ({ path, content, abortSignal: signal }) => {
         const canonical = await confine(path);
         await mkdir(dirname(canonical), { recursive: true, mode: 0o700 });
-        const text = await collectStream(content);
-        await writeFile(canonical, text, { mode: 0o600 });
+        // Bytes, not text: this is the contract's binary write primitive.
+        const bytes = await collectStreamBytes(content, signal ?? abortSignal);
+        await writeFile(canonical, bytes, { mode: 0o600 });
       },
 
       // ── exec ──────────────────────────────────────────────────────────
-      run: async ({ command, abortSignal: signal }) => {
+      run: async ({ command, abortSignal: signal, env: suppliedEnv }) => {
         const translated = await translateAdapterCommand(
           command,
           translationContext
         );
-        return runTranslated(translated, signal ?? abortSignal);
+        return runTranslated(translated, signal ?? abortSignal, suppliedEnv);
       },
 
-      spawn: async ({ command, abortSignal: signal }) => {
+      spawn: async ({ command, abortSignal: signal, env: suppliedEnv }) => {
         const translated = await translateAdapterCommand(
           command,
           translationContext
@@ -308,16 +376,22 @@ export function createSupervisedLocalHarnessProvider(
           // The adapters only ever `spawn` the bridge, but the contract allows
           // any command here; a non-exec translation is satisfied immediately
           // rather than being quietly upgraded into a process.
-          const result = await runTranslated(translated, signal ?? abortSignal);
+          const result = await runTranslated(
+            translated,
+            signal ?? abortSignal,
+            suppliedEnv
+          );
           return completedProcess(result.stdout, result.exitCode);
         }
-        const isBridge = !bridgeStarted;
+        const isBridge = !bridgeClaimed;
+        if (isBridge) bridgeClaimed = true;
+        await assertRuntimeUnchanged();
         const handle = await opts.supervisor.spawnSupervised({
           sessionId,
           executable: translated.executable,
           args: translated.args,
           workingDirectory: translated.workingDirectory,
-          env,
+          env: envFor(suppliedEnv),
           runtimeId: opts.runtime.runtimeId,
           workspaceGrantId: opts.workspaceGrantId,
           targetKind: opts.targetKind,
@@ -328,12 +402,30 @@ export function createSupervisedLocalHarnessProvider(
           ...(signal ?? abortSignal ? { abortSignal: (signal ?? abortSignal)! } : {}),
         });
         if (isBridge) {
-          bridgeStarted = true;
-          if (opts.onBridgeStarted) {
-            await opts.onBridgeStarted({
-              pid: handle.pid,
+          try {
+            // MANDATORY, not an optional callback: the loopback guarantee is
+            // only a guarantee if a bridge that binds the wrong interface
+            // cannot start a session. `assertBridgeLoopbackOnly` waits for the
+            // port to actually be listening first — probing before the bridge
+            // binds would let every refused connection pass and then admit a
+            // LAN listener that appeared a moment later.
+            await assertBridgeLoopbackOnly({
               port: opts.bridgePort,
+              ...(opts.bridgeReadinessTimeoutMs !== undefined
+                ? { readinessTimeoutMs: opts.bridgeReadinessTimeoutMs }
+                : {}),
             });
+            if (opts.onBridgeStarted) {
+              await opts.onBridgeStarted({
+                pid: handle.pid,
+                port: opts.bridgePort,
+              });
+            }
+          } catch (error) {
+            // Never leave the root running while reporting a failed spawn: the
+            // caller has no handle to it, so nothing else would stop it.
+            await opts.supervisor.stopSession(sessionId).catch(() => {});
+            throw error;
           }
         }
         return handle;
@@ -351,7 +443,7 @@ export function createSupervisedLocalHarnessProvider(
         return localBridgeUrl({ port, ...(protocol ? { protocol } : {}) });
       },
       setPorts: async (next) => {
-        ports = [...next];
+        ports.splice(0, ports.length, ...next);
       },
       // setNetworkPolicy is intentionally NOT implemented. A native provider
       // has no primitive that would enforce one, and the contract treats a
@@ -375,6 +467,10 @@ export function createSupervisedLocalHarnessProvider(
               `for session ${sessionId}`
           );
         }
+        // `destroy` discards resumability, so the session's disposable state —
+        // synthetic home, bridge state, caches — goes with it. `stop` keeps it,
+        // because a stopped session can still be resumed.
+        await removeSessionStateDir(opts.sessionStateDir);
       },
 
       restricted: () => session,
@@ -398,6 +494,24 @@ export function createSupervisedLocalHarnessProvider(
     resumeSession: async (options) =>
       buildSession(options.sessionId, options.abortSignal),
   };
+}
+
+/**
+ * Remove a session's disposable state, re-checking containment first.
+ *
+ * Resolved on both sides before comparison: a prefix test on the raw string
+ * would accept `<root>/../../etc`, and this ends in a recursive delete.
+ */
+async function removeSessionStateDir(dir: string): Promise<void> {
+  const root = resolve(localHarnessStateRoot());
+  const target = resolve(dir);
+  if (target === root || !target.startsWith(root + sep)) {
+    logger.warn("[local-harness] refusing to remove state outside the root", {
+      dir,
+    });
+    return;
+  }
+  await rm(target, { recursive: true, force: true }).catch(() => {});
 }
 
 /** Session state directory for a local harness session. Always inside the

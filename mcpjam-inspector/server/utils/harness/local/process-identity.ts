@@ -89,24 +89,38 @@ async function readLinuxBirthIdentity(
 }
 
 /**
- * Parse `ps -o state=,lstart=` output.
+ * Parse `ps -o state=,lstart=,comm=` output.
  *
- * macOS decorates the state with modifiers (`Ss`, `S+`, `R<`), so only the
- * first character names the state. Pure and exported for the same reason as
- * the Linux parser: it cannot be exercised from a Linux test host, and the
- * zombie branch is exactly the one worth locking down.
+ * `lstart` has ONE-SECOND precision, which on its own is a weak discriminator:
+ * a pid recycled onto another instance of the same program inside the same
+ * second would present an identical identity. `comm` — the executable path —
+ * is appended so that a recycled pid must additionally be running the same
+ * program before it can be mistaken for ours. That does not make the identity
+ * unforgeable, and the supervisor does not rely on it alone: for its own
+ * children it also holds the `ChildProcess` handle.
+ *
+ * `lstart` renders as exactly five whitespace-separated tokens
+ * (`Www Mmm dd hh:mm:ss yyyy`), so the split point is positional and does not
+ * depend on `comm` being a single token — which it is not for an app bundle.
+ * Tokens are rejoined with single spaces, because `ps` space-pads a
+ * single-digit day and an identity that changed with the padding would be a
+ * worse discriminator rather than a better one.
+ *
+ * Pure and exported because a Linux test host cannot exercise it otherwise,
+ * and both the zombie branch and this parsing are worth locking down.
  */
 export function parseDarwinPsLine(
   raw: string
-): { state: string; lstart: string } | null {
+): { state: string; lstart: string; comm: string } | null {
   const line = raw.trim();
   if (line.length === 0) return null;
-  const match = /^(\S+)\s+(.+)$/.exec(line);
-  if (!match) return null;
-  const state = match[1]!;
-  const lstart = match[2]!.trim();
-  if (lstart.length === 0) return null;
-  return { state, lstart };
+  const tokens = line.split(/\s+/);
+  // state + 5 lstart tokens, then optionally comm.
+  if (tokens.length < 6) return null;
+  const state = tokens[0]!;
+  const lstart = tokens.slice(1, 6).join(" ");
+  const comm = tokens.slice(6).join(" ");
+  return { state, lstart, comm };
 }
 
 async function readDarwinBirthIdentity(
@@ -115,7 +129,7 @@ async function readDarwinBirthIdentity(
   const stdout = await new Promise<string | null>((resolve) => {
     execFile(
       "/bin/ps",
-      ["-o", "state=,lstart=", "-p", String(pid)],
+      ["-o", "state=,lstart=,comm=", "-p", String(pid)],
       { timeout: PS_TIMEOUT_MS, maxBuffer: 16 * 1024, encoding: "utf8", env: {} },
       (error, out) => resolve(error ? null : typeof out === "string" ? out : null)
     );
@@ -124,7 +138,7 @@ async function readDarwinBirthIdentity(
   const parsed = parseDarwinPsLine(stdout);
   if (parsed === null) return null;
   if (isDeadState(parsed.state.charAt(0))) return null;
-  return `darwin:${parsed.lstart}`;
+  return `darwin:${parsed.lstart}|${parsed.comm}`;
 }
 
 /**

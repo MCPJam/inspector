@@ -57,23 +57,48 @@ describe("parseLinuxProcStat", () => {
 });
 
 describe("parseDarwinPsLine", () => {
-  it("splits the state from the start time", () => {
-    expect(parseDarwinPsLine("S     Mon Sep  1 01:00:00 2026\n")).toEqual({
+  it("splits state, the five-token start time, and the executable", () => {
+    expect(
+      parseDarwinPsLine("S     Mon Sep  1 01:00:00 2026 /usr/local/bin/node\n")
+    ).toEqual({
+      // Whitespace-normalized: `ps` space-pads a single-digit day, and an
+      // identity that changed with the padding would be a worse discriminator,
+      // not a better one.
       state: "S",
-      lstart: "Mon Sep  1 01:00:00 2026",
+      lstart: "Mon Sep 1 01:00:00 2026",
+      comm: "/usr/local/bin/node",
+    });
+  });
+
+  it("keeps an executable path containing spaces intact", () => {
+    // The lstart field is a fixed FIVE tokens, so the split is positional and
+    // does not assume `comm` is one token — which it is not for an app bundle.
+    expect(
+      parseDarwinPsLine(
+        "Ss   Mon Sep  1 01:00:00 2026 /Applications/My App.app/Contents/MacOS/My App"
+      )
+    ).toEqual({
+      state: "Ss",
+      lstart: "Mon Sep 1 01:00:00 2026",
+      comm: "/Applications/My App.app/Contents/MacOS/My App",
     });
   });
 
   it("keeps only the first character meaningful for decorated states", () => {
     // macOS decorates state with modifiers: `Ss`, `S+`, `R<`.
-    expect(parseDarwinPsLine("Ss+   Mon Sep  1 01:00:00 2026")?.state).toBe("Ss+");
-    expect(parseDarwinPsLine("Z     Mon Sep  1 01:00:00 2026")?.state).toBe("Z");
+    expect(parseDarwinPsLine("Ss+   Mon Sep  1 01:00:00 2026 /bin/x")?.state).toBe(
+      "Ss+"
+    );
+    expect(parseDarwinPsLine("Z     Mon Sep  1 01:00:00 2026 /bin/x")?.state).toBe(
+      "Z"
+    );
   });
 
   it("returns null for empty or truncated output", () => {
     expect(parseDarwinPsLine("")).toBeNull();
     expect(parseDarwinPsLine("   ")).toBeNull();
     expect(parseDarwinPsLine("S")).toBeNull();
+    expect(parseDarwinPsLine("S Mon Sep 1 01:00:00")).toBeNull();
   });
 });
 

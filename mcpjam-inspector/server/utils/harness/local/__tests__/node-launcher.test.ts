@@ -22,20 +22,26 @@ describe("resolveNodeLauncher", () => {
     });
   });
 
-  it("prefers a Node runtime shipped with the bundle", () => {
-    expect(
-      resolveNodeLauncher({ override: "/opt/mcpjam/runtimes/node/bin/node", isElectron: true })
-    ).toEqual({
-      executable: "/opt/mcpjam/runtimes/node/bin/node",
-      requiredEnv: {},
-      kind: "bundled",
-    });
-  });
-
   it("refuses a relative launcher, which a PATH would have to resolve", () => {
-    expect(() => resolveNodeLauncher({ override: "node" })).toThrow(NodeLauncherError);
     expect(() => resolveNodeLauncher({ execPath: "node", isElectron: false })).toThrow(
       NodeLauncherError
     );
+  });
+
+  it("refuses an empty launcher path", () => {
+    expect(() => resolveNodeLauncher({ execPath: "", isElectron: false })).toThrow(
+      NodeLauncherError
+    );
+  });
+
+  it("offers no unverified override", () => {
+    // A caller-supplied "absolute path we promise is Node" would be a trust
+    // path with nothing verifying it. The bundled runtime arrives with the CI
+    // bundle build, and with that build's digest verification.
+    expect(Object.keys(resolveNodeLauncher({ execPath: "/usr/bin/node" }))).toEqual([
+      "executable",
+      "requiredEnv",
+      "kind",
+    ]);
   });
 });

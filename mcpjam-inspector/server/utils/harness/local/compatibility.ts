@@ -104,8 +104,12 @@ export interface LocalHarnessCompatibility {
   permissionProfileMapping: PermissionProfileMapping;
   /** Platforms this harness may run NATIVE on. Empty = never native. */
   nativePlatforms: readonly LocalPlatform[];
-  /** Isolation backends conformance has passed for this harness. */
-  isolatedBackends: readonly LocalIsolationBackend[];
+  /** Isolation backends conformance has passed for this harness, PER
+   *  PLATFORM. A backend proven on Linux says nothing about macOS, and a
+   *  single flat list would let one platform's evidence admit another's. */
+  isolatedBackends: Readonly<
+    Partial<Record<LocalPlatform, readonly LocalIsolationBackend[]>>
+  >;
   /** Bumped whenever the lifecycle evidence is re-gathered. */
   lifecycleConformanceVersion: string;
   /** The adapter's hardcoded bootstrap dir, matched (never touched) by the
@@ -155,7 +159,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     // tested — an unenforced cleanup promise is worse than no Windows support.
     nativePlatforms: ["darwin", "linux"],
     // Empty until a backend's escape probes actually pass (I6).
-    isolatedBackends: [],
+    isolatedBackends: {},
     lifecycleConformanceVersion: "",
     adapterBootstrapDir: "/tmp/harness/claude-code",
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
@@ -181,7 +185,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     // reviewed restricted mode, or inside a verified isolation backend.
     permissionProfileMapping: {},
     nativePlatforms: [],
-    isolatedBackends: [],
+    isolatedBackends: {},
     lifecycleConformanceVersion: "",
     adapterBootstrapDir: "/tmp/harness/codex",
     bridgeBundleDigest: `sha256:${"0".repeat(64)}`,
@@ -209,8 +213,9 @@ export interface LocalCompatibilityQuery {
   permissionProfile: LocalPermissionProfile;
   backend?: LocalIsolationBackend;
   /** The adapter version actually installed, read from the package at call
-   *  time so a lockfile drift cannot pass unnoticed. */
-  installedAdapterVersion?: string;
+   *  time so a lockfile drift cannot pass unnoticed. Required: a caller that
+   *  cannot state it cannot be allowed to skip the pin. */
+  installedAdapterVersion: string | undefined;
 }
 
 /**
@@ -228,7 +233,16 @@ export function resolveLocalCompatibility(
     Partial<Record<string, LocalHarnessCompatibility>>
   > = LOCAL_HARNESS_MANIFEST
 ): LocalCompatibilityResult {
-  const manifest = manifests[query.harnessId];
+  // OWN properties only: a `harnessId` off the wire spelled `toString` or
+  // `__proto__` would otherwise resolve to an inherited Object property, pass
+  // the presence check below, and throw somewhere further down instead of
+  // returning the named refusal this function promises.
+  const manifest = Object.prototype.hasOwnProperty.call(
+    manifests,
+    query.harnessId
+  )
+    ? manifests[query.harnessId]
+    : undefined;
   if (!manifest) {
     return {
       ok: false,
@@ -239,15 +253,16 @@ export function resolveLocalCompatibility(
     };
   }
 
-  if (
-    query.installedAdapterVersion !== undefined &&
-    query.installedAdapterVersion !== manifest.adapterVersion
-  ) {
+  // REQUIRED, not optional: omitting it would silently skip the exact adapter
+  // pin, which is the check that catches a lockfile drift changing the command
+  // shapes the translator is built around.
+  if (query.installedAdapterVersion !== manifest.adapterVersion) {
     return {
       ok: false,
       status: "adapter-version-mismatch",
       message:
-        `${query.harnessId} adapter ${query.installedAdapterVersion} is ` +
+        `${query.harnessId} adapter ` +
+        `${query.installedAdapterVersion ?? "(version not supplied)"} is ` +
         `installed but the local manifest was reviewed against ` +
         `${manifest.adapterVersion}. An adapter upgrade can change the command ` +
         `shapes the local provider translates, so it must be re-reviewed ` +
@@ -302,14 +317,16 @@ export function resolveLocalCompatibility(
         message: "an isolated target must name its isolation backend.",
       };
     }
-    if (!manifest.isolatedBackends.includes(query.backend)) {
+    const verifiedHere = manifest.isolatedBackends[query.platform] ?? [];
+    if (!verifiedHere.includes(query.backend)) {
       return {
         ok: false,
         status: "backend-not-verified",
         message:
           `isolation backend ${query.backend} has not passed conformance for ` +
-          `${query.harnessId}. Isolated mode never falls back to native — ` +
-          `run hosted until the backend is verified.`,
+          `${query.harnessId} on ${query.platform}. Isolated mode never falls ` +
+          `back to native — run hosted until the backend is verified for this ` +
+          `platform.`,
       };
     }
   }

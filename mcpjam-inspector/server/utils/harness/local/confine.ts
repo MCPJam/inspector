@@ -20,6 +20,21 @@
  * ancestor with `realpath` and re-attaches the not-yet-created tail, then
  * checks the result. A write that creates a new file inside the root is
  * allowed; a write through a link that leaves the root is not.
+ *
+ * ── The remaining race, stated plainly ───────────────────────────────────
+ * Validation and the filesystem operation are two steps, so a process running
+ * as the same OS user can replace a resolved directory with a symlink in
+ * between and move the write outside the root. Closing that properly needs
+ * `openat`-style directory-handle operations with no-follow semantics, which
+ * Node does not expose.
+ *
+ * The honest framing: in NATIVE mode the only actor able to win that race is a
+ * same-user process, and a same-user process can already open those paths
+ * directly — this module was never what stood between it and the filesystem.
+ * So the race does not widen native mode's authority. It WOULD matter under an
+ * isolation backend, where the confined child genuinely cannot reach outside
+ * on its own; a backend that relies on this check for its filesystem boundary
+ * must supply its own enforcement rather than inherit this one.
  */
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
@@ -60,7 +75,12 @@ async function resolveExistingAncestor(
         // Reached the root without finding anything real.
         return { base: current, tail };
       }
-      tail.unshift(current.slice(parent.length + 1));
+      // `+ 1` skips the separator between parent and child — but when the
+      // parent IS the root it already ends in one, so adding the offset would
+      // eat the first character of the segment and turn `/ttmp/x` into
+      // `/tmp/x`. Skip the separator only when there is one to skip.
+      const cut = parent.endsWith(sep) ? parent.length : parent.length + 1;
+      tail.unshift(current.slice(cut));
       current = parent;
     }
   }

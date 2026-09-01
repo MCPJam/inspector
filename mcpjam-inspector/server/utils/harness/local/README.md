@@ -105,6 +105,16 @@ machine's non-loopback addresses and fails the session if one is accepted. The
 bundle build is expected to bind loopback; the probe is what makes that
 enforceable rather than aspirational.
 
+### The bridge probe is mandatory, and waits for the bridge
+
+An exposure probe that runs before the listener exists proves nothing: every
+connection is refused, the probe passes, and a bridge that binds `0.0.0.0` a
+moment later is admitted with a clean bill of health. So the provider waits for
+the port to accept a loopback connection, and only then tests whether it is
+*also* reachable through this machine's non-loopback addresses. Either failure
+stops the session, and the root process is killed rather than left running
+behind the refusal.
+
 ### A zombie is a dead process
 
 `/proc/<pid>/stat` still exists after a process exits, until something reaps it.
@@ -133,7 +143,7 @@ the macOS `ps` path, and both parsers are pure and directly tested.
 9. Nothing is installed during a session — `command-translation.ts`.
 10. Secrets stay out of argv, persisted state, and logs — `session-env.ts`, `grants.ts`.
 11. Every terminal path kills the whole owned tree — `supervisor.ts`, `process-identity.ts`.
-12. A pid alone never proves ownership — `process-identity.ts`, `process-registry.ts`.
+12. A pid alone never proves ownership — `process-identity.ts`, `process-registry.ts`. A supervisor *nonce* alone does not prove its owner exited either: the janitor requires the owning Inspector's pid and birth identity to be provably gone, so a second window cannot reclaim the first's live sessions.
 13. Unsupported tuples fail closed with actionable diagnostics — `compatibility.ts`, `availability.ts`.
 14. Attended, explicitly scoped consent — `grants.ts`, `availability.ts`.
 
@@ -144,10 +154,12 @@ off, unlike the local computer engine's flag: a local bash command is discrete
 and separately approved, a local harness is a long-lived agent process.
 
 The flag alone is not enough, and deliberately so. Every shipped manifest entry
-carries an empty `lifecycleConformanceVersion` and an all-zero bundle digest, so
-`resolveLocalHarnessAvailability` refuses with `conformance-missing` or
-`bundle-digest-mismatch` until real evidence and a real CI-built bundle exist.
-The flag enables the feature; it does not certify it.
+carries an empty `lifecycleConformanceVersion`, so
+`resolveLocalHarnessAvailability` refuses with `conformance-missing` before it
+ever looks at a runtime; the all-zero bundle digests are a second closed door
+behind it (a real bundle can never hash to zeroes), surfaced as
+`runtime-unavailable` carrying the underlying `bundle-digest-mismatch`. The flag
+enables the feature; it does not certify it.
 
 ## What is not here yet
 

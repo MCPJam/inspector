@@ -13,6 +13,11 @@ import {
   SUPPORTED_LOCAL_HARNESS_IDS,
 } from "../targets.js";
 
+/** The adapter version the shipped manifest was reviewed against. Supplied on
+ *  every query because the pin is mandatory — a caller that cannot state the
+ *  installed version does not get to skip it. */
+const PINNED = LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion;
+
 /** A manifest with conformance recorded, so the platform/profile rules can be
  *  exercised on their own. Everything shipped has an EMPTY conformance version
  *  until evidence exists, which the first test below is about. */
@@ -36,6 +41,7 @@ describe("the shipped manifest", () => {
         harnessId,
         platform: "linux",
         targetKind: "local-native",
+        installedAdapterVersion: PINNED,
         permissionProfile: "workspace-edits",
       });
       expect(result.ok).toBe(false);
@@ -109,7 +115,8 @@ describe("codex is structurally barred from native mode", () => {
           harnessId: "codex",
           platform,
           targetKind: "local-native",
-          permissionProfile: "unrestricted",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "unrestricted",
         },
         conformed(LOCAL_HARNESS_MANIFEST.codex)
       );
@@ -135,7 +142,8 @@ describe("claude-code native resolution", () => {
           harnessId: "claude-code",
           platform: "darwin",
           targetKind: "local-native",
-          permissionProfile: "read-only",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "read-only",
         },
         manifests
       )
@@ -147,7 +155,8 @@ describe("claude-code native resolution", () => {
           harnessId: "claude-code",
           platform: "linux",
           targetKind: "local-native",
-          permissionProfile: "workspace-edits",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "workspace-edits",
         },
         manifests
       )
@@ -161,7 +170,8 @@ describe("claude-code native resolution", () => {
           harnessId: "claude-code",
           platform: "win32",
           targetKind: "local-native",
-          permissionProfile: "workspace-edits",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "workspace-edits",
         },
         manifests
       )
@@ -177,6 +187,7 @@ describe("claude-code native resolution", () => {
         harnessId: "claude-code",
         platform: "linux",
         targetKind: "local-native",
+        installedAdapterVersion: PINNED,
         permissionProfile: "unrestricted",
       },
       permissive
@@ -195,7 +206,8 @@ describe("claude-code native resolution", () => {
           platform: "linux",
           targetKind: "local-isolated",
           backend: "linux-bwrap",
-          permissionProfile: "workspace-edits",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "workspace-edits",
         },
         manifests
       )
@@ -209,7 +221,8 @@ describe("claude-code native resolution", () => {
           harnessId: "claude-code",
           platform: "linux",
           targetKind: "local-isolated",
-          permissionProfile: "workspace-edits",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "workspace-edits",
         },
         manifests
       )
@@ -222,8 +235,8 @@ describe("claude-code native resolution", () => {
         harnessId: "claude-code",
         platform: "linux",
         targetKind: "local-native",
-        permissionProfile: "workspace-edits",
         installedAdapterVersion: "1.0.0-canary.99",
+        permissionProfile: "workspace-edits",
       },
       manifests
     );
@@ -238,11 +251,48 @@ describe("claude-code native resolution", () => {
           harnessId: "cursor",
           platform: "linux",
           targetKind: "local-native",
-          permissionProfile: "read-only",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "read-only",
         },
         manifests
       )
     ).toMatchObject({ status: "harness-not-supported" });
+  });
+
+  it.each(["toString", "__proto__", "constructor"])(
+    "refuses the inherited Object property %s as a harness id",
+    (harnessId) => {
+      // An id off the wire must never resolve to an inherited property: the
+      // presence check would pass and the resolver would throw instead of
+      // returning its named refusal.
+      expect(
+        resolveLocalCompatibility(
+          {
+            harnessId,
+            platform: "linux",
+            targetKind: "local-native",
+            installedAdapterVersion: PINNED,
+            permissionProfile: "read-only",
+          },
+          manifests
+        )
+      ).toMatchObject({ status: "harness-not-supported" });
+    }
+  );
+
+  it("refuses a caller that cannot state the installed adapter version", () => {
+    expect(
+      resolveLocalCompatibility(
+        {
+          harnessId: "claude-code",
+          platform: "linux",
+          targetKind: "local-native",
+          installedAdapterVersion: undefined,
+          permissionProfile: "read-only",
+        },
+        manifests
+      )
+    ).toMatchObject({ status: "adapter-version-mismatch" });
   });
 
   it("refuses a platform local execution does not cover", () => {
@@ -252,7 +302,8 @@ describe("claude-code native resolution", () => {
           harnessId: "claude-code",
           platform: null,
           targetKind: "local-native",
-          permissionProfile: "read-only",
+          installedAdapterVersion: PINNED,
+        permissionProfile: "read-only",
         },
         manifests
       )

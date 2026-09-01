@@ -145,6 +145,13 @@ describe("scoped values", () => {
     "NODE_OPTIONS",
     "LD_PRELOAD",
     "DYLD_INSERT_LIBRARIES",
+    // Scoped values are applied last, so without these a caller could point
+    // the child's config, cache, and temp roots back at the real home and undo
+    // the synthetic home entirely.
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "TMPDIR",
+    "APPDATA",
   ])("refuses to let a caller inject %s", (name) => {
     expect(() =>
       buildLocalHarnessEnv({
@@ -177,6 +184,40 @@ describe("scoped values", () => {
         scoped: { "A-B": "x" },
       })
     ).toThrow(LocalHarnessEnvError);
+  });
+});
+
+describe("the adapter's own per-spawn environment", () => {
+  it("forwards the bridge's control variables and the vendor auth names", async () => {
+    const { filterBridgeSuppliedEnv } = await import("../session-env.js");
+    expect(
+      filterBridgeSuppliedEnv({
+        BRIDGE_CHANNEL_TOKEN: "tok",
+        BRIDGE_WS_PORT: "39271",
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:1/gw",
+      })
+    ).toEqual({
+      BRIDGE_CHANNEL_TOKEN: "tok",
+      BRIDGE_WS_PORT: "39271",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:1/gw",
+    });
+  });
+
+  it("drops everything else the adapter offers", async () => {
+    const { filterBridgeSuppliedEnv } = await import("../session-env.js");
+    expect(
+      filterBridgeSuppliedEnv({
+        HOME: "/home/dev",
+        PATH: "/evil",
+        LD_PRELOAD: "/evil.so",
+        SOMETHING_NEW: "x",
+      })
+    ).toEqual({});
+  });
+
+  it("drops a value carrying a control character", async () => {
+    const { filterBridgeSuppliedEnv } = await import("../session-env.js");
+    expect(filterBridgeSuppliedEnv({ BRIDGE_CHANNEL_TOKEN: "a\nB=c" })).toEqual({});
   });
 });
 

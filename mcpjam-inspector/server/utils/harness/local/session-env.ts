@@ -103,6 +103,7 @@ export interface LocalHarnessEnvOptions {
  *  vendor credential fallbacks the gateway exists to replace, or redirect
  *  executable/config lookup. */
 const SCOPED_NAME_DENYLIST = new Set([
+  // Executable, library, and config resolution.
   "PATH",
   "HOME",
   "USERPROFILE",
@@ -112,6 +113,20 @@ const SCOPED_NAME_DENYLIST = new Set([
   "LD_LIBRARY_PATH",
   "DYLD_INSERT_LIBRARIES",
   "DYLD_LIBRARY_PATH",
+  // Every generated path this module sets. Scoped values are applied LAST, so
+  // without these a caller could overwrite the synthetic config, cache, and
+  // temp roots and point the child back at the user's real configuration —
+  // undoing the whole reason a synthetic home exists.
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "PWD",
 ]);
 
 export class LocalHarnessEnvError extends Error {}
@@ -185,6 +200,57 @@ export function buildLocalHarnessEnv(
   }
 
   return env;
+}
+
+/**
+ * Environment names the ADAPTER is allowed to contribute per `spawn`/`run`.
+ *
+ * The adapters pass the bridge its channel token, its port, and the vendor auth
+ * settings through `SandboxProcessOptions.env`. Dropping that would leave the
+ * bridge unable to start; forwarding it wholesale would let an adapter set any
+ * variable in the child. So the names are enumerated, and everything else the
+ * adapter offers is discarded.
+ *
+ * `HOME` is deliberately absent even though the adapters set it: the session's
+ * synthetic home is ours to decide, and we already answer the adapter's `$HOME`
+ * probe with it, so an adapter-supplied value can only agree or be wrong.
+ */
+export const BRIDGE_SUPPLIED_ENV_ALLOWLIST: readonly string[] = [
+  // Bridge control channel.
+  "BRIDGE_CHANNEL_TOKEN",
+  "BRIDGE_WS_PORT",
+  "BRIDGE_REPLAY_FROM_DISK",
+  // Vendor model endpoints and credentials, as computed by the adapter from
+  // the explicit auth Inspector hands it.
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "CODEX_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "AI_GATEWAY_API_KEY",
+  "AI_GATEWAY_BASE_URL",
+];
+
+/**
+ * Filter an adapter-supplied environment down to the allowlist.
+ *
+ * Values are not inspected — they are the adapter's to compute — but names
+ * outside the list never reach the child, so an adapter change cannot quietly
+ * introduce a new variable into a supervised process.
+ */
+export function filterBridgeSuppliedEnv(
+  env: Readonly<Record<string, string>> | undefined
+): Record<string, string> {
+  const filtered: Record<string, string> = {};
+  if (!env) return filtered;
+  for (const name of BRIDGE_SUPPLIED_ENV_ALLOWLIST) {
+    const value = env[name];
+    if (typeof value === "string" && !/[\0\n\r]/.test(value)) {
+      filtered[name] = value;
+    }
+  }
+  return filtered;
 }
 
 /**

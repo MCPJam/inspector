@@ -46,6 +46,7 @@ import { realpath, stat } from "node:fs/promises";
 import { logger } from "../../logger.js";
 import {
   LOCAL_HARNESS_POLICY_VERSION,
+  LOCAL_ISOLATION_POLICY_VERSION,
   type LocalIsolationBackend,
   type LocalPermissionProfile,
   type SupportedLocalHarnessId,
@@ -162,12 +163,36 @@ async function readState(): Promise<PersistedState> {
     if (!parsed || typeof parsed !== "object") return { ...EMPTY_STATE };
     const record = parsed as Partial<PersistedState>;
     if (record.version !== 1) return { ...EMPTY_STATE };
+    // Validate every persisted record. A malformed `expiresAt` would let
+    // verification treat a grant as live while pruning removes it, and a
+    // non-string `tokenHash` would make `Buffer.from` throw out of a function
+    // whose whole contract is to RETURN a verification result.
     return {
       version: 1,
-      workspaces: Array.isArray(record.workspaces) ? record.workspaces : [],
-      harnessGrants: Array.isArray(record.harnessGrants)
-        ? record.harnessGrants
-        : [],
+      workspaces: (Array.isArray(record.workspaces) ? record.workspaces : [])
+        .filter(
+          (w): w is WorkspaceGrant =>
+            !!w &&
+            typeof w === "object" &&
+            typeof (w as WorkspaceGrant).workspaceGrantId === "string" &&
+            typeof (w as WorkspaceGrant).canonicalPath === "string"
+        ),
+      harnessGrants: (
+        Array.isArray(record.harnessGrants) ? record.harnessGrants : []
+      ).filter((g): g is PersistedHarnessGrant => {
+        if (!g || typeof g !== "object") return false;
+        const grant = g as PersistedHarnessGrant;
+        return (
+          typeof grant.grantId === "string" &&
+          typeof grant.tokenHash === "string" &&
+          /^[0-9a-f]{64}$/.test(grant.tokenHash) &&
+          typeof grant.bindingHash === "string" &&
+          typeof grant.expiresAt === "string" &&
+          Number.isFinite(Date.parse(grant.expiresAt)) &&
+          !!grant.binding &&
+          typeof grant.binding === "object"
+        );
+      }),
     };
   } catch {
     return { ...EMPTY_STATE };
@@ -258,7 +283,10 @@ export function registerWorkspaceGrant(
     }
     // Refuse the obviously wrong roots. A home directory or a filesystem root
     // as "the workspace" makes the workspace label meaningless.
-    const home = homedir();
+    // Compare against the RESOLVED home: on a machine where the home
+    // directory is itself a symlink, the raw value never equals the
+    // canonicalized selection and the refusal below would not fire.
+    const home = await realpath(homedir()).catch(() => homedir());
     if (canonicalPath === home || canonicalPath === sep) {
       return {
         ok: false as const,
@@ -340,6 +368,13 @@ export function grantLocalHarnessConsent(
 ): Promise<MintedHarnessGrant> {
   return withGrantLock(async () => {
     const now = opts?.now ?? Date.now();
+    // Clamped, never trusted: a caller asking for a longer life than the
+    // attended maximum is asking for an unattended capability, which is the
+    // one thing a v1 local grant must not be.
+    // Only the CEILING matters: asking for longer than the attended maximum is
+    // asking for an unattended capability. A shorter grant is strictly safer,
+    // so it is honoured as given.
+    const ttlMs = Math.min(opts?.ttlMs ?? GRANT_TTL_MS, GRANT_TTL_MS);
     const token = randomBytes(32).toString("base64url");
     const grant: PersistedHarnessGrant = {
       grantId: `grant_${randomUUID()}`,
@@ -347,7 +382,7 @@ export function grantLocalHarnessConsent(
       bindingHash: hashGrantBinding(binding),
       binding,
       grantedAt: new Date(now).toISOString(),
-      expiresAt: new Date(now + (opts?.ttlMs ?? GRANT_TTL_MS)).toISOString(),
+      expiresAt: new Date(now + ttlMs).toISOString(),
     };
     const state = await readState();
     // One live grant per binding: re-consenting rotates rather than
@@ -384,13 +419,20 @@ export async function verifyLocalHarnessGrant(
   if (!token || token.length < 16 || token.length > 256) {
     return { ok: false, reason: "invalid", message: "no local harness grant was presented" };
   }
-  if (binding.policyVersion !== LOCAL_HARNESS_POLICY_VERSION) {
+  // A native binding carries the local-harness policy version; an isolated one
+  // carries the ISOLATION policy version, because those are the terms its user
+  // was shown. Either must be current.
+  const expectedPolicy =
+    binding.targetKind === "local-isolated"
+      ? LOCAL_ISOLATION_POLICY_VERSION
+      : LOCAL_HARNESS_POLICY_VERSION;
+  if (binding.policyVersion !== expectedPolicy) {
     return {
       ok: false,
       reason: "binding-mismatch",
       message:
         `this grant was minted under policy ${binding.policyVersion}; the ` +
-        `current policy is ${LOCAL_HARNESS_POLICY_VERSION}. The terms changed, ` +
+        `current policy is ${expectedPolicy}. The terms changed, ` +
         `so consent is asked again.`,
     };
   }

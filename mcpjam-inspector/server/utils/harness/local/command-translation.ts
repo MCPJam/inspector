@@ -349,42 +349,54 @@ async function matchBridgeLaunch(
   if (!command.startsWith(prefix)) return null;
   const rest = command.slice(prefix.length);
   const tokens = rest.split(" ").filter((t) => t.length > 0);
-  if (tokens.length % 2 !== 0) {
-    throw new CommandTranslationError(
-      "bridge launch arguments are not flag/value pairs",
-      command
-    );
-  }
-  // Flags the pinned bridges accept, and how each value is resolved. A flag
-  // outside this map — or a repeated one — rejects the launch.
-  const allowed: Record<string, "session" | "bundle"> = {
+
+  // The EXACT flag vector each pinned adapter emits, in order. Matching a
+  // subset, a permutation, or another harness's flags would let an adapter
+  // change slip through as a valid launch — the opposite of the fail-closed
+  // behaviour this module promises. Codex passes `--bootstrap-dir`; Claude
+  // Code does not.
+  const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> = {
+    "claude-code": ["--workdir", "--bridge-state-dir"],
+    codex: ["--workdir", "--bridge-state-dir", "--bootstrap-dir"],
+  };
+  const resolution: Record<string, "session" | "bundle"> = {
     "--workdir": "session",
     "--bridge-state-dir": "session",
     "--bootstrap-dir": "bundle",
   };
+  const flags = expected[ctx.harnessId];
+
+  if (tokens.length !== flags.length * 2) {
+    // A workspace path containing a space lands here too, because the adapters
+    // interpolate these values UNQUOTED. That command is genuinely ambiguous —
+    // not something to guess at — so it is refused with a message that names
+    // the real cause rather than an arithmetic one.
+    throw new CommandTranslationError(
+      `the ${ctx.harnessId} bridge launch must carry exactly ` +
+        `${flags.join(", ")} (${flags.length * 2} tokens), but ` +
+        `${tokens.length} were given. The adapters interpolate these paths ` +
+        `unquoted, so a workspace or session path containing a space produces ` +
+        `an ambiguous command; choose a path without spaces, or the adapter ` +
+        `must be changed to quote them.`,
+      command
+    );
+  }
+
   const args: string[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < tokens.length; i += 2) {
-    const flag = tokens[i]!;
-    const value = tokens[i + 1]!;
-    const resolution = allowed[flag];
-    if (resolution === undefined) {
+  for (let i = 0; i < flags.length; i += 1) {
+    const flag = tokens[i * 2]!;
+    const value = tokens[i * 2 + 1]!;
+    if (flag !== flags[i]) {
       throw new CommandTranslationError(
-        `unknown bridge flag ${JSON.stringify(flag)}`,
+        `expected bridge flag ${JSON.stringify(flags[i])} at position ` +
+          `${i + 1}, found ${JSON.stringify(flag)}`,
         command
       );
     }
-    if (seen.has(flag)) {
-      throw new CommandTranslationError(
-        `repeated bridge flag ${JSON.stringify(flag)}`,
-        command
-      );
-    }
-    seen.add(flag);
     assertPlainPathOperand(value, command);
     args.push(
       flag,
-      resolution === "bundle"
+      resolution[flag] === "bundle"
         ? remapBootstrapPath(value, ctx)
         : await ctx.confine(value)
     );

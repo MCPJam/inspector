@@ -98,6 +98,62 @@ function canConnect(
 }
 
 /**
+ * Wait until the bridge is actually accepting connections on loopback.
+ *
+ * The exposure probe below is worthless if it runs before the listener exists:
+ * every connection would be refused, the probe would pass, and a bridge that
+ * binds `0.0.0.0` a moment later would be admitted with a clean bill of
+ * health. So readiness is established first, and only then is exposure tested.
+ */
+export async function waitForLoopbackListener(args: {
+  port: number;
+  timeoutMs?: number;
+  pollMs?: number;
+  connect?: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+}): Promise<boolean> {
+  const connect = args.connect ?? canConnect;
+  const pollMs = args.pollMs ?? 50;
+  const deadline = Date.now() + (args.timeoutMs ?? 30_000);
+  for (;;) {
+    if (await connect(LOOPBACK_HOST_V4, args.port, 500)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+/**
+ * The check the provider runs before admitting a bridge: wait for it to listen
+ * on loopback, then prove it is not ALSO reachable from the local network.
+ *
+ * Throws on either failure, because both are session-stopping: a bridge that
+ * never came up cannot be used, and one reachable off-box is an agent control
+ * channel published to whatever network the machine is on.
+ */
+export async function assertBridgeLoopbackOnly(args: {
+  port: number;
+  readinessTimeoutMs?: number;
+  addresses?: readonly string[];
+  timeoutMs?: number;
+  connect?: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+}): Promise<void> {
+  const ready = await waitForLoopbackListener({
+    port: args.port,
+    ...(args.readinessTimeoutMs !== undefined
+      ? { timeoutMs: args.readinessTimeoutMs }
+      : {}),
+    ...(args.connect ? { connect: args.connect } : {}),
+  });
+  if (!ready) {
+    throw new BridgeExposureError(
+      `the harness bridge never started listening on ` +
+        `${LOOPBACK_HOST_V4}:${args.port}, so its binding could not be ` +
+        `verified. The session stops rather than proceeding unverified.`
+    );
+  }
+  await assertBridgeIsLoopbackOnly(args);
+}
+
+/**
  * Prove the bridge port is NOT reachable from any non-loopback address on this
  * machine.
  *

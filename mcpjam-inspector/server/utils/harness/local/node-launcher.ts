@@ -16,10 +16,13 @@
  *    explicit here rather than implied somewhere in a spawn call, because it
  *    is a conformance-tested property of the launch, not a detail.
  *
- * A packaged build that ships its own signed Node runtime alongside the
- * managed bundle passes it as `override`; that is the preferred shape once the
- * bundle build lands, since it pins the runtime the bundle was tested against
- * instead of inheriting whatever the app happens to embed.
+ * A packaged build shipping its own signed Node runtime alongside the managed
+ * bundle is the preferred shape once the bundle build lands. It is deliberately
+ * NOT an option here yet: an "absolute path the caller promises is the right
+ * Node" is a trust path with no verification behind it, and adding the option
+ * before there is a digest to check it against would be exactly that. It
+ * arrives with the bundle build, and with the same digest verification the rest
+ * of the runtime gets.
  */
 import { isAbsolute } from "node:path";
 
@@ -29,26 +32,15 @@ export interface NodeLauncher {
   /** Environment entries this launcher REQUIRES, merged by the provider after
    *  the allowlisted base environment is built. */
   requiredEnv: Readonly<Record<string, string>>;
-  kind: "node" | "electron-as-node" | "bundled";
+  kind: "node" | "electron-as-node";
 }
 
 export class NodeLauncherError extends Error {}
 
 export function resolveNodeLauncher(opts?: {
-  /** Absolute path to a Node runtime shipped with the managed bundle. */
-  override?: string;
   execPath?: string;
   isElectron?: boolean;
 }): NodeLauncher {
-  if (opts?.override !== undefined) {
-    if (!isAbsolute(opts.override)) {
-      throw new NodeLauncherError(
-        "a bundled Node runtime must be given as an absolute path"
-      );
-    }
-    return { executable: opts.override, requiredEnv: {}, kind: "bundled" };
-  }
-
   const execPath = opts?.execPath ?? process.execPath;
   if (!execPath || !isAbsolute(execPath)) {
     throw new NodeLauncherError(

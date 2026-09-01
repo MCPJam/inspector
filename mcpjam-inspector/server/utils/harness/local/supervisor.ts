@@ -34,6 +34,7 @@ import {
   readProcessBirthIdentity,
   supportsOwnershipProof,
   terminateOwnedProcessGroup,
+  type ProcessBirthIdentity,
 } from "./process-identity.js";
 import {
   forgetProcess,
@@ -160,6 +161,19 @@ export class LocalHarnessSupervisor {
   private readonly limits: SupervisorLimits;
   private readonly platform: NodeJS.Platform;
   private readonly live = new Map<string, Set<LiveProcess>>();
+  /**
+   * This Inspector process's own birth identity, recorded on every process it
+   * owns.
+   *
+   * A nonce says which supervisor created a record; it does NOT say whether
+   * that supervisor is still running. Without this, a second Inspector opened
+   * alongside the first would see the first's records under a foreign nonce
+   * and reclaim them — killing live sessions belonging to a healthy process.
+   * The janitor uses pid + birth identity to require that the owner is
+   * genuinely gone before it touches anything.
+   */
+  private supervisorBirthIdentity: ProcessBirthIdentity | null = null;
+  private readonly supervisorIdentityReady: Promise<void>;
 
   constructor(opts?: {
     limits?: Partial<SupervisorLimits>;
@@ -168,6 +182,12 @@ export class LocalHarnessSupervisor {
     this.nonce = mintSupervisorNonce();
     this.limits = { ...DEFAULT_SUPERVISOR_LIMITS, ...(opts?.limits ?? {}) };
     this.platform = opts?.platform ?? process.platform;
+    this.supervisorIdentityReady = readProcessBirthIdentity(
+      process.pid,
+      this.platform
+    ).then((identity) => {
+      this.supervisorBirthIdentity = identity;
+    });
   }
 
   /**
@@ -220,6 +240,14 @@ export class LocalHarnessSupervisor {
     }
     assertArgvAllowed(request.args);
 
+    // ── Everything up to and including bucket registration is SYNCHRONOUS ──
+    //
+    // Two `spawnSupervised` calls for the same session interleave across the
+    // awaits below. If the bucket were read here and stored after an await,
+    // each call would build its own Set and the second `this.live.set` would
+    // drop the first process from supervision entirely — it would keep
+    // running, unregistered, and `stopSession` would never see it. So the
+    // slot is reserved before anything can yield.
     const bucket = this.live.get(request.sessionId) ?? new Set<LiveProcess>();
     if (bucket.size >= this.limits.maxConcurrentProcesses) {
       throw new SupervisorError(
@@ -228,6 +256,7 @@ export class LocalHarnessSupervisor {
           `${this.limits.maxConcurrentProcesses})`
       );
     }
+    this.live.set(request.sessionId, bucket);
 
     const child = spawn(request.executable, [...request.args], {
       cwd: request.workingDirectory,
@@ -241,17 +270,38 @@ export class LocalHarnessSupervisor {
       windowsHide: true,
     });
 
-    // An 'error' event on a ChildProcess with no listener attached is an
-    // unhandled error event, which takes the whole Inspector process down —
-    // and there are awaits between here and the full wiring below (reading the
-    // birth identity, writing the durable record). So a listener goes on
-    // synchronously, right after spawn, and hands off to `finish` once that
-    // exists. A failed spawn (ENOENT on the launcher) is exactly this path.
-    let earlyError: Error | null = null;
-    let onProcessError: (error: Error) => void = (error) => {
-      earlyError = error;
+    // Listeners and stream pumps attach synchronously, before the first await.
+    //
+    // Two reasons, both of which have bitten this code: an 'error' event with
+    // no listener is an unhandled error event that takes the whole Inspector
+    // process down; and a short-lived child can EXIT during the awaits below,
+    // so a `close` listener attached afterwards would never fire and
+    // `wait()` would hang forever. The outcome is therefore recorded into a
+    // slot that the promise, built later, reads or subscribes to.
+    const out = bufferedStream(this.limits.maxOutputBytesPerStream);
+    const err = bufferedStream(this.limits.maxOutputBytesPerStream);
+    child.stdout?.on("data", (chunk: Buffer) => out.push(new Uint8Array(chunk)));
+    child.stderr?.on("data", (chunk: Buffer) => err.push(new Uint8Array(chunk)));
+
+    let exitResult: { exitCode: number } | null = null;
+    let notifyExit: ((result: { exitCode: number }) => void) | null = null;
+    const recordExit = (exitCode: number) => {
+      if (exitResult !== null) return;
+      exitResult = { exitCode };
+      notifyExit?.(exitResult);
     };
-    child.on("error", (error: Error) => onProcessError(error));
+    child.on("error", (error: Error) => {
+      logger.warn("[local-harness] supervised process error", {
+        sessionId: request.sessionId,
+        error: error.message,
+      });
+      recordExit(-1);
+    });
+    child.on("close", (code, signal) => {
+      // A signalled exit reports 124 — the conventional timeout code — so a
+      // caller reading only the exit code still sees a failure, not a clean 0.
+      recordExit(code ?? (signal ? 124 : 1));
+    });
 
     const pid = child.pid;
     if (pid === undefined) {
@@ -260,38 +310,67 @@ export class LocalHarnessSupervisor {
       );
     }
 
-    // Read the birth identity immediately: this is the value that later proves
-    // a pid still belongs to us. Reading it after any await would race a fast
-    // exit and a pid reuse.
-    const birthIdentity = await readProcessBirthIdentity(pid, this.platform);
-    if (request.role === "root" && birthIdentity === null) {
-      // The process started but we cannot identify it, so we could not
-      // guarantee cleanup. Kill what we just made and refuse.
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
+    const entry: LiveProcess = {
+      child,
+      pid,
+      birthIdentity: null,
+      role: request.role,
+      killed: false,
+    };
+    bucket.add(entry);
+
+    // ── From here on, failures must not leave a live unsupervised process ──
+    const abandon = async (): Promise<void> => {
+      // Two cases, and the difference matters.
+      //
+      // With a PROVEN birth identity we own the group and can take the whole
+      // tree — which is what a registry failure needs, since the child has had
+      // time to fork. Without one, only the handle we hold is safe to signal:
+      // `process.kill(-pid)` would target a GROUP keyed on a pid we have not
+      // verified, which is precisely the ownership invariant this supervisor
+      // exists to uphold, and unacceptable even on a failure path.
+      if (entry.birthIdentity !== null) {
+        await terminateOwnedProcessGroup({
+          pid,
+          birthIdentity: entry.birthIdentity,
+          graceMs: this.limits.terminationGraceMs,
+          platform: this.platform,
+        }).catch(() => undefined);
+      } else {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
       }
+      bucket.delete(entry);
+      if (bucket.size === 0) this.live.delete(request.sessionId);
+    };
+
+    // Read the birth identity immediately: this is the value that later proves
+    // a pid still belongs to us. Reading it after any further await would race
+    // a fast exit and a pid reuse.
+    const birthIdentity = await readProcessBirthIdentity(pid, this.platform);
+    entry.birthIdentity = birthIdentity;
+    if (request.role === "root" && birthIdentity === null) {
+      // Started, but unidentifiable — we could not guarantee cleanup, so we
+      // refuse rather than run a tree we cannot prove we own.
+      await abandon();
       throw new SupervisorError(
         "could not read the process birth identity for the harness root; " +
           "refusing to run a tree this Inspector cannot prove it owns"
       );
     }
 
-    const entry: LiveProcess = {
-      child,
-      pid,
-      birthIdentity,
-      role: request.role,
-      killed: false,
-    };
-    bucket.add(entry);
-    this.live.set(request.sessionId, bucket);
-
     if (request.role === "root") {
+      await this.supervisorIdentityReady;
       const record: LocalHarnessProcessRecord = {
         sessionId: request.sessionId,
         supervisorNonce: this.nonce,
+        supervisorPid: process.pid,
+        ...(this.supervisorBirthIdentity !== null
+          ? { supervisorBirthIdentity: this.supervisorBirthIdentity }
+          : {}),
         runtimeId: request.runtimeId,
         rootPid: pid,
         processBirthIdentity: birthIdentity!,
@@ -302,58 +381,33 @@ export class LocalHarnessSupervisor {
         lifecycleState: "starting",
         sessionStateDir: request.sessionStateDir,
       };
-      await recordProcess(record);
-      await updateLifecycleState(request.sessionId, "running");
+      try {
+        await recordProcess(record);
+        await updateLifecycleState(request.sessionId, "running");
+      } catch (error) {
+        // The durable record is what the janitor recovers from. Without it a
+        // crash would strand this tree, so a registry failure means the tree
+        // does not run at all.
+        await abandon();
+        throw new SupervisorError(
+          `could not record the supervised process for session ` +
+            `${request.sessionId}, so it was terminated rather than left ` +
+            `running unrecoverably: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
-
-    const out = bufferedStream(this.limits.maxOutputBytesPerStream);
-    const err = bufferedStream(this.limits.maxOutputBytesPerStream);
-    child.stdout?.on("data", (chunk: Buffer) => out.push(new Uint8Array(chunk)));
-    child.stderr?.on("data", (chunk: Buffer) => err.push(new Uint8Array(chunk)));
-
-    let settled = false;
-    const exited = new Promise<{ exitCode: number }>((resolvePromise) => {
-      const finish = (code: number) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(wallClockTimer);
-        if (out.truncated() || err.truncated()) {
-          logger.warn("[local-harness] output ceiling reached; output dropped", {
-            sessionId: request.sessionId,
-            pid,
-            stdout: out.truncated(),
-            stderr: err.truncated(),
-          });
-        }
-        request.abortSignal?.removeEventListener("abort", onAbort);
-        bucket.delete(entry);
-        out.close();
-        err.close();
-        resolvePromise({ exitCode: code });
-      };
-      onProcessError = (error) => {
-        logger.warn("[local-harness] supervised process error", {
-          sessionId: request.sessionId,
-          error: error.message,
-        });
-        finish(-1);
-      };
-      if (earlyError !== null) onProcessError(earlyError);
-      child.on("close", (code, signal) => {
-        // A signalled exit reports 124 — the conventional timeout code — so a
-        // caller reading only the exit code still sees a failure rather than a
-        // clean zero.
-        finish(code ?? (signal ? 124 : 1));
-      });
-    });
 
     const killTree = async (): Promise<void> => {
       if (entry.killed) return;
       entry.killed = true;
       if (entry.birthIdentity === null) {
-        // Cannot prove ownership (helper on an unsupported platform): signal
-        // only the direct child, never a group.
-        child.kill("SIGKILL");
+        // Cannot prove ownership of a group; signal only the handle we hold.
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
         return;
       }
       const outcome = await terminateOwnedProcessGroup({
@@ -383,6 +437,34 @@ export class LocalHarnessSupervisor {
       void killTree();
     }, this.limits.maxWallClockMs);
     wallClockTimer.unref?.();
+
+    // Built AFTER the timer and abort listener exist, so the teardown below
+    // can reference them without a temporal dead zone. A child that already
+    // exited resolves immediately from the recorded slot.
+    const exited = new Promise<{ exitCode: number }>((resolvePromise) => {
+      if (exitResult !== null) {
+        resolvePromise(exitResult);
+        return;
+      }
+      notifyExit = resolvePromise;
+    });
+
+    void exited.then(() => {
+      clearTimeout(wallClockTimer);
+      request.abortSignal?.removeEventListener("abort", onAbort);
+      bucket.delete(entry);
+      if (bucket.size === 0) this.live.delete(request.sessionId);
+      if (out.truncated() || err.truncated()) {
+        logger.warn("[local-harness] output ceiling reached; output dropped", {
+          sessionId: request.sessionId,
+          pid,
+          stdout: out.truncated(),
+          stderr: err.truncated(),
+        });
+      }
+      out.close();
+      err.close();
+    });
 
     return {
       pid,

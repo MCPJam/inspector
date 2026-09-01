@@ -24,7 +24,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { LocalHarnessCompatibility } from "./compatibility.js";
 import type { LocalPlatform, SupportedLocalHarnessId } from "./targets.js";
 
@@ -200,6 +200,19 @@ export async function resolveManagedBundle(args: {
   }
 
   const launcherPath = join(canonicalRoot, policy.launcherRelativePath);
+  // The digest covers the TREE; the launcher must be a file inside it. A
+  // `..` in the manifest's relative path would otherwise resolve to a file
+  // outside the bytes consent verified, and the supervisor would launch it.
+  const normalizedLauncher = normalize(launcherPath);
+  if (!normalizedLauncher.startsWith(canonicalRoot + sep)) {
+    return {
+      ok: false,
+      status: "bundle-corrupt",
+      message:
+        `the ${manifest.harnessId} manifest points its launcher outside the ` +
+        `bundle whose digest was verified`,
+    };
+  }
   try {
     const info = await stat(launcherPath);
     if (!info.isFile()) throw new Error("not a file");
@@ -274,6 +287,35 @@ function isUntrustedInstallPath(
   return null;
 }
 
+/** First dotted version number in a probe line (`claude 1.2.3` → `1.2.3`). */
+function extractVersion(line: string): string | null {
+  return /(\d+\.\d+\.\d+)/.exec(line)?.[1] ?? null;
+}
+
+/**
+ * Minimal `>=x.y.z` range check.
+ *
+ * Deliberately narrow rather than a semver dependency: the manifest is
+ * Inspector-owned, so the only range shape that needs supporting is the one it
+ * is allowed to write, and anything else fails closed.
+ */
+function satisfiesMinimumRange(version: string, range: string): boolean {
+  const match = /^>=\s*(\d+)\.(\d+)\.(\d+)$/.exec(range.trim());
+  if (!match) return false;
+  const parts = version.split(".").map((n) => Number.parseInt(n, 10));
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return false;
+  const min = [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  ];
+  for (let i = 0; i < 3; i += 1) {
+    if (parts[i]! > min[i]!) return true;
+    if (parts[i]! < min[i]!) return false;
+  }
+  return true;
+}
+
 export interface SystemDiscoveryOptions {
   manifest: LocalHarnessCompatibility;
   platform: LocalPlatform;
@@ -340,7 +382,13 @@ export async function resolveSystemInstall(
   const probe = opts.probe ?? defaultProbe;
 
   const accepted: ResolvedRuntime[] = [];
-  const rejections: string[] = [];
+  // Rejections carry the status they should REPORT: telling a user their
+  // vendor CLI lives somewhere the session can write, when in fact its
+  // `--version` probe failed, sends them to fix the wrong thing.
+  const rejections: Array<{
+    status: RuntimeResolutionFailure["status"];
+    message: string;
+  }> = [];
 
   for (const dir of searchPaths) {
     for (const name of policy.executableNames) {
@@ -355,10 +403,12 @@ export async function resolveSystemInstall(
 
       const untrusted = isUntrustedInstallPath(canonical, opts.forbiddenRoots);
       if (untrusted) {
-        rejections.push(
-          `${candidate} resolves into ${untrusted}, which the session or the ` +
-            `workspace can write`
-        );
+        rejections.push({
+          status: "system-runtime-untrusted-path",
+          message:
+            `${candidate} resolves into ${untrusted}, which the session or ` +
+            `the workspace can write`,
+        });
         continue;
       }
 
@@ -369,16 +419,55 @@ export async function resolveSystemInstall(
         continue;
       }
       if (!info.isFile() || (info.mode & 0o111) === 0) {
-        rejections.push(`${candidate} is not an executable file`);
+        rejections.push({
+          status: "system-runtime-not-installed",
+          message: `${candidate} is not an executable file`,
+        });
         continue;
       }
       // Group- or world-writable means anything on the machine can swap it
       // between the probe and the launch.
       if ((info.mode & 0o022) !== 0) {
-        rejections.push(
-          `${candidate} is group- or world-writable, so its identity cannot be ` +
-            `held between verification and launch`
-        );
+        rejections.push({
+          status: "system-runtime-untrusted-path",
+          message:
+            `${candidate} is group- or world-writable, so its identity ` +
+            `cannot be held between verification and launch`,
+        });
+        continue;
+      }
+      // Ownership, not just mode: a file owned by the session user can be
+      // rewritten by the very agent we are about to start, between this check
+      // and the launch. Mode 0755 does not help — the owner can chmod it. So a
+      // system installation must belong to a system owner.
+      //
+      // This is strict on purpose, and it is why no shipped manifest selects
+      // `system-install` yet: the common macOS case (a Homebrew prefix owned by
+      // the user) cannot satisfy it, and the honest answer there is the
+      // platform provenance verifier above, not a relaxed ownership rule.
+      if (platform !== "win32" && info.uid !== 0) {
+        rejections.push({
+          status: "system-runtime-untrusted-path",
+          message:
+            `${candidate} is owned by uid ${info.uid} rather than a system ` +
+            `owner, so the supervised agent — which runs as that user — could ` +
+            `replace it between verification and launch`,
+        });
+        continue;
+      }
+
+      // [7] `requirePlatformProvenance` is a promise the manifest makes. There
+      // is no code-signature verifier here yet, so honouring it means failing
+      // CLOSED rather than quietly accepting an executable on the strength of
+      // its own `--version` output.
+      if (policy.vendorIdentityPolicy.requirePlatformProvenance) {
+        rejections.push({
+          status: "system-runtime-identity-mismatch",
+          message:
+            `${manifest.harnessId} requires platform code-signing/package ` +
+            `provenance, and this Inspector has no verifier for ${platform} ` +
+            `yet, so the candidate at ${candidate} cannot be accepted`,
+        });
         continue;
       }
 
@@ -388,10 +477,25 @@ export async function resolveSystemInstall(
         result.exitCode !== 0 ||
         !new RegExp(policy.vendorIdentityPolicy.stdoutPattern).test(line)
       ) {
-        rejections.push(
-          `${candidate} did not identify itself as ${manifest.harnessId} ` +
-            `(probe output ${JSON.stringify(line.slice(0, 120))})`
-        );
+        rejections.push({
+          status: "system-runtime-identity-mismatch",
+          message:
+            `${candidate} did not identify itself as ${manifest.harnessId} ` +
+            `(probe output ${JSON.stringify(line.slice(0, 120))})`,
+        });
+        continue;
+      }
+
+      // [15] The manifest declares a version range; accepting anything whose
+      // first line merely matches the identity pattern would ignore it.
+      const version = extractVersion(line);
+      if (version === null || !satisfiesMinimumRange(version, policy.executableVersionRange)) {
+        rejections.push({
+          status: "system-runtime-identity-mismatch",
+          message:
+            `${candidate} reports version ${version ?? "(unparseable)"}, which ` +
+            `is outside the manifest range ${policy.executableVersionRange}`,
+        });
         continue;
       }
 
@@ -423,13 +527,14 @@ export async function resolveSystemInstall(
   if (accepted.length === 0) {
     return {
       ok: false,
-      status: rejections.length
-        ? "system-runtime-untrusted-path"
-        : "system-runtime-not-installed",
+      // Report the FIRST real rejection's own status, not a blanket one.
+      status: rejections[0]?.status ?? "system-runtime-not-installed",
       message:
         `no acceptable ${manifest.harnessId} installation was found in ` +
         `${searchPaths.join(", ")}.` +
-        (rejections.length ? ` Rejected: ${rejections.join("; ")}.` : "") +
+        (rejections.length
+          ? ` Rejected: ${rejections.map((r) => r.message).join("; ")}.`
+          : "") +
         ` Inspector never installs or upgrades a harness during a session.`,
     };
   }

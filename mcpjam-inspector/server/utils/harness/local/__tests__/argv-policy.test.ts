@@ -73,6 +73,25 @@ describe("permission-bypass capabilities", () => {
     }
   });
 
+  it.each([
+    ["--ask-for-approval", "never"],
+    ["--sandbox", "danger-full-access"],
+    ["--permission-mode", "bypassPermissions"],
+    ["--approval-policy", "never"],
+  ])("denies the separated form %s %s", (flag, value) => {
+    // Neither entry is denied on its own; together they are the bypass.
+    expect(() => assertArgumentAllowed(flag)).not.toThrow();
+    expect(() => assertArgvAllowed(["/opt/b.mjs", flag, value])).toThrow(
+      /disables the vendor permission controls/
+    );
+  });
+
+  it("still allows a legitimate value after one of those flags", () => {
+    expect(() =>
+      assertArgvAllowed(["/opt/b.mjs", "--permission-mode", "allow-edits"])
+    ).not.toThrow();
+  });
+
   it("locks the denylist against silent shrinkage", () => {
     // Adding an entry is free. Removing one re-opens a permission bypass, and
     // that must be a visible edit to this expectation, not a quiet diff in the
