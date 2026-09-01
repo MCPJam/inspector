@@ -104,7 +104,7 @@ describe("a read that cannot prove it saw everything", () => {
 
     const result = await readTurnEvidence({ ...scope, transport });
 
-    expect(result).toEqual({ rows: [], exhausted: false });
+    expect(result).toEqual({ rows: [], exhausted: false, unparseableRows: 0 });
   });
 
   test("a thrown transport is reported, never propagated", async () => {
@@ -201,10 +201,12 @@ describe("row parsing", () => {
     expect(result.rows[0].payloadsReadable).toBe(true);
   });
 
-  test("drops a row it cannot understand, and the caller still sees exhaustion", async () => {
-    // Dropping is only safe because a malformed row means the page's shape is
-    // not what this reader knows; the row set is still whole as far as the
-    // backend is concerned, and the merge treats what it gets on its merits.
+  test("drops a row it cannot understand — and COUNTS it, so the merge can refuse completeness", async () => {
+    // The dangerous version of this behaviour was drop-and-stay-silent: with
+    // `exhausted: true` and no count, a version-skewed row (the backend
+    // deploys first) simply vanished, and the call it recorded was graded a
+    // hallucination. The count is what turns the hole into an incomplete
+    // turn instead of a false accusation.
     const transport: EvidenceReadTransport = async () =>
       page([{ requestId: "no-other-fields" }, settledRow]);
 
@@ -212,6 +214,7 @@ describe("row parsing", () => {
 
     expect(result.rows.map((r) => r.requestId)).toEqual(["req-1"]);
     expect(result.exhausted).toBe(true);
+    expect(result.unparseableRows).toBe(1);
   });
 
   test("asks for a page the backend will actually serve", async () => {

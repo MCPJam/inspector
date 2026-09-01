@@ -4247,6 +4247,14 @@ const runHostedIterationWithBrowser = async (
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
+  /**
+   * The TRACE transcript — `messageHistory`'s evidence-enriched twin (see the
+   * acc contract on `DriveHostedEvalTurnParams`). Persisted and gate-read in
+   * place of the model transcript only under the run's frozen evidence
+   * decision; element-identical to `messageHistory` whenever capture is off,
+   * which is what keeps an off run byte-equivalent.
+   */
+  const traceMessageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -4751,8 +4759,14 @@ const runHostedIterationWithBrowser = async (
         { messages },
         toolPolicyGate?.blockedToolCallIds() ?? new Set()
       ),
+    // The evidence reconciler's exclusion set, read fresh per turn — a
+    // policy-refused call never reached a server, so its absence from the
+    // wire record must not degrade the turn to narration grading.
+    policyBlockedToolCallIds: () =>
+      toolPolicyGate?.blockedToolCallIds() ?? new Set(),
     acc: {
       messageHistory,
+      traceMessageHistory,
       capturedSpans,
       accumulatedUsage,
       toolsCalledByPrompt,
@@ -4836,11 +4850,20 @@ const runHostedIterationWithBrowser = async (
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
       ?.failOnToolError !== false;
+  // Which transcript the predicate gate reads. EVIDENCE grading gets the
+  // trace transcript (raw results and reconstructed wire-only calls are what
+  // evidence-aware predicates are for); narration grading keeps the model
+  // transcript even when capture enriched the persisted view, so a
+  // capture-on/narration-graded run's verdict is unchanged by enrichment.
+  const gateMessages =
+    harnessEvidenceDecision?.gradingSource === "evidence"
+      ? traceMessageHistory
+      : messageHistory;
   const traceForGate =
-    capturedSpans.length > 0 || messageHistory.length > 0
+    capturedSpans.length > 0 || gateMessages.length > 0
       ? {
           ...(capturedSpans.length > 0 ? { spans: capturedSpans } : {}),
-          messages: messageHistory as ModelMessage[] as Array<{
+          messages: gateMessages as ModelMessage[] as Array<{
             role: string;
             content: unknown;
           }>,
@@ -4912,7 +4935,15 @@ const runHostedIterationWithBrowser = async (
     passed,
     evaluation,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    // The persisted transcript is the TRACE view whenever this run captured
+    // evidence: matched calls keep their narrated output, wire-only calls
+    // appear as reconstructed tool results, and run detail / the judge's
+    // second pass read what the proxy actually saw. Capture off (or a run
+    // that never minted) persists the model transcript, byte-identical to
+    // pre-evidence behaviour.
+    messages: harnessEvidenceDecision?.captureEnabled
+      ? traceMessageHistory
+      : messageHistory,
     // The RESOLVED id, not `test.model`: `modelId` is what `executeTestCase`
     // canonicalized and what the hosted `/stream` call actually billed, so
     // attribution here agrees with the provider request. (This runner is never

@@ -21,6 +21,7 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import {
+  EVIDENCE_UNAVAILABLE_MESSAGE,
   handleJsonRpc,
   parseAndValidateJsonRpc,
 } from "../../services/mcp-http-bridge";
@@ -181,13 +182,12 @@ function armToolCallEvidence(
         arguments: args,
         startedAtMs,
       });
+      // THE shared constant, not a copy: the evidence merge detects a
+      // narrated refusal by this exact text, so a reworded local copy here
+      // would silently kill detection with every test still green.
       return recorded
         ? { ok: true }
-        : {
-            ok: false,
-            reason:
-              "MCPJam could not record this tool call, so it was not executed. No action was taken on the server.",
-          };
+        : { ok: false, reason: EVIDENCE_UNAVAILABLE_MESSAGE };
     },
     afterExecute: async ({ outcome }) => {
       await client.recordSettlement({
@@ -198,34 +198,17 @@ function armToolCallEvidence(
             : isCallToolResultError(outcome.result)
               ? "call_tool_error"
               : "success",
+        // For a thrown failure, the bridge hands over the EXACT error member
+        // of the envelope it responds with (message fallback chain,
+        // `data.normalized` and all) — recorded verbatim, never
+        // reconstructed, so the evidence of a failed call is what the
+        // harness actually received.
         response:
           outcome.kind === "error"
-            ? serializeEvidenceError(outcome.error)
+            ? { error: outcome.errorEnvelope }
             : outcome.result,
         settledAtMs: Date.now(),
       });
-    },
-  };
-}
-
-/**
- * The JSON-RPC error envelope the bridge WILL generate for a thrown failure.
- *
- * Recorded rather than the raw exception: the evidence is meant to be the
- * outcome the harness saw, and what it sees is this envelope. Built here from
- * the same message the bridge uses, with the code it uses (-32000, "the tool
- * ran and failed").
- */
-function serializeEvidenceError(error: unknown): unknown {
-  return {
-    error: {
-      code: -32000,
-      message:
-        error instanceof Error
-          ? error.message
-          : typeof error === "string"
-            ? error
-            : "Tool call failed",
     },
   };
 }

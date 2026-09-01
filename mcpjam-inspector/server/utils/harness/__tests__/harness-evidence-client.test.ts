@@ -6,11 +6,17 @@
  * existing is that "the write failed" and "the call did not happen" are
  * different facts, and a turn's grading depends on telling them apart.
  */
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   createHarnessEvidenceClient,
+  evidenceSinkBreaker,
   type HarnessEvidenceTransport,
 } from "../harness-evidence-client";
+
+// The breaker is module-level state keyed by iterationId (it must survive
+// across per-request client instances); tests share one scope, so each starts
+// from a closed breaker.
+beforeEach(() => evidenceSinkBreaker.resetForTest());
 
 const scope = {
   runId: "run_1",
@@ -269,5 +275,117 @@ describe("a thrown transport", () => {
 
     expect(await client.recordStart(startCall)).toBe(true);
     expect(transport).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("infra 4xx without a verdict body", () => {
+  test("a bare 429 is retryable — one throttled attempt is not a refused tool call", async () => {
+    const { transport, calls } = transportReturning(
+      { status: 429 },
+      { status: 200 },
+    );
+    const client = createHarnessEvidenceClient({
+      scope,
+      transport,
+      sleep: noSleep,
+    });
+
+    expect(await client.recordStart(startCall)).toBe(true);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("a labeled-final 429 is still final — the backend's verdict wins", async () => {
+    const { transport, calls } = transportReturning({
+      status: 429,
+      body: { retryable: false, code: "nope" },
+    });
+    const client = createHarnessEvidenceClient({
+      scope,
+      transport,
+      sleep: noSleep,
+    });
+
+    expect(await client.recordStart(startCall)).toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("a 408 is retryable; an unlabeled 400 stays permanent", async () => {
+    const retry = transportReturning({ status: 408 }, { status: 200 });
+    expect(
+      await createHarnessEvidenceClient({
+        scope,
+        transport: retry.transport,
+        sleep: noSleep,
+      }).recordStart(startCall),
+    ).toBe(true);
+
+    evidenceSinkBreaker.resetForTest();
+    const permanent = transportReturning({ status: 400 });
+    expect(
+      await createHarnessEvidenceClient({
+        scope,
+        transport: permanent.transport,
+        sleep: noSleep,
+      }).recordStart(startCall),
+    ).toBe(false);
+    expect(permanent.calls).toHaveLength(1);
+  });
+});
+
+describe("the per-iteration breaker", () => {
+  test("opens after consecutive failed writes and then fails FAST", async () => {
+    const dead = transportReturning({ status: 500 });
+    // Three separate clients — the breaker's whole reason to exist is that
+    // the client is rebuilt per proxied request and remembers nothing.
+    for (let i = 0; i < 3; i += 1) {
+      const client = createHarnessEvidenceClient({
+        scope,
+        transport: dead.transport,
+        sleep: noSleep,
+      });
+      expect(await client.recordStart(startCall)).toBe(false);
+    }
+    const callsBeforeOpen = dead.calls.length;
+    expect(callsBeforeOpen).toBeGreaterThan(0);
+
+    // Breaker open: the next request is refused without touching the sink —
+    // still fail-closed, just without making the model wait to hear it.
+    const client = createHarnessEvidenceClient({
+      scope,
+      transport: dead.transport,
+      sleep: noSleep,
+    });
+    expect(await client.recordStart(startCall)).toBe(false);
+    expect(dead.calls.length).toBe(callsBeforeOpen);
+  });
+
+  test("a success closes it again", async () => {
+    const flaky = transportReturning(
+      { status: 500 },
+      { status: 500 },
+      { status: 500 },
+      { status: 200 },
+    );
+    const failing = createHarnessEvidenceClient({
+      scope,
+      transport: flaky.transport,
+      sleep: noSleep,
+    });
+    expect(await failing.recordStart(startCall)).toBe(false);
+    // One failed WRITE (three attempts) = one breaker strike; two more strikes.
+    evidenceSinkBreaker.recordFailure(scope.iterationId);
+    evidenceSinkBreaker.recordFailure(scope.iterationId);
+    expect(evidenceSinkBreaker.isOpen(scope.iterationId)).toBe(true);
+
+    evidenceSinkBreaker.recordSuccess(scope.iterationId);
+    expect(evidenceSinkBreaker.isOpen(scope.iterationId)).toBe(false);
+  });
+
+  test("a different iteration's breaker does not trip this one", async () => {
+    for (let i = 0; i < 3; i += 1) {
+      evidenceSinkBreaker.recordFailure("iter_other");
+    }
+    expect(evidenceSinkBreaker.isOpen("iter_other")).toBe(true);
+    expect(evidenceSinkBreaker.isOpen(scope.iterationId)).toBe(false);
   });
 });

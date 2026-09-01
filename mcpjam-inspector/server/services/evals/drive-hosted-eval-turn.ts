@@ -34,7 +34,10 @@ import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
-import { reconcileTurnEvidence } from "./harness-evidence-turn.js";
+import {
+  reconcileTurnEvidence,
+  selectGradedToolCalls,
+} from "./harness-evidence-turn.js";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
@@ -54,7 +57,12 @@ import {
 import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
 
-type ToolCall = { toolName: string; arguments: Record<string, any> };
+type ToolCall = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /** Present when the projection carried one; the evidence merge joins on it. */
+  toolCallId?: string;
+};
 
 export type HostedEvalTurnOutcome =
   | { kind: "completed" }
@@ -292,9 +300,23 @@ export interface DriveHostedEvalTurnParams {
   /** The runner's `extractToolCallsFromConversation`, passed in (rather than
    *  imported) to avoid a module cycle with evals-runner.ts. */
   extractToolCalls: (messages: ModelMessage[]) => ToolCall[];
+  /** The policy gate's refused `toolCallId`s, read fresh per turn — the
+   *  evidence reconciler must exclude them (they never reached a server, so
+   *  their absence from the wire record is not a hole). */
+  policyBlockedToolCallIds?: () => ReadonlySet<string>;
   /** Shared mutable iteration state. The helper appends/rolls in place. */
   acc: {
     messageHistory: ModelMessage[];
+    /**
+     * The TRACE transcript — `messageHistory`'s evidence-enriched twin, and
+     * never called plain `messages` anywhere (that naming ambiguity is the
+     * failure mode the two-transcript contract exists to kill). Mutated at
+     * exactly the same sites as `messageHistory`, except a driven turn's
+     * slice is the evidence projection: matched calls as narrated, wire-only
+     * calls appended as reconstructed tool results. On a capture-off run the
+     * two are element-identical, which is what keeps off runs byte-equivalent.
+     */
+    traceMessageHistory: ModelMessage[];
     capturedSpans: EvalTraceSpan[];
     accumulatedUsage: UsageTotals;
     toolsCalledByPrompt: ToolCall[][];
@@ -377,7 +399,10 @@ export async function driveHostedEvalTurn(
   // Push the user prompt into `messageHistory` BEFORE the engine call so a
   // failed turn still persists the user side of the transcript (Cursor
   // review round-2 — the transcript stays honest about WHICH turn errored).
+  // Mirrored into the trace transcript at the same site — the two histories
+  // move together everywhere or the trace view drifts silently.
   acc.messageHistory.push({ role: "user", content: params.prompt });
+  acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
@@ -502,7 +527,11 @@ export async function driveHostedEvalTurn(
    * does.
    */
   let harnessEvidence:
-    | { captureEnabled: boolean; gradingSource: string; turnId: string }
+    | {
+        captureEnabled: boolean;
+        gradingSource: "narration" | "evidence";
+        turnId: string;
+      }
     | undefined;
 
   // Cursor + Codex review fix: thread `toolChoice` AND `maxOutputTokens`
@@ -693,6 +722,12 @@ export async function driveHostedEvalTurn(
     ...traceCtx.recordedSpans,
     ...(turnResult.turnTrace?.spans ?? []),
   ];
+  // The turn's OWN messages: the engine returns the full transcript, and
+  // reconciling against all of it would try to match this turn's evidence
+  // to earlier turns' calls. ONE slice, consumed by the reconciler, the
+  // grading projection and the trace roll below — three slices could
+  // disagree if the engine ever mutated the array between them.
+  const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
   const evidence = await reconcileTurnEvidence({
     ...(params.evalIterationId
       ? { iterationId: params.evalIterationId }
@@ -700,10 +735,13 @@ export async function driveHostedEvalTurn(
     ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
     captureEnabled: harnessEvidence?.captureEnabled === true,
     spans: turnSpans,
-    // The turn's OWN messages: the engine returns the full transcript, and
-    // reconciling against all of it would try to match this turn's evidence
-    // to earlier turns' calls.
-    newMessages: turnResult.messages.slice(messageCountBeforeTurn),
+    newMessages,
+    // Policy-refused calls never reached a server; without this the
+    // reconciler would count each one as a narrated MCP call with no wire
+    // row and degrade every policy-exercising turn to narration grading.
+    ...(params.policyBlockedToolCallIds
+      ? { policyBlockedToolCallIds: params.policyBlockedToolCallIds() }
+      : {}),
   });
   acc.capturedSpans.push(...evidence.spans);
   // Reconcile accumulated usage to the engine's canonical post-turn total
@@ -720,21 +758,34 @@ export async function driveHostedEvalTurn(
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
   }
 
-  // Per-turn tool calls — rebuild from the new messages only (the engine
-  // returns the FULL transcript; slice from `messageCountBeforeTurn` so
-  // prior turns' calls aren't double-counted). Replaces whatever the live
-  // `onToolCall` sink accumulated so the grader sees the canonical shape.
-  const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
-  const canonicalPromptToolsCalled = params.extractToolCalls(newMessages);
+  // Per-turn tool calls — rebuilt from the new messages only, then run
+  // through the GRADING-SOURCE selection: under frozen evidence grading a
+  // complete turn's set comes from the canonical wire record (matched calls
+  // carry server-received arguments, wire-only calls join, narration-only
+  // MCP calls stop counting), and everything else — narration grading,
+  // capture off, an incomplete turn — is exactly the narrated projection.
+  // Replaces whatever the live `onToolCall` sink accumulated so the grader
+  // sees the canonical shape.
+  const canonicalPromptToolsCalled = selectGradedToolCalls({
+    narration: params.extractToolCalls(newMessages),
+    evidence,
+    gradingSource: harnessEvidence?.gradingSource,
+  }) as ToolCall[];
   // Truncate to the baseline (NOT 0) so a follow-up turn sharing the parent's
   // `promptIndex` drops only its own live entries and keeps the parent's
   // committed calls; for a fresh authored turn the baseline is 0 (unchanged).
   promptToolsCalled.length = promptToolsBaseline;
   promptToolsCalled.push(...canonicalPromptToolsCalled);
 
-  // Roll the engine's transcript forward as the next turn's starting point.
+  // Roll the engine's transcript forward as the next turn's starting point —
+  // and the TRACE transcript alongside it. The model history is replaced
+  // wholesale with the engine's full transcript; the trace history appends
+  // this turn's evidence-enriched slice (identical to `newMessages` plus any
+  // reconstructed wire-only tool results), so prior turns' enrichment is
+  // never lost to the wholesale roll.
   acc.messageHistory.length = 0;
   acc.messageHistory.push(...turnResult.messages);
+  acc.traceMessageHistory.push(...(evidence.traceMessages ?? newMessages));
 
   // Failure detection (ordered most-specific → least-specific). Three engine
   // failure shapes the runner must catch:

@@ -77,14 +77,28 @@ export type ToolCallEvidenceHook = {
    * Called with the outcome, before the result returns to the harness.
    * `outcome.kind` distinguishes a `CallToolResult` (including one with
    * `isError: true`, which is a domain answer the model reads) from a thrown
-   * failure the bridge will turn into a JSON-RPC error envelope.
+   * failure the bridge turned into a JSON-RPC error envelope.
+   *
+   * For an error outcome, `errorEnvelope` is the EXACT `error` member of the
+   * response the harness receives — same message fallback chain, same
+   * `data.normalized`. Recorded verbatim rather than re-derived by the hook:
+   * the evidence of a failed call is meant to be what the harness saw, and a
+   * hand-reconstructed copy drifts the moment this catch evolves. (In manager
+   * mode a thrown failure is answered as a SUCCESS envelope carrying an
+   * `isError: true` CallToolResult; that outcome arrives here as
+   * `kind: "result"` with that exact result, because that is what the harness
+   * saw.)
    */
   afterExecute: (context: {
     serverId: string;
     toolName: string;
     outcome:
       | { kind: "result"; result: unknown }
-      | { kind: "error"; error: unknown };
+      | {
+          kind: "error";
+          error: unknown;
+          errorEnvelope: { code: number; message: string; data?: unknown };
+        };
   }) => Promise<void>;
 };
 
@@ -100,13 +114,21 @@ export type ToolCallEvidenceHook = {
 export const EVIDENCE_UNAVAILABLE_CODE = -32001;
 
 /**
- * The default refusal text, used when the hook rejects rather than returning a
- * reason of its own.
+ * The refusal text, used when the hook rejects (or refuses without a reason of
+ * its own — the harness proxy passes exactly this constant back, so producer
+ * and detector cannot drift apart by one copy being reworded).
  *
  * Written for the two readers it actually has: a model deciding what to do
  * next, and a human reading the trace. Both need to know the tool did not run.
+ *
+ * EXPORTED because it is load-bearing beyond this file: the evidence merge's
+ * completeness check detects a narrated refusal by this exact text (the
+ * harness flattens tool results to strings, so no structural marker survives
+ * the trip). Every producer of the refusal and the one detector import THIS
+ * constant; a fourth hand-typed copy is how detection dies silently under a
+ * copy edit with every test still green.
  */
-const EVIDENCE_UNAVAILABLE_MESSAGE =
+export const EVIDENCE_UNAVAILABLE_MESSAGE =
   "MCPJam could not record this tool call, so it was not executed. No action was taken on the server.";
 
 /**
@@ -147,13 +169,7 @@ async function beginToolCallEvidence(
  */
 async function settleToolCallEvidence(
   hook: ToolCallEvidenceHook,
-  context: {
-    serverId: string;
-    toolName: string;
-    outcome:
-      | { kind: "result"; result: unknown }
-      | { kind: "error"; error: unknown };
-  }
+  context: Parameters<ToolCallEvidenceHook["afterExecute"]>[0]
 ): Promise<void> {
   try {
     await hook.afterExecute(context);
@@ -463,6 +479,13 @@ export async function handleJsonRpc(
         let targetServerId = serverId;
         let observedToolName: string | undefined;
         const observedToolInput = params?.arguments ?? {};
+        const evidence = options.toolCallEvidence;
+        // Whether a durable `started` row exists for THIS call. The shared
+        // catch below settles only when it does: an error thrown before the
+        // start (target resolution, a missing tool name) has no row to
+        // settle, and a settle without a start is a protocol violation the
+        // backend refuses anyway.
+        let evidenceStarted = false;
         try {
           // Shared with the harness proxy's policy gate so a prefixed name
           // cannot resolve to one `(server, tool)` for the policy and another
@@ -479,7 +502,6 @@ export async function handleJsonRpc(
           }
           observedToolName = toolName;
 
-          const evidence = options.toolCallEvidence;
           const toolArguments = (params?.arguments ?? {}) as Record<
             string,
             unknown
@@ -505,30 +527,20 @@ export async function handleJsonRpc(
                 },
               });
             }
+            evidenceStarted = true;
           }
 
-          let exec: unknown;
-          try {
-            exec = await clientManager.executeTool(
-              targetServerId,
-              toolName,
-              toolArguments
-            );
-          } catch (executionError) {
-            // Settle FIRST, then rethrow into the shared catch below, which
-            // owns the response shape. The evidence of a failed call is worth
-            // as much as the evidence of a successful one — a call the model
-            // was told failed is the one a reader most wants the wire record
-            // of.
-            if (evidence) {
-              await settleToolCallEvidence(evidence, {
-                serverId: targetServerId,
-                toolName,
-                outcome: { kind: "error", error: executionError },
-              });
-            }
-            throw executionError;
-          }
+          // A thrown execution failure settles in the SHARED CATCH below —
+          // after the response envelope is built — so the evidence records
+          // the exact outcome the harness receives rather than a
+          // reconstruction of it. The evidence of a failed call is worth as
+          // much as the evidence of a successful one: a call the model was
+          // told failed is the one a reader most wants the wire record of.
+          const exec: unknown = await clientManager.executeTool(
+            targetServerId,
+            toolName,
+            toolArguments
+          );
 
           if (evidence) {
             // Awaited BEFORE the result goes back, so a turn that ends
@@ -576,6 +588,12 @@ export async function handleJsonRpc(
             // the one in the URL.
             targetServerId,
           });
+          // Evidence settles the EXACT harness-facing outcome, built once and
+          // used for both the record and the response — a hand-reconstructed
+          // copy in the hook drifts the moment this catch evolves, and the
+          // rows it drifts on are the failed calls a reader most needs the
+          // wire record of. Only when a durable start exists: an error thrown
+          // before the start has no row to settle.
           if (mode === "manager") {
             const result = {
               content: [
@@ -583,15 +601,31 @@ export async function handleJsonRpc(
               ],
               isError: true,
             };
+            if (evidence && evidenceStarted) {
+              // What the harness sees in manager mode IS a CallToolResult
+              // with `isError: true`, so that is what the evidence records —
+              // outcome kind `call_tool_error`, matching the model's view.
+              await settleToolCallEvidence(evidence, {
+                serverId: targetServerId,
+                toolName: observedToolName ?? "",
+                outcome: { kind: "result", result },
+              });
+            }
             return respond({ result });
           }
-          return respond({
-            error: {
-              code: -32000,
-              message: e?.message || String(e),
-              data: { normalized },
-            },
-          });
+          const errorEnvelope = {
+            code: -32000,
+            message: e?.message || String(e),
+            data: { normalized },
+          };
+          if (evidence && evidenceStarted) {
+            await settleToolCallEvidence(evidence, {
+              serverId: targetServerId,
+              toolName: observedToolName ?? "",
+              outcome: { kind: "error", error: e, errorEnvelope },
+            });
+          }
+          return respond({ error: errorEnvelope });
         }
       }
       case "resources/list": {

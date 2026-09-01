@@ -46,6 +46,81 @@ import type { WriteAttempt } from "../acknowledged-write.js";
 const EVIDENCE_MAX_ATTEMPTS = 3;
 const EVIDENCE_ATTEMPT_TIMEOUT_MS = 10_000;
 
+/**
+ * Hard wall-clock ceiling on ONE write (all attempts and backoff together),
+ * started when the write begins — NOT when the request was armed, because the
+ * user's tool runs between start and settle and a slow-but-legitimate tool
+ * must not eat the settle's budget.
+ *
+ * The per-attempt timeout alone cannot bound a write: 3 × 10s attempts plus
+ * backoff is ~31s, and paid on BOTH writes that is over the ~60s Claude Code
+ * MCP tool timeout the budget exists to stay inside. 15s per write caps the
+ * whole evidence overhead of one call at ~30s worst case, leaving the rest of
+ * the window for the tool itself.
+ */
+export const EVIDENCE_WRITE_BUDGET_MS = 15_000;
+
+/**
+ * Per-iteration circuit breaker over the evidence sink.
+ *
+ * The per-write budget bounds ONE call's overhead; a dead or stalling sink
+ * would still charge every subsequent call in the turn its full budget,
+ * because the client is rebuilt per proxied HTTP request and remembers
+ * nothing. This registry is the memory: after `BREAKER_THRESHOLD` consecutive
+ * failed writes for an iteration, further writes fail FAST for
+ * `BREAKER_OPEN_MS` — a refused start is still fail-closed (the tool call is
+ * refused either way), it just stops making the model wait 15s to hear it.
+ * One probe is allowed when the window lapses; a success closes it.
+ *
+ * Per-instance, deliberately: a shared breaker would need the very evidence
+ * plane it is guarding. Keyed by iteration so one broken run cannot trip
+ * another's capture.
+ */
+const BREAKER_THRESHOLD = 3;
+const BREAKER_OPEN_MS = 60_000;
+const breakerByIteration = new Map<
+  string,
+  { consecutiveFailures: number; openedAtMs?: number }
+>();
+
+export const evidenceSinkBreaker = {
+  /** True ⇒ skip the attempts entirely; the write is reported failed. */
+  isOpen(key: string, now = Date.now()): boolean {
+    const state = breakerByIteration.get(key);
+    if (!state || state.consecutiveFailures < BREAKER_THRESHOLD) return false;
+    if (
+      state.openedAtMs !== undefined &&
+      now - state.openedAtMs >= BREAKER_OPEN_MS
+    ) {
+      // Half-open: one probe write gets through; its outcome decides.
+      state.consecutiveFailures = BREAKER_THRESHOLD - 1;
+      delete state.openedAtMs;
+      return false;
+    }
+    return true;
+  },
+  recordFailure(key: string, now = Date.now()): void {
+    const state = breakerByIteration.get(key) ?? { consecutiveFailures: 0 };
+    state.consecutiveFailures += 1;
+    if (state.consecutiveFailures >= BREAKER_THRESHOLD) {
+      state.openedAtMs ??= now;
+    }
+    breakerByIteration.set(key, state);
+    // Opportunistic bound: entries are deleted on success, so growth means
+    // many failing iterations at once; drop the stalest rather than leak.
+    if (breakerByIteration.size > 512) {
+      const oldest = breakerByIteration.keys().next().value;
+      if (oldest !== undefined) breakerByIteration.delete(oldest);
+    }
+  },
+  recordSuccess(key: string): void {
+    breakerByIteration.delete(key);
+  },
+  resetForTest(): void {
+    breakerByIteration.clear();
+  },
+};
+
 export type HarnessEvidenceOutcomeKind =
   "success" | "call_tool_error" | "jsonrpc_error";
 
@@ -120,8 +195,16 @@ function classify(response: EvidenceTransportResponse): WriteAttempt<true> {
         ? body.error
         : `evidence write failed (${response.status})`;
   if (body.retryable === false) return { status: "permanent", reason };
-  // A 4xx the backend did not label is a request this client built wrong;
-  // repeating it verbatim will not fix it.
+  // Infra-generated 4xx that never carry a verdict body: a bare 429 (this
+  // stack emits them — the harness proxy's own rate limiter does) or a 408
+  // from a fronting proxy is a transient condition, and treating it as
+  // permanent turns one throttled attempt into a refused tool call (start)
+  // or a falsely incomplete turn (settle).
+  if (response.status === 429 || response.status === 408) {
+    return { status: "retryable", reason };
+  }
+  // Any other 4xx the backend did not label is a request this client built
+  // wrong; repeating it verbatim will not fix it.
   if (response.status >= 400 && response.status < 500) {
     return { status: "permanent", reason };
   }
@@ -198,26 +281,57 @@ export function createHarnessEvidenceClient(args: {
   const started = new Set<string>();
   const settled = new Set<string>();
   const unsettled = new Set<string>();
+  const breakerKey = args.scope.iterationId;
 
-  const write = (path: "start" | "settle", body: Record<string, unknown>) =>
-    writeUntilAcknowledged<true>(
+  const write = async (
+    path: "start" | "settle",
+    body: Record<string, unknown>,
+  ) => {
+    if (evidenceSinkBreaker.isOpen(breakerKey)) {
+      // The sink already failed BREAKER_THRESHOLD consecutive writes for this
+      // iteration; failing fast preserves the harness's tool-call window
+      // instead of spending another full budget hearing the same answer.
+      return {
+        acknowledged: false as const,
+        reason: "evidence sink breaker open",
+        attempts: 0,
+        gaveUp: false,
+      };
+    }
+    // The WRITE's own wall-clock ceiling, started here — not at arm time,
+    // because the user's tool runs between start and settle and a slow tool
+    // must not eat the settle's budget. Combined with the per-attempt timeout
+    // below it bounds one call's total evidence overhead regardless of how a
+    // stalling sink misbehaves.
+    const writeBudget = AbortSignal.timeout(EVIDENCE_WRITE_BUDGET_MS);
+    const writeSignal = args.signal
+      ? AbortSignal.any([args.signal, writeBudget])
+      : writeBudget;
+    const result = await writeUntilAcknowledged<true>(
       async () => {
         // Per-ATTEMPT timeout, not per-write: a backend that accepts the
         // connection and then stalls would otherwise hold the tool call open
         // for as long as it liked, which is the one failure mode a retry
         // budget alone cannot bound.
         const timeout = AbortSignal.timeout(EVIDENCE_ATTEMPT_TIMEOUT_MS);
-        const signal = args.signal
-          ? AbortSignal.any([args.signal, timeout])
-          : timeout;
+        const signal = AbortSignal.any([writeSignal, timeout]);
         return classify(await args.transport(path, body, { signal }));
       },
       {
         maxAttempts: EVIDENCE_MAX_ATTEMPTS,
         ...(args.sleep ? { sleep: args.sleep } : {}),
-        ...(args.signal ? { signal: args.signal } : {}),
+        signal: writeSignal,
       },
     );
+    if (result.acknowledged) {
+      evidenceSinkBreaker.recordSuccess(breakerKey);
+    } else if (!args.signal?.aborted) {
+      // A cancelled TURN is not a sick sink; only real write failures count
+      // toward opening the breaker.
+      evidenceSinkBreaker.recordFailure(breakerKey);
+    }
+    return result;
+  };
 
   return {
     async recordStart(call) {

@@ -20,8 +20,15 @@
  */
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { extractToolCallsFromConversation } from "@/shared/eval-tool-call-projection";
+import {
+  extractToolCallsFromConversation,
+  type ProjectedToolCall,
+} from "@/shared/eval-tool-call-projection";
 import { logger } from "../../utils/logger.js";
+import {
+  EVIDENCE_UNAVAILABLE_CODE,
+  EVIDENCE_UNAVAILABLE_MESSAGE,
+} from "../mcp-http-bridge.js";
 import {
   createConvexEvidenceReadTransport,
   readTurnEvidence,
@@ -29,19 +36,13 @@ import {
 } from "../../utils/harness/harness-evidence-reader.js";
 import {
   buildEvidenceToolResultMessage,
+  evidenceToolCallId,
   mergeHarnessEvidence,
   type EvidenceCompleteness,
   type MergeResult,
   type NarratedToolCall,
 } from "./harness-evidence-merge.js";
 import { annotateSpansWithEvidence } from "./harness-evidence-spans.js";
-
-/**
- * The marker the proxy returns for a call it refused because the call's start
- * could not be recorded. A refused call leaves NO evidence row, so the
- * narration is the only place it exists — see `assessCompleteness`.
- */
-const EVIDENCE_UNAVAILABLE_MARKER = "could not record this tool call";
 
 export type TurnEvidenceResult = {
   /** Spans to persist — provenance-annotated when capture ran. */
@@ -96,11 +97,26 @@ export function collectNarratedCalls(args: {
   }).flatMap((call) => {
     if (!call.toolCallId) return [];
     const serverId = serverIdByToolCallId.get(call.toolCallId);
+    // MCP-vs-native classification normally rides the span join above — and
+    // span loss is a real path (a scope step-up breaks the harness stream
+    // before the span push). A narrated name that is still MCP-SHAPED with no
+    // span must not silently reclassify as native: it stays unmatched (there
+    // is no serverId identity to match strictly on) but is flagged so the
+    // completeness zero-row guard still counts it as an MCP call, and the
+    // loss is a log line instead of a silent false green.
+    const mcpShaped = !serverId && /^mcp__/u.test(call.toolName);
+    if (mcpShaped) {
+      logger.warn(
+        "[harness-evidence] narrated MCP-shaped call has no span serverId",
+        { toolCallId: call.toolCallId, toolName: call.toolName },
+      );
+    }
     return [
       {
         toolCallId: call.toolCallId,
         toolName: call.toolName,
         ...(serverId ? { serverId } : {}),
+        ...(mcpShaped ? { mcpShaped: true as const } : {}),
         arguments: call.arguments,
         ...(args.policyBlockedToolCallIds?.has(call.toolCallId)
           ? { policyBlocked: true as const }
@@ -118,6 +134,16 @@ export function collectNarratedCalls(args: {
  * Matched on the message text for the same reason the policy-block reader is —
  * the harness flattens tool results to strings, so a structural marker would
  * not survive the trip.
+ *
+ * Two guards keep prose-matching honest:
+ *
+ *  - The needle is the SHARED `EVIDENCE_UNAVAILABLE_MESSAGE` constant — the
+ *    same value every producer returns — so rewording the model-facing copy
+ *    moves producer and detector together instead of silently killing
+ *    detection with every test still green.
+ *  - Only an ERROR-shaped part (or one carrying the refusal's -32001 code)
+ *    counts. A successful tool result QUOTING the refusal — a `Read` of a log
+ *    that contains one — must not mark a fully-settled turn incomplete.
  */
 export function sawEvidenceUnavailableMarker(
   messages: readonly ModelMessage[],
@@ -128,10 +154,21 @@ export function sawEvidenceUnavailableMarker(
     if (!Array.isArray(content)) continue;
     for (const part of content) {
       if (!part || typeof part !== "object") continue;
-      const serialized = JSON.stringify(
-        (part as { output?: unknown }).output ?? "",
-      );
-      if (serialized.includes(EVIDENCE_UNAVAILABLE_MARKER)) return true;
+      const output = (part as { output?: unknown }).output;
+      const serialized = JSON.stringify(output ?? "");
+      if (!serialized.includes(EVIDENCE_UNAVAILABLE_MESSAGE)) continue;
+      const outputType =
+        output && typeof output === "object"
+          ? (output as { type?: unknown }).type
+          : undefined;
+      const errorShaped =
+        typeof outputType === "string" && outputType.startsWith("error");
+      if (
+        errorShaped ||
+        serialized.includes(String(EVIDENCE_UNAVAILABLE_CODE))
+      ) {
+        return true;
+      }
     }
   }
   return false;
@@ -158,6 +195,72 @@ function buildTraceMessages(
   ];
 }
 
+/**
+ * The turn's graded tool-call set, from the SELECTED grading source.
+ *
+ * This is where the program's verdict semantics actually change hands, so the
+ * rules are exactly the documented flip classes and nothing else:
+ *
+ *  - A MATCHED call keeps its narrated position and `toolCallId` but carries
+ *    the SERVER-RECEIVED arguments — assertions grade what the server got,
+ *    not what the harness said it sent.
+ *  - A NARRATION-ONLY MCP call (narrated, no wire row, on a complete record)
+ *    stops counting: the server never saw it.
+ *  - A WIRE-ONLY call (executed, never narrated — the program's motivating
+ *    case) is appended in wire order under its `evidence:<requestId>` id, so
+ *    a dropped-but-executed call can satisfy an expectation.
+ *  - NATIVE harness tools (Bash, Read — no proxy seam) pass through as
+ *    narrated: evidence says nothing about them either way.
+ *
+ * Falls back to narration whenever it must: grading source is not
+ * `'evidence'`, capture never ran, or the turn's evidence is incomplete. The
+ * fallback is PER TURN — that is the completeness protocol's whole point.
+ */
+export function selectGradedToolCalls(args: {
+  narration: ProjectedToolCall[];
+  evidence: TurnEvidenceResult;
+  gradingSource: "narration" | "evidence" | undefined;
+}): ProjectedToolCall[] {
+  const merge = args.evidence.merge;
+  if (
+    args.gradingSource !== "evidence" ||
+    !merge ||
+    merge.completeness.status !== "complete"
+  ) {
+    return args.narration;
+  }
+
+  const graded: ProjectedToolCall[] = [];
+  for (const call of args.narration) {
+    const matched = call.toolCallId
+      ? merge.matchedByToolCallId.get(call.toolCallId)
+      : undefined;
+    if (matched) {
+      graded.push({
+        toolName: call.toolName,
+        arguments: matched.arguments,
+        ...(call.toolCallId ? { toolCallId: call.toolCallId } : {}),
+      });
+      continue;
+    }
+    if (
+      call.toolCallId &&
+      merge.narrationOnlyToolCallIds.has(call.toolCallId)
+    ) {
+      continue;
+    }
+    graded.push(call);
+  }
+  for (const call of merge.wireOnlyCalls) {
+    graded.push({
+      toolName: call.toolName,
+      arguments: call.arguments,
+      toolCallId: evidenceToolCallId(call.requestId),
+    });
+  }
+  return graded;
+}
+
 export async function reconcileTurnEvidence(
   args: ReconcileTurnEvidenceArgs,
 ): Promise<TurnEvidenceResult> {
@@ -182,6 +285,7 @@ export async function reconcileTurnEvidence(
   const merge = mergeHarnessEvidence({
     rows: read.rows,
     readExhausted: read.exhausted,
+    unparseableRows: read.unparseableRows,
     narratedCalls,
     sawEvidenceUnavailableMarker: sawEvidenceUnavailableMarker(
       args.newMessages,

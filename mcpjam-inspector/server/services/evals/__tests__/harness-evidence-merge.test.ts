@@ -46,6 +46,45 @@ function narrated(over: Partial<NarratedToolCall> = {}): NarratedToolCall {
 
 const complete = { readExhausted: true };
 
+describe("unparseable rows poison completeness", () => {
+  test("a dropped row the reader counted makes the turn incomplete", () => {
+    // Backend deploys first; a row shape this build cannot parse is version
+    // skew, and a set with known holes graded as complete would stamp the
+    // very calls those rows recorded as hallucinations.
+    const result = mergeHarnessEvidence({
+      rows: [],
+      readExhausted: true,
+      unparseableRows: 1,
+      narratedCalls: [],
+    });
+    expect(result.completeness).toEqual({
+      status: "incomplete",
+      reason: "unparseable_row",
+    });
+  });
+
+  test("an mcp-shaped narrated call with no span still blocks a zero-row complete", () => {
+    // Span loss must not reclassify an MCP call as native and let a
+    // captureless turn read as complete.
+    const result = mergeHarnessEvidence({
+      rows: [],
+      readExhausted: true,
+      narratedCalls: [
+        {
+          toolCallId: "toolu_lost",
+          toolName: "mcp__server-1__search",
+          mcpShaped: true,
+          arguments: { q: "x" },
+        },
+      ],
+    });
+    expect(result.completeness).toEqual({
+      status: "incomplete",
+      reason: "no_evidence_for_narrated_calls",
+    });
+  });
+});
+
 describe("matching", () => {
   test("matches on server, tool and argument VALUE, not key order", () => {
     // The harness serializes its arguments and the proxy re-serializes what it

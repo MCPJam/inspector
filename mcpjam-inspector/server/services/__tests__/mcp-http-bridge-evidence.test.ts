@@ -224,7 +224,12 @@ describe("settlement", () => {
       { toolCallEvidence: hook },
     );
 
-    expect(order).toEqual(["start", "execute", "settle:error"]);
+    // MANAGER mode answers a thrown failure as a SUCCESS envelope carrying
+    // an `isError: true` CallToolResult — so that is what settles: the
+    // outcome the harness actually sees, not the exception behind it. (The
+    // adapter path settles `kind: "error"` with the exact JSON-RPC envelope —
+    // see "the recorded error is the wire error" below.)
+    expect(order).toEqual(["start", "execute", "settle:result"]);
     // The response is unchanged from a run with no evidence hook at all.
     expect(response).toMatchObject({
       result: {
@@ -319,5 +324,90 @@ describe("with no hook", () => {
       id: 1,
       result: { content: [{ type: "text", text: "ok" }] },
     });
+  });
+});
+
+describe("the recorded error is the wire error", () => {
+  it("hands afterExecute the EXACT envelope the adapter response carries", async () => {
+    const boom = Object.assign(new Error("upstream exploded"), {
+      code: -32050,
+    });
+    const executeTool = vi.fn(async () => {
+      throw boom;
+    });
+    const settled: unknown[] = [];
+    const hook: ToolCallEvidenceHook = {
+      beforeExecute: async () => ({ ok: true }),
+      afterExecute: async (context) => {
+        settled.push(context.outcome);
+      },
+    };
+
+    const response = await handleJsonRpc(
+      "server-1",
+      callBody,
+      managerWith(executeTool),
+      "adapter",
+      { toolCallEvidence: hook },
+    );
+
+    expect(settled).toHaveLength(1);
+    const outcome = settled[0] as {
+      kind: string;
+      errorEnvelope: { code: number; message: string; data?: unknown };
+    };
+    expect(outcome.kind).toBe("error");
+    // Byte-for-byte the response's error member — message fallback chain,
+    // `data.normalized` and all. A reconstruction would drift the moment the
+    // bridge's catch evolves, and failed calls are exactly the rows a reader
+    // most needs the wire record of.
+    expect(outcome.errorEnvelope).toEqual(response.error);
+    expect(outcome.errorEnvelope.data).toHaveProperty("normalized");
+  });
+
+  it("in manager mode records the isError RESULT the harness actually sees", async () => {
+    const executeTool = vi.fn(async () => {
+      throw new Error("upstream exploded");
+    });
+    const settled: unknown[] = [];
+    const hook: ToolCallEvidenceHook = {
+      beforeExecute: async () => ({ ok: true }),
+      afterExecute: async (context) => {
+        settled.push(context.outcome);
+      },
+    };
+
+    const response = await handleJsonRpc(
+      "server-1",
+      callBody,
+      managerWith(executeTool),
+      "manager",
+      { toolCallEvidence: hook },
+    );
+
+    // Manager mode answers a thrown failure as a SUCCESS envelope carrying an
+    // `isError: true` CallToolResult — which is what the model reads, so it is
+    // what the evidence records (outcome kind `call_tool_error` downstream).
+    const outcome = settled[0] as { kind: string; result: unknown };
+    expect(outcome.kind).toBe("result");
+    expect(outcome.result).toEqual(response.result);
+    expect(outcome.result).toMatchObject({ isError: true });
+  });
+
+  it("an error BEFORE the start settles nothing", async () => {
+    const executeTool = vi.fn();
+    const { hook, order } = recordingHook();
+
+    // No tool name: the throw happens before the evidence seam is reached.
+    await handleJsonRpc(
+      "server-1",
+      { id: 1, method: "tools/call", params: { arguments: {} } },
+      managerWith(executeTool),
+      "adapter",
+      { toolCallEvidence: hook },
+    );
+
+    expect(executeTool).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
   });
 });

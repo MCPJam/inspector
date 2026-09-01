@@ -14,7 +14,9 @@ import {
   collectNarratedCalls,
   reconcileTurnEvidence,
   sawEvidenceUnavailableMarker,
+  selectGradedToolCalls,
 } from "../harness-evidence-turn";
+import { EVIDENCE_UNAVAILABLE_MESSAGE } from "../../mcp-http-bridge";
 import type { EvidenceReadTransport } from "../../../utils/harness/harness-evidence-reader";
 
 const toolSpan = (over: Partial<EvalTraceSpan> = {}): EvalTraceSpan =>
@@ -296,5 +298,173 @@ describe("sawEvidenceUnavailableMarker", () => {
         } as unknown as ModelMessage,
       ]),
     ).toBe(false);
+  });
+});
+
+describe("sawEvidenceUnavailableMarker — quoting is not refusing", () => {
+  test("a SUCCESSFUL result quoting the refusal text does not fire", () => {
+    // A `Read` of a log that contains a prior refusal must not mark a
+    // fully-settled turn incomplete: only an error-shaped part counts.
+    expect(
+      sawEvidenceUnavailableMarker([
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              output: {
+                type: "text",
+                value: `log line: ${EVIDENCE_UNAVAILABLE_MESSAGE}`,
+              },
+            },
+          ],
+        } as unknown as ModelMessage,
+      ]),
+    ).toBe(false);
+  });
+
+  test("fires on the -32001 code even when the part is not error-typed", () => {
+    // The harness may flatten the JSON-RPC error into plain text; the
+    // refusal's own code rides along and is enough.
+    expect(
+      sawEvidenceUnavailableMarker([
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              output: {
+                type: "text",
+                value: `MCP error -32001: ${EVIDENCE_UNAVAILABLE_MESSAGE}`,
+              },
+            },
+          ],
+        } as unknown as ModelMessage,
+      ]),
+    ).toBe(true);
+  });
+
+  test("the detector needle IS the producer constant — no fourth copy", () => {
+    // If someone rewords the model-facing copy, producer and detector move
+    // together through the shared import; this test would only fail if a
+    // literal copy crept back in.
+    expect(EVIDENCE_UNAVAILABLE_MESSAGE).toContain(
+      "could not record this tool call",
+    );
+  });
+});
+
+describe("collectNarratedCalls — span loss must not read as native", () => {
+  test("an mcp__-shaped name with no span is flagged, not reclassified", () => {
+    const calls = collectNarratedCalls({
+      newMessages: [
+        assistantCall("toolu_lost", "mcp__server-1__search", { q: "x" }),
+      ],
+      spans: [], // the span never survived (e.g. a scope step-up broke the stream)
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ mcpShaped: true });
+    expect(calls[0]!.serverId).toBeUndefined();
+  });
+});
+
+describe("selectGradedToolCalls — the verdict flips, and only those", () => {
+  const narration = [
+    { toolName: "search", arguments: { q: "narrated" }, toolCallId: "toolu_1" },
+    { toolName: "Bash", arguments: { cmd: "ls" }, toolCallId: "toolu_native" },
+    {
+      toolName: "hallucinated_tool",
+      arguments: { a: 1 },
+      toolCallId: "toolu_hallu",
+    },
+  ];
+  const matched = {
+    requestId: "req-1",
+    serverId: "server-1",
+    toolName: "search",
+    arguments: { q: "server-received" },
+    response: {},
+    outcomeKind: "success" as const,
+    startedAtMs: 1,
+    settledAtMs: 2,
+  };
+  const wireOnly = {
+    ...matched,
+    requestId: "req-dropped",
+    toolName: "write_file",
+    arguments: { path: "/tmp/x" },
+    startedAtMs: 9,
+  };
+  const completeEvidence = {
+    spans: [],
+    completeness: { status: "complete" as const },
+    merge: {
+      completeness: { status: "complete" as const },
+      canonicalCalls: [matched, wireOnly],
+      matchedByToolCallId: new Map([["toolu_1", matched]]),
+      wireOnlyCalls: [wireOnly],
+      narrationOnlyToolCallIds: new Set(["toolu_hallu"]),
+    },
+  };
+
+  test("evidence grading: server args win, hallucinations stop counting, dropped calls join", () => {
+    const graded = selectGradedToolCalls({
+      narration,
+      evidence: completeEvidence,
+      gradingSource: "evidence",
+    });
+    expect(graded).toEqual([
+      // Matched: narrated position + id, SERVER-received arguments.
+      {
+        toolName: "search",
+        arguments: { q: "server-received" },
+        toolCallId: "toolu_1",
+      },
+      // Native harness tool: evidence says nothing about it; passes through.
+      { toolName: "Bash", arguments: { cmd: "ls" }, toolCallId: "toolu_native" },
+      // toolu_hallu is GONE — narrated, never crossed the wire.
+      // Wire-only: executed but never narrated — the motivating case.
+      {
+        toolName: "write_file",
+        arguments: { path: "/tmp/x" },
+        toolCallId: "evidence:req-dropped",
+      },
+    ]);
+  });
+
+  test("an incomplete turn grades from narration, verbatim", () => {
+    const graded = selectGradedToolCalls({
+      narration,
+      evidence: {
+        ...completeEvidence,
+        merge: {
+          ...completeEvidence.merge,
+          completeness: {
+            status: "incomplete" as const,
+            reason: "unsettled_row" as const,
+          },
+        },
+      },
+      gradingSource: "evidence",
+    });
+    expect(graded).toBe(narration);
+  });
+
+  test("narration grading ignores evidence even when it is complete", () => {
+    const graded = selectGradedToolCalls({
+      narration,
+      evidence: completeEvidence,
+      gradingSource: "narration",
+    });
+    expect(graded).toBe(narration);
+  });
+
+  test("no merge at all (capture never ran) is narration", () => {
+    const graded = selectGradedToolCalls({
+      narration,
+      evidence: { spans: [] },
+      gradingSource: "evidence",
+    });
+    expect(graded).toBe(narration);
   });
 });

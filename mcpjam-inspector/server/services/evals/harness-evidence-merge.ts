@@ -80,6 +80,14 @@ export type NarratedToolCall = {
   toolCallId: string;
   toolName: string;
   serverId?: string;
+  /**
+   * The narrated name is MCP-SHAPED (`mcp__…`) but no span survived to
+   * resolve its serverId. Matching stays strict — without a serverId there is
+   * no identity to match on — but the completeness zero-row guard counts it
+   * as an MCP call, because "the span was lost" must not read as "this was a
+   * native tool" and let a captureless turn grade as complete.
+   */
+  mcpShaped?: boolean;
   arguments: unknown;
   /** Narrated model-visible output, if the harness reported one. */
   output?: unknown;
@@ -114,6 +122,12 @@ export type EvidenceIncompleteReason =
   | "unreadable_payload"
   /** Pagination did not finish, so the row set is not known to be whole. */
   | "read_incomplete"
+  /**
+   * The read returned rows this build could not parse — version skew on a
+   * backend-deploys-first topology. The set is known to have holes even
+   * though pagination finished.
+   */
+  | "unparseable_row"
   /** Narrated MCP calls with no evidence at all — capture never armed. */
   | "no_evidence_for_narrated_calls"
   /** A call refused because its start could not be recorded. */
@@ -123,6 +137,8 @@ export type MergeInput = {
   rows: EvidenceRow[];
   /** Whether the paginated read reached the end. */
   readExhausted: boolean;
+  /** Rows the reader received but could not parse. >0 ⇒ incomplete. */
+  unparseableRows?: number;
   narratedCalls: NarratedToolCall[];
   /**
    * Whether any narrated tool result carries the proxy's
@@ -219,6 +235,14 @@ export function assessCompleteness(input: MergeInput): EvidenceCompleteness {
   if (!input.readExhausted) {
     return { status: "incomplete", reason: "read_incomplete" };
   }
+  if ((input.unparseableRows ?? 0) > 0) {
+    // The reader saw rows it could not understand. Pagination may well have
+    // finished, but a set with known holes graded as complete would stamp
+    // the very calls those rows recorded as `wireCorroborated: false` — the
+    // persisted trace accusing the model of hallucinating calls the proxy
+    // in fact captured.
+    return { status: "incomplete", reason: "unparseable_row" };
+  }
   for (const row of input.rows) {
     if (row.status !== "settled") {
       return { status: "incomplete", reason: "unsettled_row" };
@@ -233,7 +257,7 @@ export function assessCompleteness(input: MergeInput): EvidenceCompleteness {
     // calls were blocked is complete, and counting them here would downgrade
     // every policy-exercising turn to narration grading.
     const narratedMcpCalls = input.narratedCalls.filter(
-      (call) => !call.policyBlocked && call.serverId,
+      (call) => !call.policyBlocked && (call.serverId || call.mcpShaped),
     );
     if (narratedMcpCalls.length > 0) {
       return {

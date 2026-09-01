@@ -32,6 +32,16 @@ export type EvidenceReadResult = {
   rows: EvidenceRow[];
   /** Whether pagination reached the end. False ⇒ the turn is incomplete. */
   exhausted: boolean;
+  /**
+   * Rows the backend returned that this reader could not parse — a status or
+   * field shape it does not recognize, which on a backend-deploys-first
+   * topology is exactly what version skew looks like. NOT folded into
+   * `exhausted`: the read may well have reached the end, but a set with rows
+   * missing from it must still fail the completeness check, or the calls
+   * whose rows were dropped get graded as hallucinations the proxy in fact
+   * recorded.
+   */
+  unparseableRows: number;
 };
 
 export type EvidenceReadTransport = (body: {
@@ -72,11 +82,18 @@ export function createConvexEvidenceReadTransport(): EvidenceReadTransport {
   };
 }
 
-function readRows(payload: Record<string, unknown> | null): EvidenceRow[] {
-  const rows = payload?.rows;
-  if (!Array.isArray(rows)) return [];
-  return rows.flatMap((raw) => {
-    if (!raw || typeof raw !== "object") return [];
+function readRows(payload: Record<string, unknown> | null): {
+  rows: EvidenceRow[];
+  dropped: number;
+} {
+  const raws = payload?.rows;
+  if (!Array.isArray(raws)) return { rows: [], dropped: 0 };
+  let dropped = 0;
+  const rows = raws.flatMap((raw): EvidenceRow[] => {
+    if (!raw || typeof raw !== "object") {
+      dropped += 1;
+      return [];
+    }
     const row = raw as Record<string, unknown>;
     if (
       typeof row.requestId !== "string" ||
@@ -86,10 +103,12 @@ function readRows(payload: Record<string, unknown> | null): EvidenceRow[] {
       (row.status !== "started" && row.status !== "settled") ||
       typeof row.startedAtMs !== "number"
     ) {
-      // A row this reader cannot understand is DROPPED, and dropping it is
-      // safe only because the caller treats a short read as incomplete: the
-      // turn degrades to narration grading rather than being graded against a
-      // record with a hole in it.
+      // A row this reader cannot understand is DROPPED — but COUNTED. The
+      // old comment here claimed dropping was safe because the caller treats
+      // a short read as incomplete; no caller ever did, and a dropped row
+      // with `exhausted: true` read as a complete set with the row simply
+      // absent. The count is what makes the hole visible to completeness.
+      dropped += 1;
       return [];
     }
     return [
@@ -120,6 +139,7 @@ function readRows(payload: Record<string, unknown> | null): EvidenceRow[] {
       },
     ];
   });
+  return { rows, dropped };
 }
 
 /**
@@ -189,6 +209,7 @@ export async function readTurnEvidence(args: {
   transport: EvidenceReadTransport;
 }): Promise<EvidenceReadResult> {
   const rows: EvidenceRow[] = [];
+  let unparseableRows = 0;
   let cursor: string | null = null;
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -206,7 +227,7 @@ export async function readTurnEvidence(args: {
         turnId: args.turnId,
         error: error instanceof Error ? error.message : String(error),
       });
-      return { rows, exhausted: false };
+      return { rows, exhausted: false, unparseableRows };
     }
 
     if (response.status < 200 || response.status >= 300) {
@@ -215,17 +236,31 @@ export async function readTurnEvidence(args: {
         turnId: args.turnId,
         status: response.status,
       });
-      return { rows, exhausted: false };
+      return { rows, exhausted: false, unparseableRows };
     }
 
-    rows.push(...(await resolveSpilledPayloads(readRows(response.body))));
+    const page = readRows(response.body);
+    if (page.dropped > 0) {
+      unparseableRows += page.dropped;
+      logger.warn(
+        "[harness-evidence] read returned rows this reader cannot parse",
+        {
+          iterationId: args.iterationId,
+          turnId: args.turnId,
+          dropped: page.dropped,
+        },
+      );
+    }
+    rows.push(...(await resolveSpilledPayloads(page.rows)));
 
-    if (response.body?.isDone === true) return { rows, exhausted: true };
+    if (response.body?.isDone === true) {
+      return { rows, exhausted: true, unparseableRows };
+    }
     const nextCursor = response.body?.cursor;
     if (typeof nextCursor !== "string" || nextCursor === cursor) {
       // No usable cursor and not done: the reader cannot advance, so it says
       // so rather than reporting what it happens to hold as the whole set.
-      return { rows, exhausted: false };
+      return { rows, exhausted: false, unparseableRows };
     }
     cursor = nextCursor;
   }
@@ -237,5 +272,5 @@ export async function readTurnEvidence(args: {
     turnId: args.turnId,
     rows: rows.length,
   });
-  return { rows, exhausted: false };
+  return { rows, exhausted: false, unparseableRows };
 }
