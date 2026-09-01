@@ -51,9 +51,13 @@ const SCREENSHOT_POLL_MS = 1_000;
  * Its session reports `remote-interactive-url`, and the viewport lives in the
  * Browser panel, which can both show the stream and hand control to a person.
  * So the notice at the top of this screen has to say which of those situations
- * the viewer is actually in — see `viewportNotice`. Telling someone driving a
- * datacenter browser to look at a window on their own desk sends them hunting
- * for something that is not there.
+ * the viewer is actually in. Telling someone driving a datacenter browser to
+ * look at a window on their own desk sends them hunting for something that is
+ * not there.
+ *
+ * Every one of those per-transport differences lives in `viewportBehaviour`,
+ * whose `satisfies never` makes the next transport kind a compile error here
+ * instead of a silent fall-through to window behaviour.
  */
 export function WebmcpInspectorTab() {
   const {
@@ -137,18 +141,21 @@ export function WebmcpInspectorTab() {
 
   const live = Boolean(session) && session?.status !== "closed";
   const transportKind = session?.viewportTransport.kind;
-  /** The hosted browser paints somewhere else; there is no screencast to ask for. */
-  const hostedViewport = transportKind === "remote-interactive-url";
+  /** Everything this screen does differently per transport, decided in one place. */
+  const behaviour = viewportBehaviour(transportKind);
   /**
-   * An in-app session has no other viewport, so its stream is not optional.
+   * Whether the pane is meant to be showing a picture the SERVER produces.
    *
-   * Offering "Live view: off" there would offer a browser nobody can see or
-   * touch — a state with no way back except closing the session. Visibility
-   * gating still applies, which covers the case the toggle was for: a tab
-   * nobody is looking at stops streaming on its own.
+   * `electron-webview` is the kind that makes this more than a rename: its
+   * surface paints itself, so "streaming" is false for it no matter what the
+   * Live view toggle or the document's visibility say — there is no stream to
+   * turn on, and asking for one would start a poll that overwrites nothing.
    */
-  const streamRequired = transportKind === "frame-stream";
-  const streaming = live && (liveView || streamRequired) && documentVisible;
+  const streaming =
+    live &&
+    behaviour.serverPaints &&
+    (liveView || behaviour.streamRequired) &&
+    documentVisible;
 
   /**
    * Keep the pane fed while it is being looked at, and stop the moment it is
@@ -160,7 +167,12 @@ export function WebmcpInspectorTab() {
    * picture comes from the Browser panel instead. The fallback engages on its
    * own, silently: someone running an older server should see their page, not
    * an error explaining why they cannot.
+   *
+   * A client-owned surface has NEITHER. `streaming` is already false for it,
+   * so this effect never runs — no `set_screencast` command, no poll timer, and
+   * nothing to withdraw on unmount.
    */
+  const pollsScreenshots = behaviour.pollsScreenshots;
   useEffect(() => {
     if (!streaming) return;
     let cancelled = false;
@@ -174,7 +186,7 @@ export function WebmcpInspectorTab() {
       poll = setInterval(shoot, SCREENSHOT_POLL_MS);
     };
 
-    if (hostedViewport) {
+    if (pollsScreenshots) {
       startPolling();
     } else {
       void setScreencast(true).then((accepted) => {
@@ -188,9 +200,9 @@ export function WebmcpInspectorTab() {
       // Asked for unconditionally, including when the stream was never running:
       // it is idempotent on the server, and a session left encoding frames for
       // a pane nobody is looking at is exactly what demand-driving avoids.
-      if (!hostedViewport) void setScreencast(false);
+      if (!pollsScreenshots) void setScreencast(false);
     };
-  }, [streaming, hostedViewport, setScreencast, captureScreenshot]);
+  }, [streaming, pollsScreenshots, setScreencast, captureScreenshot]);
 
   /**
    * Where this session's browser should run and appear.
@@ -295,7 +307,11 @@ export function WebmcpInspectorTab() {
             >
               Screenshot
             </Button>
-            {streamRequired ? null : (
+            {/* Hidden when the stream is not optional (an in-app session has
+                no other viewport) and when there is no stream at all (a
+                client-owned surface is always on, and cannot be turned off
+                without unmounting the session). */}
+            {behaviour.streamRequired || !behaviour.serverPaints ? null : (
               <Button
                 size="sm"
                 variant={liveView ? "default" : "outline"}
@@ -398,7 +414,7 @@ export function WebmcpInspectorTab() {
               machine in a datacenter — telling someone to look at a window on
               their own desk would send them hunting for something that is not
               there. */}
-          {viewportNotice(session?.viewportTransport.kind)}
+          {behaviour.notice}
           {session?.url ? (
             <span className="ml-1 font-mono">{session.url}</span>
           ) : null}
@@ -413,6 +429,7 @@ export function WebmcpInspectorTab() {
               fallbackScreenshot={lastScreenshot}
               streaming={streaming}
               transport={session?.viewportTransport}
+              behaviour={behaviour}
               onInput={sendInput}
             />
           ) : null}
@@ -498,12 +515,14 @@ function ViewportPane({
   fallbackScreenshot,
   streaming,
   transport,
+  behaviour,
   onInput,
 }: {
   frame: WebMcpFrame | undefined;
   fallbackScreenshot: string | undefined;
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
+  behaviour: ViewportBehaviour;
   onInput: (events: WebMcpInputEvent[]) => void;
 }) {
   // The screenshot is a FALLBACK for a stream that is meant to be running, not
@@ -512,14 +531,11 @@ function ViewportPane({
   // view is off" placeholder would never appear, because a source was present.
   const source = frame?.data ?? (streaming ? fallbackScreenshot : undefined);
   /**
-   * Whether this pane drives the page.
-   *
-   * Only a `frame-stream` session. A native-window session is view-only on
-   * purpose: the person already has the real page in front of them, and
-   * forwarding pane input would drive it a SECOND time — every click landing
-   * twice, from two directions, with nothing reconciling them.
+   * Whether this pane drives the page. Read from the one exhaustive table
+   * rather than re-derived here, so a new transport kind cannot answer this
+   * question differently from the rest of the screen.
    */
-  const interactive = transport?.kind === "frame-stream";
+  const interactive = behaviour.drivesPage;
   const imageRef = useRef<HTMLImageElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState(false);
@@ -534,9 +550,7 @@ function ViewportPane({
    */
   const surface = frame
     ? { width: frame.deviceWidth, height: frame.deviceHeight }
-    : transport?.kind === "frame-stream"
-      ? { width: transport.width, height: transport.height }
-      : { width: WEBMCP_VIEWPORT.width, height: WEBMCP_VIEWPORT.height };
+    : transportSurface(transport);
 
   const frameSizeRef = useRef(surface);
   frameSizeRef.current = surface;
@@ -745,18 +759,18 @@ function ViewportPane({
           <p className="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
             {streaming
               ? "Waiting for the first frame…"
-              : "Live view is off. Turn it on to watch the page here."}
+              : behaviour.serverPaints
+                ? "Live view is off. Turn it on to watch the page here."
+                : behaviour.viewOnlyCaption}
           </p>
         )}
       </div>
       <figcaption className="pt-1 text-center text-[11px] text-muted-foreground">
-        {transport?.kind === "remote-interactive-url"
-          ? "Snapshots of your MCPJam computer's browser. Open the Browser panel to interact with it."
-          : interactive
-            ? focused
-              ? "Typing and clicking here goes to the page. Press Esc to leave."
-              : "Click to interact with the page."
-            : "A live view of the page. Interact with it in the browser window."}
+        {interactive
+          ? focused
+            ? "Typing and clicking here goes to the page. Press Esc to leave."
+            : "Click to interact with the page."
+          : behaviour.viewOnlyCaption}
       </figcaption>
     </figure>
   );
@@ -831,21 +845,138 @@ function ErrorBanner({
 }
 
 /**
- * What to tell someone about where the browser they are driving actually is.
- * Each branch is a different physical situation, and getting it wrong sends
- * people looking for a window that does not exist.
+ * Everything this screen does differently per viewport kind, in ONE exhaustive
+ * table.
+ *
+ * It used to be four separate `kind === "…"` comparisons scattered down the
+ * component, each with an implicit "otherwise, behave like a native window".
+ * That default is a trap: adding a transport meant the new kind silently
+ * inherited window behaviour — the screencast asked for on a surface that
+ * cannot stream, the input forwarder armed on a page that already receives
+ * real input, and a notice telling the viewer to go look at a window that does
+ * not exist — with nothing failing to compile and nothing failing at runtime
+ * either. So the branch is a switch, and its default arm asserts `never`:
+ * the NEXT kind added to the protocol is a typecheck failure here, and whoever
+ * adds it decides these answers deliberately.
  */
-function viewportNotice(
+interface ViewportBehaviour {
+  /**
+   * The SERVER produces this session's picture — as a frame stream, as polled
+   * screenshots, or not at all.
+   *
+   * False means the surface paints itself where the viewer already is, so
+   * nothing here should ask for frames, poll, or forward input.
+   */
+  serverPaints: boolean;
+  /** Poll screenshots instead of asking for a stream; nothing streams here. */
+  pollsScreenshots: boolean;
+  /** The stream is the ONLY view, so "Live view: off" must not be offered. */
+  streamRequired: boolean;
+  /** Whether the pane forwards the viewer's input to the page. */
+  drivesPage: boolean;
+  /** Where the page actually is, for the notice above the pane. */
+  notice: string;
+  /** The pane's caption when it is a view rather than a surface. */
+  viewOnlyCaption: string;
+}
+
+const NATIVE_WINDOW_BEHAVIOUR: ViewportBehaviour = {
+  serverPaints: true,
+  pollsScreenshots: false,
+  streamRequired: false,
+  // View-only on purpose: the person already has the real page in front of
+  // them, and forwarding pane input would drive it a SECOND time — every click
+  // landing twice, from two directions, with nothing reconciling them.
+  drivesPage: false,
+  notice:
+    "A browser window is open on this machine — interact with the page there. Tools it registers appear here as they register.",
+  viewOnlyCaption:
+    "A live view of the page. Interact with it in the browser window.",
+};
+
+function viewportBehaviour(
   kind: WebMcpViewportTransport["kind"] | undefined,
-): string {
+): ViewportBehaviour {
   switch (kind) {
+    // No session yet, so nothing is being shown. The window arm is the safe
+    // answer: it asks for a stream that a started session would accept, and
+    // drives nothing.
+    case undefined:
+    case "native-window":
+      return NATIVE_WINDOW_BEHAVIOUR;
     case "headless":
-      return "Running headless — no window to interact with. Tools, invocation and screenshots all work; use the Screenshot button to see the page.";
+      return {
+        ...NATIVE_WINDOW_BEHAVIOUR,
+        notice:
+          "Running headless — no window to interact with. Tools, invocation and screenshots all work; use the Screenshot button to see the page.",
+        viewOnlyCaption: "A live view of the headless page.",
+      };
     case "remote-interactive-url":
-      return "This browser is running on your MCPJam computer, not on this machine. Open the Browser panel to watch it, or to take control when a sign-in needs you.";
+      return {
+        ...NATIVE_WINDOW_BEHAVIOUR,
+        // The hosted browser paints somewhere else entirely; there is no
+        // screencast on this side of the daemon to ask for.
+        pollsScreenshots: true,
+        notice:
+          "This browser is running on your MCPJam computer, not on this machine. Open the Browser panel to watch it, or to take control when a sign-in needs you.",
+        viewOnlyCaption:
+          "Snapshots of your MCPJam computer's browser. Open the Browser panel to interact with it.",
+      };
     case "frame-stream":
-      return "This page is running in the pane below — click and type into it there. Tools it registers appear as they register.";
+      return {
+        ...NATIVE_WINDOW_BEHAVIOUR,
+        // The pane is the only viewport, so its stream is not optional:
+        // offering "Live view: off" would offer a browser nobody can see or
+        // touch, with no way back except closing the session.
+        streamRequired: true,
+        drivesPage: true,
+        notice:
+          "This page is running in the pane below — click and type into it there. Tools it registers appear as they register.",
+        viewOnlyCaption: "A live view of the page.",
+      };
+    case "electron-webview":
+      return {
+        // The one kind the client owns. Its pixels are a real Chromium surface
+        // already on this screen, so there is nothing to encode, nothing to
+        // poll, and no input to forward — the surface takes the viewer's mouse
+        // and keyboard natively, which is the entire point of it.
+        serverPaints: false,
+        pollsScreenshots: false,
+        streamRequired: false,
+        drivesPage: false,
+        notice:
+          "This page is running right here, in the app — click and type into it directly. Tools it registers appear as they register.",
+        viewOnlyCaption: "The page is running natively in this pane.",
+      };
     default:
-      return "A browser window is open on this machine — interact with the page there. Tools it registers appear here as they register.";
+      // The guard this whole table exists for. A kind added to the protocol
+      // lands here, fails to compile, and gets an answer chosen on purpose
+      // rather than inherited from the window arm.
+      kind satisfies never;
+      return NATIVE_WINDOW_BEHAVIOUR;
+  }
+}
+
+/**
+ * The surface a `frame-stream` session reports, for laying the pane out before
+ * the first frame arrives. Every other kind has no dimensions to report and
+ * falls back to the viewport constant.
+ */
+function transportSurface(transport: WebMcpViewportTransport | undefined): {
+  width: number;
+  height: number;
+} {
+  switch (transport?.kind) {
+    case "frame-stream":
+      return { width: transport.width, height: transport.height };
+    case undefined:
+    case "native-window":
+    case "headless":
+    case "remote-interactive-url":
+    case "electron-webview":
+      return { width: WEBMCP_VIEWPORT.width, height: WEBMCP_VIEWPORT.height };
+    default:
+      transport satisfies never;
+      return { width: WEBMCP_VIEWPORT.width, height: WEBMCP_VIEWPORT.height };
   }
 }
