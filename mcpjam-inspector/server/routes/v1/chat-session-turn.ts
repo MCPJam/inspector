@@ -1020,9 +1020,18 @@ async function handleTurn(c: Context): Promise<Response> {
     // catalog failure degrades to no skills rather than failing the turn.
     let turnCapabilities: EffectiveCapabilitySet | undefined;
     let capabilitiesAreLive = false;
+    // The project pool is a MEMBER resource: `listCloudRuntimeSkills` resolves
+    // `projectSkills:listSkills`, which is signed-in-only, and
+    // `getConvexBearerForRequest` forwards a guest bearer verbatim. The v1 mount
+    // already 401s guests on this path (`/chat-sessions/messages` is absent from
+    // `guest-allowed-paths.ts`), so this term is unreachable today — it is here
+    // because that allowlist is edited independently of this file, and the
+    // reachable twin of this exact gate on the local route is what produced
+    // CONVEX-19R.
+    const callerIsGuest = Boolean(c.get("guestId"));
     if (target.environmentCapabilities) {
       turnCapabilities = target.environmentCapabilities;
-    } else if (projectId) {
+    } else if (projectId && !callerIsGuest) {
       try {
         turnCapabilities = buildLiveEffectiveCapabilities({
           standaloneSkills: await listCloudRuntimeSkills({

@@ -1282,11 +1282,17 @@ chatV2.post("/", async (c) => {
     // orchestrator used to pick between.
     //
     // Local files are always in it (this route only runs where there IS a local
-    // filesystem). The project's skills join them when the request is
-    // authenticated and names a project — the same three conditions
-    // `shouldEnableCloudSkillTools` applies on the hosted routes, restated here
-    // because this route derives guest-ness from the absence of an
-    // Authorization header rather than from a guest id.
+    // filesystem). The project's skills join them when the request comes from a
+    // SIGNED-IN caller and names a project — the same membership condition
+    // `shouldEnableCloudSkillTools` applies on the hosted routes.
+    //
+    // `requestIsGuest`, not the presence of an Authorization header: this route
+    // attaches a guest bearer for anonymous callers (`/api/mcp/chat-v2` is in
+    // the client's `HOSTED_AUTH_PATH_PREFIXES`), so a header proves a session
+    // exists, never that it belongs to a member. Reading it as membership sent
+    // one `projectSkills:listSkills` per guest turn into a signed-in-only
+    // query, which refused every one of them (CONVEX-19R). The header term
+    // survives only to narrow `string | undefined` for `authHeader` below.
     //
     // Signed out, or with no project: local-only, which is exactly what this
     // route did before. What is new is that signing IN no longer means choosing.
@@ -1311,7 +1317,12 @@ chatV2.post("/", async (c) => {
       : [];
     let cloudRuntimeSkills: RuntimeStandaloneSkill[] = [];
     let skillsFetchFailed: SkillsFetchFailure | undefined;
-    if (gathersInMemorySkills && requestAuthHeader && body.projectId) {
+    if (
+      gathersInMemorySkills &&
+      !requestIsGuest &&
+      requestAuthHeader &&
+      body.projectId
+    ) {
       const startedAt = Date.now();
       try {
         cloudRuntimeSkills = await listCloudRuntimeSkills({
