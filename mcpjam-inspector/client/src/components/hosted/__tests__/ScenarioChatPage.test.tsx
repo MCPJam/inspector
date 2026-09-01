@@ -289,6 +289,75 @@ describe("ScenarioChatPage", () => {
     );
   });
 
+  it("does not brand the shell as Claude while the link is still redeeming", async () => {
+    // Reported by testers on an org-invited scenario: the header showed the
+    // Claude mark and the word "Claude" for the whole load, on a scenario that
+    // wasn't a Claude host at all. The redeem is held open here so the
+    // bootstrapping frame is the one under assertion.
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = render(<ScenarioChatPage pathToken="tok_loading" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      container.querySelector('[data-host-style="claude"]')
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="mcpjam"]')
+    ).toBeInTheDocument();
+    // No host identity is claimed until the redeem says which host this is —
+    // painting one brand and swapping to another reads as a glitch.
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+    // The visible placeholder is decorative, so the heading has to carry the
+    // shell's name for a screen reader in the meantime.
+    expect(
+      screen.getByRole("heading", { name: "Loading scenario" })
+    ).toBeInTheDocument();
+  });
+
+  it("does not wear the previous scenario's brand while a new link redeems", async () => {
+    // sessionStorage outlives the page, so a tester opening a second link still
+    // holds the first scenario's session. Dressing the redemption in that
+    // scenario's host is the same impersonation as seeding one — the stored
+    // session simply supplies the wrong vendor instead of a hardcoded one.
+    writeScenarioSession({
+      scenarioId: "sbx_previous",
+      accessVersion: 1,
+      shareToken: "tok_previous",
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_previous",
+        name: "Previous Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = render(<ScenarioChatPage pathToken="tok_new" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      container.querySelector('[data-host-style="claude"]')
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="mcpjam"]')
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+  });
+
   // Removed: "uses the Claude loading indicator variant for Claude-style
   // hosted scenarios". The indicator no longer flows through a
   // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
