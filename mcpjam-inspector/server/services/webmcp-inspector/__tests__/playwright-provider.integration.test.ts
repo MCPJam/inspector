@@ -355,9 +355,12 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       { timeout: 15_000 },
     );
     const streaming = runtime.hub.buffered();
-    const streamingKinds = streaming
-      .filter((event) => event.type === "activity")
-      .map((event) => event.entry.kind);
+    const streamingActivity = streaming.filter(
+      (event) => event.type === "activity",
+    );
+    const streamingKinds = streamingActivity.map((event) => event.entry.kind);
+    // Identities, not kinds, for the prefix check below — see the comment there.
+    const streamingIds = streamingActivity.map((event) => event.entry.id);
     expect(streamingKinds).toContain("session_started");
     expect(streamingKinds).toContain("tools_added");
     expect(streamingKinds).toContain("navigated");
@@ -378,7 +381,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // before the stop is still there, in the same order.
     //
     // A PREFIX rather than an equality, and the difference is a real race
-    // rather than a nicety. `streamingKinds` was sampled the moment a frame
+    // rather than a nicety. `streamingIds` was sampled the moment a frame
     // arrived after the reload — but the reloaded page re-registers its tools
     // asynchronously, in however many batches Chromium happens to deliver, and
     // the two 750ms sleeps above give it 1.5 seconds to add more. Demanding
@@ -386,12 +389,15 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // which is not a property this test is about and not one the code
     // provides. What the stop must not do is LOSE or REORDER an entry, and
     // that is what this checks.
-    const stoppedKinds = stopped
+    //
+    // Compared by `id` rather than `kind`: a run of `tools_added` entries all
+    // carry the same kind, so a prefix of kinds would still match if the stop
+    // dropped one and the reloading page happened to add another. Identity is
+    // the only thing that says THESE entries survived.
+    const stoppedIds = stopped
       .filter((event) => event.type === "activity")
-      .map((event) => event.entry.kind);
-    expect(stoppedKinds.slice(0, streamingKinds.length)).toEqual(
-      streamingKinds,
-    );
+      .map((event) => event.entry.id);
+    expect(stoppedIds.slice(0, streamingIds.length)).toEqual(streamingIds);
 
     await registry.disposeAll();
   }, 60_000);

@@ -536,6 +536,13 @@ export function decodeWebMcpBinaryFrame(
   if (jpegLength !== bytes.byteLength - WEBMCP_FRAME_WS_HEADER_BYTES) {
     return undefined;
   }
+  // Zero pixels is not a frame. A bare header passes the check above — its
+  // declared length of nothing does match the nothing that arrived — and the
+  // presenter would then hand an `<img>` a 0-byte blob URL, which fails to
+  // decode and blanks the pane with exactly the silence the check above
+  // exists to prevent. Rejected HERE, at the one boundary where wire data is
+  // validated, rather than guarded again at every consumer.
+  if (jpegLength === 0) return undefined;
   return {
     deviceWidth: view.getUint16(2, true),
     deviceHeight: view.getUint16(4, true),

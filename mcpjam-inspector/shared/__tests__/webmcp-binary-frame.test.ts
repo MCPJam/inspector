@@ -57,11 +57,16 @@ describe("webmcp binary frame codec", () => {
     expect(decodeWebMcpBinaryFrame(buffer)?.seq).toBe(7);
   });
 
-  it("decodes a zero-byte payload rather than refusing it", () => {
-    const decoded = decodeWebMcpBinaryFrame(
-      encodeWebMcpBinaryFrame(frame({ jpeg: new Uint8Array(0) })),
-    );
-    expect(decoded?.jpeg.byteLength).toBe(0);
+  it("refuses a zero-byte payload — a bare header is not a frame", () => {
+    // It passes the declared-length check (nothing declared, nothing sent), so
+    // nothing else would stop it. Accepted, it reaches the presenter as a
+    // 0-byte blob URL, which an `<img>` cannot decode: the pane goes blank
+    // with no error. Dropping it leaves the previous paint on screen.
+    expect(
+      decodeWebMcpBinaryFrame(
+        encodeWebMcpBinaryFrame(frame({ jpeg: new Uint8Array(0) })),
+      ),
+    ).toBeUndefined();
   });
 
   it("copies the payload rather than viewing the socket's buffer", () => {
