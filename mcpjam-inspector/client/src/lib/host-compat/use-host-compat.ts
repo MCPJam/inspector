@@ -135,5 +135,6 @@ export function useHostCompatReports(
     catalogState,
     claudeCodeEnabled,
     codexEnabled,
+    cursorCliEnabled,
   ]);
 }

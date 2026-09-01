@@ -68,6 +68,13 @@ export type HarnessId = Harness;
  *  `createCodex`. */
 export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 
+/** Escape a value for safe interpolation INSIDE a single-quoted shell word.
+ *  A single quote is the only character with meaning there, and the standard
+ *  `'\''` dance is how it is closed, escaped and reopened. */
+function shellSingleQuote(value: string): string {
+  return value.replaceAll("'", `'\''`);
+}
+
 /** Placeholder credential value handed to the in-sandbox CLI on the broker path.
  *  It is never used for auth (the proxy ignores VM-supplied Authorization/
  *  x-api-key and trusts only E2B's injected `x-mcpjam-harness-lease`); it just
@@ -1376,7 +1383,15 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     // `.harness-bootstrap/<harnessId>` under the session workdir, and
     // `implementation.json` puts the executable at
     // `implementation/home/.local/bin/agent` (privateHome: true).
-    `"${sessionWorkDir}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version`,
+    //
+    // SINGLE-quoted with embedded quotes escaped, not double-quoted: the
+    // workdir is host-configured, and `$(…)`/backticks inside double quotes
+    // are still expanded by the shell. `resolveWorkingDirectory` confines the
+    // value to /home/user but does not reject shell metacharacters, so a path
+    // like `/home/user/$(id)` would otherwise run `id` during session setup.
+    `'${shellSingleQuote(
+      sessionWorkDir,
+    )}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version`,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
     return createCursor({

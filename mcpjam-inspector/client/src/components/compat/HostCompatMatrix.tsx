@@ -181,7 +181,7 @@ export function HostCompatMatrix({
         logoSrc: p.logoSrc,
         logoSrcByTheme: p.logoSrcByTheme,
       })),
-    [catalogState, claudeCodeEnabled, codexEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled]
   );
 
   const [byServer, setByServer] = useState<Record<string, HostCompatReport[]>>(

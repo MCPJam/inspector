@@ -1294,6 +1294,22 @@ export async function runHarnessTurn(
           // the reader can act on it without opening a runbook. NEVER defaulted
           // or silently skipped — starting the CLI with no credential produces
           // an opaque failure from inside the box instead.
+          //
+          // KNOWN LIMITATION, and this is where it surfaces: callers that do
+          // NOT wire secrets deliver none (see the note on `runtimeSecrets`
+          // above — that is the documented contract, not an oversight). The
+          // SYNTHETIC path (`sessionSimulation/runner.ts`, which drives
+          // scenario/swarm/eval turns through `runUnifiedAssistantTurn`) is one
+          // of them, so an external-account harness is refused there today even
+          // when the environment does hold the secret.
+          //
+          // Deliberately not fixed here. Wiring it means fetching the secrets
+          // AND building the scrubber in that runner — the pair is what keeps
+          // delivered values out of the persisted transcript — and doing so
+          // would also start delivering project secrets to the EXISTING
+          // harnesses' synthetic turns, which today receive none. That is a
+          // security-relevant behaviour change well outside this change's
+          // scope. The refusal above is the fail-closed, legible alternative.
           const one = missing.length === 1;
           throw new Error(
             `The ${harnessAdapter.displayName} harness requires ` +
@@ -1732,15 +1748,6 @@ export async function runHarnessTurn(
         // could start bootstrapping the same box mid-run. `reservationHeld`
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
-        // Stamp delivery HERE, because this path took the credential out of the
-        // session env bag and the provider's `onSessionEnvUsed` can therefore
-        // never fire for it — for a project whose only secret is this one, the
-        // bag is empty and nothing would ever stamp. The value is about to be
-        // handed to the runtime that authenticates with it, which is exactly
-        // the "reached an execution surface" the stamp means. Getting this
-        // wrong makes a live credential read as dormant to whoever is deciding
-        // whether it is safe to delete.
-        onSecretEnvDelivered?.();
       } else {
         brokerRunId = turnRunId;
         const broker = await startHarnessModelBroker({
@@ -1883,6 +1890,22 @@ export async function runHarnessTurn(
               mcpJson,
             });
           }
+          // DELIVERY STAMP for the external-account credential.
+          //
+          // Here rather than where `auth` was resolved, for the same reason the
+          // provider stamps on first USE and not at construction: resolving the
+          // value only put it in a local object, and setup can still throw
+          // before anything receives it. By this point a sandbox session
+          // exists and the runtime is about to be started holding the
+          // credential — the "reached an execution surface" the stamp means.
+          //
+          // It has to be stamped explicitly at all because this path took the
+          // credential OUT of the session env bag, so the provider's own
+          // `onSessionEnvUsed` can never fire for it: for a project whose only
+          // secret is this one the bag is empty and nothing would ever stamp,
+          // making a live credential read as dormant to whoever is deciding
+          // whether it is safe to delete.
+          if (externalAccountAuth) onSecretEnvDelivered?.();
           // VERSION CANARY. For an adapter whose CLI version is not pinned by
           // the package pin (Cursor bootstraps `curl … | bash`, which always
           // fetches the current build), ask the box what it actually installed
@@ -2721,7 +2744,14 @@ export async function runHarnessTurn(
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
               });
             }
-            if (!isError) successfulToolCalls += 1;
+            // `!policyBlock` for the SAME reason the result and span above
+            // exclude it: a policy block never reached the server, so no tool
+            // ran. Counting it here would let a turn whose every call MCPJam
+            // refused look like a turn that did work — and the entitlement-wall
+            // check reads this counter to decide whether an "upgrade your plan"
+            // answer is a real answer. A blocked call plus that text is exactly
+            // the case where the wall must still be caught.
+            if (!policyBlock && !isError) successfulToolCalls += 1;
             pendingResults.push({
               toolCallId,
               toolName: meta.toolName,

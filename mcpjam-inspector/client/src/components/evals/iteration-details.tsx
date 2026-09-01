@@ -104,6 +104,9 @@ const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
   "minimax",
   "qwen",
   "custom",
+  // The Cursor CLI harness runs on the customer's own Cursor account; without
+  // this it normalizes to "custom" and the run reads as an unknown provider.
+  "cursor",
 ];
 
 function tryParseStructuredArgumentString(value: string): unknown | null {

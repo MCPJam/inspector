@@ -1135,6 +1135,7 @@ function useTemplateVerifyDeepLink({
     requestedFocusTab,
     claudeCodeEnabled,
     codexEnabled,
+    cursorCliEnabled,
     flagWaitExpired,
     themeMode,
     createHost,

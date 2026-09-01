@@ -23,12 +23,30 @@ const harnessState = vi.hoisted(() => ({
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
     destroy: vi.fn(async () => {}),
+    // The file-capable sandbox session the turn's `onSandboxSession` receives.
+    writeTextFile: vi.fn(async () => {}),
+    readTextFile: vi.fn(async () => null),
+    run: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
   },
 }));
 
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
-    createSession = vi.fn(async () => harnessState.session);
+    // The real agent invokes `onSandboxSession` when it opens the box, BEFORE
+    // the runtime process starts. The turn hangs real work off that hook (MCP
+    // delivery, the credential delivery stamp, the version canary), so a double
+    // that skipped it would silently not exercise any of it.
+    constructor(private readonly opts: Record<string, unknown>) {}
+    createSession = vi.fn(async () => {
+      const onSandboxSession = this.opts.onSandboxSession as
+        | ((a: { session: unknown; sessionWorkDir: string }) => Promise<void>)
+        | undefined;
+      await onSandboxSession?.({
+        session: harnessState.session,
+        sessionWorkDir: "/home/user",
+      });
+      return harnessState.session;
+    });
     stream = vi.fn(async () => ({
       fullStream: (async function* () {
         yield { type: "finish", finishReason: "stop" };
@@ -134,8 +152,9 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../mcp-config.js")>();
   return {
     ...actual,
-    buildHarnessMcpJson: vi.fn(() => ({ mcpServers: {} })),
-    harnessServerInputFromConfig: vi.fn(),
+    // Only what the turn actually imports. `buildHarnessProxyMcpJson` is
+    // deliberately NOT stubbed — it comes through from the real module, so the
+    // mcpJson handed to `createHarness` below is the genuinely built object.
     harnessServerKeyToName: vi.fn((key: string) => key),
   };
 });
