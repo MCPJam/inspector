@@ -61,3 +61,11 @@ host has been measured for, rather than showing a column of "Not yet tested" —
 question dressed as an answer. The two eras gate independently, so a 2025-only
 measurement never publishes a 2026 row nobody has probed. No host values ship
 here, so neither row is visible yet.
+
+Saving the toggle also reconnects the host's connected servers, because the
+setting is read from a connection's config when it connects — without this a
+saved change sat inert until the user happened to reconnect, which reads as the
+switch doing nothing. Same reason the per-server protocol pin reconnects after
+its save. Narrow by construction: only when the setting actually changed, only
+for servers that are already connected, never interactive (a save must not open
+an OAuth prompt), and a failed reconnect warns rather than failing the save.

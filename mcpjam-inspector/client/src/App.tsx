@@ -652,7 +652,8 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, handleReconnect } =
+    useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   // `/servers/:serverId` and `/servers/plugins/:pluginId` — the exact
@@ -725,6 +726,7 @@ export function ServersRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
       onSelectHost={handleSelectHost}
+      onReconnect={handleReconnect}
       serversTabElement={
         <ServersTabBody
           routeServerId={routeParams.serverId ?? null}
@@ -800,6 +802,7 @@ export function HostsRoute() {
     hostsTabSelectedHostId,
     isAuthenticated,
     setHostsTabSelectedHostId,
+    handleReconnect,
   } = useAppRouteContext();
   const [previewedHostId, setPreviewedHostId] =
     usePreviewedHostId(convexProjectId);
@@ -976,6 +979,7 @@ export function HostsRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={openableHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
+      onReconnect={handleReconnect}
       serversTabElement={<ServersTabBody />}
     />
   );

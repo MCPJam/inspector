@@ -61,6 +61,49 @@ import {
 interface HostBuilderViewRedesignedProps {
   hostId: string;
   projectId: string;
+  /**
+   * Reconnects one server by name. Threaded from `App` (which owns it) so a
+   * saved setting that only takes effect at connect time can be applied to the
+   * live connection — see the cancellation hook in `handleSave`.
+   */
+  onReconnect?: (
+    serverName: string,
+    options?: { forceOAuthFlow?: boolean; allowInteractiveOAuthFlow?: boolean }
+  ) => Promise<unknown> | void;
+}
+
+/**
+ * Whether a save changed the tool-cancellation setting.
+ *
+ * Compared as canonical JSON rather than by reference, matching how
+ * `handleSave` diffs the rest of the draft: the record is rebuilt on every
+ * keystroke, so identity always differs and would reconnect on every save.
+ */
+export function toolCallCancellationChanged(
+  saved: HostConfigInputV2 | null | undefined,
+  draft: HostConfigInputV2
+): boolean {
+  return (
+    JSON.stringify(saved?.mcpProfile?.toolCallCancellation) !==
+    JSON.stringify(draft.mcpProfile?.toolCallCancellation)
+  );
+}
+
+/**
+ * The servers a cancellation change must be applied to: this host's own
+ * servers that are currently CONNECTED.
+ *
+ * Disconnected ones are deliberately excluded — they read the setting when
+ * they next connect, and reconnecting them from a config save would be a
+ * surprise the user did not ask for.
+ */
+export function serversNeedingCancellationReconnect(
+  hostServerNames: ReadonlyArray<string>,
+  connectionStatusByName: Record<string, { connectionStatus?: string } | undefined>
+): string[] {
+  return hostServerNames.filter(
+    (name) => connectionStatusByName[name]?.connectionStatus === "connected"
+  );
 }
 
 const CLOSED_FOCUS: HostFocusState = {
@@ -72,6 +115,7 @@ const CLOSED_FOCUS: HostFocusState = {
 export function HostBuilderViewRedesigned({
   hostId,
   projectId,
+  onReconnect,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useAppNavigate();
   const location = useLocation();
@@ -364,6 +408,12 @@ export function HostBuilderViewRedesigned({
               JSON.stringify(savedConfig[key])
           )
         : [];
+      // Reuse the same draft-vs-saved comparison the telemetry diff uses,
+      // rather than introducing a second notion of "changed".
+      const cancellationChanged = toolCallCancellationChanged(
+        savedConfig,
+        draftConfig
+      );
       const { hostConfigId } = await updateHost({
         hostId,
         name: draftName,
@@ -373,6 +423,35 @@ export function HostBuilderViewRedesigned({
       // subscription on the next tick; don't include it in this toast
       // because `host?.config?.id` is still the *previous* saved config here.
       toast.success("Client saved");
+      // Tool cancellation is read from the connection's config at CONNECT
+      // time, so a saved toggle would otherwise sit inert until the user
+      // happened to reconnect — which reads as the switch doing nothing.
+      // Reconnect the host's live servers so the just-saved value governs
+      // them, the same reason the per-server protocol pin reconnects after
+      // its save (`ServersTab`).
+      //
+      // Deliberately narrow: only when this setting actually changed, and
+      // only for servers that are currently connected. A disconnected server
+      // picks the value up on its next connect, and reconnecting it here
+      // would be a surprise. Never interactive — a save must not open an
+      // OAuth prompt.
+      if (cancellationChanged && onReconnect) {
+        const connectedNames = serversNeedingCancellationReconnect(
+          requiredServerNames,
+          connectionStatusByName
+        );
+        // Best-effort, like the telemetry below: the config is already
+        // persisted, so a failed reconnect is a warning, never a failed save.
+        for (const name of connectedNames) {
+          try {
+            await onReconnect(name, { allowInteractiveOAuthFlow: false });
+          } catch {
+            toast.warning(
+              `Saved, but "${name}" did not reconnect — its tool-cancellation setting still reflects the previous connection.`
+            );
+          }
+        }
+      }
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
@@ -392,7 +471,16 @@ export function HostBuilderViewRedesigned({
     } finally {
       setIsSaving(false);
     }
-  }, [hostId, draftName, draftConfig, savedConfig, updateHost]);
+  }, [
+    hostId,
+    draftName,
+    draftConfig,
+    savedConfig,
+    updateHost,
+    onReconnect,
+    requiredServerNames,
+    connectionStatusByName,
+  ]);
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {
