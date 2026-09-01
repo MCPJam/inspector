@@ -357,9 +357,10 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
     expect(onSkillCreated.mock.calls[0][0].source).toEqual(CLOUD);
   });
 
-  it("leaves a local upload unstamped rather than inventing a source", async () => {
-    // There is no source to record for a filesystem write, and stamping a
-    // fabricated one would be worse than the existing fallback.
+  it("stamps a local upload as local rather than leaving it to the fallback", async () => {
+    // An absent `source` prop is not "no source" — it is the filesystem route,
+    // which is exactly what `{kind:'local'}` names. Leaving it unstamped would
+    // send the card to its ambient prop, which now follows the active project.
     const onSkillCreated = vi.fn();
     render(
       <SkillUploadDialog
@@ -373,7 +374,7 @@ describe("SkillUploadDialog — which tier an upload lands in", () => {
     fireEvent.click(screen.getByRole("button", { name: /upload skill/i }));
 
     await waitFor(() => expect(onSkillCreated).toHaveBeenCalled());
-    expect(onSkillCreated.mock.calls[0][0].source).toBeUndefined();
+    expect(onSkillCreated.mock.calls[0][0].source).toEqual({ kind: "local" });
   });
 
   it("asks nothing of Convex for a local upload", () => {

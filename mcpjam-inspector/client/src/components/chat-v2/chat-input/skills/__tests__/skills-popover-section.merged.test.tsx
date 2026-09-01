@@ -269,6 +269,55 @@ describe("SkillsPopoverSection — local and library in one list", () => {
     expect(screen.getByText("refunds")).toBeInTheDocument();
   });
 
+  it("keeps the highlight on its row when a late local half shifts the list", async () => {
+    // Rendering each half as it lands means the list can grow at the FRONT.
+    // The parent holds only a numeric index, so a library row highlighted
+    // before the local half arrived would otherwise have the highlight — and
+    // the row Enter selects — slide onto a different skill.
+    let releaseLocal: (rows: unknown[]) => void = () => {};
+    mockListSkills.mockImplementation(async (source?: { kind: string }) => {
+      if (source?.kind === "cloud") return [libraryItem("refunds")];
+      return new Promise((resolve) => {
+        releaseLocal = resolve as (rows: unknown[]) => void;
+      });
+    });
+    const setHighlightedIndex = vi.fn();
+    const { rerender } = render(
+      <SkillsPopoverSection
+        onSkillSelected={vi.fn()}
+        highlightedIndex={0}
+        setHighlightedIndex={setHighlightedIndex}
+        startIndex={0}
+        isHovering={false}
+        actionTrigger={null}
+        skillsSource={LIBRARY}
+      />,
+    );
+
+    // Only the library row is on screen, highlighted at index 0.
+    await screen.findByText("refunds");
+    expect(setHighlightedIndex).not.toHaveBeenCalled();
+
+    // The local half lands and is prepended, pushing "refunds" to index 1.
+    releaseLocal([localItem("notes")]);
+    await screen.findByText("notes");
+
+    await waitFor(() => expect(setHighlightedIndex).toHaveBeenCalledWith(1));
+    // And the row itself is unchanged — the highlight followed the skill.
+    rerender(
+      <SkillsPopoverSection
+        onSkillSelected={vi.fn()}
+        highlightedIndex={1}
+        setHighlightedIndex={setHighlightedIndex}
+        startIndex={0}
+        isHovering={false}
+        actionTrigger={null}
+        skillsSource={LIBRARY}
+      />,
+    );
+    expect(screen.getByText("refunds")).toBeInTheDocument();
+  });
+
   it("counts both halves for the parent's arrow-key range", async () => {
     halves({
       local: [localItem("notes")],

@@ -5,7 +5,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/chat-utils";
 import { SquareSlash, Loader2 } from "lucide-react";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   listSkills,
   getSkill,
@@ -375,6 +375,33 @@ export function SkillsPopoverSection({
     },
     [onSkillSelected]
   );
+
+  /**
+   * Keep the keyboard highlight on the ROW it was on when a late half lands.
+   *
+   * Rendering each half as it settles means the list can grow at the FRONT:
+   * if the library answers first and the local half arrives after, local rows
+   * are prepended and every library row shifts down. The parent holds only a
+   * numeric `highlightedIndex`, so without this the highlight — and the row
+   * Enter would select — slides silently onto a different skill while someone
+   * is browsing.
+   *
+   * Looks up where the previously highlighted row went and follows it. Keyed
+   * on the row list alone: reacting to `highlightedIndex` too would fight the
+   * parent's own arrow-key updates.
+   */
+  const prevSkillsRef = useRef<SkillRow[]>(skills);
+  useEffect(() => {
+    const prev = prevSkillsRef.current;
+    prevSkillsRef.current = skills;
+    if (prev === skills || prev.length === 0) return;
+    const wasAt = highlightedIndex - startIndex;
+    if (wasAt < 0 || wasAt >= prev.length) return;
+    const key = rowKey(prev[wasAt]!);
+    const nowAt = skills.findIndex((row) => rowKey(row) === key);
+    if (nowAt !== -1 && nowAt !== wasAt) setHighlightedIndex(startIndex + nowAt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skills]);
 
   // The parent's navigation range must cover BOTH lists — see `onCountChange`.
   useEffect(() => {

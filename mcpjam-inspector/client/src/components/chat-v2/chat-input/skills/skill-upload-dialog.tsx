@@ -313,13 +313,20 @@ export function SkillUploadDialog({
         file_count: files.length,
         sharing,
       });
-      // Stamped with the source it was WRITTEN to, for the same reason picker
-      // selections are: `SkillResultCard` falls back to the composer's ambient
-      // source for an unstamped result, and that source now follows the active
-      // project. A skill uploaded locally (or into project A) and expanded
-      // after the project syncs (or switches to B) would otherwise have its
-      // supporting files read out of the wrong store.
-      onSkillCreated?.({ ...skill, ...(source ? { source } : {}) });
+      // Stamped with the source it was WRITTEN to — ALWAYS, local included.
+      //
+      // An absent `source` is not "no source": `uploadSkillFolder` reads it the
+      // way the rest of this API does, so undefined means the local filesystem
+      // route (`/api/mcp/skills/upload-folder`). Recording that as
+      // `{kind:'local'}` describes where the bytes went; it is what the picker
+      // already stamps on local rows, not an invention.
+      //
+      // It matters for the same reason it does there: `SkillResultCard` falls
+      // back to the composer's ambient source for an unstamped result, and
+      // that source now follows the active project. A skill uploaded before a
+      // project synced, and expanded after, would otherwise have its
+      // supporting files read out of Convex.
+      onSkillCreated?.({ ...skill, source: source ?? { kind: "local" } });
       handleOpenChange(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
