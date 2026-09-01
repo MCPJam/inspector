@@ -133,15 +133,25 @@ describe("openapi.json ↔ the decision vocabularies", () => {
       ).toEqual(new Set(vocabulary));
       // Set equality alone would accept a duplicated member.
       expect(node.enum).toHaveLength(vocabulary.length);
-      // ORDER TOO, and for the stages it is load-bearing rather than tidy:
-      // `StageResultRow.stage`'s own description — which the coverage check
-      // below reads — tells an integrator the order is NORMATIVE and that
-      // `notReached` is derived from position. A spec whose enum is shuffled
-      // teaches the opposite while every set-based check stays green.
-      expect(
-        node.enum,
-        `${label} lists the ${site.vocabulary} in a different order from the contract`
-      ).toEqual([...vocabulary]);
+      // ORDER TOO, but ONLY FOR THE STAGES, because only there is it part of
+      // the contract: `USER_VALUE_STAGES` declares its array order normative
+      // and `StageResultRow.stage`'s own description — which the coverage
+      // check below reads — tells an integrator that `notReached` is derived
+      // from position. A spec whose stage enum is shuffled teaches the
+      // opposite while every set-based check stays green.
+      //
+      // The other three vocabularies carry no ordering contract, so pinning
+      // them would assert something neither document promises: alphabetizing
+      // `failureCategory` in the SDK changes no wire meaning, and a ratchet
+      // that reddens for it trains readers to re-order the spec to silence a
+      // test rather than because a reader was misled.
+      if (site.vocabulary === "stages") {
+        expect(
+          node.enum,
+          `${label} lists the ${site.vocabulary} in a different order from the contract, ` +
+            "and their order is normative — `notReached` is derived from position"
+        ).toEqual([...vocabulary]);
+      }
     });
 
     it(`${label} defines every member in its own description`, () => {

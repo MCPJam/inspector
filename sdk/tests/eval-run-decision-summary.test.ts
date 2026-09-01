@@ -960,6 +960,39 @@ describe("the human renderer", () => {
     }
   });
 
+  it("names an unrecognized verdict, source or undecided reason instead of blanking it", () => {
+    // Guarding the lookups stopped `function Object() { [native code] }` from
+    // reaching a human, but a bare `?? ""` traded one broken sentence for
+    // another: `Decision summary:  ()` and a naked `Why:` read as a rendering
+    // bug rather than as a member this SDK predates. A vocabulary gaining a
+    // member is the EXPECTED case — an agent reading `Why: judgeNewThing` can
+    // go look it up, where a blank sends it nowhere.
+    const base = byName("measured-failure-at-every-stage").expected;
+    const text = formatEvalRunDecisionSummary({
+      ...base,
+      verdict: "verdictFromTheFuture" as unknown as typeof base.verdict,
+      verdictSource: "sourceFromTheFuture" as unknown as typeof base.verdictSource,
+      undecided: { reason: "reasonFromTheFuture" } as unknown as typeof base.undecided,
+    });
+    expect(text).toContain("verdictFromTheFuture");
+    expect(text).toContain("sourceFromTheFuture");
+    expect(text).toContain("Why: reasonFromTheFuture");
+    // The specific malformations the `?? ""` fallbacks produced.
+    expect(text).not.toContain("Decision summary:  ");
+    expect(text.split("\n")).not.toContain("  Why: ");
+    // An inherited property name is still not a member, and must not print
+    // as one now that unknown members reach the page verbatim.
+    for (const member of ["constructor", "toString", "valueOf"]) {
+      const inherited = formatEvalRunDecisionSummary({
+        ...base,
+        verdict: member as unknown as typeof base.verdict,
+        undecided: { reason: member } as unknown as typeof base.undecided,
+      });
+      expect(inherited, member).not.toContain("native code");
+      expect(inherited, member).not.toContain("function ");
+    }
+  });
+
   it("prints no chain rows for a chain that was withheld or never recorded", () => {
     // `unverified` had its rows refused at the boundary and `absent` never had
     // any. Six "not measured" rows for either would state as measured-and-empty

@@ -555,12 +555,10 @@ export function formatEvalRunDecisionSummary(
 
   if (summary.undecided) {
     lines.push(
-      `  Why: ${
-        labelFor(
-          EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
-          summary.undecided.reason
-        ) ?? ""
-      }`
+      `  Why: ${labelOrMember(
+        EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
+        summary.undecided.reason
+      )}`
     );
     if (summary.undecided.detail) {
       lines.push(`  Detail: ${summary.undecided.detail}`);
@@ -591,11 +589,19 @@ export function formatEvalRunDecisionSummary(
  * clause on a falsy label instead prints
  * `function Object() { [native code] }` at a human.
  *
- * Used by EVERY label lookup in this file — the chain rows, the per-diagnostic
- * rows, the verdict headline, its source, and both kinds of "Why" line.
- * Hardening a subset would leave the same payload class leaking function
- * source from whichever lookup was left out, which is a more confusing change
- * than either extreme rather than a smaller one.
+ * EVERY label lookup in this file goes through here — the chain rows, the
+ * per-diagnostic rows, the verdict headline, its source, and both kinds of
+ * "Why" line — either directly or via {@link labelOrMember}. Hardening a subset
+ * would leave the same payload class leaking function source from whichever
+ * lookup was left out, which is a more confusing change than either extreme
+ * rather than a smaller one.
+ *
+ * What a caller does with `undefined` is the caller's decision, and the two
+ * answers are both right in their place: drop the line where the sentence
+ * survives without it, or fall back to the raw member via
+ * {@link labelOrMember} where it does not. What no caller may do is print the
+ * empty string, which turns an unknown member into a sentence that reads as a
+ * rendering bug.
  */
 function labelFor<TMember extends string>(
   labels: Readonly<Record<TMember, string>>,
@@ -605,6 +611,35 @@ function labelFor<TMember extends string>(
     Object.prototype.hasOwnProperty.call(labels, member)
     ? labels[member]
     : undefined;
+}
+
+/**
+ * A member's label, falling back to the RAW MEMBER — never to an empty string.
+ *
+ * For a value this renderer must name rather than skip: the verdict, its
+ * source, and the reason a run went undecided each anchor a sentence that reads
+ * as broken without them (`Decision summary:  ()`, or a bare `Why:`). Dropping
+ * the clause is not available either — "undecided" with no reason is exactly
+ * the sentence somebody opened the summary to read.
+ *
+ * So an unrecognized member prints verbatim. A vocabulary that gained a member
+ * this SDK predates is the expected case, and `Why: judgeNewThing` sends a
+ * reader to the changelog, where a blank sends them nowhere. Printing it raw is
+ * safe in a way the pre-`labelFor` lookup was not: this is the member itself, a
+ * string off the wire, not whatever `Object.prototype` happened to answer with.
+ *
+ * Use {@link labelFor} instead wherever an unknown member should drop its line
+ * — the per-reason "Why" list does, because a list simply gets shorter.
+ */
+function labelOrMember<TMember extends string>(
+  labels: Readonly<Record<TMember, string>>,
+  member: TMember | undefined
+): string {
+  const label = labelFor(labels, member);
+  if (label !== undefined) return label;
+  return typeof member === "string" && member.trim().length > 0
+    ? member
+    : "not recorded";
 }
 
 /**
@@ -733,11 +768,14 @@ function formatFirstBreakLine(
 }
 
 function formatDecisionHeadline(summary: EvalRunDecisionSummary): string {
-  const verdict =
-    labelFor(EVAL_RUN_DECISION_VERDICT_LABELS, summary.verdict) ?? "";
-  const source =
-    labelFor(EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS, summary.verdictSource) ??
-    "";
+  const verdict = labelOrMember(
+    EVAL_RUN_DECISION_VERDICT_LABELS,
+    summary.verdict
+  );
+  const source = labelOrMember(
+    EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS,
+    summary.verdictSource
+  );
   const counts = summary.counts;
   if (counts === undefined) {
     return summary.verdictSource === "none"
