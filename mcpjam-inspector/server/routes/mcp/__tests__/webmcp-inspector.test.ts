@@ -450,6 +450,82 @@ describe("webmcp-inspector routes", () => {
     await reader.cancel();
   });
 
+  /**
+   * Read an SSE body until it goes quiet.
+   *
+   * Draining to quiet rather than stopping at the first interesting token,
+   * because a frame does NOT arrive in seq order here: the route holds a
+   * frame offered to a full queue in its one-slot `pendingFrame` and flushes
+   * it from `pull`, so it lands after everything ahead of it. A reader that
+   * stopped early would report "no frames" for a stream that was about to
+   * deliver one — which is a green test for a broken filter.
+   */
+  async function drainSse(res: Response, quietMs = 80): Promise<string> {
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    try {
+      for (let i = 0; i < 50; i += 1) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), quietMs)),
+        ]);
+        if (!chunk || chunk.done) break;
+        buffered += decoder.decode(chunk.value, { stream: true });
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+    return buffered;
+  }
+
+  it("suppresses frames — live and replayed — for frames=off", async () => {
+    const started = await openSession(provider);
+    // Published BEFORE the connect, so this covers the REPLAYED path too: the
+    // retained frame is delivered through the same `send` closure, and a
+    // client on the binary socket would otherwise pay the base64-in-JSON tax
+    // once per connect.
+    provider.sessions[0].emitFrame({ data: "cmVwbGF5ZWQ=" });
+    provider.sessions[0].emitTools([fakeTool({ origin: "https://example.test" })]);
+
+    const res = await app.request(
+      `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50&frames=off`,
+    );
+    // A live frame too, offered while the consumer is still draining.
+    provider.sessions[0].emitFrame({ data: "bGl2ZQ==" });
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+      fakeTool({ origin: "https://example.test", name: "later" }),
+    ]);
+
+    const buffered = await drainSse(res);
+    // Everything else still flows: only the pixels move to the other socket.
+    expect(buffered).toContain("session_started");
+    expect(buffered).toContain("https://example.test::echo");
+    expect(buffered).toContain("later");
+    expect(buffered).not.toContain('"type":"frame"');
+    expect(buffered).not.toContain("cmVwbGF5ZWQ=");
+    expect(buffered).not.toContain("bGl2ZQ==");
+  });
+
+  it("still sends frames with no param, and with frames=on", async () => {
+    // The old-client guard. A client that has never heard of this parameter —
+    // every client older than the WebSocket — must get exactly today's stream.
+    for (const query of ["replay=50", "replay=50&frames=on"]) {
+      const started = await openSession(provider);
+      const session = provider.sessions[provider.sessions.length - 1];
+      session.emitFrame({ data: "cGFpbnQ=" });
+
+      const res = await app.request(
+        `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?${query}`,
+      );
+      const buffered = await drainSse(res);
+      expect(buffered, query).toContain('"type":"frame"');
+      expect(buffered, query).toContain("cGFpbnQ=");
+      await webMcpSessions.close(started.sessionId);
+    }
+  });
+
   it("tells an SSE client the session is gone instead of hanging", async () => {
     const res = await app.request(
       "http://local/api/mcp/webmcp/sessions/does-not-exist/events",

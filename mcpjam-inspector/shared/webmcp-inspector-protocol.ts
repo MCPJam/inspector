@@ -387,6 +387,118 @@ export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
 /** Floor on the gap between published frames: 10fps. */
 export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
 
+/**
+ * Size of the fixed header on a binary frame message. See
+ * {@link encodeWebMcpBinaryFrame}.
+ */
+export const WEBMCP_FRAME_WS_HEADER_BYTES = 24;
+
+/** Current version byte of the binary frame wire format. */
+const WEBMCP_FRAME_WIRE_VERSION = 1;
+/** Message kind: a painted JPEG frame. The only kind V1 defines. */
+const WEBMCP_FRAME_WIRE_KIND_JPEG = 1;
+
+/** A frame as it travels on the binary wire, and as `decode` hands it back. */
+export interface WebMcpBinaryFrame {
+  deviceWidth: number;
+  deviceHeight: number;
+  /** Wall-clock capture time, from the publishing server. */
+  ts: number;
+  /** The session's monotonic event counter, shared with the SSE stream. */
+  seq: number;
+  /** Raw JPEG bytes — NOT base64. */
+  jpeg: Uint8Array;
+}
+
+/**
+ * Pack one frame as a single binary message: a fixed 24-byte little-endian
+ * header followed by the JPEG bytes.
+ *
+ *   offset  type  field
+ *   0       u8    version (1)
+ *   1       u8    kind (1 = JPEG)
+ *   2       u16   deviceWidth
+ *   4       u16   deviceHeight
+ *   6       u16   reserved (0)
+ *   8       f64   ts
+ *   16      u32   seq
+ *   20      u32   jpegByteLength
+ *   24      …     JPEG bytes
+ *
+ * ONE message per frame rather than a meta/payload pair: a pair needs pairing
+ * state on the receiver — and a receiver that loses track of which half it is
+ * holding paints one frame's pixels with another frame's dimensions, which is
+ * exactly the bug that puts every click in the wrong place. One atomic message
+ * also halves the message count on a 30fps stream.
+ *
+ * `DataView` and `Uint8Array` only, no `Buffer`: this runs in the browser on
+ * the decode side, and one file compiled for both ends is the only way the two
+ * cannot drift.
+ */
+export function encodeWebMcpBinaryFrame(
+  frame: WebMcpBinaryFrame,
+): Uint8Array {
+  const out = new Uint8Array(WEBMCP_FRAME_WS_HEADER_BYTES + frame.jpeg.length);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  view.setUint8(0, WEBMCP_FRAME_WIRE_VERSION);
+  view.setUint8(1, WEBMCP_FRAME_WIRE_KIND_JPEG);
+  // Clamped rather than trusted: a surface reported larger than a u16 would
+  // wrap to a small number and letterbox every later click against a box the
+  // page never had.
+  view.setUint16(2, clampU16(frame.deviceWidth), true);
+  view.setUint16(4, clampU16(frame.deviceHeight), true);
+  view.setUint16(6, 0, true);
+  view.setFloat64(8, frame.ts, true);
+  view.setUint32(16, frame.seq >>> 0, true);
+  view.setUint32(20, frame.jpeg.length, true);
+  out.set(frame.jpeg, WEBMCP_FRAME_WS_HEADER_BYTES);
+  return out;
+}
+
+function clampU16(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(0xffff, Math.round(value)));
+}
+
+/**
+ * Unpack a binary frame message, or `undefined` if it is not one.
+ *
+ * NEVER THROWS on wire data. This decodes bytes that arrived over a socket,
+ * and the one thing worse than a dropped frame is a throw inside a `message`
+ * handler taking the whole stream down with it. An unknown version or kind
+ * reads as "not a frame I understand" rather than an error — which is what
+ * makes adding a second kind later a non-breaking change for THIS client.
+ */
+export function decodeWebMcpBinaryFrame(
+  buffer: ArrayBuffer | Uint8Array,
+): WebMcpBinaryFrame | undefined {
+  const bytes =
+    buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (bytes.byteLength < WEBMCP_FRAME_WS_HEADER_BYTES) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint8(0) !== WEBMCP_FRAME_WIRE_VERSION) return undefined;
+  if (view.getUint8(1) !== WEBMCP_FRAME_WIRE_KIND_JPEG) return undefined;
+  const jpegLength = view.getUint32(20, true);
+  // The declared length must match what actually arrived. A truncated message
+  // would otherwise hand an `<img>` half a JPEG, which decodes to nothing and
+  // leaves the pane blank with no way to tell why.
+  if (
+    jpegLength !==
+    bytes.byteLength - WEBMCP_FRAME_WS_HEADER_BYTES
+  ) {
+    return undefined;
+  }
+  return {
+    deviceWidth: view.getUint16(2, true),
+    deviceHeight: view.getUint16(4, true),
+    ts: view.getFloat64(8, true),
+    seq: view.getUint32(16, true),
+    // A copy, not a view onto the socket's buffer: the caller holds this while
+    // it decodes, and some transports reuse the underlying allocation.
+    jpeg: bytes.slice(WEBMCP_FRAME_WS_HEADER_BYTES),
+  };
+}
+
 /** Marker appended to a truncated string result. */
 export function truncationMarker(totalBytes: number): string {
   return `\n…[truncated: ${totalBytes} bytes total]`;
