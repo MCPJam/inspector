@@ -186,6 +186,7 @@ import {
   type XMcpHeaderDeclaration,
 } from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
+import { cancellationLeafForVersion } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
@@ -4166,14 +4167,22 @@ export class MCPClientManager {
     requestOptions: { signal: AbortSignal } | undefined;
     settle: <T>(promise: Promise<T>) => Promise<T>;
   } {
-    // One flag, already resolved for this connection's era by whoever built
-    // the config. Deliberately NOT re-derived from the live client here:
-    // `getProtocolEra()` is optional on the managed-client interface, so on
-    // the adapters that do not implement it the era reads as unknown and the
-    // suppression would silently never apply.
+    // Resolve the era from what the connection actually negotiated — the same
+    // value the UI reports — falling back to the configured pin before the
+    // handshake has landed. Config-time resolution cannot work for an
+    // unpinned (`"auto"`) host: the era does not exist yet, and guessing one
+    // makes the other era's toggle unreachable.
+    const config = this.registeredServers.get(serverId)?.config;
+    const configPin =
+      config && "mcpProtocolVersion" in config
+        ? config.mcpProtocolVersion
+        : undefined;
+    const negotiated: string | undefined =
+      this.getNegotiatedProtocolVersion(serverId) ??
+      (typeof configPin === "string" ? configPin : undefined);
+    const leaves = config?.toolCallCancellation;
     const suppressed =
-      this.registeredServers.get(serverId)?.config
-        .suppressRequestCancellation === true;
+      leaves?.[cancellationLeafForVersion(negotiated)] === false;
 
     if (abortSignal === undefined) {
       return { requestOptions: undefined, settle: (promise) => promise };

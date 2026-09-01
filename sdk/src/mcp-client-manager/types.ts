@@ -350,29 +350,30 @@ export type BaseServerConfig = {
    */
   supportsMrtr?: boolean;
   /**
-   * Whether cancelling an in-flight request reaches the server.
+   * Whether cancelling an in-flight request reaches the server, per era.
    *
-   * `undefined` (the default) and `false` both signal it. `true` simulates a
-   * host that ends the turn locally and tells the server nothing: the caller's
+   * Absent per leaf (and `true`) both signal normally. `false` simulates a host
+   * that ends the turn locally and tells the server nothing: the caller's
    * promise still rejects promptly, but the server keeps running the tool to
    * completion — side effects, cost and all — because it never learns the user
    * pressed stop.
    *
-   * ONE flag, though the host config measures cancellation per era: a
-   * connection speaks exactly one era, so the leaf is resolved upstream (see
-   * `cancellationLeafForVersion`) where the version pin is already known. This
-   * layer never asks the live connection what it negotiated — that answer is
-   * not always available, and a missing one would silently read as "cancels".
+   * Both leaves are carried rather than pre-reduced to one flag, because the
+   * era is only known once the connection has negotiated. On an unpinned
+   * (`"auto"`) host that answer does not exist at config-build time, and
+   * guessing there made one era's toggle unreachable. The manager reads
+   * {@link MCPClientManager.getNegotiatedProtocolVersion} — the same value the
+   * UI shows — and picks the leaf for the era the connection actually landed
+   * on.
    *
-   * Withholding the caller's signal withholds whichever mechanism the
-   * connection would have used, because the signal is the single input to
-   * both: closing the response stream on 2026-07-28 Streamable HTTP, POSTing
+   * Withholding the caller's signal withholds whichever mechanism that era
+   * would have used, because the signal is the single input to both: closing
+   * the response stream on 2026-07-28 Streamable HTTP, POSTing
    * `notifications/cancelled` everywhere else.
    *
-   * Wired into the inspector via
-   * `hostConfig.mcpProfile.toolCallCancellation.{legacy,modern} === false`.
+   * Wired into the inspector via `hostConfig.mcpProfile.toolCallCancellation`.
    */
-  suppressRequestCancellation?: boolean;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */

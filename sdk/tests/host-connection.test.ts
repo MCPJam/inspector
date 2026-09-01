@@ -122,7 +122,7 @@ describe("hostConnectionProfile", () => {
       });
       expect(p.firstPageOnly).toBe(true);
       expect(p.supportsMrtr).toBe(false);
-      expect(p.suppressRequestCancellation).toBe(true);
+      expect(p.toolCallCancellation).toEqual({ legacy: false, modern: false });
     });
 
     it("collapses default literals AND absent fields to no wire field", () => {
@@ -140,7 +140,7 @@ describe("hostConnectionProfile", () => {
         for (const key of [
           "firstPageOnly",
           "supportsMrtr",
-          "suppressRequestCancellation",
+          "toolCallCancellation",
         ]) {
           expect(key in p).toBe(false);
         }
@@ -185,51 +185,39 @@ describe("hostConnectionProfile", () => {
       }
     });
 
-    it("picks the cancellation leaf from the version pin", () => {
-      // The knob is measured per era, but a connection speaks one — so the pin
-      // decides which leaf reaches the wire, and the other is ignored. This is
-      // the seam that used to ask the live client for its era, which silently
-      // did nothing on adapters that cannot report one.
-      const modernPin = (toolCallCancellation: Record<string, boolean>) =>
+    it("forwards only the degraded leaves, never resolving the era here", () => {
+      // Resolution is the SDK's job at request time: on an unpinned host the
+      // era does not exist yet, and picking one here made the other era's
+      // toggle unreachable.
+      const forward = (toolCallCancellation: Record<string, unknown>) =>
         hostConnectionProfile({
-          mcpProfile: {
-            profileVersion: 1,
-            mcpProtocolVersion: "2026-07-28",
-            toolCallCancellation,
-          },
-        });
-      const legacyPin = (toolCallCancellation: Record<string, boolean>) =>
-        hostConnectionProfile({
-          mcpProfile: {
-            profileVersion: 1,
-            mcpProtocolVersion: "2025-11-25",
-            toolCallCancellation,
-          },
-        });
+          mcpProfile: { profileVersion: 1, toolCallCancellation },
+        }).toolCallCancellation;
 
-      expect(modernPin({ modern: false }).suppressRequestCancellation).toBe(
-        true
-      );
-      expect("suppressRequestCancellation" in modernPin({ legacy: false })).toBe(
-        false
-      );
-      expect(legacyPin({ legacy: false }).suppressRequestCancellation).toBe(
-        true
-      );
-      expect("suppressRequestCancellation" in legacyPin({ modern: false })).toBe(
-        false
-      );
+      expect(forward({ legacy: false })).toEqual({ legacy: false });
+      expect(forward({ modern: false })).toEqual({ modern: false });
+      // Conforming and malformed leaves are dropped, so an all-good host emits
+      // nothing and keeps hashing as it did before the field existed.
+      expect(forward({ legacy: true, modern: false })).toEqual({
+        modern: false,
+      });
+      expect(forward({ legacy: "false" })).toBeUndefined();
     });
 
-    it("reads an unpinned host as modern (auto negotiates newest first)", () => {
-      const p = hostConnectionProfile({
-        mcpProfile: {
-          profileVersion: 1,
-          mcpProtocolVersion: "auto",
-          toolCallCancellation: { modern: false },
-        },
-      });
-      expect(p.suppressRequestCancellation).toBe(true);
+    it("is unaffected by the version pin", () => {
+      // The pin used to decide the leaf here. It must not any more — a pinned
+      // and an unpinned host forward the same thing.
+      for (const mcpProtocolVersion of ["2026-07-28", "2025-11-25", "auto"]) {
+        expect(
+          hostConnectionProfile({
+            mcpProfile: {
+              profileVersion: 1,
+              mcpProtocolVersion,
+              toolCallCancellation: { legacy: false },
+            },
+          }).toolCallCancellation
+        ).toEqual({ legacy: false });
+      }
     });
 
     it("fails closed on unrecognized literals", () => {
@@ -245,7 +233,7 @@ describe("hostConnectionProfile", () => {
           toolCallCancellation: "sometimes",
         },
       });
-      expect("suppressRequestCancellation" in p).toBe(false);
+      expect("toolCallCancellation" in p).toBe(false);
       expect("firstPageOnly" in p).toBe(false);
       expect("supportsMrtr" in p).toBe(false);
     });

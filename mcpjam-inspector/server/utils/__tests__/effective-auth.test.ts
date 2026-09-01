@@ -264,7 +264,7 @@ describe("applyHostConformanceKnobs — toolListChanged", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
-    suppressRequestCancellation: undefined,
+    toolCallCancellation: undefined,
   } as const;
 
   it("adds the host's knobs to a body that carried none", () => {
@@ -300,7 +300,7 @@ describe("conformanceKnobsFromMcpProfile", () => {
       supportsMrtr: false,
       suppressListenChannel: undefined,
       dropToolListChanged: undefined,
-      suppressRequestCancellation: undefined,
+      toolCallCancellation: undefined,
     });
   });
 
@@ -319,37 +319,27 @@ describe("conformanceKnobsFromMcpProfile", () => {
         supportsMrtr: undefined,
         suppressListenChannel: undefined,
         dropToolListChanged: undefined,
-        suppressRequestCancellation: undefined,
+        toolCallCancellation: undefined,
       });
     }
   });
 });
 
 describe("conformanceKnobsFromMcpProfile — toolCallCancellation", () => {
-  it("picks the leaf named by the host's version pin", () => {
-    // The host config measures both eras; the pin says which one its
-    // connections speak, so exactly one flag comes out.
+  it("forwards only the degraded leaves", () => {
+    // Both eras travel; the SDK picks which one applies once the connection
+    // has negotiated. Resolving here cannot work for an unpinned host.
     expect(
       conformanceKnobsFromMcpProfile({
-        mcpProtocolVersion: "2025-11-25",
         toolCallCancellation: { legacy: false },
-      }).suppressRequestCancellation
-    ).toBe(true);
-
-    // The other era's leaf must be ignored, not leak through.
-    expect(
-      conformanceKnobsFromMcpProfile({
-        mcpProtocolVersion: "2025-11-25",
-        toolCallCancellation: { modern: false },
-      }).suppressRequestCancellation
-    ).toBeUndefined();
+      }).toolCallCancellation
+    ).toEqual({ legacy: false });
 
     expect(
       conformanceKnobsFromMcpProfile({
-        mcpProtocolVersion: "2026-07-28",
-        toolCallCancellation: { modern: false },
-      }).suppressRequestCancellation
-    ).toBe(true);
+        toolCallCancellation: { legacy: true, modern: false },
+      }).toolCallCancellation
+    ).toEqual({ modern: false });
   });
 
   it("treats `true`, junk and a non-record as the conforming client", () => {
@@ -363,7 +353,7 @@ describe("conformanceKnobsFromMcpProfile — toolCallCancellation", () => {
     ]) {
       expect(
         conformanceKnobsFromMcpProfile({ toolCallCancellation: value })
-          .suppressRequestCancellation
+          .toolCallCancellation
       ).toBeUndefined();
     }
   });
@@ -375,25 +365,25 @@ describe("applyHostConformanceKnobs — toolCallCancellation", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
-    suppressRequestCancellation: undefined,
+    toolCallCancellation: undefined,
   } as const;
 
-  it("adds the host's suppression to a body that carried none", () => {
+  it("adds the host's leaves to a body that carried none", () => {
     expect(
       applyHostConformanceKnobs(undefined, {
         ...conforming,
-        suppressRequestCancellation: true,
+        toolCallCancellation: { modern: false },
       })
-    ).toEqual({ suppressRequestCancellation: true });
+    ).toEqual({ toolCallCancellation: { modern: false } });
   });
 
-  it("REMOVES body-supplied suppression when the host cancels normally", () => {
+  it("REMOVES body-supplied leaves when the host cancels normally", () => {
     // Same security property as the sibling knobs: a share-link body must not
     // be able to make a conforming host silently abandon cancelled calls,
     // leaving servers running tools nobody wants.
     expect(
       applyHostConformanceKnobs(
-        { suppressRequestCancellation: true },
+        { toolCallCancellation: { legacy: false } },
         conforming
       )
     ).toEqual({});

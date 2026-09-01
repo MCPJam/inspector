@@ -550,13 +550,13 @@ describe("cancellation suppression", () => {
 
   async function abortSlowToolThroughAiSdk(
     connectOverrides: Record<string, unknown> = {},
-    protocolVersion: "2026-07-28" | "2025-11-25" = "2026-07-28"
+    protocolVersion: "2026-07-28" | "2025-11-25" | undefined = "2026-07-28"
   ) {
     served = await serveMultiPageFixtureOnPort({ listSlowTool: true });
     manager = new MCPClientManager();
     await manager.connectToServer("fixture", {
       url: served.url,
-      mcpProtocolVersion: protocolVersion,
+      ...(protocolVersion ? { mcpProtocolVersion: protocolVersion } : {}),
       timeout: 10_000,
       ...connectOverrides,
     });
@@ -588,7 +588,7 @@ describe("cancellation suppression", () => {
 
   it("2026: the modern flag leaves the server running the tool", async () => {
     const methods = await abortSlowToolThroughAiSdk({
-      suppressRequestCancellation: true,
+      toolCallCancellation: { modern: false },
     });
 
     // Nothing was said. Not the 2026 signal (the held-open `tools/call`
@@ -611,7 +611,7 @@ describe("cancellation suppression", () => {
 
   it("2025: the flag withholds notifications/cancelled", async () => {
     const methods = await abortSlowToolThroughAiSdk(
-      { suppressRequestCancellation: true },
+      { toolCallCancellation: { legacy: false } },
       "2025-11-25"
     );
 
@@ -626,4 +626,32 @@ describe("cancellation suppression", () => {
     expect(methods).toContain("notifications/cancelled");
   }, 30_000);
 
+  it("applies only the negotiated era's leaf, never the other one", async () => {
+    // The crossover. A host measured broken on 2025 must still cancel normally
+    // on a 2026 connection, and vice versa.
+    const modernConn = await abortSlowToolThroughAiSdk({
+      toolCallCancellation: { legacy: false },
+    });
+    expect(modernConn).toContain("tools/call");
+
+    const legacyConn = await abortSlowToolThroughAiSdk(
+      { toolCallCancellation: { modern: false } },
+      "2025-11-25"
+    );
+    expect(legacyConn).toContain("notifications/cancelled");
+  }, 60_000);
+
+  it("resolves the leaf on an UNPINNED connection from what it negotiated", async () => {
+    // The bug this design replaces: with no pin there is no era at config
+    // time, so the old code guessed "modern" and the 2025 leaf could never
+    // apply. Here the connection negotiates against the fixture and whichever
+    // era it lands on must be the leaf that governs.
+    const methods = await abortSlowToolThroughAiSdk(
+      { toolCallCancellation: { legacy: false, modern: false } },
+      undefined
+    );
+
+    expect(methods).not.toContain("notifications/cancelled");
+    expect(methods).not.toContain("tools/call");
+  }, 30_000);
 });

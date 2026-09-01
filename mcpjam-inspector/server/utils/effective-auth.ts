@@ -24,7 +24,6 @@
  */
 
 import {
-  cancellationLeafForVersion,
   readXaaEnterprisePolicy,
   XAA_ENTERPRISE_POLICY_IDPS,
   XAA_MCP_EXTENSION,
@@ -236,12 +235,27 @@ export function applyHostParamMirroring<
  * Like the mirroring reader, this cannot fail closed into an error: an
  * unreadable value means "behave conformantly", which is always safe.
  */
+/**
+ * The degraded (`false`) cancellation leaves only, or `undefined` when the host
+ * cancels normally on both eras. Absent leaves are the conforming answer, so a
+ * fully cancelling host must contribute no field at all.
+ */
+function degradedCancellationLeaves(
+  raw: { legacy?: unknown; modern?: unknown } | undefined
+): { legacy?: boolean; modern?: boolean } | undefined {
+  if (!raw) return undefined;
+  const leaves: { legacy?: boolean; modern?: boolean } = {};
+  if (raw.legacy === false) leaves.legacy = false;
+  if (raw.modern === false) leaves.modern = false;
+  return Object.keys(leaves).length > 0 ? leaves : undefined;
+}
+
 export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
   firstPageOnly: true | undefined;
   supportsMrtr: false | undefined;
   suppressListenChannel: true | undefined;
   dropToolListChanged: true | undefined;
-  suppressRequestCancellation: true | undefined;
+  toolCallCancellation: { legacy?: boolean; modern?: boolean } | undefined;
 } {
   const profile =
     mcpProfile !== null && typeof mcpProfile === "object"
@@ -281,18 +295,9 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
       toolListChanged?.listens === false ? true : undefined,
     dropToolListChanged:
       toolListChanged?.refetches === false ? true : undefined,
-    // One flag: the host's own version pin says which era its connections
-    // speak, so the leaf is resolved here rather than at request time.
-    suppressRequestCancellation:
-      toolCallCancellation?.[
-        cancellationLeafForVersion(
-          typeof profile?.mcpProtocolVersion === "string"
-            ? profile.mcpProtocolVersion
-            : undefined
-        )
-      ] === false
-        ? true
-        : undefined,
+    // Forwarded, not resolved: the era is only known once the connection
+    // negotiates, so the SDK picks the leaf. Only degraded leaves travel.
+    toolCallCancellation: degradedCancellationLeaves(toolCallCancellation),
   };
 }
 
@@ -319,7 +324,7 @@ export function applyHostConformanceKnobs<
     supportsMrtr?: boolean;
     suppressListenChannel?: boolean;
     dropToolListChanged?: boolean;
-    suppressRequestCancellation?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   }
 >(
   pins: T | undefined,
@@ -328,7 +333,7 @@ export function applyHostConformanceKnobs<
     supportsMrtr: false | undefined;
     suppressListenChannel: true | undefined;
     dropToolListChanged: true | undefined;
-    suppressRequestCancellation: true | undefined;
+    toolCallCancellation: { legacy?: boolean; modern?: boolean } | undefined;
   }
 ): T | undefined {
   let next = pins;
@@ -356,10 +361,13 @@ export function applyHostConformanceKnobs<
     const { dropToolListChanged: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
-  if (host.suppressRequestCancellation === true) {
-    next = { ...((next ?? {}) as T), suppressRequestCancellation: true };
-  } else if (next?.suppressRequestCancellation !== undefined) {
-    const { suppressRequestCancellation: _hostOverrides, ...rest } = next;
+  if (host.toolCallCancellation !== undefined) {
+    next = {
+      ...((next ?? {}) as T),
+      toolCallCancellation: host.toolCallCancellation,
+    };
+  } else if (next?.toolCallCancellation !== undefined) {
+    const { toolCallCancellation: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
   return next;

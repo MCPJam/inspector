@@ -1,5 +1,4 @@
 import { extractHostExecutionPolicy } from "./host-policy.js";
-import { cancellationLeafForVersion } from "./types.js";
 
 /**
  * The MCP connection facts a host advertises — what to send in the `initialize`
@@ -44,15 +43,13 @@ export interface HostConnectionProfile {
    */
   supportsMrtr?: false;
   /**
-   * `true` = cancelling an in-flight request never reaches the server. The
-   * client abandons the call locally; the server runs the tool to completion.
-   *
-   * ONE flag, even though the host config measures two eras: this connection
-   * speaks exactly one, so the leaf is picked here — where the version is
-   * already resolved — and the client just obeys. Maps onto
-   * `MCPServerConfig.suppressRequestCancellation`.
+   * Per-era cancellation, forwarded verbatim rather than reduced to one flag:
+   * the era is only known after the connection negotiates, which on an
+   * unpinned host has not happened yet. Maps onto
+   * `MCPServerConfig.toolCallCancellation`, where the manager picks the leaf
+   * for the era actually negotiated.
    */
-  suppressRequestCancellation?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /**
    * `true` = the client never opens the server→client notification channel
    * (legacy: the standalone GET SSE stream; 2026-07-28:
@@ -131,19 +128,20 @@ export function hostConnectionProfile(
       : undefined;
   const supportsMrtr =
     mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
-  // Nested record, but the same discipline as the enum knobs: only an explicit
-  // `false` leaf degrades, and an absent or malformed leaf stays conforming.
-  // The version pin resolves WHICH leaf governs this connection, so only one
-  // reaches the wire.
-  const toolCallCancellation =
+  // Nested record, same discipline as the enum knobs: only an explicit `false`
+  // leaf degrades, and an absent or malformed leaf stays conforming. Reduced
+  // to just the degraded leaves so an all-conforming host still emits nothing.
+  const rawCancellation =
     mcpProfile && isRecord(mcpProfile.toolCallCancellation)
       ? mcpProfile.toolCallCancellation
       : undefined;
-  const suppressRequestCancellation =
-    toolCallCancellation?.[cancellationLeafForVersion(mcpProtocolVersion)] ===
-    false
-      ? (true as const)
-      : undefined;
+  const toolCallCancellation = rawCancellation
+    ? Object.fromEntries(
+        (["legacy", "modern"] as const)
+          .filter((key) => rawCancellation[key] === false)
+          .map((key) => [key, false])
+      )
+    : undefined;
   // A nested record rather than an enum, but the same discipline: only an
   // explicit `false` leaf degrades, and absent stays absent. Narrowed like
   // `initialize` above — `mcpProfile` is an untyped record here.
@@ -174,7 +172,9 @@ export function hostConnectionProfile(
       : {}),
     ...(firstPageOnly ? { firstPageOnly } : {}),
     ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
-    ...(suppressRequestCancellation ? { suppressRequestCancellation } : {}),
+    ...(toolCallCancellation && Object.keys(toolCallCancellation).length > 0
+      ? { toolCallCancellation }
+      : {}),
     ...(suppressListenChannel ? { suppressListenChannel } : {}),
     ...(dropToolListChanged ? { dropToolListChanged } : {}),
     respectToolVisibility,

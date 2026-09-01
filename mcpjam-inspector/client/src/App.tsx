@@ -256,7 +256,6 @@ import {
   readXaaEnterprisePolicy,
   taskModeForSurface,
   type McpProtocolVersion,
-  cancellationLeafForVersion,
 } from "@mcpjam/sdk/browser";
 import {
   cloneHostTemplateInput,
@@ -3614,13 +3613,16 @@ export default function App() {
       activeMcpProfile?.toolListChanged?.refetches === false
         ? (true as const)
         : undefined;
-    // Host-level pin resolves which era these connections speak, so one flag
-    // travels rather than both leaves.
-    const suppressRequestCancellation =
-      activeMcpProfile?.toolCallCancellation?.[
-        cancellationLeafForVersion(activeMcpProfile?.mcpProtocolVersion)
-      ] === false
-        ? (true as const)
+    // Forward the degraded leaves; the SDK picks the one matching the era each
+    // connection negotiates, which an unpinned host only learns at connect.
+    const cancellationLeaves = Object.fromEntries(
+      (["legacy", "modern"] as const)
+        .filter((key) => activeMcpProfile?.toolCallCancellation?.[key] === false)
+        .map((key) => [key, false])
+    );
+    const toolCallCancellation =
+      Object.keys(cancellationLeaves).length > 0
+        ? cancellationLeaves
         : undefined;
 
     return {
@@ -3635,7 +3637,7 @@ export default function App() {
       supportsMrtr,
       suppressListenChannel,
       dropToolListChanged,
-      suppressRequestCancellation,
+      toolCallCancellation,
       xaaPolicy,
     };
   }, [
