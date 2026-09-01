@@ -97,6 +97,12 @@ function createWindow(id = 1) {
   };
 }
 
+function errorBroadcastCount(window: ReturnType<typeof createWindow>) {
+  return window.webContents.send.mock.calls.filter(
+    ([channel]) => channel === "update-error",
+  ).length;
+}
+
 function emitAutoUpdaterEvent(event: string, ...args: any[]) {
   for (const handler of autoUpdaterHandlers.get(event) ?? []) {
     handler(...args);
@@ -464,6 +470,39 @@ describe("update-listeners", () => {
       // retry is not blocked by a stuck isQuittingForUpdate.
       ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
       expect(quitAndInstallMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not re-report a silent install after the retry throws", async () => {
+    // First click no-ops and arms the quit watchdog; the retry throws and
+    // reports right away. The armed watchdog must not fire a second error for
+    // a request that already failed.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      vi.advanceTimersByTime(400);
+
+      quitAndInstallMock.mockImplementationOnce(() => {
+        throw new Error("squirrel: staging dir missing");
+      });
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      expect(errorBroadcastCount(window)).toBe(1);
+
+      vi.advanceTimersByTime(5_000);
+
+      expect(errorBroadcastCount(window)).toBe(1);
     } finally {
       vi.useRealTimers();
     }

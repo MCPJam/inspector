@@ -76,6 +76,10 @@ function clearInstallQuitWatchdog(): void {
 // Ask Squirrel to swap in the staged build and restart. A throw is surfaced
 // immediately; a silent no-op is caught by the watchdog instead.
 function requestQuitAndInstall(): void {
+  // Clear first: a synchronous throw below returns early, and a watchdog left
+  // armed from a previous call would then fire against a request that already
+  // reported its failure.
+  clearInstallQuitWatchdog();
   try {
     autoUpdater.quitAndInstall();
   } catch (error) {
@@ -87,7 +91,6 @@ function requestQuitAndInstall(): void {
     broadcastUpdateError();
     return;
   }
-  clearInstallQuitWatchdog();
   installQuitTimer = setTimeout(() => {
     installQuitTimer = null;
     log.error(
