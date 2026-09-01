@@ -796,7 +796,35 @@ describe("the human renderer", () => {
       (row) => row.name === "category-without-first-failed-stage"
     )!.text;
     expect(text).toContain(
-      `  First break: no stage was reached — grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 measured trials)`
+      `  First break: no stage was reached — grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 2 measured trials)`
+    );
+  });
+
+  it("counts only the trials that actually carry a category", () => {
+    // A readable chain can establish neither a stage nor a category. Folding
+    // those into the count would attribute them to a bucket nothing put them
+    // in — the same over-claim the spread clause avoids on the stage line.
+    const base = byName("category-without-first-failed-stage").expected;
+    const uncategorized = {
+      ...base.diagnostics.items[0]!,
+      iterationId: "it-3",
+      iterationNumber: 3,
+      chain: {
+        status: "verified" as const,
+        stages: [],
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+      },
+    };
+    const text = formatEvalRunDecisionSummary({
+      ...base,
+      diagnostics: {
+        ...base.diagnostics,
+        items: [...base.diagnostics.items, uncategorized],
+        scannedIterations: base.diagnostics.scannedIterations + 1,
+      },
+    });
+    expect(text).toContain(
+      `grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 3 measured trials; 1 established no category)`
     );
   });
 

@@ -3818,6 +3818,83 @@ test("eval run --wait --format json carries the decision summary", async () => {
   }
 });
 
+test("eval run --wait --format human never leaks the wire enums", async () => {
+  // `writeResult` pretty-prints the SAME object in human format, so a
+  // `decisionSummary` left ungated lands on the terminal as raw JSON directly
+  // above the label-aware block written to replace it — the narrative twice,
+  // once unreadably. `eval status` has always stripped it here; these two
+  // commands must too.
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait"
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // The prose block is still there — this is not a revert of the feature.
+    assert.match(run.stdout, /Decision summary:/);
+    // But the machine document is not.
+    assert.equal(
+      run.stdout.includes('"decisionSummary"'),
+      false,
+      "the raw summary must not ride on the human receipt"
+    );
+    for (const wire of ["notEstablished", "caseVariant", "argumentMismatch", "userValue"]) {
+      assert.equal(run.stdout.includes(wire), false, `raw ${wire} leaked into human output`);
+    }
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval compare --format human never leaks the wire enums", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "compare",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1"
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.match(run.stderr, /Decision summary:/);
+    assert.equal(
+      run.stdout.includes('"decisionSummary"'),
+      false,
+      "the raw summary must not ride on the human compare document"
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
 test("eval run --wait still prints the launch receipt when the wait times out", async () => {
   // The run ids are the only handle a caller has on runs it has already PAID
   // for. Raising the timeout before the receipt is written left

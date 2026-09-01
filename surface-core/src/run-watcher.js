@@ -80,10 +80,12 @@ async function readDecisionSummarySoftly(args) {
  * anyway (Slack's own mrkdwn-emoji version has never used the default), so
  * there is no "reasonable default" to fall back to — only a per-surface one.
  *
- * `formatOutcome` receives the run's DECISION SUMMARY as a fourth argument on
- * every terminal non-pass, so a surface can name where the chain broke without
- * each one growing its own fetch. It is `null` whenever that read did not
- * produce one — see {@link wantsDecisionChain} for which runs are asked at all.
+ * `formatOutcome` is called TWICE on a terminal non-pass, and the order is the
+ * point: once immediately with `null`, so the verdict is delivered without
+ * waiting on anything, and again with the run's DECISION SUMMARY once that read
+ * returns something. A surface therefore names where the chain broke without
+ * growing its own fetch, and without the enrichment ever deciding when the
+ * verdict lands. See {@link wantsDecisionChain} for which runs are asked at all.
  *
  * @param {{apiClient:any,delivery:any,ref?:any,statusHandle:any,ctx:any,runId:string,url:string,actorId:string,pollIntervalMs?:number,maxMs?:number,logger?:any,formatOutcome:(run:any,url:string,actorId:string,decisionSummary?:any)=>any,onTerminal?:(run:any)=>Promise<void>}} args
  */
@@ -99,13 +101,36 @@ export async function watchRunUntilDone(args) {
 		try {
 			const run = await args.apiClient.getEvalRun(args.runId, args.ctx);
 			if (TERMINAL_STATUSES.has(run.status)) {
-				const decisionSummary = wantsDecisionChain(run)
-					? await readDecisionSummarySoftly(args)
-					: null;
+				// THE VERDICT GOES OUT FIRST, unenriched.
+				//
+				// Reading the decision summary before this edit made the chain
+				// sentence a PRECONDITION of the notification: a slow or degraded
+				// route held somebody's "running…" message for up to the read's
+				// full 30s timeout. That is the same trade the fail-soft rule
+				// already refuses — an enrichment must never decide whether, or
+				// when, the verdict arrives.
 				await args.delivery.edit(
 					args.statusHandle,
-					formatOutcome(run, args.url, args.actorId, decisionSummary),
+					formatOutcome(run, args.url, args.actorId, null),
 				);
+				// Then enrich, in a SECOND edit, and only when there is something
+				// to add. Editing again with an empty result would spend a write
+				// against the surface's rate limit to change nothing.
+				if (wantsDecisionChain(run)) {
+					const decisionSummary = await readDecisionSummarySoftly(args);
+					if (decisionSummary) {
+						try {
+							await args.delivery.edit(
+								args.statusHandle,
+								formatOutcome(run, args.url, args.actorId, decisionSummary),
+							);
+						} catch (error) {
+							// The verdict is already delivered; losing the enrichment
+							// edit costs a sentence, not the notification.
+							args.logger?.warn?.(`Run chain enrichment edit failed: ${error}`);
+						}
+					}
+				}
 				try {
 					await args.onTerminal?.(run);
 				} catch (error) {

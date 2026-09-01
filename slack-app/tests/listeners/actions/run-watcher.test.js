@@ -63,6 +63,16 @@ describe('watchRunUntilDone', () => {
   it('edits the outcome FIRST, then runs the completion hook', async () => {
     // The hook is strictly additive. If it ran first, a slow screenshot pass
     // would leave the thread saying "running…" long after the run ended.
+    //
+    // The same rule now covers the chain enrichment, which is why this run
+    // records TWO updates: the verdict goes out immediately with no summary,
+    // and the decision-summary read — which can take up to its own 30s
+    // timeout — happens after, producing a second edit. The invariant this
+    // test names is unchanged and stronger: nothing optional precedes the
+    // verdict reaching the thread. Here the enrichment fetch is the same
+    // `globalThis.fetch` stub, so it resolves to the run body, which carries
+    // no diagnostics and still yields a second edit only because the stub
+    // answers; a real absent summary produces one edit.
     stubRun({ status: 'completed', result: 'failed' });
     /** @type {string[]} */
     const order = [];
@@ -88,7 +98,14 @@ describe('watchRunUntilDone', () => {
         },
       }),
     );
-    assert.deepStrictEqual(order, ['update', 'hook:completed/failed']);
+    // The VERDICT edit is first and the hook is last; the enrichment edit
+    // sits between them and can never delay either.
+    assert.strictEqual(order[0], 'update');
+    assert.strictEqual(order.at(-1), 'hook:completed/failed');
+    assert.deepStrictEqual(
+      order.filter((entry) => entry !== 'update'),
+      ['hook:completed/failed'],
+    );
   });
 
   it('a rejecting completion hook is logged, never thrown', async () => {

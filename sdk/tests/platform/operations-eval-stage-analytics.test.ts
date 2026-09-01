@@ -295,6 +295,49 @@ describe("list_eval_suite_stage_analytics", () => {
     }
   });
 
+  it("narrows to one comparison group when asked", () => {
+    // The description tells a reader to partition on `runGroupId` before
+    // claiming any trend. Without a selector that instruction could only be
+    // followed by fetching a mixed page and filtering it client-side.
+    const { client, fetchMock } = makeClient();
+    return listEvalSuiteStageAnalyticsOperation
+      .execute(
+        { project: "project-1", suite: "suite-1", runGroupId: "grp-7" },
+        { client }
+      )
+      .then(() => {
+        const url = fetchMock.mock.calls
+          .map(([target]) => new URL(String(target)))
+          .find((candidate) =>
+            candidate.pathname.endsWith("/stage-analytics")
+          )!;
+        expect(url.searchParams.get("runGroupId")).toBe("grp-7");
+      });
+  });
+
+  it("refuses an inverted window before it reaches the wire", async () => {
+    // A guaranteed 400. Refused in `execute` rather than a schema refinement,
+    // per the rule `operationInputError` states: a caller that invokes
+    // `execute` directly never parses the input schema.
+    const { client, fetchMock } = makeClient();
+    await expect(
+      listEvalSuiteStageAnalyticsOperation.execute(
+        {
+          project: "project-1",
+          suite: "suite-1",
+          from: 1_700_600_000_000,
+          to: 1_700_000_000_000,
+        },
+        { client }
+      )
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(
+      fetchMock.mock.calls
+        .map(([target]) => new URL(String(target)).pathname)
+        .filter((path) => path.endsWith("/stage-analytics"))
+    ).toEqual([]);
+  });
+
   it("requires a project and a suite, and bounds the page size", () => {
     const schema = listEvalSuiteStageAnalyticsOperation.inputSchema;
     expect(schema.safeParse({ suite: "s" }).success).toBe(false);

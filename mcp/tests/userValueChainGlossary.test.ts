@@ -30,6 +30,8 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DECISION_LABEL_VOCABULARIES,
+  EVAL_RUN_DECISION_UNDECIDED_REASONS,
+  EVAL_RUN_DECISION_VERDICTS,
   EVAL_STAGE_EXCLUSION_CLASSES,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
@@ -77,6 +79,20 @@ describe("the user-value-chain glossary", () => {
       }
     });
   }
+
+  it("names every verdict and every reason one was withheld", () => {
+    // The glossary's own frontmatter promises "the four verdicts", and the
+    // undecided reasons are the table directly under them. Neither vocabulary
+    // is in `DECISION_LABEL_VOCABULARIES`, so the loop above does not reach
+    // them — and a promise the totality test does not cover is exactly the
+    // kind of drift this file exists to catch.
+    for (const member of [
+      ...EVAL_RUN_DECISION_VERDICTS,
+      ...EVAL_RUN_DECISION_UNDECIDED_REASONS,
+    ]) {
+      expect(markdown).toContain(`\`${member}\``);
+    }
+  });
 
   it("names every stage-analytics exclusion class", () => {
     // Not in DECISION_LABEL_VOCABULARIES (it is the analytics contract's own

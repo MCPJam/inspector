@@ -35,7 +35,11 @@ row — and even that says what was observed, not what to fix.
 ## The six stages
 
 They run in this order, and **the order is normative**: `notReached` is derived
-from position, so a stage after the first failure was never attempted.
+from position — but only over a stage that decided nothing of its own. A stage
+AFTER the first failure that has its own evidence keeps its measured verdict;
+the derivation overwrites only the rows that were otherwise `notMeasured`. A
+case whose `selection` failed on a stray call still made the expected call and
+still ran its predicates, and those rows say so.
 
 `connection` → `discovery` → `selection` → `call` → `response` → `userValue`
 
@@ -57,7 +61,7 @@ never checked" gets read as "it passed".
 | --- | --- | --- |
 | `passed` | passed | Measured, and the link held. |
 | `failed` | failed | Measured, and the link did not hold. |
-| `notReached` | never ran (an earlier stage failed) | Derived from POSITION: an earlier stage failed, so this one was never attempted. Not a verdict about this stage. |
+| `notReached` | never ran (an earlier stage failed) | Position, applied only to a stage that decided nothing of its own: the chain broke upstream and that is why nothing is known here. Not a verdict about this stage — and not applied to a later stage that WAS measured, whose own rows survive. |
 | `notMeasured` | not measured | The stage was reached and this run captured nothing that could decide it. **Not a pass.** |
 | `notApplicable` | not applicable to this case | The authored case asserts nothing this stage could decide. **Not a pass.** |
 

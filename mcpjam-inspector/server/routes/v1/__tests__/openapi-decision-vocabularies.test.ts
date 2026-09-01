@@ -133,6 +133,15 @@ describe("openapi.json ↔ the decision vocabularies", () => {
       ).toEqual(new Set(vocabulary));
       // Set equality alone would accept a duplicated member.
       expect(node.enum).toHaveLength(vocabulary.length);
+      // ORDER TOO, and for the stages it is load-bearing rather than tidy:
+      // `StageResultRow.stage`'s own description — which the coverage check
+      // below reads — tells an integrator the order is NORMATIVE and that
+      // `notReached` is derived from position. A spec whose enum is shuffled
+      // teaches the opposite while every set-based check stays green.
+      expect(
+        node.enum,
+        `${label} lists the ${site.vocabulary} in a different order from the contract`
+      ).toEqual([...vocabulary]);
     });
 
     it(`${label} defines every member in its own description`, () => {

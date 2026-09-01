@@ -2302,7 +2302,12 @@ async function writeCompareResult(
     {
       compare: args.report,
       exitCode: evalGateExitCode(args.report),
-      ...(args.decisionSummary
+      // JSON ONLY. `writeResult` pretty-prints this same object in human
+      // format, so including it there would put the raw wire enums on the
+      // terminal immediately above the label-aware block that exists to
+      // replace them — the narrative twice, once unreadably. `eval status`
+      // strips it for exactly this reason.
+      ...(args.format === "json" && args.decisionSummary
         ? { decisionSummary: args.decisionSummary }
         : {}),
     },
@@ -3524,7 +3529,12 @@ export function registerEvalCommands(program: Command): void {
             // the stable contract and the human block below is not, so a
             // pipeline that reads stdout used to get run ids and a status and
             // had to make a second call to learn what the run decided.
-            ...(completion.decisionSummary
+            //
+            // JSON ONLY, though: `writeResult` pretty-prints this same object
+            // in human format, so leaving it ungated would print the raw wire
+            // enums directly above the label-aware block written to replace
+            // them. `eval status` strips it for the same reason.
+            ...(globalOptions.format === "json" && completion.decisionSummary
               ? { decisionSummary: completion.decisionSummary }
               : {}),
           },

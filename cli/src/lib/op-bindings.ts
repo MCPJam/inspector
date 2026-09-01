@@ -182,9 +182,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // the same document read two ways — one run, or a suite's runs as a trend
   // series — and two commands would leave a reader guessing which one
   // answers "has this stage got worse".
-  get_eval_run_stage_analytics: { command: "cloud eval stage-analytics" },
+  //
+  // FLAG-QUALIFIED, following the `registry install --card` precedent above:
+  // the binding test resolves the flag against the real Commander tree, so
+  // these entries prove each shelf exists. Unqualified, both would resolve to
+  // the bare command and the test would still pass with `--run` deleted.
+  get_eval_run_stage_analytics: {
+    command: "cloud eval stage-analytics --run",
+  },
   list_eval_suite_stage_analytics: {
-    command: "cloud eval stage-analytics",
+    command: "cloud eval stage-analytics --suite",
   },
   compare_eval_run: { command: "cloud eval compare" },
   waive_eval_gate: { command: "cloud eval gate waive" },

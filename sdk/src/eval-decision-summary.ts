@@ -648,21 +648,28 @@ function formatFirstBreakLine(
     // Every readable chain established a category and no stage — a setup abort
     // or an evaluator error. Naming a stage here would put a location on a run
     // that never reached one.
-    const categories = [
-      ...new Set(
-        readable.flatMap((item) =>
-          item.chain.status === "verified" && item.chain.failureCategory
-            ? [
-                labelFor(FAILURE_CATEGORY_LABELS, item.chain.failureCategory),
-              ].filter((label): label is string => label !== undefined)
-            : []
-        )
-      ),
-    ];
+    //
+    // The COUNT is of the trials that actually CARRY a category, not of every
+    // readable trial. A readable chain can establish neither a stage nor a
+    // category, and saying "3 measured trials" grouped under one bucket when
+    // only two name it would attribute the third to a bucket nothing put it
+    // in — the same over-claim the spread clause below exists to avoid.
+    const grouped = readable.flatMap((item) =>
+      item.chain.status === "verified" && item.chain.failureCategory
+        ? [
+            labelFor(FAILURE_CATEGORY_LABELS, item.chain.failureCategory),
+          ].filter((label): label is string => label !== undefined)
+        : []
+    );
+    const categories = [...new Set(grouped)];
+    const ungrouped = readable.length - grouped.length;
     return categories.length > 0
       ? `  First break: no stage was reached — grouped under ${categories.join(
           ", "
-        )} (${readable.length} measured ${unit})`
+        )} (${grouped.length} of ${readable.length} measured ${measurementUnitLabel(
+          "trial",
+          readable.length
+        )}${ungrouped > 0 ? `; ${ungrouped} established no category` : ""})`
       : undefined;
   }
 

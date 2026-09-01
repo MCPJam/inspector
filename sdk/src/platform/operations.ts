@@ -6427,6 +6427,14 @@ const listEvalSuiteStageAnalyticsInput = z.object({
       "Project the suite belongs to (name or ID), as returned by list_eval_suites."
     ),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  runGroupId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Narrow to ONE comparison group. The parity contract requires a shared runGroupId before two funnels may be read as a trend, so this is how you fetch a partition rather than filtering one out of a mixed page yourself."
+    ),
   cursor: z
     .string()
     .min(1)
@@ -6495,12 +6503,29 @@ export const listEvalSuiteStageAnalyticsOperation: PlatformOperation<
       input.project
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+    // An inverted window is a guaranteed 400, so it is refused before the
+    // request is built. In `execute` rather than a schema refinement, per the
+    // rule `operationInputError` states: a caller that invokes `execute`
+    // directly never parses the input schema, and a refine-only guard would
+    // simply not fire for it.
+    if (
+      input.from !== undefined &&
+      input.to !== undefined &&
+      input.to < input.from
+    ) {
+      throw operationInputError(
+        "`to` must not be earlier than `from` — the window is inclusive over the run's completion time in epoch milliseconds."
+      );
+    }
     let page;
     try {
       page = await client.listEvalSuiteStageAnalytics(
         {
           projectId: project.id,
           suiteId: suite.id,
+          ...(input.runGroupId !== undefined
+            ? { runGroupId: input.runGroupId }
+            : {}),
           ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
           ...(input.from !== undefined ? { from: input.from } : {}),
