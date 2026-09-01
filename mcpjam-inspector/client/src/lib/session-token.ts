@@ -399,6 +399,16 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // module header on why a pattern, not a prefix, is what keeps the grant as
   // narrow as the id segments in the middle.
   /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+  // The Evaluate (New) chain reads: D9's decision summary and D5c's stage
+  // analytics, suite-paged and run-scoped. Same anchored bearer-scope grant as
+  // the disclosure above, and needed for the same reason — both go out through
+  // `authFetch`, so without an entry here they ship no `Authorization` at all
+  // and the route answers "Bearer token required". That 401 surfaces as
+  // `requestFailed`/service copy ("could not be loaded"), which reads as a
+  // backend outage rather than a missing header, so the panels look broken
+  // while the API is fine.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics)$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {
