@@ -1248,6 +1248,22 @@ describe("TraceViewer", () => {
     );
   });
 
+  it("lets a shell override the reasoning mode for a live chat", () => {
+    // The Playground reveals a live trace in chat through this component, and
+    // there the emulated host decides the presentation, not the recorded-trace
+    // default. BB-136.
+    render(
+      <TraceViewer trace={reasoningTrace} reasoningDisplayMode="inline" />,
+    );
+    openChatTab();
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasoningDisplayMode: "inline",
+      }),
+    );
+  });
+
   it("forwards ModelDefinition when provided", () => {
     const model = {
       id: "gpt-4o",

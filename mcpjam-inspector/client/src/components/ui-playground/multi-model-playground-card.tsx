@@ -60,6 +60,7 @@ import {
   type HostConfigDtoV2,
 } from "@/lib/client-config-v2";
 import type { HostSnapshot } from "@/lib/host-snapshot";
+import { getReasoningDisplayForStyle } from "@/lib/client-styles";
 import {
   getScenarioChatBackground,
   type ScenarioHostStyle,
@@ -229,7 +230,7 @@ export function MultiModelPlaygroundCard({
   broadcastRequest,
   deterministicExecutionRequest,
   stopRequestId,
-  reasoningDisplayMode = "inline",
+  reasoningDisplayMode,
   executionConfig,
   hostedContext,
   hostedOrgModelConfig,
@@ -288,6 +289,11 @@ export function MultiModelPlaygroundCard({
   const effectiveMcpProfile = hostSnapshot
     ? hostSnapshot.mcpProfile
     : tabRootMcpProfile;
+  // Reasoning presentation is part of the host's chat surface, so in multi-host
+  // mode each column renders it the way its own host does. The prop stays the
+  // caller's override for a surface that needs to pin a mode. BB-136.
+  const effectiveReasoningDisplayMode =
+    reasoningDisplayMode ?? getReasoningDisplayForStyle(hostStyle);
   const [modelContextQueue, setModelContextQueue] = useState<
     WidgetModelContextEntry[]
   >([]);
@@ -793,6 +799,10 @@ export function MultiModelPlaygroundCard({
                     effectiveLiveTraceEnvelope?.traceEndedAtMs ?? null
                   }
                   forcedViewMode="chat"
+                  // Revealing a live trace in chat renders the transcript through
+                  // TraceViewer, so the host's reasoning mode has to follow it here
+                  // too or the same chat would present reasoning two ways. BB-136.
+                  reasoningDisplayMode={effectiveReasoningDisplayMode}
                   hideToolbar
                   fillContent
                   onRevealNavigateToChat={navigateTraceRevealToChat}
@@ -891,7 +901,7 @@ export function MultiModelPlaygroundCard({
                       showInlineEdit={!hideInlineEdit}
                       fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                       onFullscreenChatStop={stop}
-                      reasoningDisplayMode={reasoningDisplayMode}
+                      reasoningDisplayMode={effectiveReasoningDisplayMode}
                       mcpToolResultImageRendering={
                         resolvedMcpToolResultImageRendering
                       }

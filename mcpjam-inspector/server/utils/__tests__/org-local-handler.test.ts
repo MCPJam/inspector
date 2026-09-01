@@ -51,6 +51,13 @@ import {
   buildOrgModelFromResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
+import {
+  THINK_DELTAS,
+  collectStreamParts,
+  reasoningOf,
+  textOf,
+  thinkStreamModel,
+} from "./helpers/think-model";
 
 function buildResolvedProvider(): OrgProviderResolvedConfig {
   // Cast — the handler only reads `providerKey` off the resolved config;
@@ -252,6 +259,39 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
       totalTokens: 10,
     });
     expect(body.finishReason).toBe("stop");
+  });
+
+  it("hands the engine a model that extracts an inlined <think> block", async () => {
+    // The factory is stubbed, so asserting it was called would still pass
+    // with the wrap removed. Drive the model the engine actually got. BB-136.
+    vi.mocked(buildOrgModelFromResolvedConfig).mockReturnValue(
+      thinkStreamModel(THINK_DELTAS) as never,
+    );
+    streamTextMock.mockImplementationOnce(() => defaultStreamTextReturn());
+
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj",
+      modelId: "deepseek-reasoner",
+      messages: [{ role: "user", content: "2+2?" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+
+    expect(streamTextMock).toHaveBeenCalledTimes(1);
+    const parts = await collectStreamParts(
+      streamTextMock.mock.calls[0][0].model,
+    );
+    expect(reasoningOf(parts)).toContain("2 plus 2.");
+    expect(textOf(parts)).toBe("It is 4.");
   });
 
   it("does NOT fire postLocalUsage on abort (silent-cancel invariant)", async () => {

@@ -30,6 +30,7 @@ import {
   assertOrgModelAllowed,
   buildOrgModelFromResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import { withOrgInlineReasoningExtracted } from "./inline-reasoning";
 import {
   resolveSyntheticModelSource,
   type SyntheticModelSource,
@@ -169,7 +170,9 @@ export async function resolveTurnRuntime(
 
     // Same validation + build the SSE/headless local handlers run.
     assertOrgModelAllowed(orgRuntime.provider, modelId);
-    const llmModel = buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId);
+    const llmModel = withOrgInlineReasoningExtracted(
+      buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId),
+    );
 
     const runtime: DirectRuntime = {
       kind: "direct",

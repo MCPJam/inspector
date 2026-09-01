@@ -288,6 +288,11 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
     loadingIndicator: ClaudeMarkIndicator,
+    // claude.ai keeps thinking behind an expansion panel the reader opens, so
+    // it starts closed here too rather than leading with the model's scratch
+    // work. Closed, not merely collapsible: showing it expanded buries the
+    // answer under reasoning nobody asked to read yet.
+    reasoningDisplay: "collapsed",
   },
 };
 

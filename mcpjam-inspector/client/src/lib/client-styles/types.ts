@@ -5,6 +5,12 @@ import type {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import type { InjectedOpenAiCompatCapabilities } from "@/shared/widget-snapshot";
+// Type-only, so no runtime edge from lib back into the component tree: the
+// union's home is the component that consumes it. Re-exported so the rest of
+// `client-styles` reaches it through one entry point.
+import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
+
+export type { ReasoningDisplayMode };
 
 /**
  * Persistable shape for a custom loading indicator. Built-in hosts ship
@@ -412,6 +418,12 @@ export interface HostChatUi {
    * mode prop so adding a new host stays "register one component."
    */
   loadingIndicator: ComponentType<{ className?: string }>;
+  /**
+   * How this host presents a model's reasoning. Undefined inherits the chat's
+   * `inline` default, which is what a host that shows reasoning as plain
+   * running text wants. BB-136.
+   */
+  reasoningDisplay?: ReasoningDisplayMode;
 }
 
 /**
