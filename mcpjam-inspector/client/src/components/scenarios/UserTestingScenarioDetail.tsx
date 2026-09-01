@@ -76,10 +76,10 @@ import { ActionableFindings } from "@/components/shared/actionable-insights/acti
  * One User Testing scenario.
  *
  * Detail (`/user-testing/:id`): Insights | Sessions under one header carrying
- * Edit / Open preview / Share. Edit (`/user-testing/:id/edit`) wears the SAME
- * header and holds Settings — environment, sharing permissions, ratings,
- * grading — beside a docked live Preview. Sharing has exactly one entry point
- * per surface: the header's Share modal here, the full section there.
+ * Edit / Open preview / Share. Edit (`/user-testing/:id/edit`) wears the same
+ * action row and holds Settings — environment, sharing permissions, ratings,
+ * grading — beside a docked live Preview. Only the back link differs: Edit is
+ * a sub-route, so it returns to the scenario rather than out to the list.
  *
  * Preview embeds the share link, so opening Edit starts a REAL guest session —
  * it shows up in Sessions. The embed tags itself `?surface=preview` so that
@@ -465,6 +465,16 @@ export function UserTestingScenarioDetail({
           "focus-visible:border-0 focus-visible:ring-0",
         )}
       />
+      {/* Host-backed scenarios get no Environment section — nothing else on
+          Edit names the client they run against, so the header does. */}
+      {editMode && !composerActive && scenario.namedHostName ? (
+        <span
+          className="shrink-0 text-sm text-muted-foreground"
+          data-testid="user-testing-host-client"
+        >
+          Client: {scenario.namedHostName}
+        </span>
+      ) : null}
     </div>
   );
 
@@ -525,9 +535,13 @@ export function UserTestingScenarioDetail({
   if (editMode) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        {/* Back goes to the scenario, not the list: Edit is a sub-route, and
+            its own Edit button is inert here, so the list would strand it. */}
         <DetailPageHeader
-          backLabel="User Testing"
-          onBack={onBack}
+          backLabel={scenario.name || "Scenario"}
+          onBack={() =>
+            navigate(buildUserTestingScenarioPath(scenario.scenarioId))
+          }
           backTestId="user-testing-detail-back"
           title={headerTitle}
           actions={headerActions}

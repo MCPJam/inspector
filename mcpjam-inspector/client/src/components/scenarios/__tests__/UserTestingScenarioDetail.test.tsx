@@ -443,6 +443,40 @@ describe("UserTestingScenarioDetail", () => {
       screen.queryByTestId("user-testing-environment-section"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
+    // With no Environment section, the header is the only thing left that can
+    // say which client this runs against.
+    expect(screen.getByTestId("user-testing-host-client")).toHaveTextContent(
+      "Client: Cursor",
+    );
+  });
+
+  it("keeps the client out of the header once Environment can show it", () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      name: "Checkout flow",
+      origin: { kind: "manual" },
+      revision: 1,
+      servers: [],
+      hostStyle: "chatgpt",
+      updatedAt: 0,
+    };
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(
+      screen.getByTestId("user-testing-environment-section"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("user-testing-host-client")).toBeNull();
+  });
+
+  it("goes back to the scenario from Edit, not out to the list", () => {
+    renderEdit();
+
+    fireEvent.click(screen.getByTestId("user-testing-detail-back"));
+
+    // Edit is a sub-route and its own Edit button is inert there, so the list
+    // would leave no one-click way back to Insights.
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1");
   });
 
   it("seeds the session pane from a deep-linked session", () => {

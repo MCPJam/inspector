@@ -28,7 +28,7 @@ export function ScenarioShareDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-lg"
+        className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
         aria-describedby={undefined}
         data-testid="user-testing-share-dialog"
       >
