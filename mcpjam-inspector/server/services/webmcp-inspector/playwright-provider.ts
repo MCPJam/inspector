@@ -1259,24 +1259,25 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     if (enabled === this.screencasting) return this.screencasting;
     this.screencasting = enabled;
     if (enabled) {
-      // Rides the session's existing CDPSession — the same one `Page.enable`
-      // and the WebMCP domain are on. A second session would double every
-      // event this class already handles.
-      //
       // Page-target-level, so it survives navigations: the pane keeps painting
       // across a page load without anything re-arming it.
-      // A browser that cannot screencast reports it here, and the caller turns
-      // that `false` into the client's screenshot fallback.
-      if (!(await this.sendStartScreencast())) this.screencasting = false;
-      // The retry belonged to the stream that was refused, and that stream is
-      // over.
+      //
+      // Everything the PREVIOUS stream left behind is discarded here, BEFORE
+      // the start command rather than after it. `screencasting` is already
+      // true, so the browser can deliver a frame of the new cast while the
+      // start's own reply is still in flight — and a reset applied after that
+      // await would throw away the new stream's work: the substitute owed to
+      // its first oversized paint, the pressure that paint reported, and the
+      // generation of a capture it had already begun. The previous stream is
+      // over the moment this decides to start another; there is nothing to
+      // wait a round trip for.
+      //
+      // The retry belonged to the stream that is over.
       this.restartPending = false;
-      // Likewise the substitute owed to a frame of the PREVIOUS stream: it
-      // describes a picture this one has not sent, and the timer draining it
-      // is armed below.
+      // As does the substitute owed to one of its frames: it describes a
+      // picture this stream has not sent.
       this.oversizePending = false;
-      // A capture from the previous stream describes a picture this one has
-      // not sent yet.
+      // And a capture it began, for the same reason.
       this.captureGeneration += 1;
       // A fresh audience, and the replay burst that comes with it, is not
       // evidence about the link: the drops that pressured the PREVIOUS stream
@@ -1284,6 +1285,13 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // read as more of them. The RUNG itself survives — see the field.
       this.dropTimestamps = [];
       this.lastRungChangeAt = Date.now();
+      // Rides the session's existing CDPSession — the same one `Page.enable`
+      // and the WebMCP domain are on. A second session would double every
+      // event this class already handles.
+      //
+      // A browser that cannot screencast reports it here, and the caller turns
+      // that `false` into the client's screenshot fallback.
+      if (!(await this.sendStartScreencast())) this.screencasting = false;
       // AFTER the start resolves, and only if the stream survived it. A stop
       // that lands mid-start wins (see `setScreencast(false)` below), and an
       // interval armed unconditionally here would outlive it — capturing

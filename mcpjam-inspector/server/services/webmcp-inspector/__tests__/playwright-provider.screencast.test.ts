@@ -530,6 +530,61 @@ describe("PlaywrightWebMcpSession screencast", () => {
     expect(h.stills).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a substitute owed to the stream that is starting", async () => {
+    // `Page.startScreencast` held open, so the window this is about — between
+    // `screencasting` going true and the start's reply arriving — is a window
+    // the test controls rather than one it hopes to hit.
+    let releaseStart!: () => void;
+    const startHeld = new Promise<unknown>((resolve) => {
+      releaseStart = () => resolve({});
+    });
+    let starts = 0;
+    const held = heldStill();
+    const h = await startedWithFakeClock({
+      still: held.still,
+      onSend: (method) => {
+        if (method !== "Page.startScreencast") return undefined;
+        starts += 1;
+        return starts === 2 ? startHeld : undefined;
+      },
+    });
+
+    // A still from the FIRST stream, pinned open — which is what makes the
+    // next oversized frame set the pending flag rather than capture directly.
+    await h.session.setScreencast(true);
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1, 0x41), 1),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.stills).toHaveBeenCalledTimes(1);
+
+    await h.session.setScreencast(false);
+    const enabling = h.session.setScreencast(true);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The browser is already casting — the start's REPLY is what has not
+    // landed — so this frame belongs to the new stream, not the old one.
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1, 0x42), 2),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    releaseStart();
+    await enabling;
+    // The first stream's capture can finish now; it discards itself, and frees
+    // the latch the pending substitute is waiting on.
+    held.release();
+    await vi.advanceTimersByTimeAsync(WEBMCP_HOUSEKEEPING_INTERVAL_MS);
+
+    // The substitute the NEW stream asked for is taken and published. Wiped by
+    // a reset that ran after the start resolved, this paint would never reach
+    // the pane at all — the frame itself was refused for its size, and nothing
+    // repaints a page that has gone quiet.
+    expect(h.frames.map((frame) => frame.data)).toEqual([SMALL_STILL]);
+  });
+
   it("gives up on a capture the browser never answers", async () => {
     // A CDP session that takes the command and never replies — a wedged
     // browser, or a target that went away mid-capture. `cdp.send` has no
