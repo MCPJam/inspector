@@ -121,17 +121,23 @@ export function parseVars(block) {
       continue;
     }
 
-    if (ch === "(") parens++;
-    else if (ch === ")" && parens > 0) parens--;
+    if (ch === "(") {
+      parens++;
+    } else if (ch === ")") {
+      // Checked in BOTH directions, or the rule is only half a rule. An
+      // unmatched `(` keeps every following `;` inside the value and quietly
+      // swallows the rest of the block into one declaration; a stray `)` does
+      // not corrupt the parse but is equally malformed, and letting it through
+      // would carry nonsense into a mirrored surface unchallenged.
+      if (parens === 0) {
+        throw new Error("Unmatched closing parenthesis in tokens.css");
+      }
+      parens--;
+    }
 
     decl += ch;
   }
 
-  // An unmatched `(` would keep every following `;` inside the value, quietly
-  // swallowing the rest of the block into one declaration. Making the `;`
-  // paren-aware fixed a truncation bug by opening this one, so it is checked
-  // rather than trusted: CSS values always balance, and a block where they do
-  // not is malformed input, not a value.
   if (parens !== 0) {
     throw new Error("Unterminated parentheses in tokens.css");
   }
