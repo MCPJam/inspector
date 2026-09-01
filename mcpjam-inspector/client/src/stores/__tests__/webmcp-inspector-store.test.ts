@@ -1141,6 +1141,43 @@ describe("webmcp inspector store — frame transport", () => {
     expect(FakeWebSocket.instances).toHaveLength(4);
   });
 
+  it("returns the retry budget after a socket opens", async () => {
+    vi.useFakeTimers();
+    const { ws } = await openFrameSession();
+
+    // Three drops spread across a long session, each reconnecting fine.
+    let current = ws;
+    for (let i = 0; i < 3; i += 1) {
+      current.emitClose(1006);
+      vi.advanceTimersByTime(500);
+      current = FakeWebSocket.instances.at(-1)!;
+      current.open();
+    }
+    expect(FakeWebSocket.instances).toHaveLength(4);
+
+    // Without the reset, the fourth close would exhaust a budget meant for the
+    // structural case and latch a session that has been working all along —
+    // reverting it to the SSE latency this change exists to remove.
+    current.emitClose(1006);
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(5);
+    FakeWebSocket.instances.at(-1)!.open();
+  });
+
+  it("still latches after four failures with no successful open between them", async () => {
+    vi.useFakeTimers();
+    const { ws } = await openFrameSession();
+    // The bound the reset must not weaken: a server too old to serve the route
+    // answers 1006 every time and never opens, so the ladder still stops.
+    ws.emitClose(1006);
+    for (const delay of [500, 1_000, 2_000]) {
+      vi.advanceTimersByTime(delay);
+      FakeWebSocket.instances.at(-1)!.emitClose(1006);
+    }
+    vi.advanceTimersByTime(60_000);
+    expect(FakeWebSocket.instances).toHaveLength(4);
+  });
+
   it("flips SSE back to frames=off when a retry succeeds", async () => {
     vi.useFakeTimers();
     const { ws } = await openFrameSession();
@@ -1249,6 +1286,42 @@ describe("webmcp inspector store — frame transport", () => {
     expect(useWebmcpInspectorStore.getState().liveFrame).toBe(painted);
     vi.advanceTimersByTime(60_000);
     expect(FakeWebSocket.instances.at(-1)).toBe(current);
+  });
+
+  it("ignores a text frame and drops one it cannot decode", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.emitFrame(binaryFrame(3));
+    const painted = useWebmcpInspectorStore.getState().liveFrame;
+
+    // A pong is control traffic, not a paint.
+    expect(() =>
+      ws.onmessage?.({ data: JSON.stringify({ type: "pong" }) }),
+    ).not.toThrow();
+    // And a truncated message is dropped rather than thrown: a throw in a
+    // `message` handler takes the whole socket down over one bad paint.
+    const encoded = encodeWebMcpBinaryFrame(binaryFrame(4));
+    expect(() =>
+      ws.onmessage?.({ data: encoded.buffer.slice(0, 12) }),
+    ).not.toThrow();
+
+    expect(useWebmcpInspectorStore.getState().liveFrame).toBe(painted);
+  });
+
+  it("pings while open, and stops once the socket closes", async () => {
+    vi.useFakeTimers();
+    const { ws } = await openFrameSession();
+    ws.open();
+
+    vi.advanceTimersByTime(30_000);
+    expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
+
+    // The keepalive is a timer on a socket that is gone otherwise — and on the
+    // server it is also what refreshes the session's idle deadline, so a
+    // stopped one is a session reaped under a pane nobody closed.
+    ws.emitClose(1006);
+    vi.advanceTimersByTime(120_000);
+    expect(ws.sent).toHaveLength(1);
   });
 
   it("clears the frame and its blob when the stream stops", async () => {

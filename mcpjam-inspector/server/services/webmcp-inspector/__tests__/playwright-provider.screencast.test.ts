@@ -713,6 +713,45 @@ describe("PlaywrightWebMcpSession input rate", () => {
     ]);
   });
 
+  it("does not restore a coordinate the page navigated away from mid-move", async () => {
+    const h = await started();
+    await h.session.dispatchInput([
+      { kind: "wheel", x: 40, y: 50, deltaX: 0, deltaY: -120 },
+    ]);
+    h.driven.length = 0;
+
+    // The navigation lands DURING the awaited move, which is routine: a click
+    // that navigates, then a wheel in the same gesture. Clearing `pointerAt`
+    // on the event is not enough on its own — the assignment after the await
+    // would put the old document's coordinate straight back, and the next
+    // same-coordinate wheel would skip the move that first tells the NEW page
+    // where the pointer is.
+    (
+      h.page as unknown as {
+        mouse: { move: (x: number, y: number) => Promise<void> };
+      }
+    ).mouse.move = async (x: number, y: number) => {
+      h.driven.push(`move(${x},${y})`);
+      h.cdp.emit("Page.frameNavigated", {
+        frame: { id: "main", url: "https://example.test/two" },
+      });
+    };
+
+    await h.session.dispatchInput([
+      { kind: "wheel", x: 60, y: 70, deltaX: 0, deltaY: -120 },
+    ]);
+    await h.session.dispatchInput([
+      { kind: "wheel", x: 60, y: 70, deltaX: 0, deltaY: -120 },
+    ]);
+
+    expect(h.driven).toEqual([
+      "move(60,70)",
+      "wheel(0,-120)",
+      "move(60,70)",
+      "wheel(0,-120)",
+    ]);
+  });
+
   it("forgets the remembered coordinate when the page navigates", async () => {
     const h = await started();
     await h.session.dispatchInput([

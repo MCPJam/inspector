@@ -73,6 +73,33 @@ describe("webmcp binary frame codec", () => {
     expect(decoded.jpeg[0]).toBe(0xff);
   });
 
+  it("copies a Node Buffer's payload too", () => {
+    // The case that actually bites, and the one a Uint8Array test misses: a
+    // Buffer IS a Uint8Array but overrides `slice` to return a VIEW, so the
+    // `ws` receive buffer — the only input where aliasing has a real writer —
+    // is exactly where `.slice()` would fail to copy.
+    const encoded = Buffer.from(encodeWebMcpBinaryFrame(frame()));
+    const decoded = decodeWebMcpBinaryFrame(encoded)!;
+    encoded[WEBMCP_FRAME_WS_HEADER_BYTES] = 0x00;
+    expect(decoded.jpeg[0]).toBe(0xff);
+    expect([...decoded.jpeg]).toEqual([...JPEG]);
+  });
+
+  it("decodes a Buffer that is a view onto a larger allocation", () => {
+    // `ws` hands over slices of a pooled buffer, so byteOffset is routinely
+    // non-zero. A decoder reading from the underlying ArrayBuffer's origin
+    // rather than the view's would return another frame's bytes entirely.
+    const encoded = encodeWebMcpBinaryFrame(frame({ seq: 21 }));
+    const pool = Buffer.alloc(encoded.length + 16, 0x5a);
+    encoded.forEach((byte, i) => {
+      pool[8 + i] = byte;
+    });
+    const view = pool.subarray(8, 8 + encoded.length);
+    const decoded = decodeWebMcpBinaryFrame(view)!;
+    expect(decoded.seq).toBe(21);
+    expect([...decoded.jpeg]).toEqual([...JPEG]);
+  });
+
   it("returns undefined for a truncated message", () => {
     const encoded = encodeWebMcpBinaryFrame(frame());
     expect(

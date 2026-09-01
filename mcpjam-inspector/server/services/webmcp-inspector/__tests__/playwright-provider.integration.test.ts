@@ -340,8 +340,21 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // WHILE STREAMING: the replay buffer holds exactly ONE frame, however many
     // hundreds were published into it — and every timeline entry is still
     // there beside it. That is the whole point of the coalesced slot.
+    //
+    // Polled rather than read once: the reload above clears the retained frame
+    // (`onNavigated` → `hub.clearFrame()`), and a frame delivered just BEFORE
+    // that event leaves the slot empty for as long as it takes the page to
+    // paint again — which on a loaded runner is longer than the counter this
+    // waits on suggests. Polling keeps the claim exactly as strong (a slot
+    // that settled at two frames still fails) without racing the repaint.
+    await vi.waitFor(
+      () =>
+        expect(
+          runtime.hub.buffered().filter((event) => event.type === "frame"),
+        ).toHaveLength(1),
+      { timeout: 15_000 },
+    );
     const streaming = runtime.hub.buffered();
-    expect(streaming.filter((event) => event.type === "frame")).toHaveLength(1);
     const streamingKinds = streaming
       .filter((event) => event.type === "activity")
       .map((event) => event.entry.kind);

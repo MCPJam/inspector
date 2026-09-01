@@ -511,7 +511,17 @@ describe("webmcp-inspector routes", () => {
   it("still sends frames with no param, and with frames=on", async () => {
     // The old-client guard. A client that has never heard of this parameter —
     // every client older than the WebSocket — must get exactly today's stream.
-    for (const query of ["replay=50", "replay=50&frames=on"]) {
+    for (const query of [
+      "replay=50",
+      "replay=50&frames=on",
+      // Only the exact string `off` suppresses. An empty or null-like value is
+      // what a client building the query from an unset variable sends, and
+      // treating it as "off" would blank the pane of a client that never opted
+      // in to the socket.
+      "replay=50&frames=",
+      "replay=50&frames=null",
+      "replay=50&frames=OFF",
+    ]) {
       const started = await openSession(provider);
       const session = provider.sessions[provider.sessions.length - 1];
       session.emitFrame({ data: "cGFpbnQ=" });

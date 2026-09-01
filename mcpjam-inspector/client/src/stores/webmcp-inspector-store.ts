@@ -575,6 +575,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         sessionId,
         onOpen: () => {
           if (generation !== connectionGeneration) return;
+          // A socket that opened is proof the failure before it was
+          // TRANSIENT. The four-attempt bound exists for the structural case —
+          // a server too old to serve this route, answering 1006 every time —
+          // and counting drops spread across an hour against it would latch a
+          // session that has been working fine, permanently reverting it to
+          // the latency this whole change removes.
+          frameAttempts = 0;
           // Frames are arriving here now, so stop paying for them twice. On
           // the first attempt this is already the case and does nothing; after
           // a successful retry it is what puts SSE back to carrying only the

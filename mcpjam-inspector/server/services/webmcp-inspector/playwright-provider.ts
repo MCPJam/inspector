@@ -178,6 +178,14 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * leave the page believing the pointer had never arrived.
    */
   private pointerAt: { x: number; y: number } | undefined;
+  /**
+   * Bumped by every main-frame navigation, so a `mouse.move` still in flight
+   * when the page changes cannot write its coordinate back afterwards.
+   * Clearing `pointerAt` alone is not enough: the clear happens during the
+   * await, and the assignment after it would restore a coordinate that
+   * describes the previous document.
+   */
+  private pointerGeneration = 0;
 
   constructor(
     private readonly browser: Browser,
@@ -280,6 +288,7 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       // longer describes anything. Keeping it would let the wheel path skip
       // the move that first tells the new page where the pointer is.
       this.pointerAt = undefined;
+      this.pointerGeneration += 1;
       this.callbacks.onNavigated(frame.url, originOf(frame.url));
     });
   }
@@ -549,11 +558,35 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     }
   }
 
-  /** Move the virtual pointer, remembering where it ended up. */
-  private async moveTo(x: number, y: number): Promise<void> {
+  /**
+   * Move the virtual pointer, remembering where it ended up.
+   *
+   * `skipIfUnchanged` is for the wheel path: a scroll is a run of wheels at
+   * one coordinate and each move is an awaited CDP round trip, so the ones
+   * after the first buy nothing.
+   */
+  private async moveTo(
+    x: number,
+    y: number,
+    skipIfUnchanged = false,
+  ): Promise<void> {
     const [clampedX, clampedY] = this.clamp(x, y);
+    if (
+      skipIfUnchanged &&
+      this.pointerAt?.x === clampedX &&
+      this.pointerAt?.y === clampedY
+    ) {
+      return;
+    }
+    const generation = this.pointerGeneration;
     await this.page.mouse.move(clampedX, clampedY);
-    this.pointerAt = { x: clampedX, y: clampedY };
+    // Only if the page is still the one this move was aimed at. A navigation
+    // during the await already cleared the remembered coordinate; writing it
+    // back here would let the next same-coordinate wheel skip the move that
+    // first tells the NEW document where the pointer is.
+    if (generation === this.pointerGeneration) {
+      this.pointerAt = { x: clampedX, y: clampedY };
+    }
   }
 
   private async applyInput(event: WebMcpInputEvent): Promise<void> {
@@ -589,20 +622,15 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           ...(event.clickCount ? { clickCount: event.clickCount } : {}),
         });
         return;
-      case "wheel": {
-        // Skip the positioning move when the pointer is already there. A wheel
-        // costs TWO awaited CDP round trips, and a scroll gesture is a run of
-        // wheels at one coordinate — so this halves the server-side cost of
-        // the most latency-sensitive input there is. Only the move is skipped;
-        // the wheel itself always goes.
-        const [x, y] = this.clamp(event.x, event.y);
-        if (this.pointerAt?.x !== x || this.pointerAt?.y !== y) {
-          await this.page.mouse.move(x, y);
-          this.pointerAt = { x, y };
-        }
+      case "wheel":
+        // Skip the positioning move when the pointer is provably already
+        // there. A wheel costs TWO awaited CDP round trips, and a scroll is a
+        // run of wheels at one coordinate — so this halves the server-side
+        // cost of the most latency-sensitive input there is. Only the move is
+        // skipped; the wheel itself always goes.
+        await this.moveTo(event.x, event.y, true);
         await this.page.mouse.wheel(event.deltaX, event.deltaY);
         return;
-      }
       case "key_down":
         await this.page.keyboard.down(event.key);
         this.noteModifierKey(event.key, true);

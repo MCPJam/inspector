@@ -37,6 +37,8 @@ vi.mock("../../../config.js", () => ({
 import {
   createFramePacer,
   createWebMcpFramesWsHandler,
+  isFramePingMessage,
+  toCallbackSocket,
   killWebMcpFrameSockets,
   resetWebMcpFramesForTests,
   shutdownWebMcpFrameSockets,
@@ -338,6 +340,45 @@ describe("webmcp frames WS — the stream", () => {
     expect(ws.text).toContain(JSON.stringify({ type: "pong" }));
   });
 
+  it("survives a control message that is not an object", async () => {
+    const session = await openSession();
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+
+    // The contract, end to end: a malformed control message is ignored and the
+    // socket keeps serving. The parsing rule that makes this true by
+    // construction — rather than by an adapter absorbing a TypeError — is
+    // pinned directly in "ping message parsing" below.
+    for (const payload of ["null", '"ping"', "42", "true", "[]", "[1,2]"]) {
+      ws.ws.send(payload);
+    }
+    await ws.settle();
+    expect(ws.text).toEqual([]);
+
+    // …and the socket is still alive and still speaking the protocol.
+    ws.ws.send(JSON.stringify({ type: "ping" }));
+    await ws.settle();
+    expect(ws.text).toEqual([JSON.stringify({ type: "pong" })]);
+  });
+
+  it("refreshes the session's idle deadline on a ping", async () => {
+    const session = await openSession();
+    const runtime = webMcpSessions.get(session.sessionId);
+    const ws = connect(server.port, session.sessionId, token);
+    await ws.opened;
+
+    // Wind the deadline back to just short of expiry, as ten quiet minutes
+    // would. A pane with no navigation, no invocation and nothing else
+    // touching the registry is otherwise reaped out from under someone
+    // looking straight at it.
+    runtime.expiresAt = Date.now() + 1_000;
+    const before = runtime.expiresAt;
+
+    ws.ws.send(JSON.stringify({ type: "ping" }));
+    await ws.settle();
+    expect(runtime.expiresAt).toBeGreaterThan(before);
+  });
+
   it("closes 4404 when the session it is watching goes away", async () => {
     const session = await openSession();
     const ws = connect(server.port, session.sessionId, token);
@@ -390,6 +431,118 @@ describe("webmcp frames WS — lifecycle", () => {
 
     ws.ws.close();
     await vi.waitFor(() => expect(runtime.hub.listenerCount).toBe(0));
+  });
+});
+
+describe("ping message parsing", () => {
+  it("accepts a ping", () => {
+    expect(isFramePingMessage(JSON.stringify({ type: "ping" }))).toBe(true);
+  });
+
+  it("answers false for null WITHOUT throwing", () => {
+    // The case worth its own test: `JSON.parse("null")` succeeds and
+    // `typeof null` is `"object"`, so a naive `parsed.type` is a TypeError
+    // raised inside a socket message handler. Whether the adapter absorbs
+    // that is not something correctness should depend on.
+    expect(() => isFramePingMessage("null")).not.toThrow();
+    expect(isFramePingMessage("null")).toBe(false);
+  });
+
+  it("answers false for every other shape a client could send", () => {
+    for (const payload of [
+      '"ping"',
+      "42",
+      "true",
+      "[]",
+      '[{"type":"ping"}]',
+      "{",
+      "",
+      JSON.stringify({ type: "resize", cols: 80 }),
+      JSON.stringify({ type: null }),
+      JSON.stringify({}),
+    ]) {
+      expect(() => isFramePingMessage(payload), payload).not.toThrow();
+      expect(isFramePingMessage(payload), payload).toBe(false);
+    }
+  });
+});
+
+describe("callback socket selection", () => {
+  /** A `WSContext`-shaped object with whatever `raw` a test wants to try. */
+  function context(raw: unknown) {
+    const fallbackSends: unknown[] = [];
+    return {
+      fallbackSends,
+      ws: {
+        raw,
+        send: (data: unknown) => fallbackSends.push(data),
+      } as never,
+    };
+  }
+
+  it("uses a node-ws raw directly, so its send callback paces the stream", () => {
+    const calls: Array<[Uint8Array, unknown]> = [];
+    const raw = {
+      send: (data: Uint8Array, cb: () => void) => calls.push([data, cb]),
+      terminate: () => {},
+    };
+    const { ws } = context(raw);
+    const sink = toCallbackSocket(ws);
+    const bytes = new Uint8Array([1]);
+    sink.send(bytes, () => {});
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe(bytes);
+    // The callback reached the raw socket, which is the whole basis of the
+    // pacing: it fires when the OS actually took the bytes.
+    expect(typeof calls[0]![1]).toBe("function");
+  });
+
+  it("falls back for a browser-shaped raw that would ignore the callback", async () => {
+    // `WSContext.raw` is adapter-specific, and only node-`ws` promises the
+    // completion callback. A platform `send(data)` silently dropping a second
+    // argument would leave the pacer waiting forever on a callback that never
+    // comes — one frame sent, then a pane frozen with the stream healthy.
+    const rawSends: unknown[] = [];
+    const raw = { send: (data: unknown) => rawSends.push(data), readyState: 1 };
+    const { ws, fallbackSends } = context(raw);
+    const sink = toCallbackSocket(ws);
+
+    let settled = false;
+    sink.send(new Uint8Array([1]), () => {
+      settled = true;
+    });
+    // Routed through the WSContext, not the unrecognised raw…
+    expect(rawSends).toHaveLength(0);
+    expect(fallbackSends).toHaveLength(1);
+    // …and settled on a microtask, so pacing degrades to none rather than to
+    // a wedge.
+    expect(settled).toBe(false);
+    await Promise.resolve();
+    expect(settled).toBe(true);
+  });
+
+  it("falls back when there is no raw at all", async () => {
+    const { ws, fallbackSends } = context(undefined);
+    let settled = false;
+    toCallbackSocket(ws).send(new Uint8Array([1]), () => {
+      settled = true;
+    });
+    expect(fallbackSends).toHaveLength(1);
+    await Promise.resolve();
+    expect(settled).toBe(true);
+  });
+
+  it("keeps frames flowing through the fallback, never wedging", async () => {
+    const { ws, fallbackSends } = context({ send: () => {}, readyState: 1 });
+    const pacer = createFramePacer(toCallbackSocket(ws));
+    for (let i = 1; i <= 4; i += 1) {
+      pacer.push(new Uint8Array([i]));
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    // The property that matters: the pane keeps painting on an adapter this
+    // route does not recognise.
+    expect(fallbackSends).toHaveLength(4);
   });
 });
 
@@ -450,6 +603,39 @@ describe("frame pacer", () => {
     settle();
     pacer.push(bytes(4));
     expect(sent.map((b) => b[0])).toEqual([1, 2, 3, 4]);
+  });
+
+  it("keeps sending when the sink settles synchronously", () => {
+    // The fallback path a non-node adapter takes: no real completion signal,
+    // so the pacer degrades to no pacing rather than to a wedge.
+    const sent: Uint8Array[] = [];
+    const pacer = createFramePacer({
+      send: (b, cb) => {
+        sent.push(b);
+        cb();
+      },
+    });
+    pacer.push(bytes(1));
+    pacer.push(bytes(2));
+    pacer.push(bytes(3));
+    expect(sent.map((b) => b[0])).toEqual([1, 2, 3]);
+  });
+
+  it("wedges — by design — on a sink that never settles, which is why the adapter is checked", () => {
+    // This is the failure `toCallbackSocket` refuses to walk into: a platform
+    // `send(data)` that ignores a second argument leaves the callback
+    // unfired, so one frame goes out and the pane freezes forever. The pacer
+    // cannot detect that, which is why the ROUTE only hands it a raw socket it
+    // recognises as node-`ws`.
+    const sent: Uint8Array[] = [];
+    const pacer = createFramePacer({
+      send: (b) => {
+        sent.push(b);
+      },
+    });
+    pacer.push(bytes(1));
+    pacer.push(bytes(2));
+    expect(sent.map((b) => b[0])).toEqual([1]);
   });
 
   it("drops the held frame on close and sends nothing after it", () => {

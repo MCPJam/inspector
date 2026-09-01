@@ -66,6 +66,13 @@ export function notePainted(frame: { ts: number; seq: number }): void {
   if (!frameStatsEnabled()) return;
   const now = Date.now();
   push(captureToPaint, now - frame.ts);
+  // Expired HERE as well as on send. `noteInputSent` is not a reliable expiry
+  // point: a gesture followed by silence leaves its entry sitting until the
+  // next input, and a frame arriving minutes later would settle it as a
+  // multi-second "echo" — poisoning the one percentile this exists to report.
+  awaitingPaint = awaitingPaint.filter(
+    (entry) => now - entry.sentAt < INPUT_TIMEOUT_MS,
+  );
   const settled = awaitingPaint.filter((entry) => frame.seq > entry.afterSeq);
   if (settled.length === 0) return;
   awaitingPaint = awaitingPaint.filter((entry) => frame.seq <= entry.afterSeq);

@@ -456,9 +456,7 @@ export interface WebMcpBinaryFrame {
  * the decode side, and one file compiled for both ends is the only way the two
  * cannot drift.
  */
-export function encodeWebMcpBinaryFrame(
-  frame: WebMcpBinaryFrame,
-): Uint8Array {
+export function encodeWebMcpBinaryFrame(frame: WebMcpBinaryFrame): Uint8Array {
   const out = new Uint8Array(WEBMCP_FRAME_WS_HEADER_BYTES + frame.jpeg.length);
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
   view.setUint8(0, WEBMCP_FRAME_WIRE_VERSION);
@@ -493,8 +491,7 @@ function clampU16(value: number): number {
 export function decodeWebMcpBinaryFrame(
   buffer: ArrayBuffer | Uint8Array,
 ): WebMcpBinaryFrame | undefined {
-  const bytes =
-    buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   if (bytes.byteLength < WEBMCP_FRAME_WS_HEADER_BYTES) return undefined;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint8(0) !== WEBMCP_FRAME_WIRE_VERSION) return undefined;
@@ -503,10 +500,7 @@ export function decodeWebMcpBinaryFrame(
   // The declared length must match what actually arrived. A truncated message
   // would otherwise hand an `<img>` half a JPEG, which decodes to nothing and
   // leaves the pane blank with no way to tell why.
-  if (
-    jpegLength !==
-    bytes.byteLength - WEBMCP_FRAME_WS_HEADER_BYTES
-  ) {
+  if (jpegLength !== bytes.byteLength - WEBMCP_FRAME_WS_HEADER_BYTES) {
     return undefined;
   }
   return {
@@ -516,7 +510,12 @@ export function decodeWebMcpBinaryFrame(
     seq: view.getUint32(16, true),
     // A copy, not a view onto the socket's buffer: the caller holds this while
     // it decodes, and some transports reuse the underlying allocation.
-    jpeg: bytes.slice(WEBMCP_FRAME_WS_HEADER_BYTES),
+    //
+    // `new Uint8Array(subarray)` rather than `.slice()`, because a Node
+    // `Buffer` IS a `Uint8Array` and overrides `slice` to return a VIEW — so
+    // the one input where aliasing actually bites (a `ws` receive buffer) is
+    // exactly the one `.slice()` fails to copy.
+    jpeg: new Uint8Array(bytes.subarray(WEBMCP_FRAME_WS_HEADER_BYTES)),
   };
 }
 

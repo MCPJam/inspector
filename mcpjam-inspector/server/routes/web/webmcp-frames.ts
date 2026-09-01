@@ -120,6 +120,27 @@ export function resetWebMcpFramesForTests(): void {
   liveSockets.clear();
 }
 
+/**
+ * Whether a text control message is a ping.
+ *
+ * Its own function because the interesting case is not the happy one:
+ * `JSON.parse("null")` SUCCEEDS and returns `null`, and `typeof null` is
+ * `"object"`, so a naive `parsed.type` is a TypeError raised inside a socket
+ * `message` handler. Whether that throw is absorbed depends on the adapter,
+ * which is not a thing correctness should rest on — and as a plain function
+ * the rule is provable without a socket at all.
+ */
+export function isFramePingMessage(data: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null) return false;
+  return (parsed as { type?: unknown }).type === "ping";
+}
+
 /** A socket that reports when the OS actually took the bytes. */
 interface CallbackSocket {
   send(data: Uint8Array, cb: (error?: Error) => void): void;
@@ -189,9 +210,20 @@ export function createFramePacer(sink: CallbackSocket): FramePacer {
  * settles on a microtask: pacing degrades to none, which is worse than
  * self-clocking but is never a wedge.
  */
-function toCallbackSocket(ws: WSContext<unknown>): CallbackSocket {
-  const raw = ws.raw as { send?: unknown } | undefined;
-  if (raw && typeof raw.send === "function") {
+export function toCallbackSocket(ws: WSContext<unknown>): CallbackSocket {
+  const raw = ws.raw as { send?: unknown; terminate?: unknown } | undefined;
+  // `terminate` as well as `send`, because `WSContext.raw` is adapter-specific
+  // and only node-`ws` promises the completion callback. A platform
+  // `send(data)` that silently ignored a second argument would leave the pacer
+  // waiting on a callback that never comes — one frame sent, then a pane
+  // frozen forever. `terminate` is the Node-only method that tells that
+  // adapter apart from a browser-shaped WebSocket, which has send and
+  // readyState but not this.
+  if (
+    raw &&
+    typeof raw.send === "function" &&
+    typeof raw.terminate === "function"
+  ) {
     return raw as unknown as CallbackSocket;
   }
   return {
@@ -334,13 +366,19 @@ export function createWebMcpFramesWsHandler(
         // ordering domain would be a second way to get a drag wrong.
         const data = evt.data;
         if (typeof data !== "string") return;
-        let message: { type?: string };
+        if (!isFramePingMessage(data)) return;
+        // A ping is a viewer saying they are still watching, so it refreshes
+        // the idle deadline. Without this a session whose only audience is the
+        // pane — no navigation, no invocation, nothing else touching the
+        // registry — is reaped out from under someone looking straight at it.
+        // Bounded by the client's own 30s cadence, so it cannot be used to
+        // hold a session open faster than a real viewer would.
         try {
-          message = JSON.parse(data);
+          webMcpSessions.touch(webMcpSessions.get(sessionId));
         } catch {
-          return;
+          // Already gone; the session-event branch owns the close.
         }
-        if (message.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+        ws.send(JSON.stringify({ type: "pong" }));
       },
 
       onClose: (_evt, ws) => {
