@@ -89,7 +89,16 @@ export type WebMcpViewportTransport =
   /** No viewport at all: the browser is headless, so tools only. */
   | { kind: "headless" }
   | { kind: "remote-interactive-url"; url: string }
-  | { kind: "frame-stream" };
+  /**
+   * The page is streamed here as frames, and driven from here as input.
+   *
+   * Carries the surface's dimensions so the client can lay out (and letterbox)
+   * its pane BEFORE the first frame arrives. Waiting for a frame to learn the
+   * aspect ratio means the pane resizes under the viewer a moment after it
+   * appears, and any click landing in that moment is scaled against the wrong
+   * box.
+   */
+  | { kind: "frame-stream"; width: number; height: number };
 
 export interface WebMcpSessionPublic {
   sessionId: string;
@@ -112,6 +121,79 @@ export const WEBMCP_INSPECTOR_PROTOCOL_VERSION = 1 as const;
 /** Where an invocation came from. Both share one queue and one timeline. */
 export type WebMcpInvocationSource = "manual" | "chat";
 
+/**
+ * A modifier's state at the moment an event was produced.
+ *
+ * Sent per event rather than tracked server-side: the pane can lose focus
+ * mid-gesture (an alt-tab between keydown and keyup), and a server holding its
+ * own idea of "shift is down" would then apply it to every later click with
+ * nothing to correct it.
+ */
+export interface WebMcpInputModifiers {
+  alt?: boolean;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+}
+
+/**
+ * One thing a person did to the pane, in the FRAME's device pixels.
+ *
+ * Coordinates are scaled on the client, because only the client knows the
+ * rendered size of its pane and how the picture is letterboxed inside it. It
+ * scales against the dimensions of the frame it is looking at, so the mapping
+ * is exact even mid-resize.
+ */
+export type WebMcpInputEvent =
+  | {
+      kind: "mouse_move";
+      x: number;
+      y: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | {
+      kind: "mouse_down";
+      x: number;
+      y: number;
+      button: WebMcpMouseButton;
+      clickCount?: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | {
+      kind: "mouse_up";
+      x: number;
+      y: number;
+      button: WebMcpMouseButton;
+      clickCount?: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | {
+      kind: "wheel";
+      x: number;
+      y: number;
+      deltaX: number;
+      deltaY: number;
+      modifiers?: WebMcpInputModifiers;
+    }
+  | { kind: "key_down"; key: string; modifiers?: WebMcpInputModifiers }
+  | { kind: "key_up"; key: string; modifiers?: WebMcpInputModifiers }
+  /**
+   * Text as the person actually produced it, not a key sequence.
+   *
+   * Its own event because paste and IME composition have no keystrokes to
+   * replay: reconstructing "日本語" or a pasted paragraph as key events would
+   * be wrong in a different way on every keyboard layout.
+   */
+  | { kind: "text"; text: string };
+
+export type WebMcpMouseButton = "left" | "middle" | "right";
+
+/** Most events a single `input` command may carry. */
+export const WEBMCP_INPUT_BATCH_LIMIT = 64;
+
+/** Longest run of text one `text` event may carry. */
+export const WEBMCP_INPUT_TEXT_MAX_CHARS = 4 * 1024;
+
 export type WebMcpCommand =
   | { type: "navigate"; url: string }
   | { type: "reload" }
@@ -123,13 +205,31 @@ export type WebMcpCommand =
       source: WebMcpInvocationSource;
     }
   | { type: "cancel_invocation"; invokeId: string }
-  | { type: "capture_screenshot" };
+  | { type: "capture_screenshot" }
+  /**
+   * Turn the viewport stream on or off. DEMAND-DRIVEN on purpose: a page
+   * nobody is looking at should not be encoding JPEGs, so the client asks for
+   * frames when its pane is visible and stops asking when it is not.
+   */
+  | { type: "set_screencast"; enabled: boolean }
+  /**
+   * Drive the page from the pane.
+   *
+   * A BATCH, never a single event. Pointer movement is the flooding vector — a
+   * drag across the pane produces hundreds of events a second — and batching
+   * solves that at the transport rather than asking every caller to remember to
+   * rate-limit. The route bounds the array, so one request can never carry an
+   * unbounded amount of work.
+   */
+  | { type: "input"; events: WebMcpInputEvent[] };
 
 export type WebMcpCommandResult =
   | { ok: true }
   | { ok: true; invokeId: string }
   | { ok: true; cancelled: boolean }
-  | { ok: true; screenshotBase64?: string };
+  | { ok: true; screenshotBase64?: string }
+  /** `set_screencast`: whether frames are actually flowing now. */
+  | { ok: true; streaming: boolean };
 
 /** Terminal state of an invocation, ours rather than CDP's. */
 export type WebMcpInvocationState =
@@ -197,6 +297,33 @@ export type WebMcpActivityEntry =
   | { id: string; ts: number; kind: "session_error"; message: string }
   | { id: string; ts: number; kind: "unsupported"; message: string };
 
+/**
+ * One painted frame of the inspected page, for the `frame-stream` viewport.
+ *
+ * TRANSIENT, and deliberately not an activity entry. Frames never enter the
+ * replay ring, never appear in an export, and carry no history worth keeping:
+ * the only interesting frame is the current one. That is also why they are
+ * distinct from the `screenshotBase64` on an invocation entry, which is
+ * PERSISTED EVIDENCE at a much smaller budget — a frame may even predate the
+ * settle it appears beside, because coalescing keeps the last *paint* rather
+ * than the paint at any particular moment. Never source one from the other.
+ *
+ * The device dimensions ride on every frame rather than being read from
+ * {@link WEBMCP_VIEWPORT}: the client scales pointer coordinates against them,
+ * and a frame whose dimensions came from somewhere other than the frame itself
+ * would put clicks in the wrong place the moment the two disagreed.
+ */
+export interface WebMcpFrame {
+  /** Base64 JPEG, capped at {@link WEBMCP_FRAME_MAX_BYTES}. */
+  data: string;
+  /** Width of the captured surface, in device pixels. */
+  deviceWidth: number;
+  /** Height of the captured surface, in device pixels. */
+  deviceHeight: number;
+  /** Wall-clock capture time. */
+  ts: number;
+}
+
 export type WebMcpEvent =
   | { type: "session"; seq: number; session: WebMcpSessionPublic }
   /**
@@ -205,7 +332,14 @@ export type WebMcpEvent =
    * correct on arrival no matter what it missed.
    */
   | { type: "tools"; seq: number; tools: WebMcpToolDescriptor[] }
-  | { type: "activity"; seq: number; entry: WebMcpActivityEntry };
+  | { type: "activity"; seq: number; entry: WebMcpActivityEntry }
+  /**
+   * Coalesced, not queued: the hub keeps ONE of these per session and replaces
+   * it, so a page animating at 10fps cannot flush the activity ring. `seq` is
+   * still stamped from the session's own counter so a replayed frame sorts into
+   * place beside the events around it.
+   */
+  | { type: "frame"; seq: number; frame: WebMcpFrame };
 
 /**
  * Cap on a result, both for what we persist in the timeline and what a model
@@ -233,6 +367,25 @@ export const WEBMCP_TOOL_DESCRIPTION_MAX_CHARS = 512;
 export const WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8 * 1024;
 
 export const WEBMCP_VIEWPORT = { width: 1280, height: 800 } as const;
+
+/** JPEG quality for streamed frames. Legible text, roughly a tenth the bytes. */
+export const WEBMCP_FRAME_QUALITY = 50;
+
+/**
+ * Hard cap on one streamed frame.
+ *
+ * Four times the 64 KiB budget the timeline's screenshots live under, and
+ * deliberately so: a frame is TRANSIENT — it is replaced by the next paint and
+ * never persisted — so the cost of a big one is one SSE write, not a permanent
+ * entry in an export. An oversized frame is DROPPED rather than re-encoded in
+ * the hot path; the provider converges the pane by publishing one budgeted
+ * screenshot instead, so a page whose final paint never fits still stops being
+ * stale.
+ */
+export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
+
+/** Floor on the gap between published frames: 10fps. */
+export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
 
 /** Marker appended to a truncated string result. */
 export function truncationMarker(totalBytes: number): string {

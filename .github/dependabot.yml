@@ -1,0 +1,103 @@
+# Dependabot configuration.
+#
+# Why this file exists: before it landed, this repo raised alerts but never
+# acted on them. Dependabot security updates were off and no config existed,
+# so a critical protobufjs RCE advisory sat open for 124 days (2026-04-16 →
+# 2026-08-18) and was cleared only because a human happened to look. Alerts
+# without update PRs are a reporting system, not a remediation one.
+#
+# Grouping is load-bearing, not cosmetic. There are ~400 open alerts; turning
+# security updates on WITHOUT groups opens a PR per advisory, and a flood of
+# several hundred PRs gets ignored in exactly the way the alerts did.
+
+version: 2
+updates:
+  # --------------------------------------------------------------- workspace
+  - package-ecosystem: npm
+    directories:
+      - "/"
+      # Standalone: has its own committed manifest + lockfile and is NOT a root
+      # npm workspace, so the workspace entry above does not cover it.
+      - "/mcpjam-inspector/test-servers/mcp-check-fixture"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # The desktop packaging chain gets its own groups. dependabot-auto-merge
+      # holds any PR that TOUCHES electron/sharp/@electron*, so leaving these
+      # packages inside the general groups holds the entire group hostage: the
+      # first weekly sync's 29-update dev group (#4558) was held for one
+      # packaging package while 28 auto-mergeable bumps sat behind it. Carving
+      # them out keeps the hold blast radius to exactly the packages it is for.
+      desktop-packaging:
+        applies-to: version-updates
+        patterns: ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+        update-types: [minor, patch]
+      desktop-packaging-security:
+        applies-to: security-updates
+        patterns: ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+      production-dependencies:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: [minor, patch]
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+      development-dependencies:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: [minor, patch]
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+      # Security updates group separately so an advisory PR is never queued
+      # behind a routine version bump.
+      security-production:
+        applies-to: security-updates
+        dependency-type: production
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+      security-development:
+        applies-to: security-updates
+        dependency-type: development
+        exclude-patterns:
+          ["electron", "sharp", "@electron/*", "@electron-forge/*"]
+    # Deliberately NO `ignore` rules for electron / sharp majors. `ignore`
+    # suppresses SECURITY updates as well as version updates, so such a rule
+    # would have hidden the Electron 37 → 43 bump (#4081) that cleared 31
+    # advisories. Those packages are held back from AUTO-MERGE instead — see
+    # dependabot-auto-merge.yml — so a human reads them, never so they vanish.
+
+  # ------------------------------------------------------------ example apps
+  # Each example ships its own lockfile, so each is a separate Dependabot
+  # target. Together they are ~70% of open-alert volume while shipping nothing
+  # to users, which is why extracting them to a public examples repo is under
+  # discussion. Keep this block contiguous so it deletes in one cut.
+  - package-ecosystem: npm
+    directories:
+      - "/examples/conformance/basic"
+      - "/examples/evals/asana"
+      - "/examples/evals/brightdata"
+      - "/examples/mcp-apps/express-react-template"
+      - "/examples/mcp-apps/flashcards-supabase"
+      - "/examples/mcp-apps/reservation-app"
+      - "/examples/mcp-apps/sip-cocktails"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      example-dependencies:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+      example-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # --------------------------------------------------------- GitHub Actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]

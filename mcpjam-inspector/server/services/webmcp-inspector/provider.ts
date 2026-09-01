@@ -13,6 +13,8 @@
  * at once.
  */
 import type {
+  WebMcpFrame,
+  WebMcpInputEvent,
   WebMcpToolAnnotations,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
@@ -55,6 +57,15 @@ export interface WebMcpSessionCallbacks {
    */
   onActivityObserved(): void;
   onCrashed(message: string): void;
+  /**
+   * A painted frame of the page, for the `frame-stream` viewport.
+   *
+   * Deliberately NOT routed through `onActivityObserved`. A page with a CSS
+   * spinner paints forever, so a frame that ticked the idle clock would make an
+   * abandoned session unreapable — the browser would sit open until its hard
+   * lifetime ran out, holding a capacity slot nobody is using.
+   */
+  onFrame(frame: WebMcpFrame): void;
 }
 
 export interface WebMcpInvokeRequest {
@@ -74,14 +85,61 @@ export interface WebMcpBrowserSession {
   captureScreenshot(): Promise<string | undefined>;
   currentUrl(): string;
   viewportTransport(): WebMcpViewportTransport;
+  /**
+   * Start or stop streaming frames, reporting whether frames are now flowing.
+   *
+   * The RETURN VALUE is what lets the client fall back. A provider with no
+   * screencast (the hosted one drives its own stream) answers `false`, and so
+   * does one whose browser refused `Page.startScreencast` — and the client
+   * polls screenshots instead of sitting on "Waiting for the first frame…"
+   * forever. Reporting a failed start as success is the same bug as not having
+   * a fallback at all.
+   *
+   * Idempotent: the client asks on every pane mount and every visibility
+   * change, so "already on" is a no-op rather than a second encoder. Must
+   * never throw — the client asks unconditionally, and a throw would surface as
+   * a failed command on a session whose viewport may be working fine.
+   */
+  setScreencast(enabled: boolean): Promise<boolean>;
+  /**
+   * Apply a batch of input to the page, in order.
+   *
+   * A batch rather than one event at a time because pointer movement floods:
+   * the transport above coalesces moves and flushes on a short interval, and
+   * ordering within a batch is what makes a down-move-up sequence a drag rather
+   * than three unrelated events.
+   *
+   * A provider that cannot be driven this way (the hosted one, whose viewport
+   * is driven through the Browser panel instead) logs and returns.
+   */
+  dispatchInput(events: WebMcpInputEvent[]): Promise<void>;
   /** Idempotent, and must not hang: teardown races a timeout internally. */
   dispose(): Promise<void>;
 }
+
+/**
+ * WHERE the person looks at, and drives, the page.
+ *
+ * `window` is the original behaviour: a real Chrome window on the developer's
+ * own machine, which they drive directly with their own devtools open. The
+ * inspector streams a view of it, but the window is the surface.
+ *
+ * `embedded` has no window at all. The browser runs headless and the streamed
+ * pane is the only way to see or touch the page, which is why an embedded
+ * session starts its screencast without being asked: a headless browser with no
+ * stream is a session with no viewport, and nothing would ever turn it on.
+ */
+export type WebMcpViewportMode = "window" | "embedded";
 
 export interface CreateWebMcpSessionOptions {
   url: string;
   /** False only in tests; a user-facing session always opens a real window. */
   headless?: boolean;
+  /**
+   * Defaults to `window`, so a caller that omits it gets exactly the V1
+   * behaviour. `embedded` implies headless regardless of the flag above.
+   */
+  viewportMode?: WebMcpViewportMode;
   callbacks: WebMcpSessionCallbacks;
 }
 

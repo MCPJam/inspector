@@ -381,6 +381,13 @@ export function buildHostedStepHandlers(
         accounting.userMessage,
         accounting.assistantMessage,
       );
+      // The trace transcript moves at every site the model transcript does; a
+      // pinned turn is inspector-executed (no harness narration to enrich), so
+      // its slice is identical in both.
+      acc.traceMessageHistory.push(
+        accounting.userMessage,
+        accounting.assistantMessage,
+      );
       (acc.toolsCalledByPrompt[turnOrdinal] ??= []).push(
         ...accounting.toolCalls,
       );
