@@ -22,8 +22,14 @@ const handlers = vi.hoisted(() => ({
   localOrg: vi.fn(async (_opts: unknown) => new Response("org-local")),
 }));
 
+// A real `PersistChatOutcome`, not a stub token: the continuation case below
+// takes its `expectedVersion` from the version the previous turn's save
+// returned, which is how the client builds one.
 const persistMock = vi.hoisted(() =>
-  vi.fn(async (_payload: unknown) => ({ outcome: "ok" as const })),
+  vi.fn(async (_payload: unknown) => ({
+    outcome: "saved" as const,
+    version: 7,
+  })),
 );
 
 vi.mock("../mcpjam-stream-handler.js", () => ({
@@ -123,25 +129,55 @@ function args(persistOverrides: Record<string, unknown>) {
   };
 }
 
+type PersistCallback = (history: unknown[], trace: unknown) => Promise<unknown>;
+
+/**
+ * Run one turn and hand back the persist callback it built, undriven.
+ *
+ * Reads the NEWEST handler call rather than the first, so a test can run a
+ * second turn on top of a first — which is what an honest continuation needs.
+ */
+async function startTurn(
+  persistOverrides: Record<string, unknown>,
+): Promise<PersistCallback> {
+  await streamWebChatTurn(args(persistOverrides) as never);
+  const opts = handlers.mcpjamFree.mock.calls.at(-1)?.[0] as
+    { onConversationComplete?: PersistCallback } | undefined;
+  expect(opts?.onConversationComplete).toBeTypeOf("function");
+  return opts!.onConversationComplete!;
+}
+
+/** Run one turn, drive its persist, and return the payload it wrote. */
+async function persistOneTurn(
+  persistOverrides: Record<string, unknown>,
+  fullHistory: unknown[] = [],
+): Promise<Record<string, unknown>> {
+  const before = persistMock.mock.calls.length;
+  const onConversationComplete = await startTurn(persistOverrides);
+  await onConversationComplete(fullHistory, { turnId: "t1" });
+  // One turn wrote exactly one record — this keeps the `.at(-1)` reads from
+  // silently reporting on some earlier turn's payload.
+  expect(persistMock.mock.calls.length).toBe(before + 1);
+  return persistMock.mock.calls.at(-1)![0] as Record<string, unknown>;
+}
+
+/** The outcome the most recent persist resolved with. */
+async function lastPersistOutcome(): Promise<{ version?: number }> {
+  return (await persistMock.mock.results.at(-1)!.value) as { version?: number };
+}
+
+function resumeConfigOf(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  expect(payload.resumeConfig).toBeDefined();
+  return payload.resumeConfig as Record<string, unknown>;
+}
+
 /** Run one turn and return the `resumeConfig` it persisted. */
 async function persistedResumeConfig(
   persistOverrides: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  await streamWebChatTurn(args(persistOverrides) as never);
-  const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as
-    | {
-        onConversationComplete?: (
-          history: unknown[],
-          trace: unknown,
-        ) => Promise<unknown>;
-      }
-    | undefined;
-  expect(opts?.onConversationComplete).toBeTypeOf("function");
-  await opts!.onConversationComplete!([], { turnId: "t1" });
-  const payload = persistMock.mock.calls[0]?.[0] as
-    { resumeConfig?: Record<string, unknown> } | undefined;
-  expect(payload?.resumeConfig).toBeDefined();
-  return payload!.resumeConfig!;
+  return resumeConfigOf(await persistOneTurn(persistOverrides));
 }
 
 describe("browser Playground turn records its execution target", () => {
@@ -173,18 +209,70 @@ describe("browser Playground turn records its execution target", () => {
     expect("environmentId" in resumeConfig).toBe(false);
   });
 
-  it("re-sends the pin on a continuation instead of pinning locally", async () => {
-    // The inspector deliberately does NOT try to enforce first-write-wins
-    // itself: `preserveAgentResumePins` does that at the ingest boundary, so a
-    // continuation carrying a different environment cannot rewrite what the
-    // conversation already recorded. Sending it every turn is what lets a
-    // session created before this field existed get filled in on its next turn
-    // rather than staying unpinned forever — the same reasoning the v1 agent
-    // route already documents for its four pins.
-    const resumeConfig = await persistedResumeConfig({
-      environmentId: "env_second_turn",
+  it("treats a null environment id as no target, not as a pin", async () => {
+    // Same rule as `""`, one rung lower: only a truthy id is a target. A
+    // `persist.environmentId !== undefined` gate would write `null` here, and
+    // a recorded null is a recorded answer.
+    const resumeConfig = await persistedResumeConfig({ environmentId: null });
+    expect("environmentId" in resumeConfig).toBe(false);
+  });
+
+  it("re-sends the pin on a REAL continuation instead of pinning locally", async () => {
+    // TURN 1 — a fresh conversation. This is what creates the already-pinned
+    // session the second turn continues from; without it the assertion below
+    // would just be the first test again.
+    const first = await persistOneTurn({ environmentId: "env_first_turn" });
+    expect(resumeConfigOf(first).environmentId).toBe("env_first_turn");
+    const savedVersion = (await lastPersistOutcome()).version;
+    expect(savedVersion).toBeTypeOf("number");
+
+    // TURN 2 — an ACTUAL continuation of that session: the same chat session
+    // id, the first exchange replayed back in, and the CAS baseline the client
+    // took from turn 1's save. And it ran somewhere ELSE, which is the only
+    // arrangement that can tell the three candidate behaviours apart.
+    const prior = [
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+    ];
+    const second = await persistOneTurn(
+      {
+        environmentId: "env_second_turn",
+        originalMessages: prior,
+        expectedVersion: savedVersion,
+      },
+      prior,
+    );
+
+    // The continuation state really reached the writer. If these ever stopped
+    // holding, the assertion below would be proving nothing about a
+    // continuation — it would be a duplicate of the first test wearing a
+    // different name, which is what this test replaced.
+    expect(second.chatSessionId).toBe(first.chatSessionId);
+    expect(second.expectedVersion).toBe(savedVersion);
+    expect((second.sessionMessages as unknown[]).length).toBe(prior.length);
+
+    // THE POINT. The second turn still records what IT ran on:
+    //   - not absent  (a "the session already has a pin, skip it" local gate),
+    //   - not `env_first_turn`  (a local first-write-wins replay).
+    // First-write-wins is `preserveAgentResumePins`'s job at the ingest
+    // boundary, not this process's. Sending unconditionally is also the only
+    // way a session created before this field existed ever acquires one.
+    expect(resumeConfigOf(second).environmentId).toBe("env_second_turn");
+  });
+
+  it("propagates a rejected persist to the engine rather than swallowing it", async () => {
+    // `onConversationComplete`'s result becomes the turn's
+    // `data-persist-receipt`, so the client is TOLD what happened to its save.
+    // A swallowed rejection would resolve as "nothing to report" and the
+    // conversation would look saved when it was not.
+    const onConversationComplete = await startTurn({
+      environmentId: "env_abc123",
     });
-    expect(resumeConfig.environmentId).toBe("env_second_turn");
+    persistMock.mockRejectedValueOnce(new Error("ingest exploded"));
+    await expect(
+      onConversationComplete([], { turnId: "t1" }),
+    ).rejects.toThrowError("ingest exploded");
+    expect(persistMock).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the other resume fields untouched", async () => {
