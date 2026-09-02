@@ -705,6 +705,11 @@ export class PlatformApiClient {
    * per-attempt key deduplicates nothing: a timeout-and-retry would run and
    * bill the turn twice. With a stable key, a retry replays the completed
    * turn instead.
+   *
+   * `hostId` names the saved host (client) the turn executes as, which is what
+   * decides between MCPJam's emulated engine and a real agent harness. It is
+   * PER-TURN, not pinned: re-send it on every turn. The response's `engine`
+   * field always names what actually ran.
    */
   sendChatMessage(
     params: {
@@ -713,6 +718,7 @@ export class PlatformApiClient {
       projectId?: string;
       sessionId?: string;
       modelId?: string;
+      hostId?: string;
       environmentId?: string;
       serverIds?: string[];
       systemPrompt?: string;
@@ -744,6 +750,7 @@ export class PlatformApiClient {
             ? { sessionId: params.sessionId }
             : {}),
           ...(params.modelId !== undefined ? { modelId: params.modelId } : {}),
+          ...(params.hostId !== undefined ? { hostId: params.hostId } : {}),
           ...(params.environmentId !== undefined
             ? { environmentId: params.environmentId }
             : {}),

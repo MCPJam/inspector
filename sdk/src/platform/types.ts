@@ -360,6 +360,18 @@ export interface PlatformChatTurn {
   usage?: PlatformTurnUsage;
   model?: { id: string; provider: string };
   toolMode?: PlatformToolMode;
+  /**
+   * WHICH ENGINE RAN: `"emulated"` or `"harness:<id>"` (e.g.
+   * `"harness:claude-code"`).
+   *
+   * Read it rather than assume. A turn that named a harness host but omitted
+   * `hostId` — it is per-turn, not pinned — runs the emulated engine, and this
+   * is the field that says so instead of leaving the caller to infer it from
+   * the model id.
+   */
+  engine?: string;
+  /** The saved host this turn executed as, when it named one. */
+  hostId?: string;
   advertisedToolCount?: number;
   excludedToolCount?: number;
   persisted: { outcome: string; version?: number };

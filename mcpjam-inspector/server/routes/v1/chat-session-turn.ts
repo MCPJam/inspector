@@ -39,6 +39,15 @@
  * verify, and the operation description says so. `auto` advertises everything
  * and may cause real side effects through arbitrary third-party tools.
  *
+ * HOST TARGETING SAYS WHICH ENGINE RUNS. A turn may name a saved host — by
+ * `hostId`, or implicitly through the environment that pins one — and the
+ * server re-fetches that host's authoritative runtime config to decide between
+ * MCPJam's emulated engine and a real agent harness. `harness`/`computer` are
+ * never read from the request body. When a harness-declaring target cannot run
+ * here the turn is REFUSED before it spends, never quietly downgraded, and
+ * every response names the engine it ran on. See `chat-session-host-target.ts`
+ * for the rules and why each refusal exists.
+ *
  * CONFIG IS FIRST-TURN-ONLY. Model, target, system prompt and tool mode pin at
  * session creation and are stored in `resumeConfig`; a continuation that
  * resends any of them is refused with `CONFIG_ON_CONTINUATION` rather than
@@ -81,6 +90,16 @@ import {
 } from "../../services/environments/effective-capabilities.js";
 import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import { captureServerEvent } from "../../utils/analytics.js";
+import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
+import {
+  assertHarnessDispatchable,
+  assertHostPointerAgreement,
+  engineLabel,
+  resolveChatSessionEngine,
+  type ChatSessionEngine,
+  type ChatSessionHostTarget,
+} from "./chat-session-host-target.js";
 import { v1Error, v1Resource } from "./envelope.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
@@ -192,6 +211,29 @@ const turnSchema = z
         },
       ),
     modelId: z.string().min(1).optional(),
+    /**
+     * The saved host (client) this turn executes AS — an opaque pointer, and
+     * the ONLY way this surface learns which engine to run.
+     *
+     * The server re-fetches the host's authoritative runtime config by this id
+     * and reads `harness` / `computer` from there. Neither is accepted from
+     * the body: this is a `strictObject`, so a body carrying `harness` is a
+     * 400 rather than a hint the route might honour.
+     *
+     * DELIBERATELY NOT IN {@link CONFIG_FIELDS}, and therefore not pinned. The
+     * backend's ingest boundary projects `resumeConfig` through
+     * `AGENT_RESUME_PIN_KEYS`, which does not carry a host — a `hostId` added
+     * there would validate, return 200 and be dropped, so pinning it would
+     * refuse every continuation for restating a pin that never persisted. It
+     * is per-turn for exactly the reason `allowedServerIds` is: re-send it on
+     * every turn you want it applied to. The response's `engine` field is the
+     * receipt — a continuation that forgot it reports `emulated`, out loud.
+     *
+     * An ENVIRONMENT target needs none of this: it resolves its own host
+     * server-side on every turn, including continuations, because
+     * `environmentId` IS a pin.
+     */
+    hostId: z.string().min(1).optional(),
     environmentId: z.string().min(1).optional(),
     serverIds: z.array(z.string().min(1)).min(1).max(20).optional(),
     systemPrompt: z.string().max(8_000).optional(),
@@ -360,6 +402,15 @@ interface ResolvedTarget {
    */
   environmentCapabilities?: EffectiveCapabilitySet;
   /**
+   * The host this turn executes as, resolved SERVER-SIDE — from the
+   * environment's own `spec.host`, or by re-fetching an explicit `hostId`.
+   *
+   * Absent for a bare `serverIds` turn with no host pointer, which is the
+   * pre-existing shape and always runs the emulated engine. Present ⇒ its
+   * `runtimeConfig` is the only source of `harness`/`computer` for this turn.
+   */
+  host?: ChatSessionHostTarget;
+  /**
    * Built-in tool ids the target's client advertises that THIS surface does
    * not run — see {@link unappliedBuiltInToolIds}.
    */
@@ -393,30 +444,139 @@ function unappliedBuiltInToolIds(runtimeConfig: unknown): string[] {
 }
 
 /**
- * Resolve which MCP servers this turn talks to.
+ * Read the host's OWN server selection, for a turn that named only a host.
  *
- * The caller names an environment or a list of server IDS — never raw server
- * CONFIGS. That is the same rule the eval run-start route enforces: accepting
- * configs on a public endpoint would let a caller point our egress at an
- * arbitrary host under their own project's credentials.
+ * Server-authoritative by construction: it comes off the fetched runtime
+ * config, never the body. A malformed field reads as EMPTY rather than being
+ * partially salvaged — connecting a subset of what a host declares would run a
+ * configuration nobody chose.
+ */
+function hostSelectedServerIds(
+  runtimeConfig: Record<string, unknown>,
+): string[] {
+  const ids = runtimeConfig.selectedServerIds;
+  if (!Array.isArray(ids)) return [];
+  return ids.every((id) => typeof id === "string" && id.length > 0)
+    ? (ids as string[])
+    : [];
+}
+
+/**
+ * Re-fetch a host's authoritative runtime config, and FAIL CLOSED.
+ *
+ * The same fetch and the same fail-closed posture as `routes/web/chat-v2.ts`'s
+ * host-bound branch, for the same reason: this config is the only source of
+ * `harness`, so falling back to "no host config" would silently run the
+ * emulated engine for a host that declares a real runtime — the exact
+ * misattribution this whole path exists to prevent.
+ */
+async function fetchExplicitHostTarget(
+  hostId: string,
+  context: { authHeader: string; signal?: AbortSignal },
+): Promise<ChatSessionHostTarget> {
+  const runtime = await fetchHostRuntimeConfig({
+    hostId,
+    bearer: context.authHeader,
+    ...(context.signal ? { signal: context.signal } : {}),
+  });
+  if (!runtime.ok) {
+    logger.warn("[v1/chat-session-turn] host runtime-config fetch failed", {
+      hostId,
+      status: runtime.status,
+      error: runtime.error,
+    });
+    // A 403 collapses to 404, the rule this module already applies to
+    // sessions: refusal and absence must read identically, or the endpoint
+    // becomes an existence oracle for hosts the caller cannot see.
+    const [status, code] =
+      runtime.status >= 500
+        ? ([502, ErrorCode.SERVER_UNREACHABLE] as const)
+        : runtime.status === 401
+        ? ([401, ErrorCode.UNAUTHORIZED] as const)
+        : ([404, ErrorCode.NOT_FOUND] as const);
+    throw new WebRouteError(
+      status,
+      code,
+      `Couldn't load host "${hostId}", so the turn was stopped rather than run on the wrong engine. ${runtime.error}`,
+      { reason: "HOST_UNRESOLVED", hostId },
+    );
+  }
+  return {
+    hostId,
+    runtimeConfig: runtime.config as unknown as Record<string, unknown>,
+    source: "host",
+  };
+}
+
+/**
+ * Resolve which MCP servers this turn talks to, and which host it runs as.
+ *
+ * The caller names an environment, a list of server IDS, or a host — never raw
+ * server CONFIGS. That is the same rule the eval run-start route enforces:
+ * accepting configs on a public endpoint would let a caller point our egress
+ * at an arbitrary host under their own project's credentials.
+ *
+ * A `hostId` alongside an environment is an ASSERTION, not a second target:
+ * the environment pins its own host, and a pointer naming a different one is
+ * refused rather than resolved by precedence.
  */
 async function resolveTarget(
   client: ConvexHttpClient,
   projectId: string,
-  input: { environmentId?: string; serverIds?: string[] },
+  input: { environmentId?: string; serverIds?: string[]; hostId?: string },
+  hostContext: { authHeader: string; signal?: AbortSignal },
 ): Promise<ResolvedTarget> {
+  // Fetched ONCE, before either branch, so a host pointer costs the same round
+  // trip whichever way the target names its servers.
+  const explicitHost = input.hostId
+    ? await fetchExplicitHostTarget(input.hostId, hostContext)
+    : undefined;
+
   if (input.serverIds && input.serverIds.length > 0) {
-    return { serverIds: input.serverIds };
+    return {
+      serverIds: input.serverIds,
+      ...(explicitHost ? { host: explicitHost } : {}),
+      ...(explicitHost
+        ? withUnappliedCapabilities(explicitHost.runtimeConfig)
+        : {}),
+    };
   }
   if (!input.environmentId) {
+    if (explicitHost) {
+      // Host-only target: the servers are the ones the HOST selected. Reading
+      // them here (rather than making the caller restate them) keeps the whole
+      // execution shape server-authoritative — the same set the Playground
+      // would connect for this host.
+      const serverIds = hostSelectedServerIds(explicitHost.runtimeConfig);
+      if (serverIds.length === 0) {
+        throw new WebRouteError(
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          `Host "${input.hostId}" selects no MCP servers, so there is nothing to connect. Attach servers to the host, or pass environmentId/serverIds alongside it.`,
+        );
+      }
+      return {
+        serverIds,
+        host: explicitHost,
+        ...withUnappliedCapabilities(explicitHost.runtimeConfig),
+      };
+    }
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "A first turn must name its target: pass environmentId or serverIds.",
+      "A first turn must name its target: pass environmentId, serverIds, or hostId.",
     );
   }
   const spec = await resolveEnvironmentForRuntime(client, {
     projectId,
+    environmentId: input.environmentId,
+  });
+  // The environment already decided which host runs this turn. A contradicting
+  // pointer is rejected here — before any connection, any model resolution and
+  // any spend — rather than silently preferring one of the two.
+  assertHostPointerAgreement({
+    ...(input.hostId ? { requestedHostId: input.hostId } : {}),
+    environmentHostId: spec.host.hostId,
     environmentId: input.environmentId,
   });
   const serverIds = runtimeServerIds(spec);
@@ -447,8 +607,34 @@ async function resolveTarget(
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
     environmentId: input.environmentId,
     environmentCapabilities: resolveEffectiveCapabilities(spec, attribution),
+    // The environment's OWN host, resolved by the backend in the same atomic
+    // read as its server set. This is what makes a harness environment run its
+    // harness on a CONTINUATION too: `environmentId` is a resume pin, so every
+    // turn re-resolves the host from scratch and nothing has to be re-sent.
+    host: {
+      hostId: spec.host.hostId,
+      runtimeConfig: spec.host.runtimeConfig,
+      source: "environment",
+    },
     ...(unappliedCapabilities.length > 0 ? { unappliedCapabilities } : {}),
   };
+}
+
+/**
+ * The `unappliedCapabilities` field, spread-only-when-present.
+ *
+ * Extended to the explicit-host path so a `hostId` turn reports the same gap an
+ * environment turn already did. It OVER-reports on a harness turn — the harness
+ * has its own shell and file tools in its sandbox, so `bash` is not really
+ * missing there — and that is the safe direction for an advisory field: naming
+ * a capability the turn may in fact have costs a caller a second look, whereas
+ * omitting one it genuinely lacks is the silent gap this field exists to close.
+ */
+function withUnappliedCapabilities(
+  runtimeConfig: Record<string, unknown>,
+): { unappliedCapabilities?: string[] } {
+  const unappliedCapabilities = unappliedBuiltInToolIds(runtimeConfig);
+  return unappliedCapabilities.length > 0 ? { unappliedCapabilities } : {};
 }
 
 // ── Tool policy ─────────────────────────────────────────────────────────────
@@ -915,10 +1101,27 @@ async function handleTurn(c: Context): Promise<Response> {
     leaseTurnId = lease.turnId;
 
     // --- Target + model ---------------------------------------------------
-    const target = await resolveTarget(client, projectId, {
-      ...(pins.environmentId ? { environmentId: pins.environmentId } : {}),
-      ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
-    });
+    const target = await resolveTarget(
+      client,
+      projectId,
+      {
+        ...(pins.environmentId ? { environmentId: pins.environmentId } : {}),
+        ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
+        // Per-turn, off the BODY on every turn including continuations — it is
+        // not a resume pin (see the schema's note on why it cannot be one).
+        ...(body.hostId ? { hostId: body.hostId } : {}),
+      },
+      // The turn's own controller, so a host fetch stops with the turn rather
+      // than running on to its own timeout after the caller has gone.
+      { authHeader, signal: abortController.signal },
+    );
+    // A host-only first turn pinned no target of its own: its servers came off
+    // the host's server-authoritative selection. Pin the RESOLVED set so a
+    // continuation still has something to connect — `hostId` is not carried by
+    // the ingest boundary's `resumeConfig` projection, so it cannot be the pin.
+    if (!pins.environmentId && !pins.serverIds) {
+      pins = { ...pins, serverIds: target.serverIds };
+    }
     // Narrowed as PAIRS. `createManualHostedConnection` pairs ids and names
     // POSITIONALLY (`buildServerNamesById`), so filtering the ids while
     // passing the target's original name array would relabel every server
@@ -958,6 +1161,47 @@ async function handleTurn(c: Context): Promise<Response> {
       projectId,
       auth: { authHeader },
     });
+
+    // --- Engine pre-flight ------------------------------------------------
+    //
+    // BEFORE the connection and before any model call, so a harness host whose
+    // runtime is unavailable costs nothing and gets ONE clear error naming the
+    // missing piece. The alternative this replaces is the failure mode that
+    // motivated the whole change: running the emulated engine and reporting a
+    // 200, which is a wrong answer attributed to the wrong runtime.
+    const engineDecision = resolveChatSessionEngine({
+      ...(target.host ? { hostTarget: target.host } : {}),
+      model: {
+        id: String(modelDefinition.id),
+        ...(modelDefinition.provider
+          ? { provider: modelDefinition.provider }
+          : {}),
+      },
+      hasSelectedMcpServers: selectedServerIds.length > 0,
+      toolPolicy: {
+        toolMode: pins.toolMode,
+        ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),
+        ...(body.maxToolCalls !== undefined
+          ? { maxToolCalls: body.maxToolCalls }
+          : {}),
+      },
+    });
+    if (!engineDecision.ok) {
+      return v1Error(
+        c,
+        "FEATURE_NOT_SUPPORTED",
+        `This host runs the ${engineDecision.harness} harness, which this turn can't run: ${engineDecision.reason}.`,
+        {
+          reason: "HARNESS_UNAVAILABLE",
+          harness: engineDecision.harness,
+          // Branch on the KIND, never on the wording — a copy edit to the
+          // reason above must not change what a caller does about it.
+          kind: engineDecision.kind,
+          ...(target.host ? { hostId: target.host.hostId } : {}),
+        },
+      );
+    }
+    const engine: ChatSessionEngine = engineDecision.engine;
 
     // --- Connect ----------------------------------------------------------
     const connection = await createManualHostedConnection(
@@ -1118,7 +1362,15 @@ async function handleTurn(c: Context): Promise<Response> {
       chatSessionId: runtimeChatSessionId,
       serverIds: selectedServerIds,
       tools,
+      // The harness selector rides the RUNTIME, which is where
+      // `runUnifiedAssistantTurn` reads it from. Absent ⇒ the emulated engine,
+      // byte-identical to every turn this surface ran before host targeting.
+      ...(engine.kind === "harness" ? { harness: engine.harness } : {}),
     });
+    // Never emulate a harness. `runAssistantTurn` would log-and-degrade, and a
+    // local-BYOK resolution drops `harness` entirely — both would answer 200
+    // for a runtime that never ran.
+    assertHarnessDispatchable({ engine, runtimeKind: runtime.runtime.kind });
 
     const maxSteps = Math.max(
       1,
@@ -1150,6 +1402,16 @@ async function handleTurn(c: Context): Promise<Response> {
       maxSteps,
       projectId,
       chatSessionId: runtimeChatSessionId,
+      // How the harness's cloud sandbox reaches THIS inspector's MCP servers.
+      // `runHarnessTurn` THROWS without it whenever servers are selected, and
+      // this surface always has at least one — so a harness turn without it
+      // could never have run. Same WEB-AUTHORIZED plane the eval runner and
+      // the hosted chat routes resolve: this route builds an ephemeral
+      // authorized manager exactly as they do, and deriving a different
+      // strategy is how a sandbox ends up pointed at the wrong manager.
+      ...(engine.kind === "harness"
+        ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
+        : {}),
       abortSignal: abortController.signal,
       ...(prepared.progressivePlan
         ? { progressivePlan: prepared.progressivePlan }
@@ -1173,6 +1435,7 @@ async function handleTurn(c: Context): Promise<Response> {
         startedAt,
         outcome: "timeout",
         toolCallCount: result.toolCalls.length,
+        engine: engineLabel(engine),
       });
       return v1Error(
         c,
@@ -1200,6 +1463,7 @@ async function handleTurn(c: Context): Promise<Response> {
         startedAt,
         outcome: rateLimited ? "rate_limited" : "failed",
         toolCallCount: result.toolCalls.length,
+        engine: engineLabel(engine),
       });
       return v1Error(
         c,
@@ -1295,6 +1559,7 @@ async function handleTurn(c: Context): Promise<Response> {
       startedAt,
       outcome: "ok",
       toolCallCount: result.toolCalls.length,
+      engine: engineLabel(engine),
     });
 
     // No materialized project secret can be in this turn's payloads: this route
@@ -1339,6 +1604,20 @@ async function handleTurn(c: Context): Promise<Response> {
         provider: providerOf(pins.modelId),
       },
       toolMode: pins.toolMode,
+      /**
+       * WHICH ENGINE RAN — `"emulated"` or `"harness:<id>"`, on every turn.
+       *
+       * Not decoration. This surface used to answer 200 for a harness-declaring
+       * target while running the emulated engine, and the response said nothing
+       * either way, so nothing downstream could tell. It is also the receipt
+       * for the one gap host targeting cannot close on its own: `hostId` is
+       * per-turn, so a continuation that forgets it reports `emulated` here
+       * rather than quietly pretending otherwise.
+       */
+      engine: engineLabel(engine),
+      // The host this turn executed as, when there was one. Server-resolved —
+      // an environment's own host, or the pointer the caller sent.
+      ...(target.host ? { hostId: target.host.hostId } : {}),
       advertisedToolCount: Object.keys(tools).length,
       excludedToolCount: excluded.length,
       // Present only when the client asked for something this surface does not
@@ -1424,6 +1703,8 @@ function captureTurnEvent(
     startedAt: number;
     outcome: "ok" | "failed" | "rate_limited" | "timeout";
     toolCallCount: number;
+    /** `"emulated"` | `"harness:<id>"`. Server-derived, never body-supplied. */
+    engine: string;
   },
 ): void {
   captureServerEvent(c, "api_chat_session_turn_completed", {
@@ -1431,6 +1712,7 @@ function captureTurnEvent(
     outcome: data.outcome,
     duration_ms: Date.now() - data.startedAt,
     tool_call_count: data.toolCallCount,
+    engine: data.engine,
   });
 }
 
@@ -1443,6 +1725,7 @@ export const __testing = {
   wantsNoTools,
   computeExcludedToolNames,
   unappliedBuiltInToolIds,
+  hostSelectedServerIds,
   CONFIG_FIELDS,
   turnSchema,
 };
