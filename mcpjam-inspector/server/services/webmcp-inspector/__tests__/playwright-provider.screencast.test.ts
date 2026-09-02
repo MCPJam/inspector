@@ -649,6 +649,36 @@ describe("PlaywrightWebMcpSession screencast", () => {
     expect(h.stills).toHaveBeenCalledTimes(2);
   });
 
+  it("walks to the bottom rung for a page that will not compress", async () => {
+    // Everything above quality 10 comes back over the cap: a viewport-filling
+    // noise canvas or a grain-heavy photo, which is the only kind of page that
+    // reaches the bottom of this ladder at all. The threshold is absolute
+    // rather than read off the ladder — derived from it, this test would
+    // simply follow the ladder down and pass however short it was cut.
+    const huge = base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1, 0x61);
+    const h = await startedWithFakeClock({
+      still: ({ quality }) => (quality <= 10 ? SMALL_STILL : huge),
+    });
+    await h.session.setScreencast(true);
+
+    h.cdp.emit(
+      "Page.screencastFrame",
+      screencastFrame(base64OfSize(WEBMCP_FRAME_MAX_BYTES + 1, 0x41)),
+    );
+    await vi.advanceTimersByTimeAsync(200);
+
+    // Ugly, and the right answer: the frame itself was refused for its size
+    // and a page that stops painting sends nothing else, so a ladder that
+    // gives up above this leaves the pane showing a page the person has left.
+    // Frames are transient — the next paint replaces this one.
+    expect(h.frames.map((frame) => frame.data)).toEqual([SMALL_STILL]);
+    expect(
+      h.cdp.sent
+        .filter((call) => call.method === "Page.captureScreenshot")
+        .map((call) => (call.params as { quality: number }).quality),
+    ).toEqual([...WEBMCP_SUBSTITUTE_QUALITY_LADDER]);
+  });
+
   it("still owes the substitute when another capture holds the slot", async () => {
     // A timeline screenshot in flight — the invoke pane asks for one whenever
     // a tool runs, and it goes through the same CDP command as a still.

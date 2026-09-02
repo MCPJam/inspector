@@ -448,8 +448,21 @@ export const WEBMCP_STREAM_QUALITY_LADDER = [75, 60, 45, 30] as const;
  * Deliberately below the stream's baseline: this still exists because the
  * page's own paint did not fit the cap, so trying to publish it at the same
  * quality would mostly reproduce the same failure a round trip later.
+ *
+ * The bottom rung is ugly on purpose. It is only ever reached by a page whose
+ * paint will not fit at 25 — near-maximum-entropy content, a noise canvas or a
+ * grain-heavy photo filling the viewport — and for THAT page the choice is not
+ * between a good picture and a poor one. It is between a poor picture of the
+ * page it is looking at and a sharp picture of a page it has left, because the
+ * frame itself was refused for its size and a page that has stopped painting
+ * sends nothing else. Frames are transient; the next paint replaces this.
+ *
+ * It narrows the gap rather than closing it: a paint that will not fit at 10
+ * still publishes nothing. Closing it needs a proportional resize, which CDP
+ * offers only through `clip` — measured to clobber the context's
+ * `deviceScaleFactor` and push an off-content frame into the stream.
  */
-export const WEBMCP_SUBSTITUTE_QUALITY_LADDER = [50, 25] as const;
+export const WEBMCP_SUBSTITUTE_QUALITY_LADDER = [50, 25, 10] as const;
 
 /**
  * Qualities tried for the SETTLE still — the sharp picture published once a
