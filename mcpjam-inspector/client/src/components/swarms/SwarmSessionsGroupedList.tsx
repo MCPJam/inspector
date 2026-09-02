@@ -85,56 +85,53 @@ function SwarmSessionGroupSection({
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <section
-        className="overflow-hidden rounded-lg border border-border/60 bg-background shadow-sm"
+        className="overflow-hidden"
         data-testid={sectionTestId}
       >
         <CollapsibleTrigger
           className={cn(
-            "group/trigger flex w-full flex-col gap-0.5 px-3 py-2.5 text-left transition-colors",
-            "border-b border-border/60 bg-muted/55 hover:bg-muted/70",
+            "group/trigger flex w-full items-center gap-2 border-b border-transparent px-3 py-1.5 text-left transition-colors",
+            "bg-muted hover:bg-accent",
+            "data-[state=open]:border-border",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
-            "data-[state=closed]:border-b-0",
           )}
           data-testid={`${sectionTestId}-trigger`}
         >
-          <div className="flex items-center gap-2">
-            <ChevronDown
-              aria-hidden
-              className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/trigger:-rotate-90"
-            />
-            <p className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-              {groupLabel(group, runLabels, groupUnit)}
-            </p>
-            <span className="shrink-0 font-mono text-[10px] font-medium text-muted-foreground">
-              {sessionLabel}
+          <ChevronDown
+            aria-hidden
+            className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/trigger:-rotate-90"
+          />
+          <p className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-5 text-card-foreground">
+            {groupLabel(group, runLabels, groupUnit)}
+          </p>
+          <p className="shrink-0 text-[10px] leading-none text-muted-foreground">
+            <span>{sessionLabel}</span>
+            <span>
+              {" · "}
+              {formatJourneyRelativeTime(group.latestActivityAt)}
             </span>
-          </div>
-          <p className="pl-5 text-[10px] text-muted-foreground">
-            Latest activity {formatJourneyRelativeTime(group.latestActivityAt)}
           </p>
         </CollapsibleTrigger>
         <CollapsibleContent
           className={cn(
-            "overflow-hidden bg-background transition-[opacity] duration-200",
+            "overflow-hidden transition-[opacity] duration-200",
             "data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0",
           )}
           data-testid={`${sectionTestId}-content`}
         >
-          <div className="space-y-1 p-2">
-            {group.rows.map((row) => {
-              const thread = threadsById.get(row.id);
-              if (!thread) return null;
-              return (
-                <ThreadCard
-                  key={row.id}
-                  thread={thread}
-                  isSelected={row.id === selectedThreadId}
-                  onSelect={() => onSelectThread(row.id)}
-                />
-              );
-            })}
-          </div>
+          {group.rows.map((row) => {
+            const thread = threadsById.get(row.id);
+            if (!thread) return null;
+            return (
+              <ThreadCard
+                key={row.id}
+                thread={thread}
+                isSelected={row.id === selectedThreadId}
+                onSelect={() => onSelectThread(row.id)}
+              />
+            );
+          })}
         </CollapsibleContent>
       </section>
     </Collapsible>
@@ -151,7 +148,10 @@ export function SwarmSessionsGroupedList({
 }: SwarmSessionsGroupedListProps) {
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-3 p-2">
+      <div
+        className="flex flex-col gap-1"
+        data-testid="swarm-sessions-grouped-list"
+      >
         {groups.map((group, index) => (
           <SwarmSessionGroupSection
             key={group.runId ?? "ungrouped"}
@@ -184,12 +184,12 @@ export function SwarmSessionsGroupCount({
   );
   const unitLabel = unit === "goal" ? "goal" : "run";
   return (
-    <p className="shrink-0 truncate text-xs text-muted-foreground">
+    <span className="truncate">
       {groups.length}
       {canLoadMore ? "+" : ""} {unitLabel}
       {groups.length === 1 ? "" : "s"} ·{" "}
       {sessionCount}
-      {canLoadMore ? "+" : ""} session{sessionCount === 1 ? "" : "s"}
-    </p>
+      {canLoadMore ? "+" : ""} total session{sessionCount === 1 ? "" : "s"}
+    </span>
   );
 }

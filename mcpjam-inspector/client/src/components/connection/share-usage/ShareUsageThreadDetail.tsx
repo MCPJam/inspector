@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatDistanceToNow } from "date-fns";
-import { Copy, FlaskConical, Loader2, MessageSquare } from "lucide-react";
+import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -32,10 +31,7 @@ import {
 } from "@/hooks/useSharedChatThreads";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
-import {
-  feedbackHeadline,
-  formatThumbCounts,
-} from "@/components/connection/share-usage/feedback-headline";
+import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
@@ -568,136 +564,43 @@ export function ShareUsageThreadDetail({
     );
   }
 
-  const duration =
-    thread.lastActivityAt && thread.startedAt
-      ? thread.lastActivityAt - thread.startedAt
-      : 0;
-  const durationStr =
-    duration > 0
-      ? duration < 60000
-        ? `${Math.round(duration / 1000)}s`
-        : `${Math.round(duration / 60000)}m`
-      : null;
   const isScenarioThread = thread.sourceType === "scenario";
   const reasoningDisplayMode = isScenarioThread ? "collapsible" : "collapsed";
 
-  const feedbackSummary = thread.feedback ?? null;
-  const feedbackHeadlineValue = feedbackSummary
-    ? feedbackHeadline(feedbackSummary)
-    : null;
-  const hasFeedback =
-    feedbackSummary != null ||
-    thread.feedbackRating != null ||
-    (thread.feedbackComment && thread.feedbackComment.trim().length > 0);
-
   return (
     <div className="flex h-full flex-col">
-      {/* Thread header — min-h keeps the border-b aligned with the
-          sessions-list toolbar on the other side of the resize handle. */}
-      <div className="flex min-h-[60px] shrink-0 flex-col justify-center border-b px-4 py-3">
-        {hasFeedback ? (
-          <div className="mb-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Feedback
-            </p>
-            {feedbackSummary && feedbackHeadlineValue ? (
-              <p className="mt-1 text-sm font-medium">
-                {feedbackHeadlineValue.kind === "thumbs"
-                  ? formatThumbCounts(
-                      feedbackHeadlineValue.up,
-                      feedbackHeadlineValue.down
-                    )
-                  : feedbackHeadlineValue.kind === "mixed"
-                  ? `${feedbackHeadlineValue.avg.toFixed(
-                      1
-                    )}/5 · ${formatThumbCounts(
-                      feedbackHeadlineValue.up,
-                      feedbackHeadlineValue.down
-                    )}`
-                  : `${feedbackHeadlineValue.avg.toFixed(1)}/5`}
-                <span className="ml-1 font-normal text-muted-foreground">
-                  across {feedbackSummary.count}{" "}
-                  {feedbackSummary.count === 1 ? "rating" : "ratings"}
-                  {/* The worst turn is what the filters and the list row's
-                      amber tint key on, so name it here rather than leaving
-                      the average to imply a uniformly mediocre session.
-                      Suppressed for a thumbs-only session: "worst 1/5" would
-                      restate the 👎 tally on a scale nobody was shown. */}
-                  {feedbackSummary.count > 1 &&
-                  feedbackHeadlineValue.kind !== "thumbs"
-                    ? ` · worst ${feedbackSummary.min}/5`
-                    : ""}
-                </span>
-              </p>
-            ) : thread.feedbackRating != null ? (
-              <p className="mt-1 text-sm font-medium">
-                {thread.feedbackRating}/5
-              </p>
-            ) : null}
-            {/* Per-turn comments render inline on the Chat tab, next to the
-                response they are about. This card keeps the worst one so the
-                header still says something when the transcript is scrolled
-                away. */}
-            {feedbackSummary?.worstComment ?? thread.feedbackComment ? (
-              <p className="mt-1 text-sm text-muted-foreground">
-                &ldquo;
-                {feedbackSummary?.worstComment ?? thread.feedbackComment}
-                &rdquo;
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium truncate">
-              {thread.visitorDisplayName}
-            </p>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{thread.modelId}</span>
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <MessageSquare className="h-3 w-3" />
-                {thread.messageCount} messages
-              </span>
-              {durationStr && (
-                <>
-                  <span>·</span>
-                  <span>{durationStr}</span>
-                </>
-              )}
-              <span>·</span>
-              <span>
-                {formatDistanceToNow(new Date(thread.startedAt), {
-                  addSuffix: true,
-                })}
-              </span>
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {canPromoteThread ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-xl"
-                data-testid="share-usage-promote-to-test-case"
-                onClick={() => setPromoteOpen(true)}
-              >
-                <FlaskConical className="mr-1.5 size-3.5" />
-                Promote to test case
-              </Button>
-            ) : null}
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <p className="truncate text-sm font-semibold text-card-foreground">
+            {thread.visitorDisplayName}
+          </p>
+          <SessionFeedbackMark thread={thread} variant="header" />
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {canPromoteThread ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="rounded-xl"
-              onClick={() => void handleCopySessionRef()}
+              className="h-8 rounded-lg px-2.5 text-xs"
+              data-testid="share-usage-promote-to-test-case"
+              onClick={() => setPromoteOpen(true)}
             >
-              <Copy className="mr-1.5 size-3.5" />
-              {sessionLink ? "Copy session link" : "Copy session ID"}
+              Promote to test case
             </Button>
-          </div>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 rounded-lg px-0"
+            aria-label={
+              sessionLink ? "Copy session link" : "Copy session ID"
+            }
+            onClick={() => void handleCopySessionRef()}
+          >
+            <Copy className="size-3.5" />
+          </Button>
         </div>
       </div>
 

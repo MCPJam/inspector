@@ -19,7 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
+import {
+  SessionListChrome,
+  ShareUsageThreadList,
+} from "@/components/connection/share-usage/ShareUsageThreadList";
+import { sessionCountLabel } from "@/components/connection/share-usage/session-list-format";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import {
   SwarmSessionsGroupedList,
@@ -230,154 +234,158 @@ export function SwarmsSessionsPanel({
     ? "No sessions for this persona yet"
     : "No swarm sessions yet";
 
+  const listCountLabel =
+    status === "LoadingFirstPage"
+      ? groupBy === "run"
+        ? "Loading runs…"
+        : groupBy === "goal"
+          ? "Loading goals…"
+          : "Loading sessions…"
+      : groupBy === "run" || groupBy === "goal"
+        ? null
+        : sessionCountLabel(threads.length, { canLoadMore });
+
+  const filterTriggerClass = "h-7 w-auto min-w-0 gap-1.5 px-2.5 text-xs";
+
   return (
     <div
       className="flex h-full min-h-0 flex-col"
       data-testid="swarms-sessions-panel"
     >
-      <div className="flex shrink-0 items-center gap-3 border-b border-border/40 px-4 py-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          {status === "LoadingFirstPage" ? (
-            <p className="shrink-0 truncate text-xs text-muted-foreground">
-              {groupBy === "run"
-                ? "Loading runs…"
-                : groupBy === "goal"
-                ? "Loading goals…"
-                : "Loading sessions…"}
-            </p>
-          ) : groupBy === "run" ? (
-            <SwarmSessionsGroupCount
-              groups={runGroups}
-              canLoadMore={canLoadMore}
-              unit="run"
-            />
-          ) : groupBy === "goal" ? (
-            <SwarmSessionsGroupCount
-              groups={goalGroups}
-              canLoadMore={canLoadMore}
-              unit="goal"
-            />
-          ) : (
-            <p className="shrink-0 truncate text-xs text-muted-foreground">
-              {`${threads.length}${canLoadMore ? "+" : ""} session${
-                threads.length === 1 ? "" : "s"
-              }`}
-            </p>
-          )}
-          {status === "CanLoadMore" && !autoPagingAllowed ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 shrink-0 text-xs"
-              data-testid="swarms-sessions-load-more"
-              onClick={() => {
-                setAutoPagesLoaded(0);
-                loadMore(DEFAULT_PAGE_SIZE);
-              }}
-            >
-              Load more
-            </Button>
-          ) : null}
-          <Select
-            value={groupBy}
-            onValueChange={(value) => {
-              if (value === "run" || value === "goal" || value === "session") {
-                setGroupBy(value);
-              }
-            }}
-          >
-            <SelectTrigger
-              data-testid="swarms-sessions-group-by"
-              className="h-8 w-[min(100%,10rem)] text-xs"
-              aria-label="Group sessions by"
-            >
-              <SelectValue placeholder="Group by sessions" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="session">By session</SelectItem>
-              <SelectItem value="run">By run</SelectItem>
-              <SelectItem value="goal">By goal</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select
-            value={personaRefId ?? "all"}
-            onValueChange={(value) =>
-              onPersonaRefIdChange(value === "all" ? null : value)
-            }
-          >
-            <SelectTrigger
-              data-testid="swarms-sessions-persona-filter"
-              className="h-8 w-[min(100%,12rem)] text-xs"
-              aria-label="Filter sessions by persona"
-            >
-              <SelectValue placeholder="All personas" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All personas</SelectItem>
-              {personas.map((persona) => (
-                <SelectItem key={persona._id} value={persona._id}>
-                  {persona.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {hostOptions.length > 0 ? (
-            <Select
-              value={hostFilter ?? "all"}
-              onValueChange={(value) =>
-                setHostFilter(value === "all" ? null : value)
-              }
-            >
-              <SelectTrigger
-                data-testid="swarms-sessions-host-filter"
-                className="h-8 w-[min(100%,12rem)] text-xs"
-                aria-label="Filter sessions by client"
-              >
-                <SelectValue placeholder="All clients" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All clients</SelectItem>
-                {hostOptions.map((h) => (
-                  <SelectItem key={h.hostId} value={h.hostId}>
-                    {h.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="shrink-0 px-4 pt-3">
-        <ErrorBoundary fallback={null}>
-          <SwarmSessionsMetricStrip
-            projectId={projectId}
-            personaRefId={personaRefId}
-          />
-        </ErrorBoundary>
-      </div>
+      <ErrorBoundary fallback={null}>
+        <SwarmSessionsMetricStrip
+          projectId={projectId}
+          personaRefId={personaRefId}
+        />
+      </ErrorBoundary>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">
           <ResizablePanel defaultSize={32} minSize={22}>
-            <div className="h-full overflow-hidden">
-              {isGrouped ? (
-                <SwarmSessionsGroupedList
-                  groups={groupBy === "goal" ? goalGroups : runGroups}
-                  threadsById={threadsById}
-                  selectedThreadId={selectedThreadId}
-                  onSelectThread={setSelectedThreadId}
-                  runLabels={groupBy === "goal" ? goalLabels : runLabels}
-                  groupUnit={groupBy === "goal" ? "goal" : "run"}
-                />
-              ) : (
-                <ShareUsageThreadList
-                  threads={threads}
-                  selectedThreadId={selectedThreadId}
-                  onSelectThread={setSelectedThreadId}
-                />
-              )}
+            <div className="flex h-full min-h-0 flex-col overflow-hidden">
+              <SessionListChrome
+                countLabel={
+                  listCountLabel ??
+                  (groupBy === "goal" ? (
+                    <SwarmSessionsGroupCount
+                      groups={goalGroups}
+                      canLoadMore={canLoadMore}
+                      unit="goal"
+                    />
+                  ) : (
+                    <SwarmSessionsGroupCount
+                      groups={runGroups}
+                      canLoadMore={canLoadMore}
+                      unit="run"
+                    />
+                  ))
+                }
+              >
+                <Select
+                  value={groupBy}
+                  onValueChange={(value) => {
+                    if (
+                      value === "run" ||
+                      value === "goal" ||
+                      value === "session"
+                    ) {
+                      setGroupBy(value);
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    data-testid="swarms-sessions-group-by"
+                    className={filterTriggerClass}
+                    aria-label="Group sessions by"
+                  >
+                    <SelectValue placeholder="Group by sessions" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="session">By session</SelectItem>
+                    <SelectItem value="run">By run</SelectItem>
+                    <SelectItem value="goal">By goal</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={personaRefId ?? "all"}
+                  onValueChange={(value) =>
+                    onPersonaRefIdChange(value === "all" ? null : value)
+                  }
+                >
+                  <SelectTrigger
+                    data-testid="swarms-sessions-persona-filter"
+                    className={filterTriggerClass}
+                    aria-label="Filter sessions by persona"
+                  >
+                    <SelectValue placeholder="Personas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All personas</SelectItem>
+                    {personas.map((persona) => (
+                      <SelectItem key={persona._id} value={persona._id}>
+                        {persona.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {hostOptions.length > 0 ? (
+                  <Select
+                    value={hostFilter ?? "all"}
+                    onValueChange={(value) =>
+                      setHostFilter(value === "all" ? null : value)
+                    }
+                  >
+                    <SelectTrigger
+                      data-testid="swarms-sessions-host-filter"
+                      className={filterTriggerClass}
+                      aria-label="Filter sessions by client"
+                    >
+                      <SelectValue placeholder="Clients" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All clients</SelectItem>
+                      {hostOptions.map((h) => (
+                        <SelectItem key={h.hostId} value={h.hostId}>
+                          {h.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+                {status === "CanLoadMore" && !autoPagingAllowed ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-7 shrink-0 text-xs"
+                    data-testid="swarms-sessions-load-more"
+                    onClick={() => {
+                      setAutoPagesLoaded(0);
+                      loadMore(DEFAULT_PAGE_SIZE);
+                    }}
+                  >
+                    Load more
+                  </Button>
+                ) : null}
+              </SessionListChrome>
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {isGrouped ? (
+                  <SwarmSessionsGroupedList
+                    groups={groupBy === "goal" ? goalGroups : runGroups}
+                    threadsById={threadsById}
+                    selectedThreadId={selectedThreadId}
+                    onSelectThread={setSelectedThreadId}
+                    runLabels={groupBy === "goal" ? goalLabels : runLabels}
+                    groupUnit={groupBy === "goal" ? "goal" : "run"}
+                  />
+                ) : (
+                  <ShareUsageThreadList
+                    threads={threads}
+                    selectedThreadId={selectedThreadId}
+                    onSelectThread={setSelectedThreadId}
+                  />
+                )}
+              </div>
             </div>
           </ResizablePanel>
           <ResizableHandle withHandle />
@@ -399,7 +407,7 @@ export function SwarmsSessionsPanel({
                   }
                 />
               ) : (
-                <div className="flex h-full items-center justify-center">
+                <div className="flex h-full items-center justify-center px-6">
                   <div className="text-center">
                     <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
                     <p className="text-sm text-muted-foreground">
@@ -409,8 +417,7 @@ export function SwarmsSessionsPanel({
                     </p>
                     {!filtered && threads.length === 0 ? (
                       <p className="mt-1 text-xs text-muted-foreground/70">
-                        Run a goal to generate sessions, or filter by persona
-                        above.
+                        Run a goal to generate sessions, or filter by persona.
                       </p>
                     ) : null}
                   </div>

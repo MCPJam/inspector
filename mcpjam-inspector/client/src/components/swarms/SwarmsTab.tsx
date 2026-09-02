@@ -950,22 +950,24 @@ export function SwarmsTab({
           }}
           launchJourney={launchJourney}
           onCancel={() => navigate(routePaths.swarms)}
-          onDone={(runLabels) => {
-            // Labels are component state and `/swarms/new` → `/swarms` swaps
-            // sibling routes without remounting this component, so they
-            // survive. `?view=sessions` carries the landing view in the URL
-            // regardless, so a remount (or a reload) still lands correctly —
-            // it just falls back to run-id labels.
+          onDone={(runLabels, swarmRunGroupId) => {
+            // Labels are component state and `/swarms/new` → `/swarms/:id`
+            // swaps sibling routes without remounting this component, so
+            // they survive. Findings is the swarm page's default tab — the
+            // run keeps going after this leave.
             setSwarmRunLabels(runLabels);
+            if (swarmRunGroupId) {
+              navigate(buildSwarmPath(swarmRunGroupId));
+              return;
+            }
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
           onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
             setSwarmRunLabels(runLabels);
             if (swarmRunGroupId) {
-              // The wave's own page, on the session that produced the finding.
-              // It is a real URL, so this leave is reversible — and the run
-              // keeps streaming into that page while the user reads.
+              // Live-pane "open this completed session" — the transcript,
+              // not Findings. Findings is `onDone` / Open findings.
               navigate(
                 buildSwarmPath(swarmRunGroupId, {
                   tab: "sessions",
@@ -974,8 +976,6 @@ export function SwarmsTab({
               );
               return;
             }
-            // No wave id means nothing launched under one, so there is no run
-            // page to open — fall back to the handoff `onDone` already makes.
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}

@@ -236,4 +236,35 @@ describe("SwarmSessionsGroupedList", () => {
     );
     expect(screen.getByText("Run 123456")).toBeInTheDocument();
   });
+
+  it("tints group headers so they sit above session rows", () => {
+    render(
+      <SwarmSessionsGroupedList
+        groups={[
+          group("goal-a", "Goal A", ["s1"]),
+          group("goal-b", "Goal B", ["s2"]),
+        ]}
+        threadsById={
+          new Map([
+            ["s1", thread("s1", "Persona A")],
+            ["s2", thread("s2", "Persona B")],
+          ])
+        }
+        selectedThreadId={null}
+        onSelectThread={() => {}}
+        groupUnit="goal"
+      />,
+    );
+
+    const openTrigger = screen.getByTestId("swarm-goal-group-goal-a-trigger");
+    const closedTrigger = screen.getByTestId("swarm-goal-group-goal-b-trigger");
+    expect(openTrigger).toHaveClass("bg-muted", "py-1.5");
+    expect(closedTrigger).toHaveClass("bg-muted", "py-1.5");
+    expect(openTrigger).toHaveAttribute("data-state", "open");
+    expect(closedTrigger).toHaveAttribute("data-state", "closed");
+    // Paper shows through between muted bars so collapsed groups don't fuse.
+    expect(screen.getByTestId("swarm-sessions-grouped-list")).toHaveClass(
+      "gap-1",
+    );
+  });
 });

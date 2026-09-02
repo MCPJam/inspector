@@ -12,16 +12,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown, Loader2, Trash2, X } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { SectionLabel } from "@/components/shared/section-label";
-import { JudgesSection } from "@/components/evals/judges-section";
-import { areAllChecksValid } from "@/components/evals/checks-section";
-import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
 import {
   PersonaPixelAvatar,
   mintPersonaAvatarLook,
@@ -35,17 +32,8 @@ import {
   type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
-import { useAvailableModels } from "@/hooks/use-available-models";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
-import {
-  formatCriterion,
-  SWARM_LEVEL_PREDICATE_KINDS,
-} from "@/shared/predicate-kinds";
-import {
-  MAX_RUBRIC_CRITERIA,
-  mintCriterionId,
-  type JourneyCriterion,
-} from "@/shared/journey-rubric";
+import { type JourneyCriterion } from "@/shared/journey-rubric";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -62,9 +50,6 @@ export type ProposedPersona = {
     key: string;
     name?: string;
     goal: string;
-    /** Generation-suggested checks, stamped onto THIS journey's rubric only —
-     * ids minted at proposal time so the row shown here is the row stamped. */
-    checks?: JourneyCriterion[];
   }[];
 };
 
@@ -82,6 +67,8 @@ export type ReusedPersona = {
 export type LaunchTarget = {
   journeyId: string;
   label: string;
+  /** Goal/journey name alone — Running-step cells lead with this. */
+  goalLabel?: string;
   personaId: string;
   personaName: string;
   personaRole: string;
@@ -106,33 +93,14 @@ export type ConfirmLaunchPayload = {
    * environment selection, launch stamps it onto any of these whose stored
    * environments differ — the picker's promise wins over the journey's past. */
   reusedTargets: LaunchTarget[];
-  /** Per reused journey: its current rubric. Swarm-level grading is MERGED
-   * into it at launch (additive, structural dedupe) — same "this screen's
-   * promise wins" rule as environments, minus the overwrite. */
+  /** Per reused journey: its current rubric. Confirm does not author
+   * swarm-level grading, so this is empty from this screen. */
   reusedGrading: { journeyId: string; existingRubric: JourneyCriterion[] }[];
 };
 
 type SelectedPersona =
   | { kind: "proposed"; key: string }
   | { kind: "reused"; id: string };
-
-/**
- * Checks a fresh slate starts with, honoring the Describe step's "we infer …
- * a scoring rubric" promise. Confirm is a prune screen, so these arrive
- * pre-filled the same way personas do — and they're limited to the universal
- * instruments that hold for ANY server: no tool names, no thresholds to
- * guess, free to grade. Journey-specific checks (naming actual tools) belong
- * to generation and land with the backend follow-up.
- */
-function starterRubric(): JourneyCriterion[] {
-  return [
-    { id: mintCriterionId(), predicate: { type: "noToolErrors" } },
-    {
-      id: mintCriterionId(),
-      predicate: { type: "finalAssistantMessageNonEmpty" },
-    },
-  ];
-}
 
 type ReusedGoal = {
   journeyId: string;
@@ -143,9 +111,6 @@ type ReusedResolved = {
   targets: LaunchTarget[] | null;
   goals: ReusedGoal[];
   graded: boolean;
-  /** Each journey's CURRENT rubric, so launch can merge swarm-level criteria
-   * into it instead of overwriting what its owner authored. */
-  grading: { journeyId: string; rubric: JourneyCriterion[] }[];
 };
 
 /** Uncommitted edits to one EXISTING persona, held while its panel is open. */
@@ -269,24 +234,16 @@ function CompactPersonaCard({
           paletteIndex={avatarPalette}
           size="lg"
         />
-        <div className="min-w-0 flex-1 space-y-1">
+        <div className="min-w-0 flex-1">
           <p
             className={cn(
-              "min-w-0 truncate text-sm font-semibold",
+              "mb-1 line-clamp-1 text-sm font-semibold leading-5",
               muted ? "text-muted-foreground" : "text-foreground"
             )}
           >
-            {name}
-            {role ? (
-              <span className="font-normal text-muted-foreground"> — {role}</span>
-            ) : null}
+            {role ? `${name} | ${role}` : name}
           </p>
-          <p
-            className={cn(
-              "line-clamp-2 text-sm leading-snug",
-              muted ? "text-muted-foreground" : "text-foreground"
-            )}
-          >
+          <p className="mb-1 line-clamp-2 text-sm leading-snug text-muted-foreground">
             {description}
           </p>
           <p className="text-xs leading-snug text-muted-foreground">{meta}</p>
@@ -366,7 +323,6 @@ function PersonaDetailPanel({
   draftEditable,
   onClose,
   onRemoveGoal,
-  onRemoveCheck,
   onChangeName,
   onChangeRole,
   onChangeContext,
@@ -384,8 +340,6 @@ function PersonaDetailPanel({
   goals: {
     key: string;
     label: string;
-    /** Suggested deterministic checks scoped to this goal's journey. */
-    checks?: { id: string; label: string }[];
   }[];
   graded?: boolean;
   loadingGoals?: boolean;
@@ -398,7 +352,6 @@ function PersonaDetailPanel({
    */
   onClose: () => void;
   onRemoveGoal?: (goalKey: string) => void;
-  onRemoveCheck?: (goalKey: string, checkId: string) => void;
   onChangeName?: (name: string) => void;
   onChangeRole?: (role: string) => void;
   onChangeContext?: (notes: string) => void;
@@ -552,44 +505,13 @@ function PersonaDetailPanel({
                       </button>
                     ) : null}
                   </div>
-                  {/* Journey-scoped checks live with the journey they grade,
-                      not in the swarm-level rubric below the persona list —
-                      stamping them there would drag down pass rates on
-                      journeys that never touch the tool. */}
-                  {goal.checks && goal.checks.length > 0 ? (
-                    <ul
-                      className="mt-1.5 flex flex-wrap gap-1.5 pl-4"
-                      aria-label={`Suggested checks for ${goal.label}`}
-                    >
-                      {goal.checks.map((check) => (
-                        <li
-                          key={check.id}
-                          data-testid="new-swarm-journey-check"
-                          className="flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground"
-                        >
-                          {check.label}
-                          {onRemoveCheck ? (
-                            <button
-                              type="button"
-                              aria-label={`Remove check ${check.label}`}
-                              className="text-muted-foreground hover:text-foreground"
-                              onClick={() => onRemoveCheck(goal.key, check.id)}
-                            >
-                              <X className="size-3" />
-                            </button>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
                 </li>
               ))}
             </ul>
           )}
           {graded ? (
             <p className="text-xs text-muted-foreground">
-              Has its own grading — swarm-level checks are merged in at launch,
-              never replacing it.
+              Has its own grading.
             </p>
           ) : null}
           {draftEditable ? null : (
@@ -632,16 +554,13 @@ function ReusedPersonaJourneyLoader({
 
   const resolved = useMemo((): ReusedResolved => {
     if (journeys === undefined) {
-      return { targets: null, goals: [], graded: false, grading: [] };
+      return { targets: null, goals: [], graded: false };
     }
     return {
-      grading: journeys.map((journey) => ({
-        journeyId: journey._id,
-        rubric: journey.rubric ?? [],
-      })),
       targets: journeys.map((journey) => ({
         journeyId: journey._id,
         label: `${persona.name} · ${journeyLabel(journey)}`,
+        goalLabel: journeyLabel(journey),
         personaId: persona._id,
         personaName: persona.name,
         personaRole: persona.role,
@@ -726,7 +645,6 @@ function ReusedPersonaCard({
 }
 
 export function NewSwarmConfirmStep({
-  projectId,
   proposed,
   onProposedChange,
   reusedPersonas,
@@ -746,7 +664,6 @@ export function NewSwarmConfirmStep({
   onSaveReusedPersona,
   onSaveReusedGoal,
 }: {
-  projectId: string;
   proposed: ProposedPersona[];
   onProposedChange: (next: ProposedPersona[]) => void;
   reusedPersonas: ReusedPersona[];
@@ -778,22 +695,10 @@ export function NewSwarmConfirmStep({
   /** Persist an edit to an existing journey's goal text. */
   onSaveReusedGoal: (journeyRefId: string, goal: string) => Promise<void>;
 }) {
-  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
-    undefined
-  );
-  // Always seeded: swarm-level grading applies to every journey this swarm
-  // launches — created ones get it stamped, reused ones get it MERGED into
-  // their own rubric (existing rows survive; structural dupes are skipped).
-  // Lazy init on purpose: Back discards all grading state anyway.
-  const [rubric, setRubric] = useState<JourneyCriterion[]>(() =>
-    starterRubric()
-  );
-  const [gradingOpen, setGradingOpen] = useState(false);
   const [selected, setSelected] = useState<SelectedPersona | null>(null);
   const [reusedResolved, setReusedResolved] = useState<
     Record<string, ReusedResolved>
   >({});
-  const { availableModels } = useAvailableModels({ projectId });
 
   const handleReusedResolved = useCallback(
     (personaId: string, data: ReusedResolved) => {
@@ -865,25 +770,6 @@ export function NewSwarmConfirmStep({
       journeys: persona.journeys.filter((journey) => journey.key !== journeyKey),
     }));
   };
-  const removeJourneyCheck = (
-    personaKey: string,
-    journeyKey: string,
-    checkId: string
-  ) => {
-    patchProposed(personaKey, (persona) => ({
-      ...persona,
-      journeys: persona.journeys.map((journey) =>
-        journey.key === journeyKey
-          ? {
-              ...journey,
-              checks: (journey.checks ?? []).filter(
-                (check) => check.id !== checkId
-              ),
-            }
-          : journey
-      ),
-    }));
-  };
   const addPersona = () => {
     const key = newLocalKey("persona");
     const next: ProposedPersona = {
@@ -943,25 +829,7 @@ export function NewSwarmConfirmStep({
     ),
     environmentCount,
   });
-  /**
-   * Rubric budget held back for per-journey suggested checks. Launch stamps
-   * the swarm rubric FIRST and appends each journey's own checks after, then
-   * hard-slices at the cap — so without this reserve a full swarm rubric is
-   * exactly what silently drops the tool-specific checks generation produced.
-   * Reserve the worst case (the journey carrying the most checks), since the
-   * cap applies per journey, not across the swarm.
-   */
-  const reservedCheckSlots = proposed.reduce(
-    (worst, persona) =>
-      persona.journeys.reduce(
-        (inner, journey) => Math.max(inner, journey.checks?.length ?? 0),
-        worst
-      ),
-    0
-  );
-  const rubricValid = areAllChecksValid(rubric.map((entry) => entry.predicate));
-  const canLaunch =
-    journeyCount > 0 && rubricValid && !launching && !reusedPending;
+  const canLaunch = journeyCount > 0 && !launching && !reusedPending;
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -1161,14 +1029,6 @@ export function NewSwarmConfirmStep({
                       goals={persona.journeys.map((journey) => ({
                         key: journey.key,
                         label: journey.goal,
-                        ...(journey.checks && journey.checks.length > 0
-                          ? {
-                              checks: journey.checks.map((check) => ({
-                                id: check.id,
-                                label: formatCriterion(check),
-                              })),
-                            }
-                          : {}),
                       }))}
                       draftEditable
                       avatarShape={persona.avatarShape}
@@ -1176,9 +1036,6 @@ export function NewSwarmConfirmStep({
                       onClose={() => setSelected(null)}
                       onRemoveGoal={(goalKey) =>
                         removeJourney(persona.key, goalKey)
-                      }
-                      onRemoveCheck={(goalKey, checkId) =>
-                        removeJourneyCheck(persona.key, goalKey, checkId)
                       }
                       onChangeName={(nextName) =>
                         patchProposed(persona.key, (current) => ({
@@ -1370,7 +1227,20 @@ export function NewSwarmConfirmStep({
             {SWARM_INTENSITY_ORDER.map((value) => {
               const option = SWARM_INTENSITY_PRESETS[value];
               const selected = pushIntensity === value;
-              const sessions = estimateSwarmSessions(option, environmentCount);
+              // Once a slate exists, the preset no longer sizes the swarm —
+              // the authored goals and reused targets do. Quote what THIS
+              // option would actually launch, not the preset's defaults.
+              const hasSlate = newJourneyCount + activeReusedTargets.length > 0;
+              const sessions = hasSlate
+                ? estimateLaunchSessions({
+                    preset: option,
+                    newJourneyCount,
+                    reusedSessionsPerTarget: activeReusedTargets.map(
+                      (target) => target.sessionsPerTarget ?? null
+                    ),
+                    environmentCount,
+                  })
+                : estimateSwarmSessions(option, environmentCount);
               return (
                 <button
                   key={value}
@@ -1397,89 +1267,6 @@ export function NewSwarmConfirmStep({
           </div>
         </div>
 
-        {/* Scoring applies to EVERY journey this swarm launches: stamped
-            onto created journeys, merged additively into reused ones (their
-            own rows survive with their ids). Always visible for the same
-            reason the environment picker is — this screen's promise wins. */}
-        <div className="border-t border-border/40 pt-3">
-          <button
-            type="button"
-            onClick={() => setGradingOpen((open) => !open)}
-            className="flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
-            aria-expanded={gradingOpen}
-            data-testid="new-swarm-grading-toggle"
-          >
-            <ChevronDown
-              className={cn(
-                "size-3.5 transition-transform",
-                gradingOpen && "rotate-180"
-              )}
-            />
-            Grading
-            {(() => {
-              // Same invitation the header line makes with "2 personas ·
-              // 10 journeys": say what's inside before it's opened.
-              const journeyCheckCount = proposed.reduce(
-                (sum, persona) =>
-                  sum +
-                  persona.journeys.reduce(
-                    (inner, journey) =>
-                      inner + (journey.checks?.length ?? 0),
-                    0
-                  ),
-                0
-              );
-              const summary = [
-                judgeConfig ? "judge on" : null,
-                rubric.length > 0
-                  ? `${rubric.length} ${
-                      rubric.length === 1 ? "check" : "checks"
-                    }`
-                  : null,
-                journeyCheckCount > 0
-                  ? `${journeyCheckCount} goal-specific`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ");
-              return summary ? (
-                <span className="font-normal text-muted-foreground/80">
-                  · {summary}
-                </span>
-              ) : null;
-            })()}
-          </button>
-          {gradingOpen ? (
-            <div className="mt-2">
-              <JudgesSection
-                chrome="bare"
-                value={judgeConfig}
-                onChange={setJudgeConfig}
-                availableModels={availableModels}
-                bareAutoGradeBlurb="Grade every session in this swarm automatically against its goal. Uses credits. You can also judge any session on demand from its detail view."
-                bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
-              />
-              <div className="mt-3 border-t border-border/40 pt-3">
-                <JourneyRubricEditor
-                  value={rubric}
-                  onChange={setRubric}
-                  allowedKinds={SWARM_LEVEL_PREDICATE_KINDS}
-                  maxCriteria={MAX_RUBRIC_CRITERIA - reservedCheckSlots}
-                />
-                {reservedCheckSlots > 0 ? (
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    Goal-specific checks were also suggested — they
-                    appear with each persona&rsquo;s goals, and grade only
-                    their own goal. {reservedCheckSlots}{" "}
-                    {reservedCheckSlots === 1 ? "slot is" : "slots are"}{" "}
-                    reserved for them.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </div>
-
         {errorMessage ? (
           <p role="alert" className="text-sm leading-relaxed text-destructive">
             {errorMessage}
@@ -1501,17 +1288,9 @@ export function NewSwarmConfirmStep({
             data-testid="new-swarm-launch"
             onClick={() =>
               onLaunch({
-                rubric,
-                ...(judgeConfig ? { judgeConfig } : {}),
+                rubric: [],
                 reusedTargets: activeReusedTargets,
-                reusedGrading: reusedPersonas.flatMap((persona) =>
-                  (reusedResolved[persona._id]?.grading ?? []).map(
-                    (entry) => ({
-                      journeyId: entry.journeyId,
-                      existingRubric: entry.rubric,
-                    })
-                  )
-                ),
+                reusedGrading: [],
               })
             }
           >

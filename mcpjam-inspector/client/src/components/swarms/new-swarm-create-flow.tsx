@@ -78,7 +78,6 @@ import {
 import {
   MAX_RUBRIC_CRITERIA,
   mergeRubrics,
-  mintCriterionId,
   serializeRubricForWire,
 } from "@/shared/journey-rubric";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -392,9 +391,13 @@ export function NewSwarmCreateFlow({
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
   onCancel: () => void;
-  /** Hands back a label per launched run so the sessions view can name the
-   * groups after the persona and journey instead of a run id. */
-  onDone: (runLabels: Map<string, string>) => void;
+  /** Hands back a label per launched run so the swarm page can name the
+   * groups after the persona and journey instead of a run id. The wave id
+   * is this launch's durable home — Findings is the default tab. */
+  onDone: (
+    runLabels: Map<string, string>,
+    swarmRunGroupId?: string | null,
+  ) => void;
   /**
    * Follow a live finding to its evidence. `swarmRunGroupId` is this launch's
    * wave id, so the caller can send the user to the swarm's OWN page (the run's
@@ -996,20 +999,6 @@ export function NewSwarmCreateFlow({
             key: `journey-${personaIndex}-${journeyIndex}`,
             ...(journey.name ? { name: journey.name } : {}),
             goal: journey.goal,
-            // Criterion ids are minted at the same moment as the journey key,
-            // so the row the user sees (and prunes) on Confirm is the row the
-            // launch stamps — not a lookalike with a fresh id. The label makes
-            // the scorecard read "Calls export_png" instead of the formatted
-            // predicate's mouthful.
-            ...(journey.suggestedChecks?.length
-              ? {
-                  checks: journey.suggestedChecks.map((predicate) => ({
-                    id: mintCriterionId(),
-                    label: `Calls ${predicate.toolName}`,
-                    predicate,
-                  })),
-                }
-              : {}),
           })),
         })),
       );
@@ -1294,14 +1283,9 @@ export function NewSwarmCreateFlow({
             for (const journey of journeys) {
               // The swarm-level rubric is stamped onto every journey (shared
               // ids are what let Findings roll a criterion up across the
-              // swarm); the journey's own suggested checks ride on top of it,
-              // stamped onto THIS journey only — a check about the export
-              // tool must never drag down the pass rate of a journey that
-              // would never call it.
-              const criteria = [
-                ...payload.rubric,
-                ...(journey.checks ?? []),
-              ].slice(0, MAX_RUBRIC_CRITERIA);
+              // swarm). Generation may still emit per-tool suggestedChecks;
+              // this flow does not carry or stamp them.
+              const criteria = payload.rubric.slice(0, MAX_RUBRIC_CRITERIA);
               const rubricWire =
                 criteria.length > 0
                   ? serializeRubricForWire(criteria)
@@ -1325,11 +1309,12 @@ export function NewSwarmCreateFlow({
                   ...(swarmRefId ? { swarmRefId } : {}),
                   idempotencyKey: `${flowId}:journey:${persona.key}:${journey.key}`,
                 });
+                const goalLabel =
+                  journey.name?.trim() || journey.goal.slice(0, 40);
                 targets.push({
                   journeyId,
-                  label: `${persona.name} · ${
-                    journey.name?.trim() || journey.goal.slice(0, 40)
-                  }`,
+                  label: `${persona.name} · ${goalLabel}`,
+                  goalLabel,
                   personaId: personaRefId,
                   personaName: persona.name,
                   personaRole: persona.role,
@@ -1395,6 +1380,9 @@ export function NewSwarmCreateFlow({
                       ? { avatarPalette: target.avatarPalette }
                       : {}),
                     label: target.label,
+                    ...(target.goalLabel
+                      ? { goalLabel: target.goalLabel }
+                      : {}),
                   });
                 }
               }
@@ -1575,7 +1563,10 @@ export function NewSwarmCreateFlow({
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
-    onDone(launchedRunLabelsRef.current);
+    onDone(
+      launchedRunLabelsRef.current,
+      persistedRunGroupIdRef.current,
+    );
   }, [onDone]);
 
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave
@@ -1689,9 +1680,8 @@ export function NewSwarmCreateFlow({
       className="flex h-full min-h-0 flex-col"
       data-testid="new-swarm-create-flow"
     >
-      {/* Describe and Confirm carry `flowHeader` inside their own column, so
-          this bar is Running's alone: it is not redesigned yet, and its own
-          footer Leave sits far down a streaming matrix. */}
+      {/* Describe and Confirm carry `flowHeader` inside their own column.
+          Running keeps this thin stepper — the matrix + stream live below. */}
       {step === "running" ? (
         <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
           <div className="flex min-w-0 items-center gap-4">
@@ -1737,7 +1727,6 @@ export function NewSwarmCreateFlow({
           />
         ) : step === "confirm" ? (
           <NewSwarmConfirmStep
-            projectId={projectId}
             proposed={proposed}
             onProposedChange={setProposed}
             reusedPersonas={reusedPersonas}

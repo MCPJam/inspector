@@ -137,10 +137,6 @@ export function deriveHonestyFootnotes(args: {
   if (!signals.terminal) {
     notes.push("This swarm is still running — findings may change");
   }
-  const { graded, total } = signals.judgeCoverage;
-  if (graded < total) {
-    notes.push(`Judge covered ${graded} of ${total} sessions`);
-  }
   if (signals.truncated) {
     notes.push("Session scan hit its cap — counts cover a subset");
   }

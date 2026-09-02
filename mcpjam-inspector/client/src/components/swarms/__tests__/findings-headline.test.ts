@@ -197,18 +197,15 @@ describe("deriveHonestyFootnotes", () => {
     ).toContain("Rubric findings only");
   });
 
-  it("flags partial judge, truncation, low confidence, and a live wave", () => {
+  it("flags truncation, low confidence, and a live wave", () => {
     const notes = deriveHonestyFootnotes({
       signals: signals({
-        judgeCoverage: { graded: 0, total: 8 },
         truncated: true,
         lowConfidence: true,
         terminal: false,
       }),
       hasGroupId: true,
     });
-    // Zero graded of eight is the WORST coverage, not a reason to stay quiet.
-    expect(notes).toContain("Judge covered 0 of 8 sessions");
     expect(notes).toContain("Session scan hit its cap — counts cover a subset");
     expect(notes).toContain(
       "Most sessions are unanalyzed — treat counts as partial"
@@ -217,11 +214,11 @@ describe("deriveHonestyFootnotes", () => {
       "This swarm is still running — findings may change"
     );
 
-    const partial = deriveHonestyFootnotes({
+    const partialJudge = deriveHonestyFootnotes({
       signals: signals({ judgeCoverage: { graded: 3, total: 8 } }),
       hasGroupId: true,
     });
-    expect(partial).toEqual(["Judge covered 3 of 8 sessions"]);
+    expect(partialJudge).toEqual([]);
   });
 
   it("stays silent on a clean, fully graded, terminal wave", () => {

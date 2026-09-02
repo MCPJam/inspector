@@ -129,10 +129,9 @@ export function FindingsGoalInspect({
                 onClick={() => onSelectStage(stage.id)}
                 onKeyDown={(event) => handleStageKeyDown(event, stageIndex)}
                 className={cn(
-                  "group flex min-h-[6.5rem] w-full flex-col rounded-xl border p-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+                  "group flex min-h-[6.5rem] w-full flex-col rounded-xl border p-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
                   STAGE_BUTTON_CLASSES[state],
-                  pressed &&
-                    "border-orange-300/80 bg-orange-300/15 shadow-[0_0_0_2px_rgba(253,186,116,0.18)]"
+                  pressed && "ring-2 ring-white ring-offset-2 ring-offset-zinc-950"
                 )}
                 data-testid={`findings-stage-${stage.id}`}
                 data-state={state}
