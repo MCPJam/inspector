@@ -5,6 +5,7 @@ import {
   describeDraft,
   dirtyKeys,
   initSuiteSettingsDraft,
+  normalizeSuiteSettingsValues,
   readSuiteSettingsValues,
   SUITE_SETTINGS_KEYS,
   suiteSettingsReducer,
@@ -254,6 +255,28 @@ describe("a concurrent edit is marked, never merged", () => {
     });
     expect(dirtyKeys(draft)).toEqual([]);
     expect(draft.conflicts).toEqual([]);
+  });
+});
+
+describe("what is saved is what the draft then holds", () => {
+  test("a name with surrounding whitespace normalizes the same way twice", () => {
+    // `toUpdateArgs` trims; the commit rebases onto the normalized values.
+    // Two definitions of "what the server stored" is how a person ends up
+    // looking at their own whitespace in the input while the server holds
+    // something else.
+    const draft = edit(draftOf(), "name", "  Renamed  ");
+    expect(toUpdateArgs(draft, "s").name).toBe("Renamed");
+    expect(normalizeSuiteSettingsValues(draft.current).name).toBe("Renamed");
+  });
+
+  test("committing the normalized values leaves nothing dirty", () => {
+    let draft = edit(draftOf(), "name", "  Renamed  ");
+    draft = suiteSettingsReducer(draft, {
+      type: "commitSucceeded",
+      live: normalizeSuiteSettingsValues(draft.current),
+    });
+    expect(dirtyKeys(draft)).toEqual([]);
+    expect(draft.current.name).toBe("Renamed");
   });
 });
 

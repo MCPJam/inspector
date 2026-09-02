@@ -86,6 +86,7 @@ import {
   canCommit,
   describeDraft,
   initSuiteSettingsDraft,
+  normalizeSuiteSettingsValues,
   readSuiteSettingsValues,
   suiteSettingsReducer,
 } from "./suite-settings-draft";
@@ -543,7 +544,14 @@ export function SuiteIterationsView({
         // Convex subscription has not delivered the new one yet. Rebasing onto
         // the stale snapshot would flash the old values back into the controls
         // and re-arm the unsaved-changes guard for edits already saved.
-        dispatchDraft({ type: "commitSucceeded", live: draft.current });
+        // NORMALIZED, because that is what the server stored: `toUpdateArgs`
+        // trims the name, so rebasing onto the raw draft would leave the
+        // person looking at their own whitespace until the subscription
+        // corrected it.
+        dispatchDraft({
+          type: "commitSucceeded",
+          live: normalizeSuiteSettingsValues(draft.current),
+        });
       } else if (outcome.status === "conflict") {
         // The draft SURVIVES. Throwing away someone's edits because a
         // colleague saved first is the outcome the precondition exists to
@@ -552,7 +560,11 @@ export function SuiteIterationsView({
         toast.error(
           "This suite changed since you opened it. Your edits are still here — review them against the new values and save again.",
         );
-        dispatchDraft({ type: "rebase", live: readSuiteSettingsValues(suite) });
+        // No rebase here on purpose. `suite` is still the document we already
+        // had — the one the server just told us is stale — so rebasing onto it
+        // would compare the draft against the same values and mark nothing.
+        // The subscription delivers the newer document a moment later, and the
+        // rebase effect above does the real comparison then.
       }
     },
     [commit, draft, suite],

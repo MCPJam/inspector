@@ -215,6 +215,21 @@ export function canCommit(
 }
 
 /**
+ * The values as the SERVER will store them.
+ *
+ * One definition, used both to build the mutation arguments and to rebase the
+ * draft after a successful save. Trimming in one place and rebasing with the
+ * untrimmed value in another is how a person who typed `"  Name  "` ends up
+ * looking at their own whitespace in the input while the server holds
+ * something else.
+ */
+export function normalizeSuiteSettingsValues(
+  values: SuiteSettingsValues,
+): SuiteSettingsValues {
+  return { ...values, name: values.name.trim() };
+}
+
+/**
  * The mutation arguments for exactly the keys that changed.
  *
  * NULL SEMANTICS ARE PRESERVED EXACTLY as the per-control writers had them:
@@ -233,11 +248,12 @@ export function toUpdateArgs(
   },
 ): Record<string, unknown> {
   const args: Record<string, unknown> = { suiteId };
+  const normalized = normalizeSuiteSettingsValues(draft.current);
   for (const key of dirtyKeys(draft)) {
     const value = draft.current[key];
     switch (key) {
       case "name":
-        args.name = draft.current.name.trim();
+        args.name = normalized.name;
         break;
       case "defaultPassCriteria":
         args.defaultPassCriteria = value ?? null;

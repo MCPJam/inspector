@@ -32,15 +32,14 @@ export function SuiteSettingsCommitBar({
   return (
     <div
       data-testid="suite-settings-commit-bar"
-      // The bar appears and its count changes with no other cue, so a
-      // screen-reader user would otherwise learn about pending edits only by
-      // reaching the buttons.
-      role="status"
-      aria-live="polite"
       className="sticky bottom-0 z-10 -mx-4 mt-4 flex items-center justify-between gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur"
     >
+      {/* The live region is the TEXT, not the bar. Announcing the whole bar
+          would re-read Discard and Review and save every time the count
+          changes, and interactive controls inside a live region is its own
+          anti-pattern. `role="status"` already implies polite. */}
       <div className="min-w-0">
-        <p className="text-xs font-medium text-foreground">
+        <p role="status" className="text-xs font-medium text-foreground">
           {changeCount === 1
             ? "1 unsaved change"
             : `${changeCount} unsaved changes`}

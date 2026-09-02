@@ -241,6 +241,37 @@ describe("a note belongs to one change", () => {
     ).toBe("");
   });
 
+  it("a trimmed name is what the sheet shows after saving", async () => {
+    renderSettingsSheet();
+    editName("  Renamed  ");
+    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalled());
+    expect(
+      (mocks.applySuiteSettings.mock.calls[0][0] as { name: string }).name,
+    ).toBe("Renamed");
+    // And the input agrees, rather than holding whitespace the server dropped.
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("Suite name") as HTMLInputElement).value,
+      ).toBe("Renamed"),
+    );
+  });
+
+  it("announces the count on the text, not on the whole bar", () => {
+    renderSettingsSheet();
+    editName("Renamed");
+
+    // A live region wrapping Discard and Review and save would re-announce
+    // both buttons every time the count moved.
+    const bar = screen.getByTestId("suite-settings-commit-bar");
+    expect(bar.getAttribute("role")).toBeNull();
+    const status = screen.getByRole("status");
+    expect(status.textContent).toContain("1 unsaved change");
+    expect(status.querySelector("button")).toBeNull();
+  });
+
   it("a saved draft stops reporting unsaved changes immediately", async () => {
     renderSettingsSheet();
     editName("Renamed");
