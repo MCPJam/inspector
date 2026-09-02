@@ -2214,6 +2214,19 @@ export interface PlatformEnvironmentCapabilities {
    * still parses.
    */
   skillVersionPins?: boolean;
+  /**
+   * `secretSelection` is accepted on create / update / ad-hoc materialization,
+   * so an environment can carry a credential grant. Absent/false on older
+   * backends, which reject the unknown field with a validator error naming
+   * nothing the caller can act on — so probe this before sending a grant.
+   *
+   * Optional, so an older backend's response still parses. Note that the
+   * backend must PUBLISH this for a client to offer the field: a deployment
+   * that supports secret grants but predates the flag reports absence, which
+   * a strict client reads as "not supported". That is the intended reading —
+   * the flag is the contract — and it is why the backend half ships first.
+   */
+  secretGrants?: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
