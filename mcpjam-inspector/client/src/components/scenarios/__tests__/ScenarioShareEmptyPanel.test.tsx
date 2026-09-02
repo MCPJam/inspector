@@ -1,10 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
-import {
-  ScenarioShareBanner,
-  ScenarioShareEmptyPanel,
-} from "../ScenarioShareBanner";
+import { ScenarioShareEmptyPanel } from "../ScenarioShareEmptyPanel";
 
 const {
   authState,
@@ -51,24 +48,6 @@ beforeEach(() => {
   copyToClipboardMock.mockResolvedValue(true);
 });
 
-describe("ScenarioShareBanner", () => {
-  it("renders the compact share strip when authenticated", () => {
-    render(<ScenarioShareBanner scenario={scenario} />);
-
-    expect(screen.getByTestId("user-testing-share-banner")).toBeInTheDocument();
-    expect(screen.getByText("mcpjam.link/t/tok")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Copy link" }),
-    ).toBeInTheDocument();
-  });
-
-  it("hides entirely when unauthenticated", () => {
-    authState.isAuthenticated = false;
-    const { container } = render(<ScenarioShareBanner scenario={scenario} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-});
-
 describe("ScenarioShareEmptyPanel", () => {
   it("offers both a self-serve run and the share actions", () => {
     render(<ScenarioShareEmptyPanel scenario={scenario} />);
@@ -90,7 +69,7 @@ describe("ScenarioShareEmptyPanel", () => {
     expect(preview).toHaveAttribute("target", "_blank");
   });
 
-  it("does not restate the header banner's share headline", () => {
+  it("does not restate the header's share headline", () => {
     render(<ScenarioShareEmptyPanel scenario={scenario} />);
 
     expect(

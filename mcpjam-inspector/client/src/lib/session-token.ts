@@ -409,6 +409,15 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // while the API is fine.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics)$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
+  // One page of a run's iterations, each carrying its own stage rows — the
+  // only read that covers a PASSING trial's chain, which D9's diagnostics
+  // exclude by contract.
+  //
+  // Anchored at `iterations` on purpose: the trace and the per-iteration
+  // resource beneath it are a transcript and a row, read elsewhere with their
+  // own auth, and a pattern that swallowed them would be the blanket prefix
+  // this list exists to avoid. The eval-chain test pins all three.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {

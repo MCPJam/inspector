@@ -153,8 +153,13 @@ const TOOL: WebMcpToolDescriptor = {
 function liveFrame(data: string, seq = 2) {
   return {
     src: `data:image/jpeg;base64,${data}`,
+    rung: "ws" as const,
     deviceWidth: 1280,
     deviceHeight: 800,
+    // Same numbers at scale 1, and deliberately still stated: the pane lays
+    // out and scales clicks against these, not the device ones.
+    cssWidth: 1280,
+    cssHeight: 800,
     ts: 1,
     seq,
   };
@@ -264,6 +269,7 @@ describe("webmcp inspector store", () => {
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
     });
@@ -658,6 +664,72 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().session).toEqual(SESSION);
   });
 
+  it("tells the server the viewer's pixel ratio, and only for an in-app session", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => new Response(JSON.stringify(SESSION), { status: 201 }),
+      );
+    const original = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", {
+      configurable: true,
+      value: 2,
+    });
+    try {
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/", { display: "in-app" });
+      // The browser runs headless on the server, with no display to ask.
+      expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
+        url: "https://shop.test/",
+        display: "in-app",
+        devicePixelRatio: 2,
+      });
+
+      // A window session paints on a real display that already knows its own
+      // ratio, so the field is left off entirely.
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/");
+      expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toEqual({
+        url: "https://shop.test/",
+      });
+
+      // A ratio with more precision than the wire carries. Three decimals,
+      // because that is what a frame's own `scale` carries — the two describe
+      // the same ratio and should not disagree in the third place.
+      Object.defineProperty(window, "devicePixelRatio", {
+        configurable: true,
+        value: 1.3333333,
+      });
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/", { display: "in-app" });
+      expect(
+        JSON.parse(String(fetchSpy.mock.calls[2][1]?.body)).devicePixelRatio,
+      ).toBe(1.333);
+
+      Object.defineProperty(window, "devicePixelRatio", {
+        configurable: true,
+        value: 1,
+      });
+      await useWebmcpInspectorStore
+        .getState()
+        .startSession("https://shop.test/", { display: "in-app" });
+      // Omitted at 1: the server's own default, so the common case puts
+      // nothing new on the wire and an older server strips nothing.
+      expect(JSON.parse(String(fetchSpy.mock.calls[3][1]?.body))).toEqual({
+        url: "https://shop.test/",
+        display: "in-app",
+      });
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+
   it("sends an input batch as one command, and nothing for an empty one", async () => {
     await openSession();
     const fetchSpy = vi
@@ -895,6 +967,96 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("older");
   });
 
+  it("carries the server's capture time beside the picture", async () => {
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({ screenshotBase64: "shot", capturedAt: 1_234 }),
+          { status: 200 },
+        ),
+    );
+
+    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+
+    // The measurement needs the same definition of "captured" a streamed
+    // frame's `ts` carries. Timed from arrival here instead, the poll's
+    // percentile would exclude the capture and the round trip — a different
+    // quantity sharing a table with the socket's.
+    const state = useWebmcpInspectorStore.getState();
+    expect(state.lastScreenshot).toBe("shot");
+    expect(state.lastScreenshotAt).toBe(1_234);
+  });
+
+  it("dates the poll's picture and not the button's", async () => {
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            screenshotBase64: "shot",
+            capturedAt: 1_234,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBe(1_234);
+
+    // Somebody presses the Screenshot button. The picture changes; the poll
+    // timestamp must not survive it, and the manual capture must not acquire
+    // one — what the measurement records is a TRANSPORT, and a person pressing
+    // a button is not the pane polling. Left dated, a session that never
+    // polled would grow a `byTransport.poll` bucket, and a headless one —
+    // where the button is the only way to see the page — would report every
+    // capture as polling.
+    await useWebmcpInspectorStore.getState().captureScreenshot();
+
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
+    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBeUndefined();
+  });
+
+  it("keeps the picture when a poll answers without one", async () => {
+    await openSession();
+    const releases: Array<(response: Response) => void> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+
+    const first = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    const second = useWebmcpInspectorStore
+      .getState()
+      .captureScreenshot({ silent: true });
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+
+    // 200, and no picture: the provider holds outstanding captures at one, so
+    // a browser slower than the poll's one-second cadence answers the next
+    // tick this way. It is "nothing to show you right now", NOT "the page is
+    // blank".
+    releases[1](new Response("{}", { status: 200 }));
+    await second;
+
+    // The real capture, still on its way when that landed. Had the empty
+    // answer claimed the slot, this would be rejected as stale — and with a
+    // browser that stays slow, so would every one after it, leaving the pane
+    // blank for as long as it lasted.
+    releases[0](
+      new Response(JSON.stringify({ screenshotBase64: "real" }), {
+        status: 200,
+      }),
+    );
+    await first;
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("real");
+  });
+
   it("abandons the rest of a split gesture when the session turns over", async () => {
     await openSession();
     const bodies: string[] = [];
@@ -1041,6 +1203,7 @@ describe("webmcp inspector store — frame transport", () => {
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
     });
@@ -1103,8 +1266,104 @@ describe("webmcp inspector store — frame transport", () => {
       src: "blob:frame-0",
       deviceWidth: 1024,
       deviceHeight: 640,
+      cssWidth: 1024,
+      cssHeight: 640,
       ts: 5_000,
       seq: 7,
+      // The transport this frame came in on, carried WITH it: a frame decodes
+      // for tens of milliseconds and the ladder can move in that window.
+      rung: "ws",
+    });
+  });
+
+  it("stamps each frame with the transport that delivered it", async () => {
+    const { sse, ws } = await openFrameSession();
+    ws.open();
+    ws.emitFrame(binaryFrame(7));
+    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe("ws");
+
+    // The socket dies; the same session's next frame arrives on SSE. Reading
+    // the CURRENT transport when this paints would file it under whichever
+    // rung the ladder had reached by then.
+    ws.emitClose(1006);
+    sse.emit({
+      type: "frame",
+      seq: 8,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe(
+      "sse-frames",
+    );
+  });
+
+  it("reports a scaled frame's CSS size, so clicks stay in the page's units", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    ws.emitFrame(
+      binaryFrame(7, { deviceWidth: 2560, deviceHeight: 1600, scale: 2 }),
+    );
+
+    const frame = useWebmcpInspectorStore.getState().liveFrame;
+    // The picture is 2560 pixels wide and the page is 1280 CSS pixels wide.
+    // Scaling a click against the former sends it to twice the coordinate the
+    // person pointed at.
+    expect(frame).toMatchObject({
+      deviceWidth: 2560,
+      deviceHeight: 1600,
+      cssWidth: 1280,
+      cssHeight: 800,
+    });
+  });
+
+  it("tags an SSE frame as SSE even while a screenshot poll runs", async () => {
+    const { sse, ws } = await openFrameSession();
+    ws.open();
+    // An older server produces both at once: a socket that will not open and a
+    // refused `set_screencast`. A frame that arrived on the event stream did
+    // not arrive on the poll, whatever else is running.
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
+    sse.emit({
+      type: "frame",
+      seq: 9,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+
+    expect(useWebmcpInspectorStore.getState().liveFrame?.rung).toBe(
+      "sse-frames",
+    );
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
+  });
+
+  it("reads a missing or nonsense scale as 1", async () => {
+    const { sse, ws } = await openFrameSession();
+    ws.open();
+    // No scale at all: every server older than the field, and every provider
+    // that does not capture above CSS resolution.
+    ws.emitFrame(binaryFrame(7, { deviceWidth: 1280, deviceHeight: 800 }));
+    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
+      cssWidth: 1280,
+      cssHeight: 800,
+    });
+
+    // Zero would divide the geometry into infinity and put the pane's box
+    // somewhere no click could reach.
+    ws.emitFrame(
+      binaryFrame(8, { deviceWidth: 1280, deviceHeight: 800, scale: 0 }),
+    );
+    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
+      cssWidth: 1280,
+      cssHeight: 800,
+    });
+
+    sse.emit({
+      type: "frame",
+      seq: 9,
+      frame: { data: "paint", deviceWidth: 1280, deviceHeight: 800, ts: 1 },
+    });
+    expect(useWebmcpInspectorStore.getState().liveFrame).toMatchObject({
+      src: "data:image/jpeg;base64,paint",
+      cssWidth: 1280,
+      cssHeight: 800,
     });
   });
 
@@ -1152,6 +1411,98 @@ describe("webmcp inspector store — frame transport", () => {
     expect(useWebmcpInspectorStore.getState().liveFrame?.src).toBe(
       "data:image/jpeg;base64,newer",
     );
+  });
+
+  it("reports the socket once it is open, and nothing before that", async () => {
+    const transport = () => useWebmcpInspectorStore.getState().frameTransport;
+    const { ws } = await openFrameSession();
+    // One attempt spent, nothing carrying pixels yet: the handshake is still
+    // in flight and SSE has already been told to stop sending frames.
+    expect(transport()).toEqual({ rung: "none", attempts: 1, latched: false });
+
+    ws.open();
+    expect(transport()).toEqual({ rung: "ws", attempts: 0, latched: false });
+
+    useWebmcpInspectorStore.getState().disconnect();
+    // A teardown is not a degradation: the counters go back to where a fresh
+    // session starts, so the next one is not described by the last one's
+    // failures.
+    expect(transport()).toEqual({ rung: "none", attempts: 0, latched: false });
+  });
+
+  it("counts the ladder's attempts, and says when it has given up", async () => {
+    vi.useFakeTimers();
+    const transport = () => useWebmcpInspectorStore.getState().frameTransport;
+    const { ws } = await openFrameSession();
+
+    // 1006 — an old server's 404 upgrade. Frames move back to SSE at once and
+    // the ladder starts retrying: degraded, but NOT settled, so nothing should
+    // be telling the person about it yet.
+    ws.emitClose(1006);
+    expect(transport()).toMatchObject({ rung: "sse-frames", latched: false });
+
+    for (const [attempt, delay] of [
+      [2, 500],
+      [3, 1_000],
+      [4, 2_000],
+    ] as const) {
+      vi.advanceTimersByTime(delay);
+      expect(transport().attempts).toBe(attempt);
+      FakeWebSocket.instances.at(-1)!.emitClose(1006);
+    }
+
+    // The fourth failure exhausts the ladder. THIS is the state worth showing:
+    // the pane is on the slower path and nothing will move it back for the
+    // rest of the session.
+    expect(transport()).toEqual({
+      rung: "sse-frames",
+      attempts: 4,
+      latched: true,
+    });
+  });
+
+  it("latches without retrying when the socket is refused outright", async () => {
+    const { ws } = await openFrameSession();
+    // 4401/4503: auth, or the feature switched off. Retrying cannot fix
+    // either, so the ladder stops here rather than spending its budget.
+    ws.emitClose(4401);
+    expect(useWebmcpInspectorStore.getState().frameTransport).toEqual({
+      rung: "sse-frames",
+      attempts: 1,
+      latched: true,
+    });
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("leaves the screenshot poll's state to the surface that owns it", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    // A second session starts while the pane is still mounted and still
+    // polling. Its interval outlives the teardown, so clearing the flag here
+    // would report `none` for a pane visibly painting screenshots — the
+    // surface says when its poll actually stops.
+    await openFrameSession("session-2");
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
+      "poll",
+    );
+  });
+
+  it("reports the screenshot poll as the transport it is", async () => {
+    const { ws } = await openFrameSession();
+    ws.open();
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(true);
+    // A server too old to screencast at all. Whatever the socket ladder is
+    // doing, what is on screen came from a screenshot.
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    useWebmcpInspectorStore.getState().noteScreenshotPolling(false);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("ws");
   });
 
   it("puts frames back on SSE at once, then retries three times and latches", async () => {
@@ -1366,6 +1717,38 @@ describe("webmcp inspector store — frame transport", () => {
     ws.emitClose(1006);
     vi.advanceTimersByTime(120_000);
     expect(ws.sent).toHaveLength(1);
+  });
+
+  it("does NOT ping while the document is hidden, and resumes when it shows", async () => {
+    vi.useFakeTimers();
+    // Shadows the prototype getter; the delete in `finally` restores it.
+    const setVisibility = (value: DocumentVisibilityState) =>
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => value,
+      });
+    try {
+      setVisibility("hidden");
+      const { ws } = await openFrameSession();
+      ws.open();
+
+      // The server refreshes the session's idle deadline on every ping, so a
+      // hidden tab that kept pinging would hold the session — a real Chromium,
+      // and one of the capacity slots — unreapable for as long as the tab
+      // existed anywhere in the browser. Hidden already means "not watching"
+      // to the rest of this feature: the pane stops the screencast on the very
+      // same signal.
+      vi.advanceTimersByTime(120_000);
+      expect(ws.sent).toHaveLength(0);
+
+      // The socket stayed open, so coming back needs no handshake and is at
+      // most one interval from telling the server someone is watching again.
+      setVisibility("visible");
+      vi.advanceTimersByTime(30_000);
+      expect(ws.sent).toEqual([JSON.stringify({ type: "ping" })]);
+    } finally {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+    }
   });
 
   it("clears the frame and its blob when the stream stops", async () => {
