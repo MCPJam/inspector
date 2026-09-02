@@ -48,6 +48,7 @@ import { probeFreePort } from "./server-port-fallback.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
+import { createSafeStorageKeyStore } from "./ipc/local-harness/local-harness-listeners.js";
 import {
   installUpdateOnQuit,
   setTrustedUpdateWindow,
@@ -116,8 +117,12 @@ if (!app.isDefaultProtocolClient("mcpjam")) {
 let mainWindow: BrowserWindow | null = null;
 let server: any = null;
 let serverPort: number = 0;
+/** Session token for the local-harness IPC picker; re-read on every server start. */
+let localHarnessSessionToken: string | null = null;
 let shutdownLocalTerminals: (() => void) | null = null;
 let killLocalTerminals: (() => void) | null = null;
+let shutdownWebMcpFrames: (() => void) | null = null;
+let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
 
@@ -389,16 +394,55 @@ async function startHonoServer(): Promise<number> {
       cachedProbedPort = port;
     }
 
+    // Where the local-harness runtime pack installs. A packaged app keeps its
+    // runtime with the rest of its own state rather than in `~/.mcpjam`, which
+    // is where the npx server falls back to. Set BEFORE the server module
+    // loads, for the same reason SERVER_PORT is.
+    process.env.MCPJAM_RUNTIME_ROOT = path.join(
+      app.getPath("userData"),
+      "local-harness",
+      "runtime"
+    );
+
     // Dynamic import so server/config.ts evaluates with the env var we just
     // set, not the build-time default. After the first call the module is in
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
+
+    // The session token the local-harness picker presents when it registers a
+    // workspace grant through the server's own route. Read here, after the
+    // server module has generated it, and re-read on every restart.
+    try {
+      const { getSessionToken } = await import(
+        "../server/services/session-token.js"
+      );
+      localHarnessSessionToken = getSessionToken();
+    } catch {
+      localHarnessSessionToken = null;
+    }
+
+    // Seal the local-harness instance key with the OS keychain. Injected
+    // rather than imported by the server, which has to stay loadable under
+    // `npx` where there is no Electron and no keychain at all.
+    try {
+      const { setInstanceKeyStore } = await import(
+        "../server/utils/harness/local/instance-key.js"
+      );
+      setInstanceKeyStore(createSafeStorageKeyStore());
+    } catch (err) {
+      log.warn(
+        "Local harness instance key will fall back to an owner-only file",
+        err
+      );
+    }
     const {
       app: honoApp,
       injectWebSocket,
       shutdownLocalComputerTerminals,
       killLocalComputerTerminals,
+      shutdownWebMcpFrameSockets,
+      killWebMcpFrameSockets,
     } = await createHonoApp();
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
@@ -406,6 +450,11 @@ async function startHonoServer(): Promise<number> {
     // `window-all-closed`, after which macOS may restart this same server.
     shutdownLocalTerminals = shutdownLocalComputerTerminals;
     killLocalTerminals = killLocalComputerTerminals;
+    // The WebMCP frame sockets are the same story: established WebSockets that
+    // `server.close()` leaves attached, with a latching variant for a real quit
+    // and a non-latching one for `window-all-closed`.
+    shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
+    killWebMcpFrames = killWebMcpFrameSockets;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -854,8 +903,13 @@ app.whenReady().then(async () => {
     createAppMenu();
     mainWindow = createMainWindow(serverUrl);
 
-    // Register IPC listeners
-    registerListeners(mainWindow, () => mainWindow);
+    // Register IPC listeners. The local-harness accessors are read at CALL
+    // time, not captured: both the bound port and the session token change
+    // across a server restart.
+    registerListeners(mainWindow, () => mainWindow, {
+      getServerOrigin: () => (serverPort === null ? null : getServerUrl()),
+      getSessionToken: () => localHarnessSessionToken,
+    });
 
     appBootstrapped = true;
 
@@ -894,6 +948,9 @@ app.on("window-all-closed", () => {
   // does it anyway; this makes it unconditional) but do NOT latch shutdown, or
   // every terminal handshake after reopening would be refused.
   killLocalTerminals?.();
+  // Same non-latching kill: latching here would 4503 every frame handshake
+  // after the user reopened the window from the dock.
+  killWebMcpFrames?.();
   if (server) {
     server.close?.();
     serverPort = 0;
@@ -1016,6 +1073,7 @@ app.on("before-quit", (event) => {
     return;
   }
   shutdownLocalTerminals?.();
+  shutdownWebMcpFrames?.();
   if (server) {
     server.close?.();
   }

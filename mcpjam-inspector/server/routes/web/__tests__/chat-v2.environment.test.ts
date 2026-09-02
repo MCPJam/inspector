@@ -93,9 +93,19 @@ vi.mock("../../../utils/scenario-runtime-config.js", async () => {
 // delivery kill switch, computers data plane) that a unit test process has
 // none of. Those gates are covered by harness-availability's own tests; here we
 // only care about which skill set reaches which engine.
-vi.mock("../../../utils/harness/harness-availability.js", () => ({
-  checkHarnessRuntimeAvailable: () => ({ ok: true }),
-}));
+// Only `checkHarnessRuntimeAvailable` is stubbed. Spreading `actual` is
+// load-bearing, not tidiness: a wholesale replacement makes every OTHER export
+// the route calls `undefined(...)` at runtime — a 500 that looks like a routing
+// bug rather than a missing mock entry.
+vi.mock("../../../utils/harness/harness-availability.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/harness-availability.js")
+  >("../../../utils/harness/harness-availability.js");
+  return {
+    ...actual,
+    checkHarnessRuntimeAvailable: () => ({ ok: true }),
+  };
+});
 
 vi.mock("../apps.js", () => ({ default: new Hono() }));
 

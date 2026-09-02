@@ -55,6 +55,8 @@ import { AssertPickChooser, type AssertPick } from "./assert-pick-chooser";
 import { CaseRunsHistory } from "./runs/case-runs-history";
 import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
 import { IterationDetails } from "./iteration-details";
+import { TrialChainPanel } from "@/components/evaluate/trial-chain-panel";
+import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { resolveIterationJudge } from "./goal-completion-presentation";
 import { CompareRunChatSurface } from "./compare-run-chat-surface";
 import { EvalTraceSurface } from "./eval-trace-surface";
@@ -227,6 +229,15 @@ interface TestTemplateEditorProps {
   selectedTestCaseId: string;
   connectedServerNames: Set<string>;
   projectId: string | null;
+  /**
+   * Read each opened trial's user-value chain, and show it above its trace.
+   *
+   * The editor is the one host of `IterationDetails` that can: it resolves the
+   * replayed iteration's RUN from `suiteRuns` and holds the project id, which
+   * is exactly what the chain read needs and what the other four hosts lack.
+   * Off by default, and off issues no request.
+   */
+  trialChainEnabled?: boolean;
   availableModels: ModelDefinition[];
   /**
    * Iterations for the entire suite, already subscribed by the parent via
@@ -840,6 +851,7 @@ export function TestTemplateEditor({
   onSelectTab,
   openCompareFromRoute = false,
   openCompareIterationId = null,
+  trialChainEnabled = false,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -1203,6 +1215,63 @@ export function TestTemplateEditor({
       return quickRunHostOptions[0]?.value ?? null;
     });
   }, [quickRunHostOptions]);
+
+  /**
+   * The RUN whose trial the drill-in is showing, and that trial's chain.
+   *
+   * ABOVE THE EARLY RETURN, and that placement is load-bearing rather than
+   * stylistic: this component returns a loading state before `currentTestCase`
+   * resolves, so a hook called below it runs on some renders and not others —
+   * which React reports as "rendered more hooks than during the previous
+   * render". A test caught exactly that.
+   *
+   * The run is resolved here for the same reason `replayHostId` is: an
+   * iteration knows its `suiteRunId` and nothing else about the run, and the
+   * chain read needs the run's status and revision to know whether there is
+   * anything to read and when to re-read it. The candidate order mirrors
+   * `latestTracedIteration` below — the replayed trial first, then whichever
+   * traced iteration the drill-in would fall back to.
+   */
+  const openTrialRun = useMemo(() => {
+    const runId =
+      replayIteration?.suiteRunId ??
+      [
+        routeCompareAnchorIteration,
+        ...recentIterations,
+        lastSavedIteration,
+      ].find(
+        (it): it is EvalIteration => !!it && !!(it.blob || it.chatSessionId),
+      )?.suiteRunId;
+    if (!runId) return null;
+    return suiteRuns.find((run) => run._id === runId) ?? null;
+  }, [
+    replayIteration,
+    routeCompareAnchorIteration,
+    recentIterations,
+    lastSavedIteration,
+    suiteRuns,
+  ]);
+
+  const trialChains = useEvalRunIterationChains({
+    projectId,
+    run: openTrialRun,
+    enabled: trialChainEnabled,
+  });
+
+  /**
+   * The chain panel for one opened trial, or nothing.
+   *
+   * Built here and passed DOWN as a node: `IterationDetails` has five hosts
+   * and only this one can answer which run the trial belongs to.
+   */
+  const trialChainSlotFor = (iteration: EvalIteration | null) => {
+    if (!iteration) return null;
+    const chain = trialChains.chains.get(iteration._id);
+    // An absent KEY is "not loaded", which is not "no chain" — a trial the
+    // walk has not reached renders nothing rather than a false absence.
+    if (!chain) return null;
+    return <TrialChainPanel chain={chain} resetKey={iteration._id} />;
+  };
 
   // The host a replayed iteration actually ran on (its suite run's
   // `namedHostId`) — i.e. the matrix column the user clicked to open it.
@@ -2862,6 +2931,7 @@ export function TestTemplateEditor({
     latestTracedIteration,
     suiteRuns,
   );
+
   const latestAvailableResult = latestAvailableIteration
     ? computeIterationResult(latestAvailableIteration)
     : null;
@@ -3375,6 +3445,7 @@ export function TestTemplateEditor({
                       serverNames={effectiveSuiteServers}
                       layoutMode="full"
                       judgeCase={replayJudgeCase}
+                      trialChainSlot={trialChainSlotFor(replayIteration)}
                     />
                   </div>
                 ) : liveRecordMode && !showSpecOverride ? (
@@ -3475,6 +3546,7 @@ export function TestTemplateEditor({
                         serverNames={effectiveSuiteServers}
                         layoutMode="full"
                         judgeCase={latestTracedJudgeCase}
+                        trialChainSlot={trialChainSlotFor(latestTracedIteration)}
                       />
                     </div>
                   </div>

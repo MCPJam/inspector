@@ -144,6 +144,16 @@ export interface WebMcpSessionPublic {
   /** Hard stop, regardless of activity. */
   hardExpiresAt: number;
   viewportTransport: WebMcpViewportTransport;
+  /**
+   * JPEG quality the viewport stream is currently encoding at, when the
+   * provider has an adaptive one.
+   *
+   * Reported so the picture getting worse is a fact the UI can show rather
+   * than a mystery the viewer has to guess at — "the link is struggling" and
+   * "the page is broken" look identical otherwise. Absent for a provider whose
+   * stream is not adaptive, and for every server older than the field.
+   */
+  streamQuality?: number;
   protocolVersion: typeof WEBMCP_INSPECTOR_PROTOCOL_VERSION;
   /** Present when status is `unsupported` or `error`. */
   detail?: string;
@@ -170,12 +180,16 @@ export interface WebMcpInputModifiers {
 }
 
 /**
- * One thing a person did to the pane, in the FRAME's device pixels.
+ * One thing a person did to the pane, in the page's CSS pixels.
  *
  * Coordinates are scaled on the client, because only the client knows the
  * rendered size of its pane and how the picture is letterboxed inside it. It
- * scales against the dimensions of the frame it is looking at, so the mapping
- * is exact even mid-resize.
+ * scales against the dimensions of the frame it is looking at — DIVIDED by
+ * that frame's {@link WebMcpFrame.scale}, so a frame captured at two device
+ * pixels per CSS pixel still maps onto the coordinate space the page itself
+ * uses. CSS pixels rather than device pixels is what keeps a session whose
+ * frames arrive at more than one scale from dispatching half its clicks at
+ * double coordinates.
  */
 export type WebMcpInputEvent =
   | {
@@ -355,6 +369,21 @@ export interface WebMcpFrame {
   deviceHeight: number;
   /** Wall-clock capture time. */
   ts: number;
+  /**
+   * Device pixels per CSS pixel in THIS frame. Absent means 1.
+   *
+   * The frame's dimensions are physical; everything a person points at is in
+   * CSS pixels, and the two stop being the same number the moment a session
+   * captures at a device pixel ratio above 1. Carried per frame rather than per
+   * session because a session's frames need not agree: a still captured at full
+   * device resolution can arrive between two streamed frames captured at CSS
+   * resolution, and a client that assumed one ratio for the session would put
+   * clicks in the wrong place for the other.
+   *
+   * Optional so an older server's frames — which have no notion of this — read
+   * as the 1 they have always implicitly been.
+   */
+  scale?: number;
 }
 
 export type WebMcpEvent =
@@ -401,8 +430,112 @@ export const WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8 * 1024;
 
 export const WEBMCP_VIEWPORT = { width: 1280, height: 800 } as const;
 
-/** JPEG quality for streamed frames. Legible text, roughly a tenth the bytes. */
-export const WEBMCP_FRAME_QUALITY = 50;
+/**
+ * JPEG quality rungs for the streamed frames themselves, best first.
+ *
+ * Index 0 is the BASELINE every stream starts at. 75 rather than the 50 this
+ * ladder replaces because the artefact people actually notice is mosquito
+ * noise around text: at q50 a paragraph of 14px body copy is legible but
+ * visibly dirty, and the whole picture is being resampled by the pane on top
+ * of that. The lower rungs exist for a link that cannot carry the baseline,
+ * and the governor — not this file — decides when to walk down them.
+ */
+export const WEBMCP_STREAM_QUALITY_LADDER = [75, 60, 45, 30] as const;
+
+/**
+ * Qualities tried for the still that replaces an OVERSIZE frame.
+ *
+ * Deliberately below the stream's baseline: this still exists because the
+ * page's own paint did not fit the cap, so trying to publish it at the same
+ * quality would mostly reproduce the same failure a round trip later.
+ *
+ * The bottom rung is ugly on purpose. It is only ever reached by a page whose
+ * paint will not fit at 25 — near-maximum-entropy content, a noise canvas or a
+ * grain-heavy photo filling the viewport — and for THAT page the choice is not
+ * between a good picture and a poor one. It is between a poor picture of the
+ * page it is looking at and a sharp picture of a page it has left, because the
+ * frame itself was refused for its size and a page that has stopped painting
+ * sends nothing else. Frames are transient; the next paint replaces this.
+ *
+ * It narrows the gap rather than closing it: a paint that will not fit at 10
+ * still publishes nothing. Closing it needs a proportional resize, which CDP
+ * offers only through `clip` — measured to clobber the context's
+ * `deviceScaleFactor` and push an off-content frame into the stream.
+ */
+export const WEBMCP_SUBSTITUTE_QUALITY_LADDER = [50, 25, 10] as const;
+
+/**
+ * Qualities tried for the SETTLE still — the sharp picture published once a
+ * page has stopped painting.
+ *
+ * ABOVE the stream's baseline, which is the entire point. Motion hides
+ * compression artefacts and a still page does not: the frame a person actually
+ * reads is the one that is still on screen a second after they stopped
+ * scrolling, and that one can afford bytes the 10fps stream cannot.
+ */
+export const WEBMCP_SETTLE_STILL_QUALITIES = [
+  85,
+  // The floor is the STREAM's own baseline, never below it: this still exists
+  // to improve on the picture already on screen, and publishing a worse one
+  // because the good one did not fit would be a downgrade dressed up as a
+  // feature. When neither rung fits, nothing is published and the pane keeps
+  // what it has.
+  75,
+] as const;
+
+/**
+ * How long a page must go without painting (or being driven) before the sharp
+ * still is taken.
+ *
+ * Long enough that a scroll's momentum, a hover transition or a page reflow
+ * does not spend a capture; short enough that "stopped scrolling" and "the
+ * text sharpened" feel like the same moment.
+ */
+export const WEBMCP_SETTLE_QUIET_MS = 800;
+
+/**
+ * Cadence of the provider's housekeeping timer, which is what notices the
+ * quiet window has passed.
+ *
+ * A timer rather than a per-frame `setTimeout`, because the interesting case is
+ * the ABSENCE of frames — there is no event to hang a deadline off. 250ms puts
+ * at most a quarter-second of slop on {@link WEBMCP_SETTLE_QUIET_MS} while
+ * costing four wakeups a second on an idle session.
+ */
+export const WEBMCP_HOUSEKEEPING_INTERVAL_MS = 250;
+
+/**
+ * How far back the governor looks for evidence that the link cannot carry the
+ * stream.
+ *
+ * One dropped frame is not evidence: the pacer holds the newest frame while a
+ * send is outstanding, and a single overwrite happens on any link the moment
+ * two paints land inside one round trip. A RUN of them inside a couple of
+ * seconds is a consumer that is not keeping up.
+ */
+export const WEBMCP_QUALITY_PRESSURE_WINDOW_MS = 2_000;
+
+/** Drops inside that window before the stream steps down a rung. */
+export const WEBMCP_QUALITY_PRESSURE_DROPS = 3;
+
+/**
+ * How long a rung is held before the governor may move again.
+ *
+ * A step costs a stop/start of the encoder, and the frames already in flight
+ * when it lands are still the old size — so a governor without a hold would
+ * read its own transition as more pressure and walk to the bottom of the
+ * ladder in one burst.
+ */
+export const WEBMCP_QUALITY_STEP_HOLD_MS = 3_000;
+
+/**
+ * How long the link must be free of drops before quality climbs back.
+ *
+ * Deliberately much longer than the step-down window. Stepping down is a
+ * response to something a person is watching happen; stepping up is an
+ * experiment, and an experiment that fails costs them another stall.
+ */
+export const WEBMCP_QUALITY_RECOVER_QUIET_MS = 10_000;
 
 /**
  * Hard cap on one streamed frame.
@@ -412,13 +545,162 @@ export const WEBMCP_FRAME_QUALITY = 50;
  * never persisted — so the cost of a big one is one SSE write, not a permanent
  * entry in an export. An oversized frame is DROPPED rather than re-encoded in
  * the hot path; the provider converges the pane by publishing one budgeted
- * screenshot instead, so a page whose final paint never fits still stops being
- * stale.
+ * STILL instead (see {@link WEBMCP_SUBSTITUTE_QUALITY_LADDER}), so a page whose
+ * final paint never fits still stops being stale.
  */
 export const WEBMCP_FRAME_MAX_BYTES = 256 * 1024;
 
 /** Floor on the gap between published frames: 10fps. */
 export const WEBMCP_FRAME_MIN_INTERVAL_MS = 100;
+
+/**
+ * Floor while someone is actively driving the pane: ~30fps.
+ *
+ * The resting floor is deliberately slow — a page nobody is touching does not
+ * need 30 JPEGs a second, and most of what a screencast paints is a spinner.
+ * But the moment a person scrolls or types, the interesting frame is the one
+ * echoing what they just did, and a 100ms floor puts up to a tenth of a second
+ * between the two on its own. So the rate is raised by INPUT rather than
+ * configured: the cost is paid exactly while it buys something.
+ */
+export const WEBMCP_FRAME_BOOST_INTERVAL_MS = 33;
+
+/**
+ * How long a boost lasts after the input that caused it.
+ *
+ * Long enough to cover the settle of a gesture — a scroll's momentum, a page
+ * reflowing after a keystroke — and short enough that an idle pane is back to
+ * the resting floor about a second after the person stops.
+ */
+export const WEBMCP_FRAME_BOOST_WINDOW_MS = 1_500;
+
+/**
+ * Size of the fixed header on a binary frame message. See
+ * {@link encodeWebMcpBinaryFrame}.
+ */
+export const WEBMCP_FRAME_WS_HEADER_BYTES = 24;
+
+/** Current version byte of the binary frame wire format. */
+const WEBMCP_FRAME_WIRE_VERSION = 1;
+/** Message kind: a painted JPEG frame. The only kind V1 defines. */
+const WEBMCP_FRAME_WIRE_KIND_JPEG = 1;
+
+/** A frame as it travels on the binary wire, and as `decode` hands it back. */
+export interface WebMcpBinaryFrame {
+  deviceWidth: number;
+  deviceHeight: number;
+  /** Device pixels per CSS pixel; see {@link WebMcpFrame.scale}. */
+  scale?: number;
+  /** Wall-clock capture time, from the publishing server. */
+  ts: number;
+  /** The session's monotonic event counter, shared with the SSE stream. */
+  seq: number;
+  /** Raw JPEG bytes — NOT base64. */
+  jpeg: Uint8Array;
+}
+
+/**
+ * Pack one frame as a single binary message: a fixed 24-byte little-endian
+ * header followed by the JPEG bytes.
+ *
+ *   offset  type  field
+ *   0       u8    version (1)
+ *   1       u8    kind (1 = JPEG)
+ *   2       u16   deviceWidth
+ *   4       u16   deviceHeight
+ *   6       u16   scale x 1000 (0 = 1.0)
+ *   8       f64   ts
+ *   16      u32   seq
+ *   20      u32   jpegByteLength
+ *   24      …     JPEG bytes
+ *
+ * ONE message per frame rather than a meta/payload pair: a pair needs pairing
+ * state on the receiver — and a receiver that loses track of which half it is
+ * holding paints one frame's pixels with another frame's dimensions, which is
+ * exactly the bug that puts every click in the wrong place. One atomic message
+ * also halves the message count on a 30fps stream.
+ *
+ * `DataView` and `Uint8Array` only, no `Buffer`: this runs in the browser on
+ * the decode side, and one file compiled for both ends is the only way the two
+ * cannot drift.
+ */
+export function encodeWebMcpBinaryFrame(frame: WebMcpBinaryFrame): Uint8Array {
+  const out = new Uint8Array(WEBMCP_FRAME_WS_HEADER_BYTES + frame.jpeg.length);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  view.setUint8(0, WEBMCP_FRAME_WIRE_VERSION);
+  view.setUint8(1, WEBMCP_FRAME_WIRE_KIND_JPEG);
+  // Clamped rather than trusted: a surface reported larger than a u16 would
+  // wrap to a small number and letterbox every later click against a box the
+  // page never had.
+  view.setUint16(2, clampU16(frame.deviceWidth), true);
+  view.setUint16(4, clampU16(frame.deviceHeight), true);
+  // Fixed point in the byte pair V1 reserved, so this is an ADDITIVE change:
+  // an old decoder reads the two bytes it always ignored, and a new decoder
+  // reads an old server's 0 as the 1.0 it means.
+  view.setUint16(6, clampU16(Math.round((frame.scale ?? 1) * 1_000)), true);
+  view.setFloat64(8, frame.ts, true);
+  view.setUint32(16, frame.seq >>> 0, true);
+  view.setUint32(20, frame.jpeg.length, true);
+  out.set(frame.jpeg, WEBMCP_FRAME_WS_HEADER_BYTES);
+  return out;
+}
+
+function clampU16(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(0xffff, Math.round(value)));
+}
+
+/**
+ * Unpack a binary frame message, or `undefined` if it is not one.
+ *
+ * NEVER THROWS on wire data. This decodes bytes that arrived over a socket,
+ * and the one thing worse than a dropped frame is a throw inside a `message`
+ * handler taking the whole stream down with it. An unknown version or kind
+ * reads as "not a frame I understand" rather than an error — which is what
+ * makes adding a second kind later a non-breaking change for THIS client.
+ */
+export function decodeWebMcpBinaryFrame(
+  buffer: ArrayBuffer | Uint8Array,
+): WebMcpBinaryFrame | undefined {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (bytes.byteLength < WEBMCP_FRAME_WS_HEADER_BYTES) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint8(0) !== WEBMCP_FRAME_WIRE_VERSION) return undefined;
+  if (view.getUint8(1) !== WEBMCP_FRAME_WIRE_KIND_JPEG) return undefined;
+  const jpegLength = view.getUint32(20, true);
+  // The declared length must match what actually arrived. A truncated message
+  // would otherwise hand an `<img>` half a JPEG, which decodes to nothing and
+  // leaves the pane blank with no way to tell why.
+  if (jpegLength !== bytes.byteLength - WEBMCP_FRAME_WS_HEADER_BYTES) {
+    return undefined;
+  }
+  // Zero pixels is not a frame. A bare header passes the check above — its
+  // declared length of nothing does match the nothing that arrived — and the
+  // presenter would then hand an `<img>` a 0-byte blob URL, which fails to
+  // decode and blanks the pane with exactly the silence the check above
+  // exists to prevent. Rejected HERE, at the one boundary where wire data is
+  // validated, rather than guarded again at every consumer.
+  if (jpegLength === 0) return undefined;
+  const scaleMilli = view.getUint16(6, true);
+  return {
+    deviceWidth: view.getUint16(2, true),
+    deviceHeight: view.getUint16(4, true),
+    // Zero is what every server older than this field writes, and what
+    // `encodeWebMcpBinaryFrame` wrote as "reserved" — it means 1, not a frame
+    // of zero size.
+    scale: scaleMilli === 0 ? 1 : scaleMilli / 1_000,
+    ts: view.getFloat64(8, true),
+    seq: view.getUint32(16, true),
+    // A copy, not a view onto the socket's buffer: the caller holds this while
+    // it decodes, and some transports reuse the underlying allocation.
+    //
+    // `new Uint8Array(subarray)` rather than `.slice()`, because a Node
+    // `Buffer` IS a `Uint8Array` and overrides `slice` to return a VIEW — so
+    // the one input where aliasing actually bites (a `ws` receive buffer) is
+    // exactly the one `.slice()` fails to copy.
+    jpeg: new Uint8Array(bytes.subarray(WEBMCP_FRAME_WS_HEADER_BYTES)),
+  };
+}
 
 /** Marker appended to a truncated string result. */
 export function truncationMarker(totalBytes: number): string {

@@ -66,6 +66,16 @@ export interface WebMcpSessionCallbacks {
    * lifetime ran out, holding a capacity slot nobody is using.
    */
   onFrame(frame: WebMcpFrame): void;
+  /**
+   * The stream is now encoding at a different quality.
+   *
+   * OPTIONAL, because only a provider with an adaptive stream has anything to
+   * say here — the hosted browser paints in a datacenter and the embedded
+   * surface is already on the viewer's screen. The runtime republishes the
+   * session so the picture getting worse is visible as a fact rather than a
+   * mystery.
+   */
+  onStreamQualityChanged?(quality: number): void;
 }
 
 export interface WebMcpInvokeRequest {
@@ -113,6 +123,18 @@ export interface WebMcpBrowserSession {
    * is driven through the Browser panel instead) logs and returns.
    */
   dispatchInput(events: WebMcpInputEvent[]): Promise<void>;
+  /**
+   * A frame could not be handed to a viewer, and was replaced by a newer one.
+   *
+   * The transport's report that the link is behind — the one thing a provider
+   * cannot observe for itself, since it publishes into a fan-out and never
+   * learns what happened afterwards. Called on the HOT PATH, once per dropped
+   * frame, so it must be cheap and MUST NOT THROW.
+   *
+   * OPTIONAL: a provider whose stream is not adaptive has nothing to do with
+   * this, and should not have to carry an empty method to say so.
+   */
+  noteFramePressure?(): void;
   /** Idempotent, and must not hang: teardown races a timeout internally. */
   dispose(): Promise<void>;
 }
@@ -140,6 +162,21 @@ export interface CreateWebMcpSessionOptions {
    * behaviour. `embedded` implies headless regardless of the flag above.
    */
   viewportMode?: WebMcpViewportMode;
+  /**
+   * Device pixels per CSS pixel the page should be RENDERED at.
+   *
+   * The viewer's own ratio, forwarded by the client, because that is the only
+   * place it is known: a browser running headless on a server has no display to
+   * ask. Omitted means 1, which is what every caller older than this field
+   * gets and what a provider with no notion of it can ignore.
+   *
+   * Fixed for the life of the session on purpose. It is the browser context's
+   * `deviceScaleFactor`, set once at creation rather than emulated later — a
+   * second device-metrics override fights the one Playwright re-applies on
+   * every navigation, and last-writer-wins between two of them is a session
+   * whose scale depends on timing.
+   */
+  devicePixelRatio?: number;
   callbacks: WebMcpSessionCallbacks;
 }
 

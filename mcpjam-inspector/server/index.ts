@@ -53,6 +53,7 @@ import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog"
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -62,6 +63,10 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import {
+  createWebMcpFramesWsHandler,
+  shutdownWebMcpFrameSockets,
+} from "./routes/web/webmcp-frames.js";
 import { shutdownWebMcpSessions } from "./services/webmcp-inspector/session-registry";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
@@ -321,6 +326,11 @@ startHostedModelCatalogRefresh();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Reports whether a local-harness runtime pack is present. Deliberately
+// only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
+// kill switch and a consent grant is installed when the user asks, never
+// at startup and never during a session start.
+reportLocalHarnessRuntimeStatusInBackground();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -539,6 +549,16 @@ if (!HOSTED_MODE) {
   app.get(
     "/api/web/computers/local-terminal",
     createLocalComputerTerminalWsHandler(upgradeWebSocket),
+  );
+}
+// WebMCP Inspector frame stream WebSocket. Local only, for the same reason the
+// `/api/mcp/webmcp/*` routes are: a hosted replica runs no local browser to
+// stream. Auth is the ordinary session token on `Sec-WebSocket-Protocol` —
+// see routes/web/webmcp-frames.
+if (!HOSTED_MODE) {
+  app.get(
+    "/api/web/webmcp/sessions/:id/frames",
+    createWebMcpFramesWsHandler(upgradeWebSocket),
   );
 }
 // Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
@@ -1005,6 +1025,9 @@ async function shutdown() {
     // does NOT tear down established sockets, so a live shell would otherwise
     // outlive the inspector.
     shutdownLocalComputerTerminals();
+    // Same reason, same moment: a frame socket is an established connection
+    // that `server.close()` would leave attached to an exiting process.
+    shutdownWebMcpFrameSockets();
     // Also before server.close(), and awaited: a WebMCP session owns a real
     // Chromium — a visible window when it is headed — and a fire-and-forget
     // teardown loses the race against the process.exit(0) below.
