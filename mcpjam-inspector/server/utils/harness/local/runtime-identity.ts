@@ -109,17 +109,32 @@ export async function computeTreeDigest(root: string): Promise<string> {
  * One entry of a tree's stat snapshot: everything a cheap re-check can compare
  * without reading a byte of content.
  *
- * `ino` is in here because size and mtime alone are forgeable by anything that
- * can write the file; a replacement that preserves both still lands on a new
- * inode unless it was written in place, and a write in place changes mtime. It
- * is not a substitute for hashing — the files that actually execute are still
- * re-hashed — it is what makes re-hashing only those files defensible.
+ * Size and mtime alone are forgeable by anything that can write the file, so
+ * two harder fields carry the check: `ino`, which a replacement lands on a new
+ * value of unless it was written in place, and `ctimeMs`, which a write in
+ * place cannot avoid moving and no syscall can set back. Together they are what
+ * makes skipping the full digest on an unchanged tree defensible — the digest
+ * itself remains the authority whenever anything here disagrees.
  */
 export interface RuntimeTreeEntrySnapshot {
   /** Path relative to the tree root, POSIX separators. */
   path: string;
   size: number;
   mtimeMs: number;
+  /**
+   * Inode CHANGE time — the field that makes the stat compare detect a
+   * rewrite rather than merely notice a careless one.
+   *
+   * `mtime` is forgeable: `utimes` sets it to anything. `ctime` is not, because
+   * no syscall sets it — the kernel stamps it on every metadata change, and
+   * `utimes` itself bumps it. So a tamper that opens a file, rewrites its
+   * bytes, and restores size, mtime and mode still leaves a ctime strictly
+   * later than the one recorded here.
+   *
+   * Not a substitute for the digest, which remains the authority; it is what
+   * makes skipping the digest on an unchanged tree defensible.
+   */
+  ctimeMs: number;
   ino: number;
   mode: number;
 }
@@ -199,6 +214,7 @@ async function digestTreeWithSnapshot(
         path: rel,
         size: info.size,
         mtimeMs: info.mtimeMs,
+        ctimeMs: info.ctimeMs,
         ino: Number(info.ino),
         mode: info.mode,
       });
@@ -219,12 +235,19 @@ async function digestTreeWithSnapshot(
 
 /**
  * Files whose content digest is baselined during the full walk, split by what
- * the pre-spawn re-verify can afford to read again.
+ * the pre-spawn re-verify reads again.
  *
- * Everything here is a file that actually executes; the other ~5,400 files in
- * the tree are covered by the stat compare, which is what makes the re-verify a
- * stat walk instead of a 515 MB read. The split inside that set is a budget
- * question, measured against a real 494 MB pack on this machine:
+ * The stat compare is the primary check and it is strong: it covers path, size,
+ * mode, inode and `ctime`, and `ctime` is the one field a tamper cannot put
+ * back — the kernel stamps it on every write and no syscall sets it. An
+ * in-place rewrite is therefore caught for all ~5,400 files without reading a
+ * byte.
+ *
+ * Re-hashing on top of that is defence for the case where the stat fields
+ * cannot be trusted at all: a doctored filesystem image, a restore that rebuilt
+ * the metadata, root on the same machine. That is worth a couple of
+ * milliseconds and not worth two seconds, and the split is a budget question
+ * measured against a real 494 MB pack:
  *
  *   stat walk over 5,462 files   350 ms
  *   launcher.mjs + bridge.mjs      2 ms
@@ -234,12 +257,8 @@ async function digestTreeWithSnapshot(
  *                               1949 ms  against a 1.5 s session-start SLO
  *
  * So the two small scripts are re-hashed on every spawn — they are the bytes
- * this repo wrote to constrain the bridge, they cost nothing, and an in-place
- * rewrite of `launcher.mjs` is precisely how the loopback guarantee would be
- * removed. The two large binaries are left to the stat compare by default and
- * re-hashed when `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY=true`, which trades
- * ~1.6 s per session start for defence against an in-place rewrite that also
- * restored size, mtime, inode and mode.
+ * this repo wrote to constrain the bridge, and they are free. The two large
+ * binaries join them under `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY=true`.
  *
  * The vendor CLI is matched by pattern because its name is platform-suffixed
  * inside the vendor's own platform package.
@@ -1011,6 +1030,7 @@ async function detectSnapshotDrift(
       if (
         info.size !== expected.size ||
         info.mtimeMs !== expected.mtimeMs ||
+        info.ctimeMs !== expected.ctimeMs ||
         Number(info.ino) !== expected.ino ||
         info.mode !== expected.mode
       ) {

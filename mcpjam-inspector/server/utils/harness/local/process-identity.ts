@@ -394,7 +394,13 @@ export async function terminateOwnedProcess(args: {
   if (await waitGone(args.graceMs)) return "graceful";
   const again = await probeProcess(args.pid, platform);
   if (again.state === "gone") return "graceful";
-  if (again.state === "alive" && !sameBirthIdentity(args.identity, again.identity)) return "not-owned";
+  // `unknown` is a failure to LOOK, and escalation is an action. The initial
+  // probe above already refuses to signal on it; so does this one, because a
+  // transient probe failure over a pid that has since been reused is exactly
+  // how a SIGKILL lands on a stranger. The caller keeps its record and the
+  // janitor retries when the probe can see again.
+  if (again.state === "unknown") return "unknown";
+  if (!sameBirthIdentity(args.identity, again.identity)) return "not-owned";
   try { process.kill(args.pid, "SIGKILL"); } catch { return "graceful"; }
   return (await waitGone(500)) ? "forced" : "escaped";
 }
@@ -812,10 +818,18 @@ export async function terminateOwnedProcessGroup(args: {
   if (afterGrace.state === "unknown") {
     return { outcome: "unknown", reason: afterGrace.reason };
   }
-  if (afterGrace.identity !== args.birthIdentity) {
+  if (!sameBirthIdentity(args.birthIdentity, afterGrace.identity)) {
     // Our root exited during the grace window and the number was reused. The
-    // tree is gone; the stranger now holding the pid is not ours to signal.
-    return { outcome: "graceful" };
+    // stranger now holding the pid is not ours to signal — but our DESCENDANTS
+    // may still be running, and the root dying is not the tree dying. So the
+    // group is settled rather than declared clean, anchored because the root
+    // was proven alive and ours at the top of this call.
+    //
+    // `sameBirthIdentity`, not `!==`: the sibling check above uses it, and an
+    // exact compare reads a darwin process caught mid-exit — which reports its
+    // command as `(node)` — as pid reuse. That is the mistake this file has
+    // made before, and here it would report a clean stop over a live tree.
+    return settleGroup("graceful", true);
   }
   signalProcessGroup(args.pid, "SIGKILL", platform);
 

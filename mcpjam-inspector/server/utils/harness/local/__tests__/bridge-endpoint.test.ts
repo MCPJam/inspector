@@ -176,9 +176,37 @@ describe("the OS-level binding check", () => {
       "::ffff:127.0.0.1",
       "::ffff:7f00:1",
       "[::1]",
+      // What `/proc/net/tcp6` actually writes: every group padded to four hex
+      // digits. Reading these as exposed would REFUSE a bridge bound exactly
+      // where it was told to bind — a false positive in the check whose whole
+      // job is to be trusted.
+      "0000:0000:0000:0000:0000:0000:0000:0001",
+      "0000:0000:0000:0000:0000:ffff:7f00:0001",
     ]) {
       expect(isLoopbackBoundAddress(address)).toBe(true);
     }
+  });
+
+  it("still reads a padded non-loopback IPv6 address as off-box", () => {
+    // Zero-stripping must not turn into "anything with lots of zeroes is
+    // loopback".
+    for (const address of [
+      "0000:0000:0000:0000:0000:0000:0000:0000",
+      "fe80:0000:0000:0000:0000:0000:0000:0001",
+      "0000:0000:0000:0000:0000:ffff:c0a8:0105",
+    ]) {
+      expect(isLoopbackBoundAddress(address)).toBe(false);
+    }
+  });
+
+  it("passes a bridge the kernel reports on padded IPv6 loopback", async () => {
+    await expect(
+      assertBridgeBindingIsLoopback({
+        pid: 4242,
+        platform: "linux",
+        read: async () => ["0000:0000:0000:0000:0000:0000:0000:0001"],
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("treats a wildcard binding as off-box, because it is", () => {

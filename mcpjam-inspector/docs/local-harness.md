@@ -145,7 +145,7 @@ each one changes.
 | `MCPJAM_RUNTIME_ROOT` | app data | Where packs install. Set by Electron's main process; on npx it falls back to `~/.mcpjam/harness-local/runtime`. |
 | `MCPJAM_LOCAL_HARNESS_PACK_SOURCE` | unset | Install from a local archive instead of the release asset. Development only — a pack from here has no signed manifest, and the installer says so. |
 | `MCPJAM_LOCAL_HARNESS_EXPECTED_PACK` | unset | `<version>:sha256:<hex>`, the digest to accept. **Only honoured when `PACK_SOURCE` is also set**, so it cannot widen what a shipped Inspector will install. Exists because the pack build has to verify the pack it just produced, which by definition is not in the generated table yet. |
-| `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY` | `false` | Re-hash `bin/node` and the vendor binary on **every** pre-spawn re-verify, not just compare their size, mtime, inode and mode. See below. |
+| `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY` | `false` | Re-hash `bin/node` and the vendor binary on **every** pre-spawn re-verify, rather than relying on their stat fields. See below. |
 
 ### What the pre-spawn re-verify costs
 
@@ -168,10 +168,16 @@ a cache hit at 0–1 ms.)
 
 So the two small scripts are re-hashed every time — they are what forces the
 bridge's listener onto loopback, and they cost nothing — and the two large
-binaries are left to the stat compare unless `STRICT_REVERIFY` is on. The gap
-that buys the 1.6 s: an in-place rewrite of one of those binaries that also
-restored its size, mtime, inode and mode, performed after this process already
-digested the tree. Turn the knob on where that matters more than the budget.
+binaries are left to the stat compare unless `STRICT_REVERIFY` is on.
+
+The stat compare is not the weak half. It covers path, size, mode, inode and
+**`ctime`**, and `ctime` is the field a tamper cannot put back: the kernel
+stamps it on every write and no syscall sets it, so an in-place rewrite that
+restores size, mtime and mode still gives itself away — for all 5,462 files,
+without reading one. Re-hashing on top of that defends the narrower case where
+the stat fields themselves cannot be trusted: a doctored filesystem image, a
+restore that rebuilt the metadata, root on the same machine. Turn the knob on
+where that matters more than 1.6 s per session start.
 
 ## Brakes, from fastest to slowest
 

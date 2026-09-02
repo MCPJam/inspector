@@ -369,26 +369,19 @@ describe("verification cost", () => {
     );
   });
 
-  it("leaves the large binaries to the stat compare unless asked not to", async () => {
-    // The budget this trades against, measured on a real 494 MB pack: the stat
-    // walk over 5,462 files costs 350 ms, `launcher.mjs` and `bridge.mjs`
-    // together 2 ms, `bin/node` 334 ms and the vendor `claude` binary 1,263 ms
-    // — 1.9 s inside a 1.5 s session-start SLO.
+  it("catches an in-place rewrite of a large binary from the stat compare alone", async () => {
+    // The field that makes this work is `ctime`. A tamper can restore size,
+    // mode and mtime — `utimes` takes any value — but nothing in userland sets
+    // ctime, and the write that changed the bytes moved it. So `bin/node`, the
+    // one file the cheap path does NOT re-hash by default, is still caught.
     //
-    // So by default `bin/node` is covered by size, mtime, inode and mode (and
-    // by the FULL digest, which still runs once per process before any spawn),
-    // and an operator who wants it re-read on every spawn asks for that. This
-    // test states both halves, because a default that is weaker than the strict
-    // mode should be visible rather than implied.
+    // That is why the default is cheap rather than weak: re-hashing the large
+    // binaries (see `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY`) defends the
+    // narrower case where the stat fields themselves cannot be trusted.
     delete process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY;
     clearRuntimeVerificationCache();
     const root = await writeBundle("bignode", { "bridge.mjs": "x" });
     const nodePath = join(root, "bin", "node");
-    // Stamped to a whole millisecond before the snapshot is taken, because
-    // that is the only way a test can put an mtime back EXACTLY: `utimes`
-    // takes a Date, and the filesystem records nanoseconds. Without this the
-    // stat compare wins on sub-millisecond drift and the test proves nothing
-    // about hashing.
     const stamp = new Date(1_600_000_000_000);
     await utimes(nodePath, stamp, stamp);
 
@@ -406,10 +399,50 @@ describe("verification cost", () => {
     const original = await readFile(nodePath);
     await writeFile(nodePath, Buffer.alloc(original.length, 0x7a));
     await utimes(nodePath, stamp, stamp);
-    expect((await stat(nodePath)).mtimeMs).toBe(stamp.getTime());
+    const after = await stat(nodePath);
+    expect(after.mtimeMs).toBe(stamp.getTime());
+    // …and the field that gives it away.
+    expect(after.ctimeMs).toBeGreaterThan(stamp.getTime());
 
-    await expect(revalidateRuntime(resolved.runtime)).resolves.toEqual({
-      ok: true,
+    const result = await revalidateRuntime(resolved.runtime);
+    expect(result.ok).toBe(false);
+    expect((result as { message: string }).message).toMatch(
+      /changed after consent was granted/,
+    );
+  });
+
+  it("re-hashes the large binaries too when strict re-verification is on", async () => {
+    // The knob's own effect, isolated from the stat compare: with the snapshot
+    // agreeing on every field, only a re-read can disagree. Achieved by
+    // re-baselining the snapshot AFTER the rewrite, which is the only way a
+    // test can simulate stat fields a tamper could forge.
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("strictnode", { "bridge.mjs": "x" });
+    const resolved = await resolveManagedBundle({
+      manifest: manifestFor("strictnode", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "linux",
+    });
+    if (!resolved.ok) throw new Error("fixture did not resolve");
+
+    const verification = await verifyRuntime(root, resolved.runtime.digest);
+    if (!verification.ok) throw new Error("fixture did not verify");
+    const nodePath = join(root, "bin", "node");
+    const original = await readFile(nodePath);
+    await writeFile(nodePath, Buffer.alloc(original.length, 0x7a));
+    // Re-stamp the snapshot from the tampered file, so every cheap field
+    // agrees and only the recorded content digest still describes the
+    // original bytes.
+    const rewritten = await stat(nodePath);
+    const entry = verification.snapshot.entries.find(
+      (e) => e.path === "bin/node",
+    )!;
+    Object.assign(entry, {
+      size: rewritten.size,
+      mtimeMs: rewritten.mtimeMs,
+      ctimeMs: rewritten.ctimeMs,
+      ino: Number(rewritten.ino),
+      mode: rewritten.mode,
     });
 
     try {

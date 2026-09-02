@@ -152,6 +152,9 @@ describe("scoped values", () => {
     "XDG_CONFIG_HOME",
     "XDG_CACHE_HOME",
     "TMPDIR",
+    // The vendor CLI extracts its native binary here, so a scoped override
+    // would put that extraction back outside the session's disposable state.
+    "CLAUDE_CODE_TMPDIR",
     "APPDATA",
   ])("refuses to let a caller inject %s", (name) => {
     expect(() =>

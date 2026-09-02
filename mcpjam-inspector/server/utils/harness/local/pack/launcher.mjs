@@ -29,9 +29,31 @@ import net from "node:net";
 
 const LOOPBACK = "127.0.0.1";
 
-/** Hosts that mean "every interface", in every spelling Node accepts. */
-const isWildcardHost = (host) =>
-  host === undefined || host === null || host === "" || host === "0.0.0.0" || host === "::";
+/**
+ * Hosts that reach only this machine.
+ *
+ * Deliberately a LOOPBACK allowlist rather than a wildcard denylist. A denylist
+ * has to enumerate every spelling of "every interface" Node accepts — `""`,
+ * `0.0.0.0`, `::`, `::0`, `0`, `[::]` — and the one it misses is a control
+ * channel published to the LAN. An allowlist fails the other way: an exotic
+ * spelling of loopback gets forced to `127.0.0.1`, which is where it was going
+ * anyway.
+ */
+const isLoopbackHost = (host) => {
+  if (typeof host !== "string") return false;
+  const bare = host.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%")[0];
+  if (bare === "localhost") return true;
+  if (/^127(\.\d{1,3}){3}$/.test(bare)) return true;
+  if (bare === "::1") return true;
+  // Zero-padded and IPv4-mapped spellings of the same two addresses.
+  const groups = bare.split(":").map((g) => g.replace(/^0+(?=.)/, ""));
+  if (bare.includes(":") && groups.join(":") === "0:0:0:0:0:0:0:1") return true;
+  const mapped = /^(?:::ffff:|0:0:0:0:0:ffff:)(.+)$/.exec(groups.join(":"));
+  return mapped !== null && /^127(\.\d{1,3}){3}$/.test(mapped[1]);
+};
+
+/** Anything this launcher will rewrite: not provably loopback. */
+const isWildcardHost = (host) => !isLoopbackHost(host);
 
 const originalListen = net.Server.prototype.listen;
 

@@ -430,9 +430,32 @@ function decodeProcNetAddress(hex: string): string | null {
   return null;
 }
 
+/**
+ * Strip the leading zeroes an IPv6 group may carry.
+ *
+ * `/proc/net/tcp6` renders every group as four hex digits, so loopback arrives
+ * as `0000:0000:0000:0000:0000:0000:0000:0001` — the same address as `::1` and
+ * not equal to it as a string. Classifying that as exposed would REFUSE a
+ * session whose bridge is bound exactly where it is supposed to be, which is a
+ * false positive in the one check whose job is to be trusted.
+ *
+ * Only zero-stripping: no `::` collapsing, because the classifier below
+ * compares against fully-expanded forms and adding a second spelling would give
+ * it two things to get right instead of one.
+ */
+function normalizeHexGroups(address: string): string {
+  if (!address.includes(":")) return address;
+  return address
+    .split(":")
+    .map((group) => (/^[0-9a-f]+$/.test(group) ? group.replace(/^0+(?=.)/, "") : group))
+    .join(":");
+}
+
 /** Is a bound address one that only this machine can reach? */
 export function isLoopbackBoundAddress(address: string): boolean {
-  const bare = address.split("%")[0]!.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const bare = normalizeHexGroups(
+    address.split("%")[0]!.trim().toLowerCase().replace(/^\[|\]$/g, ""),
+  );
   if (bare === "") return false;
   if (/^127\./.test(bare)) return true;
   if (bare === "::1" || bare === "0:0:0:0:0:0:0:1") return true;

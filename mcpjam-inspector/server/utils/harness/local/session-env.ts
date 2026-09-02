@@ -123,6 +123,10 @@ const SCOPED_NAME_DENYLIST = new Set([
   "TMPDIR",
   "TMP",
   "TEMP",
+  // Same reason as TMPDIR, and the reason it is set at all: the vendor CLI
+  // extracts its native binary here, so a scoped override would put that
+  // extraction back outside the session's disposable state.
+  "CLAUDE_CODE_TMPDIR",
   "XDG_CONFIG_HOME",
   "XDG_CACHE_HOME",
   "XDG_DATA_HOME",
