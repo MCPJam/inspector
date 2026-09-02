@@ -236,7 +236,7 @@ export function registerSessionsCommands(program: Command): void {
         )
         .option(
           "--session <sessionId>",
-          "Continue this session instead of starting one. Configuration is fixed at the first turn, so the config flags below are refused with a session. The per-turn flags are not: --client, --max-steps and --max-tool-calls apply to whichever turn sends them, and --client in particular must be RE-SENT on every turn of a host-bound conversation."
+          "Continue this session instead of starting one. Configuration is fixed at the first turn, so the config flags below are refused with a session. The per-turn flags are not: --client, --max-steps and --max-tool-calls apply to whichever turn sends them, and --client in particular must be RE-SENT on every turn of a host-bound conversation — a session started with --client alone refuses a continuation that omits it."
         )
         .option(
           "--model <modelId>",
@@ -244,7 +244,7 @@ export function registerSessionsCommands(program: Command): void {
         )
         .option(
           "--client <hostId>",
-          "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Alongside --environment it only asserts which host you expect (a mismatch is refused). A harness turn needs --tool-mode auto with no --max-tool-calls."
+          "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Continuing a session you started with --client alone REQUIRES it: without it the turn is refused rather than answered by the emulated engine. Alongside --environment it only asserts which host you expect (a mismatch is refused). A harness turn needs --tool-mode auto with no --max-tool-calls."
         )
         .option(
           "--environment <environmentId>",

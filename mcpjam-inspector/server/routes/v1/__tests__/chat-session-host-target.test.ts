@@ -83,6 +83,11 @@ vi.mock("../../../services/environments/runtime.js", () => ({
   runtimeServerIds: (spec: { servers: { effectiveServerIds: string[] } }) =>
     spec.servers.effectiveServerIds,
   runtimeServerNames: () => [],
+  // Identity stands in for the real projection, which is `runtimeSkills`'s own
+  // contract: what these tests are about is WIRING — whether the environment's
+  // resolved set reaches the harness engine at all, or is silently replaced by
+  // the live project-wide catalog.
+  runtimeSkills: (spec: { skills?: unknown[] }) => spec.skills ?? [],
 }));
 
 vi.mock("../../web/auth.js", () => ({
@@ -447,10 +452,17 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
       environmentSpec({ harness: "claude-code" }),
     );
 
-    const body = await (
-      await turn(firstTurn({ environmentId: ENVIRONMENT, modelId: byokModel }))
-    ).json();
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, modelId: byokModel }),
+    );
+    const body = await response.json();
 
+    // The STATUS is half of the refusal. Asserting only the body would pass for
+    // a 200 that carried the refusal as commentary while skipping the engine —
+    // a silent 200 is the exact shape this file exists to prevent, so the
+    // failure mode must not be able to hide in the field nobody checked.
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
     expect(body.details.kind).toBe("model-not-hosted");
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
@@ -482,6 +494,245 @@ describe("an unavailable harness runtime is refused, never emulated", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).engine).toBe("emulated");
+  });
+});
+
+describe("an environment's skills reach the engine that runs", () => {
+  const ENV_SKILL = {
+    skillId: "sk_env",
+    name: "deploy",
+    description: "the environment's own",
+    content: "# deploy",
+    aggregateHash: "hash_1",
+  };
+
+  it("hands the HARNESS the environment's resolved set, not the project catalog", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue({
+      ...environmentSpec({ harness: "claude-code" }),
+      skills: [ENV_SKILL],
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    // Presence is what makes it authoritative: with this absent,
+    // `selectHarnessSkillSource` takes its `live` arm and the sandbox is
+    // written the whole PROJECT-WIDE catalog — the environment's decision
+    // honoured by the emulated engine and discarded by the harness.
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeSkillsOverride: [ENV_SKILL] }),
+    );
+  });
+
+  it("delivers an environment's EMPTY set as empty rather than falling back", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue({
+      ...environmentSpec({ harness: "claude-code" }),
+      skills: [],
+    });
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    // "This environment delivers no skills" is a real answer, and a different
+    // one from "ask the project". An omitted field would mean the latter.
+    const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
+      Record<string, unknown>,
+    ];
+    expect(args.runtimeSkillsOverride).toEqual([]);
+  });
+
+  it("leaves a host-only harness turn on the live catalog", async () => {
+    // No environment resolved anything, so there is no decision to honour and
+    // the legacy project-wide fetch is the correct source. An EMPTY override
+    // here would silently starve the turn of every skill it should have had.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        harness: "claude-code",
+        selectedServerIds: ["srv_1"],
+      },
+    });
+
+    await turn(firstTurn({ hostId: HOST }));
+
+    const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
+      Record<string, unknown>,
+    ];
+    expect(args).not.toHaveProperty("runtimeSkillsOverride");
+  });
+});
+
+describe("continuing a session a HOST established", () => {
+  const SESSION = "cs_1";
+
+  /**
+   * A session whose first turn named only a `hostId`.
+   *
+   * It pins a model and a tool mode and NO target: `hostId` is per-turn and the
+   * ingest boundary's allowlist cannot carry it, so there is nothing in the row
+   * that says which engine ran. That absence is the whole subject of this
+   * block.
+   */
+  function hostEstablishedSession(overrides: Record<string, unknown> = {}) {
+    return {
+      _id: SESSION,
+      chatSessionId: "runtime-uuid",
+      projectId: PROJECT,
+      origin: "api",
+      version: 3,
+      startedAt: 1_000,
+      messagesBlobUrl: "https://blob.test/messages",
+      resumeConfig: { modelId: MODEL, toolMode: "auto" },
+      ...overrides,
+    };
+  }
+
+  function continuation(overrides: Record<string, unknown> = {}) {
+    return {
+      sessionId: SESSION,
+      idempotencyKey: `k-${Math.random()}`,
+      message: "again",
+      ...overrides,
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("pins NO server set for a host-only first turn", async () => {
+    // The pin would be a workaround for `hostId` not being pinnable, and it
+    // would defeat both halves of the point: a bare continuation would find a
+    // target and run the EMULATED engine on a session established on a
+    // harness, and a continuation that did re-send `hostId` would connect the
+    // set resolved once rather than the one the host selects now.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        harness: "claude-code",
+        selectedServerIds: ["srv_from_host"],
+      },
+    });
+
+    await turn(firstTurn({ hostId: HOST }));
+
+    const [args] = persistChatSessionToConvexMock.mock.calls.at(-1) as [
+      { resumeConfig: Record<string, unknown> },
+    ];
+    expect(args.resumeConfig).not.toHaveProperty("serverIds");
+    expect(args.resumeConfig).not.toHaveProperty("environmentId");
+  });
+
+  it("REFUSES a bare continuation instead of quietly emulating it", async () => {
+    queryMock.mockResolvedValue(hostEstablishedSession());
+
+    const response = await turn(continuation());
+    const body = await response.json();
+
+    // The session may have run a harness. Resolving "no host pointer,
+    // therefore emulated" would splice two engines into one transcript with
+    // nothing in it saying where the seam is — the silent emulation this
+    // whole path exists to remove, arriving one turn later.
+    expect(response.status).toBe(400);
+    expect(body.details.reason).toBe("HOST_TARGET_REQUIRED");
+    // Before the lease: nothing claimed, nothing spent, nothing ran.
+    expect(mutationMock).not.toHaveBeenCalled();
+    expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("cannot be walked from a harness first turn into an emulated second one", async () => {
+    // The two halves above, end to end and against the row the FIRST TURN
+    // actually wrote — the shape a workaround pin would have produced is the
+    // shape that used to make this walk succeed silently.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        harness: "claude-code",
+        selectedServerIds: ["srv_from_host"],
+      },
+    });
+    const first = await turn(firstTurn({ hostId: HOST }));
+    expect((await first.json()).engine).toBe("harness:claude-code");
+
+    const [persisted] = persistChatSessionToConvexMock.mock.calls.at(-1) as [
+      { resumeConfig: Record<string, unknown> },
+    ];
+    queryMock.mockResolvedValue(
+      hostEstablishedSession({ resumeConfig: persisted.resumeConfig }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),
+    );
+    runUnifiedAssistantTurnMock.mockClear();
+    resolveTurnRuntimeMock.mockClear();
+
+    const second = await turn(continuation());
+
+    // Not "a 200 that happens to say emulated": the turn does not run at all.
+    expect(second.status).toBe(400);
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("re-resolves the host's CURRENT servers when the continuation re-sends hostId", async () => {
+    queryMock.mockResolvedValue(hostEstablishedSession());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),
+    );
+    // The host has since changed what it selects. The turn must connect what
+    // the host selects NOW — the host is the authority on its own server set,
+    // and a session-side copy would make a host edit invisible to the session
+    // it was made for.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        harness: "claude-code",
+        selectedServerIds: ["srv_after_the_edit"],
+      },
+    });
+
+    const response = await turn(continuation({ hostId: HOST }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.engine).toBe("harness:claude-code");
+    expect(createManualHostedConnectionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ serverIds: ["srv_after_the_edit"] }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("leaves an ENVIRONMENT-pinned continuation alone — it needs no pointer", async () => {
+    // `environmentId` IS a pin, and the environment resolves its own host on
+    // every turn. Nothing to re-send, so nothing to refuse.
+    queryMock.mockResolvedValue(
+      hostEstablishedSession({
+        resumeConfig: {
+          modelId: MODEL,
+          toolMode: "auto",
+          environmentId: ENVIRONMENT,
+        },
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),
+    );
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code" }),
+    );
+
+    const response = await turn(continuation());
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).engine).toBe("harness:claude-code");
   });
 });
 

@@ -47,10 +47,33 @@ live while the response still reports the narrowing.
 And every turn now names its engine. `engine` is `"emulated"` or
 `"harness:<id>"` on every response, harness or not. A turn that said nothing was
 indistinguishable from one that ran the harness, which is what let this go
-unnoticed; it is also the receipt for the one gap host targeting cannot close on
-its own, since `hostId` is per-turn (the ingest boundary's `resumeConfig`
-projection carries no host, so pinning it would validate, 200, and be dropped) —
-a continuation that forgets it reports `emulated`, out loud.
+unnoticed.
+
+A CONTINUATION cannot fall through to the other engine either. `hostId` is
+per-turn — the ingest boundary's `resumeConfig` projection is an allowlist that
+carries no host, so pinning it would validate, answer 200 and be dropped — and a
+session established by `hostId` alone therefore pins no target of its own. A bare
+continuation of one is REFUSED (400, `details.reason: "HOST_TARGET_REQUIRED"`,
+before the lease) rather than resolved as "no host pointer, therefore emulated":
+the session's earlier turns may have run a real harness, and splicing a second
+engine into the same transcript is the original bug arriving one turn later. The
+caller re-sends the `hostId` the first turn's response reported, and the host's
+CURRENT server selection is re-resolved from it — a host edit is visible to the
+session it was made for, which a copy of the first turn's set would have hidden.
+Making the engine durable instead is a backend change: `AGENT_RESUME_PIN_KEYS`
+and the ingest projection would both have to carry a host.
+
+An environment-backed harness turn now delivers the ENVIRONMENT's resolved
+skills. The emulated engine already honoured them; the harness read
+`runtimeSkillsOverride`, which nothing set here, so it fell back to the live
+project-wide catalog and wrote the whole project's skills into the sandbox — the
+environment's decision honoured on one engine and discarded on the other, from
+two responses that look identical. Presence is authoritative, so an environment
+resolving zero skills delivers zero. Per-skill supporting files and pinned plugin
+versions still do not cross (they travel as `effectiveCapabilities`, which the
+`runAssistantTurn` facade does not expose): a harness turn here delivers the
+environment's skill bodies, narrower than the Playground but no longer a
+different set.
 
 `hostId` is threaded through the SDK client and the `send_chat_message`
 operation, and reaches the wire rather than merely passing validation. The CLI

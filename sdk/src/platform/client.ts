@@ -708,8 +708,9 @@ export class PlatformApiClient {
    *
    * `hostId` names the saved host (client) the turn executes as, which is what
    * decides between MCPJam's emulated engine and a real agent harness. It is
-   * PER-TURN, not pinned: re-send it on every turn. The response's `engine`
-   * field always names what actually ran.
+   * PER-TURN, not pinned: re-send it on every turn — a continuation of a
+   * session that named only a host is REFUSED without it, rather than run on
+   * the other engine. The response's `engine` field always names what ran.
    */
   sendChatMessage(
     params: {

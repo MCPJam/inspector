@@ -46,7 +46,9 @@
  * never read from the request body. When a harness-declaring target cannot run
  * here the turn is REFUSED before it spends, never quietly downgraded, and
  * every response names the engine it ran on. See `chat-session-host-target.ts`
- * for the rules and why each refusal exists.
+ * for the rules and why each refusal exists. `hostId` is per-turn and cannot
+ * be pinned, so a continuation of a host-established session must re-send it —
+ * omitting it is `HOST_TARGET_REQUIRED`, never a quiet fall back to emulated.
  *
  * CONFIG IS FIRST-TURN-ONLY. Model, target, system prompt and tool mode pin at
  * session creation and are stored in `resumeConfig`; a continuation that
@@ -80,7 +82,9 @@ import {
   resolveEnvironmentForRuntime,
   runtimeServerIds,
   runtimeServerNames,
+  runtimeSkills as environmentRuntimeSkills,
 } from "../../services/environments/runtime.js";
+import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { logger } from "../../utils/logger.js";
 import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
 import {
@@ -226,8 +230,15 @@ const turnSchema = z
      * there would validate, return 200 and be dropped, so pinning it would
      * refuse every continuation for restating a pin that never persisted. It
      * is per-turn for exactly the reason `allowedServerIds` is: re-send it on
-     * every turn you want it applied to. The response's `engine` field is the
-     * receipt — a continuation that forgot it reports `emulated`, out loud.
+     * every turn you want it applied to.
+     *
+     * A continuation of a HOST-ESTABLISHED session (one that named a host and
+     * nothing else) that omits it is REFUSED — `HOST_TARGET_REQUIRED`, before
+     * the lease — rather than run on the emulated engine. Not pinnable is not
+     * the same as not required, and a per-turn field that silently changes the
+     * ENGINE when forgotten is the one shape this surface must not have.
+     * Making it durable is a backend change: `AGENT_RESUME_PIN_KEYS` and the
+     * ingest projection would both have to carry a host.
      *
      * An ENVIRONMENT target needs none of this: it resolves its own host
      * server-side on every turn, including continuations, because
@@ -401,6 +412,22 @@ interface ResolvedTarget {
    * caller builds a live set instead.
    */
   environmentCapabilities?: EffectiveCapabilitySet;
+  /**
+   * The SAME environment decision, flattened for the HARNESS engine.
+   *
+   * `environmentCapabilities` is what the emulated engine consumes; a harness
+   * writes skills to disk inside its sandbox and reads only this flat list
+   * (`runtimeSkillsOverride` → `selectHarnessSkillSource`). Setting one and
+   * not the other is how an environment-backed harness turn ends up running
+   * the LIVE project-wide catalog — the environment's decision honoured on one
+   * engine and ignored on the other, which is worse than either alone because
+   * the two turns look identical from outside.
+   *
+   * PRESENCE, not length, is the signal: an environment that resolves zero
+   * skills delivers zero, and must never fall through to the project pool.
+   * Absent ⇒ no environment named, and the live fetch is correct.
+   */
+  environmentSkills?: RuntimeSkill[];
   /**
    * The host this turn executes as, resolved SERVER-SIDE — from the
    * environment's own `spec.host`, or by re-fetching an explicit `hostId`.
@@ -607,6 +634,11 @@ async function resolveTarget(
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
     environmentId: input.environmentId,
     environmentCapabilities: resolveEffectiveCapabilities(spec, attribution),
+    // The same resolution the emulated engine gets, in the shape the HARNESS
+    // engine reads. Always set on this branch — presence is what makes it
+    // authoritative, so an environment resolving no skills delivers none
+    // instead of falling through to the project-wide catalog.
+    environmentSkills: environmentRuntimeSkills(spec),
     // The environment's OWN host, resolved by the backend in the same atomic
     // read as its server set. This is what makes a harness environment run its
     // harness on a CONTINUATION too: `environmentId` is a resume pin, so every
@@ -976,6 +1008,27 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(resume.environmentId ? { environmentId: resume.environmentId } : {}),
       ...(resume.serverIds ? { serverIds: resume.serverIds } : {}),
     };
+    // A session whose first turn named ONLY a host pinned no target of its
+    // own, because `hostId` cannot be pinned: the ingest boundary's
+    // `resumeConfig` projection is an allowlist and does not carry it (see the
+    // schema's note). So a bare continuation of such a session knows neither
+    // the server set NOR — the part that matters — the ENGINE.
+    //
+    // Refused, not resolved. "No host pointer, therefore emulated" is exactly
+    // the silent emulation this whole path exists to remove, and it would be
+    // worse on a continuation than on a first turn: the session's earlier
+    // turns may have run a real harness, so the transcript would splice two
+    // engines together with nothing in it saying where the seam is. The
+    // caller re-sends the `hostId` the first turn's response reported, and the
+    // host's CURRENT selection is re-resolved from it.
+    if (!pins.environmentId && !pins.serverIds && !body.hostId) {
+      return v1Error(
+        c,
+        "VALIDATION_ERROR",
+        "This session pinned no target of its own — its first turn named a host, and hostId is per-turn rather than a resume pin. Re-send the same hostId (the first turn's response reported it) so this turn runs on the engine that host declares. The turn was refused rather than run on the emulated engine.",
+        { reason: "HOST_TARGET_REQUIRED" },
+      );
+    }
     priorMessages = (await loadResumeHistory(existing)) as ModelMessage[];
   } else {
     if (!body.projectId) {
@@ -1115,13 +1168,15 @@ async function handleTurn(c: Context): Promise<Response> {
       // than running on to its own timeout after the caller has gone.
       { authHeader, signal: abortController.signal },
     );
-    // A host-only first turn pinned no target of its own: its servers came off
-    // the host's server-authoritative selection. Pin the RESOLVED set so a
-    // continuation still has something to connect — `hostId` is not carried by
-    // the ingest boundary's `resumeConfig` projection, so it cannot be the pin.
-    if (!pins.environmentId && !pins.serverIds) {
-      pins = { ...pins, serverIds: target.serverIds };
-    }
+    // A host-only turn deliberately pins NOTHING here. Pinning the resolved
+    // server set would look like a convenience and behave like a trap twice
+    // over: a bare continuation would then have a target, run the emulated
+    // engine and answer 200 for a session established on a harness; and a
+    // continuation that DID re-send `hostId` would connect the set the first
+    // turn resolved rather than the one the host selects now, so a host edit
+    // would be invisible to the session it was made for. The host is the
+    // authority on both, and re-resolving it per turn is the only way to keep
+    // it one. The continuation guard above is what makes the absence safe.
     // Narrowed as PAIRS. `createManualHostedConnection` pairs ids and names
     // POSITIONALLY (`buildServerNamesById`), so filtering the ids while
     // passing the target's original name array would relabel every server
@@ -1412,6 +1467,26 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(engine.kind === "harness"
         ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
         : {}),
+      // The ENVIRONMENT's resolved skills, for the harness that will write them
+      // into its sandbox. Without this `selectHarnessSkillSource` falls to its
+      // `live` arm and the turn runs the whole PROJECT-WIDE catalog — the
+      // environment's decision honoured by the emulated engine (through
+      // `skillsSource` above) and silently discarded by the harness, which is
+      // the same class of mismatch as running the wrong engine.
+      //
+      // Harness-only and presence-semantic. The emulated arm ignores this
+      // field, so gating on the engine keeps every emulated turn byte-identical
+      // rather than relying on a downstream reader to stay uninterested.
+      //
+      // What still does NOT cross: per-skill SUPPORTING FILES and pinned plugin
+      // versions, which travel as `effectiveCapabilities` — an option
+      // `runAssistantTurn` does not expose (the browser route reaches it
+      // through `web-chat-turn`). So a harness turn here delivers the
+      // environment's skill BODIES, not its attachments. Narrower than the
+      // Playground, and no longer a different set.
+      ...(engine.kind === "harness" && target.environmentSkills !== undefined
+        ? { runtimeSkillsOverride: target.environmentSkills }
+        : {}),
       abortSignal: abortController.signal,
       ...(prepared.progressivePlan
         ? { progressivePlan: prepared.progressivePlan }
@@ -1609,10 +1684,10 @@ async function handleTurn(c: Context): Promise<Response> {
        *
        * Not decoration. This surface used to answer 200 for a harness-declaring
        * target while running the emulated engine, and the response said nothing
-       * either way, so nothing downstream could tell. It is also the receipt
-       * for the one gap host targeting cannot close on its own: `hostId` is
-       * per-turn, so a continuation that forgets it reports `emulated` here
-       * rather than quietly pretending otherwise.
+       * either way, so nothing downstream could tell. It is also what a caller
+       * reads back the host from: a continuation that means to stay on a
+       * harness re-sends the `hostId` reported alongside it, and one that
+       * forgets is refused rather than answered by the other engine.
        */
       engine: engineLabel(engine),
       // The host this turn executed as, when there was one. Server-resolved —
