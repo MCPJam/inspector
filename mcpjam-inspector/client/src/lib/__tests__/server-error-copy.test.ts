@@ -40,6 +40,16 @@ describe("splitServerAttribution", () => {
     });
   });
 
+  it("still says something when the failure carries no message", () => {
+    // The dropped preamble ("Failed to connect to X:") used to guarantee the
+    // toast had words in it. An Error with an empty message no longer gets
+    // one for free.
+    expect(splitServerAttribution("alpha", "  ")).toEqual({ title: "alpha" });
+    expect(splitServerAttribution("", "")).toEqual({
+      title: "Connection failed",
+    });
+  });
+
   it("trims, so the title never lands on leading whitespace", () => {
     expect(splitServerAttribution("alpha", "  Connection refused  ")).toEqual({
       title: "alpha",

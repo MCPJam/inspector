@@ -19,6 +19,9 @@ export function splitServerAttribution(
   message: string,
 ): { title: string; description?: string } {
   const trimmed = message.trim();
+  // An Error with an empty message would otherwise render a red toast saying
+  // the server name and nothing else, or nothing at all.
+  if (!trimmed) return { title: serverName || "Connection failed" };
   if (!serverName) return { title: trimmed };
   // Substring, not an exact quoted form: the SDK quotes it
   // (`MCP server "champions"`) while other messages may not, and either way
