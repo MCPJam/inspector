@@ -152,6 +152,72 @@ describe("harness registry", () => {
     expect(codex.supportsModel("openai/o1")).toBe(false);
   });
 
+  // ── Tool-less model lines ────────────────────────────────────────────────
+  //
+  // These cases are VERSION-KEYED to the pinned Codex CLI and were measured,
+  // not guessed: `.spike-codex-appserver` gate P5 drove the pinned binary
+  // through every gpt-5-family id in the hosted catalog and recorded how many
+  // tools each was given. The whole gpt-5.6 line got zero. Re-measure and
+  // update `CODEX_TOOL_LESS_MODEL_LINES` when the pinned CLI moves.
+  //
+  // Why this matters more than an ordinary unsupported model: the CLI RESOLVES
+  // these ids, so there is no unknown-model warning and the turn completes
+  // normally — the user just silently gets a Codex host that cannot act. All
+  // three are in MCPJam's hosted catalog today.
+  it.each([
+    ["openai/gpt-5.6-terra"],
+    ["openai/gpt-5.6-sol"],
+    ["openai/gpt-5.6-luna"],
+    // The bare line id, and case-insensitively.
+    ["openai/gpt-5.6"],
+    ["openai/GPT-5.6-Terra"],
+  ])("refuses the tool-less %s rather than running it chat-only", (modelId) => {
+    const codex = getHarnessAdapter("codex");
+    expect(codex.supportsModel(modelId)).toBe(false);
+    expect(codex.toNativeModel?.(modelId)).toBeUndefined();
+  });
+
+  it.each([
+    ["openai/gpt-5"],
+    ["openai/gpt-5-chat"],
+    ["openai/gpt-5-codex"],
+    ["openai/gpt-5-mini"],
+    ["openai/gpt-5-nano"],
+    ["openai/gpt-5-pro"],
+    ["openai/gpt-5.1-codex"],
+    ["openai/gpt-5.1-codex-max"],
+    ["openai/gpt-5.1-codex-mini"],
+    ["openai/gpt-5.1-instant"],
+    ["openai/gpt-5.1-thinking"],
+    ["openai/gpt-5.2"],
+    ["openai/gpt-5.2-chat"],
+    ["openai/gpt-5.2-codex"],
+    ["openai/gpt-5.2-pro"],
+    ["openai/gpt-5.3-chat"],
+    ["openai/gpt-5.3-codex"],
+    ["openai/gpt-5.4"],
+    ["openai/gpt-5.4-mini"],
+    ["openai/gpt-5.4-nano"],
+    ["openai/gpt-5.4-pro"],
+    ["openai/gpt-5.5"],
+    ["openai/gpt-5.5-pro"],
+  ])("keeps admitting %s, which the pinned CLI does equip", (modelId) => {
+    const codex = getHarnessAdapter("codex");
+    expect(codex.supportsModel(modelId)).toBe(true);
+    expect(codex.toNativeModel?.(modelId)).toBe(
+      modelId.slice("openai/".length),
+    );
+  });
+
+  it("does not let a tool-less LINE swallow a longer numeric line", () => {
+    // `gpt-5.60` starts with the string "gpt-5.6" but is a different line, so
+    // the separator guard has to keep it admitted. A plain startsWith would
+    // silently refuse an entire future family.
+    const codex = getHarnessAdapter("codex");
+    expect(codex.supportsModel("openai/gpt-5.60")).toBe(true);
+    expect(codex.supportsModel("openai/gpt-5.61-mini")).toBe(true);
+  });
+
   it("patches the Claude Code bridge bootstrap compatibility gaps", async () => {
     // The fixture quotes the CURRENT installed bridge's anchor sites VERBATIM
     // (from @ai-sdk/harness-claude-code dist/bridge/index.mjs on the 1.0.x
