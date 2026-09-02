@@ -208,6 +208,31 @@ describe("webmcp-inspector routes", () => {
     expect(body.invokeId).toBeTruthy();
   });
 
+  it("dates a screenshot, and only when there is one", async () => {
+    const started = await openSession(provider);
+
+    const shot = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "capture_screenshot" }),
+    );
+    // The client measures capture-to-paint against this. Without it the poll
+    // could only time from its own arrival, which excludes the capture and
+    // the round trip — a different quantity from the one a streamed frame's
+    // `ts` produces, sharing a percentile table with it.
+    expect(shot.body.screenshotBase64).toBeTruthy();
+    expect(typeof shot.body.capturedAt).toBe("number");
+
+    // A capture that produced nothing is not dated: a timestamp on an empty
+    // answer would date a paint that never happened.
+    provider.sessions[0].captureScreenshot = async () => undefined;
+    const empty = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "capture_screenshot" }),
+    );
+    expect(empty.body.screenshotBase64).toBeUndefined();
+    expect(empty.body.capturedAt).toBeUndefined();
+  });
+
   it("409s navigation while a tool is running", async () => {
     const started = await openSession(provider);
     const session = provider.sessions[0];
@@ -407,6 +432,36 @@ describe("webmcp-inspector routes", () => {
     configState.hostedBrowser = false;
   });
 
+  it("bounds the device pixel ratio it will render at", async () => {
+    for (const devicePixelRatio of [0.5, 3, 0]) {
+      const { status } = await call(
+        "/api/mcp/webmcp/sessions",
+        json({ url: "https://a.test/", devicePixelRatio }),
+      );
+      // Below 1 is a client asking for a picture smaller than the page, and
+      // above 2 is bytes growing faster than anyone can see. Both are refused
+      // at the boundary rather than clamped silently.
+      expect(status, `devicePixelRatio ${devicePixelRatio}`).toBe(400);
+    }
+  });
+
+  it("accepts the ratios a real display reports", async () => {
+    // Filling the registry first is what makes this land without launching a
+    // browser: `reserve()` runs after the schema, so a 429 proves the request
+    // got past validation — which is the half under test here. The forwarding
+    // half is asserted against a fake provider in session-registry.test.ts.
+    await openSession(new FakeProvider());
+    await openSession(new FakeProvider());
+    for (const devicePixelRatio of [1, 1.5, 2]) {
+      const { status, body } = await call(
+        "/api/mcp/webmcp/sessions",
+        json({ url: "https://a.test/", display: "in-app", devicePixelRatio }),
+      );
+      expect(status, `devicePixelRatio ${devicePixelRatio}`).toBe(429);
+      expect(body.code).toBe("capacity");
+    }
+  });
+
   it("rejects a display this server does not know", async () => {
     const { status } = await call(
       "/api/mcp/webmcp/sessions",
@@ -513,7 +568,9 @@ describe("webmcp-inspector routes", () => {
       for (let i = 0; i < 50; i += 1) {
         const chunk = await Promise.race([
           reader.read(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), quietMs)),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), quietMs),
+          ),
         ]);
         if (!chunk || chunk.done) break;
         buffered += decoder.decode(chunk.value, { stream: true });
@@ -524,6 +581,34 @@ describe("webmcp-inspector routes", () => {
     return buffered;
   }
 
+  it("reports a frame this consumer could not take", async () => {
+    const started = await openSession(provider);
+    const session = provider.sessions[0];
+    // Replay fills the stream's queue before anything is read: the route's
+    // `start()` runs synchronously and enqueues every replayed event into a
+    // count-based queue with a high-water mark of 1, so `desiredSize` is
+    // already at or below zero by the time a live frame is offered.
+    session.emitTools([fakeTool({ origin: "https://example.test" })]);
+    const res = await app.request(
+      `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50`,
+    );
+    expect(res.ok).toBe(true);
+
+    // The body is deliberately NOT read yet. The first frame is HELD, which is
+    // the mechanism working rather than a loss.
+    session.emitFrame({ data: "Zmlyc3Q=" });
+    expect(session.pressureEvents).toBe(0);
+
+    // The second replaces it: a frame nobody will ever see.
+    session.emitFrame({ data: "c2Vjb25k" });
+    expect(session.pressureEvents).toBe(1);
+
+    // And the newest one still arrives once the consumer drains — a pane on a
+    // slow link converges on the current paint rather than freezing.
+    const drained = await drainSse(res);
+    expect(drained).toContain("c2Vjb25k");
+  });
+
   it("suppresses frames — live and replayed — for frames=off", async () => {
     const started = await openSession(provider);
     // Published BEFORE the connect, so this covers the REPLAYED path too: the
@@ -531,7 +616,9 @@ describe("webmcp-inspector routes", () => {
     // client on the binary socket would otherwise pay the base64-in-JSON tax
     // once per connect.
     provider.sessions[0].emitFrame({ data: "cmVwbGF5ZWQ=" });
-    provider.sessions[0].emitTools([fakeTool({ origin: "https://example.test" })]);
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+    ]);
 
     const res = await app.request(
       `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50&frames=off`,

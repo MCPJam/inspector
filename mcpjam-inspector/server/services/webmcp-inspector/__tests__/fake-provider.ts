@@ -150,6 +150,18 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
     this.inputBatches.push(events);
   }
 
+  /** Frames a viewer's transport could not take. See `noteFramePressure`. */
+  pressureEvents = 0;
+
+  noteFramePressure(): void {
+    this.pressureEvents += 1;
+  }
+
+  /** Announce a quality change the way an adaptive provider would. */
+  emitStreamQuality(quality: number): void {
+    this.callbacks.onStreamQualityChanged?.(quality);
+  }
+
   async dispose(): Promise<void> {
     if (this.disposeGate) await this.disposeGate.promise;
     this.disposed = true;

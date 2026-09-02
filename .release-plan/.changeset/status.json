@@ -3,144 +3,104 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/chat-ui",
-          "type": "minor"
+          "name": "@mcpjam/inspector",
+          "type": "patch"
         }
       ],
-      "summary": "Derive the package's default scoped theme from the canonical MCPJam design tokens.\n\nThe `.mcpjam-chat-ui` fallback tokens were hand-maintained stock shadcn neutrals, so\na host that had not defined its own tokens rendered the transcript in grey-blue zinc\nrather than MCPJam's warm paper and ink. Those values are now generated from\n`design-system/src/tokens.css` and checked in CI.\n\nThis only affects embedders relying on the package defaults; hosts that define their\nown tokens (including the MCPJam inspector itself) are unchanged. To keep the\nprevious look, override the `--token` values on `.mcpjam-chat-ui`.",
-      "id": "chat-ui-warm-tokens"
+      "summary": "The suite page stops opening with an aggregate\n\nThe first thing labelled \"user value chain\" on the suite page was a funnel — a population statistic, sitting above the run history. It was the wrong introduction to the idea. The chain a reader arrives asking about is one request's journey, and the aggregate answers a different, later question.\n\nIt also read badly on real runs. On a three-trial suite it showed six green stages over \"2 of 3 trials\", the excluded one being precisely the trial that broke; on a ten-trial suite it showed `call` and `response` as `applicable=0`, which looks like a gap and only means those cases assert nothing there. The page's most prominent claim was its least reliable.\n\nThe per-trial chain now answers \"why did this not deliver value\", on the run page, the trace pane and the case table. The run-level document still renders on the run page behind its existing flag, where it reads as the follow-up it is.\n\nRemoved with the mount: `StageAnalyticsPanel`, `useEvalSuiteStageAnalytics`, `fetchEvalSuiteStageAnalytics` and the panel-state model — the suite-scoped reader had exactly one consumer, and dead code with passing tests is what drifts. `RunDocument`, `RateCell` and `useStageFindings` all stay; the run page uses them.\n\n**Two test files were re-aimed rather than deleted.** The findings tests ran through the panel, and the API tests covered only the suite listing — but their claims were never about which resource was fetched. The findings ones now assert against `RunDocument` + `StageFindingsCard`, the composition the run page actually builds; the API ones now cover `fetchEvalRunStageAnalytics`, which had no wrapper-level coverage at all (its hook test mocks the wrapper). Deleting them would have quietly dropped the guarantees they exist for: auth has one owner, the payload is validated not trusted, identity is bound, and the four failure kinds stay four.",
+      "id": "drop-suite-stage-funnel"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
           "type": "patch"
-        }
-      ],
-      "summary": "Stage analytics stop printing wire enums at a human\n\nThe funnel on the Evaluate suite page rendered `noEvidenceCaptured (3)` and `serverData (4)` — the enums as they travel on the wire. `decision-labels.ts` has held the words for both vocabularies since D9, and `run-decision-summary-presentation.ts` reads them correctly; the stage-analytics model simply never imported them. So the same run described its own failure two different ways depending on which card you were looking at.\n\n`STAGE_REASON_LABELS` and `FAILURE_CATEGORY_LABELS` are now what the panel renders. The wire spelling survives beside the words as a `data-reason` attribute rather than being dropped: it is what a test pins on and what a later join against the same vocabulary matches by, and a downstream match against prose is not a match at all.\n\nReasons render **one line each** (`3 — nothing eligible for that stage was captured`) rather than comma-joined. The labels are \"…because &lt;fragment&gt;\" sentences by construction, and three of them spliced with commas reads as one long claim about one population instead of three separate counts. Failure categories stay comma-joined because those labels are noun phrases.\n\n**New: `USER_VALUE_STAGE_QUESTIONS`** — the question each of the six stages answers, prose taken from the normative stage descriptions in `chain.ts`. **`USER_VALUE_STAGE_OUTCOMES`** is its past-tense companion: \"Session connected\", \"Tools discovered\", \"Usable response returned\" — what good looks like at each link, for a surface that wants the delivery story rather than six checkmarks. Only ever shown for a stage measured as **passed**: they are claims about the chain holding, and putting one on an unmeasured stage would state as observed the one thing nobody observed.\n\n**New: `EXCLUDED_TRIAL_DETAIL_LABELS` and `describeExcludedTrialDetail`.** `excludedTrialDetail` — fourteen fine-grained exclusion counts — has been fetched and validated on every document and rendered nowhere. It now sits behind a collapsed disclosure on the run header, because it says the same trials the coarse \"Excluded:\" line already names, at a finer grain: two lines that look like two findings and are one. The summary names the population first (\"3 of 7 trials excluded — why\"), and the disclosure is absent entirely when nothing was excluded, since a control that opens onto nothing is a worse answer than no control.\n\nBoth new maps are `satisfies Record<…, string>`, so a stage or an exclusion key added to the contract breaks this file until somebody writes the words. The exclusion map's totality test reads `evalStageCoverageDetailSchema.shape` rather than a hand-written key list — a hand list is a second declaration of the vocabulary, and the one that goes stale silently.\n\nNo visual restructuring: the same cards, in the same places, saying what they always meant.",
-      "id": "evals-stage-analytics-human-words"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Where the chain broke is now a place you can click\n\nThe stage funnel was six rows of numbers and zero click handlers. It answered \"what were the rates\" for all six stages at once, and left \"which link actually broke, and how much of the run did it touch\" to be reconstructed by eye.\n\nThe overall slice is now a row of six numbered cards — Connect → Discover → Select → Call → Respond → Satisfy — each wearing a chip derived from that stage's own tally, with the first break selected automatically and a \"What happened\" card underneath it.\n\n**The chip vocabulary is five states, and the fourth is the one that matters.** First match wins: some passed and some failed is `mixed` (said before either pure verdict, because \"2 of 3 failed\" is a different finding from \"it failed\" and collapsing it loses the population that makes it actionable); anything failed is `failed`; anything measured is `passed`; **nothing measured is never a pass word** — not \"passed\", not a green tone, not an empty chip that reads as fine — it is the dominant honest state among `notReached` / `notMeasured` / `reachUnknown` / `notApplicable`, in that state's own words and in a neutral tone. An amber chip there would send a reader to fix something nothing observed. A unit test walks all 81 combinations of the four not-verdicts and asserts none of them produces a pass kind, a success tone, or a pass word.\n\nA passing card reads its stage's outcome phrase — \"Session connected\", \"Tools discovered\", \"Usable response returned\" — so the row tells the delivery story rather than reporting that six checks ran.\n\n**Auto-selection opens the FIRST break in chain order**, because a failure at `selection` explains the `notReached` at `call` after it, and opening on the later card would put a reader in front of a consequence and call it a finding. A run with nothing broken opens nothing: there is no \"what happened\" to answer, and auto-opening anyway would manufacture a question the run did not raise. Clicking the open card closes it.\n\nThe detail card carries the stage's question from `USER_VALUE_STAGE_QUESTIONS`, the same three rates (`RateCell` is imported from the panel, not re-implemented — a second renderer is a second place for a zero denominator to become a `0%`), its per-stage exclusions, its latency with unit and basis, and a slot for the trial evidence a later change fills.\n\nThe panel says the boundary in its own words: *\"Stage health explains the request-delivery path; it does not determine the evaluation verdict.\"* Without it a `failed` chip on a run whose verdict is `passed` reads as a contradiction, when in fact policy v2 lets a case pass with a failing trial in it.\n\nThe full three-rate table for all six stages, the intent/model/host marginals and the Setup block keep their markup **verbatim**, now behind collapsed disclosures — the cards answer \"where did it break\", and a reader who has not yet found the break is not asking whether it differs by host. Every existing `data-testid` is preserved, so the honesty-rule tests still pin the same nodes.\n\nSelection is local state held by `RunDocument` itself, so both mounts — the suite panel and the run-detail slot — inherit the behaviour without either knowing the other exists, and a run switch resets it rather than opening a stage the new run may not have broken at.",
-      "id": "evals-stage-chain-cards"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "A failing stage now shows you which trials failed there, and what to do next\n\nThe stage funnel counted failures; D9's diagnostics carried the human material — the case title, the observed failure string, the tool names, the trace locator, the next action. They lived on different routes, were rendered by different cards, and **nothing joined one to the other**. A reader who saw `response: 2 failed` had no path from that number to the trial it described.\n\n`buildStageFindings` is that join, and it is a lookup rather than an inference: a diagnostic contributes to stage S **iff** its own chain is `verified` and its row for S says `failed`. Not because its failure category sounds like S, not because it is the only failure in the run, and never because a stage needed an example.\n\n**What is never guessed.** A diagnostic with no failed stage row — a setup abort, an evaluator error, an unverified chain, an absent one — goes to a run-level bucket rendered as one line under the cards (\"3 non-passing trials are not attributable to a stage\"). The contract says a setup abort is a real answer about a run that never reached a stage; putting its error text under a stage nothing measured it at would be the invention this whole join exists to avoid.\n\n**Grouped by the stage row's own `StageReason`** — the same vocabulary D5c's `reasons[]` tallies by — so a group's count can be checked against the tally line directly above it. Groups sort count-descending, tie-broken by `STAGE_REASONS` order; three groups per stage and three trials per group, the rest behind expanders. The model keeps every trial: capping there would make the count and the list disagree, and the count is the thing a reader checks.\n\n**Two population traps, both handled explicitly.**\n\n1. **D9 enumerates non-passing trials only**, while D5c tallies stage failures over every included trial. Under policy v2 a case can pass with a failing trial in it, so a trial can fail a stage and have no diagnostic row at all. Where the tally's `failed` exceeds the attributed diagnostics **under a complete scan**, the section says so: *\"2 further stage failures occurred on trials whose cases passed, so they have no diagnostic row here.\"* Silence would have read as \"we found nothing\". On a **partial** page the claim is withheld, because there the gap is explained by the paging and stating it would invent a finding out of an unfinished read.\n2. When more trials are attributed than the tally counted, that cannot be policy v2 — so the disagreement is **reported and both numbers stand**. The materializer counted the whole run and this counted a page of it; a silently corrected tally would be worse than either.\n\nEvery degraded state is its own variant, never an empty \"ready\": disabled (renders nothing, issues nothing), loading, unavailable (the decision card's own copy discipline — the stage rates stay on screen and it never reads as a finding about the server), `noDecisionDiagnostics` for a legacy or verdict-less run, `runNotTerminal`, and `identityMismatch`, which renders as **nothing rather than an error** because that is what a mid-navigation frame looks like and an alarm for a state that resolves itself trains a reader to ignore it. A provisional document inherits one caveat line. Nothing in the section states a verdict — that stays D9's card's.\n\n**The loop closes on the diagnostic's own `nextAction`**, already authored per failure category in the SDK and carried on every diagnostic, surfaced as \"Next: …\" under the evidence. No new vocabulary; a group whose trials disagree on one shows none, because picking one would be a guess wearing the contract's authority.\n\n**Wiring: zero new routes, zero new flags, zero extra HTTP.** Both surfaces call `useEvalRunDecisionDetail` with the identical target `RunDecisionSummarySection` already uses, so the shared LRU store makes the second caller a cache hit. The run page offers \"View trace\" through the existing `onViewTrace` threading; the suite page offers \"Open run\" via the `onRunClick` it already holds, because deep trace focus exists only on the run page and a button promising it elsewhere would land a reader on a page with nothing opened. Both ride the existing `evaluate-enabled` flag, and both gate on a terminal run — off, or non-terminal, means no request at all, which is what keeps `/evals` and the CI commit detail at exactly zero.\n\n`isDiagnosticTraceable` is extracted from `DiagnosticRow` rather than reimplemented, so the two surfaces cannot drift on which trials offer a link; its three conditions are pinned by their own tests.",
-      "id": "evals-stage-findings"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Record which hop failed on `http.request.failed`.\n\nThe event carries `origin` — who must act — and nothing that says which\nboundary broke. The two are different questions, and only one is answerable\nfrom the wire shape: `transport/fetch_failed` is `ambiguous` because a user's\ndead MCP server and MCPJam's own OAuth-metadata proxy produce the identical\nerror, so the catalog is right to refuse to guess. Only the catch site knows\nwhich hop it wrapped.\n\n`RouteFailureHop` already existed, but `route-error-report.ts` mapped\n`user_server_hop` to `undefined`: a declaration could promote toward `mcpjam`\nand say nothing in the other direction. The one fact separating \"MCPJam is\nbroken\" from \"someone pointed us at a dead server\" was computed, used once to\nsuppress a Sentry capture, and dropped — populated on 0 of 2,851 prod rows over\n7 days.\n\n`hop` is now on the event schema, threaded through `webErrorMeta` the way\n`origin` and `slug` already are, and emitted when a catch site declares one.\nTwo rules hold it in place. Absent means unknown, never \"the user's\" — a\nconsumer reading a missing `hop` as an exclusion would rebuild the blindness\nthe field exists to remove, so it is omitted rather than defaulted. And a\ndeclared hop is recorded beside `origin`, never folded into it, so a\n`user_server_hop` cannot lower a positively-MCPJam verdict; that direction is\npinned by a test rather than a comment, because its failure mode is silencing\nreal outages.\n\nAlso fixes the hosted direct MRTR catch, which called `webError` by hand with\nthe mapped error's status, code and message but neither its `normalized` block\nnor its promoted `origin` — the omission `webErrorFromRoute` exists to prevent.\nEvery failure on `/api/web/tools/execute`, `/api/web/resources/read` and\n`/api/web/prompts/get` reached the event with no `origin` and no `slug`, which\nan origin-keyed monitor reads as nothing at all.\n\nNo catch site declares a hop yet and no monitor definition changes here: the\nfield ships unused so the values and the alert threshold can follow on measured\ndata.",
-      "id": "http-request-failed-hop"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Add the supervised-native foundation for running an official vendor harness locally, without Docker\n\nA local harness runs as a supervised host process, not in a sandbox. The\ndistinction is the whole design: `local-native` has no outer containment, so its\nauthority is the OS user's, narrowed only by the vendor harness's own permission\ncontrols, an explicit consent grant, process supervision, and the selected\nworkspace. `targetHasHostContainment()` is the single predicate every surface\nagrees on and `executionTargetLabel()` the only place a mode is named, so\n\"native\" can never be rendered as \"sandboxed\" by a call site that forgot.\n\nTwo properties of the pinned adapters drove the shape. They emit shell command\n*strings* — in a cloud sandbox those go to a shell inside the box; on a host they\nmust not — so the translator recognizes only the exact pinned shapes, turns them\ninto structured operations, and rejects everything else. There is no shell\nparser and no `shell: true`. It also remaps the adapters' `.harness-bootstrap`\ndirectory, which the framework resolves inside the user's workspace, onto a\ndigest-verified managed bundle — both the commands and the recipe *files*, which\nthe framework writes through the session's file API — so a vendor CLI's\ndependency graph never lands in somebody's checkout. Separately, the vendor bridges bind `0.0.0.0`; on a\nlaptop that publishes an agent control channel to the local network, so the\nprovider waits for the bridge to listen on loopback and then proves it is not\nalso reachable through a non-loopback address, stopping the session if it is.\n\nCodex is barred from native mode structurally rather than by comment: empty\n`nativePlatforms`, no permission-profile mapping, and `unrestricted` refused for\na native target regardless of what a manifest says. Windows is absent because\nwhole-tree cleanup cannot be guaranteed there yet.\n\nDisabled by default behind `MCPJAM_LOCAL_HARNESS_ENABLED`, forced off hosted,\nand not yet wired into the turn path. The flag alone cannot enable anything:\nevery manifest entry ships without conformance evidence and with a placeholder\nbundle digest, so resolution fails closed until both exist.",
-      "id": "local-harness-supervised-native-foundation"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
         },
         {
           "name": "@mcpjam/cli",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "The CLI tells the same story in JSON as it does in prose, and leads with where the chain broke\n\n**`--format json` was the one consumer that never got the decision.** `eval run --wait` built the run's decision summary, printed it as prose for a human, and then dropped it for the machine reader — the guard on the fetch was literally `format === \"human\"`. `eval compare` did the same: it assembled the compare side's summary, wrote it to stderr and onto the reporter artifact, and left it out of the JSON document. So the consumer that cannot ask a follow-up question was the only one told nothing but an exit code. Both now carry `decisionSummary` inside their existing stdout document — one parseable document still, the summary inside it rather than appended after it. `docs/cli/ci.mdx` claimed this was already true; it now carries a per-command table that is.\n\n**`eval status` can page its diagnostics.** The command asked for 20 and said nothing about the rest, so a run with two hundred failures reported the first twenty and `complete: false` — a field a reader who does not know it exists cannot act on. `--diagnostics-limit` and `--diagnostics-cursor` walk them. The handler also stopped casting its input and started validating it, so `--diagnostics-limit 500` is a usage error against the schema's own 1..200 bound instead of a request that travels to the wire.\n\n**The human summary now leads with where the chain broke.** Under the diagnostics headline, before any per-trial detail, a non-passing run gets one line: the earliest stage at which a readable trial stopped, why, and how many stopped there — \"First break: Tool call — the call arguments did not match what the case expects (2 of 3 measured trials)\". \"First\" means earliest in chain order, never \"most common\", so the count beside it is what says whether the run had one problem or several; the line names how many stages broke when they are spread, and how many chains could not be read at all, because otherwise the denominator quietly shrinks to the trials that happened to validate. A run that reached no stage names its bucket rather than inventing a location. `eval run --wait`, `status`, `gate` and `compare` inherit it through the one renderer.\n\nThe full six-row chain per failing trial is the detailed layer, behind `eval status --stages`: six rows times twenty failures is a lot of terminal, and the first-break line above already carries the answer. It renders only inside a `verified` chain — six \"not measured\" rows for a chain that was withheld or never recorded would state as measured-and-empty exactly what was never measured.\n\nHuman output is not a stable contract and JSON is, which is what makes leading with the chain safe. Every value still passes through the label maps: the corpus test that refuses a raw wire enum now renders both layers.",
-      "id": "uvc-cli-json-carries-the-decision"
+      "summary": "An environment's secret grant is reachable from the SDK, CLI and MCP again\n\n`secretSelection` is how a project secret is granted to the runs an environment launches. The API takes it on create and on update, the `/api/v1` route takes it on both, and `PlatformEnvironmentCreateBody` / `PlatformEnvironmentUpdateBody` have always declared it — but the two operation schemas in `platform/operations.ts` never did, so the only surfaces an agent or a script can use dropped it on the floor.\n\nBoth halves were silent in the way that costs the most time:\n\n- **Create** parses through a `z.object`, which STRIPS what it does not declare. A create carrying a grant returned 201 with `secretSelection: null` and no error anywhere — the environment simply had no credentials, and the failure surfaced much later as a run refusing to start for want of a secret that had apparently been attached.\n- **Update** validated fine, but the at-least-one-field `.refine` did not list the field, so a PATCH changing ONLY the grant was rejected client-side with a message that enumerated eight other fields and not the one the caller had passed.\n\nTogether those meant a secret could be attached by neither path: not on create, and not afterwards. The route's own comment says as much about what unclearable would cost — \"an environment's credential grant can only ever grow, and revoking it would require deleting the environment\" — and that was the state the SDK was in.\n\nThe field now rides a single shared `secretSelectionInput` used by both operations, matching how `skillSelection` and `pluginVersionIds` are already shared, with the same tri-state on update: omit to leave unchanged, `null` to REVOKE, a value to replace. `secretIds: []` is rejected rather than read as \"remove every credential\" — that is what `null` is for.\n\nThe CLI's `--file`/`--json` help on `environments create` and `environments update` listed every other body field but this one; it lists it now.\n\nNot changed: `ensure_adhoc_environment` and the run operations' `compose` still have no secrets axis, though the route accepts one. A composed stack cannot carry a grant, so a run that needs a credential still needs a named environment.",
+      "id": "environment-secret-selection-sdk"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
+          "type": "patch"
         },
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Stage analytics becomes reachable from an agent and a shell, not just the web app\n\nThe user-value chain is described by two documents, and only one of them had ever been wrapped in an operation. `get_eval_run`'s `decisionSummary` says what one trial did and where it stopped; **stage analytics** says how much of the run was measured at all — per stage, how many trials it applied to, how many reached it, how many were measured there, how many passed and failed, and how many were excluded and why, overall and sliced marginally by intent, model and host. The routes existed. The client methods existed. No `PlatformOperation` wrapped either, so no MCP tool and no CLI command could ask, and nothing recorded that as a gap. This closes it — and records the product decision that Lane D deliberately deferred.\n\n**Two operations, not one.** `get_eval_run_stage_analytics` reads one run. `list_eval_suite_stage_analytics` pages a suite's runs newest-first, one complete document per run. The listing is not a convenience wrapper: an agent asked \"which stage has been failing this month\" cannot answer through the run-scoped op without already knowing every run id, and walking a suite listing to reach one known run is unbounded work that fails outright once the run falls outside the window.\n\n**The listing is a TREND SERIES, never an aggregate.** Nothing sums or averages documents anywhere. Both descriptions and the registry prompt notes carry the comparability contract, not just \"never sum\": two funnels drawn side by side *is* a comparability claim, and it holds only within a partition on `runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`, `measurementsSchemaVersion` and `materializationState: \"final\"`. An **absent** run group, config revision or case-set fingerprint **blocks** comparability rather than being assumed compatible — two runs that both record nothing compare equal under a naive check while sharing nothing at all. \"Which stage has been failing this month\" is answerable only within one partition; across partitions it reports a change in what was measured as a change in the server.\n\n**Three absences, and none may impersonate another.** A bare 404 means the deployment does not serve the route — an explicit error, because rendering it as \"never measured\" would report every run on that deployment as unmeasured, which is the dark-ship failure mode the web wrapper's own comment warns about. An enveloped `NOT_FOUND` from the analytics route alone is ambiguous: the API declines to separate \"no document\" from \"no such run\" so it does not leak the existence of runs in projects the caller cannot see. So the run op **fetches the run first**: a run that cannot be retrieved fails as run-not-found, and only a run that WAS retrieved and has no document returns `analyticsState: \"unmeasured\"` with `analytics: null` — permanently, because there is no backfill.\n\n**One CLI command**, `mcpjam cloud eval stage-analytics`, with `--run` XOR `--suite` (and `--cursor`/`--limit` for the listing). Both selectors refused when neither or both are given, and the paging flags refused on `--run`, where there is only one document.\n\nBoth are `readOnly` reads with no risk facet, both mint an eval-run permalink, and both are registered in every registry that partitions the operation catalog: the MCP catalog and its README table, the agent op registry with prompt notes, the in-app workspace toolset, the CLI bindings, and the docs.",
-      "id": "uvc-stage-analytics-operations"
+      "summary": "A passing trial can have its chain read too\n\nD9's decision summary carries a per-trial user-value chain, and the browser already fetches it — for **non-passing trials only**. That filter lives in the contract assembler and is deliberate: diagnostics are evidence beneath a verdict, and a trial that passed is not evidence of anything going wrong. The consequence is that a reader who opens a trial that succeeded has nothing to read, and \"how far did value travel here\" is exactly as good a question about a passing trial as a failing one.\n\nThe iterations resource projects the same stage columns over every row of a run, passing included — verified against production, where all ten trials of a run came back carrying six rows each. This adds the client read for it.\n\n**One chain type, one validator.** The rows go through the contract's own chain assembler, now exported as `assembleEvalRunDecisionChain`, which is the same function D9's summary is built from. So the result is `EvalRunDecisionChain` — the type the decision card and the trial cards already render, with no adapter and no second shape — and the **whole derivation** is validated rather than the rows one at a time. Row-level validation accepts five rows, or six in the wrong order, and a renderer that numbers cards `01`–`06` by position would then publish a different claim about which stages were blocked, because `notReached` is derived from position. A test feeds it both shapes and pins that they come back `unverified`.\n\n**Three absences stay three facts.** A bare 404 from a router that never had the path is a deployment that does not serve iterations; an enveloped `NOT_FOUND` is a run that is not there; a row with no derivation is `absent`. Reading the first as the third would report every trial on an undeployed build as having no chain.\n\n**Keyed on the run's revision, not just terminal status.** A terminal run is not frozen — a judge landing minutes later rewrites `judgePending` into `judgeObserved`, which is a different chain for the same trial. The read keys its cache on the same revision marker the decision-summary store uses, so the two refresh together and one trial can never show two chains at once.\n\n**Silent unless asked.** Off without the caller's switch, a project id, and a finished run; with any missing it issues no request at all.\n\nThe route needed an entry in `authFetch`'s bearer allowlist, and the existing eval-chain test already pinned it in the negative list — so this is a **move**, not an addition, and the test now pins that the trace and per-iteration paths beneath it are still *not* granted. Without the entry the read ships no `Authorization` and the 401 surfaces as \"could not be loaded\", which reads as a backend outage while the API is fine. That has happened three times before on this surface.",
+      "id": "uvc-iteration-chain-read"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Every failing trial now shows its own user-value chain, as cards\n\nThe run-level funnel answers \"how much of this run was measured, and where did it stop\". The question a reader actually arrives with is narrower: **this** trial did not deliver value — how far did it get, and why. That answer already existed and was rendered as six lines of flat text inside a collapsed diagnostic row: `Connection: passed`, `Response: failed — the server reported a tool error`.\n\nIt is now the same six numbered cards the suite page uses, reading left to right, with a \"what happened\" card underneath the one a reader selects. The chain opens on the stage the contract named as the first failure, so a reader lands on the break rather than hunting for it.\n\n**A trial is not a population, and the card row says so.** The aggregate chip counts (`failed in 2 of 3 measured`); a trial's chip states (`failed`). There are no rates on a trial's card — \"100% (1/1)\" over a single observation is a statistic manufactured from one trial — and no latency, which is deliberately not a field on a stage row. What a trial's card carries instead is what a trial actually has: one state, one reason, and that row's own evidence.\n\n**The reason stays off the chip and on the detail card.** Some reason labels are whole sentences, six cards at their minimum width would wrap into unreadable columns, and — the part that matters — keeping the chip to the state word keeps the \"never says passed when nothing was decided\" invariant total over the five states rather than dependent on the twenty-nine-member reason vocabulary. Two reason labels contain the word \"made\", which that invariant's own regex matches.\n\n**Which card opens is a UI choice; where the chain stopped is the contract's.** The default selection is `firstFailedStage`, read from the chain and never re-derived by scanning rows — the day a second derivation disagreed, the UI would be the one that was wrong while looking authoritative. When the contract established no failed stage at all, the card that opens is the first non-passing row carrying a reason: that is the setup-abort and policy-block shape, where every stage reads `not measured` and the single sentence explaining the trial would otherwise sit behind a click nobody knows to make.\n\nA withheld (`unverified`) or absent chain renders its existing notice and no cards. An empty six-card row would read as measured, which is exactly what those two states exist to prevent.",
+      "id": "uvc-per-trial-stage-cards"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "The trace pane opens with the chain, not just the transcript\n\n\"View trace\" lands a reader on one trial's transcript — the place they arrive when they want to know why that trial did not deliver value. The answer was not on that screen. It was back on the run page, inside a diagnostic row they had already navigated away from, and for a trial that PASSED it did not exist anywhere.\n\nThe chain now sits above the transcript: six cards, opened on the break, with the \"what happened\" card under whichever one the reader selects. A passing trial reads as the delivery story end to end — Session connected → Tools and resources discovered → … → Request satisfied — which is the first time that story has been visible for a trial that worked.\n\n**`IterationDetails` does not fetch it.** It has five hosts and knows only its iteration: not the run, not the project, not whether the Evaluate opt-in is on — and the chain read needs all three. So it takes a slot, and the one host that can answer those questions builds the node. The other four pass nothing and issue no request, which keeps a shared component free of a read four of its callers never asked for.\n\n**The hooks sit above the early return, and that placement is load-bearing.** The editor returns a loading state before its test case resolves, so a hook called below it runs on some renders and not others — React reports that as \"rendered more hooks than during the previous render\". A test caught exactly that, on the first draft.\n\nSelection uses the same `undefined`-is-not-`null` rule as the run page: `undefined` means \"not chosen yet\" and derives the default at render time, `null` means the reader closed the card. The distinction is what makes the trace pane work at all — the chain arrives *after* mount there, so a state initialized once from an empty chain would compute `null` and never auto-open the break.\n\nAn absent map key means \"not loaded\", never \"no chain\": a trial the page walk has not reached renders nothing rather than a false absence.",
+      "id": "uvc-trial-chain-on-trace-pane"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "A run's case table says where each trial stopped\n\nThe run-scoped case view lists every trial of one case and told you, per row, whether it passed. \"Failed\" is the least useful true thing you can say about a trial: the reader's next question is always *where*, and answering it meant opening rows one at a time.\n\nEach row now carries a one-line summary of its chain — `broke at Tool response`, `Request satisfied`, `chain withheld` — from the same read the trace pane uses, so the whole table costs one request rather than one per row.\n\n**The table takes a lookup, not a run.** The chain is scoped by run, and only the run-scoped host of this table knows which run its rows belong to; the cross-run case view passes nothing and issues no read, because filling that column there would mean one request per run.\n\nThree shades of nothing stay distinct, which is the whole reason this is a function of the chain rather than of the row's result:\n\n- a row whose chain has not loaded renders **no chip** — an absent map key means \"not loaded\", never \"no chain\";\n- a chain the server withheld says `chain withheld`, not silence, because the rows exist and did not validate;\n- a trial with no failed stage says `Request satisfied` **only when user value actually passed**. A policy-blocked trial has no failed stage either, and calling that satisfied would claim an outcome from an absence of evidence; it reads `not measured` instead.",
+      "id": "uvc-trial-chain-table-chip"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/chat-ui",
-      "type": "minor",
-      "oldVersion": "0.2.0",
+      "name": "@mcpjam/inspector",
+      "type": "patch",
+      "oldVersion": "3.3.3",
       "changesets": [
-        "chat-ui-warm-tokens"
+        "drop-suite-stage-funnel",
+        "uvc-iteration-chain-read",
+        "uvc-per-trial-stage-cards",
+        "uvc-trial-chain-on-trace-pane",
+        "uvc-trial-chain-table-chip"
       ],
-      "newVersion": "0.3.0"
+      "newVersion": "3.3.4"
     },
     {
       "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.4.0",
-      "changesets": [
-        "evals-stage-analytics-human-words",
-        "uvc-cli-json-carries-the-decision",
-        "uvc-stage-analytics-operations"
-      ],
-      "newVersion": "8.5.0"
-    },
-    {
-      "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "3.3.2",
+      "oldVersion": "8.5.0",
       "changesets": [
-        "evals-stage-analytics-human-words",
-        "evals-stage-chain-cards",
-        "evals-stage-findings",
-        "http-request-failed-hop",
-        "local-harness-supervised-native-foundation",
-        "uvc-stage-analytics-operations"
+        "environment-secret-selection-sdk",
+        "uvc-iteration-chain-read"
       ],
-      "newVersion": "3.3.3"
+      "newVersion": "8.5.1"
     },
     {
       "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "5.4.0",
+      "type": "patch",
+      "oldVersion": "5.5.0",
       "changesets": [
-        "uvc-cli-json-carries-the-decision",
-        "uvc-stage-analytics-operations"
+        "environment-secret-selection-sdk"
       ],
-      "newVersion": "5.5.0"
+      "newVersion": "5.5.1"
     },
     {
       "name": "@mcpjam/mcp",

@@ -133,6 +133,37 @@ describe("webmcp binary frame codec", () => {
     expect(decodeWebMcpBinaryFrame(wrongKind)).toBeUndefined();
   });
 
+  it("round-trips the capture scale, and reads a missing one as 1", () => {
+    expect(
+      decodeWebMcpBinaryFrame(encodeWebMcpBinaryFrame(frame({ scale: 2 })))!
+        .scale,
+    ).toBe(2);
+    // Fractional ratios are real: 1.5 is what a 150% Windows display reports.
+    expect(
+      decodeWebMcpBinaryFrame(encodeWebMcpBinaryFrame(frame({ scale: 1.5 })))!
+        .scale,
+    ).toBe(1.5);
+    // A frame from a server that has never heard of the field. Zero is what
+    // V1 wrote into these two bytes as "reserved", and it means 1 — not a
+    // frame of no size, which is what a literal reading would make of it.
+    const legacy = encodeWebMcpBinaryFrame(frame());
+    new DataView(legacy.buffer, legacy.byteOffset).setUint16(6, 0, true);
+    expect(decodeWebMcpBinaryFrame(legacy)!.scale).toBe(1);
+    expect(encodeWebMcpBinaryFrame(frame())[6]).toBe(0xe8); // 1000, low byte
+  });
+
+  it("puts the scale where V1 reserved bytes, and nowhere else", () => {
+    // The compatibility claim in one assertion: every byte an old decoder
+    // reads is identical, so a new server's frames decode correctly on a
+    // client that has never heard of `scale`.
+    const withScale = encodeWebMcpBinaryFrame(frame({ scale: 2 }));
+    const withoutScale = encodeWebMcpBinaryFrame(frame({ scale: 1 }));
+    const differing = [...withScale]
+      .map((byte, index) => (byte === withoutScale[index] ? -1 : index))
+      .filter((index) => index >= 0);
+    expect(differing).toEqual([6, 7]);
+  });
+
   it("clamps a surface too large for the header rather than wrapping it", () => {
     // A wrapped width would letterbox every later click against a box the page
     // never had.
