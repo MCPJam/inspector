@@ -750,7 +750,6 @@ describe("v1 project environment routes", () => {
       },
     );
 
-
     it("answers false — not an error — when the deployment is too OLD", async () => {
       // ABSENCE IS THE SIGNAL. An older deployment does not export the query;
       // a 500 here would break clients that are perfectly able to fall back.

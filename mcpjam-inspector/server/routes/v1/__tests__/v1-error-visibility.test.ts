@@ -621,15 +621,26 @@ describe("translateConvexWriteError — the generic structured branch", () => {
     expect(context.message).toBeUndefined();
   });
 
-  it.each([
+  it.each<[string, { code?: unknown; message?: unknown }]>([
     ["a blank message", { code: "ENV_SOMETHING_NEW", message: "   " }],
     ["a blank code", { code: "  ", message: "Fix the thing." }],
     ["both blank", { code: "", message: "" }],
+    // `null` is the shape a backend produces by writing the key and having
+    // nothing to put in it — a stubbed field, a spread of an optional that
+    // resolved to nothing. It is not a string, so it never reaches the trim
+    // at all; the case is here because the payload arrives UNTYPED over the
+    // wire, and the eligibility read (`typeof data.code === "string"`) is the
+    // only thing standing between a JSON null and a 400 whose message would
+    // have to come from somewhere else.
+    ["a null message", { code: "ENV_SOMETHING_NEW", message: null }],
+    ["a null code", { code: null, message: "Fix the thing." }],
+    ["both null", { code: null, message: null }],
   ])("refuses %s and keeps the logged 500", (_label, data) => {
-    // A blank field is not a refusal anybody wrote: 400 with an empty sentence
-    // tells the caller nothing AND suppresses the log that says we did not
-    // understand the failure. The same gate `translateStructuredConvexRefusal`
-    // applies at the boundary, so both entry points agree on this payload.
+    // A blank or absent field is not a refusal anybody wrote: 400 with an
+    // empty sentence tells the caller nothing AND suppresses the log that says
+    // we did not understand the failure. The same gate
+    // `translateStructuredConvexRefusal` applies at the boundary, so both
+    // entry points agree on this payload.
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     const result = translateConvexWriteError(
@@ -639,6 +650,10 @@ describe("translateConvexWriteError — the generic structured branch", () => {
 
     expect(result.status).toBe(500);
     expect(result.code).toBe(ErrorCode.INTERNAL_ERROR);
+    // Nothing from the payload rode out on the refusal.
+    expect(result.details?.code).toBeUndefined();
+    // The terminal log, NOT the new unclassified-refusal one: this failure is
+    // still one nobody recognized, so it keeps the discovery signal it had.
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toContain("unrecognized");
   });
