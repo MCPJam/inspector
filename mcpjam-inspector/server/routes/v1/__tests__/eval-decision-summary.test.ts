@@ -212,6 +212,18 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     expect(isGuestAllowedV1Request("GET", path)).toBe(true);
     expect(isGuestAllowedV1Request("POST", path)).toBe(false);
 
+    // The run page's stage strip reads this sibling. Denying it rendered
+    // "measurements could not be read", which a viewer takes for a broken
+    // backend rather than for a permission they never had. Its payload is
+    // counts over the same iterations a guest can already GET.
+    const stagePath = `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${
+      corpus.cases[0]!.input.run.id
+    }/stage-analytics`;
+    expect(isGuestAllowedV1Request("GET", stagePath)).toBe(true);
+    expect(isGuestAllowedV1Request("POST", stagePath)).toBe(false);
+    // Narrow, like every entry beside it: nothing hangs beneath this segment.
+    expect(isGuestAllowedV1Request("GET", `${stagePath}/overall`)).toBe(false);
+
     stubCorpusRow(corpus.cases[0]!);
     validateGuestTokenMock.mockResolvedValue({
       valid: true,

@@ -67,6 +67,25 @@ export type StageStripView =
 export type BuildStageStripInput = {
   status: "idle" | "loading" | "ready" | "absent" | "error";
   document: EvalStageAnalyticsV1 | null;
+  /**
+   * WHICH failure, when there was one.
+   *
+   * The adapter keeps four kinds apart and the first draft of this strip threw
+   * all of them away, printing one sentence for a permission problem, a
+   * deployment without the route, a contract violation and a network blip
+   * alike. That sentence sent two people looking in the wrong place, so the
+   * kinds travel through to the reader now.
+   */
+  error?: { kind: string; status?: number } | null;
+};
+
+const FAILURE_MESSAGE: Record<string, string> = {
+  routeUnavailable:
+    "This deployment does not serve stage measurements, so how far this run's iterations got is not established.",
+  invalidContract:
+    "This run's stage measurements did not match the published contract, so they are withheld rather than shown unchecked.",
+  requestFailed:
+    "Stage measurements could not be read for this run. The request did not complete.",
 };
 
 export function buildStageStrip(input: BuildStageStripInput): StageStripView {
@@ -87,10 +106,13 @@ export function buildStageStrip(input: BuildStageStripInput): StageStripView {
   }
 
   if (input.status === "error" || !input.document) {
-    return {
-      kind: "unavailable",
-      message: "Stage measurements could not be read for this run.",
-    };
+    const kind = input.error?.kind ?? "requestFailed";
+    const base = FAILURE_MESSAGE[kind] ?? FAILURE_MESSAGE.requestFailed;
+    // The status code is the one thing that turns "could not be read" into
+    // something a reader can act on: 401 is a permission, 500 is ours.
+    const suffix =
+      typeof input.error?.status === "number" ? ` (HTTP ${input.error.status})` : "";
+    return { kind: "unavailable", message: `${base}${suffix}` };
   }
 
   const overall = overallSlice(input.document);

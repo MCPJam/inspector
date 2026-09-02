@@ -103,6 +103,16 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/decision-summary$/,
     methods: ["GET"],
   },
+  // Stage measurements for one run, which the Evaluate run page reads for its
+  // stage strip. Same argument as the summary above and a narrower payload: it
+  // is counts over the iterations a guest can already GET, with no prompt,
+  // response or tool argument in it. Denying it rendered the strip as "could
+  // not be read", which reads as a broken backend rather than as a permission
+  // the guest was never granted. GET-only, for the reason stated above.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/stage-analytics$/,
+    methods: ["GET"],
+  },
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
   },

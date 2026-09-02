@@ -82,6 +82,38 @@ describe("the stage strip", () => {
     expect(result.message).toContain("could not be read");
   });
 
+  it("says WHICH failure, because they send a reader to different places", () => {
+    // One sentence for a permission problem, a deployment without the route, a
+    // contract violation and a network blip is how two people ended up looking
+    // in the wrong place for the same message.
+    const route = buildStageStrip({
+      status: "error",
+      document: null,
+      error: { kind: "routeUnavailable", status: 501 },
+    });
+    if (route.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(route.message).toContain("does not serve stage measurements");
+    expect(route.message).toContain("HTTP 501");
+
+    const contract = buildStageStrip({
+      status: "error",
+      document: null,
+      error: { kind: "invalidContract" },
+    });
+    if (contract.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(contract.message).toContain("did not match the published contract");
+    // No status was recorded, so none is invented.
+    expect(contract.message).not.toContain("HTTP");
+
+    const denied = buildStageStrip({
+      status: "error",
+      document: null,
+      error: { kind: "requestFailed", status: 401 },
+    });
+    if (denied.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(denied.message).toContain("HTTP 401");
+  });
+
   it("says out loud when a judge fanout could still move the numbers", () => {
     const provisional = structuredClone(GOLDEN_STAGE_ANALYTICS);
     provisional.materializationState = "provisional";

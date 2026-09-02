@@ -158,7 +158,8 @@ export function EvaluateRunContent({
         status: stageAnalytics.status,
         document: stageAnalytics.document,
       }),
-    [stageAnalytics.status, stageAnalytics.document],
+    [stageAnalytics.status, stageAnalytics.document, stageAnalytics.error],
+        error: stageAnalytics.error,
   );
 
   // What changed since the previous run. One read, no store: the answer is not
