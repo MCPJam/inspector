@@ -27,6 +27,9 @@ import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manif
  * below rather than being skipped.
  */
 const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
+  // S1 — the name moved into the sheet, so the manifest claims it and the
+  // PATCH schema has to actually accept it.
+  name: "Renamed",
   "settings.minimumAccuracy": 80,
   "settings.minimumIterations": 3,
   "settings.matchOptions": { toolCallOrder: "exact" },

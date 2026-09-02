@@ -24,6 +24,24 @@ import type {
 export type { EvalJudgeConfig, EvalJudgeConfigOverride, EvalJudgeRunOverride };
 
 /**
+ * One criterion the suite's judge is asked to apply to every case.
+ *
+ * `weight` and `scale` are deliberately absent rather than optional-and-
+ * ignored: the judge returns one score per case plus the criteria it hit, so
+ * there is nothing for a per-criterion weight to weigh. Adding the field
+ * without the machinery would let an author express a preference the grader
+ * silently discards.
+ */
+export type EvalJudgeRubricCriterion = {
+  id: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+};
+
+export type EvalJudgeRubric = { criteria: EvalJudgeRubricCriterion[] };
+
+/**
  * Host identity an eval run executed against. Hand-mirrored from the Convex
  * `insightHostSnapshotValidator` (convex/lib/insightHostSnapshot.ts) per the
  * two-repo layout. Model/config fields are resolved from the run's pinned
@@ -257,6 +275,23 @@ export type EvalSuite = {
    * Convex `v.object` (no codegen for backend → inspector types).
    */
   judgeConfig?: EvalJudgeConfig;
+  /**
+   * B10a — the suite's own grading criteria, handed to the judge as one block
+   * alongside each case's own expectation.
+   *
+   * DISTINCT from `rubric`: that one is deterministic predicates the journeys
+   * surface evaluates itself, this one is prose the judge reads. A criterion
+   * here has no predicate and never gates on its own; it changes what the
+   * judge was ASKED, which is why editing it retires the suite's calibration.
+   */
+  judgeRubric?: EvalJudgeRubric;
+  /**
+   * G6 — the suite configuration's revision number, newest first in
+   * `listSuiteRevisions`. Absent on a backend that predates suite history, so
+   * every reader must treat absence as "this deployment has no history" rather
+   * than "this suite has none".
+   */
+  revisionNumber?: number;
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {

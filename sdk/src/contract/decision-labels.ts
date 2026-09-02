@@ -38,7 +38,6 @@ import {
   type UserValueStage,
 } from "./chain.js";
 import { STAGE_REASONS, type StageReason } from "./stage-derivation.js";
-import { PREDICATE_STAGE } from "./grader-stage.js";
 import type { EvalStageCoverageDetail } from "./stage-analytics.js";
 import {
   EVAL_VERDICT_DECISION_REASONS,
@@ -470,13 +469,14 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   failureCategories: FAILURE_CATEGORIES,
   stageReasons: STAGE_REASONS,
   verdictDecisionReasons: EVAL_VERDICT_DECISION_REASONS,
-  /**
-   * B7 — which stage each predicate kind's evidence is filed under. A MAP
-   * rather than a list, because the label a reader needs is the pairing: a
-   * settings page saying "this grader measures selection" is only legible
-   * next to the stage vocabulary above.
-   */
-  graderStages: PREDICATE_STAGE,
+  // NOT listed here: B7's `PREDICATE_STAGE`. This registry holds closed
+  // member LISTS, and its consumer walks the OpenAPI spec asserting that any
+  // enum overlapping one of them matches it exactly. `PREDICATE_STAGE` is a
+  // map from predicate kind to stage, so it has no member list to guard —
+  // and its VALUES are already `stages` above. Adding it would have meant
+  // weakening that check to accommodate a shape it was never about. It is
+  // exported from the contract index directly, which is how consumers reach
+  // it.
   // NOT listed here: the fine-grained exclusion detail. Its vocabulary is a
   // zod object's SHAPE rather than a `const` array, so its totality test reads
   // `evalStageCoverageDetailSchema.shape` directly — a hand-copied list here
