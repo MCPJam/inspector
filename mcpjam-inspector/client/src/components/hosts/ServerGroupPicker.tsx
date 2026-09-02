@@ -77,6 +77,12 @@ type ServerGroupPickerProps = {
   /** `data-testid` on the trigger, for composer/lego-strip surfaces. */
   triggerTestId?: string;
   /**
+   * `id` for the trigger, so a sibling `<Label htmlFor>` names the control.
+   * Without it the accessible name is only the selected group — "Stripe",
+   * never "Server".
+   */
+  triggerId?: string;
+  /**
    * Trigger shape. `pill` (default) is the compact chip the bars and
    * lego-strips use. `field` renders a full-width, `h-9` form control that
    * lines up with an `<Input>`/`<Select>` in a labelled form column — used by
@@ -100,6 +106,7 @@ export function ServerGroupPicker({
   onClearSelection,
   inModal = false,
   triggerTestId,
+  triggerId,
   variant = "pill",
 }: ServerGroupPickerProps) {
   const { isAuthenticated } = useConvexAuth();
@@ -318,6 +325,7 @@ export function ServerGroupPicker({
         <button
           type="button"
           disabled={disabled}
+          id={triggerId}
           data-testid={triggerTestId}
           className={cn(
             "flex items-center gap-1 border text-foreground",

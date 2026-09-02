@@ -52,6 +52,12 @@ interface HostPickerProps {
    * makes sense for their surface.
    */
   priorityHostId?: string;
+  /**
+   * `id` for the select trigger, so a sibling `<Label htmlFor>` names the
+   * control. Without it the accessible name is only the selected value or
+   * placeholder — "Claude", never "Client".
+   */
+  triggerId?: string;
 }
 
 export function HostPicker({
@@ -64,6 +70,7 @@ export function HostPicker({
   noneLabel = "Project default",
   disabled = false,
   priorityHostId,
+  triggerId,
 }: HostPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
@@ -97,7 +104,7 @@ export function HostPicker({
       }}
       disabled={disabled || isLoading}
     >
-      <SelectTrigger>
+      <SelectTrigger id={triggerId}>
         <SelectValue placeholder={isLoading ? "Loading..." : placeholder} />
       </SelectTrigger>
       <SelectContent>

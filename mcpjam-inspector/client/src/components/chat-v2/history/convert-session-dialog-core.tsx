@@ -339,9 +339,23 @@ export function ConvertSessionDialogCore({
     const clients = (selectedSuiteEntry.suite.hostAttachments ?? [])
       .map((attachment) => attachment.hostName)
       .filter((hostName): hostName is string => Boolean(hostName?.trim()));
-    const servers = (selectedSuiteServerDisplay?.items ?? []).map(
-      (item) => item.label
-    );
+    // What the suite RUNS AGAINST, which for a suite pinning a standalone
+    // server group is that group — not `environment.servers`, which a
+    // group-backed suite leaves empty (`createTestSuite` stores
+    // `args.environment?.servers ?? []`). Reading only the environment showed
+    // "Claude" alone for every modern suite.
+    //
+    // DELIBERATELY a different source from `missingServers` below, which must
+    // keep mirroring `environment.servers`: that is the list the backend gates
+    // the import on and the one the opt-in patches. Pointing the check at the
+    // group instead would have the client pass a suite the server then rejects
+    // outright, replacing a fixable opt-in with a bare submit failure.
+    const pinnedGroupServers =
+      selectedSuiteEntry.suite.serverAttachment?.resolvedServerNames ?? [];
+    const servers =
+      pinnedGroupServers.length > 0
+        ? pinnedGroupServers
+        : (selectedSuiteServerDisplay?.items ?? []).map((item) => item.label);
 
     const groups = [clients, servers]
       .filter((group) => group.length > 0)
@@ -625,7 +639,14 @@ export function ConvertSessionDialogCore({
         <Label htmlFor="promote-existing-suite">Suite</Label>
         <Select
           value={selectedSuiteId}
-          onValueChange={setSelectedSuiteId}
+          onValueChange={(next) => {
+            setSelectedSuiteId(next);
+            // The opt-in below records a decision about ONE suite's
+            // environment. Carrying a tick from suite A into suite B would
+            // let a submit patch B on the strength of a confirmation the
+            // user never gave for it.
+            setUpdateSuiteEnvironment(false);
+          }}
           disabled={isSubmitting}
         >
           <SelectTrigger id="promote-existing-suite" className="w-full">
@@ -664,8 +685,8 @@ export function ConvertSessionDialogCore({
           <AlertTitle>Suite environment update required</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>
-              The selected suite is missing these servers:{" "}
-              {missingServers.join(", ")}.
+              The selected suite&apos;s recorded environment is missing these
+              servers: {missingServers.join(", ")}.
             </p>
             <label className="flex items-start gap-3">
               <Checkbox
@@ -706,7 +727,7 @@ export function ConvertSessionDialogCore({
       {attachmentPickersEnabled && effectiveProjectId ? (
         <div className="grid grid-cols-2 gap-3">
           <div className="min-w-0 space-y-2">
-            <Label>Client</Label>
+            <Label htmlFor="promote-new-suite-client">Client</Label>
             <HostPicker
               projectId={effectiveProjectId}
               value={selectedHostId}
@@ -716,10 +737,11 @@ export function ConvertSessionDialogCore({
               includeNone={false}
               disabled={isSubmitting}
               priorityHostId={defaultHostId ?? undefined}
+              triggerId="promote-new-suite-client"
             />
           </div>
           <div className="min-w-0 space-y-2">
-            <Label>Server</Label>
+            <Label htmlFor="promote-new-suite-server">Server</Label>
             <ServerAttachmentPicker
               projectId={effectiveProjectId}
               value={serverAttachmentId}
@@ -728,7 +750,8 @@ export function ConvertSessionDialogCore({
               disabled={isSubmitting}
               variant="field"
               emptyTriggerLabel="Select a server group"
-              triggerTestId="promote-new-suite-server"
+              triggerId="promote-new-suite-server"
+              triggerTestId="promote-new-suite-server-trigger"
               // The dialog's scroll-lock blocks the wheel on portaled
               // content, so the group list has to render in place.
               inModal

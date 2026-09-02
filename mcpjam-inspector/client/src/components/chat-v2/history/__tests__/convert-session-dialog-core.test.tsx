@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const importAction = vi.fn();
 const mocks = vi.hoisted(() => ({
   isUserReady: true,
-  useQuery: vi.fn(() => []),
+  useQuery: vi.fn((..._args: unknown[]) => [] as unknown[]),
 }));
 
 vi.mock("convex/react", () => ({
@@ -45,15 +45,37 @@ vi.mock("@/hooks/useClients", () => ({
 
 // Surface the picker VALUES the core wires in, without the heavy editors.
 vi.mock("@/components/evals/server-attachment-picker", () => ({
-  ServerAttachmentPicker: ({ value }: { value: string | null }) => (
-    <div data-testid="server-attachment-picker" data-value={value ?? ""} />
+  ServerAttachmentPicker: ({
+    value,
+    triggerId,
+  }: {
+    value: string | null;
+    triggerId?: string;
+  }) => (
+    <button
+      type="button"
+      id={triggerId}
+      data-testid="server-attachment-picker"
+      data-value={value ?? ""}
+    />
   ),
 }));
 // BB-163: the new-suite branch attaches ONE client through a single field,
 // so what's worth surfacing is the host id the core wires in.
 vi.mock("@/components/hosts/HostPicker", () => ({
-  HostPicker: ({ value }: { value: string | null }) => (
-    <div data-testid="client-picker" data-host={value ?? ""} />
+  HostPicker: ({
+    value,
+    triggerId,
+  }: {
+    value: string | null;
+    triggerId?: string;
+  }) => (
+    <button
+      type="button"
+      id={triggerId}
+      data-testid="client-picker"
+      data-host={value ?? ""}
+    />
   ),
 }));
 
@@ -350,6 +372,88 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.getByTestId("server-attachment-picker")).toBeTruthy();
     // ...and the existing branch's picker folds away with it.
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
+  });
+
+  it("names Client and Server through their labels, not just their values", () => {
+    // Without a trigger id the accessible name is only the selected value —
+    // "Claude", never "Client". `getByLabelText` fails unless the label is
+    // really bound to the control.
+    renderWithSuites();
+    fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
+
+    expect(screen.getByLabelText("Client")).toBe(
+      screen.getByTestId("client-picker")
+    );
+    expect(screen.getByLabelText("Server")).toBe(
+      screen.getByTestId("server-attachment-picker")
+    );
+  });
+
+  it("reports a pinned server group, not the empty environment behind it", () => {
+    // A group-backed suite leaves `environment.servers` empty
+    // (`createTestSuite` stores `args.environment?.servers ?? []`), so reading
+    // only the environment showed the client alone for every modern suite.
+    mocks.useQuery.mockReturnValue([
+      {
+        suite: {
+          _id: "suite-grouped",
+          name: "Billing evals",
+          environment: { servers: [] },
+          serverAttachment: { resolvedServerNames: ["Stripe", "GitHub"] },
+          hostAttachments: [{ hostName: "Claude" }],
+        },
+      },
+    ]);
+    renderCore();
+
+    expect(
+      screen.getByTestId("promote-existing-suite-summary").textContent
+    ).toBe("Claude · Stripe, GitHub");
+  });
+
+  it("drops a missing-servers opt-in when the suite it was ticked for changes", async () => {
+    // The box records a decision about ONE suite's environment. Carrying the
+    // tick across a suite change would let a submit patch the new suite on a
+    // confirmation nobody gave for it.
+    mocks.useQuery.mockReturnValue([
+      {
+        suite: {
+          _id: "suite-a",
+          name: "Suite A",
+          environment: { servers: [] },
+          hostAttachments: [{ hostName: "Claude" }],
+        },
+      },
+      {
+        suite: {
+          _id: "suite-b",
+          name: "Suite B",
+          environment: { servers: [] },
+          hostAttachments: [{ hostName: "Claude" }],
+        },
+      },
+    ]);
+    renderCore();
+
+    // Suite A is pre-selected and, with an empty environment, is short the
+    // session's Excalidraw server.
+    const optIn = screen.getByRole("checkbox");
+    fireEvent.click(optIn);
+    expect(optIn.getAttribute("data-state")).toBe("checked");
+    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(await screen.findByRole("option", { name: "Suite B" }));
+
+    expect(screen.getByRole("checkbox").getAttribute("data-state")).toBe(
+      "unchecked"
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled")
+    ).toBe(true);
   });
 
   it("submits into the pre-selected suite without re-asking for a destination", async () => {
