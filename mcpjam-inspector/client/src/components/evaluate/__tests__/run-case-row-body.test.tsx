@@ -144,7 +144,7 @@ describe("RunCaseRowBody", () => {
         iterations={ITERATIONS}
       />,
     );
-    expect(screen.getAllByText("Recommendation")).toHaveLength(2);
+    expect(screen.getAllByText("What to change")).toHaveLength(2);
     expect(
       screen.getAllByRole("button", { name: /Copy fix prompt/ }),
     ).toHaveLength(2);
@@ -168,7 +168,7 @@ describe("RunCaseRowBody", () => {
       />,
     );
     expect(screen.getByText("Worth checking")).toBeInTheDocument();
-    expect(screen.queryByText("Recommendation")).toBeNull();
+    expect(screen.queryByText("What to change")).toBeNull();
   });
 
   it("says plainly when a group establishes nothing about the server", () => {
@@ -188,9 +188,10 @@ describe("RunCaseRowBody", () => {
         iterations={ITERATIONS}
       />,
     );
-    expect(
-      screen.getByText("Not an established server defect"),
-    ).toBeInTheDocument();
+    // The contract records no remedy for a provider failure, so the block is
+    // absent rather than filled with a manufactured next step.
+    expect(screen.queryByText("What to change")).toBeNull();
+    expect(screen.queryByText("Worth checking")).toBeNull();
     expect(
       screen.getByText(/1 iteration did not complete, and no stage/),
     ).toBeInTheDocument();

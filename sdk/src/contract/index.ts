@@ -492,7 +492,6 @@ export {
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   STAGE_REASONS_WITHOUT_REMEDY,
   STAGE_REASON_LABELS,
-  STAGE_REASON_RECOMMENDATIONS,
   STAGE_REASON_REMEDIES,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
@@ -500,11 +499,7 @@ export {
   USER_VALUE_STAGE_QUESTIONS,
   describeExcludedTrialDetail,
 } from "./decision-labels.js";
-export type {
-  EvalStageCoverageDetailKey,
-  StageReasonRecommendation,
-  StageReasonRecommendationWording,
-} from "./decision-labels.js";
+export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
 
 // ── the canonical run decision summary ───────────────────────────────────────
 export type {

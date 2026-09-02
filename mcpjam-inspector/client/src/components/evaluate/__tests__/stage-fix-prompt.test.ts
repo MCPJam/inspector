@@ -27,8 +27,8 @@ function input(
     nextAction: "review tool selection and the tool catalog",
     expectedToolCalls: [{ toolName: "export_to_excalidraw" }],
     observedToolCalls: [{ toolName: "create_view", arguments: { id: 1 } }],
-    recommendation: {
-      wording: "direct",
+    remedy: {
+      voice: "direct",
       text: "The expected call to export_to_excalidraw never happened.",
     },
     ...overrides,
@@ -43,7 +43,7 @@ describe("buildStageFixPrompt", () => {
       "## Where the chain stopped",
       "## Expected tool calls",
       "## Observed tool calls",
-      "## Recommendation",
+      "## What to change",
     ].map((heading) => prompt.indexOf(heading));
 
     expect(order.every((index) => index >= 0)).toBe(true);
@@ -56,29 +56,22 @@ describe("buildStageFixPrompt", () => {
     expect(prompt.toLowerCase()).not.toContain("root cause");
   });
 
-  it("picks the heading from the recommendation's licence", () => {
+  it("picks the heading from what the contract licences", () => {
     expect(buildStageFixPrompt(input())).toContain("Fix the MCP server");
 
     // A judge score is one model's opinion. Telling an agent to fix on that
     // evidence invites a change nobody established was needed.
     const judged = buildStageFixPrompt(
       input({
-        recommendation: {
-          wording: "checkWhether",
-          text: "Check whether the response answered the request in full.",
+        remedy: {
+          voice: "checkWhether",
+          text: "Read the judge's rationale on the run.",
         },
       }),
     );
     expect(judged).toContain("Confirm the finding before changing server code");
 
-    const unmeasured = buildStageFixPrompt(
-      input({
-        recommendation: {
-          wording: "nothingToFix",
-          text: "Nothing to fix on the server here; the provider failed the call.",
-        },
-      }),
-    );
+    const unmeasured = buildStageFixPrompt(input({ remedy: null }));
     expect(unmeasured).toContain("not an established MCP server defect");
   });
 

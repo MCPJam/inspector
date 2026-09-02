@@ -27,10 +27,7 @@ import type {
   EvaluateCaseRow,
 } from "./evaluate-case-row-model";
 import { buildStageFixPrompt } from "./stage-fix-prompt";
-import {
-  formatStageReasonRecommendation,
-  type FormattedStageRecommendation,
-} from "./stage-reason-recommendation";
+import { remedyForReason, type StageRemedy } from "./stage-remedy";
 
 function ToolList({
   label,
@@ -112,11 +109,10 @@ function FailureGroup({
     );
   const missing = expectedNames.find((name) => !observedNames.includes(name));
 
-  const recommendation: FormattedStageRecommendation | null = group.reason
-    ? formatStageReasonRecommendation(group.reason, {
-        expectedToolNames: expectedNames,
-        observedToolNames: observedNames,
-      })
+  // The contract's own sentence, or nothing. A reason it deliberately leaves
+  // without a remedy gets no block here rather than a manufactured one.
+  const remedy: StageRemedy | null = group.reason
+    ? remedyForReason(group.reason)
     : null;
 
   return (
@@ -147,18 +143,16 @@ function FailureGroup({
         </p>
       ) : null}
 
-      {recommendation ? (
+      {remedy ? (
         <div className="flex flex-col gap-3 border-t border-border/40 bg-muted/25 px-3.5 py-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="text-[10.5px] font-semibold uppercase tracking-wide text-primary">
-              {recommendation.wording === "direct"
-                ? "Recommendation"
-                : recommendation.wording === "checkWhether"
-                  ? "Worth checking"
-                  : "Not an established server defect"}
+              {remedy.voice === "checkWhether"
+                ? "Worth checking"
+                : "What to change"}
             </div>
             <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-foreground">
-              {recommendation.text}
+              {remedy.text}
             </p>
           </div>
           <Button
@@ -194,7 +188,7 @@ function FailureGroup({
                     failed: group.iterationIds.length,
                     total: row.iterations.total,
                   },
-                  recommendation,
+                  remedy,
                 }),
               )
             }

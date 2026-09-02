@@ -125,7 +125,7 @@ describe("the stage strip", () => {
       (slice) => slice.slice.dimension === "overall",
     );
     if (!overall) throw new Error("fixture has no overall slice");
-    overall.excludedTrials = { ...overall.excludedTrials, chainUnverified: 1 };
+    overall.excludedTrials = { ...overall.excludedTrials, integrity: 1 };
 
     const result = view(document);
     if (result.kind !== "ready") throw new Error("expected a ready strip");

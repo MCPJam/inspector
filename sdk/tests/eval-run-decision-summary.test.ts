@@ -31,7 +31,6 @@ import {
   FAILURE_CATEGORY_LABELS,
   STAGE_ANALYZER_VERSION,
   STAGE_REASON_LABELS,
-  STAGE_REASON_RECOMMENDATIONS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
   USER_VALUE_STAGE_OUTCOMES,
@@ -623,15 +622,6 @@ describe("labels are total over the vocabularies they render", () => {
       DECISION_LABEL_VOCABULARIES.failureCategories
     );
     total(STAGE_REASON_LABELS, DECISION_LABEL_VOCABULARIES.stageReasons);
-    // The recommendation map is keyed on the same vocabulary as the labels,
-    // and `satisfies` already fails the build on a missing member. This guards
-    // the other direction: a member DELETED from the vocabulary while an entry
-    // lingers here would still compile, and the stale entry would be dead copy
-    // nobody could reach from a real chain.
-    total(
-      STAGE_REASON_RECOMMENDATIONS,
-      DECISION_LABEL_VOCABULARIES.stageReasons
-    );
     total(
       EVAL_VERDICT_DECISION_REASON_LABELS,
       DECISION_LABEL_VOCABULARIES.verdictDecisionReasons
@@ -710,71 +700,6 @@ describe("labels are total over the vocabularies they render", () => {
     // The sibling it has to stay consistent with: the threshold is inclusive
     // on the pass side for the same reason.
     expect(STAGE_REASON_LABELS.judgeObserved).toContain("at or above");
-  });
-
-  it("only instructs where the reason measured the system under test", () => {
-    // The whole point of the wording field. A reason from the "nothing could
-    // be measured" family observed nothing about the server, so a sentence
-    // telling someone to change server code there sends them after nothing —
-    // and it is the most confident-looking output on the page.
-    const direct = Object.entries(STAGE_REASON_RECOMMENDATIONS)
-      .filter(([, entry]) => entry.wording === "direct")
-      .map(([reason]) => reason)
-      .sort();
-    expect(direct).toEqual([
-      "argumentMismatch",
-      "connectFailed",
-      "missingToolCall",
-      "predicateFailed",
-      "protocolError",
-      "renderFailed",
-      "toolError",
-      "toolsListFailed",
-      "unexpectedToolCall",
-    ]);
-
-    // Every advisory-judge reason asks rather than instructs, because the
-    // evidence is one model's opinion of another model's answer.
-    for (const reason of [
-      "judgeObserved",
-      "judgePartial",
-      "judgeFailed",
-      "judgePending",
-      "judgeNotRequested",
-    ] as const) {
-      expect(STAGE_REASON_RECOMMENDATIONS[reason].wording, reason).toBe(
-        "checkWhether"
-      );
-      expect(STAGE_REASON_RECOMMENDATIONS[reason].action, reason).toMatch(
-        /^Check /
-      );
-    }
-  });
-
-  it("never names a cause and never prints a wire spelling", () => {
-    for (const [reason, entry] of Object.entries(
-      STAGE_REASON_RECOMMENDATIONS
-    )) {
-      // Same rule the module docblock states for every other map here: a first
-      // failed stage is a LOCATION. "Root cause" in an action line turns the
-      // place the chain stopped into a claim about why it stopped.
-      expect(entry.action.toLowerCase(), reason).not.toContain("root cause");
-      // NOT the camel-case guard the exclusion labels use. These actions name
-      // real identifiers on purpose — `maxExtraToolCalls` is the field the
-      // reader has to set, and `tools/list` is the call they have to make —
-      // and an action that refused to name them would be unfollowable. What
-      // must never appear is the REASON's own wire spelling, which would mean
-      // the entry restated its key instead of saying what to do about it.
-      expect(entry.action, reason).not.toContain(reason);
-      expect(entry.action.length, reason).toBeGreaterThan(0);
-      // Placeholders are substituted by the renderer from the trial's own
-      // evidence; anything else in braces is a typo that would reach a user.
-      for (const token of entry.action.match(/\{[^}]*\}/g) ?? []) {
-        expect(["{expected}", "{observed}", "{errorCode}"], reason).toContain(
-          token
-        );
-      }
-    }
   });
 });
 

@@ -55,7 +55,7 @@ import {
   buildEvaluateImprovePrompt,
   buildStageFixPrompt,
 } from "./stage-fix-prompt";
-import { recommendationForDiagnostic } from "./stage-reason-recommendation";
+import { remedyForDiagnostic } from "./stage-remedy";
 import { RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
 
@@ -157,9 +157,9 @@ export function EvaluateRunContent({
       buildStageStrip({
         status: stageAnalytics.status,
         document: stageAnalytics.document,
+        error: stageAnalytics.error,
       }),
     [stageAnalytics.status, stageAnalytics.document, stageAnalytics.error],
-        error: stageAnalytics.error,
   );
 
   // What changed since the previous run. One read, no store: the answer is not
@@ -253,8 +253,8 @@ export function EvaluateRunContent({
     for (const diagnostic of detail.diagnostics) {
       const caseKey = diagnostic.testCaseId ?? diagnostic.iterationId;
       if (seenCases.has(caseKey)) continue;
-      const recommendation = recommendationForDiagnostic(diagnostic);
-      if (!recommendation) continue;
+      const remedy = remedyForDiagnostic(diagnostic);
+      if (!remedy) continue;
       seenCases.add(caseKey);
       const iteration = iterations.find(
         (row) => row._id === diagnostic.iterationId,
@@ -262,8 +262,8 @@ export function EvaluateRunContent({
       stagePrompts.push(
         buildStageFixPrompt({
           caseTitle: diagnostic.title ?? "Untitled case",
-          stage: recommendation.stage,
-          reason: recommendation.reason,
+          stage: remedy.stage,
+          reason: remedy.reason,
           ...(diagnostic.chain.status === "verified"
             ? {
                 chain: diagnostic.chain.stages,
@@ -278,7 +278,7 @@ export function EvaluateRunContent({
             iteration?.actualToolCalls ??
             diagnostic.observed?.toolNames?.map((toolName) => ({ toolName })),
           observedFailure: diagnostic.observed?.failure ?? null,
-          recommendation,
+          remedy,
         }),
       );
       if (stagePrompts.length >= 3) break;
