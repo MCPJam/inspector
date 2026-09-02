@@ -59,6 +59,8 @@ import {
 } from "./runtime-identity.js";
 import {
   currentLocalPlatform,
+  localPackTarget,
+  type LocalPackTarget,
   type LocalPlatform,
   type SupportedLocalHarnessId,
 } from "./targets.js";
@@ -121,11 +123,15 @@ export interface PackManifest {
  */
 export function expectedPackFor(
   harnessId: SupportedLocalHarnessId,
-  platform: LocalPlatform,
+  /**
+   * The OS **and** architecture, because that is what a pack is built for. A
+   * lookup by OS alone would hand a darwin-x64 machine the darwin-arm64 digest.
+   */
+  target: LocalPackTarget,
 ): { packVersion: string; treeDigest: string } | null {
   const override = developmentPackExpectation();
   if (override !== null) return override;
-  const record = PACK_RECORDS[harnessId]?.[platform];
+  const record = PACK_RECORDS[harnessId]?.[target];
   if (record === undefined) return null;
   return { packVersion: record.packVersion, treeDigest: record.treeDigest };
 }
@@ -194,7 +200,14 @@ export function packSourceFor(
   };
 }
 
-/** Platform key as the pack build names it: `<os>-<arch>`. */
+/**
+ * Platform key as the pack build names it: `<os>-<arch>`.
+ *
+ * Deliberately a plain string and not `LocalPackTarget`: this is what goes in
+ * a user-facing message about a machine we have NO pack for, so it has to be
+ * able to say `linux-riscv64`. `localPackTarget` is the one that answers
+ * whether a pack exists.
+ */
 export function packPlatformKey(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
@@ -224,7 +237,9 @@ export async function readRuntimeInstallStatus(args: {
       message: `${args.platform ?? process.platform} has no local harness runtime`,
     };
   }
-  const expected = expectedPackFor(args.harnessId, platform);
+  const target = localPackTarget(args.platform, args.arch);
+  const expected =
+    target === null ? null : expectedPackFor(args.harnessId, target);
   if (expected === null) {
     return {
       state: "unsupported-platform",
@@ -300,7 +315,9 @@ export async function installRuntimePack(
       message: `${options.platform ?? process.platform} has no local harness runtime`,
     };
   }
-  const expected = expectedPackFor(options.harnessId, platform);
+  const target = localPackTarget(options.platform, options.arch);
+  const expected =
+    target === null ? null : expectedPackFor(options.harnessId, target);
   if (expected === null) {
     return {
       state: "unsupported-platform",

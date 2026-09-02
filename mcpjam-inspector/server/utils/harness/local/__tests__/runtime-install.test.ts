@@ -42,12 +42,22 @@ function spyOnPackRecords() {
   return vi.spyOn(packDigests, "PACK_RECORDS", "get");
 }
 
+/**
+ * A digest table for the machine the tests are running on.
+ *
+ * Every target, not just this one: the point of keying on `<os>-<arch>` is
+ * that a lookup for another target must not find this digest, and a fixture
+ * that only ever filled one entry could not tell the two apart.
+ */
 function tableFor(treeDigest: string): typeof packDigests.PACK_RECORDS {
+  const record = { packVersion: PACK_VERSION, treeDigest };
   return {
     "claude-code": {
-      darwin: { packVersion: PACK_VERSION, treeDigest },
-      linux: { packVersion: PACK_VERSION, treeDigest },
-      win32: { packVersion: PACK_VERSION, treeDigest },
+      "darwin-arm64": record,
+      "darwin-x64": record,
+      "linux-x64": record,
+      "linux-arm64": record,
+      "win32-x64": record,
     },
     codex: {},
   };
@@ -302,6 +312,6 @@ describe("installing a pack", () => {
     await expect(
       readRuntimeInstallStatus({ harnessId: "codex" }),
     ).resolves.toMatchObject({ state: "unsupported-platform" });
-    expect(expectedPackFor("codex", "linux")).toBeNull();
+    expect(expectedPackFor("codex", "linux-x64")).toBeNull();
   });
 });

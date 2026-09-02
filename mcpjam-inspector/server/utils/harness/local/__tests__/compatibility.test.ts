@@ -52,16 +52,24 @@ describe("the shipped manifest", () => {
     }
   });
 
-  it("ships no pack digest, so no runtime can resolve before a pack is built", () => {
-    // Pack digests are per platform and written by the pack build. Until that
-    // has run there is no entry for any platform, and `resolveManagedBundle`
-    // answers `bundle-absent` — the same honest answer a missing directory
-    // gets — instead of launching an unverified runtime.
+  it("names no runtime it cannot verify, whether or not a pack has been built", () => {
+    // Pack digests are per TARGET (`<os>-<arch>`) and written by the pack
+    // build. Written this way rather than "the map is empty" so it keeps
+    // meaning something after a release fills it: what must hold is that every
+    // digest present is a real one. An absent target answers `bundle-absent` —
+    // the same honest answer a missing directory gets — instead of launching
+    // an unverified runtime.
     for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
       expect(manifest.bridgeBundleDigest).toBe(`sha256:${"0".repeat(64)}`);
       expect(manifest.runtime).toMatchObject({ source: "managed-bundle" });
       if (manifest.runtime.source !== "managed-bundle") continue;
-      expect(Object.keys(manifest.runtime.bundleDigest)).toEqual([]);
+      for (const [target, digest] of Object.entries(
+        manifest.runtime.bundleDigest,
+      )) {
+        expect(target).toMatch(/^(darwin|linux|win32)-(arm64|x64)$/);
+        expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+        expect(digest).not.toBe(`sha256:${"0".repeat(64)}`);
+      }
       // The launcher is the pack's loopback wrapper, never the bridge itself:
       // the bridge stays byte-identical to the pinned adapter's copy so the
       // recipe compare can hold.

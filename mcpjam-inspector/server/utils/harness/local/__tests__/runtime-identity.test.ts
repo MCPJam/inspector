@@ -68,7 +68,16 @@ function manifestFor(
       bundleName,
       // Per platform, because a pack is: it carries a platform-specific Node
       // and a platform-specific vendor binary.
-      bundleDigest: { linux: digest, darwin: digest },
+      bundleDigest: {
+        // Every target, so a fixture built on one machine resolves on any
+        // other: the lookup is by `<os>-<arch>` and a partial map would
+        // make these tests pass or fail by architecture.
+        "linux-x64": digest,
+        "linux-arm64": digest,
+        "darwin-arm64": digest,
+        "darwin-x64": digest,
+        "win32-x64": digest,
+      },
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
       vendorPackages: { "@anthropic-ai/claude-code": "1.2.3" },

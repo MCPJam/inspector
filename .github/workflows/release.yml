@@ -297,6 +297,12 @@ jobs:
     uses: ./.github/workflows/local-harness-pack.yml
     with:
       pack_version: ${{ needs.preflight.outputs.inspector_version }}
+      # A release must publish packs the committed digest table already names.
+      # Otherwise the desktop artifacts — built in parallel from the checked-in
+      # table — would ship digests that match nothing, `expectedPackFor` would
+      # answer `null`, and every published pack would be rejected as
+      # unsupported: artifacts that exist and cannot be installed.
+      enforce_committed_digests: true
     secrets: inherit
 
   artifact-gate:

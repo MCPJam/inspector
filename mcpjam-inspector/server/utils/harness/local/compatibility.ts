@@ -28,6 +28,7 @@
  */
 import type {
   LocalIsolationBackend,
+  LocalPackTarget,
   LocalPermissionProfile,
   LocalPlatform,
   SupportedLocalHarnessId,
@@ -50,7 +51,7 @@ export type LocalHarnessRuntimePolicy =
        * built for it and resolves `bundle-absent`, which is the same answer a
        * missing directory gives and the correct one.
        */
-      bundleDigest: Readonly<Partial<Record<LocalPlatform, string>>>;
+      bundleDigest: Readonly<Partial<Record<LocalPackTarget, string>>>;
       /** Launcher path relative to the bundle root.
        *
        *  The pack ships `launcher.mjs`, an Inspector-owned wrapper that forces

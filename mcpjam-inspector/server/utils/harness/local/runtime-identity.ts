@@ -26,7 +26,11 @@ import { execFile } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { LocalHarnessCompatibility } from "./compatibility.js";
-import type { LocalPlatform, SupportedLocalHarnessId } from "./targets.js";
+import {
+  localPackTarget,
+  type LocalPlatform,
+  type SupportedLocalHarnessId,
+} from "./targets.js";
 import { setWindowsJobLauncherVerified } from "./process-identity.js";
 
 /** Cap on the bundle tree the digest will walk. A managed bundle is a bridge
@@ -388,6 +392,13 @@ export async function resolveManagedBundle(args: {
   /** Root directory holding per-harness bundles, owned by the install. */
   runtimeRoot: string;
   platform: LocalPlatform;
+  /**
+   * Defaults to this machine's. Present because the digest that admits a
+   * bundle is per OS AND architecture: `bin/node` and the vendor CLI are
+   * machine code, so a darwin-x64 host must not be admitted by the
+   * darwin-arm64 digest.
+   */
+  arch?: string;
 }): Promise<RuntimeResolution> {
   const { manifest, runtimeRoot, platform } = args;
   if (manifest.runtime.source !== "managed-bundle") {
@@ -416,7 +427,9 @@ export async function resolveManagedBundle(args: {
     };
   }
 
-  const expectedDigest = policy.bundleDigest[platform];
+  const target = localPackTarget(platform, args.arch ?? process.arch);
+  const expectedDigest =
+    target === null ? undefined : policy.bundleDigest[target];
   if (expectedDigest === undefined) {
     return {
       ok: false,

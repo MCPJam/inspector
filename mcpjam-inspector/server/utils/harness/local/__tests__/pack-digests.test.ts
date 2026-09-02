@@ -26,6 +26,7 @@ import {
   PACK_TREE_DIGESTS,
 } from "../pack-digests.generated.js";
 import { computeTreeDigest } from "../runtime-identity.js";
+import type { LocalPackTarget } from "../targets.js";
 
 let base: string;
 
@@ -126,28 +127,58 @@ describe("a staged pack has no hardlinks left in it", () => {
 
 describe("the generated digest table", () => {
   it("has an entry shape the manifest and installer can both read", () => {
-    for (const [harnessId, byPlatform] of Object.entries(PACK_RECORDS)) {
-      for (const [platform, record] of Object.entries(byPlatform)) {
+    for (const [harnessId, byTarget] of Object.entries(PACK_RECORDS)) {
+      for (const [target, record] of Object.entries(byTarget)) {
         expect(record.treeDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
         expect(record.packVersion.length).toBeGreaterThan(0);
         // The two tables are generated together and must not disagree: the
         // manifest reads one, the installer reads the other.
-        expect(PACK_TREE_DIGESTS[harnessId as "claude-code"][
-          platform as "linux"
-        ]).toBe(record.treeDigest);
+        expect(
+          PACK_TREE_DIGESTS[harnessId as "claude-code"][
+            target as LocalPackTarget
+          ],
+        ).toBe(record.treeDigest);
       }
     }
   });
 
   it("stays in step with the manifest, so no platform claims a pack it has none for", () => {
-    // The freshness ratchet. A manifest that lists a platform as native while
-    // no pack exists for it would resolve `bundle-absent` at runtime — an
-    // honest refusal, but one the user only discovers after consenting. This
-    // fails the build instead.
+    // The freshness ratchet, and it has to assert the REAL invariant rather
+    // than that the manifest equals the table it is assigned from — which it
+    // does by construction in `compatibility.ts`, and which therefore cannot
+    // fail. What can fail, and is what a user would meet, is a manifest that
+    // calls a platform native while no pack digest admits any machine of that
+    // platform: `resolveManagedBundle` then answers `bundle-absent` after the
+    // user has already consented.
     for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
       if (manifest.runtime.source !== "managed-bundle") continue;
-      expect(manifest.runtime.bundleDigest).toEqual(
-        PACK_TREE_DIGESTS[manifest.harnessId],
+      const targets = Object.keys(manifest.runtime.bundleDigest);
+      if (targets.length === 0) {
+        // The repo state before any pack build. Every platform then refuses
+        // identically at install time ("no runtime pack has been built for
+        // darwin-arm64"), which is uniform and honest — and is why the launch
+        // checklist makes building the packs a hard release blocker. The
+        // ratchet arms itself as soon as the first target lands.
+        continue;
+      }
+      for (const platform of manifest.nativePlatforms) {
+        expect(
+          targets.filter((target) => target.startsWith(`${platform}-`)),
+          `${manifest.harnessId} calls ${platform} native with no pack digest`,
+        ).not.toHaveLength(0);
+      }
+    }
+  });
+
+  it("keys the two generated tables identically, in both directions", () => {
+    // One table feeds the manifest and the other feeds the installer. A target
+    // in only one of them is a machine that either downloads a pack it cannot
+    // verify or verifies against a pack it will never download.
+    for (const harnessId of Object.keys(PACK_RECORDS) as Array<
+      keyof typeof PACK_RECORDS
+    >) {
+      expect(Object.keys(PACK_RECORDS[harnessId]).sort()).toEqual(
+        Object.keys(PACK_TREE_DIGESTS[harnessId]).sort(),
       );
     }
   });

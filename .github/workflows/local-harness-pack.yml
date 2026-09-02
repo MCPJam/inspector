@@ -16,6 +16,14 @@ on:
         description: Version to stamp the pack and its assets with.
         required: true
         type: string
+      enforce_committed_digests:
+        description: >-
+          Fail if `pack-digests.generated.ts` does not already carry the
+          digests this build produced. True for a release, false for the
+          dispatch that produces the digests in the first place.
+        required: false
+        type: boolean
+        default: false
     outputs:
       digests:
         description: JSON map of platform key to tree digest, for the manifest generator.
@@ -47,8 +55,11 @@ jobs:
           - platform_key: darwin-arm64
             runner: macos-latest
             node_dist: darwin-arm64
+          # macos-15-intel, not macos-13: GitHub retired the latter, and
+          # `collect` needs every matrix leg, so one unschedulable job blocks
+          # the digest map and the release with it.
           - platform_key: darwin-x64
-            runner: macos-13
+            runner: macos-15-intel
             node_dist: darwin-x64
           - platform_key: linux-x64
             runner: ubuntu-latest
@@ -138,10 +149,24 @@ jobs:
         shell: bash
         env:
           LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+          # Through the ENVIRONMENT, never interpolated into the shell source.
+          # `pack_version` is a `workflow_dispatch` input — a string a person
+          # types — and `${{ }}` substitutes before bash parses, so a quote in
+          # it would run commands in a job that holds the pack signing key.
+          PACK_VERSION: ${{ inputs.pack_version }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
         run: |
+          set -euo pipefail
+          # Validated as well as quoted: it also becomes an asset name and a
+          # directory, so a version with a slash in it is refused rather than
+          # written somewhere surprising.
+          case "$PACK_VERSION" in
+            *[!A-Za-z0-9._-]* | "")
+              echo "pack_version must be a release version" >&2; exit 1;;
+          esac
           node scripts/build-local-harness-pack.mjs \
-            --platform ${{ matrix.platform_key }} \
-            --pack-version "${{ inputs.pack_version }}" \
+            --platform "$PLATFORM_KEY" \
+            --pack-version "$PACK_VERSION" \
             --node-tarball "$NODE_ARCHIVE" \
             ${{ startsWith(matrix.platform_key, 'win32') && format('--job-launcher "{0}/mcpjam-job-launcher.exe"', runner.temp) || '' }} \
             --out "$RUNNER_TEMP/pack-out" \
@@ -149,6 +174,9 @@ jobs:
 
       - name: Record the digest
         id: digest
+        shell: bash
+        env:
+          PLATFORM_KEY: ${{ matrix.platform_key }}
         run: |
           set -euo pipefail
           line="$(grep '^::pack-digest::' "$RUNNER_TEMP/pack-build.log" | tail -1)"
@@ -158,7 +186,8 @@ jobs:
             exit 1
           fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "{\"${{ matrix.platform_key }}\":\"$digest\"}" > "$RUNNER_TEMP/pack-out/digest.json"
+          jq -nc --arg k "$PLATFORM_KEY" --arg d "$digest" '{($k): $d}' \
+            > "$RUNNER_TEMP/pack-out/digest.json"
 
       # Proves the pack the installer would download actually verifies, before
       # it is published. A pack that fails here never reaches a release.
@@ -204,4 +233,34 @@ jobs:
           set -euo pipefail
           map="$(jq -sc 'map({(.platform): {packVersion: .packVersion, treeDigest: .treeDigest}}) | add' packs/*.manifest.json)"
           echo "digests=$map" >> "$GITHUB_OUTPUT"
+          flat="$(jq -sc 'map({(.platform): .treeDigest}) | add' packs/*.manifest.json)"
+          echo "flat=$flat" >> "$GITHUB_OUTPUT"
           echo "$map"
+
+      - name: Check out the Inspector sources
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The gate that makes the checked-in digest table load-bearing.
+      #
+      # Deliberately a CHECK and not a write. `pack-digests.generated.ts` is
+      # committed so the digest a release trusts is reviewed in a diff; a
+      # release that injected digests into the build would publish packs
+      # nobody had looked at, which is the property the whole design rests on.
+      # So the packs a release builds must already match what is committed,
+      # and the release fails here if they do not — with the command that
+      # regenerates the table.
+      - name: The committed digest table matches the packs this build produced
+        if: ${{ inputs.enforce_committed_digests }}
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.pack_version }}
+          DIGESTS: ${{ steps.merge.outputs.flat }}
+        run: |
+          set -euo pipefail
+          node scripts/write-pack-digests.mjs \
+            --check --version "$PACK_VERSION" --digests "$DIGESTS"

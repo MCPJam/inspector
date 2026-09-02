@@ -31,7 +31,7 @@ import {
 import { computeTreeDigest, resolveManagedBundle } from "../runtime-identity.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
-import { LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
+import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
 import { probeProcessGroup, probeProcess } from "../process-identity.js";
 
@@ -41,6 +41,20 @@ const execFileP = promisify(execFile);
 const ROOT = process.env.CONFORMANCE_ROOT!;
 /** The pack is per platform, and so is the digest that admits it. */
 const PLATFORM = process.platform as "darwin" | "linux";
+/**
+ * …and per ARCHITECTURE, which is the key the digest table actually uses. The
+ * pack the build step produced is for this machine, so this is the entry the
+ * manifest needs to carry.
+ */
+const PACK_TARGET = (() => {
+  const target = localPackTarget();
+  if (target === null) {
+    throw new Error(
+      `no runtime pack target exists for ${process.platform}-${process.arch}`,
+    );
+  }
+  return target;
+})();
 /** Stamped into the manifest so a run cannot claim evidence it did not
  *  gather; PR 5's CI job replaces it with the job's own output. */
 const CONFORMANCE_VERSION =
@@ -231,7 +245,7 @@ async function main() {
   const base = LOCAL_HARNESS_MANIFEST["claude-code"];
   const manifest = {
     ...base,
-    runtime: { ...(base.runtime as any), bundleDigest: { [PLATFORM]: digest }, launcherRelativePath: MODE === "no-launcher" ? "bridge.mjs" : "launcher.mjs" },
+    runtime: { ...(base.runtime as any), bundleDigest: { [PACK_TARGET]: digest }, launcherRelativePath: MODE === "no-launcher" ? "bridge.mjs" : "launcher.mjs" },
     lifecycleConformanceVersion: CONFORMANCE_VERSION,
     bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}`,
   } as typeof base;

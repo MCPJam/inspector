@@ -44,7 +44,7 @@ alongside two things that are not processes and have to die with it:
 
 | Piece | Where | What it is |
 |---|---|---|
-| Runtime pack | `~/.mcpjam/harness-local/runtime/<version>/claude-code`, or `userData/local-harness/runtime/...` on Electron | ~515 MB: the adapter's frozen dependency graph, the vendor binary, an official Node, and the loopback launcher. Downloaded once, signature- and digest-verified. |
+| Runtime pack | `~/.mcpjam/harness-local/runtime/<version>/claude-code`, or `userData/local-harness/runtime/...` on Electron | ~515 MB: the adapter's frozen dependency graph, the vendor binary, an official Node, and the loopback launcher. One per `<os>-<arch>` — it contains machine code — downloaded once, signature- and digest-verified. |
 | `runtime-install.ts` | server | Downloads, verifies (signature → archive hash → tree digest), extracts atomically, activates. Never runs during a session start. |
 | `availability.ts` | server | The single chokepoint. Kill switch, hosted mode, actor, compatibility, workspace grant, runtime identity, consent — in that order, each re-derived. |
 | `supervisor.ts` | server | Owns the process tree: durable registry, ownership proof, whole-tree termination, janitor reclaim. |
@@ -245,8 +245,23 @@ correct failure but an invisible one.
       `LOCAL_HARNESS_PACK_SIGNING_KEY`. Until then `PACK_SIGNING_KEYS` is empty,
       which **refuses** every network-sourced pack — the correct default, and a
       hard blocker for release.
-- [ ] Packs built and attached to the release for every platform the manifest
-      calls native, and `pack-digests.generated.ts` regenerated from that build.
+- [ ] Packs built and attached to the release for every **target** the manifest
+      calls native — `<os>-<arch>`, so both Mac architectures, not "darwin" —
+      and `pack-digests.generated.ts` regenerated from that build and
+      **committed**:
+
+      ```
+      # 1. build the packs (workflow_dispatch on "Local harness runtime pack")
+      # 2. take the `digests` output and write the table
+      node scripts/write-pack-digests.mjs --version <release> \
+        --digests '{"darwin-arm64":"sha256:…","linux-x64":"sha256:…"}'
+      # 3. commit it, then release
+      ```
+
+      The release re-runs the same build and fails if the packs it produces do
+      not match what is committed. The table is committed rather than injected
+      at build time so the digest a release trusts is reviewed in a diff —
+      which is the property the whole verification chain rests on.
 - [ ] Conformance green on `ubuntu-latest` and `macos-latest`, and
       `lifecycleConformanceVersion` stamped from that run. Empty ⇒ every
       platform refuses, by design.
