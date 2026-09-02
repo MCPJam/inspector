@@ -38,6 +38,7 @@ import {
   type UserValueStage,
 } from "./chain.js";
 import { STAGE_REASONS, type StageReason } from "./stage-derivation.js";
+import { PREDICATE_STAGE } from "./grader-stage.js";
 import type { EvalStageCoverageDetail } from "./stage-analytics.js";
 import {
   EVAL_VERDICT_DECISION_REASONS,
@@ -469,6 +470,13 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   failureCategories: FAILURE_CATEGORIES,
   stageReasons: STAGE_REASONS,
   verdictDecisionReasons: EVAL_VERDICT_DECISION_REASONS,
+  /**
+   * B7 — which stage each predicate kind's evidence is filed under. A MAP
+   * rather than a list, because the label a reader needs is the pairing: a
+   * settings page saying "this grader measures selection" is only legible
+   * next to the stage vocabulary above.
+   */
+  graderStages: PREDICATE_STAGE,
   // NOT listed here: the fine-grained exclusion detail. Its vocabulary is a
   // zod object's SHAPE rather than a `const` array, so its totality test reads
   // `evalStageCoverageDetailSchema.shape` directly — a hand-copied list here
