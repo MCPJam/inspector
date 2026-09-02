@@ -137,6 +137,9 @@ const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 /** Above this, the library is long enough that scanning it needs a filter. */
 const SEARCHABLE_PERSONA_COUNT = 5;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
+const PERSONA_SIDEBAR_DEFAULT_WIDTH = 288;
+const PERSONA_SIDEBAR_MIN_WIDTH = 224;
+const PERSONA_SIDEBAR_MAX_WIDTH = 480;
 
 const SWARM_VIEW_OPTIONS = [
   { value: "overview" as const, label: "Overview" },
@@ -288,6 +291,12 @@ export function SwarmsTab({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environments = useProjectEnvironmentsList(effectiveProjectId);
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
+  const [personaSidebarWidth, setPersonaSidebarWidth] = useState(
+    PERSONA_SIDEBAR_DEFAULT_WIDTH
+  );
+  const [isResizingPersonaSidebar, setIsResizingPersonaSidebar] =
+    useState(false);
+  const personaSidebarRef = useRef<HTMLElement>(null);
   const runningSet = useMemo(
     () => new Set(runningPersonaIds),
     [runningPersonaIds],
@@ -673,18 +682,6 @@ export function SwarmsTab({
     },
     [launchJourney],
   );
-  const handleOpenPersonaFromDetail = useCallback(
-    (personaName: string) => {
-      const match = (personas ?? []).find(
-        (p) => p.name.toLowerCase() === personaName.toLowerCase(),
-      );
-      if (match) setSelectedPersonaId(match._id);
-      setViewMode("journeys");
-      navigate(routePaths.swarms);
-    },
-    [navigate, personas],
-  );
-
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
   const resolvePersona = (raw: unknown): Persona => {
@@ -980,13 +977,16 @@ export function SwarmsTab({
           }}
           launchJourney={launchJourney}
           onCancel={() => navigate(routePaths.swarms)}
-          onDone={(runLabels) => {
-            // Labels are component state and `/swarms/new` → `/swarms` swaps
-            // sibling routes without remounting this component, so they
-            // survive. `?view=sessions` carries the landing view in the URL
-            // regardless, so a remount (or a reload) still lands correctly —
-            // it just falls back to run-id labels.
+          onDone={(runLabels, swarmRunGroupId) => {
+            // Labels are component state and `/swarms/new` → `/swarms/:id`
+            // swaps sibling routes without remounting this component, so
+            // they survive. Findings is the swarm page's default tab — the
+            // run keeps going after this leave.
             setSwarmRunLabels(runLabels);
+            if (swarmRunGroupId) {
+              navigate(buildSwarmPath(swarmRunGroupId));
+              return;
+            }
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
@@ -998,11 +998,14 @@ export function SwarmsTab({
           }) => {
             setSwarmRunLabels(runLabels);
             if (swarmRunGroupId) {
-              // The wave's own page, on the session that produced the finding.
-              // It is a real URL, so this leave is reversible — and the run
-              // keeps streaming into that page while the user reads. The
-              // criterion rides along so the page can name the finding rather
-              // than dropping the viewer into an unexplained transcript.
+              // Live-pane "open this completed session" — the wave's own
+              // page, on the session that produced the finding, showing the
+              // transcript rather than Findings (Findings is `onDone` / Open
+              // findings). It is a real URL, so this leave is reversible — and
+              // the run keeps streaming into that page while the user reads.
+              // The criterion rides along so the page can name the finding
+              // rather than dropping the viewer into an unexplained
+              // transcript.
               navigate(
                 buildSwarmPath(swarmRunGroupId, {
                   tab: "sessions",
@@ -1012,8 +1015,6 @@ export function SwarmsTab({
               );
               return;
             }
-            // No wave id means nothing launched under one, so there is no run
-            // page to open — fall back to the handoff `onDone` already makes.
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
@@ -1054,7 +1055,6 @@ export function SwarmsTab({
           personas={personas ?? []}
           hosts={hosts ?? []}
           onRunAgain={handleRunAgainFromDetail}
-          onOpenPersona={handleOpenPersonaFromDetail}
         />
       </div>
     );
@@ -1092,7 +1092,9 @@ export function SwarmsTab({
           <>
             {/* Personas sidebar — Personas tab only */}
             <aside
-              className="flex w-80 shrink-0 flex-col border-r"
+              ref={personaSidebarRef}
+              className="flex shrink-0 flex-col border-r"
+              style={{ width: personaSidebarWidth }}
               data-testid="swarm-persona-sidebar"
             >
               <div className="flex items-center justify-between border-b px-4 py-3">
@@ -1249,6 +1251,56 @@ export function SwarmsTab({
                 )}
               </div>
             </aside>
+            <div
+              role="separator"
+              aria-label="Resize personas sidebar"
+              aria-orientation="vertical"
+              aria-valuemin={PERSONA_SIDEBAR_MIN_WIDTH}
+              aria-valuemax={PERSONA_SIDEBAR_MAX_WIDTH}
+              aria-valuenow={personaSidebarWidth}
+              tabIndex={0}
+              className={cn(
+                "relative z-10 -ml-px w-1 shrink-0 cursor-col-resize touch-none select-none border-r border-transparent transition-colors hover:border-primary/40",
+                isResizingPersonaSidebar && "border-primary/60"
+              )}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setIsResizingPersonaSidebar(true);
+              }}
+              onPointerMove={(event) => {
+                if (!isResizingPersonaSidebar) return;
+                const left =
+                  personaSidebarRef.current?.getBoundingClientRect().left ?? 0;
+                setPersonaSidebarWidth(
+                  Math.min(
+                    PERSONA_SIDEBAR_MAX_WIDTH,
+                    Math.max(
+                      PERSONA_SIDEBAR_MIN_WIDTH,
+                      event.clientX - left
+                    )
+                  )
+                );
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                setIsResizingPersonaSidebar(false);
+              }}
+              onPointerCancel={() => setIsResizingPersonaSidebar(false)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+                  return;
+                }
+                event.preventDefault();
+                const delta = event.key === "ArrowLeft" ? -16 : 16;
+                setPersonaSidebarWidth((width) =>
+                  Math.min(
+                    PERSONA_SIDEBAR_MAX_WIDTH,
+                    Math.max(PERSONA_SIDEBAR_MIN_WIDTH, width + delta)
+                  )
+                );
+              }}
+              data-testid="persona-sidebar-resizer"
+            />
 
             {/* Persona detail + journey blocks; run detail opens on the right */}
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

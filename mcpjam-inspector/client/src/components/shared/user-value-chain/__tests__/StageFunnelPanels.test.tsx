@@ -162,6 +162,14 @@ describe("SwarmRunStageFunnelPanels — the query answers", () => {
     ]);
   });
 
+  it("does not render a card for a run with no sessions", () => {
+    convex.useQuery.mockReturnValue({ ...SUMMARY, source: "swarm", total: 0 });
+    const { container } = render(
+      <SwarmRunStageFunnelPanels journeyRunIds={["run-empty"]} />,
+    );
+    expect(container.textContent).toBe("");
+  });
+
   it("renders nothing at all for an empty run list — not even its spacing", () => {
     // The caller passes a possibly-empty set and cannot easily guard on it (an
     // empty Set is truthy), so the spacing rides on this component rather than
