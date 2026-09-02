@@ -244,8 +244,18 @@ describe("EvaluateRunContent", () => {
     };
     renderContent();
 
+    // PASS_WORDS alone is too weak here: it does not contain "Failed" or
+    // "Inconclusive", so a regression that rendered either while the read was
+    // in flight would have passed this test. The claim is that NO verdict word
+    // appears at all, so assert the actual word.
+    expect(screen.getByTestId("run-verdict-word")).toHaveTextContent(
+      /^(Running|Pending|Queued|Cancelled|Did not start|No verdict)$/,
+    );
     expect(screen.getByTestId("run-verdict-word").textContent).not.toMatch(
       PASS_WORDS,
+    );
+    expect(screen.getByTestId("run-verdict-word").textContent).not.toMatch(
+      /\b(Failed|Inconclusive)\b/,
     );
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
   });
@@ -261,6 +271,9 @@ describe("EvaluateRunContent", () => {
 
     expect(screen.getByTestId("run-verdict-word").textContent).not.toMatch(
       PASS_WORDS,
+    );
+    expect(screen.getByTestId("run-verdict-word").textContent).not.toMatch(
+      /\b(Failed|Inconclusive)\b/,
     );
     expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
       "could not be read",

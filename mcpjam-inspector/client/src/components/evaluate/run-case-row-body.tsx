@@ -32,11 +32,12 @@ import { remedyForReason, type StageRemedy } from "./stage-remedy";
 function ToolList({
   label,
   names,
-  missing,
+  missing = [],
 }: {
   label: string;
   names: string[];
-  missing?: string | null;
+  /** Expected calls with no observed counterpart. ALL of them, not the first. */
+  missing?: readonly string[];
 }) {
   return (
     <div className="min-w-0">
@@ -47,20 +48,28 @@ function ToolList({
         {names.length === 0 ? (
           <li className="text-[12.5px] text-muted-foreground">none recorded</li>
         ) : (
-          names.map((name) => (
-            <li key={name} className="font-mono text-[12.5px] text-foreground">
+          names.map((name, index) => (
+            // Keyed by position, because a case may legitimately call the same
+            // tool twice and two list items cannot share a key.
+            <li
+              key={`${name}-${index}`}
+              className="font-mono text-[12.5px] text-foreground"
+            >
               {name}
             </li>
           ))
         )}
-        {missing ? (
-          <li className="font-mono text-[12.5px] text-destructive">
-            {missing}{" "}
+        {missing.map((name, index) => (
+          <li
+            key={`missing-${name}-${index}`}
+            className="font-mono text-[12.5px] text-destructive"
+          >
+            {name}{" "}
             {/* A real space, not just the margin: this text is read aloud and
                 copied, and "export_to_excalidrawnever called" is neither. */}
             <span className="font-sans text-[11.5px]">never called</span>
           </li>
-        ) : null}
+        ))}
       </ul>
     </div>
   );
@@ -107,7 +116,16 @@ function FailureGroup({
     (iteration?.actualToolCalls ?? []).map(
       (call: { toolName: string }) => call.toolName,
     );
-  const missing = expectedNames.find((name) => !observedNames.includes(name));
+  // Every expected call with no observed counterpart, matched by occurrence so
+  // a case expecting two writes and observing one reports the second missing.
+  const remaining = [...observedNames];
+  const missing: string[] = [];
+  for (const name of expectedNames) {
+    const at = remaining.indexOf(name);
+    if (at === -1) missing.push(name);
+    else remaining.splice(at, 1);
+  }
+  const missingSet = new Set(missing);
 
   // The contract's own sentence, or nothing. A reason it deliberately leaves
   // without a remedy gets no block here rather than a manufactured one.
@@ -132,8 +150,8 @@ function FailureGroup({
         <ToolList label="Expected" names={[...expectedNames]} />
         <ToolList
           label="Observed"
-          names={observedNames.filter((name) => name !== missing)}
-          missing={missing ?? null}
+          names={observedNames.filter((name) => !missingSet.has(name))}
+          missing={missing}
         />
       </div>
 

@@ -40,8 +40,20 @@ function row(overrides: Partial<EvaluateCaseRow> = {}): EvaluateCaseRow {
         connection: { kind: "passed", count: 10 },
         discovery: { kind: "passed", count: 10 },
         selection: { kind: "failed", count: 3 },
-        call: { kind: "partial", passed: 6, unreached: 4 },
-        response: { kind: "partial", passed: 6, unreached: 4 },
+        call: {
+          kind: "partial",
+          passed: 6,
+          notReached: 3,
+          notMeasured: 1,
+          notApplicable: 0,
+        },
+        response: {
+          kind: "partial",
+          passed: 6,
+          notReached: 4,
+          notMeasured: 0,
+          notApplicable: 0,
+        },
         userValue: { kind: "notMeasured", count: 10 },
       },
       withheld: 0,
@@ -188,9 +200,30 @@ describe("RunCaseRows", () => {
 
   it("splits a stage some iterations reached and others did not", () => {
     render(<RunCaseRows rows={[row()]} defaultOpenKey={null} />);
+    // The three non-passing shapes stay apart: a chain that arrived and
+    // decided nothing is a different fact from one that stopped earlier, and
+    // summing them into "never reached it" asserts the wrong one about three.
     expect(
-      screen.getByTitle("Tool call: passed in 6 of 10, 4 never reached it"),
+      screen.getByTitle(
+        "Tool call: passed in 6 of 10, 3 never reached it, 1 not measured",
+      ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByTitle("Response: passed in 6 of 10, 4 never reached it"),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the failing row when the nomination arrives after first render", async () => {
+    // The rows land only once the decision read resolves, so the FIRST render
+    // has no failing row to nominate. `useState` would keep that initial null
+    // forever and the failing case would render closed on every real run.
+    const { rerender } = render(
+      <RunCaseRows rows={[row()]} defaultOpenKey={null} />,
+    );
+    expect(screen.queryByTestId("run-case-row-body")).toBeNull();
+
+    rerender(<RunCaseRows rows={[row()]} defaultOpenKey="g1" />);
+    await screen.findByTestId("run-case-row-body");
   });
 
   it("says so plainly when a run has no cases", () => {

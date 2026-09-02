@@ -38,9 +38,15 @@ describe("the stage strip", () => {
     );
     if (!overall) throw new Error("fixture has no overall slice");
     for (const tally of overall.stages) {
+      // A contract-valid zero-measurement stage: the trials are accounted for
+      // as `notMeasured` rather than simply deleted from the tally, which is
+      // what the real "nothing was decided here" document looks like.
+      tally.notMeasured =
+        (tally.notMeasured ?? 0) + tally.measured + tally.notApplicable;
       tally.measured = 0;
       tally.passed = 0;
       tally.failed = 0;
+      tally.notApplicable = 0;
     }
 
     const result = view(document);
@@ -149,11 +155,19 @@ describe("the stage strip", () => {
   });
 
   it("says out loud when a judge fanout could still move the numbers", () => {
+    // BOTH directions. The golden fixture is already provisional, so asserting
+    // only the true case passes even if the field is never read.
     const provisional = structuredClone(GOLDEN_STAGE_ANALYTICS);
     provisional.materializationState = "provisional";
-    const result = view(provisional);
-    if (result.kind !== "ready") throw new Error("expected a ready strip");
-    expect(result.provisional).toBe(true);
+    const pending = view(provisional);
+    if (pending.kind !== "ready") throw new Error("expected a ready strip");
+    expect(pending.provisional).toBe(true);
+
+    const settled = structuredClone(GOLDEN_STAGE_ANALYTICS);
+    settled.materializationState = "final";
+    const done = view(settled);
+    if (done.kind !== "ready") throw new Error("expected a ready strip");
+    expect(done.provisional).toBe(false);
   });
 
   it("marks a stage with measured failures for attention", () => {

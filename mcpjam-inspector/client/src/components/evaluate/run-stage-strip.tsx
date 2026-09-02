@@ -88,7 +88,7 @@ export function RunStageStrip({
           </span>
         ) : null}
         {view.provisional ? (
-          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-600 dark:text-amber-500">
+          <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[10.5px] font-medium text-warning">
             provisional
           </span>
         ) : null}

@@ -26,7 +26,7 @@ const VERDICT_TONE_CLASS: Record<HeroVerdictTone, string> = {
   failed: "text-destructive",
   // Amber. An inconclusive run measured too little to decide, and red would
   // report a defect the run never observed.
-  caution: "text-amber-600 dark:text-amber-500",
+  caution: "text-warning",
   neutral: "text-muted-foreground",
 };
 
@@ -34,7 +34,9 @@ function formatCount(value: number | null): string {
   if (value === null) return "not recorded";
   if (value >= 1000) {
     const thousands = value / 1000;
-    return `${thousands >= 100 ? Math.round(thousands) : thousands.toFixed(1)}k`;
+    return `${
+      thousands >= 100 ? Math.round(thousands) : thousands.toFixed(1)
+    }k`;
   }
   return String(value);
 }

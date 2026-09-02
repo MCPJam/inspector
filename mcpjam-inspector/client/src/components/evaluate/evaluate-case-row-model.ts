@@ -81,7 +81,15 @@ export type StageCellState =
   | { kind: "failed"; count: number }
   | { kind: "passed"; count: number }
   /** Some iterations passed here and the rest never got this far. */
-  | { kind: "partial"; passed: number; unreached: number }
+  | {
+      kind: "partial";
+      passed: number;
+      /** Chains that stopped before this stage. */
+      notReached: number;
+      /** Chains that arrived and decided nothing. A different fact entirely. */
+      notMeasured: number;
+      notApplicable: number;
+    }
   | { kind: "notReached"; count: number }
   | { kind: "notMeasured"; count: number }
   | { kind: "notApplicable"; count: number }
@@ -155,13 +163,10 @@ export type BuildCaseRowsInput = {
 };
 
 function emptyBreaks(): Record<UserValueStage, number> {
-  return USER_VALUE_STAGES.reduce(
-    (acc, stage) => {
-      acc[stage] = 0;
-      return acc;
-    },
-    {} as Record<UserValueStage, number>,
-  );
+  return USER_VALUE_STAGES.reduce((acc, stage) => {
+    acc[stage] = 0;
+    return acc;
+  }, {} as Record<UserValueStage, number>);
 }
 
 function outcomeOf(iteration: EvalIteration): CaseRowIterationCell["outcome"] {
@@ -276,10 +281,16 @@ function summarizeStage(
   if (tally.passed === 0) {
     return { kind: "notMeasured", count: states.length };
   }
+  // The three non-passing shapes are kept apart rather than summed into one
+  // "never reached it": a chain that arrived and decided nothing is a
+  // different fact from one that stopped before this stage, and a stage the
+  // case never asserted is a third.
   return {
     kind: "partial",
     passed: tally.passed,
-    unreached: states.length - tally.passed,
+    notReached: tally.notReached,
+    notMeasured: tally.notMeasured,
+    notApplicable: tally.notApplicable,
   };
 }
 
@@ -309,13 +320,10 @@ export function buildEvaluateCaseRows(
     // Per stage, the states every loaded chain reported there. Aggregated from
     // the rows themselves rather than inferred from the break counts, so a
     // stage nobody reached cannot come out looking like one that passed.
-    const observed = USER_VALUE_STAGES.reduce(
-      (acc, stage) => {
-        acc[stage] = [];
-        return acc;
-      },
-      {} as Record<UserValueStage, StageState[]>,
-    );
+    const observed = USER_VALUE_STAGES.reduce((acc, stage) => {
+      acc[stage] = [];
+      return acc;
+    }, {} as Record<UserValueStage, StageState[]>);
 
     for (const iteration of group.iterations) {
       const chain = chainFor(
@@ -327,7 +335,7 @@ export function buildEvaluateCaseRows(
       if (chain && chain.status !== "verified") withheld += 1;
       const stage =
         chain && chain.status === "verified"
-          ? (chain.firstFailedStage ?? null)
+          ? chain.firstFailedStage ?? null
           : null;
       if (stage) breaksByStage[stage] += 1;
       if (chain && chain.status === "verified") {
@@ -342,13 +350,10 @@ export function buildEvaluateCaseRows(
       });
     }
 
-    const stageStates = USER_VALUE_STAGES.reduce(
-      (acc, stage) => {
-        acc[stage] = summarizeStage(observed[stage], breaksByStage[stage]);
-        return acc;
-      },
-      {} as Record<UserValueStage, StageCellState>,
-    );
+    const stageStates = USER_VALUE_STAGES.reduce((acc, stage) => {
+      acc[stage] = summarizeStage(observed[stage], breaksByStage[stage]);
+      return acc;
+    }, {} as Record<UserValueStage, StageCellState>);
 
     // Which iteration opens: the first failing one whose chain explains it,
     // then the first failing one at all, then the first iteration.
@@ -367,7 +372,13 @@ export function buildEvaluateCaseRows(
     let verdict: CaseRowVerdict = { kind: "notLoaded" };
     if (input.decisionStatus === "ready") {
       if (!verdictIndex) {
-        verdict = { kind: "legacyRun" };
+        // A LEGACY run counts trials and has no case rows by design. A run
+        // whose source is `none` established no verdict at all, which is a
+        // different sentence, so it is not filed under the legacy one.
+        verdict =
+          input.summary?.verdictSource === "legacy"
+            ? { kind: "legacyRun" }
+            : { kind: "notLoaded" };
       } else {
         const variants: CaseVariantVerdict[] = [];
         let anyCandidate = false;
@@ -390,12 +401,12 @@ export function buildEvaluateCaseRows(
         verdict = anyCandidate
           ? { kind: "matched", variants }
           : group.iterations.some(
-                (iteration) =>
-                  (iteration.testCaseSnapshot?.caseKey ??
-                    iteration.testCaseId) !== undefined,
-              )
-            ? { kind: "noMatch" }
-            : { kind: "identityNotEncodable" };
+              (iteration) =>
+                (iteration.testCaseSnapshot?.caseKey ??
+                  iteration.testCaseId) !== undefined,
+            )
+          ? { kind: "noMatch" }
+          : { kind: "identityNotEncodable" };
       }
     }
 
@@ -471,9 +482,7 @@ export function buildEvaluateCaseRows(
       },
       p50Ms: group.p50Ms,
       opensIterationId: opensId,
-      diagnostic: opensId
-        ? (diagnosticsByIteration.get(opensId) ?? null)
-        : null,
+      diagnostic: opensId ? diagnosticsByIteration.get(opensId) ?? null : null,
       // Largest group first: the shape that broke most iterations is the one
       // worth reading first.
       failureGroups: [...groupsByKey.values()].sort(

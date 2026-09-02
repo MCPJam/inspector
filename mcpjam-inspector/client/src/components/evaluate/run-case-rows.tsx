@@ -12,7 +12,7 @@
  * "2 of 3 iterations passed" is a population and "this case passed" is a
  * decision against a threshold nobody here has seen.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +33,7 @@ import type { RunChangePill } from "./evaluate-run-diff-model";
 const PILL_CLASS: Record<RunChangePill["kind"], string> = {
   regressed: "bg-destructive/15 text-destructive",
   fixed: "bg-success/15 text-success",
-  stillFailing: "bg-amber-500/15 text-amber-600 dark:text-amber-500",
+  stillFailing: "bg-warning/15 text-warning",
   unchanged: "bg-muted text-muted-foreground",
   added: "bg-muted text-muted-foreground",
   reconfigured: "bg-muted text-muted-foreground",
@@ -62,7 +62,7 @@ function ChangePill({ pill }: { pill: RunChangePill }) {
 const MARK_CLASS: Record<"passed" | "failed" | "inconclusive", string> = {
   passed: "bg-success/15 text-success",
   failed: "bg-destructive text-destructive-foreground",
-  inconclusive: "bg-amber-500/15 text-amber-600 dark:text-amber-500",
+  inconclusive: "bg-warning/15 text-warning",
 };
 
 const MARK_GLYPH: Record<"passed" | "failed" | "inconclusive", string> = {
@@ -171,13 +171,22 @@ function StageCell({
   }
 
   if (state.kind === "partial") {
-    // Split, not rounded. Some iterations passed here and the rest never
-    // arrived; either solid colour would be false about most of them.
-    const total = state.passed + state.unreached;
+    // Split, not rounded. Some iterations passed here and the rest did not
+    // arrive, were not decided, or did not apply — three different facts, so
+    // the title names whichever actually occurred instead of one lumped count.
+    const total =
+      state.passed + state.notReached + state.notMeasured + state.notApplicable;
+    const rest = [
+      state.notReached > 0 ? `${state.notReached} never reached it` : null,
+      state.notMeasured > 0 ? `${state.notMeasured} not measured` : null,
+      state.notApplicable > 0 ? `${state.notApplicable} not applicable` : null,
+    ].filter((part): part is string => part !== null);
     return (
       <span
         className="inline-flex h-2 w-3.5 overflow-hidden rounded-[2px]"
-        title={`${label}: passed in ${state.passed} of ${total}, ${state.unreached} never reached it`}
+        title={`${label}: passed in ${state.passed} of ${total}, ${rest.join(
+          ", ",
+        )}`}
       >
         <span
           className="h-full bg-success/70"
@@ -204,8 +213,8 @@ function StageCell({
         state.kind === "notLoaded"
           ? "chain not loaded"
           : state.kind === "notApplicable"
-            ? "does not apply to this case"
-            : "not measured"
+          ? "does not apply to this case"
+          : "not measured"
       }`}
     />
   );
@@ -283,6 +292,17 @@ export function RunCaseRows({
   renderBody?: (row: EvaluateCaseRow) => React.ReactNode;
 }) {
   const [openKey, setOpenKey] = useState<string | null>(defaultOpenKey);
+  // The rows arrive after the decision read resolves, so the FIRST render has
+  // no failing row to nominate and `useState` would keep that initial null
+  // forever — the failing case would render closed on every real run. Adopt a
+  // later nomination once, and never again, so a reader who closes the row
+  // does not have it reopened under them.
+  const adoptedDefault = useRef(defaultOpenKey);
+  useEffect(() => {
+    if (adoptedDefault.current === defaultOpenKey) return;
+    adoptedDefault.current = defaultOpenKey;
+    setOpenKey(defaultOpenKey);
+  }, [defaultOpenKey]);
 
   if (rows.length === 0) {
     return (

@@ -138,12 +138,27 @@ function client(): PlatformApiClient {
   });
 }
 
-function isRouteUnavailable(status: number, code: string): boolean {
+/**
+ * A deployment that never shipped this route, versus a run that is not there.
+ *
+ * `codeSource` is the discriminator, for the reason the stage-analytics reader
+ * documents at length: a route that ran and found nothing answers an enveloped
+ * `NOT_FOUND`, while a router that never had the path answers a BARE 404 with
+ * no envelope, and `STATUS_FALLBACK_CODES` maps both onto the same `code`. On
+ * `code` alone an undeployed route reads as "no comparison for this run",
+ * which is the wrong sentence to put in front of someone during a dark ship.
+ */
+function isRouteUnavailable(
+  status: number,
+  code: string,
+  codeSource?: "envelope" | "status",
+): boolean {
   return (
     code === "FEATURE_NOT_SUPPORTED" ||
     code === "NOT_IMPLEMENTED" ||
     status === 501 ||
-    status === 405
+    status === 405 ||
+    (status === 404 && codeSource === "status")
   );
 }
 
@@ -181,7 +196,13 @@ export async function fetchEvalRunCompare(
           { status: error.status, cause: error },
         );
       }
-      if (isRouteUnavailable(error.status, error.code)) {
+      if (
+        isRouteUnavailable(
+          error.status,
+          error.code,
+          (error as { codeSource?: "envelope" | "status" }).codeSource,
+        )
+      ) {
         throw new EvalRunCompareError(
           "routeUnavailable",
           "This deployment does not serve run comparisons.",

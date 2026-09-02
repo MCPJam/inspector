@@ -37,7 +37,7 @@ function chainRows(
         stage,
         state: states[stage] ?? "passed",
         ...(reasons[stage] ? { reason: reasons[stage] } : {}),
-      }) as StageResultRow,
+      } as StageResultRow),
   );
 }
 
@@ -277,6 +277,48 @@ describe("the one sentence", () => {
       expected: ["export_to_excalidraw"],
       observed: ["create_view"],
     });
+  });
+
+  it("does not say the CASE broke when only a trial did", () => {
+    // Under policy v2 a case can pass with a failing trial inside it — its
+    // threshold decides, not the trial. A diagnostic is one trial, so
+    // case-level wording there claims a verdict the diagnostic cannot support.
+    const view = buildRunVerdictHero(
+      input({
+        decision: {
+          status: "ready",
+          summary: summary({
+            verdictSource: "policyV2",
+            counts: {
+              measurementUnit: "caseVariant",
+              total: 3,
+              passed: 2,
+              failed: 1,
+              inconclusive: 0,
+            },
+          }),
+          diagnostics: [diagnostic()],
+        },
+      }),
+    );
+    expect(view.sentence.text).toBe(
+      "One iteration of Draw and share a diagram broke at Selection: an expected tool call was never made.",
+    );
+  });
+
+  it("keeps case wording on a run whose unit IS the trial", () => {
+    // A legacy run counts trials, so "the case broke" and "a trial broke" are
+    // the same claim and the shorter sentence is the honest one.
+    const view = buildRunVerdictHero(
+      input({
+        decision: {
+          status: "ready",
+          summary: summary(),
+          diagnostics: [diagnostic()],
+        },
+      }),
+    );
+    expect(view.sentence.text).toMatch(/^Draw and share a diagram broke at/);
   });
 
   it("never says root cause", () => {

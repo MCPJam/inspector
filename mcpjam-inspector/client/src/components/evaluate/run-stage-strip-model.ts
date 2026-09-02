@@ -181,7 +181,16 @@ export function buildStageStrip(input: BuildStageStripInput): StageStripView {
       label,
       measured: `${pass.numerator} of ${pass.denominator} measured`,
       notReached: unreached > 0 ? `${unreached} not reached` : null,
-      tone: failed > 0 ? "attention" : "measured",
+      // Green means every trial that ARRIVED here was decided and passed.
+      // A stage that reached trials it could not decide is not a healthy
+      // stage, and reading only `failed` painted "1 of 1 measured" green while
+      // a second chain sat undecided beside it.
+      tone:
+        failed > 0
+          ? "attention"
+          : tally.notMeasured > 0 || unreached > 0
+          ? "unmeasured"
+          : "measured",
     };
   });
 

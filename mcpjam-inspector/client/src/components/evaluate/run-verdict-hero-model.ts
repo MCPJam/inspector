@@ -224,6 +224,19 @@ export function selectHeroFocus(
 
 const UNTITLED_CASE = "An untitled case";
 
+/**
+ * Whether a diagnostic may be described as the CASE breaking.
+ *
+ * A diagnostic is one non-passing TRIAL, and under policy v2 a case can pass
+ * with a failing trial inside it — its threshold decides, not the trial. So
+ * case-level wording is only honest where the run counts trials as its unit,
+ * which is exactly the legacy source. Everywhere else the sentence names the
+ * iteration, and the case row below carries the case's own verdict.
+ */
+function mayUseCaseWording(input: RunVerdictHeroInput): boolean {
+  return input.decision.summary?.counts?.measurementUnit !== "caseVariant";
+}
+
 function sentenceFor(
   input: RunVerdictHeroInput,
   verdict: HeroVerdict,
@@ -262,10 +275,16 @@ function sentenceFor(
   const expected = [...(focus.diagnostic.expected?.toolNames ?? [])];
   const observed = [...(focus.diagnostic.observed?.toolNames ?? [])];
 
+  // "Draw a diagram broke" versus "one iteration of Draw a diagram broke" —
+  // the second is what a diagnostic actually establishes on a v2 run.
+  const subject = mayUseCaseWording(input)
+    ? title
+    : `One iteration of ${title}`;
+
   if (focus.stage && focus.reason) {
     return {
       kind: "brokeAt",
-      text: `${title} broke at ${USER_VALUE_STAGE_LABELS[focus.stage]}: ${
+      text: `${subject} broke at ${USER_VALUE_STAGE_LABELS[focus.stage]}: ${
         STAGE_REASON_LABELS[focus.reason]
       }.`,
       expected,
@@ -275,7 +294,7 @@ function sentenceFor(
   if (focus.stage) {
     return {
       kind: "brokeAt",
-      text: `${title} broke at ${USER_VALUE_STAGE_LABELS[focus.stage]}.`,
+      text: `${subject} broke at ${USER_VALUE_STAGE_LABELS[focus.stage]}.`,
       expected,
       observed,
     };
@@ -285,14 +304,16 @@ function sentenceFor(
     // WITHOUT a location. This is the setup-abort shape.
     return {
       kind: "brokeAt",
-      text: `${title} did not complete: ${STAGE_REASON_LABELS[focus.reason]}.`,
+      text: `${subject} did not complete: ${
+        STAGE_REASON_LABELS[focus.reason]
+      }.`,
       expected,
       observed,
     };
   }
   return {
     kind: "chainWithheld",
-    text: `${title} did not pass, and its stage chain is not available, so where it broke is not established.`,
+    text: `${subject} did not pass, and its stage chain is not available, so where it broke is not established.`,
   };
 }
 
