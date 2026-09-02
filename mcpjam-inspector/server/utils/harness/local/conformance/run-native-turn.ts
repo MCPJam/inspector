@@ -93,14 +93,38 @@ const freePort = () =>
       s.close(() => resolve(p));
     });
   });
-const alive = (pid: number) => {
+/**
+ * Is this pid a process that is still RUNNING?
+ *
+ * Not `kill(pid, 0)`, which answers "the kernel still has a table entry" — and
+ * a zombie has one. A zombie has no address space and executes nothing; it is
+ * a terminated process whose exit status nobody has collected. On a runner
+ * whose PID 1 is not a real init — which is where this suite runs — a process
+ * the supervisor correctly terminated stays visible to `kill(pid, 0)`
+ * indefinitely, so a naive check reports a failure at exactly the job that
+ * just succeeded.
+ *
+ * Deliberately NOT `probeProcess` from the code under test: this suite exists
+ * to check that code, so it reads the state itself. `ps -o stat=` reports `Z`
+ * for a zombie on both macOS and Linux; an empty answer means the pid is gone
+ * outright.
+ */
+async function running(pid: number): Promise<boolean> {
+  let state: string;
   try {
-    process.kill(pid, 0);
-    return true;
+    state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
   } catch {
-    return false;
+    return false; // `ps` exits non-zero for a pid that does not exist.
   }
-};
+  if (state.length === 0) return false;
+  return !state.startsWith("Z");
+}
+
+/** Which of these pids are still running — zombies do not count. */
+async function stillRunning(pids: readonly number[]): Promise<number[]> {
+  const states = await Promise.all(pids.map(running));
+  return pids.filter((_, i) => states[i]);
+}
 async function descendants(pid: number): Promise<number[]> {
   const out: number[] = [];
   const walk = async (p: number) => {
@@ -211,7 +235,7 @@ async function main() {
     lifecycleConformanceVersion: CONFORMANCE_VERSION,
     bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}`,
   } as typeof base;
-  const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: "darwin" });
+  const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM });
   if (!rt.ok) throw new Error(`${rt.status}: ${rt.message}`);
   const machineId = await getLocalMachineId();
   const target = {
@@ -281,6 +305,54 @@ async function main() {
   });
 
   mark("create_session_start");
+
+  if (MODE === "no-launcher") {
+    // The negative that makes the loopback guarantee enforceable rather than
+    // aspirational. This pack's `launcherRelativePath` points at the adapter's
+    // bridge directly, so nothing constrains the listener — and the exposure
+    // probe has to REFUSE the session.
+    //
+    // Refusal is the PASS here. A session that starts is the failure, and the
+    // dangerous one: it would mean the guarantee rests on our having shipped a
+    // launcher that usually works rather than on a check that fails when it
+    // does not. A different error is also a failure, because then the run has
+    // not exercised the probe at all.
+    let refusal: unknown;
+    try {
+      await agent.createSession({ sessionId });
+    } catch (error) {
+      refusal = error;
+    }
+    // Nothing should be running — the probe refuses before the provider hands
+    // the session back — but a stranded bridge would make the workflow's
+    // "no supervised process survived" step fail for the wrong reason.
+    await supervisor.stopSession(sessionId);
+    mock.child.kill("SIGTERM");
+    gw.child.kill("SIGTERM");
+    await revokeLocalHarnessGrants();
+
+    if (refusal === undefined) {
+      console.error(
+        "[conformance] FAILED: a pack with no loopback launcher started a " +
+          "session; the exposure probe did not refuse it",
+      );
+      process.exit(1);
+    }
+    const message = refusal instanceof Error ? refusal.message : String(refusal);
+    if (!/non-loopback address/.test(message)) {
+      console.error(
+        `[conformance] FAILED: refused, but not by the exposure probe: ${message}`,
+      );
+      process.exit(1);
+    }
+    console.log(`[conformance] refused as required: ${message}`);
+    console.log(
+      "\n=====REPORT=====\n" +
+        JSON.stringify({ mode: MODE, marks, refusedBy: "exposure-probe" }, null, 2),
+    );
+    return;
+  }
+
   const sessionRef = { s: await agent.createSession({ sessionId }) };
   mark("session_ready");
   console.log(`[conformance] sessionWorkDir=${sessionRef.s.sessionWorkDir ?? "(n/a)"} bridgePid=${bridgePid}`);
@@ -293,14 +365,17 @@ async function main() {
   console.log(`[conformance] tree: bridge ${bridgePid} -> ${JSON.stringify(kids)}`);
   for (const pid of [bridgePid, ...kids]) console.log(`  ${pid}: ${(await psLine(pid)).slice(0, 160)}`);
   const envDump = (await Promise.all([bridgePid, ...kids].map((p) => psLine(p, true)))).join("\n");
-  note(`upstream key in any child env: ${envDump.includes(UPSTREAM_KEY_CANARY) ? "LEAKED" : "absent (good)"}`);
+  const upstreamKeyInEnv = envDump.includes(UPSTREAM_KEY_CANARY);
+  note(`upstream key in any child env: ${upstreamKeyInEnv ? "LEAKED" : "absent (good)"}`);
   note(`session capability in child env: ${envDump.includes(CAPABILITY) ? "present (env delivery fallback, as designed)" : "absent"}`);
-  note(`bridge listeners: ${JSON.stringify(await listeners(bridgePid))}`);
+  const bridgeListeners = await listeners(bridgePid);
+  note(`bridge listeners: ${JSON.stringify(bridgeListeners)}`);
   const homeLeak = envDump.match(/HOME=([^\s]+)/g)?.slice(0, 2);
   note(`child HOME values: ${JSON.stringify(homeLeak)}`);
   const stateFiles = await execFileP("find", [sessionStateDir, "-type", "f"]).then((r) => r.stdout.split("\n").filter(Boolean));
   const stateBlob = (await Promise.all(stateFiles.map((f) => readFile(f, "utf8").catch(() => "")))).join("\n");
-  note(`upstream key in session state files: ${stateBlob.includes(UPSTREAM_KEY_CANARY) ? "LEAKED" : "absent (good)"}; capability persisted in state: ${stateBlob.includes(CAPABILITY) ? "yes" : "no"} (${stateFiles.length} files)`);
+  const upstreamKeyInState = stateBlob.includes(UPSTREAM_KEY_CANARY);
+  note(`upstream key in session state files: ${upstreamKeyInState ? "LEAKED" : "absent (good)"}; capability persisted in state: ${stateBlob.includes(CAPABILITY) ? "yes" : "no"} (${stateFiles.length} files)`);
 
   const turn2 = await runTurn("turn2-bash-approval", agent, sessionRef, "BASH pwd");
   mark("turn2_done");
@@ -308,7 +383,7 @@ async function main() {
   const tDetach = performance.now();
   const resumeState = await sessionRef.s.detach();
   marks.detach_ms = Math.round(performance.now() - tDetach);
-  note(`after detach: bridge alive=${alive(bridgePid)} descendants=${JSON.stringify(await descendants(bridgePid))}`);
+  note(`after detach: bridge running=${await running(bridgePid)} descendants=${JSON.stringify(await descendants(bridgePid))}`);
   const tResume = performance.now();
   const s2 = await agent.createSession({ sessionId, resumeFrom: resumeState });
   marks.resume_session_ms = Math.round(performance.now() - tResume);
@@ -320,20 +395,38 @@ async function main() {
 
   const treeBefore = [bridgePid, ...(await descendants(bridgePid))];
   const groupPs = async (pgid: number) => execFileP("ps", ["-o", "pid=,pgid=,stat=,command=", "-ax"]).then((r) => r.stdout.split("\n").filter((l) => l.split(/\s+/).filter(Boolean)[1] === String(pgid)).map((l) => l.trim().slice(0, 100)), () => []);
-  note(`pre-stop: root probe=${JSON.stringify(await probeProcess(bridgePid, "darwin"))} group=${await probeProcessGroup(bridgePid, "darwin")} members=${JSON.stringify(await groupPs(bridgePid))}`);
+  note(`pre-stop: root probe=${JSON.stringify(await probeProcess(bridgePid))} group=${await probeProcessGroup(bridgePid)} members=${JSON.stringify(await groupPs(bridgePid))}`);
   const tStop = performance.now();
   let stopError: string | undefined;
   try { await ref2.s.stop(); } catch (e: any) { stopError = String(e?.message ?? e); }
   marks.stop_ms = Math.round(performance.now() - tStop);
-  note(`stop() ${stopError ? "THREW: " + stopError : "resolved"}; root alive=${alive(bridgePid)} group=${await probeProcessGroup(bridgePid, "darwin")} members=${JSON.stringify(await groupPs(bridgePid))}`);
+  note(`stop() ${stopError ? "THREW: " + stopError : "resolved"}; root running=${await running(bridgePid)} group=${await probeProcessGroup(bridgePid)} members=${JSON.stringify(await groupPs(bridgePid))}`);
   await new Promise((r) => setTimeout(r, 300));
   note(`second supervisor.stopSession: ${JSON.stringify(await supervisor.stopSession(sessionId))}`);
-  note(`after stop: surviving pids=${JSON.stringify(treeBefore.filter(alive))} (expect [])`);
-  note(`registry records after stop: ${(await listProcessRecords()).length}`);
+  const survivors = await stillRunning(treeBefore);
+  note(`after stop: surviving pids=${JSON.stringify(survivors)} (expect [])`);
+  const recordsAfterStop = (await listProcessRecords()).length;
+  note(`registry records after stop: ${recordsAfterStop}`);
 
   const after = (await readdir(WORKSPACE)).filter((e) => !before.has(e));
   note(`new entries in workspace after session: ${JSON.stringify(after)}`);
   note(`.harness-bootstrap in workspace: ${(await stat(join(WORKSPACE, ".harness-bootstrap")).then(() => "PRESENT (bad)", () => "absent (good)"))}`);
+
+  // The findings above are a log; these are the run's verdict. A conformance
+  // scenario that observes a leaked key and exits 0 is worse than no scenario,
+  // because a green job is then evidence of nothing. Everything asserted here
+  // is a claim `docs/local-harness.md` makes to a user deciding whether to
+  // click Allow.
+  const failures: string[] = [];
+  if (upstreamKeyInEnv) failures.push("the upstream model key reached a child process's environment");
+  if (upstreamKeyInState) failures.push("the upstream model key was written to session state on disk");
+  const offLoopback = bridgeListeners.filter((l) => !/^(127\.|\[?::1\]?:)/.test(l));
+  if (offLoopback.length > 0) failures.push(`the bridge listened off loopback: ${JSON.stringify(offLoopback)}`);
+  if (bridgeListeners.length === 0) failures.push("no bridge listener was observed, so the loopback check proved nothing");
+  if (survivors.length > 0) failures.push(`stop() left ${survivors.length} process(es) running: ${survivors}`);
+  if (recordsAfterStop !== 0) failures.push(`${recordsAfterStop} process registry record(s) survived stop()`);
+  if (after.length > 0) failures.push(`the session left ${after.length} new entr(ies) in the workspace: ${JSON.stringify(after)}`);
+  if (Number(m?.[1] ?? 0) < 3) failures.push(`the model saw ${m?.[1] ?? "?"} user turns after resume, expected >= 3`);
 
   gw.child.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 200));
@@ -341,6 +434,9 @@ async function main() {
   await revokeLocalHarnessGrants();
   const report = { mode: MODE, marks, turn1, turn2, turn3, findings, gateway: gw.stderr.slice(-8), mock: mock.stderr.slice(-12) };
   console.log("\n=====REPORT=====\n" + JSON.stringify(report, null, 2));
+  if (failures.length > 0) {
+    throw new Error(`conformance assertions failed:\n  - ${failures.join("\n  - ")}`);
+  }
 }
 
 main().catch(async (e) => {

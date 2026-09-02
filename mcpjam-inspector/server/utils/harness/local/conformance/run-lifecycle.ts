@@ -42,7 +42,43 @@ const CAPABILITY = `cap_${randomBytes(24).toString("base64url")}`;
 const POP_SECRET = randomBytes(32).toString("hex");
 const ORPHAN_FILE = join(ROOT, "orphan.json");
 const log = (...a: unknown[]) => console.log("[lifecycle]", ...a);
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Fail the RUN, not just the log: CI reads the exit code. */
+function assert(condition: boolean, message: string): void {
+  if (!condition) throw new Error(message);
+}
+/**
+ * Is this pid a process that is still RUNNING?
+ *
+ * Not `kill(pid, 0)`, which answers "the kernel still has a table entry" — and
+ * a zombie has one. A zombie has no address space and executes nothing; it is
+ * a terminated process whose exit status nobody has collected. On a runner
+ * whose PID 1 is not a real init — which is where this suite runs — an orphan
+ * that WAS correctly terminated stays visible to `kill(pid, 0)` indefinitely,
+ * so a naive check reports the supervisor failed at exactly the job it just
+ * did.
+ *
+ * Deliberately NOT `probeProcess` from the code under test: this suite exists
+ * to check that code, so it reads the state itself. `ps -o stat=` reports `Z`
+ * for a zombie on both macOS and Linux; an empty answer means the pid is gone
+ * outright.
+ */
+async function running(pid: number): Promise<boolean> {
+  let state: string;
+  try {
+    state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
+  } catch {
+    return false; // `ps` exits non-zero for a pid that does not exist.
+  }
+  if (state.length === 0) return false;
+  return !state.startsWith("Z");
+}
+
+/** Which of these pids are still running — zombies do not count. */
+async function stillRunning(pids: readonly number[]): Promise<number[]> {
+  const states = await Promise.all(pids.map(running));
+  return pids.filter((_, i) => states[i]);
+}
+
 async function descendants(pid: number): Promise<number[]> {
   const out: number[] = [];
   const walk = async (p: number) => {
@@ -74,7 +110,7 @@ async function setup() {
   const bridgeBytes = await readFile(join(BUNDLE, "bridge.mjs"));
   const base = LOCAL_HARNESS_MANIFEST["claude-code"];
   const manifest = { ...base, runtime: { ...(base.runtime as any), bundleDigest: { [PLATFORM]: digest }, launcherRelativePath: "launcher.mjs" }, lifecycleConformanceVersion: CONFORMANCE_VERSION, bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}` } as typeof base;
-  const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: "darwin" }); if (!rt.ok) throw new Error(rt.message);
+  const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM }); if (!rt.ok) throw new Error(rt.message);
   const machineId = await getLocalMachineId();
   const target = { kind: "local-native" as const, machineId, workspaceGrantId: ws.grant.workspaceGrantId, harnessId: "claude-code" as const, runtimeId: rt.runtime.runtimeId, permissionProfile: "workspace-edits" as const, policyVersion: LOCAL_HARNESS_POLICY_VERSION };
   const grant = await grantLocalHarnessConsent({ userId: "conformance-user", machineId, projectId: "conformance-project", workspaceGrantId: target.workspaceGrantId, harnessId: "claude-code", targetKind: "local-native", runtimeId: target.runtimeId, permissionProfile: target.permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION });
@@ -110,14 +146,18 @@ async function main() {
   if (MODE === "orphan-b") {
     const supervisor = new LocalHarnessSupervisor();
     const orphan = JSON.parse(await readFile(ORPHAN_FILE, "utf8"));
-    log("orphan record from previous run:", orphan, "alive now:", orphan.pids.filter(alive));
+      log("orphan record from previous run:", orphan, "running now:", await stillRunning(orphan.pids));
     const t = performance.now();
     const result = await supervisor.reclaimOrphans();
     log(`reclaimOrphans in ${Math.round(performance.now() - t)}ms:`, JSON.stringify(result));
-    await new Promise((r) => setTimeout(r, 500));
-    log("orphan pids alive after reclaim:", orphan.pids.filter(alive), "(expect [])");
-    log("registry records now:", (await listProcessRecords()).length);
+      await new Promise((r) => setTimeout(r, 500));
+    const stranded = await stillRunning(orphan.pids);
+    log("orphan pids still running after reclaim:", stranded, "(expect [])");
+    const records = (await listProcessRecords()).length;
+    log("registry records now:", records);
     for (const pid of orphan.helperPids ?? []) { try { process.kill(pid, "SIGTERM"); } catch {} }
+    assert(stranded.length === 0, `the janitor left ${stranded.length} process(es) running: ${stranded}`);
+    assert(records === 0, `the janitor left ${records} registry record(s) behind`);
     return;
   }
   const ctx = await setup();
@@ -153,9 +193,17 @@ async function main() {
   await ctx.session.destroy();
   log(`destroy took ${Math.round(performance.now() - tDestroy)}ms (turn started ${Math.round(tDestroy - tStart)}ms ago)`);
   await new Promise((r) => setTimeout(r, 400));
-  log("surviving pids:", [bridgePid, ...kids].filter(alive), "(expect [])");
-  log("state dir exists after destroy:", await stat(ctx.sessionStateDir).then(() => true, () => false), "(expect false)");
-  log("registry records:", (await listProcessRecords()).length, "(expect 0)");
+  const survivors = await stillRunning([bridgePid, ...kids]);
+  log("surviving pids:", survivors, "(expect [])");
+  const stateDirExists = await stat(ctx.sessionStateDir).then(() => true, () => false);
+  log("state dir exists after destroy:", stateDirExists, "(expect false)");
+  const recordsLeft = (await listProcessRecords()).length;
+  log("registry records:", recordsLeft, "(expect 0)");
   ctx.gw.child.kill("SIGTERM"); ctx.mock.child.kill("SIGTERM");
+  // Asserted, not merely printed: a scenario that reports a survivor and exits
+  // 0 turns this whole suite into a log the CI job never reads.
+  assert(survivors.length === 0, `abort left ${survivors.length} process(es) running: ${survivors}`);
+  assert(!stateDirExists, "abort left the session state directory behind");
+  assert(recordsLeft === 0, `abort left ${recordsLeft} registry record(s) behind`);
 }
 main().catch((e) => { console.error("[lifecycle] FAILED", e?.stack ?? e); process.exit(1); });
