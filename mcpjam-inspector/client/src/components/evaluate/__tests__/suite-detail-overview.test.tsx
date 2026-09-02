@@ -150,10 +150,15 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByLabelText("Filter by verdict")).toBeTruthy();
     expect(screen.getByLabelText("Filter by client")).toBeTruthy();
     expect(screen.getByLabelText("Filter by model")).toBeTruthy();
-    expect(screen.getByTestId("suite-detail-run-aggregates")).toHaveTextContent(
-      "runs",
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "1 failing",
     );
-    expect(screen.getByText("card declined")).toBeTruthy();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "0/1 passed",
+    );
+    expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
+    expect(screen.queryByText("card declined")).toBeNull();
+    expect(screen.queryByText("Top failure signature")).toBeNull();
     expect(screen.getByText("GitHub #4188")).toBeTruthy();
     expect(screen.getByText("Hold")).toBeTruthy();
 

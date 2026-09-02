@@ -422,6 +422,7 @@ export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";
 // ── the run verdict policy (v2) ──────────────────────────────────────────────
 export type {
   EvalCaseVerdictAggregation,
+  EvalExecutionVariant,
   EvalRateMeasurement,
   EvalRateMeasurementState,
   EvalRunVerdict,
@@ -437,6 +438,7 @@ export type {
   ResolvedEvalValidityPolicy,
 } from "./verdict-policy.js";
 export {
+  EVAL_CASE_AGGREGATION_KEY_SEPARATOR,
   EVAL_RATE_MEASUREMENT_STATES,
   EVAL_RUN_VERDICTS,
   EVAL_TASK_DECISION_REASONS,
@@ -445,8 +447,10 @@ export {
   EVAL_VERDICT_DECISION_REASONS,
   EVAL_VERDICT_POLICY_SCHEMA_ID,
   EVAL_VERDICT_POLICY_VERSION,
+  evalCaseAggregationKey,
   evalCaseVerdictAggregationSchema,
   evalCaseVerdictAggregationStructuralSchema,
+  evalExecutionVariantSchema,
   evalFractionSchema,
   evalRateMeasurementSchema,
   evalRateMeasurementStateSchema,
