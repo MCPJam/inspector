@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Info, Loader2 } from "lucide-react";
+import { AlertTriangle, Info, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   swarmAttemptChatSessionId,
@@ -572,6 +572,21 @@ export function SwarmLiveStreamPane({
         />
       </div>
 
+      {/* A timeline the viewer SYNTHESIZED from `estimatedDurationMs`, shown
+          without a word, is BB-153 over again — so say so next to it. The
+          no-trace branch below cannot carry this: the transcript loading fine
+          while its span blobs fail is exactly the case, and it renders the
+          viewer. */}
+      {displayTrace && persisted.spanError ? (
+        <div
+          className="flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400"
+          data-testid="swarm-live-pane-span-error"
+        >
+          <AlertTriangle className="size-3 shrink-0" aria-hidden />
+          {persisted.spanError} — durations below are estimated.
+        </div>
+      ) : null}
+
       {/* TraceViewer (fillContent) must be a flex child; otherwise nested
           flex-1 / min-h-0 inside TraceTimeline collapse and paint empty. */}
       <div
@@ -601,8 +616,8 @@ export function SwarmLiveStreamPane({
                   ? "Stream will appear as the agent runs…"
                   : "Loading transcript…"}
               </span>
-            ) : persisted.error ? (
-              persisted.error
+            ) : (persisted.error ?? persisted.spanError) ? (
+              (persisted.error ?? persisted.spanError)
             ) : !convexSession ? (
               "No session transcript for this attempt."
             ) : (

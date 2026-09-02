@@ -37,10 +37,22 @@ function extractMessages(data: unknown): unknown[] | null {
  * TraceEnvelope so Trace / Chat / Raw work after SSE has ended.
  * Mirrors blob + turn-trace hydration in {@link ShareUsageThreadDetail}.
  */
+/** Shared by the "expected some, got none" and the thrown-hydration paths. */
+const SPAN_LOAD_FAILURE = "Could not load the recorded trace for this session";
+
 export function usePersistedSessionTrace(threadId: string | null): {
   trace: TraceEnvelope | null;
   loading: boolean;
   error: string | null;
+  /**
+   * The recorded spans could not be loaded, though the transcript may have
+   * been. SEPARATE from `error` because it does not stop the transcript from
+   * rendering — and a caller that only shows `error` in its no-trace branch
+   * would swallow it in exactly the case it exists for: the viewer falls back
+   * to a SYNTHESIZED `estimatedDurationMs` timeline, which is the BB-153
+   * failure mode wearing a confident face.
+   */
+  spanError: string | null;
   /**
    * The plugin versions this synthetic session's journey target pinned (BE-5),
    * derived server-side from the run snapshot. Returned from THIS hook rather
@@ -67,6 +79,15 @@ export function usePersistedSessionTrace(threadId: string | null): {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingSpans, setLoadingSpans] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Span-load failures live in their OWN slot, not in `error`.
+   *
+   * They used to share one, which broke in both directions: the transcript
+   * effect clears `error` on every re-run, so an unrelated refetch wiped a
+   * span failure, and the span effect never cleared it, so one transient
+   * failure outlived the successful retry that followed it.
+   */
+  const [spanError, setSpanError] = useState<string | null>(null);
 
   // The Convex queries above re-resolve to `undefined` for a new `threadId`, but
   // everything fetched by hand below lives in state that only an effect clears —
@@ -78,6 +99,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
     setMessages(null);
     setSpans([]);
     setError(null);
+    setSpanError(null);
     setLoadingMessages(Boolean(threadId));
     setLoadingSpans(Boolean(threadId));
   }
@@ -133,6 +155,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
   useEffect(() => {
     if (!threadId) {
       setSpans([]);
+      setSpanError(null);
       setLoadingSpans(false);
       return;
     }
@@ -142,12 +165,16 @@ export function usePersistedSessionTrace(threadId: string | null): {
     }
     if (turnTraces.length === 0) {
       setSpans([]);
+      setSpanError(null);
       setLoadingSpans(false);
       return;
     }
 
     let active = true;
     setLoadingSpans(true);
+    // Each attempt decides for itself: a retry that succeeds must not be
+    // reported through the failure its predecessor left behind.
+    setSpanError(null);
     // `hydrateTurnTraceSpans` swallows every per-blob failure and returns [],
     // so a total load failure was indistinguishable from a session that never
     // recorded spans — and that is not a blank timeline: `getRecordedSpans`
@@ -166,13 +193,13 @@ export function usePersistedSessionTrace(threadId: string | null): {
         if (!active) return;
         setSpans(hydrated);
         if (expectedSpans > 0 && hydrated.length === 0) {
-          setError("Could not load the recorded trace for this session");
+          setSpanError(SPAN_LOAD_FAILURE);
         }
       })
       .catch(() => {
         if (!active) return;
         setSpans([]);
-        setError("Could not load the recorded trace for this session");
+        setSpanError(SPAN_LOAD_FAILURE);
       })
       .finally(() => {
         if (active) setLoadingSpans(false);
@@ -213,6 +240,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
     trace,
     loading,
     error,
+    spanError,
     pluginVersions: thread?.resumeConfig?.pluginVersions ?? [],
   };
 }

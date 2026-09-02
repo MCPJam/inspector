@@ -12,6 +12,8 @@ const {
   mockUseQuery,
   mockThreadState,
   mockBrowserArtifactsState,
+  mockHydrateTurnTraceSpans,
+  mockTurnTracesState,
 } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
   mockReadOnlyTranscript: vi.fn(),
@@ -27,6 +29,12 @@ const {
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
+  },
+  mockHydrateTurnTraceSpans: vi.fn(
+    async (..._args: unknown[]) => [] as unknown[]
+  ),
+  mockTurnTracesState: {
+    traces: [] as unknown[],
   },
 }));
 
@@ -63,7 +71,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
     snapshots: [],
   }),
   useSharedChatTurnTraces: () => ({
-    traces: [],
+    traces: mockTurnTracesState.traces,
   }),
   useSessionBrowserArtifacts: () => ({
     artifacts: mockBrowserArtifactsState.artifacts,
@@ -72,6 +80,13 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
+}));
+
+// The `sessionAnchored` decision is made HERE, not in the utility, so the
+// utility's own suite cannot catch this component passing the wrong flag.
+vi.mock("@/components/evals/turn-trace-spans", () => ({
+  hydrateTurnTraceSpans: (...args: unknown[]) =>
+    mockHydrateTurnTraceSpans(...args),
 }));
 
 vi.mock("@/components/evals/trace-viewer-adapter", () => ({
@@ -136,6 +151,8 @@ describe("ShareUsageThreadDetail", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockThreadState.sourceType = "scenario";
+    mockTurnTracesState.traces = [];
+    mockHydrateTurnTraceSpans.mockResolvedValue([]);
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
@@ -553,5 +570,54 @@ describe("ShareUsageThreadDetail — readiness gating", () => {
       expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
     );
     expect(screen.queryByTestId("session-insight-bar")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * BB-153 span anchoring, at the level where the DECISION is made.
+ *
+ * `hydrateTurnTraceSpans` has its own suite, but it is handed `sessionAnchored`
+ * — it cannot notice this component computing the flag from the wrong field, or
+ * inverting it. These two cases are the whole routing contract.
+ */
+describe("ShareUsageThreadDetail — span anchoring by sourceType", () => {
+  const TRACES = [{ turnIndex: 0, spanCount: 2, blobUrl: "https://b/0.json" }];
+
+  const anchoredArg = () =>
+    (
+      mockHydrateTurnTraceSpans.mock.calls[0] as unknown as [
+        unknown,
+        { sessionAnchored?: boolean } | undefined,
+      ]
+    )[1]?.sessionAnchored;
+
+  beforeEach(() => {
+    mockTurnTracesState.traces = TRACES;
+  });
+
+  it("keeps an eval session's own offsets", async () => {
+    // Eval blobs are already anchored at the run start; rebasing them would
+    // displace every span by the persist round-trip.
+    mockThreadState.sourceType = "eval";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(true);
+  });
+
+  it("rebases an ordinary session", async () => {
+    mockThreadState.sourceType = "scenario";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(false);
+  });
+
+  it("rebases a swarm session — the sourceType this component was built for", async () => {
+    mockThreadState.sourceType = "swarm";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(false);
   });
 });
