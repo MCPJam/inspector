@@ -953,6 +953,198 @@ describe("GithubChecksRoute organization switching", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BINDING CHANGES — the listing has to follow them
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The offerable repositories come from an ACTION: a one-shot read that nothing
+// re-runs on its own. What decides its answer — which installations this
+// organization holds — arrives on a LIVE QUERY. So connecting an account has to
+// be what re-reads the listing, and the bug that says otherwise is not subtle:
+// a claim that succeeded server-side, repositories waiting behind it, and a
+// page still saying "Connect a GitHub account above first" until a reload.
+//
+// The other half is just as load-bearing. A Convex subscription hands back a
+// fresh array on every delivery, including one that re-sends identical rows, so
+// anything that watched the array itself would ask GitHub again on every poll.
+describe("GithubChecksRoute binding changes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [];
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockBindings.value = [];
+    mockListInstallationRepos.mockReset();
+    mockConnectVerifiedRepo.mockReset();
+    mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-new" });
+  });
+
+  it("re-lists repositories when an account is connected, with no reload", async () => {
+    mockListInstallationRepos
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([repo("acme/widgets", { accountLogin: "acme" })]);
+
+    const user = userEvent.setup();
+    const { rerender } = render(routeTree("org-1"));
+
+    // Where the user starts: nothing connected, so nothing to offer.
+    expect(
+      await screen.findByText(
+        /No repositories available\. Connect a GitHub account above first\./
+      )
+    ).toBeInTheDocument();
+    expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
+
+    // The bind lands. NOTHING else about this page changes — same org, still
+    // enabled, same memoized callbacks — which is exactly why the listing used
+    // to sit there stale.
+    mockBindings.value = [binding("acme")];
+    rerender(routeTree("org-1"));
+
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/No repositories available/)
+      ).not.toBeInTheDocument()
+    );
+    await user.click(screen.getByLabelText("Repository"));
+    expect(
+      await screen.findByRole("option", { name: "acme/widgets" })
+    ).toBeInTheDocument();
+  });
+
+  it("re-lists when a binding's status changes, not only when one appears", async () => {
+    mockBindings.value = [binding("acme")];
+    mockListInstallationRepos.mockResolvedValue([repo("acme/widgets")]);
+
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    // Suspended, removed and unbound each stop an installation answering for
+    // its repositories, so the set being unchanged is not the question.
+    mockBindings.value = [binding("acme", { status: "suspended" })];
+    rerender(routeTree("org-1"));
+
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+  });
+
+  it("does not re-list when the live query re-delivers the same bindings", async () => {
+    mockBindings.value = [binding("acme"), binding("beta")];
+    mockListInstallationRepos.mockResolvedValue([repo("acme/widgets")]);
+
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    // A new array, equal content, and the rows in the other order — all three
+    // are ordinary for a subscription and none of them is a change.
+    mockBindings.value = [binding("beta"), binding("acme")];
+    rerender(routeTree("org-1"));
+    await act(async () => {});
+
+    expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-list when the bindings query answers for the first time", async () => {
+    // `undefined` is the state every cold load starts in: the bindings query is
+    // not even subscribed until availability says `enabled`, so it answers
+    // AFTER the first listing was asked for. That answer describes the same
+    // installations that request was made against — reading it as a change
+    // would double every page load.
+    mockBindings.value = undefined;
+    mockListInstallationRepos.mockResolvedValue([repo("acme/widgets")]);
+
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    mockBindings.value = [binding("acme")];
+    rerender(routeTree("org-1"));
+    await act(async () => {});
+
+    expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
+    // …and the listing that was in flight is still the one on screen.
+    expect(
+      await screen.findByRole("combobox", { name: "Repository" })
+    ).toBeInTheDocument();
+  });
+
+  it("still resets the picker on an org switch, and still drops the stale listing", async () => {
+    // The org-switch guarantees have to survive the refetch machinery: the
+    // reset moved out of the listing effect, and the in-flight guard is now a
+    // generation rather than a per-run flag.
+    mockBindings.value = [binding("acme")];
+    let resolveStale: ((repos: unknown[]) => void) | undefined;
+    mockListInstallationRepos
+      .mockResolvedValueOnce([repo("acme/widgets")])
+      // The refetch caused by the bind below, left hanging so that the ORG
+      // SWITCH happens while it is still in flight.
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStale = resolve as (repos: unknown[]) => void;
+          })
+      )
+      .mockResolvedValue([repo("beta/gadgets", { accountLogin: "beta" })]);
+
+    const user = userEvent.setup();
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+    await chooseOption(user, "Repository", "acme/widgets");
+    await chooseOption(user, "Outage policy", "Fail closed");
+
+    // A second account is connected: the listing is re-read, and the choice
+    // just made is deliberately KEPT — the organization it belongs to has not
+    // changed, and losing it would punish someone for someone else's bind.
+    mockBindings.value = [binding("acme"), binding("beta")];
+    rerender(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Fail closed"
+    );
+
+    // Now the org changes while that refetch is still in flight.
+    rerender(routeTree("org-2"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(3)
+    );
+    expect(screen.getByLabelText("Repository")).toHaveTextContent(
+      "Select a repository"
+    );
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Select an outage policy"
+    );
+
+    // org-1's answer, arriving late. It must not repopulate org-2's picker.
+    await act(async () => {
+      resolveStale?.([repo("acme/widgets")]);
+    });
+    await user.click(screen.getByLabelText("Repository"));
+    expect(
+      await screen.findByRole("option", { name: "beta/gadgets" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "acme/widgets" })
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GITHUB ACCOUNTS — the org ↔ installation binding surface
 // ═══════════════════════════════════════════════════════════════════════════
 //

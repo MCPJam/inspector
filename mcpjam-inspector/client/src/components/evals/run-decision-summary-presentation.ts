@@ -35,7 +35,6 @@ import {
   EVAL_VERDICT_DECISION_REASON_LABELS,
   FAILURE_CATEGORY_LABELS,
   STAGE_REASON_LABELS,
-  STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
   decisionDiagnosticFailureCategory,
   decisionDiagnosticFirstFailedStage,
@@ -44,6 +43,7 @@ import {
   type EvalRunDecisionDiagnostic,
   type EvalRunDecisionSummary,
   type EvalRunDecisionVerdict,
+  type StageResultRow,
 } from "@mcpjam/sdk/contract";
 
 /** Verdict badge copy. Title case for a badge; the contract's word otherwise. */
@@ -166,8 +166,6 @@ export interface DiagnosticChainSummary {
    * Flagged, never silently dropped.
    */
   trustNote: string | null;
-  /** The six stage rows, when a verified chain carried them. */
-  stageLines: string[];
 }
 
 /**
@@ -213,17 +211,11 @@ export function describeDiagnosticChain(
         ? `Recorded by stage analyzer v${versionAhead.reported}, newer than the v${versionAhead.known} this build knows. Shown as reported.`
         : null;
 
-  const stageLines =
-    chain.status === "verified"
-      ? chain.stages.map(
-          (row) =>
-            `${USER_VALUE_STAGE_LABELS[row.stage]}: ${
-              STAGE_STATE_LABELS[row.state]
-            }${row.reason ? ` — ${STAGE_REASON_LABELS[row.reason]}` : ""}`,
-        )
-      : [];
-
-  return { firstFailedStageLine, failureCategoryLine, trustNote, stageLines };
+  // The six stage rows used to be flattened into text lines here. They are now
+  // rendered as cards from the chain itself (`stage-trial-model.ts`), so the
+  // flattening is gone rather than left behind: a second, unrendered rendering
+  // of the same rows is what drifts out of step with the one on screen.
+  return { firstFailedStageLine, failureCategoryLine, trustNote };
 }
 
 function firstFailedStageReason(
@@ -263,6 +255,34 @@ export function describeDiagnosticEvidence(
 }
 
 /**
+ * The evidence locator for ONE stage row, in words.
+ *
+ * The row-level sibling of {@link describeDiagnosticEvidence}, which reads the
+ * diagnostic's own locator — already narrowed by the contract to the first
+ * failed stage. This one is for a surface that lets a reader select ANY stage
+ * and therefore has to answer "what was this stage decided from" for a row the
+ * diagnostic's locator says nothing about.
+ *
+ * Same bound and same wording as its sibling, and the same rule underneath:
+ * only ever THIS row's own evidence. Widening to a union across stages would
+ * hand a reader the spans that worked, labelled as evidence for the one that
+ * did not.
+ */
+export function describeStageRowEvidence(row: StageResultRow): string | null {
+  const evidence = row.evidence;
+  if (!evidence) return null;
+  const parts: string[] = [];
+  if (evidence.spanIds) parts.push(`span ids ${evidence.spanIds.join(", ")}`);
+  if (evidence.promptIndexes) {
+    parts.push(`prompt indexes ${evidence.promptIndexes.join(", ")}`);
+  }
+  if (parts.length === 0) return null;
+  // Span ids are authored elsewhere. React escapes them on render; the bound is
+  // so one pathological id cannot swamp the card.
+  return `Evidence: ${truncateUntrusted(parts.join("; "), 320) ?? ""}`;
+}
+
+/**
  * The operator's next step.
  *
  * Taken from the diagnostic, which the contract already keyed on the failure
@@ -291,6 +311,71 @@ export function truncateUntrusted(
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+}
+
+/**
+ * Whether this diagnostic's evidence can actually be opened from this run.
+ *
+ * Extracted from `DiagnosticRow` so a second surface asking the same question
+ * gets the same answer. Three conditions, and the third is the one that keeps
+ * the control honest:
+ *
+ *   - a handler exists to call at all;
+ *   - the evidence names THIS run, and names the diagnostic's own iteration —
+ *     a locator pointing elsewhere would navigate somewhere the view on screen
+ *     cannot answer for;
+ *   - a case id is present, because the app focuses an iteration THROUGH its
+ *     case and that is the only path the viewer actually consumes.
+ *
+ * A button that lands on the page it is already on, having opened nothing,
+ * reads as broken. Not offering it is the honest answer.
+ */
+export function isDiagnosticTraceable(
+  diagnostic: EvalRunDecisionDiagnostic,
+  runId: string,
+  onViewTrace?: unknown,
+): boolean {
+  return (
+    Boolean(onViewTrace) &&
+    diagnostic.evidence.runId === runId &&
+    diagnostic.evidence.iterationId === diagnostic.iterationId &&
+    Boolean(diagnostic.testCaseId)
+  );
+}
+
+/**
+ * How complete the scanned set is, in words, WITHOUT the non-passing count.
+ *
+ * The tail half of {@link describeDiagnosticsScope}, split out so a surface
+ * that has its own numerator — a per-stage finding count, say — can state the
+ * same completeness fact without also restating "N non-passing of M". Two
+ * different numerators under one completeness claim is how a reader ends up
+ * reading a stage's finding count as the run's whole failure set.
+ *
+ * `serverComplete` is the SERVER's claim and is never widened here.
+ * `walkExhausted` is this client's separate fact and is said in different
+ * words, because finishing our own walk teaches us nothing about whether the
+ * server considered the set complete.
+ */
+export function describeScanScope(input: {
+  scannedIterations: number;
+  serverComplete: boolean;
+  walkExhausted: boolean;
+}): string {
+  const unit = measurementUnitLabel("trial", input.scannedIterations);
+  if (input.serverComplete) {
+    return `over all ${input.scannedIterations} scanned ${unit}`;
+  }
+  if (input.walkExhausted) {
+    return (
+      `over the ${input.scannedIterations} ${unit} scanned — every page ` +
+      `offered has been loaded, but the run did not report the set as complete`
+    );
+  }
+  return (
+    `over the first ${input.scannedIterations} ${unit} scanned — this is ` +
+    `not the complete set`
+  );
 }
 
 /**

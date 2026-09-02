@@ -5,7 +5,13 @@ on:
     # `branches` filters on the PR's BASE. A stacked PR is based on the branch
     # below it rather than on main, so with `main` alone every PR above the
     # root of a stack merges without these tests having run against it once.
-    # Drop the second pattern once the Connector Bench stack has landed.
+    # Add a pattern while a stack is in flight; drop it once that stack lands.
+    #
+    # Worth keeping the reason: this bit us on the UVH stack, where a test
+    # asserted a label's wording verbatim, a later PR in the same stack changed
+    # that wording, and the break sat unnoticed because every PR above the root
+    # was green on previews and review bots alone. That stack has landed and
+    # its pattern is gone; the lesson is why the mechanism stays.
     branches:
       - main
       - "claude/mcp-benchmarks-v2-b0tw4b-**"

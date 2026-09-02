@@ -3,11 +3,24 @@ import { ChromiumDriver } from "../chromium-driver";
 import { shortHash } from "../state-token";
 import type { DriverContext, DriverPage } from "../browser-page";
 import type { BrowserCommand } from "../../protocol";
+import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
+
+/** Every act the fake page recorded, in order, as `verb:detail` strings. */
+type ActLog = string[];
 
 interface FakePage extends DriverPage {
   setUrl(u: string): void;
   setDom(d: string): void;
-  readonly calls: { goto: string[]; reload: number; goBack: number; shots: number };
+  pushConsole(entry: { type: string; text: string; at: number }): void;
+  readonly calls: {
+    goto: string[];
+    reload: number;
+    goBack: number;
+    shots: number;
+    acts: ActLog;
+    front: number;
+    a11yRoots: (string | undefined)[];
+  };
 }
 
 function fakePage(init: {
@@ -16,13 +29,33 @@ function fakePage(init: {
   hangNetwork?: boolean;
   /** Called inside screenshotBase64 — used to simulate a shift mid-capture. */
   onScreenshot?: (page: { setDom: (d: string) => void; setUrl: (u: string) => void }) => void;
+  /** Make a targeted act fail, as a missing element would. */
+  actError?: Error;
+  a11y?: unknown;
+  /** Subtrees reachable by `rootSelector`; anything else "matches nothing". */
+  a11yBySelector?: Record<string, unknown>;
+  console?: Array<{ type: string; text: string; at: number }>;
+  webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> } ? B | null : never;
 } = {}): FakePage {
   let url = init.url ?? "about:blank";
+  const consoleEntries = [...(init.console ?? [])];
   let dom = init.dom ?? "0BODY";
   let closed = false;
-  const calls = { goto: [] as string[], reload: 0, goBack: 0, shots: 0 };
+  const calls = {
+    goto: [] as string[],
+    reload: 0,
+    goBack: 0,
+    shots: 0,
+    acts: [] as ActLog,
+    front: 0,
+    a11yRoots: [] as (string | undefined)[],
+  };
   const setDom = (d: string) => { dom = d; };
   const setUrl = (u: string) => { url = u; };
+  const act = (entry: string) => {
+    calls.acts.push(entry);
+    if (init.actError) throw init.actError;
+  };
   return {
     async goto(u) { calls.goto.push(u); url = u; },
     async reload() { calls.reload++; },
@@ -43,8 +76,41 @@ function fakePage(init: {
     url: () => url,
     close: async () => { closed = true; },
     isClosed: () => closed,
+    bringToFront: async () => { calls.front++; },
+
+    async clickAt(point, options) {
+      act(`click:${point.x},${point.y}${options?.button ? `:${options.button}` : ""}`);
+    },
+    async clickSelector(selector) { act(`click:${selector}`); },
+    async hoverAt(point) { act(`hover:${point.x},${point.y}`); },
+    async hoverSelector(selector) { act(`hover:${selector}`); },
+    async typeText(text) { act(`type:${text}`); },
+    async fillSelector(selector, text) { act(`fill:${selector}:${text}`); },
+    async press(key) { act(`press:${key}`); },
+    async scrollBy({ dx, dy }) { act(`scroll:${dx},${dy}`); },
+    async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
+    async selectOption(selector, value) { act(`select:${selector}:${value}`); },
+    async a11ySnapshot(rootSelector?: string) {
+      calls.a11yRoots.push(rootSelector);
+      // Mirrors the live adapter: an unmatched root selector resolves null,
+      // which is what the driver must turn into `unknown_selector`.
+      if (rootSelector !== undefined) {
+        return (init.a11yBySelector?.[rootSelector] ?? null) as never;
+      }
+      return (init.a11y ?? null) as never;
+    },
+    consoleEntries: () => consoleEntries,
+    dropConsoleSince: (since: number) => {
+      let keep = consoleEntries.length;
+      while (keep > 0 && consoleEntries[keep - 1].at >= since) keep -= 1;
+      consoleEntries.length = keep;
+    },
+    async webmcp() { return (init.webmcp ?? null) as never; },
+
     setUrl,
     setDom,
+    pushConsole: (e: { type: string; text: string; at: number }) =>
+      consoleEntries.push(e),
     calls,
   };
 }
@@ -143,12 +209,144 @@ describe("ChromiumDriver — observe", () => {
     expect(res).toMatchObject({ ok: false, error: "unknown_tab: ghost" });
   });
 
-  it("marks W1-unimplemented observe modes explicitly", async () => {
+  it("returns a budgeted a11y tree, omitting whole subtrees (L9)", async () => {
+    const deep = {
+      role: "main",
+      children: Array.from({ length: 30 }, (_, i) => ({
+        role: "group",
+        name: `g${i}`,
+        children: [{ role: "button", name: `b${i}` }],
+      })),
+    };
+    const page = fakePage({ url: "https://x.test/", a11y: deep });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, {
+      a11y: { maxNodes: 10, maxDepth: 5 },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(res.ok).toBe(true);
+    const output = res.output as { a11y: unknown; omittedSubtrees?: number };
+    expect(output.omittedSubtrees).toBeGreaterThan(0);
+    // A model must never receive a half-serialized node.
+    expect(() => JSON.parse(JSON.stringify(output.a11y))).not.toThrow();
+    expect(res.stateToken).toBeDefined();
+  });
+
+  it("scopes the tree to rootSelector — the retrieval verb the omission marker names", async () => {
+    // The marker tells the caller to re-observe an omitted subtree with
+    // {mode:"a11y", rootSelector:"…"}. If that does not reach the page, the
+    // marker sends the model somewhere it cannot go and the subtree is lost.
+    const page = fakePage({
+      url: "https://x.test/",
+      a11y: { role: "main" },
+      a11yBySelector: {
+        "#panel": { role: "region", children: [{ role: "button", name: "Go" }] },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootSelector: "#panel" }),
+    );
+
+    expect(page.calls.a11yRoots).toContain("#panel");
+    expect(res.ok).toBe(true);
+    expect((res.output as { a11y: unknown }).a11y).toEqual({
+      role: "region",
+      children: [{ role: "button", name: "Go" }],
+    });
+  });
+
+  it("REFUSES a rootSelector that matches nothing, instead of answering an empty tree", async () => {
+    // An empty tree reads as "that subtree is empty" — the model believes the
+    // page and moves on. The error is the only version it can act on.
+    const page = fakePage({ url: "https://x.test/", a11y: { role: "main" } });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootSelector: "#gone" }),
+    );
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unknown_selector/);
+    expect(res.error).toContain("#gone");
+  });
+
+  it("still answers a whole-page a11y observation when the page has no tree", async () => {
+    // Unmatched-selector is an error; an empty PAGE is not. Only the request
+    // that named a root gets the stricter reading.
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(res.ok).toBe(true);
+  });
+
+  it("returns the console tail, newest last, byte-capped", async () => {
+    const entries = Array.from({ length: 10 }, (_, i) => ({
+      type: "log",
+      text: `line-${i}`,
+      at: i,
+    }));
+    const page = fakePage({ url: "https://x.test/", console: entries });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, {
+      console: { maxEntries: 3, maxEntryBytes: 100 },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const output = res.output as {
+      console: Array<{ text: string }>;
+      omitted?: number;
+    };
+    expect(output.console.map((e) => e.text)).toEqual([
+      "line-7",
+      "line-8",
+      "line-9",
+    ]);
+    expect(output.omitted).toBe(7);
+  });
+
+  it("reports a page with no WebMCP as a normal answer, not an error", async () => {
     const { context } = fakeContext();
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
-    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
-    expect(res).toMatchObject({ ok: false, error: "unimplemented_in_w1: observe/a11y" });
+
+    // "This page offers no WebMCP tools" is the COMMON case; treating it as a
+    // failure would teach the model that cooperation is a precondition.
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "webmcp_tools" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({ webmcpSupported: false, tools: [] });
+  });
+
+  it("lists the page's WebMCP tools when the bridge has them", async () => {
+    const bridge = {
+      isSupported: () => true,
+      list: () => [{ name: "book_flight", origin: "https://x.test" }],
+    };
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge as never });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "webmcp_tools" }),
+    );
+    expect(res.output).toMatchObject({
+      webmcpSupported: true,
+      tools: [{ name: "book_flight" }],
+    });
   });
 });
 
@@ -199,13 +397,36 @@ describe("ChromiumDriver — screenshot token binds to the captured frame (P1)",
 });
 
 describe("ChromiumDriver — only navigate may create or replace a tab (P2)", () => {
-  it("rejects navigate newTab:true instead of silently replacing the current tab", async () => {
+  it("opens a named new tab, and refuses to replace an existing one", async () => {
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "t1"));
+
+    // A named new tab is created alongside the first.
+    const opened = await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/", newTab: true }, "t2"),
+    );
+    expect(opened.ok).toBe(true);
+    expect(created).toHaveLength(2);
+
+    // Re-using a live tabId would silently replace that tab's page — the
+    // exact confusion the P2 guard exists to prevent.
+    const clash = await driver.execute(
+      cmd({ kind: "navigate", url: "https://c.test/", newTab: true }, "t1"),
+    );
+    expect(clash).toMatchObject({ ok: false });
+    expect(clash.error).toContain("tab_exists");
+    expect(created).toHaveLength(2);
+  });
+
+  it("refuses an unnamed new tab — the tabId is how it would be addressed", async () => {
     const { context } = fakeContext();
     const driver = new ChromiumDriver(context);
     const res = await driver.execute(
       cmd({ kind: "navigate", url: "https://x.test/", newTab: true }),
     );
-    expect(res).toMatchObject({ ok: false, error: "unimplemented_in_w1: navigate/newTab" });
+    expect(res).toMatchObject({ ok: false });
+    expect(res.error).toContain("explicit tabId");
   });
 
   it("returns unknown_tab for back/reload on a tab that was never created", async () => {
@@ -223,19 +444,264 @@ describe("ChromiumDriver — only navigate may create or replace a tab (P2)", ()
   });
 });
 
-describe("ChromiumDriver — act/webmcp are explicitly deferred to W3", () => {
-  it("returns an unimplemented result rather than silently doing nothing", async () => {
-    const { context } = fakeContext();
+describe("ChromiumDriver — act verbs (W3)", () => {
+  /** Navigate first so a tab exists, then run one act. */
+  async function acted(
+    action: Extract<Parameters<typeof cmd>[0], { kind: "act" }>,
+    pageInit: Parameters<typeof fakePage>[0] = {},
+  ) {
+    const page = fakePage({ url: "https://x.test/", ...pageInit });
+    const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
-    for (const action of [
-      { kind: "act", verb: "click" } as const,
-      { kind: "webmcp_invoke", toolKey: "t", input: {} } as const,
-      { kind: "webmcp_cancel", invocationId: "i" } as const,
-    ]) {
-      const res = await driver.execute(cmd(action));
-      expect(res.ok).toBe(false);
-      expect(res.error).toContain("unimplemented_in_w1");
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd(action));
+    return { res, page };
+  }
+
+  it("dispatches each verb to its primitive, by coordinates or selector", async () => {
+    const cases: Array<[Parameters<typeof acted>[0], string]> = [
+      [{ kind: "act", verb: "click", target: { coordinates: [12, 34] } }, "click:12,34"],
+      [{ kind: "act", verb: "click", target: { selector: "#go" } }, "click:#go"],
+      [{ kind: "act", verb: "hover", target: { coordinates: [5, 6] } }, "hover:5,6"],
+      [{ kind: "act", verb: "hover", target: { selector: ".menu" } }, "hover:.menu"],
+      [{ kind: "act", verb: "type", value: "hello" }, "type:hello"],
+      [
+        { kind: "act", verb: "type", target: { selector: "#email" }, value: "a@b.c" },
+        "fill:#email:a@b.c",
+      ],
+      [{ kind: "act", verb: "press", value: "Enter" }, "press:Enter"],
+      [{ kind: "act", verb: "scroll" }, "scroll:0,600"],
+      [{ kind: "act", verb: "scroll", value: "up" }, "scroll:0,-600"],
+      [{ kind: "act", verb: "scroll", value: "250" }, "scroll:0,250"],
+      [{ kind: "act", verb: "scroll", value: "10,20" }, "scroll:10,20"],
+      [
+        { kind: "act", verb: "drag", target: { coordinates: [1, 2] }, value: "9,8" },
+        "drag:1,2->9,8",
+      ],
+      [
+        { kind: "act", verb: "select", target: { selector: "#size" }, value: "L" },
+        "select:#size:L",
+      ],
+    ];
+    for (const [action, expected] of cases) {
+      const { res, page } = await acted(action);
+      expect(res.ok, `${action.verb} should succeed`).toBe(true);
+      expect(page.calls.acts).toEqual([expected]);
     }
+  });
+
+  it("folds the post-act observation into the result (L1)", async () => {
+    // The whole point: after an act the model already HAS the new screenshot,
+    // url and a fresh token — it never spends a turn asking "what happened?".
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { coordinates: [1, 1] },
+    });
+    expect(res.output).toMatchObject({
+      url: "https://x.test/",
+      screenshot: "BASE64PNG",
+    });
+    expect(res.settled).toBe(true);
+    expect(res.stateToken).toBeDefined();
+    expect(page.calls.shots).toBe(1);
+  });
+
+  it("reports an unresolvable target as target_not_found, with the current state", async () => {
+    const { res } = await acted(
+      { kind: "act", verb: "click", target: { selector: "#gone" } },
+      { actError: new Error("Timeout 15000ms exceeded waiting for locator") },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("target_not_found");
+    // A failed act still hands back where the page IS, so the model can re-aim.
+    expect(res.stateToken).toBeDefined();
+    expect(res.output).toMatchObject({ url: "https://x.test/" });
+  });
+
+  it("refuses a11yRef targeting explicitly rather than silently mis-clicking", async () => {
+    const { res } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { a11yRef: "node-7" },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("unsupported_target");
+  });
+
+  it("refuses verbs that are missing what they need", async () => {
+    const missing: Array<Parameters<typeof acted>[0]> = [
+      { kind: "act", verb: "click" }, // no target
+      { kind: "act", verb: "press" }, // no key
+      { kind: "act", verb: "select", target: { selector: "#s" } }, // no value
+      { kind: "act", verb: "drag", target: { coordinates: [1, 2] } }, // no dest
+    ];
+    for (const action of missing) {
+      const { res } = await acted(action);
+      expect(res.ok, `${action.verb} without its input must fail`).toBe(false);
+    }
+  });
+
+  it("REFUSES a coordinate outside the observation viewport, without dispatching", async () => {
+    // Chromium delivers an out-of-viewport mouse event happily: it hits
+    // nothing, and the caller reads a normal post-act observation that is
+    // indistinguishable from a click landing on empty space. Refusing is the
+    // only outcome the model can recover from.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { coordinates: [1200, 40] },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/out_of_viewport/);
+    expect(res.error).toContain("1024x768");
+    expect(page.calls.acts).toHaveLength(0); // nothing was dispatched
+  });
+
+  it("refuses a NEGATIVE coordinate too", async () => {
+    const { res } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { coordinates: [10, -1] },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/out_of_viewport/);
+  });
+
+  it("allows the far corner — the bound is inclusive of the last pixel", async () => {
+    // Guards the off-by-one that would make the bottom-right of every
+    // screenshot unclickable.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { coordinates: [1023, 767] },
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:1023,767");
+  });
+
+  it("refuses a drag DESTINATION outside the viewport (it rides in a string)", async () => {
+    // The destination bypasses the target check because it arrives as
+    // `value: "x,y"`, so it needs its own bound.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "drag",
+      target: { coordinates: [10, 10] },
+      value: "5000,20",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/out_of_viewport/);
+    expect(page.calls.acts).toHaveLength(0);
+  });
+
+  it("closes and activates tabs", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    expect(
+      await driver.execute(cmd({ kind: "act", verb: "activate_tab" })),
+    ).toMatchObject({ ok: true });
+    expect(page.calls.front).toBe(1);
+
+    expect(
+      await driver.execute(cmd({ kind: "act", verb: "close_tab" })),
+    ).toMatchObject({ ok: true, output: { closed: "@session" } });
+    // The tab is really gone: a follow-up act finds no tab rather than a
+    // closed page it might try to drive.
+    expect(
+      await driver.execute(cmd({ kind: "act", verb: "click", target: { coordinates: [1, 1] } })),
+    ).toMatchObject({ ok: false, error: "unknown_tab: @session" });
+  });
+
+  it("returns unknown_tab for an act on a tab that was never created", async () => {
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [1, 1] } }, "ghost"),
+    );
+    expect(res).toMatchObject({ ok: false, error: "unknown_tab: ghost" });
+    expect(created).toHaveLength(0);
+  });
+});
+
+describe("ChromiumDriver — webmcp actions (W3)", () => {
+  function bridgeStub(over: Record<string, unknown> = {}) {
+    return {
+      isSupported: () => true,
+      list: () => [],
+      invoke: async () => ({ invocationId: "inv-1", output: { ok: true } }),
+      cancel: async () => true,
+      ...over,
+    } as never;
+  }
+
+  async function withBridge(bridge: unknown) {
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge as never });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    return driver;
+  }
+
+  it("invokes a page tool and returns its output with a fresh token", async () => {
+    const driver = await withBridge(bridgeStub());
+    const res = await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "book_flight", input: { seat: "1A" } }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({
+      invocationId: "inv-1",
+      result: { ok: true },
+    });
+    expect(res.stateToken).toBeDefined();
+  });
+
+  it("caps an oversized tool output rather than half-serializing it (L9)", async () => {
+    const huge = { rows: Array.from({ length: 20_000 }, (_, i) => i) };
+    const driver = await withBridge(
+      bridgeStub({ invoke: async () => ({ invocationId: "inv-1", output: huge }) }),
+    );
+    const res = await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "dump", input: {} }),
+    );
+    const output = res.output as { result: unknown; omitted?: boolean };
+    expect(output.omitted).toBe(true);
+    expect(typeof output.result).toBe("string");
+  });
+
+  it("surfaces a typed bridge failure verbatim", async () => {
+    const { WebMcpBridgeError } = await import("../webmcp-bridge");
+    const driver = await withBridge(
+      bridgeStub({
+        invoke: async () => {
+          throw new WebMcpBridgeError("webmcp_tool_gone", "The page no longer offers it.");
+        },
+      }),
+    );
+    const res = await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "vanished", input: {} }),
+    );
+    expect(res).toMatchObject({ ok: false });
+    expect(res.error).toContain("webmcp_tool_gone");
+  });
+
+  it("reports an unsupported page without pretending it errored", async () => {
+    const driver = await withBridge(bridgeStub({ isSupported: () => false }));
+    const res = await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "t", input: {} }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("webmcp_unsupported");
+  });
+
+  it("cancels an invocation and says whether the bridge knew it", async () => {
+    const driver = await withBridge(bridgeStub({ cancel: async () => false }));
+    const res = await driver.execute(
+      cmd({ kind: "webmcp_cancel", invocationId: "inv-9" }),
+    );
+    expect(res).toMatchObject({ ok: true, output: { cancelled: false } });
   });
 });
 
@@ -273,5 +739,191 @@ describe("ChromiumDriver — tabs, state token, health, close", () => {
     await driver.close();
     expect(page.isClosed()).toBe(true);
     expect(fc.wasClosed()).toBe(true);
+  });
+});
+
+describe("ChromiumDriver — loud resume after a human handoff (L6/W4)", () => {
+  it("attaches the handoff note to the FIRST observation after a resume, once", async () => {
+    const page = fakePage({ url: "https://bank.test/", dom: "0BODY" });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+
+    await driver.execute(cmd({ kind: "navigate", url: "https://bank.test/" }));
+
+    // A person takes the browser (an SSO login), then hands it back.
+    lease.acquire("panel-a", 60_000);
+    lease.resume("panel-a");
+
+    const first = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    expect(first.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+    // The note marks the observation that actually crossed the handoff — a
+    // note on every later result would be noise the model learns to ignore.
+    const second = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    expect(second.output).not.toHaveProperty("handoffNote");
+  });
+
+  it("says nothing when no handoff happened", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease: new HandoffLease() });
+    const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    expect(res.output).not.toHaveProperty("handoffNote");
+  });
+
+  it("rides an act's inline observation too (L1 + L6 together)", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("panel-a", 60_000);
+    lease.resume("panel-a");
+    const acted = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [4, 5] } }),
+    );
+    expect(acted.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+  });
+
+  it("works without a lease at all (the daemon can run leaseless)", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    expect(res.ok).toBe(true);
+    expect(res.output).not.toHaveProperty("handoffNote");
+  });
+});
+
+describe("ChromiumDriver — a FAILED act still reports the handoff (L6)", () => {
+  it("carries the note on the failure result, so the model re-reads the page", async () => {
+    const page = fakePage({ url: "https://x.test/", actError: new Error("no element") });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("panel-a", 60_000);
+    lease.resume("panel-a");
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { selector: "#gone" } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+  });
+});
+
+describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () => {
+  it("DISCARDS console captured while a person held the browser", async () => {
+    // The 423 gate stops an agent reading DURING a handoff. But the console
+    // ring fills from an eager page listener that knows nothing about leases,
+    // so without this the token a login page logged while someone signed in is
+    // readable the instant they hand back — making the guarantee "you have to
+    // wait to read it" rather than "it is private".
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const page = fakePage({
+      url: "https://bank.test/",
+      console: [{ type: "log", text: "before the handoff", at: 500 }],
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://bank.test/" }));
+
+    // A person takes the browser and signs in; the page logs as they go.
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    page.pushConsole({ type: "log", text: "auth token: SECRET", at: 2_100 });
+    page.pushConsole({ type: "error", text: "password field: hunter2", at: 2_200 });
+    now = 3_000;
+    lease.resume("panel-a");
+
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const text = JSON.stringify(observed.output);
+    expect(text).not.toContain("SECRET");
+    expect(text).not.toContain("hunter2");
+    // What was logged BEFORE the handoff is ordinary page output and stays.
+    expect(text).toContain("before the handoff");
+  });
+
+  it("purges once, not on every later command", async () => {
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    lease.resume("panel-a");
+    await driver.execute(cmd({ kind: "observe", mode: "url" })); // consumes it
+
+    // Anything logged AFTER the handoff is normal traffic and must survive.
+    page.pushConsole({ type: "log", text: "after the handoff", at: 4_000 });
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    expect(JSON.stringify(observed.output)).toContain("after the handoff");
+  });
+
+  it("purges every tab, not just the one being read", async () => {
+    // A person may open a tab; a leak in one nobody is watching is still a leak.
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const first = fakePage({ url: "https://a.test/" });
+    const second = fakePage({ url: "https://b.test/" });
+    const { context } = fakeContext({ pages: [first, second] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/", newTab: true }, "tab-2"),
+    );
+
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    first.pushConsole({ type: "log", text: "LEAK-A", at: 2_100 });
+    second.pushConsole({ type: "log", text: "LEAK-B", at: 2_100 });
+    now = 3_000;
+    lease.resume("panel-a");
+
+    const a = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const b = await driver.execute(cmd({ kind: "observe", mode: "console" }, "tab-2"));
+    expect(JSON.stringify(a.output)).not.toContain("LEAK-A");
+    expect(JSON.stringify(b.output)).not.toContain("LEAK-B");
+  });
+
+  it("DISCARDS both holds when two handoffs run back to back with no command between", async () => {
+    // The realistic shape: sign in, hand back, a CAPTCHA appears, take it again,
+    // hand back — and only THEN does the model get a turn. The purge is consumed
+    // lazily, so at that point two holds are pending against one window. Keeping
+    // the later start would drop the CAPTCHA's console and serve the sign-in's.
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const page = fakePage({
+      url: "https://bank.test/",
+      console: [{ type: "log", text: "before any handoff", at: 500 }],
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://bank.test/" }));
+
+    // Hold #1 — the sign-in.
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    page.pushConsole({ type: "log", text: "auth token: SECRET-ONE", at: 2_100 });
+    now = 3_000;
+    lease.resume("panel-a");
+
+    // Hold #2 — the CAPTCHA, before the model has run anything at all.
+    now = 4_000;
+    lease.acquire("panel-a", 60_000);
+    now = 5_000;
+    page.pushConsole({ type: "log", text: "captcha answer: SECRET-TWO", at: 5_100 });
+    now = 6_000;
+    lease.resume("panel-a");
+
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const text = JSON.stringify(observed.output);
+    expect(text).not.toContain("SECRET-ONE");
+    expect(text).not.toContain("SECRET-TWO");
+    expect(text).toContain("before any handoff");
   });
 });

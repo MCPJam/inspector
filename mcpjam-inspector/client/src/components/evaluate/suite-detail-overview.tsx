@@ -42,7 +42,6 @@ import {
   type SuiteRunHistoryFilters,
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
-import { StageAnalyticsPanel } from "./stage-analytics-panel";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
 import {
   RunDecisionVerdictBadge,
@@ -523,22 +522,6 @@ export function SuiteDetailOverview({
       </section>
       ) : null}
 
-      {/* Where the chain stopped, per run — the measured half of a run, beside
-          its history. Evaluate-only by construction: this file is the Evaluate
-          (New) suite page, so /evals cannot pick it up.
-
-          Gated on `projectId` because it is genuinely nullable here and the
-          read is project-scoped: without one there is no request to make, and
-          rendering the panel anyway would leave it spinning on a fetch that
-          never starts. Same gate the traces export uses above. */}
-      {projectId ? (
-        <StageAnalyticsPanel
-          projectId={projectId}
-          suiteId={suite._id}
-          runCount={runs.length}
-          runsLoading={runsLoading}
-        />
-      ) : null}
 
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero

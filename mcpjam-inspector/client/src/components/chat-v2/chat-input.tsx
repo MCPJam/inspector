@@ -6,7 +6,6 @@ import {
   useMemo,
   useEffect,
 } from "react";
-import { HOSTED_MODE } from "@/lib/config";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
@@ -448,12 +447,19 @@ export function ChatInput({
   environmentServersOverridden = false,
   onResetEnvironmentServers,
 }: ChatInputProps) {
-  // Cloud skill source for the `/` picker: in hosted mode, list/load skills
-  // from the project's Convex/Computer source (Playground carries projectId via
-  // `clientSelector`). Gated behind the `skills-enabled` flag until QA completes
-  // (flag off ⇒ no cloud source, so the picker lists no cloud skills). Local
-  // mode keeps the default (filesystem) path. Memoized so the popover's fetch
-  // effects don't re-run every render.
+  // The project LIBRARY half of the `/` picker: list/load skills from the
+  // project's Convex source (Playground carries the id via `clientSelector`).
+  //
+  // NOT gated on `HOSTED_MODE` any more. It was, back when the picker showed
+  // one source or the other and hosted was the only mode with a library to
+  // show — which meant a local user's own project skills were unreachable from
+  // chat, though they are exactly what the library exists for. The picker now
+  // merges both halves (see SkillsPopoverSection), so this is simply "is there
+  // a library to read": a Convex project id exists in both modes, and an
+  // unsynced project has none, which keeps the half off by itself.
+  //
+  // Still gated behind the `skills-enabled` flag until QA completes. Memoized
+  // so the popover's fetch effects don't re-run every render.
   const skillsEnabled = useSkillsEnabled();
   // Skills over MCP (SEP-2640): the selected servers ARE the candidate
   // providers. `connected: true` because a server only reaches
@@ -481,7 +487,7 @@ export function ChatInput({
 
   const skillsSource = useMemo<SkillsSource | undefined>(
     () =>
-      HOSTED_MODE && skillsEnabled && clientSelector?.cloudProjectId
+      skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
     [clientSelector?.cloudProjectId, skillsEnabled]

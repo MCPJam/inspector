@@ -9,6 +9,7 @@ import {
 } from "./run-case-groups";
 import { RunCaseIterationBar } from "./run-case-list-shared";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 
 interface RunTestCaseDetailViewProps {
   run: EvalSuiteRun;
@@ -16,6 +17,14 @@ interface RunTestCaseDetailViewProps {
   iterations: EvalIteration[];
   onBack: () => void;
   serverNames?: string[];
+  /**
+   * Where each trial's chain stopped, by iteration id.
+   *
+   * Threaded from the caller because this view is RUN-SCOPED — every row here
+   * belongs to `run`, which is what makes one chain read enough. The cross-run
+   * case view has no such run and passes nothing.
+   */
+  chainFor?: (iterationId: string) => EvalRunDecisionChain | undefined;
 }
 
 function RunCaseSummaryStrip({
@@ -76,6 +85,7 @@ export function RunTestCaseDetailView({
   iterations,
   onBack,
   serverNames = [],
+  chainFor,
 }: RunTestCaseDetailViewProps) {
   const title =
     testCase?.title ?? iterations[0]?.testCaseSnapshot?.title ?? "Test case";
@@ -120,6 +130,7 @@ export function RunTestCaseDetailView({
           serverNames={serverNames}
           label={`All iterations (${iterations.length})`}
           sortMode="failing-first"
+          {...(chainFor ? { chainFor } : {})}
         />
       </div>
     </div>
