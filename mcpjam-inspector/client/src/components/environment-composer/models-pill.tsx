@@ -168,7 +168,7 @@ export function ModelsPill({
         portalled={!inModal}
       >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {mode === "single" ? "Model" : "Models · fan-out"}
+          {mode === "single" ? "Model" : "Models"}
         </div>
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
           <Label
