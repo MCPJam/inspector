@@ -245,6 +245,17 @@ describe("useGithubChecksSettings writes", () => {
         <button
           type="button"
           onClick={() =>
+            void settings.setRepoFeedbackComments({
+              configId: "cfg-1",
+              feedbackComments: "on",
+            })
+          }
+        >
+          set feedback comments on
+        </button>
+        <button
+          type="button"
+          onClick={() =>
             void settings.unbindInstallation({ installationRef: "bind-1" })
           }
         >
@@ -390,6 +401,49 @@ describe("useGithubChecksSettings writes", () => {
         },
       },
     ]);
+  });
+
+  it("sends `on` as a literal too, not as an omission", () => {
+    render(<SettingsProbe />);
+
+    screen.getByText("set feedback comments on").click();
+
+    // The other half of the inversion. Absent already MEANS `on`, so turning a
+    // repository back on has to say so explicitly — a caller that expressed it
+    // by omitting the field would send nothing and change nothing, and the
+    // switch would appear to be stuck off.
+    expect(mocks.requests).toEqual([
+      {
+        kind: "mutation",
+        name: "github/checkRepoConfigs:setRepoFeedbackComments",
+        args: {
+          organizationId: "org-1",
+          configId: "cfg-1",
+          feedbackComments: "on",
+        },
+      },
+    ]);
+  });
+
+  it("lets a refused feedback-comment write reject, rather than swallowing it", async () => {
+    render(<SettingsProbe />);
+    const handle = mocks.handles.get(
+      "mutation:github/checkRepoConfigs:setRepoFeedbackComments"
+    ) as ReturnType<typeof vi.fn>;
+    handle.mockRejectedValueOnce(
+      new Error("Repository configuration not found")
+    );
+
+    // The rejection has to reach the caller: the component's own catch is what
+    // turns it into the toast, and a hook that resolved on failure would leave
+    // the switch showing a state the backend never accepted.
+    await expect(
+      handle({
+        organizationId: "org-1",
+        configId: "cfg-1",
+        feedbackComments: "off",
+      })
+    ).rejects.toThrow("Repository configuration not found");
   });
 
   it("sets a repository's outage policy through the org-scoped mutation", () => {
