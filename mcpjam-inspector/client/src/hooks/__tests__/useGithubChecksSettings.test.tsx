@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -203,6 +204,11 @@ describe("useGithubChecksAvailability", () => {
 describe("useGithubChecksSettings writes", () => {
   function SettingsProbe() {
     const settings = useGithubChecksSettings("org-1");
+    // What the HOOK's own promise did, rendered. Every other button here can
+    // `void` its call because the assertion is on the request that went out;
+    // a rejection assertion cannot, because the thing under test is what comes
+    // back through the hook rather than what the mock did.
+    const [feedbackOutcome, setFeedbackOutcome] = useState("pending");
     return (
       <div>
         <button
@@ -253,6 +259,27 @@ describe("useGithubChecksSettings writes", () => {
         >
           set feedback comments on
         </button>
+        <button
+          type="button"
+          onClick={() =>
+            void settings
+              .setRepoFeedbackComments({
+                configId: "cfg-1",
+                feedbackComments: "off",
+              })
+              .then(() => setFeedbackOutcome("resolved"))
+              .catch((error: unknown) =>
+                setFeedbackOutcome(
+                  `rejected: ${
+                    error instanceof Error ? error.message : "unknown"
+                  }`
+                )
+              )
+          }
+        >
+          set feedback comments observed
+        </button>
+        <div data-testid="feedback-outcome">{feedbackOutcome}</div>
         <button
           type="button"
           onClick={() =>
@@ -434,16 +461,36 @@ describe("useGithubChecksSettings writes", () => {
       new Error("Repository configuration not found")
     );
 
-    // The rejection has to reach the caller: the component's own catch is what
-    // turns it into the toast, and a hook that resolved on failure would leave
-    // the switch showing a state the backend never accepted.
-    await expect(
-      handle({
-        organizationId: "org-1",
-        configId: "cfg-1",
-        feedbackComments: "off",
-      })
-    ).rejects.toThrow("Repository configuration not found");
+    // Driven THROUGH THE HOOK, and that is the whole point of the test.
+    //
+    // An earlier version of this made the mock reject and then awaited the mock
+    // — which asserts only that a rejected promise rejects, and would have
+    // passed just as happily if the hook swallowed the error. The regression it
+    // claims to guard is the hook eating a refusal, so it has to be the hook's
+    // own promise that is observed: the component's `catch` is what becomes the
+    // toast, and a hook that resolved on failure would leave the switch showing
+    // a state the backend never accepted.
+    fireEvent.click(screen.getByText("set feedback comments observed"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feedback-outcome").textContent).toBe(
+        "rejected: Repository configuration not found"
+      )
+    );
+  });
+
+  it("resolves through the hook when the write succeeds", async () => {
+    // The other side of the same observation, so the assertion above is known
+    // to distinguish the two outcomes rather than matching any settled state.
+    render(<SettingsProbe />);
+
+    fireEvent.click(screen.getByText("set feedback comments observed"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feedback-outcome").textContent).toBe(
+        "resolved"
+      )
+    );
   });
 
   it("sets a repository's outage policy through the org-scoped mutation", () => {
