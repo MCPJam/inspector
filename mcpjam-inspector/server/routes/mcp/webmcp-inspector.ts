@@ -1019,7 +1019,22 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
 
 webmcpInspector.delete("/sessions/:id", async (c) => {
   try {
-    const closed = await webMcpSessions.close(c.req.param("id"));
+    const sessionId = c.req.param("id");
+    if (HOSTED_MODE && sessionId.startsWith("hosted:")) {
+      // IDEMPOTENT, and deliberately not a re-hydration. Closing a hosted
+      // session drops this replica's handle to a browser that keeps running on
+      // the member's computer — so a `DELETE` that lands on a replica which
+      // never had that handle has nothing to do and has succeeded. Resolving
+      // first would attach to a daemon purely in order to let go of it, and on
+      // an asleep computer it would refuse to close a session at all.
+      const identity = hostedIdentity(c);
+      if (!identity.ok) return identity.response;
+      const runtime = webMcpSessions.peek(sessionId);
+      if (runtime && !runtime.belongsTo(identity.userId)) {
+        return c.json({ closed: false });
+      }
+    }
+    const closed = await webMcpSessions.close(sessionId);
     return c.json({ closed });
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not close that session.");

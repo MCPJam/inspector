@@ -221,12 +221,17 @@ export function createComputerBrowserPanelRoutes(
           409,
         );
       }
+      // NEITHER `streamUrl` NOR `streamPassword`. They used to be here, and
+      // the panel put them straight into an iframe `src` — which made a
+      // full desktop-control credential readable from the DOM, from
+      // `document.referrer`, and from anything that logs iframe sources. The
+      // browser now watches through `/computers/browser/stream`, which
+      // authenticates upstream on the server with a password that never
+      // leaves it.
       return c.json({
         ok: true,
         computerId,
         bootId: session.bootId,
-        streamUrl: session.streamUrl,
-        streamPassword: session.streamPassword,
         contextMode: session.contextMode,
         lease: await readLease(session),
       });
