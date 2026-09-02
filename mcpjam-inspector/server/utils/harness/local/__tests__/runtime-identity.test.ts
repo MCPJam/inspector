@@ -341,10 +341,11 @@ describe("verification cost", () => {
     expect((result as { message: string }).message).toMatch(/went missing/);
   });
 
-  it("re-hashes the files that execute, catching a same-shape rewrite", async () => {
+  it("re-hashes the scripts that constrain the bridge, catching a same-shape rewrite", async () => {
     // The one case a stat compare is weakest against: a rewrite that restores
-    // size, mtime and inode. There are only four such files, so they are
-    // re-hashed outright on every pre-spawn re-verify.
+    // size, mtime and inode. `launcher.mjs` is what forces the bridge listener
+    // onto loopback, so it is re-hashed on every pre-spawn re-verify whatever
+    // the snapshot says — it costs about a millisecond.
     clearRuntimeVerificationCache();
     const root = await writeBundle("rewrite", { "bridge.mjs": "x" });
     const resolved = await resolveManagedBundle({
@@ -365,6 +366,80 @@ describe("verification cost", () => {
     expect(result.ok).toBe(false);
     expect((result as { message: string }).message).toMatch(
       /rewritten in place|was modified/,
+    );
+  });
+
+  it("leaves the large binaries to the stat compare unless asked not to", async () => {
+    // The budget this trades against, measured on a real 494 MB pack: the stat
+    // walk over 5,462 files costs 350 ms, `launcher.mjs` and `bridge.mjs`
+    // together 2 ms, `bin/node` 334 ms and the vendor `claude` binary 1,263 ms
+    // — 1.9 s inside a 1.5 s session-start SLO.
+    //
+    // So by default `bin/node` is covered by size, mtime, inode and mode (and
+    // by the FULL digest, which still runs once per process before any spawn),
+    // and an operator who wants it re-read on every spawn asks for that. This
+    // test states both halves, because a default that is weaker than the strict
+    // mode should be visible rather than implied.
+    delete process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY;
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("bignode", { "bridge.mjs": "x" });
+    const nodePath = join(root, "bin", "node");
+    // Stamped to a whole millisecond before the snapshot is taken, because
+    // that is the only way a test can put an mtime back EXACTLY: `utimes`
+    // takes a Date, and the filesystem records nanoseconds. Without this the
+    // stat compare wins on sub-millisecond drift and the test proves nothing
+    // about hashing.
+    const stamp = new Date(1_600_000_000_000);
+    await utimes(nodePath, stamp, stamp);
+
+    const resolved = await resolveManagedBundle({
+      manifest: manifestFor("bignode", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "linux",
+    });
+    if (!resolved.ok) throw new Error("fixture did not resolve");
+    await expect(revalidateRuntime(resolved.runtime)).resolves.toEqual({
+      ok: true,
+    });
+
+    // Rewritten in place: same length, same inode, same mode, mtime put back.
+    const original = await readFile(nodePath);
+    await writeFile(nodePath, Buffer.alloc(original.length, 0x7a));
+    await utimes(nodePath, stamp, stamp);
+    expect((await stat(nodePath)).mtimeMs).toBe(stamp.getTime());
+
+    await expect(revalidateRuntime(resolved.runtime)).resolves.toEqual({
+      ok: true,
+    });
+
+    try {
+      process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY = "true";
+      const strict = await revalidateRuntime(resolved.runtime);
+      expect(strict.ok).toBe(false);
+      expect((strict as { message: string }).message).toMatch(
+        /rewritten in place/,
+      );
+    } finally {
+      delete process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY;
+    }
+  });
+
+  it("baselines the strict files even with the knob off, so turning it on works", async () => {
+    // The trap this avoids: recording a content digest only in strict mode
+    // would leave the first strict re-verify with nothing to compare against,
+    // and it would have to either refuse a healthy tree or silently skip the
+    // very file it was turned on for.
+    delete process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY;
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("baseline", { "bridge.mjs": "x" });
+    const verification = await verifyRuntime(
+      root,
+      await computeTreeDigest(root),
+    );
+    expect(verification.ok).toBe(true);
+    if (!verification.ok) return;
+    expect(Object.keys(verification.snapshot.executableDigests)).toEqual(
+      expect.arrayContaining(["bin/node", "launcher.mjs", "bridge.mjs"]),
     );
   });
 });

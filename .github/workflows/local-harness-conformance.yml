@@ -46,9 +46,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install
-        working-directory: mcpjam-inspector
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
       # From `mcpjam-inspector/`, not the worktree root: the root breaks the
       # `@/shared` path alias and the suite fails for a reason that has nothing
       # to do with the code under test.
@@ -81,9 +85,13 @@ jobs:
         with:
           version: 9
 
-      - name: Install
-        working-directory: mcpjam-inspector
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
 
       - name: Download the bundled Node runtime
         run: |
@@ -205,9 +213,13 @@ jobs:
         with:
           version: 9
 
-      - name: Install
-        working-directory: mcpjam-inspector
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
 
       # The Job Object launcher is what whole-tree cleanup rests on here, so a
       # conformance run without it is not testing Windows support — it is

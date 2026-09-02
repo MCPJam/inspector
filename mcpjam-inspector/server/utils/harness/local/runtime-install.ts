@@ -123,9 +123,44 @@ export function expectedPackFor(
   harnessId: SupportedLocalHarnessId,
   platform: LocalPlatform,
 ): { packVersion: string; treeDigest: string } | null {
+  const override = developmentPackExpectation();
+  if (override !== null) return override;
   const record = PACK_RECORDS[harnessId]?.[platform];
   if (record === undefined) return null;
   return { packVersion: record.packVersion, treeDigest: record.treeDigest };
+}
+
+/**
+ * A build- and development-time expectation, from
+ * `MCPJAM_LOCAL_HARNESS_EXPECTED_PACK=<version>:sha256:<hex>`.
+ *
+ * The pack build has to be able to prove the INSTALLER accepts what it just
+ * produced, and at that moment the generated digest table cannot possibly name
+ * the digest — the build is what produces it. Without this the verification
+ * step could only ever run against a pack from a previous release, which is not
+ * the artifact about to be published.
+ *
+ * Honoured ONLY when `MCPJAM_LOCAL_HARNESS_PACK_SOURCE` is also set. That is
+ * what keeps it from being a way to widen what a shipped Inspector will
+ * install: on its own it names a digest but no source, so the installer still
+ * only fetches the release asset and still only accepts the digest this build
+ * carries. Both together mean somebody is deliberately installing a local pack
+ * they built, which is the case this exists for.
+ */
+function developmentPackExpectation(): {
+  packVersion: string;
+  treeDigest: string;
+} | null {
+  const source = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
+  const expected = process.env.MCPJAM_LOCAL_HARNESS_EXPECTED_PACK;
+  if (!source || !expected) return null;
+  const separator = expected.indexOf(":");
+  if (separator <= 0) return null;
+  const packVersion = expected.slice(0, separator).trim();
+  const treeDigest = expected.slice(separator + 1).trim();
+  if (packVersion.length === 0) return null;
+  if (!/^sha256:[0-9a-f]{64}$/.test(treeDigest)) return null;
+  return { packVersion, treeDigest };
 }
 
 /**

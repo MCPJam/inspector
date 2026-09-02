@@ -134,6 +134,40 @@ is a capability nothing offers.
 Three more things must line up before a turn runs: an installed and
 digest-verified pack, a workspace grant, and an unexpired consent capability.
 
+## The other environment knobs
+
+None of these turn the feature on; the kill switch above is the only one that
+does. They are here so an operator reading a machine's environment knows what
+each one changes.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `MCPJAM_RUNTIME_ROOT` | app data | Where packs install. Set by Electron's main process; on npx it falls back to `~/.mcpjam/harness-local/runtime`. |
+| `MCPJAM_LOCAL_HARNESS_PACK_SOURCE` | unset | Install from a local archive instead of the release asset. Development only — a pack from here has no signed manifest, and the installer says so. |
+| `MCPJAM_LOCAL_HARNESS_EXPECTED_PACK` | unset | `<version>:sha256:<hex>`, the digest to accept. **Only honoured when `PACK_SOURCE` is also set**, so it cannot widen what a shipped Inspector will install. Exists because the pack build has to verify the pack it just produced, which by definition is not in the generated table yet. |
+| `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY` | `false` | Re-hash `bin/node` and the vendor binary on **every** pre-spawn re-verify, not just compare their size, mtime, inode and mode. See below. |
+
+### What the pre-spawn re-verify costs
+
+The full tree digest runs once per process per pack and is the authority. Every
+spawn after that compares the stat snapshot it left behind, and re-hashes the
+files that execute. Measured against a real 494 MB pack:
+
+| | |
+|---|---|
+| stat walk, 5,462 files | 350 ms |
+| `launcher.mjs` + `bridge.mjs` | 2 ms |
+| `bin/node` | 334 ms |
+| the vendor `claude` binary | 1,263 ms |
+| **all of it** | **1,949 ms**, against a 1.5 s session-start SLO |
+
+So the two small scripts are re-hashed every time — they are what forces the
+bridge's listener onto loopback, and they cost nothing — and the two large
+binaries are left to the stat compare unless `STRICT_REVERIFY` is on. The gap
+that buys the 1.6 s: an in-place rewrite of one of those binaries that also
+restored its size, mtime, inode and mode, performed after this process already
+digested the tree. Turn the knob on where that matters more than the budget.
+
 ## Brakes, from fastest to slowest
 
 1. **`POST stop-all`** — ends every live session in this process now: gateway

@@ -1,11 +1,24 @@
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // The pack build script, imported for its digest implementation. It only runs
 // its `main()` when it is the entry point, so importing it is side-effect free.
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
-import { computeTreeDigest as buildScriptDigest } from "../../../../../scripts/build-local-harness-pack.mjs";
+import {
+  computeTreeDigest as buildScriptDigest,
+  flattenHardLinks,
+} from "../../../../../scripts/build-local-harness-pack.mjs";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import {
   EXPECTED_PACK_VERSION,
@@ -60,6 +73,54 @@ describe("the pack build and the server agree on what a digest is", () => {
     const after = buildScriptDigest(root).digest;
     expect(after).not.toBe(before);
     expect(after).toBe(await computeTreeDigest(root));
+  });
+});
+
+describe("a staged pack has no hardlinks left in it", () => {
+  it("gives every shared inode its own file, without changing the digest", async () => {
+    // The bug this exists to keep out: pnpm hardlinks out of its store, GNU
+    // tar records the later paths as hardlink ENTRIES, and the installer's
+    // extractor accepts only regular files and directories — so those files
+    // never landed and every install failed its digest check. Found by running
+    // the real build and the real installer against a real 494 MB pack, not by
+    // reading the code, which is why it is pinned here.
+    const root = join(base, "hardlinks");
+    await mkdir(join(root, "node_modules", "pkg"), { recursive: true });
+    await writeFile(join(root, "shared.js"), "module.exports = 1;\n");
+    await chmod(join(root, "shared.js"), 0o755);
+    await link(
+      join(root, "shared.js"),
+      join(root, "node_modules", "pkg", "index.js"),
+    );
+    expect((await stat(join(root, "shared.js"))).nlink).toBe(2);
+
+    const before = buildScriptDigest(root).digest;
+    expect(flattenHardLinks(root)).toBeGreaterThan(0);
+
+    // Two files now, not two names for one file…
+    const a = await stat(join(root, "shared.js"));
+    const b = await stat(join(root, "node_modules", "pkg", "index.js"));
+    expect(a.nlink).toBe(1);
+    expect(b.nlink).toBe(1);
+    expect(a.ino).not.toBe(b.ino);
+
+    // …with the same bytes and the same mode, so the digest the manifest
+    // records is the digest of the tree that was staged.
+    expect(await readFile(join(root, "shared.js"), "utf8")).toBe(
+      "module.exports = 1;\n",
+    );
+    expect(a.mode & 0o777).toBe(0o755);
+    expect(buildScriptDigest(root).digest).toBe(before);
+    expect(await computeTreeDigest(root)).toBe(before);
+  });
+
+  it("leaves a tree that never shared an inode alone", async () => {
+    const root = join(base, "no-hardlinks");
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, "a.js"), "1\n");
+    await writeFile(join(root, "b.js"), "1\n");
+    // Same content, separate inodes: dedup is tar's idea, not the tree's.
+    expect(flattenHardLinks(root)).toBe(0);
   });
 });
 

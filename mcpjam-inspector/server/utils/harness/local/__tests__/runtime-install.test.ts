@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -28,6 +29,29 @@ let base: string;
 let installRoot: string;
 let packSource: string;
 let realDigest: string;
+/**
+ * The generated digest table, held as one spy for the whole file.
+ *
+ * Kept at module scope rather than re-spied per test: a second `vi.spyOn` on a
+ * getter that is already mocked is not a defined way to stack mocks, and a test
+ * that needs a different table wants to swap the VALUE anyway.
+ */
+let packRecords: ReturnType<typeof spyOnPackRecords>;
+
+function spyOnPackRecords() {
+  return vi.spyOn(packDigests, "PACK_RECORDS", "get");
+}
+
+function tableFor(treeDigest: string): typeof packDigests.PACK_RECORDS {
+  return {
+    "claude-code": {
+      darwin: { packVersion: PACK_VERSION, treeDigest },
+      linux: { packVersion: PACK_VERSION, treeDigest },
+      win32: { packVersion: PACK_VERSION, treeDigest },
+    },
+    codex: {},
+  };
+}
 
 const PACK_VERSION = "test-pack-1";
 const PLATFORM_KEY = packPlatformKey();
@@ -38,7 +62,11 @@ const PLATFORM_KEY = packPlatformKey();
  */
 async function buildFixturePack(
   dir: string,
-  opts: { extraFile?: string; withSymlink?: boolean } = {},
+  opts: {
+    extraFile?: string;
+    withSymlink?: boolean;
+    withHardLink?: boolean;
+  } = {},
 ): Promise<{ archive: string; digest: string }> {
   const staging = await mkdtemp(join(base, "stage-"));
   const packRoot = join(staging, "claude-code");
@@ -50,6 +78,12 @@ async function buildFixturePack(
   await chmod(join(packRoot, "bin", "node"), 0o755);
   if (opts.extraFile !== undefined) {
     await writeFile(join(packRoot, "extra.js"), opts.extraFile);
+  }
+
+  if (opts.withHardLink === true) {
+    // What pnpm leaves behind: two paths, one inode. The digest walk sees two
+    // regular files; GNU tar sees the second as a link to the first.
+    await link(join(packRoot, "package.json"), join(packRoot, "linked.json"));
   }
 
   const digest = await computeTreeDigest(packRoot);
@@ -72,6 +106,9 @@ async function buildFixturePack(
       "--owner=0",
       "--group=0",
       "--numeric-owner",
+      // Deliberately no `--hard-dereference`: the fixture archives the way GNU
+      // tar does by default, which is the behaviour the build script has to
+      // defend against.
       "-czf",
       archive,
       "-C",
@@ -96,14 +133,8 @@ beforeAll(async () => {
 
   // The generated digest table is empty in the repo until the pack build runs,
   // so the fixture stands in for what that build would have written.
-  vi.spyOn(packDigests, "PACK_RECORDS", "get").mockReturnValue({
-    "claude-code": {
-      darwin: { packVersion: PACK_VERSION, treeDigest: realDigest },
-      linux: { packVersion: PACK_VERSION, treeDigest: realDigest },
-      win32: { packVersion: PACK_VERSION, treeDigest: realDigest },
-    },
-    codex: {},
-  });
+  packRecords = spyOnPackRecords();
+  packRecords.mockReturnValue(tableFor(realDigest));
 });
 
 afterEach(async () => {
@@ -232,6 +263,37 @@ describe("installing a pack", () => {
       const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
       await expect(readFile(join(packRoot, "sneaky"))).rejects.toThrow();
     } finally {
+      process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
+    }
+  });
+
+  it("refuses an archive that deduplicated files into hardlink entries", async () => {
+    // The bug that made every real install fail, pinned as a test.
+    //
+    // pnpm hardlinks out of its store, so a staged pack has hundreds of paths
+    // sharing an inode; tar records the later ones as hardlink entries; the
+    // extractor accepts only regular files and directories, so they never
+    // land. The tree that results is missing files and cannot hash to the
+    // digest the manifest names — which is what this asserts, because a
+    // refusal is the correct behaviour for an archive shaped like that.
+    //
+    // The fix is upstream, in `flattenHardLinks` (see its own test): the
+    // ARCHIVE must not be shaped like this in the first place.
+    const linkDir = join(base, "hardlinked");
+    const linked = await buildFixturePack(linkDir, { withHardLink: true });
+    const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
+    process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = linked.archive;
+    // The fixture's own digest is what the table would carry for it, so the
+    // mismatch this asserts is caused by extraction and nothing else.
+    packRecords.mockReturnValue(tableFor(linked.digest));
+    try {
+      const result = await installRuntimePack({ harnessId: "claude-code" });
+      expect(result.state).toBe("corrupt");
+      expect((result as { message: string }).message).toMatch(
+        /does not match the digest this Inspector was built with/,
+      );
+    } finally {
+      packRecords.mockReturnValue(tableFor(realDigest));
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
     }
   });

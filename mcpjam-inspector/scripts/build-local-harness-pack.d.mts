@@ -11,3 +11,9 @@ export declare function computeTreeDigest(root: string): {
   files: number;
   bytes: number;
 };
+
+/**
+ * Give every file under `root` its own inode, returning how many paths had to
+ * be copied. See the script for why the archive depends on it.
+ */
+export declare function flattenHardLinks(root: string): number;

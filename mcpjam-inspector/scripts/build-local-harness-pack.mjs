@@ -48,12 +48,14 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -77,6 +79,16 @@ const PLATFORMS = {
 
 /** Recipe files copied verbatim from the adapter's bridge directory. */
 const RECIPE_FILES = ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"];
+
+/** The pinned adapter's bridge recipe directory, wherever it installed. */
+function defaultAdapterBridgeDir() {
+  const required = createRequire(import.meta.url);
+  return join(
+    dirname(required.resolve("@ai-sdk/harness-claude-code/package.json")),
+    "dist",
+    "bridge",
+  );
+}
 
 function parseArgs(argv) {
   const args = {};
@@ -172,6 +184,47 @@ function findSymlinks(root, found = []) {
     if (entry.isDirectory()) findSymlinks(full, found);
   }
   return found;
+}
+
+/**
+ * Give every file in the tree its own inode.
+ *
+ * pnpm populates `node_modules` by hardlinking out of its content-addressable
+ * store, so a staged pack contains hundreds of paths sharing an inode. The tree
+ * digest does not care — a hardlink is a regular file, and it hashes every path
+ * it walks — but tar does: GNU tar records the second and later paths as
+ * hardlink ENTRIES, and the installer's extractor accepts only regular files
+ * and directories. Those files never landed, and the extracted tree hashed to
+ * something the manifest had never seen. Every install failed verification.
+ *
+ * Fixed here rather than by loosening the extractor, which would mean admitting
+ * an entry that is a reference to another entry, and rather than only by
+ * `--hard-dereference`, which is a GNU-tar flag and this build also runs where
+ * `tar` is bsdtar. Making it a property of the TREE means the archive is
+ * one-entry-per-file whichever tar writes it.
+ *
+ * Costs ~113 KB compressed on a real 494 MB pack: almost all of the store's
+ * sharing is between packs, not inside one.
+ */
+export function flattenHardLinks(root, flattened = { count: 0 }) {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) {
+      flattenHardLinks(full, flattened);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const info = statSync(full);
+    if (info.nlink <= 1) continue;
+    // Copy then rename, so the path is never absent and never a partial file:
+    // writing through the link would edit every other path sharing the inode.
+    const temporary = `${full}.mcpjam-unlink`;
+    copyFileSync(full, temporary);
+    chmodSync(temporary, info.mode & 0o7777);
+    renameSync(temporary, full);
+    flattened.count += 1;
+  }
+  return flattened.count;
 }
 
 /**
@@ -289,6 +342,30 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
   return { version, sha256: sha256File(target) };
 }
 
+/**
+ * The tar to archive with, and whether it is GNU.
+ *
+ * This build runs on all five platform runners, and `tar` is bsdtar on the
+ * macOS and Windows ones — where `--sort` and `--hard-dereference` do not
+ * exist, so a single GNU invocation would fail three of the five legs outright.
+ * `gtar` is checked second because that is what a GNU tar is called on a host
+ * whose `tar` is not one.
+ */
+function resolveTar() {
+  for (const bin of ["tar", "gtar"]) {
+    try {
+      const version = execFileSync(bin, ["--version"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      if (/GNU tar/.test(version)) return { bin, gnu: true };
+    } catch {
+      // Not installed, or too old to answer `--version`; try the next name.
+    }
+  }
+  return { bin: "tar", gnu: false };
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const platformKey = String(args.platform ?? "");
@@ -298,8 +375,13 @@ function main() {
         `${platformKey || "(none)"}`,
     );
   }
+  // Resolved through the package manager, not from the source layout: this is
+  // an npm workspace, so the adapter hoists to the REPO root rather than
+  // installing under `mcpjam-inspector/node_modules`. A path relative to this
+  // script is right on exactly one of those layouts and silently wrong on the
+  // other — which is what `check:bundled-runtime-paths` exists to stop.
   const adapterBridge = resolve(
-    String(args["adapter-bridge"] ?? join(inspectorRoot, "node_modules/@ai-sdk/harness-claude-code/dist/bridge")),
+    String(args["adapter-bridge"] ?? defaultAdapterBridgeDir()),
   );
   const outRoot = resolve(String(args.out ?? join(inspectorRoot, ".pack-out")));
   const nodeTarball = args["node-tarball"]
@@ -310,9 +392,10 @@ function main() {
     fail(`no adapter bridge directory at ${adapterBridge}`);
   }
 
+  const required = createRequire(import.meta.url);
   const adapterVersion = JSON.parse(
     readFileSync(
-      join(inspectorRoot, "node_modules/@ai-sdk/harness-claude-code/package.json"),
+      required.resolve("@ai-sdk/harness-claude-code/package.json"),
       "utf8",
     ),
   ).version;
@@ -407,6 +490,13 @@ function main() {
     fail(`pack still contains ${symlinks.length} symlink(s): ${symlinks.slice(0, 5).join(", ")}`);
   }
 
+  // 7. And no hardlinks either, for the same reason one step later: the
+  //    extractor writes regular files, so the archive has to contain them.
+  const flattened = flattenHardLinks(packRoot);
+  if (flattened > 0) {
+    console.log(`[pack] gave ${flattened} hardlinked file(s) their own inode`);
+  }
+
   const { digest, files, bytes } = computeTreeDigest(packRoot);
 
   const vendorPackages = {};
@@ -460,23 +550,37 @@ function main() {
   if (args["skip-archive"] !== true) {
     console.log("[pack] archiving…");
     const archivePath = join(outRoot, `${stem}.tar.gz`);
+    const tar = resolveTar();
     // Reproducible: sorted entries, fixed mtime, no owner names, no extended
     // attributes. Two builds of the same inputs give the same bytes, which is
     // what makes a published digest checkable by anybody.
+    //
+    // GNU only. What VERIFICATION rests on is the tree digest, which is taken
+    // from the extracted tree and covers path, type, exec bit, size and
+    // content — not mtime, not owner, not entry order. So a bsdtar host still
+    // produces a pack that installs and verifies; it just produces a pack
+    // whose BYTES another host would not reproduce, and says so.
+    const reproducible = tar.gnu
+      ? [
+          "--sort=name",
+          "--mtime=UTC 2020-01-01",
+          "--owner=0",
+          "--group=0",
+          "--numeric-owner",
+          // Belt and braces with `flattenHardLinks`: the tree has no shared
+          // inodes left to record, and this says so to the one tar that would.
+          "--hard-dereference",
+        ]
+      : [];
+    if (!tar.gnu) {
+      console.warn(
+        "[pack] no GNU tar on this host: the archive is not byte-reproducible " +
+          "(the tree digest and archive hash are unaffected)",
+      );
+    }
     execFileSync(
-      "tar",
-      [
-        "--sort=name",
-        "--mtime=UTC 2020-01-01",
-        "--owner=0",
-        "--group=0",
-        "--numeric-owner",
-        "-czf",
-        archivePath,
-        "-C",
-        outRoot,
-        "claude-code",
-      ],
+      tar.bin,
+      [...reproducible, "-czf", archivePath, "-C", outRoot, "claude-code"],
       { stdio: "inherit" },
     );
     const archiveSha = sha256File(archivePath);

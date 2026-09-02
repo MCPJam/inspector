@@ -202,7 +202,7 @@ async function digestTreeWithSnapshot(
         ino: Number(info.ino),
         mode: info.mode,
       });
-      if (isAlwaysRehashed(rel)) {
+      if (isBaselineHashed(rel)) {
         executableDigests[rel] = contentDigest.toString("hex");
       }
     }
@@ -218,31 +218,72 @@ async function digestTreeWithSnapshot(
 }
 
 /**
- * Files that are re-hashed on every pre-spawn re-verify, whatever the snapshot
- * says.
+ * Files whose content digest is baselined during the full walk, split by what
+ * the pre-spawn re-verify can afford to read again.
  *
- * These are the bytes that actually execute: the Node binary that interprets
- * everything, the loopback launcher that constrains the bridge's listener, and
- * the bridge itself. The vendor CLI binary is matched by prefix because its
- * name is platform-suffixed inside the vendor's own platform package. Anything
- * else in the tree — 5,000 files of JavaScript the bridge may or may not
- * import — is covered by the snapshot compare, which is what makes the
- * re-verify a stat walk instead of a 515 MB read.
+ * Everything here is a file that actually executes; the other ~5,400 files in
+ * the tree are covered by the stat compare, which is what makes the re-verify a
+ * stat walk instead of a 515 MB read. The split inside that set is a budget
+ * question, measured against a real 494 MB pack on this machine:
+ *
+ *   stat walk over 5,462 files   350 ms
+ *   launcher.mjs + bridge.mjs      2 ms
+ *   bin/node                     334 ms
+ *   the vendor `claude` binary  1263 ms
+ *                               ───────
+ *                               1949 ms  against a 1.5 s session-start SLO
+ *
+ * So the two small scripts are re-hashed on every spawn — they are the bytes
+ * this repo wrote to constrain the bridge, they cost nothing, and an in-place
+ * rewrite of `launcher.mjs` is precisely how the loopback guarantee would be
+ * removed. The two large binaries are left to the stat compare by default and
+ * re-hashed when `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY=true`, which trades
+ * ~1.6 s per session start for defence against an in-place rewrite that also
+ * restored size, mtime, inode and mode.
+ *
+ * The vendor CLI is matched by pattern because its name is platform-suffixed
+ * inside the vendor's own platform package.
  */
 const ALWAYS_REHASHED_RELATIVE_PATHS: readonly string[] = [
-  "bin/node",
   "launcher.mjs",
   "bridge.mjs",
 ];
-const ALWAYS_REHASHED_PATH_PATTERNS: readonly RegExp[] = [
+const STRICT_REHASHED_PATH_PATTERNS: readonly RegExp[] = [
+  /^bin\/node(\.exe)?$/,
   /(^|\/)claude-agent-sdk-[a-z0-9-]+\/(claude|claude\.exe)$/,
   /(^|\/)claude-code-[a-z0-9-]+\/(claude|claude\.exe)$/,
 ];
 
-function isAlwaysRehashed(relativePath: string): boolean {
+/**
+ * Read on every call rather than once at module load, so a test — and an
+ * operator debugging a machine — can turn it on without a restart. Explicit
+ * `"true"`: an unset or misspelled value is off, which is the cheap mode.
+ */
+function strictReverifyEnabled(): boolean {
+  return process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY === "true";
+}
+
+/**
+ * Whether the full walk should record a content digest for this path.
+ *
+ * The union of both sets, ALWAYS — never conditioned on the knob. A baseline
+ * captured only in strict mode would mean turning the knob on later had nothing
+ * to compare against, and the first strict re-verify would have to either
+ * refuse a healthy tree or silently skip the file it was turned on for.
+ */
+function isBaselineHashed(relativePath: string): boolean {
   return (
     ALWAYS_REHASHED_RELATIVE_PATHS.includes(relativePath) ||
-    ALWAYS_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
+    STRICT_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
+  );
+}
+
+/** Whether a pre-spawn re-verify should re-read this path's bytes. */
+function isRehashedOnRevalidate(relativePath: string): boolean {
+  if (ALWAYS_REHASHED_RELATIVE_PATHS.includes(relativePath)) return true;
+  return (
+    strictReverifyEnabled() &&
+    STRICT_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
   );
 }
 
@@ -939,9 +980,11 @@ export async function resolveSystemInstall(
  *  - every recorded file must still be there with the same size, mtime, inode
  *    and mode, and no extra file may have appeared (checked by counting the
  *    walk, which is why the walk runs even though the snapshot has the list);
- *  - the files that execute are re-hashed outright, because an in-place
- *    rewrite that restored size and mtime is exactly the attack a stat compare
- *    is weakest against, and there are only four of them.
+ *  - the scripts that constrain the bridge are re-hashed outright, because an
+ *    in-place rewrite that restored size, mtime, inode and mode is exactly the
+ *    attack a stat compare is weakest against, and they cost 2 ms. The two
+ *    large binaries join them under `MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY`;
+ *    see the split above for what that costs.
  */
 async function detectSnapshotDrift(
   snapshot: RuntimeTreeSnapshot,
@@ -973,7 +1016,7 @@ async function detectSnapshotDrift(
       ) {
         return `${rel} was modified`;
       }
-      if (isAlwaysRehashed(rel)) {
+      if (isRehashedOnRevalidate(rel)) {
         const content = await readFile(full);
         const fileDigest = createHash("sha256").update(content).digest("hex");
         if (fileDigest !== snapshot.executableDigests[rel]) {

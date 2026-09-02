@@ -79,10 +79,14 @@ jobs:
 
       # Only the adapter package is needed: the pack build reads its bridge
       # recipe and installs that recipe's own frozen graph inside the pack.
-      - name: Install the pinned adapter
-        working-directory: mcpjam-inspector
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
         shell: bash
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
 
       # The pack ships an official nodejs.org build, not the runner's Node:
       # the runner's is not signed the way a binary we ask users to execute
@@ -163,6 +167,7 @@ jobs:
         run: >
           npx tsx scripts/verify-local-harness-pack.ts
           "${{ steps.digest.outputs.digest }}"
+          "${{ inputs.pack_version }}"
 
       - name: Upload the pack
         uses: actions/upload-artifact@v4

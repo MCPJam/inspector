@@ -22,6 +22,8 @@ import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
 
+import { createRequire } from "node:module";
+
 const execFileP = promisify(execFile);
 const ROOT = process.env.CONFORMANCE_ROOT!;
 /** The pack is per platform, and so is the digest that admits it. */
@@ -76,7 +78,18 @@ async function setup() {
   const machineId = await getLocalMachineId();
   const target = { kind: "local-native" as const, machineId, workspaceGrantId: ws.grant.workspaceGrantId, harnessId: "claude-code" as const, runtimeId: rt.runtime.runtimeId, permissionProfile: "workspace-edits" as const, policyVersion: LOCAL_HARNESS_POLICY_VERSION };
   const grant = await grantLocalHarnessConsent({ userId: "conformance-user", machineId, projectId: "conformance-project", workspaceGrantId: target.workspaceGrantId, harnessId: "claude-code", targetKind: "local-native", runtimeId: target.runtimeId, permissionProfile: target.permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION });
-  const adapterVersion = JSON.parse(await readFile(new URL("../../../../../../node_modules/@ai-sdk/harness-claude-code/package.json", import.meta.url), "utf8")).version;
+  const adapterVersion = JSON.parse(
+    await readFile(
+      // Resolved through the package manager, never as a path relative to
+      // this file: the adapter hoists to the workspace root, and a
+      // source-layout-relative URL breaks the moment it does (which is
+      // what `check:bundled-runtime-paths` exists to catch).
+      createRequire(import.meta.url).resolve(
+        "@ai-sdk/harness-claude-code/package.json",
+      ),
+      "utf8",
+    ),
+  ).version;
   const availability = await resolveLocalHarnessAvailability({ target, actor: { isGuest: false, isScenarioSession: false, isJourneySession: false }, userId: "conformance-user", projectId: "conformance-project", grantToken: grant.token, runtimeRoot: RUNTIME_ROOT, installedAdapterVersion: adapterVersion, manifests: { "claude-code": manifest }, killSwitchEnabled: true, hosted: false });
   if (!availability.available) throw new Error(`${availability.status}: ${availability.message}`);
   const plan = availability.plan;
