@@ -309,6 +309,7 @@ export function SwarmRunDetail({
           <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
             <h1
               className="truncate text-xl font-bold tracking-tight text-foreground"
+              title={title}
               data-testid="swarm-run-detail-title"
             >
               {title}

@@ -512,6 +512,30 @@ describe("swarmWaveTitle", () => {
     ]);
     expect(swarmWaveTitle(wave!)).toBe("Checkout regression");
   });
+
+  it("keeps the id when the newest member is unnamed but an older one is not", () => {
+    // The case that separates "newest wins" from "first named wins": an ad-hoc
+    // wave that reused ONE journey would otherwise be titled after the swarm
+    // that journey was authored in.
+    const [newest, second] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([
+      withGroup(newest!, "wave-a"),
+      withGroup({ ...second!, swarmName: "Last quarter's swarm" }, "wave-a"),
+    ]);
+    expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+  });
+
+  it("treats an empty or whitespace-only name as no name at all", () => {
+    // Legacy rows, and any writer that isn't the create flow — which trims.
+    // Rendering these verbatim leaves the heading blank.
+    const [newest] = overview.runs;
+    for (const swarmName of ["", "   "]) {
+      const [wave] = groupRunsIntoSwarmWaves([
+        withGroup({ ...newest!, swarmName }, "wave-a"),
+      ]);
+      expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+    }
+  });
 });
 
 describe("Overview — swarm runs (waves), not bare journeys", () => {
@@ -701,9 +725,11 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
   it("renders title and detail tabs for a known wave", async () => {
     renderTab("run-2b");
     expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
-    expect(screen.getByTestId("swarm-run-detail-title").textContent).toBe(
-      "Swarm run-2b"
-    );
+    const heading = screen.getByTestId("swarm-run-detail-title");
+    expect(heading.textContent).toBe("Swarm run-2b");
+    // The heading truncates, and authored names run to SWARM_NAME_MAX — a
+    // clipped one is unreadable without the tooltip.
+    expect(heading.getAttribute("title")).toBe("Swarm run-2b");
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
