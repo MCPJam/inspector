@@ -46,13 +46,12 @@ export interface NodePtyModule {
       rows?: number;
       cwd?: string;
       env?: NodeJS.ProcessEnv;
-    }
+    },
   ): NodePtyProcess;
 }
 
 export type LocalPtyModuleLoad =
-  | { ok: true; pty: NodePtyModule }
-  | { ok: false; reason: string };
+  { ok: true; pty: NodePtyModule } | { ok: false; reason: string };
 
 let loadPromise: Promise<LocalPtyModuleLoad> | null = null;
 
@@ -121,15 +120,17 @@ export function loadLocalPtyModule(): Promise<LocalPtyModuleLoad> {
         const reason =
           error instanceof Error ? error.message : "node-pty is not installed";
         logger.debug("[local-pty] node-pty unavailable", { reason });
-        return { ok: false, reason: "node-pty is not available on this server" };
+        return {
+          ok: false,
+          reason: "node-pty is not available on this server",
+        };
       });
   }
   return loadPromise;
 }
 
 export type LocalTerminalAvailability =
-  | { available: true }
-  | { available: false; reason: string };
+  { available: true } | { available: false; reason: string };
 
 let cachedAvailability: LocalTerminalAvailability | undefined;
 
@@ -162,6 +163,9 @@ export function resetLocalPtyCachesForTests(): void {
 export function setLocalPtyModuleForTests(module: NodePtyModule | null): void {
   loadPromise = module
     ? Promise.resolve({ ok: true, pty: module })
-    : Promise.resolve({ ok: false, reason: "node-pty is not available on this server" });
+    : Promise.resolve({
+        ok: false,
+        reason: "node-pty is not available on this server",
+      });
   cachedAvailability = undefined;
 }

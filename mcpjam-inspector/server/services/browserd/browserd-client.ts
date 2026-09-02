@@ -21,12 +21,21 @@ export type BrowserdCommandResponse =
   | { status: "busy"; bootId: string }
   | { status: "expired"; bootId: string }
   | { status: "at_capacity"; bootId: string }
-  | { status: "stale_observation"; result?: BrowserCommandResult; bootId: string }
+  | {
+      status: "stale_observation";
+      result?: BrowserCommandResult;
+      bootId: string;
+    }
   | { status: "unknown_boot"; bootId: string }
   /** A person is holding (or has parked) the browser — see `daemon/lease.ts`.
    *  Not an error: the correct response is to wait and tell the user, which is
    *  why it is a normal outcome variant rather than a thrown client error. */
-  | { status: "lease_blocked"; lease: "held" | "parked"; holder?: string; bootId: string };
+  | {
+      status: "lease_blocked";
+      lease: "held" | "parked";
+      holder?: string;
+      bootId: string;
+    };
 
 export interface BrowserdHealth {
   ok: boolean;
@@ -180,7 +189,11 @@ export class BrowserdClient {
     const bootId = typeof body.bootId === "string" ? body.bootId : "";
     const raw = body.lease;
     if (!raw || typeof raw !== "object") return { state: "free", bootId };
-    const lease = raw as { state?: unknown; holder?: unknown; expiresAt?: unknown };
+    const lease = raw as {
+      state?: unknown;
+      holder?: unknown;
+      expiresAt?: unknown;
+    };
     const holder = typeof lease.holder === "string" ? lease.holder : undefined;
     if (lease.state === "held" && holder) {
       return {
@@ -197,10 +210,21 @@ export class BrowserdClient {
     return { state: "free", bootId };
   }
 
-  /** Send a command and interpret the daemon's reply. */
+  /**
+   * Send a command and interpret the daemon's reply.
+   *
+   * `options.timeoutMs` overrides the client-wide deadline for THIS command.
+   * Not every command is the same size: an observation is a round trip, while
+   * `webmcp_invoke` is synchronous in the daemon and does not answer until the
+   * page tool has settled — up to the 60s the daemon allows it. Under the
+   * client's flat 30s that call was aborted at the transport while the tool
+   * was still running perfectly well, and the caller was told "the browser
+   * rejected the command".
+   */
   async sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
+    options?: { timeoutMs?: number },
   ): Promise<BrowserdCommandResponse> {
     const res = await this.request(
       "/v1/commands",
@@ -210,6 +234,7 @@ export class BrowserdClient {
         body: JSON.stringify({ command, expectedBootId }),
       },
       true,
+      options?.timeoutMs,
     );
     const body = (await this.json(res)) as Record<string, unknown>;
     const bootId = typeof body.bootId === "string" ? body.bootId : "";
@@ -262,13 +287,14 @@ export class BrowserdClient {
     path: string,
     init: RequestInit,
     authenticated: boolean,
+    timeoutMs?: number,
   ): Promise<Response> {
     const headers = new Headers(init.headers);
     if (authenticated) headers.set("authorization", `Bearer ${this.bearer}`);
     return this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs ?? this.timeoutMs),
     });
   }
 
@@ -279,7 +305,9 @@ export class BrowserdClient {
       // this protocol — but neither is it a reason to throw a TypeError from a
       // field read three lines later (the session reuse path reads `bootId`
       // straight off this). Normalize every non-record body to "no fields".
-      return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      return parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed)
         ? (parsed as Record<string, unknown>)
         : {};
     } catch {

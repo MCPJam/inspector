@@ -31,7 +31,7 @@ const DEFAULT_MAX_PATH_LEN = 1024;
  */
 export function confineToHome(
   path: string | undefined,
-  opts?: { maxLen?: number }
+  opts?: { maxLen?: number },
 ): string | null {
   const maxLen = opts?.maxLen ?? DEFAULT_MAX_PATH_LEN;
   if (!path || path.length > maxLen) return null;
@@ -63,7 +63,7 @@ export function confineToHome(
  * older client, the API, or a hand-edited host config).
  */
 export function resolveWorkingDirectory(
-  raw: string | undefined
+  raw: string | undefined,
 ): { workdir: string | undefined } | { error: string } {
   if (raw === undefined || raw.trim() === "") {
     return { workdir: undefined };

@@ -56,7 +56,19 @@ export interface ComputerSandboxInfo {
 
 export type ControlPlaneResult<T> =
   | { ok: true; value: T }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /**
+       * The control plane's own machine code, when it sent one
+       * (`billing_limit_reached`, `at_capacity`, `FEATURE_UNAVAILABLE`, …).
+       * Absent for statuses that carry no code and for failures minted on this
+       * side. Callers that need to tell two refusals with the same status
+       * apart branch on this rather than on the message prose.
+       */
+      code?: string;
+    };
 
 export function getConvexHttpUrl(): string | null {
   return process.env.CONVEX_HTTP_URL?.trim() || null;
@@ -105,9 +117,9 @@ function getServiceToken(): string | null {
 export function isComputersDataPlaneConfigured(): boolean {
   return Boolean(
     getConvexHttpUrl() &&
-      getServiceToken() &&
-      process.env.E2B_API_KEY &&
-      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim()
+    getServiceToken() &&
+    process.env.E2B_API_KEY &&
+    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim(),
   );
 }
 
@@ -115,7 +127,7 @@ async function postJson<T>(
   path: string,
   headers: Record<string, string>,
   body: Record<string, unknown>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<ControlPlaneResult<T>> {
   const base = getConvexHttpUrl();
   if (!base) {
@@ -140,11 +152,21 @@ async function postJson<T>(
     // fall through with null payload
   }
   if (!response.ok) {
+    const body =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : undefined;
     const error =
-      payload && typeof payload === "object" && "error" in payload
-        ? String((payload as { error: unknown }).error)
+      body && "error" in body
+        ? String(body.error)
         : `request failed (${response.status})`;
-    return { ok: false, status: response.status, error };
+    const code = typeof body?.code === "string" ? body.code : undefined;
+    return {
+      ok: false,
+      status: response.status,
+      error,
+      ...(code ? { code } : {}),
+    };
   }
   return { ok: true, value: payload as T };
 }
@@ -190,7 +212,7 @@ export async function provisionEvalSandbox(args: {
       runId: args.runId,
       ...(args.iterationId ? { iterationId: args.iterationId } : {}),
     },
-    args.signal
+    args.signal,
   );
 }
 
@@ -225,7 +247,7 @@ export async function resolveEvalRunAttachments(args: {
     "/evals/sandbox/attachments",
     bearerHeader(args.bearer),
     { runId: args.runId },
-    args.signal
+    args.signal,
   );
 }
 
@@ -269,7 +291,7 @@ export async function provisionJourneySandbox(args: {
       targetId: args.targetId,
       sessionIdx: args.sessionIdx,
     },
-    args.signal
+    args.signal,
   );
 }
 
@@ -287,7 +309,7 @@ const SCENARIO_SANDBOX_NOTICES: ReadonlySet<string> = new Set([
 ]);
 
 export function isScenarioSandboxNotice(
-  value: unknown
+  value: unknown,
 ): value is ScenarioSandboxNotice {
   return typeof value === "string" && SCENARIO_SANDBOX_NOTICES.has(value);
 }
@@ -362,7 +384,7 @@ export async function provisionScenarioSandbox(args: {
       // notice here, before any SSE writer exists to carry it.
       noticeAckVersion: SCENARIO_SANDBOX_NOTICE_ACK_VERSION,
     },
-    args.signal
+    args.signal,
   );
 }
 
@@ -390,7 +412,7 @@ export async function ackScenarioSandboxNotices(args: {
     "/scenarios/sandbox/notices/ack",
     bearerHeader(args.bearer),
     { sandboxRowId: args.sandboxRowId, notices: args.notices },
-    args.signal
+    args.signal,
   );
   if (!result.ok) {
     // Best-effort by design: re-delivery is the failure mode, not loss.
@@ -421,14 +443,14 @@ export async function releaseSandbox(args: {
     "/computers/sandbox/release",
     headers,
     { sandboxRowId: args.sandboxRowId },
-    args.signal
+    args.signal,
   );
   if (!result.ok && result.status === 404) {
     result = await postJson(
       "/evals/sandbox/release",
       headers,
       { sandboxRowId: args.sandboxRowId },
-      args.signal
+      args.signal,
     );
   }
   if (!result.ok) {
@@ -474,7 +496,7 @@ export async function reserveComputer(args: {
     "/computers/reserve",
     bearerHeader(args.bearer),
     body,
-    args.signal
+    args.signal,
   );
 }
 
@@ -498,7 +520,7 @@ export async function getComputerSandboxInfo(args: {
     "/computers/sandbox-info",
     headers,
     { computerId: args.computerId },
-    args.signal
+    args.signal,
   );
 }
 
@@ -562,7 +584,7 @@ export async function reserveUploadBytes(args: {
     "/computers/reserve-upload-bytes",
     headers,
     { computerId: args.computerId, bytes: args.bytes },
-    args.signal
+    args.signal,
   );
 }
 
@@ -657,7 +679,7 @@ export async function ensureComputerReady(args: {
         ok: false,
         status: 504,
         error: `computer not ready after ${Math.round(
-          timeoutMs / 1000
+          timeoutMs / 1000,
         )}s (status: ${status})`,
       };
     }

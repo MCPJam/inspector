@@ -75,7 +75,7 @@ export function skillMetadataBudgetChars(modelContextTokens?: number): number {
     return SKILL_METADATA_FALLBACK_BUDGET_CHARS;
   }
   return Math.floor(
-    modelContextTokens * SKILL_METADATA_CONTEXT_FRACTION * CHARS_PER_TOKEN
+    modelContextTokens * SKILL_METADATA_CONTEXT_FRACTION * CHARS_PER_TOKEN,
   );
 }
 
@@ -96,7 +96,7 @@ export function skillMetadataBudgetChars(modelContextTokens?: number): number {
  */
 export function applySkillMetadataBudget<T extends SkillMetadataEntry>(
   entries: T[],
-  budgetChars: number
+  budgetChars: number,
 ): SkillMetadataBudgetResult<T> {
   /**
    * The punctuation of `- **<ref>** (<origin>): <description>\n`:
@@ -111,9 +111,7 @@ export function applySkillMetadataBudget<T extends SkillMetadataEntry>(
 
   for (const entry of entries) {
     const fixed =
-      entry.ref.length +
-      (entry.origin?.length ?? 0) +
-      LINE_PUNCTUATION_CHARS;
+      entry.ref.length + (entry.origin?.length ?? 0) + LINE_PUNCTUATION_CHARS;
     const full = fixed + entry.description.length;
     if (spent + full <= budgetChars) {
       admitted.push(entry);
@@ -159,7 +157,7 @@ export function skillCatalogOverflowNotice(omittedCount: number): string {
  */
 export function renderBudgetedSkillCatalog<T extends SkillMetadataEntry>(
   entries: T[],
-  budgetChars: number
+  budgetChars: number,
 ): {
   lines: string[];
   omittedRefs: string[];
@@ -169,7 +167,7 @@ export function renderBudgetedSkillCatalog<T extends SkillMetadataEntry>(
   const lines = result.entries.map((entry) =>
     entry.origin
       ? `- **${entry.ref}** (${entry.origin}): ${entry.description}`
-      : `- **${entry.ref}**: ${entry.description}`
+      : `- **${entry.ref}**: ${entry.description}`,
   );
   return {
     lines,
@@ -181,7 +179,7 @@ export function renderBudgetedSkillCatalog<T extends SkillMetadataEntry>(
 /** Join catalog lines and (when needed) the overflow notice. */
 export function formatSkillCatalogBody(
   lines: string[],
-  omittedRefs: string[]
+  omittedRefs: string[],
 ): string {
   const notice =
     omittedRefs.length > 0

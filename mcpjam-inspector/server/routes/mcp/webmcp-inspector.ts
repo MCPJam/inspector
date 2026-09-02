@@ -1,9 +1,16 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import { z } from "zod";
 import "../../types/hono";
-import { WEBMCP_INSPECTOR_ENABLED, hostedBrowserEnabled } from "../../config";
 import {
+  HOSTED_MODE,
+  WEBMCP_INSPECTOR_ENABLED,
+  hostedBrowserEnabled,
+  webmcpInspectorHostedEnabled,
+} from "../../config";
+import {
+  hostedSessionId,
   startWebMcpSession,
   webMcpSessions,
   wireWebMcpShutdown,
@@ -13,7 +20,10 @@ import {
 } from "../../services/webmcp-inspector/session-registry";
 import {
   WebMcpChromiumNotInstalledError,
+  WebMcpInvocationCancelledError,
+  WebMcpLeaseBlockedError,
   WebMcpNoDisplayError,
+  WebMcpOutcomeUnknownError,
   WebMcpToolGoneError,
   WebMcpUnsupportedError,
 } from "../../services/webmcp-inspector/provider";
@@ -24,10 +34,22 @@ import {
   WebMcpWebviewAttachError,
 } from "../../services/webmcp-inspector/electron-webview-provider";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
+import { classifyHostedReserveError } from "../../services/browserd/hosted-reserve-refusal.js";
+import {
+  HostedDesktopAsleepError,
+  resolveHostedSession,
+} from "../../services/webmcp-inspector/hosted-session-resolver.js";
+import type { WebMcpSessionRuntime } from "../../services/webmcp-inspector/session-runtime";
+import { touchBrowserSession } from "../../services/browserd/browser-sessions-client.js";
+import { touchComputerActivity } from "../../utils/computers/control-plane-client.js";
+import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import { isHostedDesktopProvisionable } from "../../utils/computers/runtime-config.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
   WEBMCP_INPUT_TEXT_MAX_CHARS,
+  type WebMcpInvocationState,
 } from "@/shared/webmcp-inspector-protocol";
 
 /**
@@ -41,11 +63,18 @@ import {
  *                                                 stream the viewport
  *   DELETE /api/mcp/webmcp/sessions/:id          close + dispose
  *
- * LOCAL ONLY, by construction rather than by check: `/api/mcp/*` is mounted
- * only when `!HOSTED_MODE`, so a hosted replica never exposes these routes at
- * all. `WEBMCP_INSPECTOR_ENABLED` is the second, independent gate — the
- * emergency switch for a managed local install — and the client-side gate is
- * the `webmcp-inspector-enabled` flag.
+ * TWO MOUNTS, one router. Locally it hangs off `/api/mcp/webmcp`, where
+ * `/api/mcp/*` is itself local-only. On a hosted replica the same router is
+ * mounted at `/api/web/webmcp` (see `routes/web/index.ts`), behind bearer auth
+ * and a VERIFIED identity — the difference matters, see `hostedIdentity`.
+ *
+ * Hosted mode forces `transport: "hosted"` and refuses every local shape
+ * explicitly rather than by being unreachable: a hosted replica has no display
+ * to open a window on and no `<webview>` to attach to, and saying so with a
+ * code the UI can explain beats a 404 on a route the client can plainly see.
+ * `WEBMCP_INSPECTOR_ENABLED` is the kill switch in both modes;
+ * `webmcpInspectorHostedEnabled()` is the separate hosted-reachability gate;
+ * the client-side gate is the `webmcp-inspector-enabled` flag.
  *
  * The browser opens as a real window on the machine running the inspector: the
  * developer drives their own page directly, and this API is the instrument
@@ -203,6 +232,16 @@ const commandSchema = z.discriminatedUnion("type", [
     toolKey: z.string().min(1),
     input: z.record(z.string(), z.unknown()).default({}),
     source: z.enum(["manual", "chat"]).default("manual"),
+    /**
+     * The client's own id for this invocation, making the call idempotent.
+     *
+     * Optional, so every existing caller is unchanged: omitted, the server
+     * issues one exactly as before. A hosted client sends it because its
+     * request can be dropped mid-flight or retried onto another replica, and
+     * "did that go through?" must not be answerable only by running the tool
+     * again.
+     */
+    invokeId: z.string().min(1).max(128).optional(),
   }),
   z.object({
     type: z.literal("cancel_invocation"),
@@ -223,6 +262,15 @@ const commandSchema = z.discriminatedUnion("type", [
  * that drift apart invisibly, because each one's own tests keep passing.
  */
 function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
+  if (error instanceof HostedIdentityError) {
+    return error.response;
+  }
+  if (error instanceof HostedDesktopAsleepError) {
+    // 409, and deliberately NOT a wake. Re-hydration is reached from reads —
+    // a page refresh, a reconnecting event stream — and provisioning from
+    // those would resurrect a computer its owner let sleep, and bill for it.
+    return c.json({ error: error.message, code: "hosted-desktop-asleep" }, 409);
+  }
   if (error instanceof WebMcpSessionNotFoundError) {
     return c.json({ error: error.message, code: "session-not-found" }, 404);
   }
@@ -252,6 +300,21 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   if (error instanceof WebMcpToolGoneError) {
     return c.json({ error: error.message, code: "tool-gone" }, 409);
   }
+  if (error instanceof WebMcpLeaseBlockedError) {
+    // 423 Locked, and NOT a 500 with a Sentry event, which is what a person
+    // pressing the panel's take-control button used to produce. The remedy is
+    // theirs and obvious: hand the browser back.
+    return c.json({ error: error.message, code: "lease-blocked" }, 423);
+  }
+  // A control-plane refusal that reached here rather than the start route's
+  // own handling — a re-hydration whose computer is gone, say.
+  const hostedRefusal = classifyHostedReserveError(error);
+  if (hostedRefusal) {
+    return c.json(
+      { error: hostedRefusal.error, code: hostedRefusal.code },
+      hostedRefusal.status,
+    );
+  }
   if (error instanceof WebMcpWebviewAttachError) {
     // 400, not 500: the id the client sent no longer names a surface we can
     // attach to (its pane unmounted, or devtools took the debugger slot). The
@@ -268,9 +331,20 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   );
 }
 
-// The capability is not discoverable when it is off: 404, not 403.
+/**
+ * Is this router reachable at all?
+ *
+ * Two independent switches, both of which answer 404 rather than 403: a
+ * capability that is off should not be discoverable, and a 403 tells a prober
+ * that the route exists and is merely closed to them.
+ */
+function webmcpInspectorReachable(): boolean {
+  if (!WEBMCP_INSPECTOR_ENABLED) return false;
+  return !HOSTED_MODE || webmcpInspectorHostedEnabled();
+}
+
 webmcpInspector.use("*", async (c, next) => {
-  if (!WEBMCP_INSPECTOR_ENABLED) {
+  if (!webmcpInspectorReachable()) {
     return c.json(
       { error: "Not found", code: "webmcp-inspector-disabled" },
       404,
@@ -278,6 +352,126 @@ webmcpInspector.use("*", async (c, next) => {
   }
   await next();
 });
+
+/**
+ * The VERIFIED identity behind a hosted request, or a refusal.
+ *
+ * `bearerAuthMiddleware` does not verify WorkOS session JWTs. It validates
+ * `sk_` API keys and guest tokens and then lets any other bearer through
+ * labelled `unverified_passthrough`, on the explicit understanding — stated in
+ * that middleware — that a route which does not forward the bearer to Convex
+ * must verify it itself. This router is exactly such a route: once a hosted
+ * session is registered, its subsequent commands are served out of an
+ * in-process map, and nothing downstream ever re-checks who is asking. Without
+ * this, `Authorization: Bearer anything` plus a session id would drive someone
+ * else's desktop browser.
+ *
+ * Guests are refused before anything else. A guest has no computer to bill and
+ * no organization to check, and `getComputerStatus` admits them — so a guest
+ * bearer must never reach it.
+ */
+function hostedIdentity(
+  c: Context,
+): { ok: true; userId: string } | { ok: false; response: Response } {
+  if (c.get("guestId")) {
+    return {
+      ok: false,
+      response: c.json(
+        {
+          error:
+            "Running a browser needs a signed-in MCPJam account — it runs on your own computer, which a guest session does not have.",
+          code: "hosted-guest-unsupported",
+        },
+        403,
+      ),
+    };
+  }
+  // `requireVerifiedAuth` (mounted with this router) sets `workosUserId` for a
+  // raw bearer it verified, and `bearerAuthMiddleware` sets it for an API-key
+  // caller. Neither sets it for `unverified_passthrough`, which is the case
+  // this exists to catch.
+  const userId = c.get("workosUserId") ?? c.get("mcpjamUserId");
+  if (typeof userId !== "string" || userId.length === 0) {
+    return {
+      ok: false,
+      response: c.json(
+        {
+          error: "Sign in to run the browser on your MCPJam computer.",
+          code: "hosted-auth-required",
+        },
+        401,
+      ),
+    };
+  }
+  return { ok: true, userId };
+}
+
+/**
+ * Report an open, watched hosted session to the control plane.
+ *
+ * The panel's keepalive does this for a person WATCHING through the Browser
+ * panel; this is the same signal for a person watching through the inspector's
+ * own event stream. Sent as `kind: "panel"` rather than `"command"` because
+ * that is what it is — presence, not work — and the backend applies its own
+ * ceiling to presence so a tab left open over a weekend cannot hold a machine
+ * awake indefinitely. Throttled per computer, like every other touch.
+ */
+function hostedPresence(runtime: WebMcpSessionRuntime): void {
+  const target = runtime.hostedTarget();
+  if (!target) return;
+  void touchBrowserSession({ sessionId: target.sessionId, kind: "panel" })
+    .then(({ counted }) => {
+      if (counted && shouldTouchActivity(target.computerId)) {
+        void touchComputerActivity({ computerId: target.computerId }).catch(
+          () => {},
+        );
+      }
+    })
+    .catch(() => {});
+}
+
+/**
+ * A refusal from `hostedIdentity` raised from somewhere that can only throw.
+ * Carries the finished Response so the error mapper can return it verbatim.
+ */
+class HostedIdentityError extends Error {
+  constructor(readonly response: Response) {
+    super("hosted identity refused");
+    this.name = "HostedIdentityError";
+  }
+}
+
+/**
+ * Keep the machine awake while somebody is using its browser.
+ *
+ * Two clocks, and they answer to different owners. The session row's decides
+ * whether the daemon is swept; the computer's decides whether the box
+ * hibernates. Both are the control plane's, and a browser being driven through
+ * this route is invisible to both — the traffic is HTTP to a daemon, not bash
+ * commands or PTY bytes, which are the only things that used to count.
+ *
+ * Fire-and-forget on purpose: losing a touch risks an earlier hibernate, while
+ * awaiting one would put a control-plane round trip in front of every command
+ * a person is waiting on.
+ */
+function hostedKeepAwake(info: {
+  computerId: string;
+  sessionId: string;
+}): void {
+  void touchBrowserSession({ sessionId: info.sessionId, kind: "command" })
+    .then(({ counted }) => {
+      // The backend decides whether this still counts (a session with no real
+      // commands for hours stops counting, so a tab left open over a weekend
+      // cannot hold a machine awake forever). Only a counted touch is worth
+      // spending a computer write on.
+      if (counted && shouldTouchActivity(info.computerId)) {
+        void touchComputerActivity({ computerId: info.computerId }).catch(
+          () => {},
+        );
+      }
+    })
+    .catch(() => {});
+}
 
 webmcpInspector.post("/sessions", async (c) => {
   const parsed = startSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -287,7 +481,41 @@ webmcpInspector.post("/sessions", async (c) => {
       400,
     );
   }
-  const { url, transport, projectId, display, webContentsId } = parsed.data;
+  const { url, projectId, display, webContentsId } = parsed.data;
+  // Hosted mode FORCES the hosted transport rather than defaulting to it. A
+  // hosted replica has no display to open a window on and no `<webview>` to
+  // attach to, so `local` is not a thing it could honour on request; leaving
+  // the field respected would mean the omitted-means-local default silently
+  // tried to launch Chromium on a container.
+  const transport = HOSTED_MODE ? ("hosted" as const) : parsed.data.transport;
+
+  if (HOSTED_MODE) {
+    if (parsed.data.transport === "local" || display || webContentsId) {
+      return c.json(
+        {
+          error:
+            "This inspector runs the browser on your MCPJam computer. A browser on this machine needs the local inspector (npx @mcpjam/inspector).",
+          code: "hosted-local-unsupported",
+        },
+        400,
+      );
+    }
+    // The backend's own answer to "would a desktop actually boot?" — template
+    // and rate, ignoring the tool catalog, which an inspector-only rollout
+    // deliberately leaves off. Refused rather than attempted: without a rate
+    // the machine boots and meters at the terminal price, which nobody
+    // notices until the bill.
+    if (isHostedDesktopProvisionable() === false) {
+      return c.json(
+        {
+          error:
+            "Hosted browsers are not configured on this deployment yet. Ask an operator to finish setting up the desktop runtime.",
+          code: "hosted-desktop-unconfigured",
+        },
+        503,
+      );
+    }
+  }
 
   if (display === "in-app" && transport === "hosted") {
     // Refused rather than silently downgraded. A hosted browser already has a
@@ -305,6 +533,9 @@ webmcpInspector.post("/sessions", async (c) => {
   }
 
   let provider;
+  /** Set on the hosted path: the reserved daemon, and who it belongs to. */
+  let handle: BrowserSessionHandle | undefined;
+  let ownerId: string | undefined;
   if (webContentsId !== undefined) {
     // Both refusals are 400s that name what the caller got wrong, because both
     // describe a request that could never be honoured rather than a server that
@@ -338,7 +569,7 @@ webmcpInspector.post("/sessions", async (c) => {
     // Every refusal below is a 4xx with a code the UI can explain, never a
     // 500: each one is a thing the person can actually fix (turn the feature
     // on, pick a project, sign in).
-    if (!hostedBrowserEnabled()) {
+    if (!hostedBrowserEnabled() && !webmcpInspectorHostedEnabled()) {
       return c.json(
         {
           error:
@@ -351,38 +582,68 @@ webmcpInspector.post("/sessions", async (c) => {
     if (!projectId) {
       return c.json(
         {
-          error: "Pick a project first — a hosted browser runs on that project's computer.",
+          error:
+            "Pick a project first — a hosted browser runs on that project's computer.",
           code: "hosted-project-required",
         },
         400,
       );
     }
-    // The USER's control-plane bearer, exactly as the chat routes take it. The
-    // hosted browser is billed to whoever owns the computer, so it needs a
-    // real identity — unlike the local browser, which needs none because it
-    // runs on the machine the caller is already sitting at.
-    const bearer = c.req.header("authorization");
-    if (!bearer) {
-      return c.json(
-        {
-          error: "Sign in to run the browser on your MCPJam computer.",
-          code: "hosted-auth-required",
-        },
-        401,
-      );
+
+    let bearer: string;
+    if (HOSTED_MODE) {
+      const identity = hostedIdentity(c);
+      if (!identity.ok) return identity.response;
+      ownerId = identity.userId;
+      // The bearer Convex will accept for THIS caller: their own JWT verbatim,
+      // or a freshly minted delegated one for an API-key caller.
+      bearer = await getConvexBearerForRequest(c);
+    } else {
+      // The USER's control-plane bearer, exactly as the chat routes take it.
+      // The hosted browser is billed to whoever owns the computer, so it needs
+      // a real identity — unlike the local browser, which needs none because
+      // it runs on the machine the caller is already sitting at.
+      const header = c.req.header("authorization");
+      if (!header) {
+        return c.json(
+          {
+            error: "Sign in to run the browser on your MCPJam computer.",
+            code: "hosted-auth-required",
+          },
+          401,
+        );
+      }
+      bearer = header;
     }
-    provider = createBrowserdWebMcpProvider({
-      ensureSession: ({ signal }) =>
-        ensureLiveBrowserSession({
-          bearer,
-          projectId,
-          // The inspector is a person driving their own page, so it gets the
-          // persistent profile — the same rule the built-in browser tools
-          // follow, and the reason evals get an ephemeral one instead.
-          contextMode: "persistent",
-          ...(signal ? { signal } : {}),
-        }),
-    });
+
+    // Reserved HERE, before the session runtime exists, rather than lazily
+    // inside `provider.createSession`. Two things were wrong with lazy:
+    // `startWebMcpSession` had already taken a capacity slot and held it for
+    // the whole E2B reserve-and-boot, and the provider called the thunk
+    // without the request's abort signal, so a caller who gave up could not
+    // stop a machine being provisioned for them. It also puts the refusal
+    // where it can be mapped to a status — see the catch below.
+    try {
+      handle = await ensureLiveBrowserSession({
+        bearer,
+        projectId,
+        // The inspector is a person driving their own page, so it gets the
+        // persistent profile — the same rule the built-in browser tools
+        // follow, and the reason evals get an ephemeral one instead.
+        contextMode: "persistent",
+        signal: c.req.raw.signal,
+      });
+    } catch (error) {
+      const refusal = classifyHostedReserveError(error);
+      if (refusal) {
+        return c.json(
+          { error: refusal.error, code: refusal.code },
+          refusal.status,
+        );
+      }
+      return webMcpErrorResponse(c, error, "Could not start your computer.");
+    }
+    provider = createBrowserdWebMcpProvider({ handle });
   }
 
   try {
@@ -392,6 +653,16 @@ webmcpInspector.post("/sessions", async (c) => {
       // Omitted means `window`, so a caller that never heard of this field gets
       // the behaviour it has always had.
       ...(display === "in-app" ? { viewportMode: "embedded" as const } : {}),
+      // A hosted session gets a DERIVED id and an owner. The id is what lets
+      // any replica find this session again; the owner is what stops anyone
+      // else from doing so, since a derived id is guessable and a random one
+      // was not.
+      ...(handle && ownerId && projectId
+        ? {
+            sessionId: hostedSessionId(projectId, handle.computerId),
+            ownerId,
+          }
+        : {}),
     });
     return c.json(session, 201);
   } catch (error) {
@@ -399,16 +670,74 @@ webmcpInspector.post("/sessions", async (c) => {
   }
 });
 
-webmcpInspector.get("/sessions/:id", (c) => {
+/**
+ * The runtime for a request, whichever replica it landed on.
+ *
+ * Locally this is a map lookup. On a hosted replica a `hosted:` id may name a
+ * session this process has never seen — the normal case behind a load balancer
+ * with no affinity — and is re-derived instead of 404'd. Everything about that
+ * lives in `hosted-session-resolver.ts`, including why it must never reserve.
+ */
+async function resolveRuntime(
+  c: Context,
+  sessionId: string,
+): Promise<WebMcpSessionRuntime> {
+  if (!HOSTED_MODE || !sessionId.startsWith("hosted:")) {
+    return webMcpSessions.get(sessionId);
+  }
+  const identity = hostedIdentity(c);
+  if (!identity.ok) throw new HostedIdentityError(identity.response);
+  return resolveHostedSession({
+    sessionId,
+    bearer: await getConvexBearerForRequest(c),
+    ownerId: identity.userId,
+    registry: webMcpSessions,
+    deps: {
+      onCommand: hostedKeepAwake,
+      hasWatchers: (id) => webMcpSessions.hasSubscribers(id),
+    },
+  });
+}
+
+webmcpInspector.get("/sessions/:id", async (c) => {
   try {
-    return c.json(webMcpSessions.describe(c.req.param("id")));
+    const runtime = await resolveRuntime(c, c.req.param("id"));
+    webMcpSessions.touch(runtime);
+    return c.json({
+      session: runtime.toPublic(),
+      tools: runtime.currentTools(),
+    });
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not read that session.");
   }
 });
 
-webmcpInspector.get("/sessions/:id/events", (c) => {
+webmcpInspector.get("/sessions/:id/events", async (c) => {
   const sessionId = c.req.param("id");
+  /**
+   * Resolved BEFORE the stream is constructed, so a hosted session this
+   * replica has never seen is re-hydrated rather than reported as gone.
+   *
+   * A refusal that names a CONDITION — an asleep computer, an unverified
+   * caller — is answered as an ordinary HTTP error, because a 409 the client
+   * can act on beats a 200 whose first frame says something went wrong.
+   *
+   * "No such session" is deliberately NOT one of those. It stays an in-stream
+   * `session_gone`, which is the contract every existing client is written
+   * against: an `EventSource` cannot read a status code, and turning this into
+   * a 404 would leave those clients retrying a dead session forever instead of
+   * showing the message this event carries.
+   */
+  let resolved: WebMcpSessionRuntime | undefined;
+  let resolveError: unknown;
+  try {
+    resolved = await resolveRuntime(c, sessionId);
+  } catch (error) {
+    if (!(error instanceof WebMcpSessionNotFoundError)) {
+      return webMcpErrorResponse(c, error, "Could not open that event stream.");
+    }
+    resolveError = error;
+  }
   const replayParam = Number(c.req.query("replay") ?? "200");
   const replay = Number.isFinite(replayParam)
     ? Math.max(0, Math.min(500, replayParam))
@@ -503,7 +832,8 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
       };
 
       try {
-        unsubscribe = webMcpSessions.subscribe(sessionId, send, replay);
+        if (!resolved) throw resolveError ?? new Error("Session not found.");
+        unsubscribe = webMcpSessions.subscribeTo(resolved, send, replay);
       } catch (error) {
         send({
           type: "session_gone",
@@ -519,6 +849,11 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
         } catch {
           /* ignore */
         }
+        // Watching IS using. Without this the idle clock only ever hears about
+        // commands, so a session someone has open and is reading — the normal
+        // way to watch an agent drive a page — is reaped mid-view.
+        webMcpSessions.touchWatchedSessions();
+        if (resolved) hostedPresence(resolved);
       }, 15_000);
 
       c.req.raw.signal.addEventListener("abort", () => {
@@ -554,6 +889,50 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
   });
 });
 
+/**
+ * What to tell a hosted caller about an invocation it just asked for.
+ *
+ * Every terminal state is a RESULT here, including the failures: the tool ran
+ * (or was refused, or timed out), the timeline recorded it, and the client
+ * needs to display that rather than receive an HTTP error for a page tool that
+ * behaved exactly as the page decided.
+ *
+ * The abort case is the interesting one. If the request goes away, this stops
+ * waiting — but the daemon's `webmcp_invoke` is synchronous and does not
+ * report an invocation id until it has finished, so there is nothing to cancel
+ * with and the tool keeps running. Reporting `cancelled` would be a lie about
+ * a tool that may still be filling in a form. `unknown` is the true answer,
+ * and the client can ask again with the same `invokeId` to find out how it
+ * ended.
+ */
+async function outcomeOf(
+  settled: Promise<{ output: unknown; truncated: boolean }>,
+  c: Context,
+): Promise<{ state: WebMcpInvocationState; error?: string }> {
+  const aborted = new Promise<"aborted">((resolve) => {
+    if (c.req.raw.signal.aborted) return resolve("aborted");
+    c.req.raw.signal.addEventListener("abort", () => resolve("aborted"), {
+      once: true,
+    });
+  });
+  try {
+    const result = await Promise.race([settled, aborted]);
+    if (result === "aborted") return { state: "unknown" };
+    return { state: "succeeded" };
+  } catch (error) {
+    if (error instanceof WebMcpOutcomeUnknownError) {
+      return { state: "unknown", error: error.message };
+    }
+    if (error instanceof WebMcpInvocationCancelledError) {
+      return { state: error.reason, error: error.message };
+    }
+    return {
+      state: "failed",
+      error: error instanceof Error ? error.message : "The tool failed.",
+    };
+  }
+}
+
 webmcpInspector.post("/sessions/:id/command", async (c) => {
   const parsed = commandSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -565,7 +944,7 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
   const command = parsed.data;
 
   try {
-    const runtime = webMcpSessions.get(c.req.param("id"));
+    const runtime = await resolveRuntime(c, c.req.param("id"));
     webMcpSessions.touch(runtime);
 
     switch (command.type) {
@@ -591,11 +970,24 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           command.toolKey,
           command.input as Record<string, unknown>,
           command.source,
+          command.invokeId,
         );
         // The caller follows the outcome on the activity stream; swallow the
         // rejection here so a failed tool is not an unhandled rejection.
         settled.catch(() => {});
-        return c.json({ ok: true, invokeId }, 202);
+        if (!HOSTED_MODE) {
+          return c.json({ ok: true, invokeId }, 202);
+        }
+        // HOSTED answers with the outcome INLINE rather than pointing at the
+        // event stream, because the subscriber watching that stream may be
+        // attached to a different replica than the one running the tool. A
+        // rejection is encoded here, not raised: the invocation settled and
+        // the timeline recorded it, so this is a result, not a failure.
+        return c.json({
+          ok: true,
+          invokeId,
+          outcome: await outcomeOf(settled, c),
+        });
       }
       case "cancel_invocation":
         return c.json({

@@ -45,7 +45,7 @@ function build(
     onFrame: () => {},
   };
   const provider = createBrowserdWebMcpProvider({
-    ensureSession: async () => HANDLE,
+    handle: HANDLE,
     transportFor: () => ({ sendCommand }) as never,
     toolPollMs: 0, // no background polling in tests
   });
@@ -255,7 +255,14 @@ describe("browserd WebMCP provider", () => {
       signal: controller.signal,
     });
     controller.abort();
-    await invoked;
+    // The CALLER is freed at once. It has to be: the daemon's invoke is
+    // synchronous, so awaiting it would mean "stop" could not take effect
+    // until the thing being stopped had finished on its own.
+    await expect(invoked).rejects.toThrow(/cancelled/i);
+    // ...and the page is still told to stop, once the daemon's reply supplies
+    // the invocation id that the cancel needs.
+    await (session as unknown as { cancelWhenIdentified: Promise<void> })
+      .cancelWhenIdentified;
     expect(
       commands.some((c) => (c.action as any).kind === "webmcp_cancel"),
     ).toBe(true);

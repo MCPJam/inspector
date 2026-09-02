@@ -54,7 +54,11 @@ function parseReadyLine(line: string): ShimReadyLine | null {
   const port = (parsed as { port?: unknown }).port;
   const host = (parsed as { host?: unknown }).host;
   if (typeof port !== "number" || !Number.isInteger(port)) return null;
-  return { event: "listening", host: typeof host === "string" ? host : "", port };
+  return {
+    event: "listening",
+    host: typeof host === "string" ? host : "",
+    port,
+  };
 }
 
 export const e2bPluginBoxConnector: PluginBoxConnector = async (box) => {
@@ -189,7 +193,7 @@ export const e2bPluginBoxConnector: PluginBoxConnector = async (box) => {
               void command
                 .wait()
                 .then(() =>
-                  finish(new Error("the plugin shim exited before listening"))
+                  finish(new Error("the plugin shim exited before listening")),
                 )
                 .catch((error) =>
                   finish(
@@ -198,29 +202,29 @@ export const e2bPluginBoxConnector: PluginBoxConnector = async (box) => {
                         error instanceof CommandExitError
                           ? `code ${error.exitCode}`
                           : "unknown"
-                      })`
-                    )
-                  )
+                      })`,
+                    ),
+                  ),
                 );
             })
             .catch((error) =>
-              finish(error instanceof Error ? error : new Error(String(error)))
+              finish(error instanceof Error ? error : new Error(String(error))),
             );
 
           timer = setTimeout(
             () =>
               finish(
                 new Error(
-                  `the plugin shim did not report listening within ${readyTimeoutMs}ms`
-                )
+                  `the plugin shim did not report listening within ${readyTimeoutMs}ms`,
+                ),
               ),
-            readyTimeoutMs
+            readyTimeoutMs,
           );
           // A ready line delivered synchronously from `onStdout` settles this
           // promise BEFORE the timer above exists, so `finish` had nothing to
           // clear — leaving a successful start holding a 30s deadline timer.
           if (settled) clearTimeout(timer);
-        }
+        },
       ),
 
     publicOrigin: (port) => `https://${sandbox.getHost(port)}`,

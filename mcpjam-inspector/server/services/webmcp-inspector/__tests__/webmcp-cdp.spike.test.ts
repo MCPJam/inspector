@@ -402,9 +402,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP support probing", () => {
     // Base args only: no --enable-features=WebMCP.
     const browser = await chromium.launch({
       headless: true,
-      args: [
-        "--disable-dev-shm-usage",
-      ],
+      args: ["--disable-dev-shm-usage"],
     });
     try {
       const page = await browser.newPage();

@@ -68,7 +68,7 @@ export interface PersonalEngineActor {
  */
 export function coercePersonalEngineForActor(
   engine: ComputerEngine,
-  actor: PersonalEngineActor
+  actor: PersonalEngineActor,
 ): ComputerEngine {
   if (engine !== "local") return engine;
   const eligible =

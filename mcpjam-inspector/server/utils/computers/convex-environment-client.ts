@@ -25,6 +25,7 @@ export interface EnvironmentRuntimeContext {
 
 /** Convex query names — kept in one place so a rename is one edit. */
 const FN = {
+  computerStatus: "projectComputers:getComputerStatus",
   runtimeContext: "computerEnvironments:getEnvironmentRuntimeContext",
   // Execution-scoped variant (reachable by guests / swarm grants). Keyed on an
   // opaque executionScope the backend re-resolves — never a raw projectId.
@@ -62,4 +63,40 @@ export async function convexGetEnvironmentRuntimeContextForExecution(
   return await makeClient(bearer).query(FN.runtimeContextExecution as any, {
     executionScope,
   });
+}
+
+/**
+ * What the caller's desktop computer is doing, WITHOUT touching it.
+ *
+ * The read that makes a hosted inspector session re-derivable. A request may
+ * land on a replica that has never seen the session; before that replica will
+ * adopt the browser, it asks the control plane — with the caller's own bearer,
+ * so the answer is authoritative about ownership — which computer this project
+ * has and whether it is awake.
+ *
+ * It must stay a QUERY. Reserve wakes a hibernated machine and starts billing
+ * it, and doing that from a `GET` would mean a browser tab left open overnight
+ * silently resurrects a computer the owner deliberately let sleep. An asleep
+ * machine is reported, never woken; waking is what the explicit start does.
+ *
+ * `null` ⇒ this project has no desktop computer at all.
+ */
+export interface DesktopComputerStatus {
+  computerId: string;
+  status: string;
+}
+
+export async function convexGetDesktopComputerStatus(
+  bearer: string,
+  projectId: string,
+): Promise<DesktopComputerStatus | null> {
+  const view = (await makeClient(bearer).query(FN.computerStatus as any, {
+    projectId,
+    runtimeKind: "desktop-browser",
+  })) as { computerId?: unknown; status?: unknown } | null;
+  if (!view || typeof view.computerId !== "string") return null;
+  return {
+    computerId: view.computerId,
+    status: typeof view.status === "string" ? view.status : "unknown",
+  };
 }

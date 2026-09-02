@@ -129,7 +129,8 @@ export function createComputerJwksVerifier(
     payload: Record<string, unknown>,
   ): ComputerTokenClaims | null {
     if (payload.purpose !== spec.purpose) return null;
-    if (typeof payload.sub !== "string" || payload.sub.length === 0) return null;
+    if (typeof payload.sub !== "string" || payload.sub.length === 0)
+      return null;
     if (
       typeof payload.computerId !== "string" ||
       payload.computerId.length === 0

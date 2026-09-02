@@ -5,12 +5,17 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-const configState = vi.hoisted(() => ({ enabled: true, hostedBrowser: false }));
+const configState = vi.hoisted(() => ({
+  enabled: true,
+  hostedBrowser: false,
+  webmcpHosted: false,
+}));
 vi.mock("../../../config", () => ({
   get WEBMCP_INSPECTOR_ENABLED() {
     return configState.enabled;
   },
   hostedBrowserEnabled: () => configState.hostedBrowser,
+  webmcpInspectorHostedEnabled: () => configState.webmcpHosted,
   HOSTED_MODE: false,
 }));
 
@@ -513,7 +518,9 @@ describe("webmcp-inspector routes", () => {
       for (let i = 0; i < 50; i += 1) {
         const chunk = await Promise.race([
           reader.read(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), quietMs)),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), quietMs),
+          ),
         ]);
         if (!chunk || chunk.done) break;
         buffered += decoder.decode(chunk.value, { stream: true });
@@ -531,7 +538,9 @@ describe("webmcp-inspector routes", () => {
     // client on the binary socket would otherwise pay the base64-in-JSON tax
     // once per connect.
     provider.sessions[0].emitFrame({ data: "cmVwbGF5ZWQ=" });
-    provider.sessions[0].emitTools([fakeTool({ origin: "https://example.test" })]);
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+    ]);
 
     const res = await app.request(
       `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50&frames=off`,

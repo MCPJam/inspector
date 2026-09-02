@@ -76,6 +76,17 @@ export type WebMcpSessionStatus =
   /** The browser has no WebMCP support; the page loaded but nothing can be inspected. */
   | "unsupported"
   | "error"
+  /**
+   * This server let go of a REMOTE browser that is still running.
+   *
+   * Only hosted sessions reach this. The browser lives on the member's own
+   * computer, so a replica dropping its handle — idle eviction, a deploy, a
+   * request routed elsewhere — ends nothing; the session can be picked up
+   * again by asking for it. Distinct from `closed` precisely because `closed`
+   * is terminal, and telling someone their live browser had ended when it had
+   * not is the failure this exists to prevent. The client re-fetches.
+   */
+  | "detached"
   | "closed";
 
 /**
@@ -265,8 +276,25 @@ export type WebMcpCommandResult =
   | { ok: true; streaming: boolean };
 
 /** Terminal state of an invocation, ours rather than CDP's. */
+/** Terminal state of an invocation, ours rather than CDP's. */
 export type WebMcpInvocationState =
-  "succeeded" | "failed" | "cancelled" | "timeout";
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "timeout"
+  /**
+   * It ran, and what it did cannot be established.
+   *
+   * Reachable only for a REMOTE browser, and it is the honest answer rather
+   * than a hedge. A hosted invocation is sent to a daemon that executes it
+   * synchronously; if our wait for the answer ends first — the request was
+   * aborted, the replica went away — the tool keeps running and its outcome
+   * lands in the daemon's result cache, addressed by the invocation's id.
+   * Until someone asks again with that id, "succeeded" and "failed" are both
+   * guesses, and a page tool that may have charged a card is not something to
+   * guess about or to re-run to find out.
+   */
+  | "unknown";
 
 export type WebMcpActivityEntry =
   | { id: string; ts: number; kind: "session_started"; url: string }

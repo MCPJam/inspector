@@ -55,6 +55,8 @@ export class WebMcpSessionUnavailableError extends Error {
 export interface WebMcpSessionRegistryOptions {
   /** Max concurrent browsers. Default 2 — each one is a real window. */
   maxSessions?: number;
+  /** Max concurrent HOSTED sessions; these are handles, not windows. */
+  maxHostedSessions?: number;
   /** Idle TTL, refreshed by API calls and by browser activity. Default 10 min. */
   idleTimeoutMs?: number;
   /** Hard ceiling regardless of activity. Default 60 min. */
@@ -65,6 +67,46 @@ export interface WebMcpSessionRegistryOptions {
 }
 
 const DEFAULT_MAX_SESSIONS = 2;
+/**
+ * The cap for HOSTED sessions, which are a different thing being counted.
+ *
+ * `DEFAULT_MAX_SESSIONS` is 2 because each local session is a real Chromium
+ * window on somebody's laptop. A hosted session is a handle to a browser
+ * running on the member's own machine, one per (project, owner) desktop; this
+ * process holds a poll timer and a tool list, and the actual resource is
+ * capped by the desktop reserve, not by us. Two would mean the third member to
+ * open the inspector on a replica gets told the server is full.
+ */
+const DEFAULT_MAX_HOSTED_SESSIONS = 50;
+
+function hostedMaxSessions(): number {
+  const raw = Number(process.env.MCPJAM_WEBMCP_HOSTED_MAX_SESSIONS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_HOSTED_SESSIONS;
+}
+
+/**
+ * A hosted session's id is DERIVED, not issued.
+ *
+ * `hosted:<projectId>:<computerId>` — because there is exactly one persistent
+ * browser per desktop computer, so there is exactly one inspector session for
+ * it, and any replica can name it without having been the one to create it.
+ * That is the whole mechanism behind surviving a hosted deploy: a request that
+ * lands on a replica which has never seen this session can still work out what
+ * it refers to and re-establish it, rather than 404ing because the process
+ * that held the map is not the one that got the request.
+ */
+export function hostedSessionId(projectId: string, computerId: string): string {
+  return `hosted:${projectId}:${computerId}`;
+}
+
+export function parseHostedSessionId(
+  sessionId: string,
+): { projectId: string; computerId: string } | null {
+  if (!sessionId.startsWith("hosted:")) return null;
+  const [, projectId, computerId, ...rest] = sessionId.split(":");
+  if (!projectId || !computerId || rest.length > 0) return null;
+  return { projectId, computerId };
+}
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_LIFETIME_MS = 60 * 60_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
@@ -80,7 +122,10 @@ export interface WebMcpSessionReservation {
 
 export class WebMcpSessionRegistry {
   private readonly sessions = new Map<string, WebMcpSessionRuntime>();
+  /** sessionId → live event-stream subscribers on THIS replica. */
+  private readonly subscriberCounts = new Map<string, number>();
   private readonly maxSessions: number;
+  private readonly maxHostedSessions: number;
   private readonly idleTimeoutMs: number;
   private readonly maxLifetimeMs: number;
   private readonly sweepIntervalMs: number;
@@ -94,6 +139,7 @@ export class WebMcpSessionRegistry {
 
   constructor(options: WebMcpSessionRegistryOptions = {}) {
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+    this.maxHostedSessions = options.maxHostedSessions ?? hostedMaxSessions();
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.maxLifetimeMs = options.maxLifetimeMs ?? DEFAULT_MAX_LIFETIME_MS;
     this.sweepIntervalMs = options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
@@ -122,16 +168,23 @@ export class WebMcpSessionRegistry {
     return this.sessions.size + this.disposingCount + this.reservedCount;
   }
 
-  reserve(): WebMcpSessionReservation {
+  /** Which ceiling applies: local windows are scarce, hosted handles are not. */
+  private ceilingFor(sessionId?: string): number {
+    return sessionId && sessionId.startsWith("hosted:")
+      ? this.maxHostedSessions
+      : this.maxSessions;
+  }
+
+  reserve(sessionId?: string): WebMcpSessionReservation {
     if (this.shuttingDown) {
       throw new WebMcpSessionUnavailableError(
         "The WebMCP Inspector is shutting down.",
       );
     }
     this.sweepExpired();
-    if (this.activeCount() >= this.maxSessions) {
+    if (this.activeCount() >= this.ceilingFor(sessionId)) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.maxSessions} WebMCP browser sessions can run at once. Close one and try again.`,
+        `Only ${this.ceilingFor(sessionId)} WebMCP browser sessions can run at once. Close one and try again.`,
       );
     }
     const reservation: WebMcpSessionReservation = {
@@ -163,10 +216,28 @@ export class WebMcpSessionRegistry {
     }
     if (reservation) {
       this.release(reservation);
-    } else if (this.activeCount() >= this.maxSessions) {
+    } else if (this.activeCount() >= this.ceilingFor(runtime.sessionId)) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.maxSessions} WebMCP browser sessions can run at once.`,
+        `Only ${this.ceilingFor(runtime.sessionId)} WebMCP browser sessions can run at once.`,
       );
+    }
+    // Close whatever held this id first. Ids used to be random per runtime, so
+    // a collision was impossible and overwriting was harmless; a hosted id is
+    // DERIVED from the computer, so two requests racing to re-hydrate the same
+    // session collide by design. Dropping the loser without closing it leaks
+    // its poll timer, which keeps sending observations to a daemon on behalf
+    // of a session nothing can reach.
+    const displaced = this.sessions.get(runtime.sessionId);
+    if (displaced && displaced !== runtime) {
+      this.sessions.delete(runtime.sessionId);
+      this.disposingCount += 1;
+      void displaced
+        .close()
+        .catch(() => {})
+        .finally(() => {
+          this.disposingCount -= 1;
+          this.stopSweepingIfIdle();
+        });
     }
     this.sessions.set(runtime.sessionId, runtime);
     this.touch(runtime);
@@ -177,6 +248,12 @@ export class WebMcpSessionRegistry {
     runtime.publishSession();
     this.ensureSweeping();
     return runtime.toPublic();
+  }
+
+  /** The runtime for this id, or undefined — no throw, for callers that have
+   *  a recovery path (hosted re-hydration). */
+  peek(sessionId: string): WebMcpSessionRuntime | undefined {
+    return this.sessions.get(sessionId);
   }
 
   get(sessionId: string): WebMcpSessionRuntime {
@@ -204,8 +281,59 @@ export class WebMcpSessionRegistry {
     replay?: number,
   ): () => void {
     const runtime = this.get(sessionId);
+    return this.subscribeTo(runtime, listener, replay);
+  }
+
+  /**
+   * Subscribe to a runtime this caller already resolved, COUNTING the
+   * subscriber for as long as it stays attached.
+   *
+   * The count is load-bearing twice over. It defers idle eviction: the idle
+   * clock was only bumped by commands, so a session someone was watching but
+   * not driving — the ordinary way to use this feature — was reaped after ten
+   * minutes and re-hydrated on the viewer's next event, repeatedly, for as
+   * long as they kept watching. And it gates the hosted tool poll, which must
+   * not spend the daemon's bounded per-boot command budget producing tool
+   * lists that nobody is reading.
+   */
+  subscribeTo(
+    runtime: WebMcpSessionRuntime,
+    listener: WebMcpEventListener,
+    replay?: number,
+  ): () => void {
     this.touch(runtime);
-    return runtime.hub.subscribe(listener, replay);
+    const id = runtime.sessionId;
+    this.subscriberCounts.set(id, (this.subscriberCounts.get(id) ?? 0) + 1);
+    const unsubscribe = runtime.hub.subscribe(listener, replay);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = (this.subscriberCounts.get(id) ?? 1) - 1;
+      if (next > 0) this.subscriberCounts.set(id, next);
+      else this.subscriberCounts.delete(id);
+      unsubscribe();
+    };
+  }
+
+  /** Is anyone attached to this session's event stream on this replica? */
+  hasSubscribers(sessionId: string): boolean {
+    return (this.subscriberCounts.get(sessionId) ?? 0) > 0;
+  }
+
+  /**
+   * Push the idle deadline out for every session that is being WATCHED.
+   *
+   * Called on the stream's own keepalive tick. A subscriber attached at minute
+   * zero is evidence at minute zero and nothing after it, so without this a
+   * long watch still expires; with it, "somebody has this open" keeps the
+   * session for as long as that stays true and not one sweep longer.
+   */
+  touchWatchedSessions(): void {
+    for (const id of this.subscriberCounts.keys()) {
+      const runtime = this.sessions.get(id);
+      if (runtime) this.touch(runtime);
+    }
   }
 
   /** Push the idle deadline out. Called by API traffic AND browser activity. */
@@ -213,13 +341,16 @@ export class WebMcpSessionRegistry {
     runtime.expiresAt = this.now() + this.idleTimeoutMs;
   }
 
-  async close(sessionId: string): Promise<boolean> {
+  async close(
+    sessionId: string,
+    options: { reason?: "closed" | "detached" } = {},
+  ): Promise<boolean> {
     const runtime = this.sessions.get(sessionId);
     if (!runtime) return false;
     this.sessions.delete(sessionId);
     this.disposingCount += 1;
     try {
-      await runtime.close();
+      await runtime.close(options.reason ?? "closed");
     } finally {
       this.disposingCount -= 1;
       this.stopSweepingIfIdle();
@@ -240,7 +371,14 @@ export class WebMcpSessionRegistry {
       const lifetimeExpired =
         runtime.hardExpiresAt > 0 && runtime.hardExpiresAt <= now;
       if (idleExpired || lifetimeExpired) {
-        void this.close(id);
+        // A hosted session DETACHES rather than closes. The browser it names
+        // is still running on the member's computer and can be picked up again
+        // by any replica; only this process's handle to it is going away.
+        // `closed` is terminal to the client and would tell someone their
+        // still-live browser had ended.
+        void this.close(id, {
+          reason: id.startsWith("hosted:") ? "detached" : "closed",
+        });
       }
     }
   }
@@ -288,6 +426,10 @@ export interface StartWebMcpSessionOptions {
   headless?: boolean;
   /** Omitted means `window` — exactly what every existing caller gets. */
   viewportMode?: WebMcpViewportMode;
+  /** Derived rather than issued, for a session other replicas must find. */
+  sessionId?: string;
+  /** Who may drive it; required whenever `sessionId` is guessable. */
+  ownerId?: string;
 }
 
 /**
@@ -302,10 +444,12 @@ export async function startWebMcpSession(
 ): Promise<WebMcpSessionPublic> {
   const registry = options.registry ?? webMcpSessions;
   const provider = options.provider ?? playwrightWebMcpProvider;
-  const reservation = registry.reserve();
+  const reservation = registry.reserve(options.sessionId);
   const runtime = new WebMcpSessionRuntime(options.url, {
     now: () => registry.clock(),
     onActivity: () => registry.touch(runtime),
+    ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(options.ownerId ? { ownerId: options.ownerId } : {}),
   });
 
   try {

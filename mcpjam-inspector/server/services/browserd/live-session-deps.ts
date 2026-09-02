@@ -31,6 +31,7 @@ import {
 } from "../../utils/computers/control-plane-client.js";
 import { bootBrowserd, type BrowserdSandbox } from "./boot-browserd.js";
 import { BrowserdClient } from "./browserd-client.js";
+import { HostedReserveError } from "./hosted-reserve-error.js";
 import {
   lookupBrowserSession,
   recordBrowserSession,
@@ -237,8 +238,15 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
         signal,
       });
       if (!reserved.ok) {
-        throw new Error(
-          `desktop reserve failed (${reserved.status}): ${reserved.error}`,
+        // The STATUS is kept, not folded into a message. Most of these are
+        // refusals a person can act on — the plan does not include Computers,
+        // the daily start cap is spent, the vendor account is full — and a
+        // caller that cannot tell them apart can only say "something went
+        // wrong" and page an engineer for a quota working as designed.
+        throw new HostedReserveError(
+          reserved.error,
+          reserved.status,
+          reserved.code,
         );
       }
       return { computerId: reserved.value.computerId };
@@ -246,9 +254,7 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
     resolveSandboxId: async (computerId) => {
       const info = await getComputerSandboxInfo({ computerId });
       if (!info.ok) {
-        throw new Error(
-          `sandbox-info failed (${info.status}): ${info.error}`,
-        );
+        throw new HostedReserveError(info.error, info.status, info.code);
       }
       if (!info.value.providerComputerId) {
         throw new Error("computer has no vendor sandbox id yet");

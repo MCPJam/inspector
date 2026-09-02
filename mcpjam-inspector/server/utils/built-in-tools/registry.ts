@@ -47,7 +47,7 @@ import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
 import { hostedBrowserEnabled } from "../../config.js";
-import { isHostedBrowserExposable } from "../computers/runtime-config.js";
+import { isHostedBrowserRefused } from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
   buildExaWebSearchTool,
@@ -461,10 +461,10 @@ export function resolveHostTools(
       // The backend's own gate (catalog entry + desktop template + desktop
       // credit rate). An explicit `false` is honored even with the env flag
       // on: the likeliest reason is an unset desktop rate, which would meter
-      // every hosted browser hour at the terminal rate. Silence (an older
-      // backend, or bootstrap not yet run) is not a refusal — the env flag
-      // above is already dark by default and is what staging drives with.
-      if (isHostedBrowserExposable() === false) {
+      // every hosted browser hour at the terminal rate. Silence is treated as
+      // a refusal on a HOSTED replica and as permission locally — see
+      // `isHostedBrowserRefused`.
+      if (isHostedBrowserRefused()) {
         logger.warn(
           "[built-in-tools] browser suppressed: the backend reports it is not exposable",
           { projectId: ctx.projectId },

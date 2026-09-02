@@ -84,7 +84,7 @@ async function readContent(skill: EffectiveSkill): Promise<string> {
  * transient failure does not pin the skill file-less for the rest of the turn.
  */
 function makeFileReader(): (
-  skill: EffectiveSkill
+  skill: EffectiveSkill,
 ) => Promise<RuntimeSkillFile[]> {
   const listings = new Map<EffectiveSkill, Promise<RuntimeSkillFile[]>>();
   return (skill) => {
@@ -128,7 +128,7 @@ function localOf(skill: EffectiveSkill): RuntimeLocalSkill | undefined {
 function originLabel(
   skill: EffectiveSkill,
   isPlugin: boolean,
-  isServer: boolean
+  isServer: boolean,
 ): string {
   const local = localOf(skill);
   // Named with its directory, because "which code-review is this?" is exactly
@@ -166,8 +166,7 @@ function buildLookup(skills: EffectiveSkill[]): SkillLookup {
 }
 
 type Resolution =
-  | { ok: true; skill: EffectiveSkill }
-  | { ok: false; error: string };
+  { ok: true; skill: EffectiveSkill } | { ok: false; error: string };
 
 /**
  * Resolve a model-supplied reference.
@@ -211,7 +210,7 @@ function buildListing(
   skills: EffectiveSkill[],
   pluginRefs: Set<string>,
   serverRefs: Set<string>,
-  modelContextTokens: number | undefined
+  modelContextTokens: number | undefined,
 ): { text: string; omittedRefs: string[] } {
   const budgetChars = skillMetadataBudgetChars(modelContextTokens);
   const { lines, omittedRefs } = renderBudgetedSkillCatalog(
@@ -221,10 +220,10 @@ function buildListing(
       origin: originLabel(
         skill,
         pluginRefs.has(skill.ref),
-        serverRefs.has(skill.ref)
+        serverRefs.has(skill.ref),
       ),
     })),
-    budgetChars
+    budgetChars,
   );
   return {
     text: formatSkillCatalogBody(lines, omittedRefs),
@@ -252,7 +251,7 @@ export function createEffectiveSkillTools(args: {
           name: z
             .string()
             .describe(
-              "The skill reference from the skills list above — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
+              "The skill reference from the skills list above — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing').",
             ),
         }),
         execute: async ({ name }) => {
@@ -312,7 +311,7 @@ export function createEffectiveSkillTools(args: {
           path: z
             .string()
             .describe(
-              "Relative path within the skill (e.g., 'scripts/fill.py')."
+              "Relative path within the skill (e.g., 'scripts/fill.py').",
             ),
         }),
         execute: async ({ name, path }) => {
@@ -400,7 +399,7 @@ const EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE =
  */
 export function getEffectiveSkillToolsAndPrompt(
   capabilities: EffectiveCapabilitySet,
-  options?: { modelContextTokens?: number; signal?: AbortSignal }
+  options?: { modelContextTokens?: number; signal?: AbortSignal },
 ): {
   tools: Partial<ReturnType<typeof createEffectiveSkillTools>>;
   systemPromptSection: string;
@@ -410,16 +409,16 @@ export function getEffectiveSkillToolsAndPrompt(
     return { tools: {}, systemPromptSection: "" };
   }
   const pluginRefs = new Set(
-    capabilities.pluginSkills.map((skill) => skill.ref)
+    capabilities.pluginSkills.map((skill) => skill.ref),
   );
   const serverRefs = new Set(
-    capabilities.serverSkills.map((skill) => skill.ref)
+    capabilities.serverSkills.map((skill) => skill.ref),
   );
   const listing = buildListing(
     skills,
     pluginRefs,
     serverRefs,
-    options?.modelContextTokens
+    options?.modelContextTokens,
   );
   if (listing.omittedRefs.length > 0) {
     logger.warn(
@@ -427,7 +426,7 @@ export function getEffectiveSkillToolsAndPrompt(
       {
         omitted: listing.omittedRefs,
         total: skills.length,
-      }
+      },
     );
   }
   // A lazy origin has not listed its files yet, so `files.length` cannot
@@ -435,15 +434,9 @@ export function getEffectiveSkillToolsAndPrompt(
   // withholding the tools would hide files that do exist, while offering
   // them for a skill with none costs one refusal the model can read.
   const hasFiles = skills.some(
-    (skill) => skill.files.length > 0 || skill.listFiles !== undefined
+    (skill) => skill.files.length > 0 || skill.listFiles !== undefined,
   );
-  const parts = [
-    "## Skills",
-    "",
-    EFFECTIVE_SKILLS_TRIGGER,
-    "",
-    listing.text,
-  ];
+  const parts = ["## Skills", "", EFFECTIVE_SKILLS_TRIGGER, "", listing.text];
   if (hasFiles) {
     parts.push("", EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE);
   }

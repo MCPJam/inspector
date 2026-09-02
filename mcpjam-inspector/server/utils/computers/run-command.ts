@@ -51,8 +51,7 @@ export interface ComputerExecOutput {
 }
 
 export type RunComputerCommandResult =
-  | ComputerExecOutput
-  | { error: string; engine?: "local" | "cloud" };
+  ComputerExecOutput | { error: string; engine?: "local" | "cloud" };
 
 export type BashRunner = (args: {
   sandboxId: string;
