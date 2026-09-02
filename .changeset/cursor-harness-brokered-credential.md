@@ -24,6 +24,14 @@ a fixed, obviously-fake placeholder so the CLI has something to send. Both
 refusals in the backend already say brokered secrets are fine on those surfaces;
 this is the inspector half.
 
+Availability is decided at the **environment**, which is the grant boundary the
+control plane actually composes a box's egress transform from — not project-wide.
+A correctly bound brokered `CURSOR_API_KEY` that the run's environment does not
+select is refused up front, naming the selection as the fix, instead of starting a
+turn that provisions a box and then fails Cursor's auth against the placeholder.
+Chat, swarm and eval launches all carry their environment id down to the harness
+turn for this.
+
 Materialized delivery is unchanged and still wins when both are configured — it
 is the one this process can prove reached the box. The refusal is still
 fail-closed and now names both deliveries and the exact binding a brokered

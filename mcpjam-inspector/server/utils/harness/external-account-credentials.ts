@@ -62,6 +62,7 @@
  * degraded read is a non-regression rather than a new failure.
  */
 import {
+  convexGetEnvironmentSecretSelection,
   convexListProjectSecretBindings,
   type ProjectSecretBinding,
 } from "../computers/convex-secrets-client.js";
@@ -118,7 +119,14 @@ type UnsatisfiedName =
   /** Neither delivery is configured, or we could not establish that one is. */
   | { name: string; reason: "absent" }
   /** A brokered row exists but its binding cannot deliver this credential. */
-  | { name: string; reason: "misbound"; hosts: string[] };
+  | { name: string; reason: "misbound"; hosts: string[] }
+  /**
+   * A brokered row exists and binds correctly, but this run's ENVIRONMENT does
+   * not grant it — either because the environment does not select it, or
+   * because the turn resolved no environment at all. Distinct from `absent`
+   * because the fix is a selection, not a new secret.
+   */
+  | { name: string; reason: "unselected"; environmentMissing: boolean };
 
 /**
  * Does a brokered row's binding actually deliver this credential?
@@ -165,33 +173,58 @@ function bindingDelivers(
  * project has configured, and answering anything but "none" for it would be a
  * turn that authenticates with a placeholder.
  *
- * PROJECT SCOPE, NOT ENVIRONMENT SCOPE, and this is the honest limitation of
- * doing it from here. The exact question — "which brokered secrets is THIS box
- * carrying" — is `projectSecretsEgress:listBrokeredSecretsForBox`, keyed on the
- * sandbox row, but it is an `internalQuery` with no public counterpart, and
- * `runHarnessTurn` is not even handed an `environmentId` to ask the
- * environment-scoped version with. The reachable read is
- * `projectSecrets:listSecrets`, which is project-scoped metadata.
+ * ENVIRONMENT SCOPE, NOT PROJECT SCOPE. The environment is the GRANT BOUNDARY,
+ * and this is the whole reason the second read exists. The authoritative
+ * question — "which brokered secrets is THIS box carrying" — is
+ * `projectSecretsEgress:listBrokeredSecretsForBox`, an `internalQuery` with no
+ * public counterpart, but its body is reproducible from two public reads: it
+ * resolves the box's grant to an `environmentId`, takes that environment's
+ * `secretSelection.secretIds`, and keeps the brokered rows among them that
+ * carry a complete binding. `projectSecrets:listSecrets` supplies the rows and
+ * their bindings; `projectEnvironments:getEnvironment` supplies the selection.
  *
- * What that costs, precisely: a project that holds a correctly-bound brokered
- * `CURSOR_API_KEY` which is NOT selected into the run's environment is allowed
- * to start, and the runtime then fails its vendor auth. That is a legible
- * misconfiguration with a legible failure, and it is strictly better than the
- * alternative it replaces (the turn could not run at all). It is also the one
- * thing a names-only public query keyed on the box would fix outright — see the
- * note in `docs/inspector/claude-code-host.mdx`.
+ * A project-wide answer would be WRONG, not merely imprecise: a correctly bound
+ * brokered `CURSOR_API_KEY` that the run's environment does not select is never
+ * composed into the box's egress transform, so reporting it available starts a
+ * turn that provisions a box and then fails vendor auth with a placeholder.
+ * Refusing before provisioning, naming the selection as the fix, is the point.
+ *
+ * The ONE rule this pair cannot reproduce is `isSecretDeliverable`'s live
+ * personal-secret check against the session owner — and it does not have to.
+ * Both reads run on the END USER's own bearer, and the backend filters both
+ * through `canSeeSecret` / `visibleSecretIdsFor`, so a personal secret owned by
+ * someone else is already absent from what we see. The residue is a turn whose
+ * session owner is not the bearer's user, which the harness path does not
+ * produce.
  */
 export type BrokeredCredentialAvailability = {
-  /** Names whose brokered row exists AND binds what the runtime needs. */
+  /** Names whose brokered row exists, binds what the runtime needs, AND is
+   *  selected into this run's environment. */
   available: Set<string>;
-  /** Names whose brokered row exists but binds the wrong hosts/header — kept
-   *  so the refusal can say WHICH hosts it found instead of "missing". */
+  /** Names whose brokered row exists and IS granted but binds the wrong
+   *  hosts/header — kept so the refusal can say WHICH hosts it found instead of
+   *  "missing". */
   misboundHosts: Record<string, string[]>;
+  /** Names whose brokered row exists and binds correctly but is NOT selected
+   *  into this run's environment. The fix is a selection, not a new secret, so
+   *  the refusal has to be able to say which. */
+  unselected: Set<string>;
+  /** This turn resolved NO Project Environment, so nothing is granted at all.
+   *  Sharpens the `unselected` copy — "there is no environment" and "the
+   *  environment does not select it" are different fixes. */
+  environmentMissing: boolean;
 };
 
 export async function fetchBrokeredCredentialNames(args: {
   bearer?: string;
   projectId?: string;
+  /**
+   * The Project Environment this turn resolved — the GRANT BOUNDARY. Absent ⇒
+   * the environment grants nothing (the backend's own rule: `resolveGrantForSandbox`
+   * answers `[]` when it cannot resolve one), which is reported as `unselected`
+   * with `environmentMissing`, never as an available credential.
+   */
+  environmentId?: string;
   /** Which box the turn runs on. Only `sandbox` (an ephemeral `evalSandboxes`
    *  row) can carry brokered secret transforms. */
   boxKind: "sandbox" | "computer";
@@ -201,6 +234,8 @@ export async function fetchBrokeredCredentialNames(args: {
   const empty: BrokeredCredentialAvailability = {
     available: new Set(),
     misboundHosts: {},
+    unselected: new Set(),
+    environmentMissing: false,
   };
   if (Object.keys(args.required).length === 0) return empty;
   // Not a failure: this box provably carries no brokered transform, so "none"
@@ -220,25 +255,66 @@ export async function fetchBrokeredCredentialNames(args: {
     );
     return null;
   }
-  const available = new Set<string>();
-  const misboundHosts: Record<string, string[]> = {};
-  for (const row of rows) {
-    if (row.delivery !== "brokered") continue;
-    const required = args.required[row.name];
-    if (!required) continue;
-    if (bindingDelivers(row, required)) {
-      available.add(row.name);
-      // A correctly bound row supersedes a sibling that is not: the credential
-      // WILL be delivered, so a stale "misbound" note must not turn into a
-      // refusal for a project that is configured correctly.
-      delete misboundHosts[row.name];
-      continue;
-    }
-    if (!available.has(row.name)) {
-      misboundHosts[row.name] = row.brokerHosts ?? [];
+  const candidates = rows.filter(
+    (row) => row.delivery === "brokered" && args.required[row.name],
+  );
+  // Nothing to scope: skip the environment read entirely rather than pay a
+  // round trip to narrow an empty set. A project with no brokered row for this
+  // credential gets the same "add it" refusal it got before, one query later.
+  if (candidates.length === 0) return empty;
+
+  // The GRANT BOUNDARY. An absent environment is not an unknown — it is the
+  // backend answering "no grant" — so it is recorded rather than refused as a
+  // read failure, and the copy says which of the two it was.
+  const environmentMissing = !args.environmentId;
+  let selectedIds: ReadonlySet<string> = new Set<string>();
+  if (args.environmentId) {
+    try {
+      selectedIds = new Set(
+        await convexGetEnvironmentSecretSelection(args.bearer, {
+          projectId: args.projectId,
+          environmentId: args.environmentId,
+        }),
+      );
+    } catch (error) {
+      logger.warn(
+        "[external-account-credentials] environment secret-selection lookup " +
+          "failed; treating the credential as unestablished",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+      return null;
     }
   }
-  return { available, misboundHosts };
+
+  const available = new Set<string>();
+  const misboundHosts: Record<string, string[]> = {};
+  const unselected = new Set<string>();
+  for (const row of candidates) {
+    const required = args.required[row.name]!;
+    // SELECTION FIRST. An unselected row's binding is irrelevant — it is not
+    // composed onto the box either way — and reporting it as "misbound" would
+    // send the reader to re-bind a secret whose binding is fine.
+    if (!selectedIds.has(row.secretId)) {
+      unselected.add(row.name);
+      continue;
+    }
+    if (bindingDelivers(row, required)) {
+      available.add(row.name);
+      continue;
+    }
+    misboundHosts[row.name] = row.brokerHosts ?? [];
+  }
+  // A correctly bound, granted row supersedes every sibling that is not: the
+  // credential WILL be delivered, so a stale note about another row must not
+  // turn into a refusal for a project that is configured correctly.
+  for (const name of available) {
+    delete misboundHosts[name];
+    unselected.delete(name);
+  }
+  // A row that is granted but misbound is the sharper complaint: it says the
+  // binding is wrong rather than that the secret is not granted.
+  for (const name of Object.keys(misboundHosts)) unselected.delete(name);
+  return { available, misboundHosts, unselected, environmentMissing };
 }
 
 /**
@@ -282,6 +358,11 @@ export function planExternalAccountCredentials(args: {
   /** Brokered rows that exist and match by NAME but not by BINDING — used only
    *  to sharpen the refusal. */
   misboundHosts?: Readonly<Record<string, string[]>>;
+  /** Brokered rows that exist and bind correctly but this run's environment
+   *  does NOT grant — used only to sharpen the refusal. */
+  unselected?: ReadonlySet<string>;
+  /** True when the turn resolved no Project Environment at all. */
+  environmentMissing?: boolean;
 }): ExternalAccountCredentialPlan {
   const auth: Record<string, string> = {};
   const materializedNames: string[] = [];
@@ -301,11 +382,19 @@ export function planExternalAccountCredentials(args: {
       continue;
     }
     const hosts = args.misboundHosts?.[name];
-    unsatisfied.push(
-      hosts && hosts.length > 0
-        ? { name, reason: "misbound", hosts }
-        : { name, reason: "absent" },
-    );
+    if (hosts && hosts.length > 0) {
+      unsatisfied.push({ name, reason: "misbound", hosts });
+      continue;
+    }
+    if (args.unselected?.has(name)) {
+      unsatisfied.push({
+        name,
+        reason: "unselected",
+        environmentMissing: args.environmentMissing === true,
+      });
+      continue;
+    }
+    unsatisfied.push({ name, reason: "absent" });
   }
 
   if (unsatisfied.length > 0) {
@@ -352,6 +441,32 @@ function externalAccountCredentialRefusal(args: {
       `Re-bind the secret under Project Settings → Secrets, or switch it to ` +
       `materialized delivery.`
     );
+  }
+  // GRANTED-BUT-NOT-SELECTED, and the refusal that closes the gap this module
+  // used to have. The secret exists and is bound correctly; what is missing is
+  // the environment's grant. "Add a CURSOR_API_KEY" would send the reader to
+  // create a duplicate of the row they already have, and — worse — the previous
+  // behaviour was not to refuse at all: the turn started, provisioned a box with
+  // no transform on it, and failed vendor auth with a placeholder.
+  const unselected = args.unsatisfied.filter(
+    (entry): entry is Extract<UnsatisfiedName, { reason: "unselected" }> =>
+      entry.reason === "unselected",
+  );
+  if (unselected.length > 0) {
+    const entry = unselected[0]!;
+    return entry.environmentMissing
+      ? `The ${args.harnessDisplayName} harness found a brokered ` +
+          `${entry.name} project secret, but this run resolved no Project ` +
+          `Environment — an environment is the grant boundary for project ` +
+          `secrets, so nothing is delivered to the box. Run this host from a ` +
+          `Project Environment that selects ${entry.name}, or configure it ` +
+          `with materialized delivery.`
+      : `The ${args.harnessDisplayName} harness found a brokered ` +
+          `${entry.name} project secret, but the environment this run uses ` +
+          `does not select it — brokered secrets are delivered per ` +
+          `environment, so the box would carry only a placeholder. Select ` +
+          `${entry.name} into that environment's secrets, or configure it ` +
+          `with materialized delivery.`;
   }
   const names = args.unsatisfied.map((entry) => entry.name);
   const one = names.length === 1;

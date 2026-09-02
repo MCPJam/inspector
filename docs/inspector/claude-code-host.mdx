@@ -1,13 +1,19 @@
 ---
-title: "Claude Code and Codex hosts"
-description: "Run the real Claude Code or Codex agent inside your project's Computer — observe native tools, MCP client, and execution behavior directly"
+title: "Harness hosts: Claude Code, Codex, and Cursor"
+description: "Run a real agent runtime — Claude Code, Codex, or the Cursor CLI — inside your project's Computer, and observe native tools, MCP client, and execution behavior directly"
 icon: "terminal"
 ---
 
-MCPJam supports two harness hosts that run a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+A harness host runs a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+
+Two of them run on **MCPJam's model access**, and everything below — turn mechanics, host settings, billing, failure modes — describes those two:
 
 - **Claude Code** — runs the real Claude Code agent with Anthropic models. Supports selected MCP servers and native tool approval.
 - **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills and selected MCP servers (through a host-executed relay — see the caveat below).
+
+The third runs on **your own vendor account**:
+
+- **Cursor CLI** — runs the real Cursor agent, signed in with your own `CURSOR_API_KEY` and billed to that Cursor account. MCPJam mints no model lease for it, so it needs a credential the other two do not. This page documents that credential in [Harness credentials on your own vendor account](#harness-credentials-on-your-own-vendor-account); its turn mechanics and host settings are not covered here yet.
 
 <Note>
   The Claude Code and Codex hosts are available to organizations where the
@@ -85,9 +91,9 @@ host, which signs in with a `CURSOR_API_KEY` and bills every generation to that
 Cursor account — takes no MCPJam model lease at all. Its credential comes from a
 **project secret**, and the delivery you choose decides which surfaces can run it.
 
-| Delivery | Where the value lives | Works in chat | Works in hosted evals and swarms |
+| Delivery | Where the value lives | Works in playground chat | Works in hosted evals and swarms |
 |---|---|---|---|
-| **Brokered** (recommended) | Never leaves MCPJam's backend. The egress proxy injects it as a header on the way out of the sandbox; the sandbox holds a non-secret placeholder. | Ephemeral (scenario/eval/swarm) boxes only | **Yes** |
+| **Brokered** (recommended) | Never leaves MCPJam's backend. The egress proxy injects it as a header on the way out of the sandbox; the sandbox holds a non-secret placeholder. | **No** — playground chat runs on your persistent project Computer, and brokered secrets are composed only onto the disposable boxes an eval, swarm or scenario run provisions | **Yes** |
 | **Materialized** | Resolved by MCPJam's server and exported as an environment variable inside the sandbox. | Yes | **No** |
 
 Hosted eval and swarm launches **refuse** an environment that selects a
@@ -108,10 +114,20 @@ So for a Cursor CLI host that you intend to run in an eval suite or a swarm,
 | Header | `Authorization` |
 | Template | `Bearer {}` |
 
-Then select it into the environment the host runs in. A turn that finds neither a
-brokered nor a materialized credential is refused before the sandbox is touched,
-with a message naming the variable and both deliveries; a brokered secret bound to
-the wrong host is refused too, naming the host it found.
+Then **select it into the environment the host runs in**. That selection is the
+grant, not a formality: brokered secrets are composed onto a box from its
+environment's selection, so a secret the environment does not grant is never
+delivered no matter how it is bound.
+
+Every way that can go wrong is refused **before the sandbox is touched**, with a
+message that names the fix:
+
+| What is wrong | What the turn says |
+|---|---|
+| Neither delivery configured | Names the variable and both deliveries, and points at Project Settings → Secrets |
+| Brokered secret exists but the environment does not select it | Says so, and asks you to select it into that environment — not to create a second one |
+| The host is not running from a Project Environment at all | Says there is no grant boundary, so no brokered secret can reach the box |
+| Brokered secret bound to the wrong host | Names the host it found and the host the runtime needs |
 
 <Note>
   A **persistent project Computer** (the ordinary playground chat box) does not

@@ -596,6 +596,7 @@ export async function runHarnessTurn(
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
+    environmentId,
     runtimeSecrets: runtimeSecretsOverride,
     secretsUnavailable,
     onSecretEnvDelivered,
@@ -1320,17 +1321,31 @@ export async function runHarnessTurn(
         // answers `[]` for anything without a `sandboxRowId` — persistent
         // computers receive no brokered secrets in v1 — so a chat turn on a
         // project computer must never be told its credential is brokered.
+        //
+        // `environmentId` is the OTHER half of that question, and the reason it
+        // is threaded all the way down here rather than approximated: the
+        // backend composes a box's egress transform from the ENVIRONMENT's
+        // `secretSelection`, so a correctly bound brokered row the run's
+        // environment does not select is never delivered. Asking project-wide
+        // would report it available and start a turn that provisions a box and
+        // then fails vendor auth against a placeholder.
         const brokered =
           unresolved.length > 0 && brokerBinding
             ? await fetchBrokeredCredentialNames({
                 ...(authHeader ? { bearer: authHeader } : {}),
                 ...(projectId ? { projectId } : {}),
+                ...(environmentId ? { environmentId } : {}),
                 boxKind: harnessSandboxBinding ? "sandbox" : "computer",
                 required: Object.fromEntries(
                   unresolved.map((name) => [name, brokerBinding[name]!]),
                 ),
               })
-            : { available: new Set<string>(), misboundHosts: {} };
+            : {
+                available: new Set<string>(),
+                misboundHosts: {},
+                unselected: new Set<string>(),
+                environmentMissing: false,
+              };
         // THROWS on an unsatisfiable credential, with copy that names the
         // variable, BOTH deliveries, and where to set them. Never defaulted or
         // silently skipped — starting the CLI with no credential produces an
@@ -1351,7 +1366,13 @@ export async function runHarnessTurn(
           secretEnv,
           brokerBinding,
           brokeredAvailable: brokered ? brokered.available : null,
-          ...(brokered ? { misboundHosts: brokered.misboundHosts } : {}),
+          ...(brokered
+            ? {
+                misboundHosts: brokered.misboundHosts,
+                unselected: brokered.unselected,
+                environmentMissing: brokered.environmentMissing,
+              }
+            : {}),
         });
       }
       const externalAccountAuth = externalAccountPlan?.auth;

@@ -78,6 +78,23 @@ const FN = {
    * "the project has not configured it at all" is to ask about the row.
    */
   listMetadata: "projectSecrets:listSecrets",
+  /**
+   * The ENVIRONMENT's own secret SELECTION — which of the project's secret rows
+   * a run launched from this environment is actually granted.
+   *
+   * Read alongside `listMetadata` because project scope is not grant scope. The
+   * environment is the grant boundary (`projectEnvironments` →
+   * `secretSelection.secretIds`), and `projectSecretsEgress` composes a box's
+   * egress transform from exactly that selection — so a brokered row that
+   * exists in the project but is NOT selected here is never delivered to the
+   * box, and must never be reported as available.
+   *
+   * Returns ids the CALLER may see: the backend filters the selection through
+   * `visibleSecretIdsFor`, so another member's personal secret is absent here
+   * exactly as it is absent from `listSecrets`. That is the same rule
+   * `listBrokeredSecretsForBox` re-checks live against the session owner.
+   */
+  environment: "projectEnvironments:getEnvironment",
 } as const;
 
 function stripBearer(token: string): string {
@@ -143,6 +160,13 @@ export async function convexMarkSecretsDelivered(
  * `listSecrets` is a metadata query whose return type has never had one.
  */
 export interface ProjectSecretBinding {
+  /**
+   * The row id. Not the secret's identity — the NAME is — but it is what an
+   * environment's `secretSelection` names, so it is the only way to ask whether
+   * THIS run's environment actually grants THIS row. Always present:
+   * `toSecretView` has returned it since the view existed.
+   */
+  secretId: string;
   /** The env-var name. This IS the secret's identity. */
   name: string;
   delivery: "brokered" | "materialized";
@@ -162,9 +186,9 @@ export interface ProjectSecretBinding {
  * establish that this credential is brokered", which is refused rather than
  * assumed either way.
  *
- * PROJECT-SCOPED, not environment-scoped, because that is the only shape the
- * backend exposes today. See `external-account-credentials.ts` for what that
- * costs and why it is still the fail-closed direction.
+ * PROJECT-SCOPED. That is the only shape the backend exposes, and it is NOT the
+ * grant boundary — pair it with {@link convexGetEnvironmentSecretSelection} to
+ * narrow it to the rows a run launched from a given environment receives.
  */
 export async function convexListProjectSecretBindings(
   bearer: string,
@@ -174,4 +198,27 @@ export async function convexListProjectSecretBindings(
     projectId: args.projectId,
   })) as ProjectSecretBinding[] | null;
   return rows ?? [];
+}
+
+/**
+ * The secret row ids ONE environment grants — the caller-visible subset of its
+ * `secretSelection`.
+ *
+ * An empty array is a real answer and the fail-closed default: an environment
+ * with no selection grants NO secrets, which is exactly what the schema says
+ * ("absent ⇒ NO secrets … the reason there is no 'all project secrets' mode").
+ *
+ * Throws on any failure, like its siblings; the caller decides what a failure
+ * means. For the harness credential path it means "we could not establish that
+ * this credential is granted", which is refused rather than assumed either way.
+ */
+export async function convexGetEnvironmentSecretSelection(
+  bearer: string,
+  args: { projectId: string; environmentId: string },
+): Promise<string[]> {
+  const environment = (await makeClient(bearer).query(FN.environment as any, {
+    projectId: args.projectId,
+    environmentId: args.environmentId,
+  })) as { secretSelection?: { secretIds?: string[] } } | null;
+  return environment?.secretSelection?.secretIds ?? [];
 }

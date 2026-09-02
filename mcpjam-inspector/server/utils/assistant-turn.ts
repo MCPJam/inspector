@@ -282,6 +282,19 @@ export interface RunAssistantTurnOptions {
   runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
 
   /**
+   * The Project Environment this turn resolved — the GRANT BOUNDARY for project
+   * secrets. Pass-through to `runHarnessTurn`, which needs it to answer whether
+   * a BROKERED credential is actually granted to this run's box: the backend
+   * composes a box's egress transform from the environment's `secretSelection`,
+   * so a project-wide answer would report a secret the box never receives.
+   *
+   * An id, never a resolved spec carrying values — see the option's docblock on
+   * `MCPJamHandlerOptions`. Absent ⇒ no grant, which is a normal state and not
+   * a failure.
+   */
+  environmentId?: MCPJamHandlerOptions["environmentId"];
+
+  /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
    * `handleHostedOrgChatModel` (org BYOK delegation chain) keeps
    * working — `runAssistantTurn` is the same engine, and the org BYOK
@@ -501,6 +514,11 @@ function buildHandlerOptions(
     ...(opts.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
       : {}),
+    // The turn's grant boundary for project secrets. Harness-relevant: the
+    // external-account credential check asks whether a BROKERED secret is
+    // selected into THIS environment, and an absent id means "no grant" rather
+    // than "ask the project".
+    ...(opts.environmentId ? { environmentId: opts.environmentId } : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),

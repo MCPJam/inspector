@@ -104,10 +104,16 @@ vi.mock("../registry.js", () => ({
  */
 const secretsClientState = vi.hoisted(() => ({
   rows: [] as Record<string, unknown>[],
+  /** What the run's ENVIRONMENT grants — the boundary the brokered check is
+   *  scoped to. Defaults (in `beforeEach`) to granting the Cursor row. */
+  selection: [] as string[],
 }));
 
 vi.mock("../../computers/convex-secrets-client.js", () => ({
   convexListProjectSecretBindings: vi.fn(async () => secretsClientState.rows),
+  convexGetEnvironmentSecretSelection: vi.fn(
+    async () => secretsClientState.selection,
+  ),
   convexListSecretsForRuntimeExecution: vi.fn(async () => []),
   convexMarkSecretsDelivered: vi.fn(async () => ({ marked: 0 })),
 }));
@@ -220,6 +226,11 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
     requireToolApproval: false,
     sourceType: "eval",
     harness: "cursor",
+    // The run's Project Environment — the GRANT BOUNDARY. Every hosted surface
+    // that can run a Cursor host threads one (chat via `web-chat-turn`, swarm
+    // via the pinned target's `environmentRef`, eval via the run's
+    // `configSnapshot.environmentRef`), so the default here matches them.
+    environmentId: "env-1",
     runtimeSecrets: [CURSOR_KEY, OTHER_SECRET],
     ...overrides,
   };
@@ -229,6 +240,7 @@ beforeEach(() => {
   harnessState.finalText = "done";
   providerState.lastArgs = undefined;
   secretsClientState.rows = [];
+  secretsClientState.selection = [CURSOR_SECRET_ROW_ID];
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 })),
@@ -381,7 +393,10 @@ const EPHEMERAL_BINDING = {
   workdir: "/home/user/work",
 };
 
+const CURSOR_SECRET_ROW_ID = "secret-cursor";
+
 const BROKERED_CURSOR_ROW = {
+  secretId: CURSOR_SECRET_ROW_ID,
   name: "CURSOR_API_KEY",
   delivery: "brokered",
   brokerHosts: ["api2.cursor.sh"],
@@ -477,6 +492,49 @@ describe("runHarnessTurn — external-account BROKERED credential", () => {
       "none",
     );
     expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+  });
+
+  it("refuses a correctly bound row the run's ENVIRONMENT does not select", async () => {
+    // The turn-level proof for the scoping fix. The project holds a brokered
+    // CURSOR_API_KEY bound exactly right, but this run's environment does not
+    // grant it, so `listBrokeredSecretsForBox` composes nothing onto the box.
+    // Before scoping, this STARTED the turn and failed vendor auth after the
+    // box was provisioned; now nothing is provisioned at all.
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    secretsClientState.selection = ["secret-something-else"];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("CURSOR_API_KEY");
+    expect(err.message).toMatch(/does not select it/i);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the turn resolved no environment at all", async () => {
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        environmentId: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toMatch(/no Project Environment/i);
     expect(registryState.createHarness).not.toHaveBeenCalled();
   });
 
