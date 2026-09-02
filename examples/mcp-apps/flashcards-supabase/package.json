@@ -15,30 +15,30 @@
     "prettier:fix": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,json,md,css,html,yml,yaml}\""
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.0.1",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@supabase/supabase-js": "^2.95.3",
+    "@supabase/supabase-js": "^2.112.4",
     "cors": "^2.8.5",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.2",
     "express": "^5.1.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "zod": "^4.3.6"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.5.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.4",
     "@types/node": "^25.2.3",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^5.1.4",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "prettier": "^3.6.2",
-    "tsx": "^4.21.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "vite-plugin-singlefile": "^2.3.0"
+    "vite-plugin-singlefile": "^2.3.3"
   },
   "overrides": {
     "shell-quote": "^1.8.4"
