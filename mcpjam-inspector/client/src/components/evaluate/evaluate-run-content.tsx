@@ -17,7 +17,7 @@
  * run-detail pane still renders beneath the verdict, so no information is
  * removed from the page in the commit that adds the headline.
  */
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -25,6 +25,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
+import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
@@ -38,9 +40,12 @@ import {
   buildEvaluateCaseRows,
   defaultOpenCaseRow,
 } from "./evaluate-case-row-model";
+import { RUN_STAGE_ANALYTICS_FLAG } from "../evals/run-user-value-chain-slot";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
+import { RunStageStrip } from "./run-stage-strip";
+import { buildStageStrip } from "./run-stage-strip-model";
 import { RunVerdictCaveats } from "./run-verdict-caveats";
 import {
   buildEvaluateImprovePrompt,
@@ -126,6 +131,38 @@ export function EvaluateRunContent({
   ]);
 
   const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
+
+  // The strip is the run-level view of the same evidence and rides its own
+  // flag, because the analytics document is a separate read from the decision.
+  const stageAnalyticsEnabled =
+    useFeatureFlagEnabled(RUN_STAGE_ANALYTICS_FLAG) === true;
+  const stageAnalytics = useEvalRunStageAnalytics({
+    projectId,
+    runId: run._id,
+    runStatus: run.status,
+    enabled: active && stageAnalyticsEnabled,
+  });
+  const stripView = useMemo(
+    () =>
+      buildStageStrip({
+        flagEnabled: stageAnalyticsEnabled,
+        status: stageAnalytics.status,
+        document: stageAnalytics.document,
+      }),
+    [stageAnalyticsEnabled, stageAnalytics.status, stageAnalytics.document],
+  );
+
+  const [stageFilter, setStageFilter] = useState<string | null>(null);
+  const visibleRows = useMemo(
+    () =>
+      stageFilter === null
+        ? caseRows
+        : caseRows.filter(
+            (row) =>
+              row.break.kind === "brokeAt" && row.break.stage === stageFilter,
+          ),
+    [caseRows, stageFilter],
+  );
 
   // Advisory only, and read from the same place the existing triage card reads
   // it. `autoRequest` is deliberately off: a server-quality generation costs
@@ -246,8 +283,16 @@ export function EvaluateRunContent({
       </div>
 
       <div className="border-t border-border/40">
+        <RunStageStrip
+          view={stripView}
+          activeStage={stageFilter}
+          onSelectStage={setStageFilter}
+        />
+      </div>
+
+      <div className="border-t border-border/40">
         <RunCaseRows
-          rows={caseRows}
+          rows={visibleRows}
           defaultOpenKey={openRowKey}
           renderBody={(row) => (
             <RunCaseRowBody

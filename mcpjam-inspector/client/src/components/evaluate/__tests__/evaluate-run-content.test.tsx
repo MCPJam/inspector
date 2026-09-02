@@ -9,6 +9,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   evalRunDecisionDiagnosticSchema,
   evalRunDecisionSummaryStructuralSchema,
@@ -16,6 +17,7 @@ import {
   type EvalRunDecisionSummary,
 } from "@mcpjam/sdk/contract";
 
+import { GOLDEN_STAGE_ANALYTICS } from "@/test/stage-analytics-fixtures";
 import { PASS_WORDS } from "./pass-words";
 import { EvaluateRunContent } from "../evaluate-run-content";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
@@ -39,6 +41,25 @@ const detailState = vi.hoisted(() => ({
 
 vi.mock("@/hooks/use-eval-run-decision-summary", () => ({
   useEvalRunDecisionDetail: () => detailState.current,
+}));
+
+const stageAnalytics = vi.hoisted(() => ({
+  current: {
+    status: "absent" as string,
+    document: null as unknown,
+    error: null,
+  },
+}));
+const flagEnabled = vi.hoisted(() => ({ current: false }));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => flagEnabled.current,
+}));
+vi.mock("@/hooks/use-eval-run-stage-analytics", () => ({
+  useEvalRunStageAnalytics: () => ({
+    ...stageAnalytics.current,
+    refetch: () => {},
+  }),
 }));
 
 // Server quality reaches Convex through `useMutation`, which needs a provider
@@ -111,8 +132,22 @@ const RUN = {
 } as unknown as EvalSuiteRun;
 
 const ITERATIONS = [
-  { _id: "it_1", status: "completed", result: "failed", tokensUsed: 900 },
-  { _id: "it_2", status: "completed", result: "passed", tokensUsed: 900 },
+  {
+    _id: "it_1",
+    status: "completed",
+    result: "failed",
+    tokensUsed: 900,
+    testCaseId: "case_1",
+    testCaseSnapshot: { title: "Draw and share a diagram", caseKey: "hash:a" },
+  },
+  {
+    _id: "it_2",
+    status: "completed",
+    result: "passed",
+    tokensUsed: 900,
+    testCaseId: "case_2",
+    testCaseSnapshot: { title: "Draw a rectangle", caseKey: "hash:b" },
+  },
 ] as unknown as EvalIteration[];
 
 function renderContent(
@@ -131,6 +166,12 @@ function renderContent(
 
 afterEach(() => {
   cleanup();
+  stageAnalytics.current = {
+    status: "absent",
+    document: null,
+    error: null,
+  };
+  flagEnabled.current = false;
   detailState.current = {
     ...detailState.current,
     status: "ready",
@@ -243,6 +284,50 @@ describe("EvaluateRunContent", () => {
       testCaseId: "case_1",
       iterationId: "it_1",
     });
+  });
+
+  it("shows no stage strip while its flag is off", () => {
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent();
+    expect(screen.queryByTestId("run-stage-strip")).toBeNull();
+  });
+
+  it("filters the case rows to the stage a reader picks", async () => {
+    flagEnabled.current = true;
+    stageAnalytics.current = {
+      status: "ready",
+      document: GOLDEN_STAGE_ANALYTICS,
+      error: null,
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent();
+
+    expect(screen.getByTestId("run-stage-strip")).toBeInTheDocument();
+    // The one case in this fixture broke at selection, so filtering to a stage
+    // nothing broke at must leave the list empty rather than showing it anyway.
+    await userEvent.click(screen.getByTestId("run-stage-strip-cell-discovery"));
+    expect(
+      screen.getByText("This run has no cases to show."),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("run-stage-strip-cell-selection"));
+    expect(screen.getByTestId("run-case-rows")).toHaveTextContent(
+      "Draw and share a diagram",
+    );
+    // And only that one: the passing case did not break at selection.
+    expect(screen.getByTestId("run-case-rows")).not.toHaveTextContent(
+      "Draw a rectangle",
+    );
   });
 
   it("offers no trace button when no diagnostic names a case row", () => {
