@@ -54,9 +54,18 @@ and **every** way to start a turn refuses, not just the button:
 
 A gate that covered only the composer would have been theatre. The two prompt
 paths keep their text as a composer draft rather than dropping it, so accepting
-the target and sending is one more click, not a retype. The acknowledgement is
-per conversation and survives a reactive refresh of that same conversation; New
-Chat, a detach and a rewind branch drop it.
+the target and sending is one more click, not a retype.
+
+And the gate is never reachable from a surface that cannot lift it, which would
+be the worse failure — no send AND no way to allow one. The disclosure is built
+once and every surface consumes it: the docked, centered and compare composers
+through `ChatInput`; the desktop fullscreen overlay, which REPLACES those
+composers, through its own slot above its input; and a mobile/tablet widget full
+takeover, the one layout with no composer at all, as a notice pinned over the
+thread — a widget can still request a follow-up there.
+
+The acknowledgement is per conversation and survives a reactive refresh of that
+same conversation; New Chat, a detach and a rewind branch drop it.
 
 The disclosure is derived only on the two paths that EXPLICITLY open a
 conversation — the history rail and the `?conversation=` restore — and never

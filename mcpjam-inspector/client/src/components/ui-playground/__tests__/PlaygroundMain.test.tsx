@@ -340,6 +340,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
     onEditUserMessage,
     editDisabled,
     sendFollowUpMessage,
+    onFullscreenChange,
   }: {
     messages: any[];
     isLoading: boolean;
@@ -349,6 +350,9 @@ vi.mock("@/components/chat-v2/thread", () => ({
     // Widget-driven follow-ups bypass the composer, so tests need the handler
     // itself — a rendered button could never stand in for that path.
     sendFollowUpMessage?: (text: string) => void;
+    // A widget going fullscreen is what swaps the docked composer for the
+    // pinned overlay; only the widget can report it, so tests drive it here.
+    onFullscreenChange?: (fullscreen: boolean) => void;
   }) =>
     (() => {
       mockThread({
@@ -358,6 +362,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
         onEditUserMessage,
         editDisabled,
         sendFollowUpMessage,
+        onFullscreenChange,
       });
       return (
         <div data-testid="thread">
@@ -561,11 +566,38 @@ vi.mock(
   })
 );
 
-// Mock FullscreenChatOverlay
+// Mock FullscreenChatOverlay. It renders the `notice` slot and a
+// canSend-driven Send button because the overlay REPLACES the docked
+// composer — a stub that dropped either would hide exactly the dead end
+// these tests exist to catch.
 vi.mock("@/components/chat-v2/fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: (props: { loadingIndicatorVariant?: string }) => {
+  FullscreenChatOverlay: (props: {
+    loadingIndicatorVariant?: string;
+    notice?: React.ReactNode;
+    input?: string;
+    onInputChange?: (value: string) => void;
+    canSend?: boolean;
+    onSend?: () => void;
+  }) => {
     mockFullscreenChatOverlay(props);
-    return <div data-testid="fullscreen-overlay">Fullscreen Overlay</div>;
+    return (
+      <div data-testid="fullscreen-overlay">
+        {props.notice}
+        <input
+          data-testid="fullscreen-overlay-input"
+          value={props.input ?? ""}
+          onChange={(e) => props.onInputChange?.(e.target.value)}
+        />
+        <button
+          type="button"
+          data-testid="fullscreen-overlay-send"
+          disabled={!props.canSend}
+          onClick={() => props.onSend?.()}
+        >
+          Send
+        </button>
+      </div>
+    );
   },
 }));
 
@@ -3119,11 +3151,13 @@ describe("PlaygroundMain", () => {
      * is what binds the disclosure to the thread on screen.
      */
     const openRestoredConversation = async (
-      resumeConfig: Record<string, unknown>
+      resumeConfig: Record<string, unknown>,
+      extraProps: Record<string, unknown> = {}
     ) => {
       arriveAtRestoredConversation(resumeConfig);
-      const { rerender } = render(
-        <PlaygroundMain {...defaultProps} syncConversationToUrl />
+      const props = { ...defaultProps, ...extraProps };
+      const { rerender: rerenderRaw } = render(
+        <PlaygroundMain {...props} syncConversationToUrl />
       );
       await waitFor(() => {
         expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
@@ -3131,8 +3165,13 @@ describe("PlaygroundMain", () => {
         );
       });
       mockUseChatSession.chatSessionId = RESTORED_SESSION_ID;
+      // Keeps the caller's props on every re-render, so a test that entered
+      // via `displayMode: "fullscreen"` does not silently fall back to the
+      // docked composer on the next flush.
+      const rerender = () =>
+        rerenderRaw(<PlaygroundMain {...props} syncConversationToUrl />);
       await act(async () => {
-        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+        rerender();
       });
       return { rerender };
     };
@@ -3148,6 +3187,9 @@ describe("PlaygroundMain", () => {
       window.history.replaceState({}, "", "/");
       invalidateChatHistoryPrefetch();
       useAgentToolPromptBridge.setState({ pending: null });
+      // Module-level store, not reset by the global `beforeEach`; the overlay
+      // tests below change it and every other test assumes the default.
+      mockUIPlaygroundStore.deviceType = "mobile";
     });
 
     it("says nothing about a live chat the user started here", () => {
@@ -3211,7 +3253,7 @@ describe("PlaygroundMain", () => {
         { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
       ] as any;
       await act(async () => {
-        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+        rerender();
       });
 
       const sendFollowUpMessage =
@@ -3298,7 +3340,7 @@ describe("PlaygroundMain", () => {
         { id: "1", role: "user", parts: [{ type: "text", text: "hi" }] },
       ] as any;
       await act(async () => {
-        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+        rerender();
       });
       await screen.findByTestId("conversation-target-notice");
 
@@ -3315,6 +3357,157 @@ describe("PlaygroundMain", () => {
       });
 
       expect(mockUseChatSession.rewindToMessage).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The gate must never be reachable from a surface that cannot lift it.
+     * Disabling Send while the only "Continue here" button lives in a composer
+     * the layout has hidden is a worse failure than the one the gate prevents:
+     * it has no exit.
+     */
+    describe("surfaces that replace the docked composer", () => {
+      /**
+       * `displayMode` reaches the component through the host-context draft,
+       * not the prop: `extractEffectiveHostDisplayMode` always resolves to a
+       * concrete mode (defaulting to "inline"), so the prop's `??` fallback
+       * never fires. Every layout below is entered through the store.
+       */
+      const setHostDisplayMode = (mode: string) => {
+        useHostContextStore.setState({
+          draftHostContext: { displayMode: mode },
+        });
+      };
+
+      /** Widget fullscreen on a desktop-ish frame swaps in the pinned overlay. */
+      const enterFullscreenOverlay = async (
+        rerender: () => void,
+      ): Promise<void> => {
+        mockUseChatSession.messages = [
+          { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ] as any;
+        await act(async () => {
+          rerender();
+        });
+        const onFullscreenChange =
+          mockThread.mock.calls.at(-1)?.[0].onFullscreenChange;
+        expect(onFullscreenChange).toBeDefined();
+        await act(async () => {
+          onFullscreenChange(true);
+        });
+      };
+
+      it("moves the acknowledgement into the fullscreen overlay instead of stranding it in the hidden composer", async () => {
+        mockUIPlaygroundStore.deviceType = "fill";
+        setHostDisplayMode("fullscreen");
+        const { rerender } = await openRestoredConversation({
+          selectedServers: ["deepwiki"],
+        });
+        await screen.findByTestId("conversation-target-notice");
+
+        await enterFullscreenOverlay(rerender);
+
+        // The docked composer really is gone — this is what made it a dead end.
+        expect(screen.getByTestId("fullscreen-overlay")).toBeInTheDocument();
+        expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+
+        // ...and the notice moved with it, rather than disappearing.
+        const notice = screen.getByTestId("conversation-target-notice");
+        expect(screen.getByTestId("fullscreen-overlay")).toContainElement(
+          notice,
+        );
+        expect(screen.getByTestId("fullscreen-overlay-send")).toBeDisabled();
+      });
+
+      it("sends from the overlay once its own acknowledgement is used", async () => {
+        // The "gate opens" direction: the overlay is a decision point, not a
+        // trap. Without a reachable control this test cannot even be written.
+        mockUIPlaygroundStore.deviceType = "fill";
+        setHostDisplayMode("fullscreen");
+        const { rerender } = await openRestoredConversation({
+          selectedServers: ["deepwiki"],
+        });
+        await screen.findByTestId("conversation-target-notice");
+        await enterFullscreenOverlay(rerender);
+
+        fireEvent.click(
+          screen.getByTestId("conversation-target-notice-acknowledge"),
+        );
+        await waitFor(() => {
+          expect(
+            screen.queryByTestId("conversation-target-notice"),
+          ).not.toBeInTheDocument();
+        });
+
+        fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+          target: { value: "continue here" },
+        });
+        await waitFor(() => {
+          expect(
+            screen.getByTestId("fullscreen-overlay-send"),
+          ).not.toBeDisabled();
+        });
+        fireEvent.click(screen.getByTestId("fullscreen-overlay-send"));
+
+        await waitFor(() => {
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ text: "continue here" }),
+          );
+        });
+      });
+
+      it("pins the acknowledgement over a widget full takeover, which renders no composer at all", async () => {
+        // Mobile/tablet fullscreen hides the footer composer AND forbids the
+        // overlay, yet a widget can still request a follow-up — which the gate
+        // refuses. Nothing on screen would lift it without this.
+        mockUIPlaygroundStore.deviceType = "mobile";
+        setHostDisplayMode("fullscreen");
+        const { rerender } = await openRestoredConversation({
+          selectedServers: ["deepwiki"],
+        });
+        mockUseChatSession.messages = [
+          { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ] as any;
+        await act(async () => {
+          rerender();
+        });
+
+        expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("fullscreen-overlay"),
+        ).not.toBeInTheDocument();
+
+        const pinned = await screen.findByTestId(
+          "pinned-conversation-target-notice",
+        );
+        expect(pinned).toContainElement(
+          screen.getByTestId("conversation-target-notice"),
+        );
+
+        // A widget follow-up is refused until it is used, and goes through after.
+        const sendFollowUpMessage =
+          mockThread.mock.calls.at(-1)?.[0].sendFollowUpMessage;
+        await act(async () => {
+          sendFollowUpMessage("follow up from a widget");
+        });
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+
+        fireEvent.click(
+          screen.getByTestId("conversation-target-notice-acknowledge"),
+        );
+        await waitFor(() => {
+          expect(
+            screen.queryByTestId("pinned-conversation-target-notice"),
+          ).not.toBeInTheDocument();
+        });
+        await act(async () => {
+          sendFollowUpMessage("follow up from a widget");
+        });
+        await waitFor(() => {
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ text: "follow up from a widget" }),
+          );
+        });
+      });
     });
 
     it("names the environment a conversation pinned when the composer points elsewhere", async () => {

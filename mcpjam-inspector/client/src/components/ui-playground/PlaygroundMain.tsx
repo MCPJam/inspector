@@ -4312,6 +4312,31 @@ export function PlaygroundMain({
     !hasLiveTimelineContent &&
     !preludeTraceEnvelope?.spans?.length;
 
+  /**
+   * ONE construction site for the as-run disclosure, consumed by every surface
+   * that can be blocked by it.
+   *
+   * The gate must never be reachable from a surface that cannot lift it. The
+   * docked/centered/compare composers take it through `ChatInput`'s `notice`
+   * slot; the fullscreen overlay REPLACES those composers, so it takes the
+   * same element through its own slot; and a widget full takeover, which
+   * renders no composer at all, gets it pinned over the thread (see
+   * `showPinnedConversationTargetNotice`). Rendering it in only one of those
+   * places disables the visible Send and hides the button that re-enables it.
+   */
+  const conversationTargetNotice = needsConversationTargetAck ? (
+    <ConversationTargetNotice
+      disclosure={conversationTargetDisclosure}
+      composerHostName={previewedHost?.name ?? null}
+      composerEnvironmentId={
+        composerExecutionTarget.kind === "environment"
+          ? composerExecutionTarget.environmentId
+          : null
+      }
+      onAcknowledge={acknowledgeConversationTarget}
+    />
+  ) : null;
+
   // Shared chat input props
   const sharedChatInputProps = {
     value: composer.input,
@@ -4366,18 +4391,7 @@ export function PlaygroundMain({
       // notice rendered directly above the input says why and carries the
       // one-click way out.
       needsConversationTargetAck,
-    notice: needsConversationTargetAck ? (
-      <ConversationTargetNotice
-        disclosure={conversationTargetDisclosure}
-        composerHostName={previewedHost?.name ?? null}
-        composerEnvironmentId={
-          composerExecutionTarget.kind === "environment"
-            ? composerExecutionTarget.environmentId
-            : null
-        }
-        onAcknowledge={acknowledgeConversationTarget}
-      />
-    ) : null,
+    notice: conversationTargetNotice,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount,
@@ -4461,9 +4475,38 @@ export function PlaygroundMain({
     !shouldShowUpsell &&
     (showPostConnectGuide || !showFullscreenChatOverlay);
 
+  /**
+   * The one layout that renders NO composer: a mobile/tablet widget full
+   * takeover hides the footer input and forbids the overlay. A widget can
+   * still request a follow-up there, and the as-run gate refuses it — so
+   * without this the refusal is silent and there is nothing on screen that
+   * could lift it. Pin the disclosure over the thread instead.
+   *
+   * The two exclusions keep it from doubling up on a notice another surface
+   * is already rendering: the centered empty-state composer survives a full
+   * takeover (but only ACTUALLY renders on an empty thread, which is the
+   * condition that matters here), and the trace-diagnostics shell has its own
+   * composer with the device frame behind it set to `display: none`.
+   */
+  const showPinnedConversationTargetNotice =
+    !!conversationTargetNotice &&
+    isWidgetFullTakeover &&
+    !showLiveTraceDiagnostics &&
+    !(isThreadEmpty && showSingleModelEmptyStateComposer);
+
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
+      {showPinnedConversationTargetNotice ? (
+        <div
+          data-testid="pinned-conversation-target-notice"
+          className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
+        >
+          <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
+            {conversationTargetNotice}
+          </div>
+        </div>
+      ) : null}
       {isThreadEmpty ? (
         // Empty state — centered (welcome + composer, or post-connect guide)
         <div
@@ -4743,10 +4786,12 @@ export function PlaygroundMain({
           onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={composerDisabled}
-          // The overlay has no room for the notice, so the honest thing it can
-          // do is show Send as unavailable — `performComposerSubmit` refuses
-          // this state anyway, and a live-looking button that does nothing is
-          // worse than a disabled one.
+          // The overlay replaces the docked composer, so it carries the
+          // disclosure — and its "Continue here" button — itself. Disabling
+          // Send without this would leave the user unable to send AND unable
+          // to acknowledge, which is a worse failure than the one the gate
+          // exists to prevent.
+          notice={conversationTargetNotice}
           canSend={
             !sendBlocked && composerHasContent && !needsConversationTargetAck
           }
