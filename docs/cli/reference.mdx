@@ -2203,24 +2203,27 @@ Send one message to a project's MCP servers and print the reply plus the raw too
 
 `--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
 
-Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. Configuration is fixed at the first turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. The **pinned** configuration (`--model`, `--environment`, `--server`, `--system-prompt`, `--tool-mode`) is fixed at the first turn and refused alongside `--session`. The **per-turn** flags (`--client`, `--max-steps`, `--max-tool-calls`) apply to whichever turn sends them.
 
 | Flag | Description |
 |------|-------------|
 | `--message <text>` | The message to send, as the user (required) |
 | `--idempotency-key <key>` | Stable key for this turn's intent (required). Reuse it when retrying. |
-| `--session <sessionId>` | Continue this session instead of starting one |
+| `--session <sessionId>` | Continue this session instead of starting one. Config flags are refused with a session; per-turn flags (`--client`, `--max-steps`, `--max-tool-calls`) are not. |
 | `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required to start a session. A bare id is rejected rather than guessed — unprefixed ids are indistinguishable from local Ollama models. |
-| `--environment <environmentId>` | Target this environment's servers. Conflicts with `--server`. |
+| `--client <hostId>` | Client ID (from `mcpjam cloud clients list`) to run the turn as. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the **real** runtime; without one the turn runs MCPJam's emulated engine. **Per-turn, not pinned** — pass it on every turn and check the printed `engine` field to confirm what ran. A session started with `--client` alone **requires** it on every continuation: omitting it is refused rather than answered by the emulated engine. Alongside `--environment` it only asserts which client you expect (a mismatch is refused). Cannot be combined with `--server`. A harness turn requires `--tool-mode auto` with no `--max-tool-calls`. |
+| `--environment <environmentId>` | Target this environment's servers. Conflicts with `--server`. An environment pins its own client, so a harness environment runs its harness on every turn including continuations. |
 | `--server <serverId...>` | Target these project servers. Conflicts with `--environment`. |
 | `--system-prompt <text>` | System prompt for the session |
-| `--tool-mode <mode>` | `read_only` (default) advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and **may cause real side effects**. |
+| `--tool-mode <mode>` | `read_only` (default) advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and **may cause real side effects**. Harness turns require `auto`. |
 | `--max-steps <n>` | Maximum engine steps this turn (1–16) |
-| `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. |
+| `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. Not supported on harness turns. |
 | `--temperature <n>` | Sampling temperature (0–2) |
 | `--project <id-or-name>` | Project name or ID (required to start a session) |
 
 `read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.
+
+The response always includes an `engine` field — `emulated` or `harness:<id>` (e.g. `harness:claude-code`) — naming which engine ran. Read this field rather than inferring the engine from the model id.
 
 ### `cloud sessions show`
 
