@@ -156,6 +156,7 @@ import {
 } from "./evals/tool-policy-gate.js";
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
+import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -540,6 +541,26 @@ export type RunEvalSuiteOptions = {
       }>;
     };
   };
+  /**
+   * The PROJECT ENVIRONMENT this run launched from — a `projectEnvironments`
+   * doc id. Deliberately NOT inside `config.environment`, which is the servers
+   * snapshot, and deliberately not `computerEnvironmentId`, which is a sandbox
+   * IMAGE; the three are unrelated despite the shared word.
+   *
+   * The GRANT BOUNDARY for the run's project secrets, and therefore what a
+   * HARNESS iteration's BROKERED external-account credential check must be
+   * scoped to. Absent for a legacy (non-environment) run, which grants none.
+   */
+  projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
@@ -1642,6 +1663,28 @@ type RunIterationBaseParams = {
    * its environment. Absent on quick-run paths that pre-resolve servers.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /**
+   * The PROJECT ENVIRONMENT this run launched from — a `projectEnvironments`
+   * doc id, and NOT to be confused with either neighbour: `environment` above
+   * is the servers snapshot, and `computerEnvironmentId` is a sandbox IMAGE.
+   *
+   * Carried for the HARNESS path only, where it is the grant boundary for the
+   * run's project secrets: an external-account credential delivered by a
+   * BROKERED secret is only composed onto this iteration's box when THIS
+   * environment selects it, so the check has to be scoped to it.
+   *
+   * Absent on a legacy (non-environment) suite run, which grants no secrets.
+   */
+  projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   /** Run caller's Convex bearer — used to provision/release the reproducible
    * eval sandbox when the suite pins a computerEnvironment. */
   convexAuthToken: string;
@@ -2030,6 +2073,11 @@ const executeTestCase = async (params: {
    * receives its servers pre-resolved via `selectedServers`.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /** The run's PROJECT ENVIRONMENT id (see RunEvalSuiteOptions) — the grant
+   *  boundary a harness iteration's brokered credential check is scoped to. */
+  projectEnvironmentId?: string;
+  /** See {@link RunEvalSuiteOptions.projectEnvironmentUnresolvedReason}. */
+  projectEnvironmentUnresolvedReason?: string;
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
   /** The run's frozen skills in harness shape (see
@@ -2073,6 +2121,8 @@ const executeTestCase = async (params: {
     setupAudit,
     suiteHostConfig,
     environment,
+    projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
     tasks,
@@ -2189,7 +2239,22 @@ const executeTestCase = async (params: {
     return outcomes;
   }
 
-  const modelDefinition = buildModelDefinition(test);
+  // THE HOST'S MODEL WINS on an external-account harness, exactly as it does on
+  // the chat rails. Resolved here rather than at either iteration runner so
+  // everything downstream of this line agrees on one model: the canonical id
+  // below, the MCPJam-vs-BYOK split, the org-BYOK runtime lookup, the engine's
+  // wire payload and what the iteration reports as the model it ran.
+  //
+  // Without it, admission and execution disagreed. Admission reads the host's
+  // id and accepts a case whose own model is an ordinary one; execution then
+  // carried that case model to `runAssistantTurn`, whose eligibility check saw
+  // a non-sentinel on an external-account harness and refused a run it had
+  // already admitted. A per-case model is normal in evals, so that refusal hit
+  // legitimate Cursor suites.
+  const modelDefinition = resolveEvalCaseModelDefinition({
+    hostConfig: suiteHostConfig,
+    caseModel: buildModelDefinition(test),
+  });
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
     modelDefinition.provider
@@ -2300,6 +2365,12 @@ const executeTestCase = async (params: {
         setupAudit,
         suiteHostConfig,
         environment,
+        // A `projectEnvironments` doc id, not the servers snapshot above and
+        // not a sandbox image — see `RunIterationBaseParams`.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
@@ -2362,6 +2433,12 @@ const executeTestCase = async (params: {
         setupAudit,
         suiteHostConfig,
         environment,
+        // A `projectEnvironments` doc id, not the servers snapshot above and
+        // not a sandbox image — see `RunIterationBaseParams`.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
@@ -2467,6 +2544,8 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
+  projectEnvironmentId,
+  projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
   pinnedHarnessSkills,
   toolPolicy,
@@ -2697,6 +2776,12 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
+        // The run's PROJECT ENVIRONMENT id — unrelated to `config.environment`
+        // above (a servers snapshot) despite the shared word.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         ...(toolPolicy
           ? {
               toolPolicy,
@@ -4136,6 +4221,8 @@ const runHostedIterationWithBrowser = async (
     // iteration eval-sandbox provisioning + the bash tool (hosted parity with
     // the local runner).
     environment,
+    projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
     tasks,
@@ -4752,6 +4839,20 @@ const runHostedIterationWithBrowser = async (
     ...(tasks !== undefined ? { tasks } : {}),
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
+      : {}),
+    // The run's PROJECT ENVIRONMENT — the grant boundary the harness path
+    // scopes its BROKERED external-account credential check to. Harness-gated
+    // like the rest of this cluster; the emulated path resolves no such
+    // credential and would only carry an unused field.
+    ...(resolvedExecution.harness && projectEnvironmentId
+      ? { environmentId: projectEnvironmentId }
+      : {}),
+    // Replay only: the run HAS an environment and this process cannot name it.
+    // Keeps the refusal honest instead of blaming a selection.
+    ...(resolvedExecution.harness &&
+    !projectEnvironmentId &&
+    projectEnvironmentUnresolvedReason
+      ? { environmentUnresolvedReason: projectEnvironmentUnresolvedReason }
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>

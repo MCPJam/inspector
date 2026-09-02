@@ -478,6 +478,47 @@ export function createE2BHarnessSandboxProvider(
       },
       // setNetworkPolicy omitted — E2B sets egress at create time; the
       // optional-call contract treats a missing impl as a no-op.
+      //
+      // `setRequestTransformations` / `addRequestTransformations` are omitted
+      // DELIBERATELY, and the cost of the omission is one console warning per
+      // Cursor turn: "The sandbox implementation does not support configuring
+      // request transformations, so credential brokering does not work.
+      // Falling back to less secure credential forwarding."
+      // (`@ai-sdk/harness`'s `warnCredentialBrokeringUnavailable`.) Three
+      // independent reasons, any one of which would be enough:
+      //
+      //  1. IT WOULD PUT THE REAL KEY IN THIS PROCESS. The framework hook is
+      //     called with the credential in `transform.headers` — its model is
+      //     "the HOST holds the key, the box gets a placeholder". MCPJam's
+      //     brokered project secrets are strictly stronger: the plaintext stays
+      //     behind KMS in the backend and is composed into the box's egress
+      //     policy there, so it never reaches the inspector at all. Wiring the
+      //     hook would be a regression dressed as a hardening.
+      //
+      //  2. E2B CANNOT EXPRESS THE MATCH. `HarnessV1RequestTransformation`
+      //     matches on host + path + method + header VALUE; E2B's network API
+      //     (`SandboxNetworkConfig.rules`) is keyed by DOMAIN alone and injects
+      //     unconditionally. Implementing the hook would mean silently widening
+      //     "this one exchange request carrying this exact placeholder" into
+      //     "every request to this host", which is not the rule the adapter
+      //     asked for.
+      //
+      //  3. THE WRITE IS REPLACE, AND WE DO NOT OWN THE BASELINE.
+      //     `PUT /sandboxes/{id}/network` replaces the whole rule set, and the
+      //     box's policy is composed by the CONTROL PLANE from its egress
+      //     baseline, its brokered project secrets, and (mid-turn) the model
+      //     lease header — see `composeBoxPolicy` and the
+      //     `hasActiveBrokerLease` precondition in mcpjam-backend. A write from
+      //     here holding only the adapter's rule would strip all of that
+      //     IRREVERSIBLY: the lease value exists only inside the transform and
+      //     cannot be read back, so the in-flight run would 401 for the rest of
+      //     its life. An ADDITIVE implementation is what the contract asks for
+      //     and is not something this side can build without a backend endpoint
+      //     that merges into the composed policy.
+      //
+      // The brokered credential path (`external-account-credentials.ts`) gets
+      // the same outcome the hook was for — real key outside the VM, placeholder
+      // inside — through the control plane instead.
 
       restricted: () => session, // same resource, narrower static type
     };

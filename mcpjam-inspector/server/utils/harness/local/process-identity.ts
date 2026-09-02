@@ -246,7 +246,31 @@ export async function readProcessBirthIdentity(
 export function supportsOwnershipProof(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  return platform === "linux" || platform === "darwin";
+  if (platform === "linux" || platform === "darwin") return true;
+  // Windows has no process group, so the guarantee comes from a Job Object with
+  // KILL_ON_JOB_CLOSE — and only when the launcher that creates one is present
+  // AND verified as part of the runtime pack's digest. Until then this answers
+  // false and every caller treats that as "do not run here".
+  //
+  // The latch is set by runtime resolution, not by a filesystem probe here:
+  // "the helper exists" is a weaker claim than "the helper is inside the tree
+  // whose digest consent named", and only the resolver can make the second.
+  if (platform === "win32") return windowsJobLauncherVerified;
+  return false;
+}
+
+/**
+ * Whether a VERIFIED Windows job launcher is available in this process.
+ *
+ * Latched by `resolveManagedBundle` when it resolves a pack that contains one.
+ * Deliberately not a probe: a helper sitting next to the pack proves nothing,
+ * and a helper this process has not digest-verified is a binary we would be
+ * spawning on a promise.
+ */
+let windowsJobLauncherVerified = false;
+
+export function setWindowsJobLauncherVerified(verified: boolean): void {
+  windowsJobLauncherVerified = verified;
 }
 
 /**
@@ -255,6 +279,132 @@ export function supportsOwnershipProof(
  * Answers false — never "probably" — when the platform cannot prove it. Every
  * caller treats false as "do not touch this pid".
  */
+/**
+ * Compare a recorded birth identity against one read just now, tolerating the
+ * one way macOS legitimately reports a different string for the same process.
+ *
+ * A process that is exiting — argv memory already torn down, not yet a zombie —
+ * is reported by `ps` with its command as `(comm)` rather than its full argv.
+ * The recorded identity carries the argv, so a byte compare answered
+ * "not-owned" for our OWN bridge the moment the adapter told it to exit, the
+ * supervisor then refused to signal it, and every clean stop was recorded as an
+ * escape.
+ *
+ * The start time is still exact in that state, and it is the half that actually
+ * defeats pid reuse: a reused pid gets a new start time. So an lstart match
+ * plus a command in the parenthesised form is accepted; a command that differs
+ * in any OTHER way is still a different process and still refused.
+ */
+export function sameBirthIdentity(
+  recorded: ProcessBirthIdentity,
+  current: ProcessBirthIdentity,
+): boolean {
+  if (recorded === current) return true;
+  const r = /^darwin:([^|]+)\|([\s\S]*)$/.exec(recorded);
+  const c = /^darwin:([^|]+)\|([\s\S]*)$/.exec(current);
+  if (r === null || c === null) return false;
+  return r[1] === c[1] && /^\([^()]+\)$/.test(c[2]!);
+}
+
+/**
+ * Enumerate the live members of a process group with their birth identities.
+ *
+ * Called at the instant the ROOT exits, while the group id provably still
+ * belongs to this tree. That timing is the whole value: afterwards the group is
+ * unanchored and nothing can prove it is still ours, but a snapshot taken while
+ * it was anchored lets a later stop verify and signal each member individually
+ * rather than refusing to touch the group.
+ *
+ * `null` means the platform could not be asked at all, which is different from
+ * an empty array (asked, nothing there) and is never treated as "nothing to
+ * clean up".
+ */
+export async function listGroupMembers(
+  pgid: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<Array<{ pid: number; identity: ProcessBirthIdentity }> | null> {
+  let pids: number[] = [];
+  if (platform === "darwin") {
+    const out = await new Promise<string | null>((resolve) => {
+      execFile(
+        "/bin/ps",
+        ["-o", "pid=,state=", "-g", String(pgid)],
+        { timeout: PS_TIMEOUT_MS, maxBuffer: 64 * 1024, encoding: "utf8", env: {} },
+        (error, stdout) => resolve(error ? (error as { code?: number }).code === 1 ? "" : null : String(stdout)),
+      );
+    });
+    if (out === null) return null;
+    pids = out
+      .split("\n")
+      .map((l) => l.trim().split(/\s+/))
+      .filter((f) => f.length >= 2 && /^\d+$/.test(f[0]!) && !isDeadState(f[1]!.charAt(0)))
+      .map((f) => Number(f[0]));
+  } else if (platform === "linux") {
+    let entries: string[];
+    try { entries = await readdir("/proc"); } catch { return null; }
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      let raw: string;
+      try { raw = await readFile(`/proc/${entry}/stat`, "utf8"); } catch { continue; }
+      const parsed = parseProcStatGroup(raw);
+      if (parsed !== null && parsed.pgrp === pgid && !isDeadState(parsed.state.charAt(0))) pids.push(Number(entry));
+    }
+  } else {
+    return null;
+  }
+  const members: Array<{ pid: number; identity: ProcessBirthIdentity }> = [];
+  for (const pid of pids) {
+    if (pid === pgid) continue;
+    const identity = await readProcessBirthIdentity(pid, platform);
+    if (identity !== null) members.push({ pid, identity });
+  }
+  return members;
+}
+
+/**
+ * Terminate ONE process whose birth identity is known: verify, SIGTERM, wait,
+ * SIGKILL.
+ *
+ * Never signals a pid whose identity changed — between the snapshot and this
+ * call the pid may have been reused, and the recorded identity is the only
+ * thing standing between "clean up our own tree" and "kill a stranger's
+ * process".
+ */
+export async function terminateOwnedProcess(args: {
+  pid: number;
+  identity: ProcessBirthIdentity;
+  graceMs: number;
+  platform?: NodeJS.Platform;
+}): Promise<"already-gone" | "not-owned" | "graceful" | "forced" | "escaped" | "unknown"> {
+  const platform = args.platform ?? process.platform;
+  const initial = await probeProcess(args.pid, platform);
+  if (initial.state === "gone") return "already-gone";
+  if (initial.state === "unknown") return "unknown";
+  if (!sameBirthIdentity(args.identity, initial.identity)) return "not-owned";
+  const waitGone = async (ms: number): Promise<boolean> => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      const p = await probeProcess(args.pid, platform);
+      if (p.state === "gone") return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  };
+  try { process.kill(args.pid, "SIGTERM"); } catch { return "already-gone"; }
+  if (await waitGone(args.graceMs)) return "graceful";
+  const again = await probeProcess(args.pid, platform);
+  if (again.state === "gone") return "graceful";
+  // `unknown` is a failure to LOOK, and escalation is an action. The initial
+  // probe above already refuses to signal on it; so does this one, because a
+  // transient probe failure over a pid that has since been reused is exactly
+  // how a SIGKILL lands on a stranger. The caller keeps its record and the
+  // janitor retries when the probe can see again.
+  if (again.state === "unknown") return "unknown";
+  if (!sameBirthIdentity(args.identity, again.identity)) return "not-owned";
+  try { process.kill(args.pid, "SIGKILL"); } catch { return "graceful"; }
+  return (await waitGone(500)) ? "forced" : "escaped";
+}
+
 export async function isSameProcess(
   pid: number,
   expected: ProcessBirthIdentity,
@@ -308,6 +458,57 @@ export async function probeProcessGroup(
 }
 
 /** `state ppid pgrp` are the three fields after `comm` in `/proc/<pid>/stat`. */
+/**
+ * The process-group id of ONE pid.
+ *
+ * Distinct from `probeProcessGroup`, which asks whether a GROUP still has live
+ * members. This asks which group a given process belongs to, so a caller that
+ * knows a session's root pid can decide whether some other process is a
+ * descendant of it — the supervisor puts every root in its own group, and a
+ * process it did not spawn directly (the vendor CLI, spawned by the bridge)
+ * inherits that group.
+ *
+ * `null` when the process is gone or the platform cannot be asked. Both are
+ * treated as "not ours" by every caller, which is the fail-closed answer.
+ */
+export async function readProcessGroupId(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<number | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (platform === "linux") {
+    try {
+      const raw = await readFile(`/proc/${pid}/stat`, "utf8");
+      return parseProcStatGroup(raw)?.pgrp ?? null;
+    } catch {
+      return null;
+    }
+  }
+  if (platform === "darwin") {
+    return new Promise((resolvePromise) => {
+      execFile(
+        "/bin/ps",
+        ["-o", "pgid=", "-p", String(pid)],
+        {
+          timeout: PS_TIMEOUT_MS,
+          maxBuffer: 4 * 1024,
+          encoding: "utf8",
+          env: {},
+        },
+        (error, stdout) => {
+          if (error) {
+            resolvePromise(null);
+            return;
+          }
+          const parsed = Number(String(stdout).trim());
+          resolvePromise(Number.isInteger(parsed) && parsed > 0 ? parsed : null);
+        },
+      );
+    });
+  }
+  return null;
+}
+
 export function parseProcStatGroup(
   raw: string,
 ): { state: string; pgrp: number } | null {
@@ -591,7 +792,7 @@ export async function terminateOwnedProcessGroup(args: {
     // announce a stopped session over a tree that may still be running.
     return { outcome: "unknown", reason: initial.reason };
   }
-  if (initial.identity !== args.birthIdentity) {
+  if (!sameBirthIdentity(args.birthIdentity, initial.identity)) {
     // Pid reuse: this is somebody else's process now. Emphatically do not
     // signal it.
     return { outcome: "not-owned" };
@@ -617,10 +818,18 @@ export async function terminateOwnedProcessGroup(args: {
   if (afterGrace.state === "unknown") {
     return { outcome: "unknown", reason: afterGrace.reason };
   }
-  if (afterGrace.identity !== args.birthIdentity) {
+  if (!sameBirthIdentity(args.birthIdentity, afterGrace.identity)) {
     // Our root exited during the grace window and the number was reused. The
-    // tree is gone; the stranger now holding the pid is not ours to signal.
-    return { outcome: "graceful" };
+    // stranger now holding the pid is not ours to signal — but our DESCENDANTS
+    // may still be running, and the root dying is not the tree dying. So the
+    // group is settled rather than declared clean, anchored because the root
+    // was proven alive and ours at the top of this call.
+    //
+    // `sameBirthIdentity`, not `!==`: the sibling check above uses it, and an
+    // exact compare reads a darwin process caught mid-exit — which reports its
+    // command as `(node)` — as pid reuse. That is the mistake this file has
+    // made before, and here it would report a clean stop over a live tree.
+    return settleGroup("graceful", true);
   }
   signalProcessGroup(args.pid, "SIGKILL", platform);
 
