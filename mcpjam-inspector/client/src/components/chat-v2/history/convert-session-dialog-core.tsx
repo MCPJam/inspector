@@ -331,6 +331,16 @@ export function ConvertSessionDialogCore({
    * writes to, so what this line shows and what the missing-servers notice
    * offers to fix can never disagree.
    */
+  /**
+   * The standalone server group the suite pins, if any. Non-empty means this
+   * suite's runs resolve their servers from the GROUP: `startTestSuiteRun`
+   * returns the standalone's selection and stops (`testSuites.ts:4921`).
+   */
+  const pinnedGroupServers = useMemo(
+    () => selectedSuiteEntry?.suite.serverAttachment?.resolvedServerNames ?? [],
+    [selectedSuiteEntry]
+  );
+
   const selectedSuiteSummary = useMemo(() => {
     if (!selectedSuiteEntry) {
       return null;
@@ -350,8 +360,6 @@ export function ConvertSessionDialogCore({
     // the import on and the one the opt-in patches. Pointing the check at the
     // group instead would have the client pass a suite the server then rejects
     // outright, replacing a fixable opt-in with a bare submit failure.
-    const pinnedGroupServers =
-      selectedSuiteEntry.suite.serverAttachment?.resolvedServerNames ?? [];
     const servers =
       pinnedGroupServers.length > 0
         ? pinnedGroupServers
@@ -362,7 +370,44 @@ export function ConvertSessionDialogCore({
       .map((group) => group.join(", "));
 
     return groups.length > 0 ? groups.join(" · ") : null;
-  }, [selectedSuiteEntry, selectedSuiteServerDisplay]);
+  }, [pinnedGroupServers, selectedSuiteEntry, selectedSuiteServerDisplay]);
+
+  /**
+   * Session servers the promoted case will not actually reach.
+   *
+   * SEPARATE from `missingServers`, which answers a different question. Two
+   * lists, two purposes:
+   *
+   *   `missingServers`        — will the BACKEND let this import through?
+   *                             It gates on `environment.servers`
+   *                             (`testSuites.ts:6679`) and the opt-in patches
+   *                             that same list, so this is the one the
+   *                             checkbox can fix.
+   *   `unreachableServers`    — will the promoted case have what it needs at
+   *                             RUN time? For a suite pinning a server group
+   *                             that is the group, because
+   *                             `startTestSuiteRun` returns the standalone's
+   *                             selection and stops (`testSuites.ts:4921`) —
+   *                             it never reads the per-host rows the opt-in
+   *                             propagates to.
+   *
+   * Conflating them let the modal promise something it could not deliver: for
+   * a group-backed suite the opt-in satisfied the gate, the case imported, and
+   * it then ran WITHOUT the server the box said had been added.
+   */
+  const unreachableServers = useMemo(() => {
+    if (!selectedSuiteEntry || pinnedGroupServers.length === 0) {
+      // No pinned group: run time and the gate read the same list, so
+      // `missingServers` already covers it and the opt-in genuinely fixes it.
+      return [];
+    }
+    const reachable = new Set(
+      pinnedGroupServers.map((name) => name.trim().toLowerCase())
+    );
+    return sessionServerDisplay.items
+      .filter((item) => !reachable.has(item.label.toLowerCase()))
+      .map((item) => item.label);
+  }, [pinnedGroupServers, selectedSuiteEntry, sessionServerDisplay.items]);
 
   /**
    * Whether there is a choice to present at all. With no suites the spec is
@@ -674,6 +719,25 @@ export function ConvertSessionDialogCore({
         </p>
       ) : null}
 
+      {/* A pinned server group is FROZEN by design — "to change the
+          selection, create a new attachment and re-point the suite" — so
+          nothing this dialog can offer will add a server to it, and the
+          opt-in below patches a list the runner does not read. Say that
+          plainly instead of collecting a confirmation that changes nothing. */}
+      {selectedSuiteEntry && unreachableServers.length > 0 ? (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>The suite&apos;s server group is missing servers</AlertTitle>
+          <AlertDescription>
+            This suite runs against a fixed server group, which does not
+            include {unreachableServers.join(", ")}. The case will still be
+            created, but it will run without{" "}
+            {unreachableServers.length === 1 ? "that server" : "those servers"}
+            {" "}until the group is updated in suite settings.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {/* Not in the design because it is not in the happy path: the session
           used a server the suite does not have, and importing without it
           would produce a case that cannot run. Kept as a submit-blocking
@@ -697,8 +761,9 @@ export function ConvertSessionDialogCore({
                 className="mt-0.5"
               />
               <span className="text-sm">
-                Add the missing servers to this suite before importing the
-                case.
+                {pinnedGroupServers.length > 0
+                  ? "Record these servers on the suite so the import can proceed."
+                  : "Add the missing servers to this suite before importing the case."}
               </span>
             </label>
           </AlertDescription>

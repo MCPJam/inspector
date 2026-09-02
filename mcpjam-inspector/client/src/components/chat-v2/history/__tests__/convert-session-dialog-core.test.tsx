@@ -411,6 +411,60 @@ describe("ConvertSessionDialogCore — Add to", () => {
     ).toBe("Claude · Stripe, GitHub");
   });
 
+  it("says a pinned group cannot be fixed from here, instead of promising it", async () => {
+    // `startTestSuiteRun` returns the standalone group's selection and stops
+    // (`testSuites.ts:4921`), so the opt-in — which patches
+    // `environment.servers` — cannot change what this suite runs against.
+    // Claiming otherwise collected a confirmation that changed nothing and
+    // then ran the case without the server.
+    mocks.useQuery.mockReturnValue([
+      {
+        suite: {
+          _id: "suite-grouped",
+          name: "Billing evals",
+          environment: { servers: [] },
+          // The group does NOT carry the session's Excalidraw server.
+          serverAttachment: { resolvedServerNames: ["Stripe"] },
+          hostAttachments: [{ hostName: "Claude" }],
+        },
+      },
+    ]);
+    renderCore();
+
+    expect(
+      screen.getByText(/server group is missing servers/i)
+    ).toBeTruthy();
+    expect(screen.getByText(/run without that server/i)).toBeTruthy();
+    // The gate-satisfying opt-in stays — the import still needs it — but it
+    // no longer claims to add anything to the suite.
+    expect(
+      screen.getByText(/record these servers on the suite/i)
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(/add the missing servers to this suite/i)
+    ).toBeNull();
+  });
+
+  it("stays quiet when the pinned group already covers the session", async () => {
+    // The common case, and the one the false positive was loudest in.
+    mocks.useQuery.mockReturnValue([
+      {
+        suite: {
+          _id: "suite-grouped",
+          name: "Billing evals",
+          environment: { servers: [] },
+          serverAttachment: { resolvedServerNames: ["Excalidraw"] },
+          hostAttachments: [{ hostName: "Claude" }],
+        },
+      },
+    ]);
+    renderCore();
+
+    expect(
+      screen.queryByText(/server group is missing servers/i)
+    ).toBeNull();
+  });
+
   it("drops a missing-servers opt-in when the suite it was ticked for changes", async () => {
     // The box records a decision about ONE suite's environment. Carrying the
     // tick across a suite change would let a submit patch the new suite on a
