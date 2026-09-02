@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test";
 import { SuiteDashboard } from "../suite-dashboard";
 import type { EvalSuite, EvalSuiteRun } from "../types";
@@ -124,8 +123,7 @@ describe("SuiteDashboard", () => {
     expect(screen.queryByText("Run insights")).not.toBeInTheDocument();
   });
 
-  it("shows the UI-only Monday.com report and can return to results", async () => {
-    const user = userEvent.setup();
+  it("does not special-case Monday.com suites with a report surface", () => {
     renderWithProviders(
       <SuiteDashboard
         suite={{ ...suite, name: "Monday.com" }}
@@ -141,17 +139,11 @@ describe("SuiteDashboard", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Monday.com reliability report" })
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("81%")).toHaveLength(2);
-    expect(
-      screen.getByRole("heading", { name: "Eval test cases" })
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Results" }));
-    expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("monday-reporting-dashboard")
+      screen.queryByRole("heading", { name: "Monday.com reliability report" })
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Report" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("latest + trends per client")).toBeInTheDocument();
   });
 });

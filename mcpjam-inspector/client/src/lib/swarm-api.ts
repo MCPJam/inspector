@@ -12,6 +12,9 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import { WebApiError } from "@/lib/apis/web/base";
+import type { NormalizedError } from "@mcpjam/sdk/browser";
+import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
@@ -990,14 +993,37 @@ async function postGenerate<T>(
     parsed = undefined;
   }
   if (!response.ok) {
-    const rawMessage =
+    const body =
       parsed && typeof parsed === "object"
-        ? (parsed as { message?: unknown }).message
-        : undefined;
+        ? (parsed as Record<string, unknown>)
+        : null;
+    const rawMessage = body?.message;
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
         : `${fallbackMessage} (${response.status})`;
+    const code =
+      typeof body?.code === "string"
+        ? body.code
+        : typeof body?.error === "string"
+          ? body.error
+          : null;
+    const normalized = isNormalizedError(body?.normalized)
+      ? (body.normalized as NormalizedError)
+      : undefined;
+    const details =
+      body?.details && typeof body.details === "object"
+        ? (body.details as Record<string, unknown>)
+        : undefined;
+    if (normalized) {
+      throw new WebApiError(
+        response.status,
+        code,
+        message,
+        normalized,
+        details,
+      );
+    }
     throw new SwarmGenerateError(response.status, message);
   }
   return parsed as T;

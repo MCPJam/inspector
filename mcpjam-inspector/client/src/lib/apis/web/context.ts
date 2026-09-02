@@ -82,7 +82,12 @@ const EMPTY_CONTEXT: ApiContext = {
 };
 
 let apiContext: ApiContext = EMPTY_CONTEXT;
-let cachedBearerToken: { token: string; expiresAt: number } | null = null;
+type BearerCacheKind = "guest" | "session";
+let cachedBearerToken: {
+  token: string;
+  expiresAt: number;
+  kind: BearerCacheKind;
+} | null = null;
 let apiContextRevision = 0;
 const apiContextListeners = new Set<() => void>();
 
@@ -748,7 +753,18 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   // whether a token is available; this function never short-circuits on mode.
   const now = Date.now();
   if (cachedBearerToken && cachedBearerToken.expiresAt > now) {
-    return `Bearer ${cachedBearerToken.token}`;
+    // A guest bearer minted before sign-in can stay cached for up to 30s.
+    // Never reuse it once the actor has a WorkOS session — Convex rejects
+    // MCPJam-model generation for guest JWTs even when the sidebar shows the
+    // signed-in user.
+    if (
+      cachedBearerToken.kind === "guest" &&
+      !shouldPreferGuestBearer()
+    ) {
+      cachedBearerToken = null;
+    } else {
+      return `Bearer ${cachedBearerToken.token}`;
+    }
   }
 
   // In guest mode, bypass WorkOS token bootstrap entirely and use a guest
@@ -760,6 +776,7 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
       cachedBearerToken = {
         token: guestToken,
         expiresAt: now + TOKEN_CACHE_TTL_MS,
+        kind: "guest",
       };
       return `Bearer ${guestToken}`;
     }
@@ -771,7 +788,11 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
     try {
       const token = await getAccessToken();
       if (token) {
-        cachedBearerToken = { token, expiresAt: now + TOKEN_CACHE_TTL_MS };
+        cachedBearerToken = {
+          token,
+          expiresAt: now + TOKEN_CACHE_TTL_MS,
+          kind: "session",
+        };
         return `Bearer ${token}`;
       }
     } catch {
@@ -792,6 +813,7 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
       cachedBearerToken = {
         token: sessionToken,
         expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+        kind: "session",
       };
       return `Bearer ${sessionToken}`;
     }
@@ -804,6 +826,7 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
     cachedBearerToken = {
       token: guestToken,
       expiresAt: now + TOKEN_CACHE_TTL_MS,
+      kind: "guest",
     };
     return `Bearer ${guestToken}`;
   }

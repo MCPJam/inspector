@@ -17,6 +17,7 @@ import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
+import { RequiredMark } from "@/components/shared/required-mark";
 import { SectionLabel } from "@/components/shared/section-label";
 import { JudgesSection } from "@/components/evals/judges-section";
 import { areAllChecksValid } from "@/components/evals/checks-section";
@@ -27,7 +28,11 @@ import {
 } from "@/components/swarms/persona-pixel-avatar";
 import {
   estimateLaunchSessions,
+  SWARM_INTENSITY_ORDER,
+  SWARM_INTENSITY_PRESETS,
+  estimateSwarmSessions,
   type SwarmIntensityPreset,
+  type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
 import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -459,23 +464,25 @@ function PersonaDetailPanel({
 
       <div className="space-y-4 px-4 pb-4 pt-3">
         <div className="space-y-1.5">
-          <SectionLabel>Persona</SectionLabel>
-          <div className="space-y-2">
-            <Input
-              value={name}
-              onChange={(event) => onChangeName?.(event.target.value)}
-              placeholder="Name"
-              aria-label="Persona name"
-              className="h-9 bg-background"
-            />
-            <Input
-              value={role}
-              onChange={(event) => onChangeRole?.(event.target.value)}
-              placeholder="Role"
-              aria-label="Persona role"
-              className="h-9 bg-background"
-            />
-          </div>
+          <SectionLabel>Name</SectionLabel>
+          <Input
+            value={name}
+            onChange={(event) => onChangeName?.(event.target.value)}
+            placeholder="Name"
+            aria-label="Persona name"
+            className="h-9 bg-background"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <SectionLabel>Role</SectionLabel>
+          <Input
+            value={role}
+            onChange={(event) => onChangeRole?.(event.target.value)}
+            placeholder="Role"
+            aria-label="Persona role"
+            className="h-9 bg-background"
+          />
         </div>
 
         <div className="space-y-1.5">
@@ -725,6 +732,8 @@ export function NewSwarmConfirmStep({
   reusedPersonas,
   onRemoveReused,
   preset,
+  pushIntensity,
+  onPushIntensityChange,
   environmentCount,
   environmentLabels,
   launching,
@@ -743,6 +752,8 @@ export function NewSwarmConfirmStep({
   reusedPersonas: ReusedPersona[];
   onRemoveReused: (personaId: string) => void;
   preset: SwarmIntensityPreset;
+  pushIntensity: SwarmPushIntensity;
+  onPushIntensityChange: (value: SwarmPushIntensity) => void;
   environmentCount: number;
   /** Display names of the environments this launch will fan out across. */
   environmentLabels: string[];
@@ -919,13 +930,12 @@ export function NewSwarmConfirmStep({
       sum + persona.journeys.filter((journey) => journey.goal.trim()).length,
     0
   );
-  const personaCount = proposed.length + reusedPersonas.length;
   const journeyCount = newJourneyCount + activeReusedTargets.length;
   // Every journey this launch fans out, not just the newly authored ones —
   // a reuse-heavy swarm was under-reporting its own session count. Reused
   // journeys are counted at THEIR OWN sessions, which is what launch runs
   // them at; the preset only sizes the journeys this swarm creates.
-  const sessionEstimate = estimateLaunchSessions({
+  const launchSessionEstimate = estimateLaunchSessions({
     preset,
     newJourneyCount,
     reusedSessionsPerTarget: activeReusedTargets.map(
@@ -1108,18 +1118,16 @@ export function NewSwarmConfirmStep({
         {header}
         <div className="space-y-2">
           <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
-            Review user personas and what they&rsquo;ll accomplish
+            Review your users and what they&rsquo;ll accomplish
           </h2>
           <p className="text-sm leading-relaxed text-foreground">
-            {/* The session count is what this screen actually spends, so it
-                leads. Persona and goal counts stay because a slate you are
-                about to prune is easier to judge with its size on screen. */}
-            We&rsquo;ll run {sessionEstimate}{" "}
-            {sessionEstimate === 1 ? "session" : "sessions"} total in this
-            swarm, across {personaCount}{" "}
-            {personaCount === 1 ? "persona" : "personas"} and {journeyCount}{" "}
-            {journeyCount === 1 ? "goal" : "goals"}. Select a persona for
-            details, or remove anything that doesn&rsquo;t fit.
+            Select a user persona for details, or remove anything that
+            doesn&rsquo;t fit.
+          </p>
+          <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
+            This launch will run {launchSessionEstimate}{" "}
+            {launchSessionEstimate === 1 ? "session" : "sessions"} total across{" "}
+            {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
           {environmentLabels.length > 0 && proposed.length > 0 ? (
             <p
@@ -1314,14 +1322,14 @@ export function NewSwarmConfirmStep({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={addPersona}
             data-testid="new-swarm-add-persona"
-            className="text-sm font-medium text-primary hover:text-primary/80"
           >
-            + Add persona
-          </button>
+            Add new persona
+          </Button>
           {personasAvailableToAdd.length > 0 ? (
             // Add-only: what is already attached is dropped from the list, and
             // detaching is the card's own Remove.
@@ -1329,12 +1337,64 @@ export function NewSwarmConfirmStep({
               personas={personasAvailableToAdd}
               open={addExistingOpen}
               onOpenChange={setAddExistingOpen}
-              groupLabel="Add existing personas"
+              groupLabel="Add existing persona"
+              triggerLabel="Add existing persona"
               triggerSize="sm"
               triggerTestId="new-swarm-confirm-add-existing"
+              showTriggerIcon={false}
               mode={{ kind: "add", onAdd: onAddReused }}
             />
           ) : null}
+        </div>
+
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <div
+              id="new-swarm-session-scope-label"
+              className="text-sm font-medium text-foreground"
+            >
+              Select the total number of sessions for the swarm.
+              <RequiredMark />
+            </div>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              We will distribute your user personas equally across the total
+              number of sessions.
+            </p>
+          </div>
+          <div
+            role="radiogroup"
+            aria-labelledby="new-swarm-session-scope-label"
+            data-testid="new-swarm-push-intensity"
+            className="grid grid-cols-1 gap-1 rounded-xl bg-muted/50 p-1 sm:grid-cols-3"
+          >
+            {SWARM_INTENSITY_ORDER.map((value) => {
+              const option = SWARM_INTENSITY_PRESETS[value];
+              const selected = pushIntensity === value;
+              const sessions = estimateSwarmSessions(option, environmentCount);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => onPushIntensityChange(value)}
+                  className={cn(
+                    "rounded-lg px-3 py-2.5 text-left transition-colors",
+                    selected
+                      ? "bg-background shadow-sm ring-1 ring-border/60"
+                      : "hover:bg-background/60"
+                  )}
+                >
+                  <span className="block text-sm font-semibold text-foreground">
+                    {option.label}
+                  </span>
+                  <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
+                    {sessions} sessions
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Scoring applies to EVERY journey this swarm launches: stamped
@@ -1461,7 +1521,7 @@ export function NewSwarmConfirmStep({
                 Launching…
               </>
             ) : (
-              "Launch Swarm"
+              "Continue"
             )}
           </Button>
         </div>

@@ -1,5 +1,5 @@
 /**
- * Swarm's "Where it runs" section.
+ * Swarm's clients-and-servers section on Describe.
  *
  * The two picker rows are the shared {@link EnvironmentComposer}; this wrapper
  * owns only what is swarm's: the section copy, the cloud-execution framing, the
@@ -99,7 +99,8 @@ export function SwarmTargetComposer({
       <div className="space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <Label>
-            Where it runs
+            Choose the clients and servers your users will interact with. This
+            will shape the swarm&rsquo;s behavior.
             {required ? <RequiredMark /> : null}
           </Label>
           {computersEnabled ? (
@@ -110,9 +111,8 @@ export function SwarmTargetComposer({
           ) : null}
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          {environmentsEnabled
-            ? "Start from an environment or build from clients and the shared stack below. Clients are the usual fan-out."
-            : "Build from clients and the shared stack below. Clients are the usual fan-out."}
+          You will be able to compare behavior across different clients
+          simultaneously.
         </p>
       </div>
 

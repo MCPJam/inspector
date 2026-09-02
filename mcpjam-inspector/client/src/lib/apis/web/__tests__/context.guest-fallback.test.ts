@@ -9,6 +9,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 import { getGuestBearerToken } from "@/lib/guest-session";
+import * as webContext from "../context";
 import {
   getApiAuthorizationHeader,
   setApiContext,
@@ -203,6 +204,37 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     expect(result2).toBe("Bearer cached-workos");
     expect(getAccessToken).toHaveBeenCalledTimes(1);
     expect(getGuestBearerToken).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a cached guest bearer after sign-in", async () => {
+    setApiContext({
+      projectId: "ws-guest-owned",
+      isAuthenticated: false,
+      serverIdsByName: {},
+    });
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-stale");
+
+    const guestResult = await getApiAuthorizationHeader();
+    expect(guestResult).toBe("Bearer guest-stale");
+    expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
+
+    const resetSpy = vi
+      .spyOn(webContext, "resetTokenCache")
+      .mockImplementation(() => {});
+    const getAccessToken = vi.fn().mockResolvedValue("workos-after-sign-in");
+    setApiContext({
+      projectId: "ws-guest-owned",
+      serverIdsByName: {},
+      getAccessToken,
+      isAuthenticated: true,
+    });
+    resetSpy.mockRestore();
+
+    const signedInResult = await getApiAuthorizationHeader();
+
+    expect(signedInResult).toBe("Bearer workos-after-sign-in");
+    expect(getAccessToken).toHaveBeenCalledTimes(1);
+    expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
   });
 
   it("re-evaluates guest token after cache expiry", async () => {

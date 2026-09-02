@@ -77,6 +77,16 @@ vi.mock("@/components/hosts/ServerGroupPicker", () => ({
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
+  useDbUserBootstrapStatus: () => ({
+    isUserReady: true,
+    isEnsuringUser: false,
+  }),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    user: { id: "user-1", email: "prathmesh@mcpjam.com" },
+  }),
 }));
 
 const { environmentsRef, createEnvironmentMock, ensureAdhocEnvironmentsMock } =
@@ -332,8 +342,8 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
       "ChatGPT prod · Claude prod"
     );
     expect(
-      screen.getByText(/run 4 sessions total in this swarm/i)
-    ).toBeInTheDocument();
+      screen.getByTestId("new-swarm-launch-session-estimate"),
+    ).toHaveTextContent(/4 sessions/i);
 
     // Attach the rubric: a deterministic check plus the LLM judge, moved off
     // the managed default onto a GPT-4 model.
