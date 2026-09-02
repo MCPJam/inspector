@@ -80,7 +80,7 @@ export function harnessModelEligibleForRuntime(args: {
   if (args.adapter.modelAccess === "external-account") {
     return (
       externalAccountHostModelRefusalReason({
-        adapter: args.adapter,
+        harnessId: args.adapter.id,
         modelId: args.modelId,
       }) === undefined
     );
@@ -116,14 +116,17 @@ export function harnessModelEligibleForRuntime(args: {
  * {@link harnessToolApprovalRefusalReason} below.
  */
 export function externalAccountHostModelRefusalReason(args: {
-  adapter: HarnessRuntimeAdapter;
+  /** Taken by ID so a caller holding only the host's `harness` can ask too —
+   *  the chat routes decide this BEFORE they have resolved any adapter. */
+  harnessId: HarnessId;
   /** The model id to hold to the rule. See the note above on which one. */
   modelId: string;
 }): string | undefined {
-  if (args.adapter.modelAccess !== "external-account") return undefined;
+  const adapter = getHarnessAdapter(args.harnessId);
+  if (adapter.modelAccess !== "external-account") return undefined;
   if (isRuntimeChosenModelSentinel(args.modelId)) return undefined;
   return (
-    `the ${args.adapter.displayName} harness chooses its own model on your ` +
+    `the ${adapter.displayName} harness chooses its own model on your ` +
     `own account, so this host cannot pin one — it carries ` +
     `"${args.modelId}", which the runtime would ignore while the session ` +
     `recorded it as the model that ran. Reset this host's model, or pick a ` +
@@ -362,7 +365,7 @@ export function checkHarnessRuntimeAvailable(args: {
   // so validating it would let a request satisfy the rule by sending
   // `cursor/auto` in the body while the host carried an ordinary id.
   const externalAccountRefusal = externalAccountHostModelRefusalReason({
-    adapter,
+    harnessId: args.harnessId,
     modelId: args.hostModelId ?? args.model.id,
   });
   if (externalAccountRefusal) {

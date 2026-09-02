@@ -84,7 +84,10 @@ import {
 } from "../../utils/effective-auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
-import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import {
+  checkHarnessRuntimeAvailable,
+  externalAccountHostModelRefusalReason,
+} from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
@@ -765,17 +768,37 @@ chatV2.post("/", async (c) => {
     // exists.
     //
     // UNCONDITIONAL for such a harness — deliberately NOT narrowed to a host
-    // that carries the sentinel. Narrowing it looks safer (why promote an id
-    // that is also wrong?) and is the opposite: it leaves the BODY's model
-    // standing on a mis-configured host, and the body's model is what the
-    // harness pre-flight below then validates. A caller could satisfy the
-    // sentinel rule by POSTing `cursor/auto` while the host itself carried an
-    // ordinary id. Promote first, always, and let the pre-flight refuse the
-    // host on what the host actually holds.
+    // that carries the sentinel. It does not need to be: by the time the
+    // promotion runs, the refusal directly below has already established that
+    // this host carries one. Narrowing it as well would only invite the reader
+    // to wonder which of the two decides, and would leave the BODY's model
+    // standing if the refusal were ever moved.
     const externalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
         harnessUsesExternalAccount(resolvedExecution.harness),
     );
+    // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
+    // below resolves anything. `resolveHostModelDefinition` asks the org's
+    // model config about an id it cannot possibly list, on a call carrying a
+    // 15 s timeout — and this host is going to be refused by the harness
+    // pre-flight further down regardless. Deciding it here keeps the same
+    // refusal (one shared sentence, one rule) and pays nothing for it.
+    //
+    // The pre-flight's own copy of the rule stays: it is the gate every surface
+    // shares, and this is a shortcut in front of it, not a replacement.
+    if (resolvedExecution.harness) {
+      const hostModelRefusal = externalAccountHostModelRefusalReason({
+        harnessId: resolvedExecution.harness,
+        modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
+      });
+      if (hostModelRefusal) {
+        throw new WebRouteError(
+          503,
+          ErrorCode.INTERNAL_ERROR,
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+        );
+      }
+    }
     if (
       (isScenarioSession || externalAccountHarnessTurn) &&
       hostRuntimeConfig &&

@@ -42,6 +42,9 @@ import {
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
+import type { ModelDefinition } from "@/shared/types";
 
 /**
  * `ok` means the run may proceed. `harness` is present when a harness was
@@ -197,6 +200,48 @@ function harnessCannotObserveWidgetsReason(
  * refuse on the surface today — a caller inlining the `serverIds`-only half is
  * the bug this exists to prevent.
  */
+/**
+ * The model an eval case ACTUALLY runs on — the host's, whenever the host runs
+ * an external-account harness that carries a runtime-chosen sentinel.
+ *
+ * A per-case model is normal and legitimate in evals: a suite names a model per
+ * case and is then pointed at a host. On an external-account host that model is
+ * consumed by nothing — Cursor's adapter passes NO model and Cursor Auto picks
+ * one on the customer's account — so the case's id describes nothing that runs.
+ * Carrying it downstream is the same mis-attribution this change closes on the
+ * chat rails, and it made ADMISSION and EXECUTION disagree: admission reads the
+ * host's id and accepts, then the dispatch's eligibility check sees the case's
+ * id and refuses a run that was already admitted.
+ *
+ * Promoted rather than refused, deliberately. Refusing at admission would be
+ * self-consistent and would also make every Cursor eval suite unrunnable: the
+ * model pickers cannot hold `cursor/auto` (it is not a selectable entry), so no
+ * case can name it. The host's model is authoritative on every other surface
+ * for exactly this reason; eval is the last one that was not.
+ *
+ * Only a SENTINEL host promotes. A host whose harness is external-account but
+ * whose model is an ordinary id is a broken configuration, and the admission
+ * gate refuses it on the host's own id — promoting that id would launder it.
+ */
+export function resolveEvalCaseModelDefinition(args: {
+  hostConfig: Record<string, unknown> | null | undefined;
+  /** The model the CASE names, already built into a definition. */
+  caseModel: ModelDefinition;
+}): ModelDefinition {
+  const harness = harnessOfHostConfig(args.hostConfig);
+  if (!harness) return args.caseModel;
+  if (getHarnessAdapter(harness).modelAccess !== "external-account") {
+    return args.caseModel;
+  }
+  const hostConfig = args.hostConfig as Record<string, unknown>;
+  const hostModelId =
+    typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";
+  if (!isRuntimeChosenModelSentinel(hostModelId)) return args.caseModel;
+  // The same builder the swarm runner uses, so the sentinel arrives with its
+  // curated label and its registered provider rather than a re-derived guess.
+  return buildSyntheticModelDefinition(hostModelId);
+}
+
 export function hasSelectedMcpServersForAdmission(args: {
   serverIds?: readonly string[];
   pluginServerIds?: readonly string[];

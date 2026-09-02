@@ -88,9 +88,19 @@ vi.mock("../../../utils/guest-auth.js", async () => {
   };
 });
 
-vi.mock("../../../utils/harness/harness-availability.js", () => ({
-  checkHarnessRuntimeAvailable: checkHarnessRuntimeAvailableMock,
-}));
+// Only `checkHarnessRuntimeAvailable` is stubbed. Spreading `actual` is
+// load-bearing, not tidiness: a wholesale replacement makes every OTHER export
+// the route calls `undefined(...)` at runtime — a 500 that looks like a routing
+// bug rather than a missing mock entry.
+vi.mock("../../../utils/harness/harness-availability.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/harness-availability.js")
+  >("../../../utils/harness/harness-availability.js");
+  return {
+    ...actual,
+    checkHarnessRuntimeAvailable: checkHarnessRuntimeAvailableMock,
+  };
+});
 
 vi.mock("../../../utils/built-in-tools/registry.js", () => ({
   resolveHostTools: resolveHostToolsMock,

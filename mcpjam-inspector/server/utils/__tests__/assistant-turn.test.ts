@@ -16,6 +16,10 @@ import type { ModelDefinition } from "@/shared/types";
 let lastExecution: Promise<void> | null = null;
 let writtenChunks: any[] = [];
 
+const { runHarnessTurnMock } = vi.hoisted(() => ({
+  runHarnessTurnMock: vi.fn(),
+}));
+
 const buildSsePayload = (events: any[]) =>
   `${events
     .map((event) => `data: ${JSON.stringify(event)}\n\n`)
@@ -91,6 +95,14 @@ vi.mock("../chat-helpers", async () => {
 
 vi.mock("../mcpjam-tool-helpers", () => ({
   serializeToolsForConvex: vi.fn(() => []),
+}));
+
+// The harness arm, stubbed so this suite can see WHICH engine the dispatch
+// chose. Without it a sentinel turn would try to reserve a real computer, and
+// the only assertion available would be about the emulated engine's fetch —
+// which cannot tell "ran the harness" from "refused".
+vi.mock("../harness/run-harness-turn.js", () => ({
+  runHarnessTurn: runHarnessTurnMock,
 }));
 
 vi.mock("../logger", () => ({
@@ -392,29 +404,37 @@ describe("runAssistantTurn", () => {
         )
       ).rejects.toThrow(/chooses its own model on your own account/);
 
-      // The load-bearing half: no engine ran at all. A resolved turn here is a
-      // completed run that never touched Cursor.
+      // The load-bearing half: NEITHER engine ran. A resolved turn here is a
+      // completed run that never touched Cursor — the emulated engine's only
+      // outbound sign is the `/stream` POST, and the harness arm is stubbed.
       expect(global.fetch).not.toHaveBeenCalled();
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
     });
 
-    it("still runs the sentinel through the harness gate without refusing", async () => {
-      // The control on the rule itself: a correctly configured host is eligible,
-      // so the dispatch does NOT throw here (it goes on to `runHarnessTurn`,
-      // which this suite does not drive).
-      const { harnessModelEligibleForRuntime } = await vi.importActual<
-        typeof import("../harness/harness-availability.js")
-      >("../harness/harness-availability.js");
-      const { getHarnessAdapter } = await vi.importActual<
-        typeof import("../harness/registry.js")
-      >("../harness/registry.js");
+    it("sends the SENTINEL to the harness — the rule refuses configurations, not Cursor", async () => {
+      // The control that makes the refusal above meaningful. A rule that
+      // refused every Cursor turn would also satisfy "no silent emulation", so
+      // the dispatch has to be observed CHOOSING the harness for a correctly
+      // configured host — not merely observed not throwing.
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
 
-      expect(
-        harnessModelEligibleForRuntime({
-          adapter: getHarnessAdapter("cursor"),
-          modelId: "cursor/auto",
+      await turn(
+        {
+          id: "cursor/auto",
           provider: "cursor",
-        })
-      ).toBe(true);
+          name: "Cursor Auto",
+        } as ModelDefinition,
+        "cursor"
+      );
+
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      // …and the emulated engine, whose only outbound sign is the `/stream`
+      // POST, was never reached.
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it("leaves the BROKERED fallback alone — ineligible there still degrades", async () => {

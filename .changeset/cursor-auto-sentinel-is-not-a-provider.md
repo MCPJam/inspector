@@ -117,6 +117,21 @@ was added for: a swarm or eval turn that completes, reports success, records
 in the transcript from a real run. The interactive rails fail closed at the
 pre-flight; this is the same refusal for the paths that never call it.
 
+Eval is where the host's model was NOT yet authoritative, and the two ends
+disagreed because of it. Admission reads the host's id, so it accepted a case
+whose own model was an ordinary one; execution then carried that case model to
+the dispatch, whose eligibility check saw a non-sentinel on an external-account
+harness and refused a run it had already admitted. A per-case model is normal
+and legitimate in evals — a suite names one per case and is then pointed at a
+host — so this hit ordinary Cursor suites. An eval case on an external-account
+host now runs the host's model, resolved once in `runTestCase` so the canonical
+id, the MCPJam-vs-BYOK split, the org-BYOK lookup, the engine's wire payload and
+what the iteration reports all agree. Promoted rather than refused at admission,
+because the model pickers cannot hold `cursor/auto` — refusing would make every
+Cursor eval suite unrunnable. A host whose model is an ordinary id still
+promotes nothing and is still refused: that is a broken configuration, not a
+case-level choice.
+
 Wherever a model label is rendered, the sentinel now reads "Cursor Auto" rather
 than the raw id, and the Playground shows it locked with the real reason ("this
 host's runtime chooses its own model on your own account") instead of the

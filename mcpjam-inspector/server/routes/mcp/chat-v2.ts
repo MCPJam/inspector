@@ -23,7 +23,10 @@ import { logger } from "../../utils/logger";
 import { WEBMCP_INSPECTOR_ENABLED } from "../../config";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
-import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import {
+  checkHarnessRuntimeAvailable,
+  externalAccountHostModelRefusalReason,
+} from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   handleMCPJamFreeChatModel,
@@ -934,11 +937,32 @@ chatV2.post("/", async (c) => {
     // browser's leftover pick would attribute the turn to a model that never
     // ran.
     //
-    // Unconditional for such a harness, matching the web rail: narrowing it to
-    // a host that carries the sentinel would leave the BODY's model standing on
-    // a mis-configured host, and the body's model is what the harness pre-flight
-    // below would then validate — a caller could satisfy the rule by sending
-    // `cursor/auto` while the host held an ordinary id.
+    // Unconditional for such a harness, matching the web rail: the refusal
+    // directly above has already established that this host carries the
+    // sentinel, so there is nothing left for a narrowing here to decide.
+    // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
+    // below resolves anything. `resolveHostModelDefinition` asks the org's
+    // model config about an id it cannot possibly list, on a call carrying a
+    // 15 s timeout — and this host is going to be refused by the harness
+    // pre-flight further down regardless. Deciding it here keeps the same
+    // refusal (one shared sentence, one rule) and pays nothing for it.
+    //
+    // The pre-flight's own copy of the rule stays: it is the gate every surface
+    // shares, and this is a shortcut in front of it, not a replacement.
+    if (resolvedExecution.harness) {
+      const hostModelRefusal = externalAccountHostModelRefusalReason({
+        harnessId: resolvedExecution.harness,
+        modelId: resolvedExecution.modelId ?? String(model?.id ?? ""),
+      });
+      if (hostModelRefusal) {
+        return c.json(
+          {
+            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          },
+          503,
+        );
+      }
+    }
     if (
       (isScenarioSession ||
         (resolvedExecution.harness &&

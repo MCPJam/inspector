@@ -671,7 +671,7 @@ export async function runAssistantTurn(
     // caller here already treats a thrown turn as a failed turn.
     const externalAccountRefusal = harnessAdapter
       ? externalAccountHostModelRefusalReason({
-          adapter: harnessAdapter,
+          harnessId: harnessAdapter.id,
           modelId: harnessModelId,
         })
       : undefined;
