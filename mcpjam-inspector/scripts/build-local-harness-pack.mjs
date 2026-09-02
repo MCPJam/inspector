@@ -343,6 +343,35 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
 }
 
 /**
+ * Refuse a pnpm too old for the adapter's recipe, before it fails obscurely.
+ *
+ * The recipe's `pnpm-workspace.yaml` carries one key, `allowBuilds` — pnpm 10
+ * syntax, and what lets the vendor SDK's extract script run and materialize the
+ * native CLI. pnpm 9 reads the same file, finds no `packages` field, and exits
+ * with "packages field missing or empty", which says nothing about the actual
+ * problem. This does.
+ */
+function assertPnpmVersion() {
+  let version;
+  try {
+    version = execFileSync("pnpm", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    fail("pnpm is not on PATH; the pack build installs the adapter's recipe with it");
+  }
+  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
+  if (!Number.isFinite(major) || major < 10) {
+    fail(
+      `pnpm ${version} is too old: the adapter's recipe uses \`allowBuilds\` in ` +
+        `pnpm-workspace.yaml, which needs pnpm 10 or newer (pnpm 9 reports ` +
+        `"packages field missing or empty" instead)`,
+    );
+  }
+}
+
+/**
  * The tar to archive with, and whether it is GNU.
  *
  * This build runs on all five platform runners, and `tar` is bsdtar on the
@@ -426,6 +455,7 @@ function main() {
   //    refuses symlinks and pnpm's default store layout is symlinks all the way
   //    down. `--ignore-scripts` everywhere except the vendor SDK's own extract
   //    step, which is what materializes the native CLI.
+  assertPnpmVersion();
   console.log("[pack] installing the adapter's frozen dependency graph…");
   execFileSync(
     "pnpm",

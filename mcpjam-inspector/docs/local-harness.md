@@ -161,6 +161,11 @@ files that execute. Measured against a real 494 MB pack:
 | the vendor `claude` binary | 1,263 ms |
 | **all of it** | **1,949 ms**, against a 1.5 s session-start SLO |
 
+End to end against that pack, the split costs **415 ms** by default and
+**2,144 ms** with `STRICT_REVERIFY=true`. (The first resolve, which takes the
+full digest, is ~3.3 s and happens once per process; every resolve after it is
+a cache hit at 0–1 ms.)
+
 So the two small scripts are re-hashed every time — they are what forces the
 bridge's listener onto loopback, and they cost nothing — and the two large
 binaries are left to the stat compare unless `STRICT_REVERIFY` is on. The gap

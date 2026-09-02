@@ -72,10 +72,14 @@ jobs:
         with:
           node-version: 22
 
+      # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
+      # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
+      # SDK's extract script to run. pnpm 9 reads the same file and fails with
+      # "packages field missing or empty".
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       # Only the adapter package is needed: the pack build reads its bridge
       # recipe and installs that recipe's own frozen graph inside the pack.
