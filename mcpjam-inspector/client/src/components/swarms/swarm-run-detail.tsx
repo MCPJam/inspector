@@ -451,6 +451,10 @@ export function SwarmRunDetail({
     live && live.total > 0
       ? Math.min(100, Math.round((live.done / live.total) * 100))
       : 0;
+  // Every attempt reached a terminal state and only the run row has yet to
+  // settle. Saying work is in flight here contradicts the count printed right
+  // beside it, which is what BB-76 reported seeing.
+  const settling = live !== null && live.total > 0 && live.done >= live.total;
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
@@ -534,7 +538,7 @@ export function SwarmRunDetail({
         >
           <span className="flex items-center gap-2 text-sm text-foreground">
             <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-            This swarm is still running
+            {settling ? "Finishing up" : "This swarm is still running"}
             {live.total > 0 ? (
               <span className="text-muted-foreground">
                 {" "}
