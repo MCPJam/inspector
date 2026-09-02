@@ -35,7 +35,6 @@ import {
   EVAL_VERDICT_DECISION_REASON_LABELS,
   FAILURE_CATEGORY_LABELS,
   STAGE_REASON_LABELS,
-  STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
   decisionDiagnosticFailureCategory,
   decisionDiagnosticFirstFailedStage,
@@ -44,6 +43,7 @@ import {
   type EvalRunDecisionDiagnostic,
   type EvalRunDecisionSummary,
   type EvalRunDecisionVerdict,
+  type StageResultRow,
 } from "@mcpjam/sdk/contract";
 
 /** Verdict badge copy. Title case for a badge; the contract's word otherwise. */
@@ -166,8 +166,6 @@ export interface DiagnosticChainSummary {
    * Flagged, never silently dropped.
    */
   trustNote: string | null;
-  /** The six stage rows, when a verified chain carried them. */
-  stageLines: string[];
 }
 
 /**
@@ -213,17 +211,11 @@ export function describeDiagnosticChain(
         ? `Recorded by stage analyzer v${versionAhead.reported}, newer than the v${versionAhead.known} this build knows. Shown as reported.`
         : null;
 
-  const stageLines =
-    chain.status === "verified"
-      ? chain.stages.map(
-          (row) =>
-            `${USER_VALUE_STAGE_LABELS[row.stage]}: ${
-              STAGE_STATE_LABELS[row.state]
-            }${row.reason ? ` — ${STAGE_REASON_LABELS[row.reason]}` : ""}`,
-        )
-      : [];
-
-  return { firstFailedStageLine, failureCategoryLine, trustNote, stageLines };
+  // The six stage rows used to be flattened into text lines here. They are now
+  // rendered as cards from the chain itself (`stage-trial-model.ts`), so the
+  // flattening is gone rather than left behind: a second, unrendered rendering
+  // of the same rows is what drifts out of step with the one on screen.
+  return { firstFailedStageLine, failureCategoryLine, trustNote };
 }
 
 function firstFailedStageReason(
@@ -260,6 +252,34 @@ export function describeDiagnosticEvidence(
   // Span ids and predicate reasons are authored elsewhere. React escapes them
   // on render; the bound is so one pathological reason cannot swamp the row.
   return `Evidence${at}: ${truncateUntrusted(parts.join("; "), 320) ?? ""}`;
+}
+
+/**
+ * The evidence locator for ONE stage row, in words.
+ *
+ * The row-level sibling of {@link describeDiagnosticEvidence}, which reads the
+ * diagnostic's own locator — already narrowed by the contract to the first
+ * failed stage. This one is for a surface that lets a reader select ANY stage
+ * and therefore has to answer "what was this stage decided from" for a row the
+ * diagnostic's locator says nothing about.
+ *
+ * Same bound and same wording as its sibling, and the same rule underneath:
+ * only ever THIS row's own evidence. Widening to a union across stages would
+ * hand a reader the spans that worked, labelled as evidence for the one that
+ * did not.
+ */
+export function describeStageRowEvidence(row: StageResultRow): string | null {
+  const evidence = row.evidence;
+  if (!evidence) return null;
+  const parts: string[] = [];
+  if (evidence.spanIds) parts.push(`span ids ${evidence.spanIds.join(", ")}`);
+  if (evidence.promptIndexes) {
+    parts.push(`prompt indexes ${evidence.promptIndexes.join(", ")}`);
+  }
+  if (parts.length === 0) return null;
+  // Span ids are authored elsewhere. React escapes them on render; the bound is
+  // so one pathological id cannot swamp the card.
+  return `Evidence: ${truncateUntrusted(parts.join("; "), 320) ?? ""}`;
 }
 
 /**

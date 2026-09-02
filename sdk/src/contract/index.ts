@@ -524,6 +524,7 @@ export {
   EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS,
   EVAL_RUN_MEASUREMENT_UNITS,
   EVAL_RUN_MEASUREMENT_UNIT_LABELS,
+  assembleEvalRunDecisionChain,
   assembleEvalRunDecisionSummary,
   decisionDiagnosticFailureCategory,
   decisionDiagnosticFirstFailedStage,

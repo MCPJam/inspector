@@ -42,7 +42,6 @@ import {
   type SuiteRunHistoryFilters,
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
-import { StageAnalyticsPanel } from "./stage-analytics-panel";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
 import {
   RunDecisionVerdictBadge,
@@ -523,31 +522,6 @@ export function SuiteDetailOverview({
       </section>
       ) : null}
 
-      {/* Where the chain stopped, per run — the measured half of a run, beside
-          its history. Evaluate-only by construction: this file is the Evaluate
-          (New) suite page, so /evals cannot pick it up.
-
-          Gated on `projectId` because it is genuinely nullable here and the
-          read is project-scoped: without one there is no request to make, and
-          rendering the panel anyway would leave it spinning on a fetch that
-          never starts. Same gate the traces export uses above. */}
-      {projectId ? (
-        <StageAnalyticsPanel
-          projectId={projectId}
-          suiteId={suite._id}
-          runCount={runs.length}
-          runsLoading={runsLoading}
-          // The run rows the findings read needs for the SELECTED document's
-          // status and revision — the analytics document carries neither.
-          runs={runs}
-          // "Open run", not a trace: deep trace focus exists only on the run
-          // page, and this is the affordance that surface actually has.
-          onRunClick={onRunClick}
-          // The same flag the verdict cell above already rides. Nothing new to
-          // turn on, and with it off no decision-summary request is issued.
-          decisionSummaryEnabled={decisionSummaryEnabled}
-        />
-      ) : null}
 
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
