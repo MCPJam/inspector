@@ -3,6 +3,7 @@ import {
   Cloud,
   FileText,
   FolderTree,
+  Globe,
   Laptop,
   Loader2,
   PanelRightClose,
@@ -26,6 +27,7 @@ import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
+import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -68,7 +70,7 @@ export function PlaygroundRightRail({
   );
 }
 
-type RightRailTab = "logs" | "shell";
+type RightRailTab = "logs" | "shell" | "browser";
 
 function RightRailTabbed({
   onClose,
@@ -97,6 +99,13 @@ function RightRailTabbed({
   // ask for. The CHIP follows the resolved `engine`, so it can never claim
   // "This machine" while commands actually run in the cloud.
   const isLocalShell = engine.selectedEngine === "local";
+  // The Browser tab follows the HOST's attached capability, not the engine:
+  // a host without `browser` has no browser for the model to drive, so a pane
+  // for one would be showing something nothing can use.
+  const hasBrowser = Boolean(
+    hostConfig?.builtInToolIds?.includes("browser") &&
+      engine.selectedEngine === "local",
+  );
 
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
@@ -126,6 +135,17 @@ function RightRailTabbed({
           isActive={activeTab === "shell"}
           onClick={() => handleTabClick("shell")}
         />
+        {/* Only when this host actually has the browser capability: a tab
+            offering a browser the model cannot use would be a promise the
+            host config does not keep. */}
+        {hasBrowser ? (
+          <TabButton
+            icon={Globe}
+            label="Browser"
+            isActive={activeTab === "browser"}
+            onClick={() => handleTabClick("browser")}
+          />
+        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -145,6 +165,23 @@ function RightRailTabbed({
       >
         <LoggerView isCollapsable={false} />
       </div>
+      {hasBrowser ? (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            activeTab === "browser" ? "flex" : "hidden",
+          )}
+        >
+          {/* Mounted-hidden like the others: switching tabs must not drop the
+              frame socket, which would stop the screencast and make the agent's
+              browser go dark every time somebody glanced at the logs. */}
+          <LocalBrowserBody
+            projectId={projectId}
+            consentGranted={engine.consent.granted}
+            consentToken={engine.consent.token}
+          />
+        </div>
+      ) : null}
       <div
         className={cn(
           "min-h-0 flex-1 flex-col",
