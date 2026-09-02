@@ -719,6 +719,38 @@ describe("v1 project environment routes", () => {
       expect(await res.json()).toMatchObject({ secretGrants: false });
     });
 
+    it.each([
+      ["null", null],
+      ["a truthy non-boolean", "yes"],
+      ["a number", 1],
+    ])(
+      "normalizes secretGrants %s to false rather than passing it through",
+      async (_label, value) => {
+        // `=== true` is the whole normalization, and the values that are NOT
+        // `true` but are also not absent are where a looser check would go
+        // wrong: a JSON `null` from a backend that stubs the field, or a
+        // truthy string that a coercing read would call support. The client
+        // spends this answer on whether to SEND `secretSelection`, so a false
+        // yes buys the validator error the probe exists to prevent — and the
+        // DTO must stay a boolean, not forward whatever arrived.
+        mockQuery({
+          "projectEnvironments:getCapabilities": {
+            modelOverrides: true,
+            modelMatrix: true,
+            secretGrants: value,
+          },
+        });
+        const res = await request(
+          "GET",
+          "/api/v1/projects/p1/environments/capabilities",
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { secretGrants: unknown };
+        expect(body.secretGrants).toBe(false);
+      },
+    );
+
+
     it("answers false — not an error — when the deployment is too OLD", async () => {
       // ABSENCE IS THE SIGNAL. An older deployment does not export the query;
       // a 500 here would break clients that are perfectly able to fall back.
