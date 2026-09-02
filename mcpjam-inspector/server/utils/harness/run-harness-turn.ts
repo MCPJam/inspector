@@ -3172,6 +3172,25 @@ export async function runHarnessTurn(
             tStream - tStart
           }ms resumed=${resumedSession}`,
         );
+        if (localPrepared !== null) {
+          // Its own line, with LOCAL-only names.
+          //
+          // Not folded into the line above, and the names are not reused: the
+          // cloud fields mean "reserve and wake an E2B box" and "install an
+          // egress transform", and neither happened here. A local turn
+          // reporting `boxWake` would be a metric that reads as a box wake and
+          // is not one — which is how a dashboard ends up averaging two
+          // different things under one name.
+          //
+          // Durations and a boolean. No path, no machine id, no digest.
+          logger.info(
+            `[harness][timing][local] runtimeVerify=${
+              localPrepared.timings.localRuntimeVerifyMs
+            }ms gatewayReady=${
+              localPrepared.timings.localGatewayReadyMs
+            }ms permissionMode=${localPrepared.permissionMode} resumed=${resumedSession}`,
+          );
+        }
         if (installedRuntimeVersion) {
           // Its own line, and greppable: the canary alert watches for this
           // value CHANGING between sessions of the same harness, which is not a
