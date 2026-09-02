@@ -22,7 +22,10 @@ const FALLBACK_PROTOCOL_VERSION = "2025-06-18";
 
 export type JsonRpcFrame = {
   jsonrpc?: string;
-  id?: number | string;
+  /** `null` is representable on purpose: a peer may SEND it, and the spec's
+   *  reply to a malformed request carries `id: null`. It is never correlatable,
+   *  which is what `handle` refuses on. */
+  id?: number | string | null;
   method?: string;
   params?: Record<string, unknown>;
   result?: unknown;
@@ -72,6 +75,21 @@ export function createHostToolMcpServer(options: {
     async handle(frame) {
       const { id, method, params } = frame;
 
+      // ID FIRST, before any method is dispatched. Two shapes were wrong here:
+      //   - `initialize` answered even with NO id, so a notification got a
+      //     response, which a strict peer treats as a protocol violation;
+      //   - an explicit `id: null` fell through as if it were correlatable, and
+      //     a response carrying `id: null` cannot be matched to anything.
+      // JSON-RPC 2.0 says only an ABSENT id makes a notification; `null` is a
+      // malformed request, so it is refused rather than answered on a guess.
+      if (id === undefined) return undefined;
+      if (id === null) {
+        return {
+          id: null,
+          error: { code: -32600, message: "Invalid Request: id must not be null" },
+        };
+      }
+
       if (method === "initialize") {
         return {
           id,
@@ -84,9 +102,6 @@ export function createHostToolMcpServer(options: {
           },
         };
       }
-
-      // A notification carries no id and must not be answered.
-      if (id === undefined) return undefined;
 
       if (method === "tools/list") {
         try {

@@ -48,7 +48,7 @@ server.
 Thread started with `approvalPolicy: "untrusted"`, `approvalsReviewer: "user"`,
 `sandbox: "workspace-write"`. Observed order:
 
-```
+```text
 started:  userMessage
 completed: userMessage
 started:  commandExecution                        <-- t

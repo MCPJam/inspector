@@ -52,6 +52,33 @@ out += bullets("changed", changed.slice(0, 40));
 if (changed.length > 40) out += `  ... and ${changed.length - 40} more\n`;
 out += "\n";
 
+/**
+ * The methods the adapter actually dispatches on, read from its own source so
+ * this file cannot drift into a stale second copy of the list.
+ */
+const USED = (() => {
+  const protocolPath = new URL(
+    "../../mcpjam-inspector/server/utils/harness/codex-appserver/bridge/app-server-protocol.ts",
+    import.meta.url
+  );
+  let source = "";
+  try {
+    source = readFileSync(protocolPath, "utf8");
+  } catch {
+    // Unreadable (moved, or the diff run standalone): treat every removal as
+    // significant rather than silently narrowing the check.
+    return { has: () => true };
+  }
+  const names = new Set();
+  for (const block of source.matchAll(
+    /export const USED_[A-Z_]+ = \[([\s\S]*?)\] as const;/g
+  )) {
+    for (const quoted of block[1].matchAll(/"([^"]+)"/g)) names.add(quoted[1]);
+  }
+  // An empty parse means the shape changed; fail loud rather than pass silently.
+  return names.size ? names : { has: () => true };
+})();
+
 for (const file of [
   "ClientRequest.json",
   "ServerRequest.json",
@@ -62,16 +89,23 @@ for (const file of [
   const after = methods(read(newDir, file));
   const gained = [...after].filter((m) => !before.has(m));
   const lost = [...before].filter((m) => !after.has(m));
-  if (lost.length) removedAnything = true;
+  // Only a method the ADAPTER actually speaks is fatal. Upstream removes
+  // methods this adapter never called (there are ~95 client methods and it uses
+  // a handful), and failing the diff on those trained the reader to ignore it —
+  // which is how a removal that does matter would slip through. Unused removals
+  // stay in the report, just not as an error.
+  const lostAndUsed = lost.filter((m) => USED.has(m));
+  if (lostAndUsed.length) removedAnything = true;
   out += `${file}: ${before.size} -> ${after.size}\n`;
   out += bullets("added", gained);
   out += bullets("REMOVED", lost);
+  out += bullets("REMOVED AND USED BY THE ADAPTER", lostAndUsed);
 }
 
 process.stdout.write(out);
 if (removedAnything) {
   process.stderr.write(
-    "\nA method was REMOVED upstream. The adapter's schema-snapshot test will fail until it is re-pinned.\n"
+    "\nA method the adapter SPEAKS was removed upstream. Its schema-snapshot test will fail until the adapter is updated and the snapshot re-pinned.\n"
   );
   process.exit(1);
 }

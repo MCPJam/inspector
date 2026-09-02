@@ -32,6 +32,10 @@ node "$HERE/manifest.mjs" "$TMP" "$VERSION" > "$OUT/MANIFEST.json"
 echo "wrote $OUT ($(ls "$OUT" | wc -l) files)"
 
 if [ "${2:-}" = "--diff" ]; then
-  PREV="$(ls -d "$HERE"/*/ | grep -v "/$VERSION/$" | sort -V | tail -1)"
+  # `ls | grep -v` exits 1 when nothing else matches, and `pipefail` turns that
+  # into an abort BEFORE the empty-PREV guard below can skip the diff — so the
+  # very first snapshot could not be generated with --diff. awk matches nothing
+  # without failing, which is the behaviour the guard was written for.
+  PREV="$(ls -d "$HERE"/*/ 2>/dev/null | awk -v cur="$HERE/$VERSION/" '$0 != cur' | sort -V | tail -1)"
   [ -n "$PREV" ] && node "$HERE/diff.mjs" "$PREV" "$OUT"
 fi

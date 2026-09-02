@@ -529,7 +529,12 @@ export function createStreamTranslator(input: {
         if (willRetry) {
           emitWarning({ message: error?.message ?? "codex retrying" });
         } else {
-          emitError({ error: error?.message ?? "codex error" });
+          // Remembered so `finishTurn` does not emit the same failure a second
+          // time: a failed turn reports it BOTH here and on
+          // `turn/completed.error`, and two error parts for one failure
+          // double-count in every downstream aggregation.
+          lastTerminalError = error?.message ?? "codex error";
+          emitError({ error: lastTerminalError });
         }
         return;
       }
@@ -563,12 +568,17 @@ export function createStreamTranslator(input: {
     }
   };
 
+  /** The terminal error already emitted from an `error` notification, if any. */
+  let lastTerminalError: string | undefined;
+
   const finishTurn: Translator["finishTurn"] = (outcome) => {
     if (finished) return;
     finished = true;
     closeAllBlocks();
     if (steps.closeStep()) emitStepFinish("stop");
-    if (outcome.error) emitError({ error: outcome.error.message });
+    if (outcome.error && outcome.error.message !== lastTerminalError) {
+      emitError({ error: outcome.error.message });
+    }
     emit({
       type: "finish",
       finishReason: {

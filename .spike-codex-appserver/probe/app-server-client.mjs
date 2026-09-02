@@ -6,12 +6,14 @@
 // typed, bundled and lives in server/utils/harness/codex-appserver; this stays
 // a scratch instrument so a probe change can never move production behaviour.
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /** Spawn `codex app-server` and speak JSON-RPC over its stdio. */
 export function spawnAppServer({
   codexBin,
+  /** argv to place before `app-server`, for an `npx <pkg>` style invocation. */
+  prefixArgs = [],
   codexHome,
   cwd = process.cwd(),
   env = {},
@@ -20,7 +22,13 @@ export function spawnAppServer({
   onServerRequest = async () => ({ error: "unhandled" }),
   onStderr = () => {},
 }) {
-  if (logPath) mkdirSync(dirname(logPath), { recursive: true });
+  if (logPath) {
+    mkdirSync(dirname(logPath), { recursive: true });
+    // TRUNCATE. These logs are evidence, and appending across runs let a stale
+    // run's frames into the next run's counts — the one thing a rig that exists
+    // to be re-run must not do.
+    writeFileSync(logPath, "");
+  }
   const log = (direction, frame) => {
     if (!logPath) return;
     appendFileSync(
@@ -29,7 +37,7 @@ export function spawnAppServer({
     );
   };
 
-  const child = spawn(codexBin, ["app-server"], {
+  const child = spawn(codexBin, [...prefixArgs, "app-server"], {
     cwd,
     env: { ...process.env, ...env, CODEX_HOME: codexHome },
     stdio: ["pipe", "pipe", "pipe"],
@@ -89,10 +97,23 @@ export function spawnAppServer({
   });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => onStderr(chunk));
-  child.on("exit", (code, signal) => {
-    dead = new Error(`codex app-server exited (code=${code} signal=${signal})`);
+  const die = (error) => {
+    if (dead) return;
+    dead = error;
     for (const entry of pending.values()) entry.reject(dead);
     pending.clear();
+  };
+  child.on("exit", (code, signal) => {
+    die(new Error(`codex app-server exited (code=${code} signal=${signal})`));
+  });
+  // A binary that cannot be spawned emits `error`, never `exit`. Without this
+  // the gate hung forever on its first request instead of reporting ENOENT.
+  child.on("error", (error) => {
+    die(new Error(`codex app-server failed to start: ${String(error)}`));
+  });
+  child.stdin.on("error", () => {
+    // A closed pipe must not become an uncaught exception; `exit`/`error`
+    // above are what report the failure.
   });
 
   return {
@@ -109,12 +130,21 @@ export function spawnAppServer({
       send({ jsonrpc: "2.0", method, params });
     },
     async close() {
+      if (child.exitCode !== null || child.signalCode !== null) return;
       child.stdin.end();
       child.kill("SIGTERM");
-      await new Promise((resolve) => {
-        if (child.exitCode !== null) resolve();
-        else child.once("exit", resolve);
-      });
+      // BOUNDED, with escalation: a child that ignores SIGTERM would otherwise
+      // hang the gate runner or the fixture recorder indefinitely.
+      const force = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      force.unref?.();
+      try {
+        await new Promise((resolve) => {
+          if (child.exitCode !== null) resolve();
+          else child.once("exit", resolve);
+        });
+      } finally {
+        clearTimeout(force);
+      }
     },
   };
 }

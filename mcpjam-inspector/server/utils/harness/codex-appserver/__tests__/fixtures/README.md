@@ -34,6 +34,7 @@ node probe/record-fixtures.mjs --codex <path-to-codex>
 | `command-declined.jsonl` | a denied command (`status: "declined"`, no execution) |
 | `text-and-reasoning.jsonl` | streamed reasoning summary + streamed text, no tools |
 | `shell-write.jsonl` | a second command shape, writing through a nested path |
+| `interrupted.jsonl` | a turn ended by `turn/interrupt` (`status: "interrupted"`) |
 
 There is deliberately **no `fileChange` fixture**. A `fileChange` item comes from
 Codex's `apply_patch`, which is not a function tool the model can be scripted to

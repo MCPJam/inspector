@@ -16,7 +16,7 @@
 // request does not DECLARE that tool the server fails the turn loudly — which is
 // how we learn Codex's real tool surface instead of guessing at it.
 import { createServer } from "node:http";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const DEFAULT_USAGE = {
@@ -41,7 +41,12 @@ export function createFakeResponsesServer({
   logPath,
   strictToolNames = true,
 }) {
-  if (logPath) mkdirSync(dirname(logPath), { recursive: true });
+  if (logPath) {
+    mkdirSync(dirname(logPath), { recursive: true });
+    // Truncated per server, not appended: an endpoint inventory built from a
+    // log carrying a previous run's requests is not this run's evidence.
+    writeFileSync(logPath, "");
+  }
   const requests = [];
   let turn = 0;
 
@@ -99,7 +104,13 @@ export function createFakeResponsesServer({
           .map((tool) => tool?.name ?? tool?.function?.name ?? tool?.type)
           .filter(Boolean)
       );
-      const missing = (step.functionCalls ?? [])
+      // BOTH call arrays. Validating only `functionCalls` let a scripted
+      // `customToolCalls` name through undeclared, so the probe could invent a
+      // tool the model was never given — exactly what strict mode is for.
+      const missing = [
+        ...(step.functionCalls ?? []),
+        ...(step.customToolCalls ?? []),
+      ]
         .map((call) => call.name)
         .filter((name) => !declared.has(name));
       if (strictToolNames && missing.length) {

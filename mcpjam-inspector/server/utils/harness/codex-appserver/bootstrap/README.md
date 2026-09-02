@@ -34,7 +34,7 @@ cd server/utils/harness/codex-appserver/bootstrap && pnpm install --lockfile-onl
 ```
 
 then add the lockfile to the bootstrap files and restore `--frozen-lockfile`.
-The repo's root `.gitignore` ignores `pnpm-lock.yaml` globally, so it needs a
+`mcpjam-inspector/.gitignore` ignores `pnpm-lock.yaml` globally, so it needs a
 negation entry when it lands.
 
 ## No `.npmrc` needed

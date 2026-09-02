@@ -1,7 +1,10 @@
 // Run the WS0 preflight gates (P1-P4) against a real `codex app-server` binary
 // and the scripted fake Responses API. No E2B, no model spend, no network.
 //
-//   node probe/run-gates.mjs --codex /path/to/codex [--gate P2] [--out RESULTS.md]
+//   node probe/run-gates.mjs --codex /path/to/codex [--gate P2]
+//
+// Results land in `artifacts/gates.json`. RESULTS.md is hand-written from them
+// — the analysis is the point of that file, so nothing generates it.
 //
 // If --codex is omitted the pinned version is fetched with npx.
 //
@@ -33,16 +36,23 @@ const arg = (name, fallback) => {
   return index === -1 ? fallback : argv[index + 1];
 };
 
+/**
+ * Resolve the codex binary, as an argv PREFIX rather than a bare name.
+ *
+ * The fallback used to fetch the package with npx and then return the string
+ * "codex", which is only runnable if a global `codex` happens to be on PATH —
+ * on any other machine the documented no-argument invocation failed later, at
+ * spawn, as an opaque ENOENT. Returning the npx invocation itself means the
+ * command we verified is the command we run.
+ */
 function resolveCodex() {
   const explicit = arg("codex");
-  if (explicit) return explicit;
+  if (explicit) return { bin: explicit, prefixArgs: [] };
   process.stdout.write(`fetching @openai/codex@${PINNED_CODEX} via npx...\n`);
-  const dir = mkdtempSync(join(tmpdir(), "codex-bin-"));
   execFileSync("npx", ["-y", `@openai/codex@${PINNED_CODEX}`, "--version"], {
     stdio: "inherit",
   });
-  rmSync(dir, { recursive: true, force: true });
-  return "codex";
+  return { bin: "npx", prefixArgs: ["-y", `@openai/codex@${PINNED_CODEX}`] };
 }
 
 /** A prepared CODEX_HOME: the model provider points at the fake server. */
@@ -104,7 +114,10 @@ async function runTurn({
   const serverRequests = [];
   const stderr = [];
   const client = spawnAppServer({
-    codexBin,
+    // `codexBin` is the resolved {bin, prefixArgs} from `resolveCodex()`, so an
+    // npx invocation runs the exact command the fetch step verified.
+    codexBin: codexBin.bin,
+    prefixArgs: codexBin.prefixArgs,
     codexHome: home,
     cwd,
     env: { PROBE_API_KEY: "probe-placeholder", RUST_LOG: "error" },
@@ -151,12 +164,15 @@ async function runTurn({
     if (afterTurnStart) {
       result.after = await afterTurnStart({ client, threadId, turnId, events });
     }
+    // The timer handle is kept and cleared: an un-cleared 45s fallback held the
+    // event loop open long after the gates finished, so the probe looked hung.
+    let turnTimer;
     result.completed = await Promise.race([
       completed,
-      new Promise((resolve) =>
-        setTimeout(() => resolve({ status: "timeout" }), 45_000)
-      ),
-    ]);
+      new Promise((resolve) => {
+        turnTimer = setTimeout(() => resolve({ status: "timeout" }), 45_000);
+      }),
+    ]).finally(() => clearTimeout(turnTimer));
     result.client = client;
     result.codexHome = home;
     result.cwd = cwd;
@@ -389,6 +405,7 @@ const gates = {
         { text: "Stopped." },
       ],
       afterTurnStart: async ({ client, threadId, turnId, events }) => {
+        let interruptTimer;
         await new Promise((resolve) => {
           const listener = (frame) => {
             if (
@@ -400,8 +417,8 @@ const gates = {
             }
           };
           events.on("notification", listener);
-          setTimeout(resolve, 8000);
-        });
+          interruptTimer = setTimeout(resolve, 8000);
+        }).finally(() => clearTimeout(interruptTimer));
         return client.request("turn/interrupt", { threadId, turnId });
       },
     });

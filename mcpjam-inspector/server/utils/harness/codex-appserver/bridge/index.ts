@@ -20,6 +20,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
+import { turnConfigurationFingerprintInput } from "../shared/turn-fingerprint.js";
 import type { StartMessage } from "../codex-appserver-bridge-protocol.js";
 import {
   spawnAppServerClient,
@@ -87,8 +88,13 @@ export function toCodexPermissions(mode: string | undefined): {
 /** Configuration whose change cannot be applied to a live thread. */
 function turnConfigurationFingerprint(start: StartMessage): string {
   return JSON.stringify({
-    tools: (start.tools ?? []).map((tool) => tool.name).sort(),
-    instructions: start.instructions ?? "",
+    // Shared with the host so the two cannot disagree about what a "changed
+    // tool" is — and over the whole descriptor, not just the name: a tool whose
+    // schema changed under a fixed name is invisible to a live thread.
+    turn: turnConfigurationFingerprintInput({
+      instructions: start.instructions,
+      tools: start.tools ?? [],
+    }),
     permissionMode: start.permissionMode ?? "allow-all",
     webSearch: start.webSearch ?? false,
     model: start.model ?? "",

@@ -82,16 +82,23 @@ export function buildHostToolAliases(hostToolNames: readonly string[]): {
   aliasToCanonical: Map<string, string>;
   canonicalToAlias: Map<string, string>;
 } {
-  const counts = new Map<string, number>();
-  for (const name of hostToolNames) {
-    const alias = aliasHostToolName(name);
-    counts.set(alias, (counts.get(alias) ?? 0) + 1);
-  }
+  // RESERVE every canonical name first. Counting collisions among the stripped
+  // forms is not enough: the fallback (the canonical name) can itself be
+  // another tool's stripped alias, and the two then map to one key with the
+  // last write winning — a call silently routed to the wrong tool. Canonical
+  // names are unique by construction (they are ToolSet keys), so falling back
+  // to one is always safe, and refusing a stripped alias that any canonical
+  // name already claims makes the duplicate unrepresentable.
+  const reserved = new Set(hostToolNames);
+  const claimed = new Set<string>();
   const aliasToCanonical = new Map<string, string>();
   const canonicalToAlias = new Map<string, string>();
   for (const name of hostToolNames) {
     const stripped = aliasHostToolName(name);
-    const alias = (counts.get(stripped) ?? 0) > 1 ? name : stripped;
+    const canUseStripped =
+      stripped !== name && !reserved.has(stripped) && !claimed.has(stripped);
+    const alias = canUseStripped ? stripped : name;
+    claimed.add(alias);
     aliasToCanonical.set(alias, name);
     canonicalToAlias.set(name, alias);
   }

@@ -143,35 +143,47 @@ for (const [name, scenario] of Object.entries(SCENARIOS)) {
     },
     onStderr: () => {},
   });
-  await client.request("initialize", {
-    clientInfo: { name: "mcpjam-fixture-recorder", version: "0.0.0" },
-  });
-  client.notify("initialized", {});
-  const thread = await client.request("thread/start", {
-    cwd,
-    approvalPolicy: scenario.approvalPolicy,
-    approvalsReviewer: "user",
-    sandbox: scenario.sandbox,
-  });
-  const done = new Promise((resolve) => {
-    const timer = setInterval(() => {
-      if (frames.some((f) => f.method === "turn/completed")) {
+  // try/finally: a rejection in the handshake or the turn used to skip BOTH
+  // cleanups, leaving the codex child and the listening fake server behind and
+  // the command hung.
+  try {
+    await client.request("initialize", {
+      clientInfo: { name: "mcpjam-fixture-recorder", version: "0.0.0" },
+    });
+    client.notify("initialized", {});
+    const thread = await client.request("thread/start", {
+      cwd,
+      approvalPolicy: scenario.approvalPolicy,
+      approvalsReviewer: "user",
+      sandbox: scenario.sandbox,
+    });
+    const done = new Promise((resolve, reject) => {
+      const timer = setInterval(() => {
+        if (frames.some((f) => f.method === "turn/completed")) {
+          clearInterval(timer);
+          clearTimeout(deadline);
+          resolve();
+        }
+      }, 100);
+      // REJECTS. Resolving on timeout wrote a partial stream over a good
+      // fixture and exited 0 — a truncated recording that every translator test
+      // would then treat as the protocol's real shape.
+      const deadline = setTimeout(() => {
         clearInterval(timer);
-        resolve();
-      }
-    }, 100);
-    setTimeout(() => {
-      clearInterval(timer);
-      resolve();
-    }, 60_000);
-  });
-  await client.request("turn/start", {
-    threadId: thread.thread.id,
-    input: [{ type: "text", text: scenario.prompt }],
-  });
-  await done;
-  await client.close();
-  await fake.close();
+        reject(
+          new Error(`timed out waiting for turn/completed in "${name}"`)
+        );
+      }, 60_000);
+    });
+    await client.request("turn/start", {
+      threadId: thread.thread.id,
+      input: [{ type: "text", text: scenario.prompt }],
+    });
+    await done;
+  } finally {
+    await client.close();
+    await fake.close();
+  }
 
   const path = join(OUT, `${name}.jsonl`);
   writeFileSync(path, `${frames.map((f) => JSON.stringify(f)).join("\n")}\n`);

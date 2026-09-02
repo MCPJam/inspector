@@ -10,6 +10,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildHostToolCatalog } from "../bridge/host-tool-catalog.js";
 import {
+  MAX_CALL_BODY_BYTES,
   startHostToolRelay,
   type HostToolRelay,
 } from "../bridge/host-tool-relay.js";
@@ -77,6 +78,34 @@ describe("host tool naming", () => {
     for (const descriptor of catalog.descriptors) {
       expect(descriptor.inputSchema).toMatchObject({ type: "object" });
     }
+  });
+});
+
+describe("host tool alias collisions", () => {
+  it("never hands two tools the same alias", () => {
+    // The contrived-but-real case: one tool's canonical name is another's
+    // stripped alias. Counting collisions among stripped forms alone let both
+    // land on `mcp__a__b`, and the last write won — a call routed to the wrong
+    // tool, silently.
+    const names = ["a__b", "mcp__a__b", "mcp__mcp__a__b"];
+    const { aliasToCanonical, canonicalToAlias } = buildHostToolAliases(names);
+
+    expect(aliasToCanonical.size).toBe(names.length);
+    expect(new Set(canonicalToAlias.values()).size).toBe(names.length);
+    // Every alias resolves back to the tool it was minted for.
+    for (const name of names) {
+      const alias = canonicalToAlias.get(name)!;
+      expect(aliasToCanonical.get(alias)).toBe(name);
+    }
+  });
+
+  it("still strips the prefix when nothing contests it", () => {
+    const { canonicalToAlias } = buildHostToolAliases([
+      "mcp__weather__get_forecast",
+    ]);
+    expect(canonicalToAlias.get("mcp__weather__get_forecast")).toBe(
+      "weather__get_forecast",
+    );
   });
 });
 
@@ -159,6 +188,36 @@ describe("host tool relay", () => {
     if (response) expect(response.status).toBe(413);
   });
 
+  it("measures the body cap in BYTES, not string length", async () => {
+    // The bug this pins: `setEncoding("utf8")` yields strings, and `.length`
+    // counts UTF-16 code units. A body built from 4-byte characters is half as
+    // many code units as bytes, so a code-unit check would admit roughly twice
+    // the intended cap. This payload is UNDER the limit by string length and
+    // OVER it by bytes — it must be refused.
+    const relay = await relayWith({
+      listTools: () => [],
+      callTool: async () => "never",
+    });
+    // "😀" is 2 UTF-16 code units and 4 UTF-8 bytes.
+    const emoji = "😀".repeat(MAX_CALL_BODY_BYTES / 4 + 8);
+    expect(emoji.length).toBeLessThan(MAX_CALL_BODY_BYTES);
+    expect(Buffer.byteLength(emoji, "utf8")).toBeGreaterThan(
+      MAX_CALL_BODY_BYTES,
+    );
+
+    const response = await fetch(`${relay.url}/call`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-mcpjam-relay-credential": relay.credential,
+      },
+      body: emoji,
+    }).catch(() => undefined);
+    // The relay destroys the socket after replying, so a client-side abort is
+    // an acceptable observation of the same refusal.
+    if (response) expect(response.status).toBe(413);
+  });
+
   it("cancels a parked call when the relay closes, so teardown cannot hang", async () => {
     // `server.close()` waits for open connections. A host tool parked on a
     // human approval keeps its request open indefinitely, so close() has to
@@ -183,6 +242,44 @@ describe("host tool relay", () => {
 });
 
 describe("the stdio MCP server Codex spawns", () => {
+  it("treats only an ABSENT id as a notification, and refuses a null one", async () => {
+    // Two shapes that used to slip past: `initialize` was dispatched before the
+    // id was inspected, so a notification got a response; and an explicit
+    // `id: null` fell through as if it were correlatable, which no peer can
+    // match a reply to. JSON-RPC 2.0: absent id = notification, `null` id =
+    // invalid request.
+    const server = createHostToolMcpServer({
+      relayUrl: undefined,
+      relayCredential: undefined,
+    });
+
+    const notification = await server.handle({
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: {},
+    });
+    expect(notification).toBeUndefined();
+
+    const nullId = await server.handle({
+      jsonrpc: "2.0",
+      id: null,
+      method: "initialize",
+      params: {},
+    });
+    expect(nullId?.error?.code).toBe(-32600);
+    expect(nullId?.result).toBeUndefined();
+
+    // The ordinary case still answers.
+    const real = await server.handle({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+    expect(real?.id).toBe(1);
+    expect(real?.error).toBeUndefined();
+  });
+
   it("proxies tools/list and tools/call, restoring the host's tool name", async () => {
     const calls: Array<{ toolName: string; input: unknown }> = [];
     const catalog = buildHostToolCatalog([

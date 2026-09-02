@@ -3,7 +3,12 @@
  * rather than eyeballed.
  */
 import { describe, expect, it } from "vitest";
-import { toHarnessUsage, zeroUsage } from "../bridge/usage.js";
+import {
+  addBreakdowns,
+  diffUsage,
+  toHarnessUsage,
+  zeroUsage,
+} from "../bridge/usage.js";
 
 describe("toHarnessUsage", () => {
   it("splits input into a non-overlapping breakdown", () => {
@@ -61,5 +66,68 @@ describe("toHarnessUsage", () => {
 
   it("reports zeroes for an absent breakdown", () => {
     expect(toHarnessUsage(undefined)).toEqual(zeroUsage());
+  });
+});
+
+describe("diffUsage", () => {
+  const at = (total: number, input: number, output: number) => ({
+    totalTokens: total,
+    inputTokens: input,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: output,
+    reasoningOutputTokens: 0,
+  });
+
+  it("reports the delta between two cumulative snapshots", () => {
+    const usage = diffUsage(at(300, 200, 100), at(100, 80, 20));
+    expect(usage?.inputTokens.total).toBe(120);
+    expect(usage?.outputTokens.total).toBe(80);
+  });
+
+  it("treats an absent start as the whole of the end", () => {
+    const usage = diffUsage(at(300, 200, 100), undefined);
+    expect(usage?.inputTokens.total).toBe(200);
+  });
+
+  it("gives up on a DECREASING counter rather than reporting nonsense", () => {
+    // Cumulative totals go DOWN across a compaction, because the context they
+    // count was rewritten. A negative delta is not a small number, it is a
+    // wrong one — `undefined` is the signal to fall back to per-request
+    // accounting instead of billing a negative turn.
+    expect(diffUsage(at(100, 80, 20), at(300, 200, 100))).toBeUndefined();
+  });
+
+  it("reports nothing when there is no end snapshot", () => {
+    expect(diffUsage(undefined, at(100, 80, 20))).toBeUndefined();
+  });
+});
+
+describe("addBreakdowns", () => {
+  it("sums component-wise", () => {
+    const sum = addBreakdowns(
+      { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    );
+    expect(sum.inputTokens).toBe(11);
+    expect(sum.outputTokens).toBe(7);
+    expect(sum.totalTokens).toBe(18);
+  });
+
+  it("keeps a component undefined only when BOTH sides are", () => {
+    // The distinction that matters: "not reported" must not silently become 0,
+    // because 0 is a claim and absence is not.
+    const sum = addBreakdowns(
+      { inputTokens: 10 },
+      { outputTokens: 4 },
+    );
+    expect(sum.inputTokens).toBe(10);
+    expect(sum.outputTokens).toBe(4);
+    expect(sum.cachedInputTokens).toBeUndefined();
+  });
+
+  it("returns the first operand unchanged when the second is absent", () => {
+    const a = { inputTokens: 10, outputTokens: 5 };
+    expect(addBreakdowns(a, undefined)).toBe(a);
   });
 });

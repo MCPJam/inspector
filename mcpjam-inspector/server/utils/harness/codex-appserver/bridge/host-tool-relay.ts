@@ -53,7 +53,7 @@ import { createServer, type Server } from "node:http";
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 
 /** Cap on a `/call` body. See the bounded-read note in the request handler. */
-const MAX_CALL_BODY_BYTES = 8 * 1024 * 1024;
+export const MAX_CALL_BODY_BYTES = 8 * 1024 * 1024;
 
 export type HostToolInvocation = {
   /** The tool name as the HOST declared it (already un-aliased). */
@@ -128,16 +128,24 @@ export async function startHostToolRelay(
     // is generous enough that no real call meets it and small enough that a
     // runaway one dies immediately.
     let body = "";
+    let bodyBytes = 0;
     let aborted = false;
     req.setEncoding("utf8");
     req.on("data", (chunk: string) => {
       if (aborted) return;
-      if (body.length + chunk.length > MAX_CALL_BODY_BYTES) {
+      // BYTES, not string length. `setEncoding("utf8")` hands us strings, whose
+      // `.length` counts UTF-16 code units — half the story for anything
+      // outside the BMP and an undercount for most non-ASCII. A body of 3-byte
+      // characters would have reached ~3x this cap before the check fired,
+      // which is the opposite of what a byte limit is for.
+      const chunkBytes = Buffer.byteLength(chunk, "utf8");
+      if (bodyBytes + chunkBytes > MAX_CALL_BODY_BYTES) {
         aborted = true;
         reply(413, { error: "request body too large" });
         req.destroy();
         return;
       }
+      bodyBytes += chunkBytes;
       body += chunk;
     });
     req.on("end", () => {

@@ -71,6 +71,10 @@ import {
   type OutboundMessage,
   type StartMessage,
 } from "./codex-appserver-bridge-protocol.js";
+import {
+  turnConfigurationFingerprintInput,
+  type TurnFingerprintTool,
+} from "./shared/turn-fingerprint.js";
 
 export const CODEX_APPSERVER_HARNESS_ID = "codex";
 
@@ -198,15 +202,10 @@ function openWebSocket(
 /** Configuration a running thread cannot absorb; a change forces a new one. */
 function fingerprintTurnConfiguration(input: {
   instructions: string | undefined;
-  tools: ReadonlyArray<{ name: string }>;
+  tools: readonly TurnFingerprintTool[];
 }): string {
   return createHash("sha256")
-    .update(
-      JSON.stringify({
-        instructions: input.instructions ?? "",
-        tools: input.tools.map((tool) => tool.name).sort(),
-      }),
-    )
+    .update(turnConfigurationFingerprintInput(input))
     .digest("hex")
     .slice(0, 16);
 }
