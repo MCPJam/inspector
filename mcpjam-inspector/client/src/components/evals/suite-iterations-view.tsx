@@ -274,6 +274,7 @@ export function SuiteIterationsView({
   casesSidebarHidden,
   onShowCasesSidebar,
   omitSuiteHeader = false,
+  omitOverviewIdentity = false,
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   alwaysShowEditIterationRows = false,
@@ -345,6 +346,8 @@ export function SuiteIterationsView({
   onShowCasesSidebar?: () => void;
   /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
   omitSuiteHeader?: boolean;
+  /** When true, the global header shows the suite switcher — hide the duplicate title. */
+  omitOverviewIdentity?: boolean;
   /**
    * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
    * history, cases — instead of the unified dashboard on suite overview.
@@ -1170,6 +1173,7 @@ export function SuiteIterationsView({
             onSuiteHostAttachmentsUpdate={
               readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
+            omitOverviewIdentity={omitOverviewIdentity}
             omitRunDetailIdentity={omitRunDetailIdentity}
           />
         </div>

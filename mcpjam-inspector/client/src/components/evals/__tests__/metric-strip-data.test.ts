@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildCellMetricStripData } from "../metric-strip-data";
+import {
+  buildCellMetricStripData,
+  formatMetricStripCollapsedSummary,
+} from "../metric-strip-data";
 
 describe("buildCellMetricStripData", () => {
   it("aggregates headline latency and pass counts across runs", () => {
@@ -48,5 +51,51 @@ describe("buildCellMetricStripData", () => {
     expect(data?.latest.latencyP50).toBe(17_200);
     expect(data?.latest.latencyP95).toBe(17_200);
     expect(data?.showTrend).toBe(false);
+  });
+});
+
+describe("formatMetricStripCollapsedSummary", () => {
+  it("includes pass counts, latency, tokens, and tool calls", () => {
+    const summary = formatMetricStripCollapsedSummary({
+      latest: {
+        passRate: 25,
+        passed: 2,
+        total: 8,
+        failed: 6,
+        latencyP50: 19_700,
+        latencyP95: 27_100,
+        tokens: 24_500,
+        toolCalls: 14,
+      },
+      series: [],
+      delta: null,
+      showTrend: false,
+    });
+
+    expect(summary).toBe(
+      "6 failing · 25% · 2/8 passed · P50 19.7s · P95 27.1s · 24.5k tokens · 14 tool calls",
+    );
+  });
+
+  it("shows an all-passing headline when nothing failed", () => {
+    const summary = formatMetricStripCollapsedSummary({
+      latest: {
+        passRate: 100,
+        passed: 8,
+        total: 8,
+        failed: 0,
+        latencyP50: 1_200,
+        latencyP95: 2_400,
+        tokens: 900,
+        toolCalls: 3,
+      },
+      series: [],
+      delta: null,
+      showTrend: false,
+    });
+
+    expect(summary).toBe(
+      "All passing · 100% · 8/8 passed · P50 1.20s · P95 2.40s · 900 tokens · 3 tool calls",
+    );
   });
 });

@@ -7,7 +7,7 @@ import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { useRunGroupQuality } from "./use-run-group-quality";
 import { GroupFindingList } from "./run-group-diagnosis-presentation";
-import { InsightBannerShell } from "./insight-banner-shell";
+import { SuiteDashboardCollapsibleSection } from "./suite-dashboard-collapsible-section";
 import { insightHighlightNarrativeClass } from "./insight-highlight-chrome";
 
 /** A selected run group — when present, the banner shows cross-host diagnosis. */
@@ -58,6 +58,13 @@ function describeRunInsightsError(code: string | undefined): string {
 
 function summaryNeedsExpand(text: string): boolean {
   return text.replace(/\s+/g, " ").trim().length > SUMMARY_CLAMP_CHARS;
+}
+
+/** One-line headline for the collapsed insights band header. */
+function formatInsightCollapsedSummary(text: string, maxChars = 120): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars - 1).trim()}…`;
 }
 
 /**
@@ -172,9 +179,19 @@ function RunInsightsBanner({
     );
   }
 
+  const collapsedSummary = summary
+    ? formatInsightCollapsedSummary(summary)
+    : pending
+      ? "Generating insights vs your previous run…"
+      : requested
+        ? "Requesting insights…"
+        : formatInsightCollapsedSummary(narrative);
+
   return (
-    <InsightBannerShell
+    <SuiteDashboardCollapsibleSection
       label={title}
+      summary={collapsedSummary}
+      testId="suite-insights-collapsible"
       trailing={
         failedGeneration ? (
           <button
@@ -187,8 +204,8 @@ function RunInsightsBanner({
         ) : undefined
       }
     >
-      {body}
-    </InsightBannerShell>
+      <div className="px-3 pb-2.5 pt-0">{body}</div>
+    </SuiteDashboardCollapsibleSection>
   );
 }
 
@@ -286,9 +303,21 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
     );
   }
 
+  const collapsedSummary = summary
+    ? formatInsightCollapsedSummary(summary)
+    : !allRunsTerminal
+      ? "Cross-client diagnosis runs once every client in this group has finished."
+      : pending || requested
+        ? "Comparing clients…"
+        : error
+          ? formatInsightCollapsedSummary(error)
+          : "We'll compare how each client performed on this suite here.";
+
   return (
-    <InsightBannerShell
+    <SuiteDashboardCollapsibleSection
       label="Cross-client insights"
+      summary={collapsedSummary}
+      testId="suite-cross-host-insights-collapsible"
       trailing={
         error || failedGeneration ? (
           <button
@@ -301,8 +330,8 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
         ) : undefined
       }
     >
-      {body}
-    </InsightBannerShell>
+      <div className="px-3 pb-2.5 pt-0">{body}</div>
+    </SuiteDashboardCollapsibleSection>
   );
 }
 

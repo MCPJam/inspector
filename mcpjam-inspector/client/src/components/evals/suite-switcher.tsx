@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import {
   formatOverviewRelativeTime,
-  getSuitePassFailCounts,
   stripTimestampSuffix,
   SuiteSourceBadge,
 } from "./suite-overview-presentation";
@@ -28,11 +27,13 @@ interface SuiteSwitcherProps {
    * is no membership to rank.
    */
   canDeleteSuite?: (suite: EvalSuite) => boolean;
+  /** Hide the footer create action when the header already pins New suite. */
+  hideFooterCreate?: boolean;
 }
 
 /**
- * Breadcrumb "Suites" label rendered as a dropdown — switching suites lives
- * here instead of a standalone list page. Search, jump, and create from one place.
+ * Suite picker for the Evaluate header — trigger shows the current suite name,
+ * not a generic "Suites" label. Search, jump, and optional create from the menu.
  */
 export function SuiteSwitcher({
   suites,
@@ -41,6 +42,7 @@ export function SuiteSwitcher({
   onCreateSuite,
   onDeleteSuite,
   canDeleteSuite,
+  hideFooterCreate = false,
 }: SuiteSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -69,14 +71,23 @@ export function SuiteSwitcher({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex max-w-full items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          data-testid="suite-switcher-trigger"
+          className={cn(
+            "inline-flex h-8 max-w-[min(280px,50vw)] shrink-0 items-center gap-1.5 rounded-full border px-2 text-foreground outline-none transition-colors",
+            "border-border/60 bg-muted/40 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary/50",
+          )}
           title={`Switch suite (current: ${currentName})`}
           aria-label={`Switch suite (current: ${currentName})`}
         >
-          <span>Suites</span>
+          <span className="grid size-5 shrink-0 place-items-center rounded-md bg-foreground text-[10px] font-semibold uppercase text-background">
+            {currentName.slice(0, 1)}
+          </span>
+          <span className="min-w-0 truncate text-xs font-medium">
+            {currentName}
+          </span>
           <ChevronDown
             className={cn(
-              "h-3.5 w-3.5 shrink-0 transition-transform",
+              "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
               open && "rotate-180",
             )}
             aria-hidden
@@ -110,7 +121,6 @@ export function SuiteSwitcher({
             filtered.map((entry) => {
               const id = entry.suite._id;
               const isActive = id === currentSuiteId;
-              const counts = getSuitePassFailCounts(entry);
               const name =
                 stripTimestampSuffix(entry.suite.name || "") ||
                 "Untitled suite";
@@ -151,20 +161,6 @@ export function SuiteSwitcher({
                       </span>
                     </span>
                   </button>
-                  {counts ? (
-                    <span
-                      className={cn(
-                        "shrink-0 font-mono text-[11px] font-semibold tabular-nums",
-                        counts.passed >= counts.total
-                          ? "text-success"
-                          : counts.passed === 0
-                            ? "text-destructive"
-                            : "text-amber-600 dark:text-amber-400",
-                      )}
-                    >
-                      {counts.passed}/{counts.total}
-                    </span>
-                  ) : null}
                   {isActive ? (
                     <Check className="h-4 w-4 shrink-0 text-primary" />
                   ) : null}
@@ -196,21 +192,23 @@ export function SuiteSwitcher({
             })
           )}
         </div>
-        <div className="mt-1 border-t border-border/50 pt-1">
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              onCreateSuite();
-            }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <span className="grid size-7 shrink-0 place-items-center rounded-md border border-dashed border-border">
-              <Plus className="h-3.5 w-3.5" />
-            </span>
-            New suite
-          </button>
-        </div>
+        {!hideFooterCreate ? (
+          <div className="mt-1 border-t border-border/50 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onCreateSuite();
+              }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            >
+              <span className="grid size-7 shrink-0 place-items-center rounded-md border border-dashed border-border">
+                <Plus className="h-3.5 w-3.5" />
+              </span>
+              New suite
+            </button>
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );
