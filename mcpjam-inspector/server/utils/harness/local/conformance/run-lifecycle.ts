@@ -9,6 +9,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
@@ -51,7 +52,14 @@ const MODE = process.argv[2] ?? "abort";
 const RUNTIME_ROOT = join(ROOT, "runtime");
 const BUNDLE = join(RUNTIME_ROOT, "claude-code");
 const WORKSPACE = join(ROOT, "workspace");
-const SCRIPT_DIR = new URL(".", import.meta.url).pathname;
+/**
+ * `fileURLToPath`, not `.pathname`. On Windows a `file:///D:/…` URL's pathname
+ * is `/D:/…`, and the leading slash makes it a path node cannot resolve — the
+ * windows leg failed at the first helper spawn with a bare `MODULE_NOT_FOUND`
+ * for three runs. (It also percent-decodes, so a checkout under a path with a
+ * space stops being a `%20` mystery on every platform.)
+ */
+const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const CAPABILITY = `cap_${randomBytes(24).toString("base64url")}`;
 const POP_SECRET = randomBytes(32).toString("hex");
 /**
@@ -171,6 +179,19 @@ function helperEnv(extra: Record<string, string>): Record<string, string> {
   return { ...base, ...extra };
 }
 
+/**
+ * `MOCK_LATENCY_MS`, forwarded explicitly. `helperEnv` is an allowlist on
+ * purpose — the scenario asserts on what a supervised child's environment
+ * contains, so it cannot inherit the parent's — which means a knob that is
+ * only exported by the caller silently does nothing. That is precisely how
+ * this one first went in: set in CI, never delivered, and the run it was
+ * meant to make deterministic stayed a race.
+ */
+function mockLatencyEnv(): Record<string, string> {
+  const raw = process.env.MOCK_LATENCY_MS;
+  return raw === undefined || raw === "" ? {} : { MOCK_LATENCY_MS: raw };
+}
+
 async function startChild(script: string, env: Record<string, string>) {
   const child = spawn(process.execPath, [join(SCRIPT_DIR, script)], { env: helperEnv(env), stdio: ["ignore", "pipe", "pipe"], detached: true });
   // Kept, not discarded: a helper that dies at startup has nothing else to
@@ -206,12 +227,14 @@ async function startChild(script: string, env: Record<string, string>) {
     );
   });
   child.unref();
-  return { child, port };
+  // `stderr` too: the abort scenario reads the gateway's log to tell a turn
+  // that was genuinely in flight from one that only looked busy retrying.
+  return { child, port, stderr };
 }
 const freePort = () => new Promise<number>((resolve) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = (s.address() as net.AddressInfo).port; s.close(() => resolve(p)); }); });
 
 async function setup() {
-  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY });
+  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY, ...mockLatencyEnv() });
   const gw = await startChild("local-gateway.mjs", { GW_UPSTREAM: `http://127.0.0.1:${mock.port}`, GW_SESSION_CAPABILITY: CAPABILITY, GW_UPSTREAM_KEY: UPSTREAM_KEY, GW_POP_SECRET: POP_SECRET });
   await mkdir(WORKSPACE, { recursive: true });
   await writeFile(join(WORKSPACE, "hello.txt"), "hello\n");
@@ -285,6 +308,11 @@ async function main() {
   await new Promise((r) => setTimeout(r, 2500));
   const kids = await descendants(bridgePid);
   log("mid-turn tree:", bridgePid, kids); for (const p of [bridgePid, ...kids]) log("  ", await psLine(p));
+  // Snapshotted BEFORE the abort. Tearing down an in-flight request makes the
+  // gateway log an upstream error legitimately, so only failures up to this
+  // point say anything — and any of those mean the "mid-turn" tree above was
+  // a CLI stuck in its retry loop rather than a turn actually running.
+  const gatewayErrorsBeforeAbort = ctx.gw.stderr.filter((l: string) => l.includes("upstream error") || l.includes("upstream timeout"));
   const tAbort = performance.now();
   ac.abort(new Error("user cancelled"));
   const parts = await reader;
@@ -305,6 +333,10 @@ async function main() {
   assert(survivors.length === 0, `abort left ${survivors.length} process(es) running: ${survivors}`);
   assert(!stateDirExists, "abort left the session state directory behind");
   assert(recordsLeft === 0, `abort left ${recordsLeft} registry record(s) behind`);
+  assert(
+    gatewayErrorsBeforeAbort.length === 0,
+    `the gateway failed ${gatewayErrorsBeforeAbort.length} upstream call(s) before the abort, so the turn was never live: ${JSON.stringify(gatewayErrorsBeforeAbort.slice(0, 3))}`,
+  );
 }
 main().catch(async (e) => {
   // Cleanup FIRST, for the same reason as the native-turn runner: these

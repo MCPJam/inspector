@@ -36,6 +36,14 @@ permissions:
 
 env:
   BUNDLED_NODE_VERSION: "24.20.0"
+  # Hold every mock upstream response briefly. An instant in-process upstream
+  # is not a neutral simplification: it hid a gateway defect for four runs by
+  # always answering inside the window where the gateway was tearing its own
+  # upstream request down, so the suite went green locally and 502'd on a
+  # loaded runner. A slow-enough upstream makes that class of race
+  # deterministic instead of dependent on how busy the machine is. The whole
+  # cost is a few seconds across a run.
+  MOCK_LATENCY_MS: "50"
 
 jobs:
   unit:

@@ -51,7 +51,7 @@ for scenario in \
   "timing-decomp.mts" \
   "group-settle.mts"
 do
-  HOME="$S/home" CONFORMANCE_ROOT="$S" npx tsx \
+  HOME="$S/home" CONFORMANCE_ROOT="$S" MOCK_LATENCY_MS=50 npx tsx \
     "server/utils/harness/local/conformance/$scenario" || echo "FAILED: $scenario"
 done
 ```
@@ -66,6 +66,17 @@ WITHOUT stopping its session, because the crash it simulates is the input to
 `MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION` stamps the manifest these scripts
 build; CI sets it to the job's own identifier so a recorded conformance version
 always names the run that produced it.
+
+`MOCK_LATENCY_MS` holds every mock upstream response for that many
+milliseconds. CI sets it to 50 and a local run should too. An upstream that
+answers instantly is not a neutral simplification: it hid a gateway defect
+through four CI runs. The gateway destroyed its upstream request on the server
+request's `close` event, which since node 16 fires when the request BODY
+finishes uploading rather than when the client disconnects — so on this machine
+the mock always answered first and the suite went green, while on a loaded
+runner every call came back 502, the vendor CLI burned ten retries, and all
+three turns finished empty after ~180s each. A conformance upstream faster than
+everything it exercises can only ever agree with the code under test.
 
 ## Platform coverage
 

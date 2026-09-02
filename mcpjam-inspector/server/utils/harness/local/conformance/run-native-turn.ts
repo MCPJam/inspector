@@ -12,6 +12,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
@@ -64,7 +65,14 @@ const MODE = (process.argv[2] ?? "full") as "full" | "no-launcher";
 const RUNTIME_ROOT = join(ROOT, "runtime");
 const BUNDLE = join(RUNTIME_ROOT, "claude-code");
 const WORKSPACE = join(ROOT, "workspace");
-const SCRIPT_DIR = new URL(".", import.meta.url).pathname;
+/**
+ * `fileURLToPath`, not `.pathname`. On Windows a `file:///D:/…` URL's pathname
+ * is `/D:/…`, and the leading slash makes it a path node cannot resolve — the
+ * windows leg failed at the first helper spawn with a bare `MODULE_NOT_FOUND`
+ * for three runs. (It also percent-decodes, so a checkout under a path with a
+ * space stops being a `%20` mystery on every platform.)
+ */
+const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const UPSTREAM_KEY_CANARY = `upstream-canary-${randomBytes(8).toString("hex")}`;
 const CAPABILITY = `cap_${randomBytes(24).toString("base64url")}`;
 const POP_SECRET = randomBytes(32).toString("hex");
@@ -142,6 +150,19 @@ function helperEnv(extra: Record<string, string>): Record<string, string> {
     if (value !== undefined) base[name] = value;
   }
   return { ...base, ...extra };
+}
+
+/**
+ * `MOCK_LATENCY_MS`, forwarded explicitly. `helperEnv` is an allowlist on
+ * purpose — the scenario asserts on what a supervised child's environment
+ * contains, so it cannot inherit the parent's — which means a knob that is
+ * only exported by the caller silently does nothing. That is precisely how
+ * this one first went in: set in CI, never delivered, and the run it was
+ * meant to make deterministic stayed a race.
+ */
+function mockLatencyEnv(): Record<string, string> {
+  const raw = process.env.MOCK_LATENCY_MS;
+  return raw === undefined || raw === "" ? {} : { MOCK_LATENCY_MS: raw };
 }
 
 async function startChild(script: string, env: Record<string, string>) {
@@ -256,7 +277,7 @@ async function listeners(pid: number) {
   }
 }
 
-type TurnResult = { text: string; parts: Record<string, number>; firstPartMs: number; firstTextMs: number; finishMs: number; approvals: number; errors: string[] };
+type TurnResult = { text: string; parts: Record<string, number>; firstPartMs: number; firstTextMs: number; finishMs: number; approvals: number; errors: string[]; tools: string[] };
 async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt: string): Promise<TurnResult> {
   const start = performance.now();
   const parts: Record<string, number> = {};
@@ -301,13 +322,14 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
     stream = res.fullStream;
   }
   const finishMs = Math.round(performance.now() - start);
-  console.log(`[conformance] ${label}: ${finishMs}ms parts=${JSON.stringify(parts)} text=${JSON.stringify(text.slice(0, 120))}`);
-  return { text, parts, firstPartMs, firstTextMs, finishMs, approvals, errors };
+  const tools = [...toolCalls.values()].map((c: any) => String(c.toolName));
+  console.log(`[conformance] ${label}: ${finishMs}ms parts=${JSON.stringify(parts)} tools=${JSON.stringify(tools)} text=${JSON.stringify(text.slice(0, 120))}`);
+  return { text, parts, firstPartMs, firstTextMs, finishMs, approvals, errors, tools };
 }
 
 async function main() {
   mark("start");
-  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY_CANARY });
+  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY_CANARY, ...mockLatencyEnv() });
   const gw = await startChild("local-gateway.mjs", {
     GW_UPSTREAM: `http://127.0.0.1:${mock.port}`, GW_SESSION_CAPABILITY: CAPABILITY,
     GW_UPSTREAM_KEY: UPSTREAM_KEY_CANARY, GW_POP_SECRET: POP_SECRET,
@@ -514,6 +536,38 @@ async function main() {
   if (recordsAfterStop !== 0) failures.push(`${recordsAfterStop} process registry record(s) survived stop()`);
   if (after.length > 0) failures.push(`the session left ${after.length} new entr(ies) in the workspace: ${JSON.stringify(after)}`);
   if (Number(m?.[1] ?? 0) < 3) failures.push(`the model saw ${m?.[1] ?? "?"} user turns after resume, expected >= 3`);
+  // The turns themselves, not just their side effects. A conformance run once
+  // went red only on the continuity probe while ALL THREE turns had finished
+  // empty — every upstream call had come back 502 and the vendor CLI had spent
+  // ~180s exhausting its retries. Every other assertion above still passed,
+  // because a session that never ran a tool also leaks nothing, writes nothing
+  // to the workspace and leaves no process behind. Nothing that reaches this
+  // point may be silent about a turn that did not happen.
+  for (const [label, turn] of [["turn1-read", turn1], ["turn2-bash-approval", turn2], ["turn3-count-after-resume", turn3]] as const) {
+    if (turn.errors.length > 0) failures.push(`${label} reported ${turn.errors.length} stream error(s): ${JSON.stringify(turn.errors.slice(0, 3))}`);
+    if (turn.text.trim() === "") failures.push(`${label} produced no assistant text, so the turn proved nothing`);
+  }
+  // The read tool ran, and its RESULT came back through the model: the mock
+  // answers a tool_result with `TOOL RESULT RECEIVED: <content>`, so the
+  // workspace file's own bytes are what close the loop here.
+  // Compared case-insensitively: the adapter reports `read`/`bash` on the
+  // tool-call part and `Bash` on the approval request. Which tool ran is the
+  // claim; how the adapter cases it is not, and pinning that here would make
+  // the suite fail on a cosmetic upstream change.
+  const ranTool = (turn: TurnResult, name: string) => turn.tools.some((t) => t.toLowerCase() === name);
+  if (!ranTool(turn1, "read")) failures.push(`turn1 never called Read (tools=${JSON.stringify(turn1.tools)})`);
+  if (!turn1.text.includes("hello from the conformance workspace")) failures.push("turn1 did not read the workspace file back through the model");
+  // Bash is the approval-gated tool; a run where it executed WITHOUT pausing
+  // would mean the permission profile was not applied, which is the opposite
+  // of what this scenario claims to prove.
+  if (!ranTool(turn2, "bash")) failures.push(`turn2 never called Bash (tools=${JSON.stringify(turn2.tools)})`);
+  // Nothing in this scenario cancels a request, so every upstream call should
+  // have completed. The gateway logging even one failure means the turns above
+  // were reached through the vendor CLI's retry path, which is not the thing
+  // being measured.
+  const gatewayErrors = gw.stderr.filter((l) => l.includes("upstream error") || l.includes("upstream timeout"));
+  if (gatewayErrors.length > 0) failures.push(`the gateway failed ${gatewayErrors.length} upstream call(s): ${JSON.stringify(gatewayErrors.slice(0, 3))}`);
+  if (turn2.approvals < 1) failures.push("turn2 ran Bash without ever requesting approval");
 
   gw.child.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 200));

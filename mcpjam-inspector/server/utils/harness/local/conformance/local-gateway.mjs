@@ -70,14 +70,25 @@ const server = http.createServer((req, res) => {
     upRes.pipe(res);
   });
   // Bounded, and cancelled when the client goes away. `req.pipe(up)` does not
-  // destroy `up` if `req` closes, and node's http client has no default
+  // destroy `up` if the client vanishes, and node's http client has no default
   // timeout — so a stalled upstream would hold a conformance run open until
   // the job timed out, with nothing in the log to say why.
   up.setTimeout(UPSTREAM_TIMEOUT_MS, () => {
     log("upstream timeout", req.method, req.url);
     up.destroy(new Error("upstream timeout"));
   });
-  req.on("close", () => { if (!up.destroyed) up.destroy(); });
+  // Watch the RESPONSE, not the request. Since node 16 `close` on a server
+  // `IncomingMessage` fires when the request STREAM completes — for a POST,
+  // the moment the body finishes uploading — not when the client disconnects.
+  // Destroying `up` there raced the upstream response and lost whenever the
+  // upstream took more than a few milliseconds: on a loaded CI runner EVERY
+  // call came back 502 `socket hang up`, the vendor CLI retried ten times, and
+  // each turn finished after ~180s with no content at all. `res` closes either
+  // because it was fully written (nothing left to cancel) or because the
+  // connection died under it (the case this exists for).
+  res.on("close", () => {
+    if (!res.writableFinished && !up.destroyed) up.destroy();
+  });
   up.on("error", (e) => {
     log("upstream error", e.message);
     if (!res.headersSent) res.writeHead(502);

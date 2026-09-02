@@ -14,16 +14,36 @@ const port = Number(process.env.MOCK_PORT ?? 0);
 const popSecret = process.env.MOCK_POP_SECRET ?? "";
 /** The credential the gateway is expected to present upstream, if the run set one. */
 const expectedUpstreamKey = process.env.MOCK_UPSTREAM_KEY ?? "";
+/**
+ * Milliseconds to hold every response. Zero by default; CI sets it.
+ *
+ * An instant in-process upstream hid a real gateway defect for four CI runs:
+ * the gateway destroyed its upstream request on the server request's `close`
+ * event, which since node 16 fires when the request BODY finishes uploading.
+ * Locally the mock answered inside that window and the run went green; on a
+ * loaded runner it lost the race and every call came back 502. A conformance
+ * upstream that is always faster than the code under test is not a neutral
+ * simplification — it is the reason the suite agreed with a broken gateway.
+ */
+const latencyMs = Number(process.env.MOCK_LATENCY_MS ?? 0);
 const seenNonces = new Set();
 const log = (...a) => console.error("[mock]", ...a);
 let requestCount = 0;
 
 function sse(res, events) {
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-  for (const [event, data] of events) {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  }
-  res.end();
+  const send = () => {
+    // The client may already be gone — the gateway cancels an upstream call
+    // when its own caller disconnects, and writing to a destroyed response
+    // throws ERR_STREAM_WRITE_AFTER_END inside a timer, killing the mock.
+    if (res.writableEnded || res.destroyed) return;
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    for (const [event, data] of events) {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+    res.end();
+  };
+  if (latencyMs > 0) setTimeout(send, latencyMs);
+  else send();
 }
 function textEvents(id, text, inputTokens) {
   return [
@@ -147,6 +167,9 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ error: "not found" }));
   });
 });
+// Announced, so a run can be checked for whether the knob was actually
+// delivered rather than merely exported by whoever started the scenario.
+log(`upstream latency: ${latencyMs}ms`);
 server.listen(port, "127.0.0.1", () => {
   console.log(JSON.stringify({ port: server.address().port }));
 });
