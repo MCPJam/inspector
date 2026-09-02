@@ -1,0 +1,162 @@
+# Builds the local-harness runtime pack — the per-platform tree the supervised
+# native Claude Code host launches from.
+#
+# The pack cannot ship inside the npm package or the DMG (~515 MB on disk, and
+# coupling Electron notarization to a third-party binary of that size is its own
+# problem), so it is built here, signed, attached to the release, and downloaded
+# on first use. That means this workflow is the ONLY place a digest comes from:
+# `pack-digests.generated.ts` is written from its output, and an Inspector build
+# refuses any pack that does not hash to what it carries.
+name: Local harness runtime pack
+
+on:
+  workflow_call:
+    inputs:
+      pack_version:
+        description: Version to stamp the pack and its assets with.
+        required: true
+        type: string
+    outputs:
+      digests:
+        description: JSON map of platform key to tree digest, for the manifest generator.
+        value: ${{ jobs.collect.outputs.digests }}
+  workflow_dispatch:
+    inputs:
+      pack_version:
+        description: Version to stamp the pack and its assets with.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # Pinned deliberately. The pack's `bin/node` is what interprets the bridge on
+  # every user's machine, and it is inside the digest — so bumping it is a
+  # reviewed change that produces a new pack, not something a runner picks.
+  BUNDLED_NODE_VERSION: "24.20.0"
+
+jobs:
+  build:
+    name: ${{ matrix.platform_key }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: darwin-arm64
+            runner: macos-latest
+            node_dist: darwin-arm64
+          - platform_key: darwin-x64
+            runner: macos-13
+            node_dist: darwin-x64
+          - platform_key: linux-x64
+            runner: ubuntu-latest
+            node_dist: linux-x64
+          - platform_key: linux-arm64
+            runner: ubuntu-24.04-arm
+            node_dist: linux-arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      # Only the adapter package is needed: the pack build reads its bridge
+      # recipe and installs that recipe's own frozen graph inside the pack.
+      - name: Install the pinned adapter
+        working-directory: mcpjam-inspector
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      # The pack ships an official nodejs.org build, not the runner's Node:
+      # the runner's is not signed the way a binary we ask users to execute
+      # needs to be, and it is not reproducible across runner images.
+      - name: Download the bundled Node runtime
+        run: |
+          set -euo pipefail
+          url="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/SHASUMS256.txt"
+          expected="$(grep "node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz" "$RUNNER_TEMP/SHASUMS256.txt" | cut -d' ' -f1)"
+          actual="$(shasum -a 256 "$RUNNER_TEMP/node-runtime.tar.gz" | cut -d' ' -f1)"
+          if [ "$expected" != "$actual" ]; then
+            echo "nodejs.org tarball checksum mismatch: expected $expected, got $actual" >&2
+            exit 1
+          fi
+
+      - name: Build the pack
+        working-directory: mcpjam-inspector
+        env:
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+        run: |
+          node scripts/build-local-harness-pack.mjs \
+            --platform ${{ matrix.platform_key }} \
+            --pack-version "${{ inputs.pack_version }}" \
+            --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
+            --out "$RUNNER_TEMP/pack-out" \
+            | tee "$RUNNER_TEMP/pack-build.log"
+
+      - name: Record the digest
+        id: digest
+        run: |
+          set -euo pipefail
+          line="$(grep '^::pack-digest::' "$RUNNER_TEMP/pack-build.log" | tail -1)"
+          digest="$(echo "$line" | awk '{print $3}')"
+          if [ -z "$digest" ]; then
+            echo "the pack build printed no digest line" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "{\"${{ matrix.platform_key }}\":\"$digest\"}" > "$RUNNER_TEMP/pack-out/digest.json"
+
+      # Proves the pack the installer would download actually verifies, before
+      # it is published. A pack that fails here never reaches a release.
+      - name: Verify the pack installs from its own archive
+        working-directory: mcpjam-inspector
+        env:
+          MCPJAM_RUNTIME_ROOT: ${{ runner.temp }}/verify-root
+          MCPJAM_LOCAL_HARNESS_PACK_SOURCE: ${{ runner.temp }}/pack-out/local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}.tar.gz
+        run: >
+          npx tsx scripts/verify-local-harness-pack.ts
+          "${{ steps.digest.outputs.digest }}"
+
+      - name: Upload the pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}
+          path: ${{ runner.temp }}/pack-out/local-harness-pack-*
+          if-no-files-found: error
+          retention-days: 14
+
+  collect:
+    name: Collect digests
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      digests: ${{ steps.merge.outputs.digests }}
+    steps:
+      - name: Download every pack
+        uses: actions/download-artifact@v4
+        with:
+          pattern: local-harness-pack-*
+          path: packs
+          merge-multiple: true
+
+      # One JSON map for the manifest generator, so `pack-digests.generated.ts`
+      # is written from the artifacts that were actually built rather than from
+      # a value typed by hand.
+      - name: Merge the manifests into a digest map
+        id: merge
+        run: |
+          set -euo pipefail
+          map="$(jq -sc 'map({(.platform): {packVersion: .packVersion, treeDigest: .treeDigest}}) | add' packs/*.manifest.json)"
+          echo "digests=$map" >> "$GITHUB_OUTPUT"
+          echo "$map"

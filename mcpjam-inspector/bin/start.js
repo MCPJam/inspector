@@ -427,7 +427,77 @@ async function setupOllamaInSingleTerminal(model) {
   }
 }
 
+/**
+ * `mcpjam-inspector harness install` — download and verify the local-harness
+ * runtime pack, then exit.
+ *
+ * A subcommand rather than a flag on the server, and handled before the server
+ * spawn, because installing a 515 MB agent runtime is a thing somebody asks
+ * for and watches finish. Nothing about starting the Inspector installs it.
+ */
+async function runHarnessSubcommand(args) {
+  const action = args[1];
+  if (action !== "install" && action !== "status") {
+    logError("usage: mcpjam-inspector harness <install|status>");
+    return 2;
+  }
+
+  // A dedicated bundle: importing the server entry would start a server.
+  const cliEntry = resolve(__dirname, "../dist/server/harness-install-cli.js");
+  if (!existsSync(cliEntry)) {
+    logError(
+      "the Inspector server build is missing; run `npm run build` first",
+    );
+    return 1;
+  }
+  const mod = await import(`file://${cliEntry.replace(/\\/g, "/")}`).catch(
+    () => null,
+  );
+  const install = mod?.harnessInstall;
+  const status = mod?.harnessStatus;
+  if (typeof install !== "function" || typeof status !== "function") {
+    logError(
+      "this Inspector build does not expose the local harness runtime " +
+        "installer",
+    );
+    return 1;
+  }
+
+  if (action === "status") {
+    const current = await status();
+    log(JSON.stringify(current, null, 2));
+    return current.state === "ready" ? 0 : 1;
+  }
+
+  logStep("1", "Installing the local Claude Code runtime pack");
+  let lastPercent = -1;
+  const result = await install((progress) => {
+    if (progress.state === "downloading" && progress.percent !== lastPercent) {
+      lastPercent = progress.percent;
+      process.stdout.write(`\r  downloading ${progress.percent}%   `);
+    } else if (progress.state === "verifying") {
+      process.stdout.write("\r  verifying…            ");
+    }
+  });
+  process.stdout.write("\r");
+  if (result.state === "ready") {
+    logSuccess(`Runtime pack ${result.packVersion} installed and verified`);
+    return 0;
+  }
+  logError(
+    `Runtime pack not installed (${result.state})` +
+      (result.message ? `: ${result.message}` : ""),
+  );
+  return 1;
+}
+
 async function main() {
+  // Subcommands run before the banner and before anything spawns a server.
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs[0] === "harness") {
+    return runHarnessSubcommand(rawArgs);
+  }
+
   // Show MCP banner at startup
   console.clear();
   printBanner();
