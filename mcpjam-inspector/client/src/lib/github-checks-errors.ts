@@ -1,6 +1,7 @@
 import { convexErrMessage } from "@/lib/convex-error";
 import type {
   GithubCheckConnectionStatus,
+  GithubCheckFeedbackComments,
   GithubInstallationBindingStatus,
 } from "@/hooks/useGithubChecksSettings";
 
@@ -137,6 +138,55 @@ export const GITHUB_UNBIND_CONFIRMATION =
  */
 export const GITHUB_BINDING_FAILED_MESSAGE =
   "We could not finish connecting that GitHub account. This is not a problem with your repositories — start again from Settings.";
+
+// ── Pull-request feedback comments ──────────────────────────────────────────
+
+/**
+ * What the per-repository comment toggle says once the write lands.
+ *
+ * BOTH DIRECTIONS SAY WHAT SURVIVES. Turning comments off is the one setting on
+ * this page an admin is most likely to reach for while worried about what
+ * MCPJam is writing on other people's pull requests, and the useful half of the
+ * answer is the half about the check: it keeps running and keeps reporting.
+ * Saying only "comments off" leaves somebody to guess whether they have just
+ * silenced the check itself.
+ *
+ * No merge promise, in either sentence. MCPJam decides what a check CONCLUDES;
+ * whether a conclusion stops a merge is branch protection's answer, in a
+ * repository setting this app can neither read nor set.
+ */
+export const GITHUB_FEEDBACK_COMMENTS_COPY = {
+  on: "MCPJam will comment on pull requests in this repository.",
+  off: "MCPJam will stop commenting on pull requests in this repository. The check still runs and still reports.",
+} as const satisfies Record<GithubCheckFeedbackComments, string>;
+
+/**
+ * The fallback when the comment toggle is refused with nothing to say.
+ *
+ * Same rule the rest of this module follows: the backend's own wording wins
+ * wherever it sent one, because it is the only side that knows which refusal
+ * happened. This is only for a failure that carried no message — a dropped
+ * connection, a client-side throw — and it exists rather than falling back to
+ * the generic "something went wrong" because THIS write has a consequence
+ * worth stating: nothing changed, so the repository is still on whichever
+ * setting it was on, and retrying is safe.
+ */
+export const GITHUB_FEEDBACK_COMMENTS_WRITE_FAILED_MESSAGE =
+  "We could not change pull-request comments for that repository. Nothing changed — try again.";
+
+/**
+ * What a refused feedback-comment write says to the admin who made it.
+ *
+ * Wraps {@link githubChecksWriteErrorMessage} rather than replacing it, so a
+ * backend refusal — availability, membership, a repository row that is not
+ * theirs — still reads exactly as the backend worded it.
+ */
+export function githubFeedbackCommentsErrorMessage(error: unknown): string {
+  const message = githubChecksWriteErrorMessage(error);
+  return message === GENERIC_WRITE_ERROR
+    ? GITHUB_FEEDBACK_COMMENTS_WRITE_FAILED_MESSAGE
+    : message;
+}
 
 /**
  * A callback URL that carries neither GitHub's setup parameters nor its OAuth

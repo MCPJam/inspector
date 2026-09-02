@@ -234,6 +234,17 @@ describe("useGithubChecksSettings writes", () => {
         <button
           type="button"
           onClick={() =>
+            void settings.setRepoFeedbackComments({
+              configId: "cfg-1",
+              feedbackComments: "off",
+            })
+          }
+        >
+          set feedback comments
+        </button>
+        <button
+          type="button"
+          onClick={() =>
             void settings.unbindInstallation({ installationRef: "bind-1" })
           }
         >
@@ -284,6 +295,7 @@ describe("useGithubChecksSettings writes", () => {
         "mutation:github/checkRepoConfigs:disconnectRepo",
         "mutation:github/checkRepoConfigs:setRepoConformance",
         "mutation:github/checkRepoConfigs:setRepoEnabled",
+        "mutation:github/checkRepoConfigs:setRepoFeedbackComments",
         "mutation:github/checkRepoConfigs:setRepoOutagePolicy",
         "mutation:github/checkRepoConfigs:setRepoSuite",
       ].sort()
@@ -355,6 +367,27 @@ describe("useGithubChecksSettings writes", () => {
         kind: "action",
         name: "github/appInstallLinkNode:startInstallation",
         args: { organizationId: "org-1" },
+      },
+    ]);
+  });
+
+  it("sends the feedback-comment policy as an explicit literal", () => {
+    render(<SettingsProbe />);
+
+    screen.getByText("set feedback comments").click();
+
+    // A LITERAL, never a boolean, and never omitted. Absent already means
+    // something on this field — `on` — so a caller that could leave it out
+    // would be sending the ON default under the name of a change.
+    expect(mocks.requests).toEqual([
+      {
+        kind: "mutation",
+        name: "github/checkRepoConfigs:setRepoFeedbackComments",
+        args: {
+          organizationId: "org-1",
+          configId: "cfg-1",
+          feedbackComments: "off",
+        },
       },
     ]);
   });

@@ -17,6 +17,7 @@ const {
   mockSetRepoSuite,
   mockSetRepoOutagePolicy,
   mockSetRepoConformance,
+  mockSetRepoFeedbackComments,
   mockDisconnectRepo,
   mockConnectRepo,
   mockConnectVerifiedRepo,
@@ -38,6 +39,7 @@ const {
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
   mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
+  mockSetRepoFeedbackComments: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
   // The unverified connect the backend still exposes for the two-deploy
   // window. It is handed to the component so that reaching for it is a
@@ -90,6 +92,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoSuite: mockSetRepoSuite,
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     setRepoConformance: mockSetRepoConformance,
+    setRepoFeedbackComments: mockSetRepoFeedbackComments,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
     startInstallation: mockStartInstallation,
@@ -193,6 +196,15 @@ function binding(
 /** A row connected before the outage policy existed: nothing was stored. */
 const UNSET_POLICY_ROW = ROW;
 const FAIL_OPEN_ROW = { ...ROW, outagePolicy: "fail_open" as const };
+
+/**
+ * A repository whose admin has opted OUT of comments.
+ *
+ * `ROW` itself is the other case and the important one: it carries no
+ * `feedbackComments` at all, which is what every repository connected before
+ * this existed looks like — and it means ON.
+ */
+const COMMENTS_OFF_ROW = { ...ROW, feedbackComments: "off" as const };
 
 function routeTree(activeOrganizationId: string | null) {
   return (
@@ -771,6 +783,179 @@ describe("GithubChecksRoute row outage policy", () => {
     expect(
       screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture")
     ).toBeEnabled();
+  });
+});
+
+/**
+ * The per-repository comment toggle, and the one reading that makes it wrong.
+ *
+ * `feedbackComments` is ABSENT ⇒ `on`, which inverts every other optional
+ * policy on the row. A UI that treats absent the way it treats
+ * `conformanceEnabled` renders the control off for every repository that has
+ * never been touched — which is every repository — and tells an administrator
+ * the opposite of what MCPJam is doing on their pull requests.
+ */
+describe("GithubChecksRoute pull-request comments", () => {
+  const COMMENTS_LABEL =
+    "Post feedback comments on pull requests for mcpjam/mcp-check-fixture";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([]);
+    mockSetRepoFeedbackComments.mockReset();
+    mockSetRepoFeedbackComments.mockResolvedValue({ changed: true });
+  });
+
+  it("renders a row with NO stored setting as ON, and turns it off", () => {
+    // The load-bearing case. Nothing is stored, so MCPJam IS commenting.
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    const toggle = screen.getByLabelText(COMMENTS_LABEL);
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+
+    expect(mockSetRepoFeedbackComments).toHaveBeenCalledWith({
+      configId: "cfg-1",
+      feedbackComments: "off",
+    });
+  });
+
+  it("renders a row stored as off, and turns it back on", () => {
+    mockRepos.value = [COMMENTS_OFF_ROW];
+    renderRoute();
+
+    const toggle = screen.getByLabelText(COMMENTS_LABEL);
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+
+    expect(mockSetRepoFeedbackComments).toHaveBeenCalledWith({
+      configId: "cfg-1",
+      feedbackComments: "on",
+    });
+  });
+
+  it("says what the toggle does, and what survives turning it off", () => {
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    expect(
+      screen.getByText(
+        /MCPJam posts one comment per pull request and updates it in place\. Turning this off leaves only the check run\./
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("announces what changed, naming the check as unaffected", async () => {
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "MCPJam will stop commenting on pull requests in this repository. The check still runs and still reports."
+      )
+    );
+  });
+
+  it("shows the backend's own refusal when the write is rejected", async () => {
+    mockRepos.value = [ROW];
+    mockSetRepoFeedbackComments.mockRejectedValueOnce(
+      new Error("You are not an administrator of this organization.")
+    );
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "You are not an administrator of this organization."
+      )
+    );
+  });
+
+  it("says nothing changed when the refusal carried no message", async () => {
+    mockRepos.value = [ROW];
+    // A `ConvexError`-less throw — a dropped connection, not a refusal the
+    // backend worded. The generic "something went wrong" would leave an admin
+    // unsure whether MCPJam is still commenting.
+    mockSetRepoFeedbackComments.mockRejectedValueOnce(new Error(""));
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "We could not change pull-request comments for that repository. Nothing changed — try again."
+      )
+    );
+  });
+
+  it("stays answerable while checks are paused", () => {
+    // Not gated on `enabled` the way conformance is: this decides what MCPJam
+    // may WRITE on other people's pull requests, and a paused repository is
+    // still a repository an admin may want to settle that for.
+    mockRepos.value = [{ ...ROW, enabled: false }];
+    renderRoute();
+
+    expect(screen.getByLabelText(COMMENTS_LABEL)).toBeEnabled();
+  });
+
+  it("drops a second click while the first write is still in flight", async () => {
+    mockRepos.value = [ROW];
+    let release: (() => void) | undefined;
+    mockSetRepoFeedbackComments.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ changed: true });
+        })
+    );
+    renderRoute();
+
+    const toggle = screen.getByLabelText(COMMENTS_LABEL);
+    fireEvent.click(toggle);
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(mockSetRepoFeedbackComments).toHaveBeenCalledTimes(1);
+
+    // The enable toggle is a DIFFERENT write on the same row and must not be
+    // frozen by this one.
+    expect(
+      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture")
+    ).toBeEnabled();
+
+    await act(async () => {
+      release?.();
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText(COMMENTS_LABEL)).toBeEnabled()
+    );
+  });
+
+  it("says at CONNECT time that MCPJam will comment, and that it is reversible", async () => {
+    // The consent moment: connecting starts MCPJam writing on pull requests in
+    // a repository other people open them against.
+    mockRepos.value = [];
+    renderRoute();
+
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    expect(
+      screen.getByText(
+        /MCPJam will also post a comment on each pull request in this repository, updated in place as new commits land\. You can turn that off per repository after connecting\./
+      )
+    ).toBeInTheDocument();
   });
 });
 

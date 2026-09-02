@@ -1,0 +1,189 @@
+---
+title: "GitHub Checks"
+description: "Run an eval suite against the MCP server built from every pull request, and read the result as a check run, a pull-request comment, and a machine-readable JSON block."
+icon: "git-pull-request"
+---
+
+Connect a repository and MCPJam runs the eval suite bound to it against the MCP
+server built from each pull request's **head commit**, then reports back as a
+check run named **MCPJam Evals**.
+
+Nothing about the check reads your default branch. It builds the pull request,
+starts the server it produces, runs the suite against that server, and reports
+what it measured.
+
+<Note>
+GitHub Checks is configured in the hosted app, at **Settings → Integrations →
+GitHub**. Connecting a repository needs an organization admin.
+</Note>
+
+## `mcpjam.yaml`
+
+MCPJam can usually work out how to build and start a server on its own. When it
+cannot — or when you would rather say it explicitly than let detection guess —
+commit an `mcpjam.yaml` at the **root of the repository**.
+
+A committed file is authoritative: MCPJam runs what it says and never falls back
+to detection. A file that is present but invalid fails the check rather than
+being ignored, because ignoring it would run a server the author never declared.
+
+```yaml mcpjam.yaml
+version: 1
+
+checks:
+  build: npm ci && npm run build
+  start: node dist/server.js
+  port: 8080
+  path: /mcp
+  env:
+    LOG_LEVEL: debug
+```
+
+### Fields
+
+| Field | Required | What it is |
+|-------|----------|------------|
+| `version` | Yes | Must be `1`. |
+| `checks.build` | Yes | The command that installs and compiles. An install-only ecosystem still declares one — `npm ci`, `uv sync --frozen`. |
+| `checks.start` | Yes | The command that starts the server. It must keep running. |
+| `checks.port` | Yes | An integer, 1–65535. The port your server listens on. |
+| `checks.path` | Yes | The MCP endpoint path. Must start with `/`. |
+| `checks.transport` | No | Only `streamable-http`, which is also the default. Version 1 of this file is HTTP-only. |
+| `checks.env` | No | Environment variables to set before `start`. |
+
+Unknown keys **inside `checks:`** are rejected — inside the authoritative
+section a stray key is a typo that would otherwise silently change what runs.
+Unknown keys at the top level are ignored, so the file can grow new sections
+without breaking older checks. The file itself is capped at 32 KB.
+
+### `env`
+
+`checks.env` is a flat mapping of at most 20 entries. Names must be uppercase
+environment-variable names (`^[A-Z][A-Z0-9_]*$`, up to 64 characters) and values
+must be **strings** of up to 1024 characters — quote anything that looks like a
+number, a boolean, or an empty value, or the file is rejected rather than
+coerced.
+
+<Warning>
+**Never put a credential in `checks.env`.** This file is committed to the
+repository, so it is readable by anyone who can read the repository, and MCPJam
+stores its values verbatim alongside the check. It is for the flags a server
+needs in order to boot — `LOG_LEVEL`, `FIXTURE_MODE` — and for nothing that
+would matter if it were printed in public.
+</Warning>
+
+### Binding and ports
+
+**The port is what has to match; the bind address is not.** MCPJam reaches your
+server through the sandbox's own host bridge, from inside the box, so a server
+bound to loopback is reachable. What fails is listening on a port other than the
+one `checks.port` declares, or a process that exits after startup — both are
+reported as an unhealthy server, and the check body says so.
+
+If your framework needs a `HOST` (or equivalent) variable set to bind the way you
+want, set it in `checks.env` like any other boot flag. Only add it if your
+framework actually needs it — it is not something MCPJam requires.
+
+## The pull-request comment
+
+Alongside the check run, MCPJam posts **one comment per pull request** and
+updates that same comment in place on every later push. It is posted for every
+conclusion, including a pass — so the comment is always current, and there is
+never a thread of stale verdicts to scroll past.
+
+The comment carries:
+
+- **The verdict line** — what the check concluded on this head commit.
+- **What the result is not.** A check that could not produce a verdict says so
+  in the comment rather than leaving you to infer it from a colour.
+- **"What to fix"** — one line per failing case, saying what to go and change.
+  Each line names the case and the one thing to look at; it does not claim to
+  know why the case failed.
+- **A collapsed JSON block**, described below, for coding agents.
+
+Comments are posted for every connected repository by default, and an admin can
+turn them off per repository — see [Turning comments
+off](#turning-comments-off).
+
+## The machine-readable JSON block
+
+The last section of the comment is a collapsed, fenced JSON block. It exists so a
+coding agent working on the pull request can read the result without parsing
+prose, and it is stable enough to be worth parsing.
+
+It is a **bounded projection** of MCPJam's eval decision contract — not the whole
+contract, and not a dump of the run. It carries:
+
+| Key | What it says |
+|-----|--------------|
+| `schemaVersion` | The version of this projection. Read it before anything else. |
+| The head SHA | The commit this result describes. A result whose SHA is not the tip is out of date. |
+| The outcome and conclusion | What MCPJam measured, and what it reported to GitHub. |
+| Trial counts | How many trials ran, passed, and failed. |
+| One entry per failing trial | Its **first failed stage**, its failure category, and the tool names the case expected versus the ones it observed. |
+| `omittedFields` | The fields of the contract this projection deliberately leaves out. |
+
+Two things to know when reading it:
+
+- **It is a projection, and it says so.** Anything the projection drops is named
+  in `omittedFields`, so a consumer can tell "MCPJam did not include this" from
+  "MCPJam measured nothing here". Do not infer an absent field's value.
+- **The first failed stage is a location, not a diagnosis.** It says where the
+  chain stopped — connection, discovery, selection, the tool call, the response,
+  or the user's request being satisfied — and nothing about why. Treating it as a
+  cause is how a change lands in the wrong file.
+
+## Review comments on removed tool names
+
+When a failing case asserts a tool that was never called, MCPJam looks for that
+tool name in the pull request's own diff. If the diff **removes** a line
+containing the name in quotes, and the name does not come back on any added line,
+MCPJam leaves a single review comment on that removed line.
+
+That comment is a **location, not a cause**. It says: the case expected this
+tool, this line is where the name stopped existing, start here. It does not claim
+the removal is a mistake — renaming or deleting a tool on purpose is an ordinary
+thing for a pull request to do, and when it is, the fix is to update the case in
+MCPJam rather than to put the line back.
+
+MCPJam never requests changes. Review comments are posted as plain comments, so
+they never sit as a blocking review on your pull request.
+
+## What appears in a comment, and what never does
+
+Comments and review comments are **public on a public repository**. What MCPJam
+writes there is deliberately bounded.
+
+**What can appear:**
+
+- fixed MCPJam copy — the same sentences on every repository;
+- the head SHA, the check-run id, and the pull-request number;
+- links back into MCPJam;
+- eval case titles, as you wrote them;
+- tool names;
+- stage reasons and counts;
+- the same clamped build and server output the check run already shows.
+
+**What never appears:**
+
+- organization, project, or installation identifiers;
+- model or provider names;
+- prompts;
+- tool-call arguments;
+- credentials — evidence strings are credential-redacted before they are
+  rendered.
+
+If a case title or a tool name is itself sensitive, treat it as published: those
+are the two fields that carry your own words into a public comment.
+
+## Turning comments off
+
+Comments are **on for every connected repository by default**, including
+repositories connected before the feature existed. An admin opts a repository
+out; there is nothing to opt in to.
+
+Go to **Settings → Integrations → GitHub**, find the repository in **Connected
+repositories**, and turn off **Post feedback comments on pull requests**.
+
+Turning it off leaves the check run exactly as it was. The suite still runs, and
+the result is still reported — the comment is simply not written.
