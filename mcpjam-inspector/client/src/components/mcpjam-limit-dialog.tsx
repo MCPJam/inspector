@@ -8,7 +8,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useFeatureFlagVariantKey } from "posthog-js/react";
+import { useFeatureFlagVariantKey, usePostHog } from "posthog-js/react";
 import { useEffect, useRef, useState } from "react";
 import {
   canManageOrgCredits,
@@ -40,6 +40,189 @@ const GUEST_PRICING_URL = "https://www.mcpjam.com/pricing";
 // shipping the flag ahead of the export can't render a broken image.
 const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.png";
 
+// The hero art's intrinsic size, used to reserve its box before the PNG decodes.
+const GUEST_WALL_ILLUSTRATION_SIZE = 582;
+
+/**
+ * The guest out-of-credits wall. Rendered ONLY while the wall is actually shown
+ * (see the caller's `showGuestDialog` guard), so the flag read here — and the
+ * PostHog `$feature_flag_called` exposure it emits — happens for guests who hit
+ * the wall, not for every app session. Mounting it app-wide would enroll all
+ * ~10k daily sessions against the ~200 who can convert, diluting both arms and
+ * keeping the experiment from ever reaching significance.
+ */
+function GuestCreditWall() {
+  const { signIn, signUp } = useAuth();
+  const close = useMCPJamLimitDialogStore((s) => s.close);
+  const posthog = usePostHog();
+  const rawVariant = useFeatureFlagVariantKey(GUEST_WALL_FLAG);
+
+  // Distinguish "flags still loading" from "flag resolved to control": both read
+  // as undefined here, but treating a still-loading flag as control would bucket
+  // a slow-network guest to control while PostHog's exposure already enrolled
+  // them in treatment. Wait for the flags to load before committing a variant.
+  const flagsLoaded = posthog?.featureFlags?.hasLoadedFlags ?? false;
+  const resolvedVariant: "control" | "treatment" | null = !flagsLoaded
+    ? null
+    : rawVariant === "treatment"
+    ? "treatment"
+    : "control";
+
+  // Freeze the variant for this opening so a mid-open flag change can't swap the
+  // copy under the user or desync the recorded variant from what was shown. The
+  // component unmounts on close, so the next opening resolves fresh.
+  const [variant, setVariant] = useState<"control" | "treatment" | null>(null);
+  useEffect(() => {
+    if (resolvedVariant !== null) setVariant((prev) => prev ?? resolvedVariant);
+  }, [resolvedVariant]);
+
+  // One impression per opening, and only once the variant is real — reporting
+  // the control fallback below would misattribute a treatment guest.
+  const impressionTrackedRef = useRef(false);
+  useEffect(() => {
+    if (variant === null || impressionTrackedRef.current) return;
+    impressionTrackedRef.current = true;
+    const isTreatment = variant === "treatment";
+    track("plan_limit_dialog_shown", {
+      location: "plan_limit_dialog",
+      wall_kind: "guest_credits",
+      limit_kind: "credits",
+      origin: "credits",
+      audience: "guest",
+      variant,
+      primary_action: isTreatment ? "create_account" : "sign_in",
+      secondary_action: isTreatment ? "see_plans" : null,
+      is_identified: false,
+    });
+  }, [variant]);
+
+  // Show control until the flag resolves so the guest never sees an empty
+  // dialog; the impression above holds until the real value arrives.
+  const isTreatment = variant === "treatment";
+  const trackedVariant = variant ?? "control";
+
+  const handleDismiss = () => {
+    close();
+    track("plan_limit_dialog_dismissed", {
+      location: "plan_limit_dialog",
+      wall_kind: "guest_credits",
+      limit_kind: "credits",
+      origin: "credits",
+      audience: "guest",
+      variant: trackedVariant,
+    });
+  };
+
+  const handleSignIn = () => {
+    signIn();
+    track("plan_limit_sign_in_clicked", {
+      location: "plan_limit_dialog",
+      wall_kind: "guest_credits",
+      limit_kind: "credits",
+      origin: "credits",
+      audience: "guest",
+      variant: trackedVariant,
+    });
+  };
+
+  // Treatment primary CTA: start the WorkOS create-account flow rather than
+  // plain sign-in, matching the Figma "Create free account" button.
+  const handleCreateAccount = () => {
+    signUp();
+    track("plan_limit_create_account_clicked", {
+      location: "plan_limit_dialog",
+      wall_kind: "guest_credits",
+      limit_kind: "credits",
+      origin: "credits",
+      audience: "guest",
+      variant: trackedVariant,
+    });
+  };
+
+  // Treatment secondary CTA: open the public pricing page in a new tab so the
+  // guest keeps their place in the app (mirrors the Enterprise CTA behavior).
+  const handleSeePlans = () => {
+    window.open(GUEST_PRICING_URL, "_blank", "noopener,noreferrer");
+    track("plan_limit_see_plans_clicked", {
+      location: "plan_limit_dialog",
+      wall_kind: "guest_credits",
+      limit_kind: "credits",
+      origin: "credits",
+      audience: "guest",
+      variant: trackedVariant,
+    });
+  };
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) handleDismiss();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        {isTreatment ? (
+          <>
+            <img
+              src={GUEST_WALL_ILLUSTRATION}
+              alt=""
+              aria-hidden
+              width={GUEST_WALL_ILLUSTRATION_SIZE}
+              height={GUEST_WALL_ILLUSTRATION_SIZE}
+              // Explicit intrinsic size reserves the box before the PNG decodes,
+              // so the CTAs don't jump up under a reaching cursor when it paints.
+              className="w-full h-auto rounded-lg"
+              // Degrade to no image if the asset hasn't been dropped in yet, so
+              // the flag can ship ahead of the design export.
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+              }}
+            />
+            <DialogHeader>
+              <DialogTitle>There's so much more to jam on.</DialogTitle>
+              <DialogDescription>
+                You're out of guest credits. Create a free account to keep
+                inspecting your traces, evaluating tool calls, and comparing
+                clients.
+              </DialogDescription>
+            </DialogHeader>
+            {/* Primary is first in the DOM so Radix's focus scope lands on it —
+                Enter converts instead of opening pricing — and flex-row-reverse
+                restores the Figma order with the primary on the right. On a
+                narrow modal the buttons stack instead of cramping. */}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row-reverse">
+              <Button onClick={handleCreateAccount} className="flex-1">
+                Create free account
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleSeePlans}
+                className="flex-1"
+              >
+                See paid plans
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>You've used up your free guest credits.</DialogTitle>
+              <DialogDescription>
+                Sign in to get{" "}
+                <strong className="text-foreground font-medium">10×</strong> the
+                free credits.
+              </DialogDescription>
+            </DialogHeader>
+            <Button onClick={handleSignIn} className="w-full">
+              Sign in
+            </Button>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
   const intent = useMCPJamLimitDialogStore((s) => s.intent);
@@ -48,49 +231,21 @@ export function MCPJamLimitDialog() {
   );
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
-  const { user, isLoading, signIn, signUp } = useAuth();
+  const { user, isLoading } = useAuth();
   const { isAuthenticated } = useConvexAuth();
-  // Normalize the multivariate flag to control/treatment. Undefined (flags not
-  // yet loaded, PostHog disabled locally, or no experiment) falls to control.
-  const rawGuestVariant =
-    useFeatureFlagVariantKey(GUEST_WALL_FLAG) === "treatment"
-      ? "treatment"
-      : "control";
   // Look up the user's orgs as a fallback in case there is no stored
   // active-org for this user (e.g. brand-new sign-in). Sorted most-recent
   // first by useOrganizationQueries.
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   const appNavigate = useAppNavigate();
-  const guestImpressionTrackedRef = useRef(false);
   const creditsImpressionTrackedRef = useRef(false);
-  // The variant actually shown to the guest, frozen for one dialog opening.
-  const [openGuestVariant, setOpenGuestVariant] = useState<
-    "control" | "treatment" | null
-  >(null);
 
   // Decide whether either variant is active before wiring billing hooks. This
   // component is mounted app-wide, so a closed dialog must not keep billing
   // and owner-member Convex subscriptions alive for the whole session.
   const showGuestDialog = !user && intent === "guest" && isOpen;
   const showTopupDialog = !!user && intent === "topup" && isOpen;
-
-  // Freeze the variant for the lifetime of one guest-wall opening. The wall
-  // only appears after a guest exhausts credits — well after flags resolve —
-  // but if the flag ever settled while the dialog was open, letting it flip
-  // would swap the copy under the user and, worse, record an impression
-  // variant that no longer matched what they saw, corrupting the A/B result.
-  // Capturing at open keeps render and analytics in lockstep, then resets on
-  // close.
-  useEffect(() => {
-    if (showGuestDialog) {
-      setOpenGuestVariant((prev) => prev ?? rawGuestVariant);
-    } else if (openGuestVariant !== null) {
-      setOpenGuestVariant(null);
-    }
-  }, [showGuestDialog, rawGuestVariant, openGuestVariant]);
-  const guestVariant = openGuestVariant ?? rawGuestVariant;
-  const isGuestTreatment = guestVariant === "treatment";
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
@@ -166,27 +321,6 @@ export function MCPJamLimitDialog() {
   const creditsAudience = creditsUpgrade.canManageBilling
     ? "billing_manager"
     : "member";
-
-  useEffect(() => {
-    if (!showGuestDialog) {
-      guestImpressionTrackedRef.current = false;
-      return;
-    }
-    if (isLoading || guestImpressionTrackedRef.current) return;
-
-    guestImpressionTrackedRef.current = true;
-    track("plan_limit_dialog_shown", {
-      location: "plan_limit_dialog",
-      wall_kind: "guest_credits",
-      limit_kind: "credits",
-      origin: "credits",
-      audience: "guest",
-      variant: guestVariant,
-      primary_action: isGuestTreatment ? "create_account" : "sign_in",
-      secondary_action: isGuestTreatment ? "see_plans" : null,
-      is_identified: false,
-    });
-  }, [guestVariant, isGuestTreatment, isLoading, showGuestDialog]);
 
   useEffect(() => {
     if (!showTopupDialog) {
@@ -303,18 +437,6 @@ export function MCPJamLimitDialog() {
     });
   };
 
-  const handleGuestDismiss = () => {
-    close();
-    track("plan_limit_dialog_dismissed", {
-      location: "plan_limit_dialog",
-      wall_kind: "guest_credits",
-      limit_kind: "credits",
-      origin: "credits",
-      audience: "guest",
-      variant: guestVariant,
-    });
-  };
-
   const handleCreditsDismiss = () => {
     close();
     track("plan_limit_dialog_dismissed", {
@@ -329,46 +451,6 @@ export function MCPJamLimitDialog() {
     });
   };
 
-  const handleSignIn = () => {
-    signIn();
-    track("plan_limit_sign_in_clicked", {
-      location: "plan_limit_dialog",
-      wall_kind: "guest_credits",
-      limit_kind: "credits",
-      origin: "credits",
-      audience: "guest",
-      variant: guestVariant,
-    });
-  };
-
-  // Treatment primary CTA: start the WorkOS create-account flow rather than
-  // plain sign-in, matching the Figma "Create free account" button.
-  const handleCreateAccount = () => {
-    signUp();
-    track("plan_limit_create_account_clicked", {
-      location: "plan_limit_dialog",
-      wall_kind: "guest_credits",
-      limit_kind: "credits",
-      origin: "credits",
-      audience: "guest",
-      variant: guestVariant,
-    });
-  };
-
-  // Treatment secondary CTA: open the public pricing page in a new tab so the
-  // guest keeps their place in the app (mirrors the Enterprise CTA behavior).
-  const handleSeePlans = () => {
-    window.open(GUEST_PRICING_URL, "_blank", "noopener,noreferrer");
-    track("plan_limit_see_plans_clicked", {
-      location: "plan_limit_dialog",
-      wall_kind: "guest_credits",
-      limit_kind: "credits",
-      origin: "credits",
-      audience: "guest",
-      variant: guestVariant,
-    });
-  };
-
   const handleUpgrade = async () => {
     const result = await creditsUpgrade.start();
     if (result?.shouldDismiss) close();
@@ -376,68 +458,7 @@ export function MCPJamLimitDialog() {
 
   return (
     <>
-      {showGuestDialog && (
-        <Dialog
-          open
-          onOpenChange={(next) => {
-            if (!next) handleGuestDismiss();
-          }}
-        >
-          <DialogContent className="sm:max-w-md">
-            {isGuestTreatment ? (
-              <>
-                <img
-                  src={GUEST_WALL_ILLUSTRATION}
-                  alt=""
-                  aria-hidden
-                  className="w-full rounded-lg"
-                  // Degrade to no image if the asset hasn't been dropped in yet,
-                  // so the flag can ship ahead of the design export.
-                  onError={(event) => {
-                    event.currentTarget.style.display = "none";
-                  }}
-                />
-                <DialogHeader>
-                  <DialogTitle>There's so much more to jam on.</DialogTitle>
-                  <DialogDescription>
-                    You're out of guest credits. Create a free account to keep
-                    inspecting your traces, evaluating tool calls, and comparing
-                    clients.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={handleSeePlans}
-                    className="flex-1"
-                  >
-                    See paid plans
-                  </Button>
-                  <Button onClick={handleCreateAccount} className="flex-1">
-                    Create free account
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <DialogHeader>
-                  <DialogTitle>
-                    You've used up your free guest credits.
-                  </DialogTitle>
-                  <DialogDescription>
-                    Sign in to get{" "}
-                    <strong className="text-foreground font-medium">10×</strong>{" "}
-                    the free credits.
-                  </DialogDescription>
-                </DialogHeader>
-                <Button onClick={handleSignIn} className="w-full">
-                  Sign in
-                </Button>
-              </>
-            )}
-          </DialogContent>
-        </Dialog>
-      )}
+      {showGuestDialog && <GuestCreditWall />}
       {showTopupDialog && (
         <CreditsLimitDialogView
           description={

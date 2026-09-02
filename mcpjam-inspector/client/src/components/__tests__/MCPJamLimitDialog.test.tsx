@@ -13,6 +13,8 @@ const trackMock = vi.hoisted(() => vi.fn());
 const guestVariantMock = vi.hoisted(() =>
   vi.fn<() => string | boolean | undefined>(() => undefined)
 );
+// Controls posthog's hasLoadedFlags so tests can exercise the flags-loading gate.
+const flagsLoadedMock = vi.hoisted(() => ({ value: true }));
 const upgradeHookOrganizationIdMock = vi.hoisted(() => vi.fn());
 const recipientHookOrganizationIdMock = vi.hoisted(() => vi.fn());
 const recipientsState = vi.hoisted(() => ({
@@ -89,6 +91,11 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagVariantKey: (...args: unknown[]) => guestVariantMock(...args),
+  // The guest wall waits for hasLoadedFlags before committing a variant; tests
+  // treat flags as already loaded so the resolved variant renders immediately.
+  usePostHog: () => ({
+    featureFlags: { hasLoadedFlags: flagsLoadedMock.value },
+  }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -119,6 +126,7 @@ beforeEach(() => {
   signUp.mockReset();
   guestVariantMock.mockReset();
   guestVariantMock.mockReturnValue(undefined);
+  flagsLoadedMock.value = true;
   trackMock.mockReset();
   upgradeHookOrganizationIdMock.mockReset();
   recipientHookOrganizationIdMock.mockReset();
@@ -373,6 +381,69 @@ describe("MCPJamLimitDialog", () => {
     expect(impressions[0]?.[1]).toEqual(
       expect.objectContaining({ variant: "treatment" })
     );
+  });
+
+  it("does not read the guest flag until the wall is shown", () => {
+    // The flag hook lives in the wall child, which only mounts when the wall
+    // shows — so no PostHog exposure fires for sessions that never hit it.
+    const { rerender } = render(<MCPJamLimitDialog />);
+    expect(guestVariantMock).not.toHaveBeenCalled();
+
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    rerender(<MCPJamLimitDialog />);
+    expect(guestVariantMock).toHaveBeenCalled();
+  });
+
+  it("shows control and holds the impression until flags load", () => {
+    flagsLoadedMock.value = false;
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    const view = render(<MCPJamLimitDialog />);
+
+    // Flags still loading: render the safe control fallback and do NOT enroll
+    // or record a variant yet.
+    expect(
+      screen.getByRole("button", { name: /^sign in$/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^create free account$/i })
+    ).not.toBeInTheDocument();
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.anything()
+    );
+
+    // Flags resolve to treatment.
+    flagsLoadedMock.value = true;
+    view.rerender(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /there's so much more to jam on/i })
+    ).toBeInTheDocument();
+    const impressions = trackMock.mock.calls.filter(
+      ([event]) => event === "plan_limit_dialog_shown"
+    );
+    expect(impressions).toHaveLength(1);
+    expect(impressions[0]?.[1]).toEqual(
+      expect.objectContaining({ variant: "treatment" })
+    );
+  });
+
+  it("orders the primary CTA first in the DOM so it takes opening focus", () => {
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    const create = screen.getByRole("button", {
+      name: /^create free account$/i,
+    });
+    const plans = screen.getByRole("button", { name: /^see paid plans$/i });
+    // "See paid plans" follows "Create free account" in the DOM, so Radix's
+    // focus scope lands on the primary and Enter converts.
+    expect(
+      create.compareDocumentPosition(plans) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it("does not render while auth state is loading", () => {
