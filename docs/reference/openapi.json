@@ -2419,6 +2419,54 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/stage-analytics": {
+      "get": {
+        "operationId": "getEvalRunStageAnalytics",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one run's stage analytics",
+        "description": "ONE run's materialized stage-analytics document: where its trials fell out of the six-stage user-value chain (connection, discovery, selection, tool call, response, user value), overall and sliced marginally by intent, model and host.\n\nThe same document the suite listing returns, addressed by run. Use this rather than paging `/eval-suites/{suiteId}/stage-analytics` to reach a known run: that listing is newest-first, so walking it costs work proportional to how long ago the run finished and cannot answer once the run falls outside the pages read.\n\nCounts are returned; RATES are not. A zero denominator is `notMeasured`, never `0`, and every excluded observation is counted under a named class so a denominator can never shrink silently.\n\n`404` covers BOTH \"this run has no document\" and \"this run is not visible to you\", and the two are deliberately not distinguished — separating them would confirm that a run exists in a project you cannot see. NOT backfilled either: a run that completed before this shipped has no document, and that absence means UNMEASURED, never a funnel of zeros.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's complete stage-analytics document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalStageAnalytics"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/schedule": {
       "patch": {
         "operationId": "updateEvalSuiteSchedule",
@@ -2914,6 +2962,110 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/server-groups": {
+      "get": {
+        "operationId": "listServerGroups",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "List a project's server groups",
+        "description": "A server group is an immutable snapshot of a set of saved servers. Pinning one on an environment is what keeps a run off its host's live server list, so a composed run keeps testing the servers it was composed against even after the shared host is edited.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project's server groups.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerGroupPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createServerGroup",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Snapshot servers into a server group",
+        "description": "Creates a server group holding exactly the given servers and responds `201` with its detail. Groups are create-only — there is no update route, because an editable group would reintroduce the drift that pinning exists to prevent. Names are unique per project, so a clash responds `409`. Servers must belong to this project and must not be plugin-managed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerGroupCreateRequest"
+              },
+              "example": {
+                "name": "Vercel",
+                "serverIds": [
+                  "p1750000000000000000000000000"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The server group was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -5065,7 +5217,11 @@
         "tags": ["Skills"],
         "summary": "List a project's skills",
         "description": "The Cloud Skills visible to the caller in this project: the project-shared ones plus the caller's own drafts. Each row reports `pinnability`, which is what decides whether its id is usable in an environment's `skillSelection`.",
-        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
         "responses": {
           "200": {
             "description": "The project's skills.",
@@ -5105,12 +5261,16 @@
         "summary": "Get a skill",
         "description": "One skill, including its SKILL.md body. The body is mutable and an edit overwrites the previous one in place, so `aggregateHash` is the only handle on which content this read returned.",
         "parameters": [
-          { "$ref": "#/components/parameters/projectId" },
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
           {
             "name": "skillId",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" },
+            "schema": {
+              "type": "string"
+            },
             "description": "Skill ID."
           }
         ],
@@ -6614,6 +6774,233 @@
           },
           "400": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/secrets": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "listSecrets",
+        "tags": ["Secrets"],
+        "summary": "List secrets",
+        "description": "The project's credentials as METADATA ONLY — no value is returned by this or any other route. Shows the project-shared secrets plus the caller's own personal ones; another member's personal secret does not appear at all, not even its name.",
+        "responses": {
+          "200": {
+            "description": "A page of secrets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSecret",
+        "tags": ["Secrets"],
+        "summary": "Create a secret",
+        "description": "Store a credential so environments can grant it to runs. THE VALUE TRAVELS IN THE REQUEST BODY and becomes visible to whatever makes the call. The response is metadata only. Creating a project-shared secret requires project admin; a personal one does not.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe create key. Replaying the SAME key with the SAME body returns the original resource instead of creating a second one; reusing it with a DIFFERENT body is a 409. Worth passing: a retried create without one fails as a name conflict with the row the first attempt already made.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The secret to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/secrets/{secretId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/secretId"
+        }
+      ],
+      "get": {
+        "operationId": "getSecret",
+        "tags": ["Secrets"],
+        "summary": "Get a secret",
+        "description": "One secret's metadata: delivery mode, host binding, sharing, and when it was last handed to a run. Never its value. A secret from another project — and another member's personal secret — both read as 404.",
+        "responses": {
+          "200": {
+            "description": "The secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateSecret",
+        "tags": ["Secrets"],
+        "summary": "Rotate or re-bind a secret",
+        "description": "Rotate the value and/or change how it is delivered. A rotation reaches NEW RUNS ONLY: a session already running holds the old value — materialized in its box's environment, or inside an egress policy that cannot be read back — and there is no safe way to replace it mid-run.",
+        "requestBody": {
+          "required": true,
+          "description": "The fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSecret",
+        "tags": ["Secrets"],
+        "summary": "Delete a secret",
+        "description": "Delete a stored credential. HARD — the row and the encrypted value both go, and MCPJam stops delivering it. Deliberately NOT blocked when an environment still selects it: refusing would leave a leaked credential undeletable until someone edited every environment naming it, and deletion must never wait on cleanup. Runs already in flight keep the value they were handed, and this does NOT revoke the credential at the provider that issued it.",
+        "responses": {
+          "200": {
+            "description": "The secret was revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretDeleted"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -11190,6 +11577,15 @@
           "type": "string"
         },
         "description": "Gate waiver ID, as returned when the waiver was granted or read."
+      },
+      "secretId": {
+        "name": "secretId",
+        "in": "path",
+        "required": true,
+        "description": "Secret ID, as returned by the project's secret list.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "requestBodies": {
@@ -14741,7 +15137,7 @@
           },
           "stageResults": {
             "type": "array",
-            "description": "Verified D1 user-value chain rows, in chain order.",
+            "description": "The user-value chain rows for this trial, in chain order, from a derivation that validated.",
             "items": {
               "$ref": "#/components/schemas/StageResultRow"
             }
@@ -14755,7 +15151,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Where the chain stopped — A LOCATION, NOT A CAUSE. It names the first link that failed, never why it failed: the why is `reason` on that stage's row (see `StageResultRow.reason`), and neither this nor the `failureCategory` bucket on its own authorizes proposing a change to the server. Absent when nothing failed — and absent on a trial that never reached a stage at all, such as a setup abort or an evaluator error, which still carries a `failureCategory`. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "failureCategory": {
             "type": "string",
@@ -14767,7 +15164,8 @@
               "serverData",
               "userValue",
               "evaluator"
-            ]
+            ],
+            "description": "The bucket this trial is grouped under — A BUCKET, NOT A DIAGNOSIS. Present without `firstFailedStage` for a trial that never reached a stage. `setup` — setup: the harness or environment never got to the test. `metadata` — tool metadata: tool names, descriptions or schemas misled the model. `selection` — tool selection: the model picked the wrong tool, or none. `arguments` — call arguments: the right tool, called wrongly. `serverData` — server data: the server answered, with data the model could not use. `userValue` — user value: everything mechanical worked and the user still was not served. `evaluator` — evaluator: the grader itself failed, so the run says nothing about the server — never folded into the others, because counting a broken judge as a server defect poisons every rate derived from it."
           },
           "stageAnalyzerVersion": {
             "type": "integer",
@@ -14781,7 +15179,7 @@
       },
       "StageResultRow": {
         "type": "object",
-        "description": "One verified D1 user-value stage verdict, in chain order.",
+        "description": "One user-value stage's verdict for one trial, from a derivation that validated. Six of these make a chain, always in chain order, and the order is normative: `notReached` is derived from position, so re-ordering them changes which stages a failure is said to have blocked.",
         "required": ["stage", "state"],
         "properties": {
           "stage": {
@@ -14793,7 +15191,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Which link of the user-value chain this row is a verdict on. The order is NORMATIVE: a run walks the six in sequence, and `notReached` is derived from position — every stage after the first failed one never ran. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "state": {
             "type": "string",
@@ -14803,7 +15202,8 @@
               "notReached",
               "notMeasured",
               "notApplicable"
-            ]
+            ],
+            "description": "What this stage did. The three non-verdicts stay three different facts on purpose: collapsing them is how \"we never checked\" gets read as \"it passed\". `passed` — measured, and it passed. `failed` — measured, and it failed. `notReached` — it never ran (an earlier stage failed), so there was nothing to decide. `notMeasured` — this run captured nothing that could decide it, so the stage is not measured. `notApplicable` — the stage is not applicable to this case at all."
           },
           "reason": {
             "type": "string",
@@ -14815,6 +15215,7 @@
               "executorEmitsNoSpans",
               "blockedByPolicy",
               "evaluatorError",
+              "providerError",
               "setupAborted",
               "connectFailed",
               "toolsListFailed",
@@ -14830,8 +15231,14 @@
               "renderFailed",
               "predicateFailed",
               "observed",
-              "impliedByLaterEvidence"
-            ]
+              "impliedByLaterEvidence",
+              "judgeObserved",
+              "judgePartial",
+              "judgeFailed",
+              "judgePending",
+              "judgeNotRequested"
+            ],
+            "description": "Why this stage landed where it did. A CLOSED vocabulary — render what arrives, never widen it. Each entry completes \"…because <reason>\". `noSpanChannel` — this run captures no evidence channel for that stage. `noEvidenceCaptured` — nothing eligible for that stage was captured. `matchVerdictUnavailable` — extra tool calls were captured but the run did not report whether its match options tolerate them. `traceAbsent` — the iteration recorded no trace. `executorEmitsNoSpans` — the executor emitted no spans. `blockedByPolicy` — a policy blocked the run before it could be measured. `evaluatorError` — the evaluator itself failed, so the run says nothing about the server. `providerError` — the model provider failed the call, so this stage was never measured. `setupAborted` — the environment was never prepared, so the test never began. `connectFailed` — the configured server was reached and initialize failed there. `toolsListFailed` — initialize succeeded and listing tools failed. `egressUnverified` — the connection failed with no evidence that our own network egress works. `lifecycleStopped` — the run was stopped mid-flight. `notAuthored` — the case asserts nothing this stage could decide. `earlierStageFailed` — an earlier stage failed. `missingToolCall` — an expected tool call was never made. `unexpectedToolCall` — a tool call was made that the case did not expect. `argumentMismatch` — the call arguments did not match what the case expects. `toolError` — the server reported a tool error. `protocolError` — the call never produced a result. `renderFailed` — the widget did not render. `predicateFailed` — a check on the result did not hold. `observed` — the evidence was inspected and the stage held. `impliedByLaterEvidence` — a later stage's success implies it. `judgeObserved` — the LLM judge scored at or above the threshold. `judgePartial` — the LLM judge scored inside the partial band — at or above the floor, below the threshold. `judgeFailed` — the LLM judge scored below the partial floor. `judgePending` — an LLM judge verdict is owed and has not arrived. `judgeNotRequested` — no LLM judge verdict was ever owed."
           },
           "evidence": {
             "type": "object",
@@ -15167,7 +15574,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Which link of the user-value chain these counts are for. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied. Counts are per stage and are never summed across stages: one trial is counted in every stage's tally, so adding the six together counts the same trial six times."
           },
           "applicable": {
             "type": "integer",
@@ -15753,6 +16161,96 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ProjectServer"
+            }
+          }
+        }
+      },
+      "ServerGroup": {
+        "type": "object",
+        "description": "An immutable snapshot of a set of saved servers. Pin one on an environment so a run uses exactly these servers instead of following its host's live server list.",
+        "required": [
+          "id",
+          "name",
+          "serverIds",
+          "serverNames"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serverIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The snapshotted server ids. Authoritative."
+          },
+          "serverNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Display names resolved at read time; a deleted server is labelled rather than dropped."
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "ServerGroupPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerGroup"
+            }
+          }
+        }
+      },
+      "ServerGroupCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "serverIds"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique among the project's live server groups."
+          },
+          "description": {
+            "type": "string"
+          },
+          "serverIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -17004,7 +17502,7 @@
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", null],
+            "enum": ["claude-code", "codex", "cursor", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
           },
           "computer": {
@@ -17354,6 +17852,25 @@
           }
         }
       },
+      "EnvironmentSecretSelection": {
+        "type": "object",
+        "description": "Which PROJECT SECRETS a run launched from this environment receives — ids only. The environment is the GRANT BOUNDARY: absent means no secrets, and there is no \"all of them\" mode. Cannot be empty; clear the field instead (send `null` on update) to revoke the grant.\n\nMembership is not delivery. A `sharing: user` secret selected here reaches ONLY sessions its owner started; every other member's run of this environment silently does not receive it, and that rule is re-checked live at launch rather than baked into the selection.",
+        "required": ["mode", "secretIds"],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["explicit"]
+          },
+          "secretIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Secret IDs, as returned by the project's secret list."
+          }
+        }
+      },
       "ProjectEnvironment": {
         "type": "object",
         "description": "A project environment: a named, live-editable execution bundle that eval suites and journeys run against.",
@@ -17395,6 +17912,9 @@
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
+          },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
           },
           "pluginVersionIds": {
             "type": "array",
@@ -17701,7 +18221,9 @@
       },
       "SkillDetail": {
         "allOf": [
-          { "$ref": "#/components/schemas/Skill" },
+          {
+            "$ref": "#/components/schemas/Skill"
+          },
           {
             "type": "object",
             "required": ["content"],
@@ -17772,6 +18294,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "items": {
@@ -17833,6 +18358,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "minItems": 1,
@@ -17893,6 +18421,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "minItems": 1,
@@ -17951,6 +18482,15 @@
             ],
             "nullable": true,
             "description": "`null` clears the pinned skill selection."
+          },
+          "secretSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentSecretSelection"
+              }
+            ],
+            "nullable": true,
+            "description": "`null` REVOKES the environment's credential grant; a value replaces it; omission leaves it unchanged. `[]` is rejected — an accidental empty array that read as \"remove every credential\" would break a workflow with no error to look at."
           },
           "pluginVersionIds": {
             "type": "array",
@@ -18845,6 +19385,10 @@
           "ephemeralEnvironmentLaunch": {
             "type": "boolean",
             "description": "`startTestSuiteRun` / the v1 group route accept `ephemeralEnvironment` — a project-scoped env may launch without suite membership. Absent or false on older backends."
+          },
+          "skillVersionPins": {
+            "type": "boolean",
+            "description": "`skillSelection.versionPins` and `serverSkillSelection.versionPins` are accepted, and a pinned revision survives into run snapshots. Absent or false on older backends, which reject the unknown field outright — probe this before offering a version picker."
           }
         }
       },
@@ -19499,6 +20043,213 @@
           },
           "notes": {
             "type": "string"
+          }
+        }
+      },
+      "Secret": {
+        "type": "object",
+        "description": "A project credential — METADATA ONLY, always. There is no `value` field on this schema and no route that returns one: a secret is written and delivered into a run, never read back.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "description",
+          "delivery",
+          "sharing",
+          "lastDeliveredAt",
+          "createdAt",
+          "updatedAt",
+          "createdByUserId",
+          "updatedByUserId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The environment-variable name (`^[A-Z_][A-Z0-9_]*$`). This IS the secret's identity: what a materialized delivery exports, what a workflow references, and what stays stable across a rotation. Immutable."
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "`brokered` — the sandbox's egress proxy injects the value as a request header OUTSIDE the VM, so the box never holds it. Prevents EXTRACTION, not USE: any process in the box can call the bound host while the policy is live, and it works for HTTPS APIs only (domain rules bind on ports 80/443). `materialized` — a real environment variable inside the box, which is the only thing a CLI can read; EXTRACTABLE BY DESIGN."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Brokered only: the exact hostnames the header is injected on."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "description": "Brokered only: the header name."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "description": "Brokered only: the header value, with `{}` where the secret goes."
+          },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "description": "`project` — admin-managed, delivered to every member's sessions. `user` — personal, delivered ONLY in sessions its owner starts and silently absent from anyone else's run of the same environment. Immutable."
+          },
+          "ownerUserId": {
+            "type": "string",
+            "description": "Personal secrets only. Project-shared rows have no owner."
+          },
+          "lastDeliveredAt": {
+            "type": ["integer", "null"],
+            "description": "When this secret was last HANDED TO a run — not when it was last used. Brokered use is unobservable by construction (the proxy injects the header; the request is never seen here), so `used` would be a number nobody can honestly produce. `null` means nothing has been recorded, which is not the same as never delivered."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "createdByUserId": {
+            "type": "string"
+          },
+          "updatedByUserId": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Secret"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists. Opaque — do not parse it."
+          }
+        }
+      },
+      "SecretCreateRequest": {
+        "type": "object",
+        "description": "THE VALUE TRAVELS IN THIS BODY and becomes visible to whatever makes the call — its process, its logs, its shell history. Supply it from a file or an environment variable rather than pasting it into a command.",
+        "required": ["name", "value", "delivery"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Z_][A-Z0-9_]*$",
+            "description": "Environment-variable name. Immutable — renaming is delete-and-recreate."
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "The credential. Stored encrypted; no route ever returns it. NOT trimmed — a trailing newline is meaningful in a PEM block, and rewriting what you sent would present as 'the key is wrong' with nothing to look at."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "Required, with no default: a caller who has not said whether the value ends up inside the sandbox has not made the decision this field exists for. See `Secret.delivery`."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Required for `brokered`, forbidden for `materialized`. Exact hostnames — no scheme, no port, no wildcard: the proxy matches a host, and a URL installs a rule that silently never fires."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required for `brokered`, forbidden for `materialized`. e.g. `Authorization`."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Required for `brokered`, forbidden for `materialized`. The header value with `{}` where the secret goes, e.g. `Bearer {}`. A template without `{}` is rejected: it installs a constant header that never carries the credential."
+          },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "default": "project",
+            "description": "Defaults to `project`. A non-admin asking for it is refused rather than downgraded to personal — a silent downgrade looks like success and then reaches nobody else's sessions."
+          }
+        }
+      },
+      "SecretUpdateRequest": {
+        "type": "object",
+        "description": "At least one field. `name` and `sharing` are absent because both are IMMUTABLE: renaming would break the workflows referencing the environment variable, and re-sharing would change who has already been handed the value. Delete and recreate for either. A rotation reaches NEW RUNS ONLY — a session already running holds the old value and cannot be reached.",
+        "minProperties": 1,
+        "properties": {
+          "value": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "The new credential. Same exposure as on create: it travels in this body."
+          },
+          "description": {
+            "type": ["string", "null"],
+            "maxLength": 500,
+            "description": "`null` clears it; omit to leave it unchanged."
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "Switching to `brokered` requires the host binding in the same call; switching to `materialized` clears it."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Required for `brokered`, forbidden for `materialized`. Exact hostnames — no scheme, no port, no wildcard: the proxy matches a host, and a URL installs a rule that silently never fires."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required for `brokered`, forbidden for `materialized`. e.g. `Authorization`."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Required for `brokered`, forbidden for `materialized`. The header value with `{}` where the secret goes, e.g. `Bearer {}`. A template without `{}` is rejected: it installs a constant header that never carries the credential."
+          }
+        }
+      },
+      "SecretDeleted": {
+        "type": "object",
+        "description": "A HARD delete: the row and the encrypted value both go. This is the revoke button, so it is not soft.",
+        "required": ["id", "projectId", "name", "deleted"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Echoed so a caller logging the revoke needs no prior read."
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [true]
           }
         }
       },
@@ -22993,7 +23744,8 @@
                   "call",
                   "response",
                   "userValue"
-                ]
+                ],
+                "description": "Where the chain stopped — A LOCATION, NOT A CAUSE. It names the first link that failed, never why it failed: the why is `reason` on that stage's row (see `StageResultRow.reason`), and neither this nor the `failureCategory` bucket on its own authorizes proposing a change to the server. Absent when nothing failed — and absent on a trial that never reached a stage at all, such as a setup abort or an evaluator error, which still carries a `failureCategory`. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
               },
               "failureCategory": {
                 "type": "string",
@@ -23006,7 +23758,7 @@
                   "userValue",
                   "evaluator"
                 ],
-                "description": "The bucket this trial is grouped under. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error — both are real answers about a run that never reached a stage."
+                "description": "The bucket this trial is grouped under — A BUCKET, NOT A DIAGNOSIS. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error — both are real answers about a run that never reached a stage. `setup` — setup: the harness or environment never got to the test. `metadata` — tool metadata: tool names, descriptions or schemas misled the model. `selection` — tool selection: the model picked the wrong tool, or none. `arguments` — call arguments: the right tool, called wrongly. `serverData` — server data: the server answered, with data the model could not use. `userValue` — user value: everything mechanical worked and the user still was not served. `evaluator` — evaluator: the grader itself failed, so the run says nothing about the server — never folded into the others, because counting a broken judge as a server defect poisons every rate derived from it."
               },
               "analyzerVersion": {
                 "type": "integer",
@@ -23095,7 +23847,7 @@
               "response",
               "userValue"
             ],
-            "description": "The stage this evidence was read from. Absent when none was established."
+            "description": "The stage this evidence was read from, and the only stage it is evidence ABOUT. Absent when none was established. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "spanIds": {
             "type": "array",

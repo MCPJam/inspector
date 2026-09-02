@@ -1167,7 +1167,7 @@ export function ProtocolTab({
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">
               <span className="text-[12px] font-medium">
-                Enterprise-managed authorization
+                Default all project servers to enterprise managed auth
               </span>
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Route every HTTP server connection through your IdP (XAA) by
@@ -1187,7 +1187,7 @@ export function ProtocolTab({
               checked={policyOn}
               onCheckedChange={setPolicyOn}
               disabled={readOnly}
-              aria-label="Enterprise-managed authorization"
+              aria-label="Default all project servers to enterprise managed auth"
             />
           </div>
         )}

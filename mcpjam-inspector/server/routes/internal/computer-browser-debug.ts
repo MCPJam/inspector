@@ -20,13 +20,17 @@ import {
   ensureComputerReady,
   getComputerSandboxInfo,
 } from "../../utils/computers/control-plane-client.js";
-import { bootBrowserd, type BrowserdSandbox } from "../../services/browserd/boot-browserd.js";
+import { bootBrowserd } from "../../services/browserd/boot-browserd.js";
 import { BrowserdClient } from "../../services/browserd/browserd-client.js";
 import {
   runBrowserProbe,
   type ProbeSandbox,
 } from "../../services/browserd/browser-debug-probe.js";
-import { MCPJAM_BROWSERD_BUNDLE_BASE64 } from "../../services/browserd/dist/mcpjam-browserd-bundle.generated.js";
+import {
+  adaptSandbox,
+  loadBrowserdBundle,
+  writeBundleInto,
+} from "../../services/browserd/live-session-deps.js";
 import { withKeyedLock } from "../../services/browserd/probe-lock.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
@@ -34,52 +38,12 @@ const internalComputerBrowserDebug = new Hono();
 
 internalComputerBrowserDebug.use("*", internalServiceAuthMiddleware());
 
-/**
- * The daemon bundle bytes. Decoded from the const that the bundler embeds INTO
- * the server build (base64), so it is always present in the production Docker
- * image — a sibling `.mjs` resolved by path would be absent, since the final
- * Docker stage copies only `dist/`.
- */
-let cachedBundle: Uint8Array | null = null;
-function loadBundle(): Uint8Array {
-  if (!cachedBundle) {
-    cachedBundle = new Uint8Array(Buffer.from(MCPJAM_BROWSERD_BUNDLE_BASE64, "base64"));
-  }
-  return cachedBundle;
-}
-
-/** Adapt a connected E2B sandbox to the boot recipe's `BrowserdSandbox`. */
-function adaptSandbox(sandbox: Sandbox): BrowserdSandbox {
-  return {
-    async runBackground(command, { envs, onStdout }) {
-      const handle = await sandbox.commands.run(command, {
-        background: true,
-        envs,
-        timeoutMs: 0,
-        onStdout,
-      });
-      return { kill: () => handle.kill(), wait: () => handle.wait() };
-    },
-    getHost: (port) => sandbox.getHost(port),
-  };
-}
-
+// Bundle bytes + sandbox adapters are SHARED with the production session path
+// (`live-session-deps.ts`), so this probe exercises the same seam
+// construction `ensureBrowserSession` relies on.
 function connectProbeSandbox(sandbox: Sandbox): ProbeSandbox {
   return {
-    async writeBundle(path, content) {
-      const slash = path.lastIndexOf("/");
-      const dir = slash > 0 ? path.slice(0, slash) : "";
-      if (dir) {
-        try {
-          await sandbox.files.makeDir(dir);
-        } catch {
-          // Idempotent: a real problem surfaces as the write's own error.
-        }
-      }
-      const data = new ArrayBuffer(content.byteLength);
-      new Uint8Array(data).set(content);
-      await sandbox.files.write(path, data);
-    },
+    writeBundle: (path, content) => writeBundleInto(sandbox, path, content),
     browserd: adaptSandbox(sandbox),
     // Never kill the durable computer here — only the daemon is stopped, by the
     // probe's own cleanup. `Sandbox.connect` holds no resource to release.
@@ -101,7 +65,7 @@ internalComputerBrowserDebug.post("/probe", async (c) => {
   }
 
   try {
-    const bundle = loadBundle();
+    const bundle = loadBrowserdBundle();
     // Serialize per user+project so two probes can't collide on the same
     // sandbox's fixed port/profile. bearer identifies the user; it is used only
     // as a lock key here and never logged.

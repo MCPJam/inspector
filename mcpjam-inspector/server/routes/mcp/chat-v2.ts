@@ -125,7 +125,11 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
-import { classifyPageToolApprovals } from "@/shared/client-fulfilled-tools";
+import {
+  classifyPageToolApprovals,
+  mergeUiToolApprovalClassifications,
+  type UiToolApprovalClassification,
+} from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -1170,6 +1174,9 @@ chatV2.post("/", async (c) => {
       localConsentValid,
     });
 
+    // Filled by the resolver when browser tools are advertised; merged into
+    // the engines' single `uiToolApprovals` slot below.
+    let browserToolApprovals: UiToolApprovalClassification | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1200,6 +1207,13 @@ chatV2.post("/", async (c) => {
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             localComputerRequested: localPrefEligible,
+            // This route THREADS the classification below, so it may advertise
+            // interactive browser tools; surfaces that thread nothing get none
+            // (see built-in-tools/browser.ts).
+            browserApprovalDelivery: { kind: "attested" },
+            onBrowserApprovals: (approvals) => {
+              browserToolApprovals = approvals;
+            },
           }
         : null,
     );
@@ -1268,11 +1282,17 @@ chatV2.post("/", async (c) => {
     // orchestrator used to pick between.
     //
     // Local files are always in it (this route only runs where there IS a local
-    // filesystem). The project's skills join them when the request is
-    // authenticated and names a project — the same three conditions
-    // `shouldEnableCloudSkillTools` applies on the hosted routes, restated here
-    // because this route derives guest-ness from the absence of an
-    // Authorization header rather than from a guest id.
+    // filesystem). The project's skills join them when the request comes from a
+    // SIGNED-IN caller and names a project — the same membership condition
+    // `shouldEnableCloudSkillTools` applies on the hosted routes.
+    //
+    // `requestIsGuest`, not the presence of an Authorization header: this route
+    // attaches a guest bearer for anonymous callers (`/api/mcp/chat-v2` is in
+    // the client's `HOSTED_AUTH_PATH_PREFIXES`), so a header proves a session
+    // exists, never that it belongs to a member. Reading it as membership sent
+    // one `projectSkills:listSkills` per guest turn into a signed-in-only
+    // query, which refused every one of them (CONVEX-19R). The header term
+    // survives only to narrow `string | undefined` for `authHeader` below.
     //
     // Signed out, or with no project: local-only, which is exactly what this
     // route did before. What is new is that signing IN no longer means choosing.
@@ -1297,7 +1317,12 @@ chatV2.post("/", async (c) => {
       : [];
     let cloudRuntimeSkills: RuntimeStandaloneSkill[] = [];
     let skillsFetchFailed: SkillsFetchFailure | undefined;
-    if (gathersInMemorySkills && requestAuthHeader && body.projectId) {
+    if (
+      gathersInMemorySkills &&
+      !requestIsGuest &&
+      requestAuthHeader &&
+      body.projectId
+    ) {
       const startedAt = Date.now();
       try {
         cloudRuntimeSkills = await listCloudRuntimeSkills({
@@ -1401,6 +1426,13 @@ chatV2.post("/", async (c) => {
     // classification is the whole of this turn's `uiToolApprovals`.
     const pageToolApprovals = classifyPageToolApprovals(
       validatedPageTools.map((entry) => entry.alias),
+    );
+    // Browser tools are name-classified for the same reason page tools are,
+    // and the engines have ONE `uiToolApprovals` slot — so the two are merged
+    // rather than one overwriting the other.
+    const uiToolApprovals = mergeUiToolApprovalClassifications(
+      pageToolApprovals,
+      browserToolApprovals,
     );
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
     const scopeStepUpBindingKey = JSON.stringify([
@@ -1549,7 +1581,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals: pageToolApprovals,
+        uiToolApprovals,
         modelVisibleMcpToolResults,
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
@@ -1817,7 +1849,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals: pageToolApprovals,
+        uiToolApprovals,
         modelVisibleMcpToolResults,
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,

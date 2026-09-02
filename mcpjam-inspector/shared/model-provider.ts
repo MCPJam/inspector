@@ -59,6 +59,9 @@ const MODEL_ID_PREFIX_IDENTITY = [
   "qwen",
   "mistral",
   "z-ai",
+  // `cursor/auto` — the Cursor CLI harness's sentinel. Without this prefix the
+  // bare-id fallback classifies it as `ollama`.
+  "cursor",
 ] as const satisfies readonly ModelProvider[];
 
 /**
@@ -69,7 +72,7 @@ export const MODEL_ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> =
   Object.assign(
     Object.create(null) as Record<string, ModelProvider>,
     Object.fromEntries(MODEL_ID_PREFIX_IDENTITY.map((p) => [p, p])),
-    MODEL_ID_PREFIX_ALIASES
+    MODEL_ID_PREFIX_ALIASES,
   );
 
 export type ModelProviderClassification = {
@@ -103,7 +106,7 @@ export type ModelProviderClassification = {
  * case that returns `null`.
  */
 export function classifyModelIdProvider(
-  modelId: string
+  modelId: string,
 ): ModelProviderClassification | null {
   const id = modelId.trim();
   if (id.length === 0) return null;

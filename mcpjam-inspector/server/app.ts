@@ -6,6 +6,7 @@ import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -18,6 +19,7 @@ import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
@@ -87,6 +89,11 @@ import {
   killLocalComputerTerminals,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal.js";
+import {
+  createWebMcpFramesWsHandler,
+  killWebMcpFrameSockets,
+  shutdownWebMcpFrameSockets,
+} from "./routes/web/webmcp-frames.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 import { buildHealthMeta } from "./utils/health-payload.js";
 
@@ -314,6 +321,14 @@ export async function createHonoApp() {
     app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
   }
   app.route("/api/web", webRoutes);
+  // Browser Panel data plane (W4): watch the browser an agent is driving, and
+  // take control when a login or a challenge needs a person. Auth is the
+  // Convex-minted browser token, so it is mounted like the other computer
+  // routes rather than inside the web router's session auth. Dark until the
+  // W7 exposure gate: the panel is only reachable once a desktop computer
+  // exists, and nothing links to it yet. Mirror of the mount in server/index.ts.
+  app.route("/api/web/computers/browser", computerBrowserPanel);
+
   // Computer terminal WebSocket + file upload (Project Computers). Registered
   // directly on the root app because the WS upgrade handler comes from
   // `createNodeWebSocket`; the upload route carries its own 30MB bodyLimit (the
@@ -331,6 +346,14 @@ export async function createHonoApp() {
     app.get(
       "/api/web/computers/local-terminal",
       createLocalComputerTerminalWsHandler(upgradeWebSocket)
+    );
+  }
+  // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
+  // local browser there to stream. Mirror of the mount in server/index.ts.
+  if (!HOSTED_MODE) {
+    app.get(
+      "/api/web/webmcp/sessions/:id/frames",
+      createWebMcpFramesWsHandler(upgradeWebSocket)
     );
   }
   app.post(
@@ -366,9 +389,9 @@ export async function createHonoApp() {
   );
   app.route("/api/v1", v1Routes);
 
-  if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
-    app.route("/user_management", workosAuthkitRoutes);
-  }
+  // Mounted in every runtime, hosted included — see the mirror of this mount
+  // in server/index.ts for why the gate had to go.
+  app.route("/user_management", workosAuthkitRoutes);
 
   // CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
   // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
@@ -498,7 +521,16 @@ export async function createHonoApp() {
 
     // Serve all static files from client root (images, svgs, etc.)
     // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-    app.use("/*", serveStatic({ root }));
+    //
+    // Document requests fall THROUGH to the injecting handler below — mirror
+    // of the guard in server/index.ts. See isSpaDocumentRequest.
+    const clientStaticFiles = serveStatic({ root });
+    app.use("/*", async (c, next) => {
+      if (isSpaDocumentRequest(c.req.path)) {
+        return next();
+      }
+      return clientStaticFiles(c, next);
+    });
 
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", async (c) => {
@@ -629,5 +661,10 @@ export async function createHonoApp() {
     injectWebSocket,
     shutdownLocalComputerTerminals,
     killLocalComputerTerminals,
+    // The frame sockets need the same pair for the same reason: an established
+    // WebSocket outlives `server.close()`, and `window-all-closed` on macOS is
+    // followed by a RESTART, so its variant must not latch.
+    shutdownWebMcpFrameSockets,
+    killWebMcpFrameSockets,
   };
 }

@@ -33,6 +33,7 @@ import { RunTestCaseDetailView } from "./run-test-case-detail-view";
 import type { RunCaseGroup } from "./run-case-groups";
 import { RunDiffView } from "./run-diff-view";
 import { TestTemplateEditor } from "./test-template-editor";
+import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
 import { JudgesSection } from "./judges-section";
@@ -562,6 +563,20 @@ export function SuiteIterationsView({
     return run ?? null;
   }, [selectedRunId, runs]);
 
+  /**
+   * Every trial's chain for the run currently open, keyed by iteration.
+   *
+   * ONE read for the whole run, shared by the rows beneath it — which is what
+   * the run-scoped case table needs and what a cross-run table could not have
+   * without a read per run. Gated on the same Evaluate opt-in and project id
+   * as the decision card, so with either missing it issues no request.
+   */
+  const runTrialChains = useEvalRunIterationChains({
+    projectId,
+    run: selectedRunDetails,
+    enabled: Boolean(evaluateDecisionSummary && projectId),
+  });
+
   const selectedCompareBaseRunId =
     route.type === "run-detail" ? route.compareToRunId ?? null : null;
 
@@ -1058,6 +1073,20 @@ export function SuiteIterationsView({
       onEditTestCase={onEditTestCase}
       alwaysShowEditIterationRows={alwaysShowEditIterationRows}
       runTrendData={runTrendData}
+      // The stage findings ride the SAME opt-in as the decision card beside
+      // them, and the same project gate: the read is per-project and the
+      // browser never resolves or guesses one. With this false the underlying
+      // read issues no request at all.
+      stageFindingsEnabled={Boolean(evaluateDecisionSummary && projectId)}
+      onViewStageTrace={({ iterationId, testCaseId }) =>
+        // Identical routing to the decision card's own trace link, and for the
+        // reason its comment gives: `tracePath` is an API path rather than an
+        // app route, and the CASE editor is the one path that actually
+        // consumes an iteration id.
+        navigation.toTestEdit(suite._id, testCaseId, {
+          iteration: iterationId,
+        })
+      }
       decisionSummarySlot={
         // Only Evaluate opts in, and only with a project id in hand: the read
         // is per-project and the browser never resolves or guesses one.
@@ -1169,6 +1198,12 @@ export function SuiteIterationsView({
                   availableModels={availableModels}
                   suiteIterations={allIterations}
                   suiteRuns={runs}
+                  // The same opt-in and project gate the decision card beside
+                  // it rides. With this false the trace pane issues no chain
+                  // request at all.
+                  trialChainEnabled={Boolean(
+                    evaluateDecisionSummary && projectId,
+                  )}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
@@ -1495,6 +1530,9 @@ export function SuiteIterationsView({
                     iterations={iterationsForSelectedRunTestCase}
                     onBack={handleBackToRunOverview}
                     serverNames={suite.environment?.servers || []}
+                    chainFor={(iterationId) =>
+                      runTrialChains.chains.get(iterationId)
+                    }
                   />
                 ) : (
                   runDetailView

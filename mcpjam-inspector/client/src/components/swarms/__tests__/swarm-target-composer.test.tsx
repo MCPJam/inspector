@@ -90,7 +90,7 @@ vi.mock(
   () => ({
     ProjectEnvironmentSkillsPicker: () => (
       <p className="italic">
-        No shared skills in this project yet. Share a skill with the project to
+        No skills in the project library yet. Add a skill to the library to
         pin it here.
       </p>
     ),
@@ -236,7 +236,7 @@ describe("SwarmTargetComposer", () => {
       screen.queryByTestId("new-swarm-skills-picker")
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/No shared skills in this project yet/i)
+      screen.queryByText(/No skills in the project library yet/i)
     ).not.toBeInTheDocument();
   });
 
@@ -247,12 +247,12 @@ describe("SwarmTargetComposer", () => {
     expect(trigger).toBeVisible();
     expect(trigger).toHaveTextContent(/No skills · pick some/i);
     expect(
-      screen.queryByText(/No shared skills in this project yet/i)
+      screen.queryByText(/No skills in the project library yet/i)
     ).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
     expect(
-      screen.getByText(/No shared skills in this project yet/i)
+      screen.getByText(/No skills in the project library yet/i)
     ).toBeVisible();
   });
 

@@ -1,113 +1,241 @@
-diff --git a/.changeset/evals-d5b-d5c-inspector.md b/.changeset/evals-d5b-d5c-inspector.md
+diff --git a/.changeset/drop-suite-stage-funnel.md b/.changeset/drop-suite-stage-funnel.md
 deleted file mode 100644
-index 19cd1c22d..000000000
---- a/.changeset/evals-d5b-d5c-inspector.md
+index 099acb0ae..000000000
+--- a/.changeset/drop-suite-stage-funnel.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
+@@ -1,15 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Add the eval-suite stage-analytics route and the /evaluate stage-analytics
--panel, rendering backend-materialized per-run stage analytics.
-diff --git a/.changeset/evals-d5b-sdk.md b/.changeset/evals-d5b-sdk.md
+-The suite page stops opening with an aggregate
+-
+-The first thing labelled "user value chain" on the suite page was a funnel — a population statistic, sitting above the run history. It was the wrong introduction to the idea. The chain a reader arrives asking about is one request's journey, and the aggregate answers a different, later question.
+-
+-It also read badly on real runs. On a three-trial suite it showed six green stages over "2 of 3 trials", the excluded one being precisely the trial that broke; on a ten-trial suite it showed `call` and `response` as `applicable=0`, which looks like a gap and only means those cases assert nothing there. The page's most prominent claim was its least reliable.
+-
+-The per-trial chain now answers "why did this not deliver value", on the run page, the trace pane and the case table. The run-level document still renders on the run page behind its existing flag, where it reads as the follow-up it is.
+-
+-Removed with the mount: `StageAnalyticsPanel`, `useEvalSuiteStageAnalytics`, `fetchEvalSuiteStageAnalytics` and the panel-state model — the suite-scoped reader had exactly one consumer, and dead code with passing tests is what drifts. `RunDocument`, `RateCell` and `useStageFindings` all stay; the run page uses them.
+-
+-**Two test files were re-aimed rather than deleted.** The findings tests ran through the panel, and the API tests covered only the suite listing — but their claims were never about which resource was fetched. The findings ones now assert against `RunDocument` + `StageFindingsCard`, the composition the run page actually builds; the API ones now cover `fetchEvalRunStageAnalytics`, which had no wrapper-level coverage at all (its hook test mocks the wrapper). Deleting them would have quietly dropped the guarantees they exist for: auth has one owner, the payload is validated not trusted, identity is bound, and the four failure kinds stay four.
+diff --git a/.changeset/environment-secret-selection-sdk.md b/.changeset/environment-secret-selection-sdk.md
 deleted file mode 100644
-index c4d2c6868..000000000
---- a/.changeset/evals-d5b-sdk.md
+index dbb5edcca..000000000
+--- a/.changeset/environment-secret-selection-sdk.md
 +++ /dev/null
-@@ -1,7 +0,0 @@
+@@ -1,21 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
+-"@mcpjam/cli": patch
 ----
 -
--Add listEvalSuiteStageAnalytics to the Platform client. Requires the deployed
--backend stage-analytics query (backend D5a); a missing backend surfaces as a
--service error, never an empty result.
-diff --git a/.changeset/skills-catalog-in-the-prompt.md b/.changeset/skills-catalog-in-the-prompt.md
+-An environment's secret grant is reachable from the SDK, CLI and MCP again
+-
+-`secretSelection` is how a project secret is granted to the runs an environment launches. The API takes it on create and on update, the `/api/v1` route takes it on both, and `PlatformEnvironmentCreateBody` / `PlatformEnvironmentUpdateBody` have always declared it — but the two operation schemas in `platform/operations.ts` never did, so the only surfaces an agent or a script can use dropped it on the floor.
+-
+-Both halves were silent in the way that costs the most time:
+-
+-- **Create** parses through a `z.object`, which STRIPS what it does not declare. A create carrying a grant returned 201 with `secretSelection: null` and no error anywhere — the environment simply had no credentials, and the failure surfaced much later as a run refusing to start for want of a secret that had apparently been attached.
+-- **Update** validated fine, but the at-least-one-field `.refine` did not list the field, so a PATCH changing ONLY the grant was rejected client-side with a message that enumerated eight other fields and not the one the caller had passed.
+-
+-Together those meant a secret could be attached by neither path: not on create, and not afterwards. The route's own comment says as much about what unclearable would cost — "an environment's credential grant can only ever grow, and revoking it would require deleting the environment" — and that was the state the SDK was in.
+-
+-The field now rides a single shared `secretSelectionInput` used by both operations, matching how `skillSelection` and `pluginVersionIds` are already shared, with the same tri-state on update: omit to leave unchanged, `null` to REVOKE, a value to replace. `secretIds: []` is rejected rather than read as "remove every credential" — that is what `null` is for.
+-
+-The CLI's `--file`/`--json` help on `environments create` and `environments update` listed every other body field but this one; it lists it now.
+-
+-Not changed: `ensure_adhoc_environment` and the run operations' `compose` still have no secrets axis, though the route accepts one. A composed stack cannot carry a grant, so a run that needs a credential still needs a named environment.
+diff --git a/.changeset/uvc-iteration-chain-read.md b/.changeset/uvc-iteration-chain-read.md
 deleted file mode 100644
-index 8c5c3e468..000000000
---- a/.changeset/skills-catalog-in-the-prompt.md
+index f3712cedd..000000000
+--- a/.changeset/uvc-iteration-chain-read.md
++++ /dev/null
+@@ -1,20 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-A passing trial can have its chain read too
+-
+-D9's decision summary carries a per-trial user-value chain, and the browser already fetches it — for **non-passing trials only**. That filter lives in the contract assembler and is deliberate: diagnostics are evidence beneath a verdict, and a trial that passed is not evidence of anything going wrong. The consequence is that a reader who opens a trial that succeeded has nothing to read, and "how far did value travel here" is exactly as good a question about a passing trial as a failing one.
+-
+-The iterations resource projects the same stage columns over every row of a run, passing included — verified against production, where all ten trials of a run came back carrying six rows each. This adds the client read for it.
+-
+-**One chain type, one validator.** The rows go through the contract's own chain assembler, now exported as `assembleEvalRunDecisionChain`, which is the same function D9's summary is built from. So the result is `EvalRunDecisionChain` — the type the decision card and the trial cards already render, with no adapter and no second shape — and the **whole derivation** is validated rather than the rows one at a time. Row-level validation accepts five rows, or six in the wrong order, and a renderer that numbers cards `01`–`06` by position would then publish a different claim about which stages were blocked, because `notReached` is derived from position. A test feeds it both shapes and pins that they come back `unverified`.
+-
+-**Three absences stay three facts.** A bare 404 from a router that never had the path is a deployment that does not serve iterations; an enveloped `NOT_FOUND` is a run that is not there; a row with no derivation is `absent`. Reading the first as the third would report every trial on an undeployed build as having no chain.
+-
+-**Keyed on the run's revision, not just terminal status.** A terminal run is not frozen — a judge landing minutes later rewrites `judgePending` into `judgeObserved`, which is a different chain for the same trial. The read keys its cache on the same revision marker the decision-summary store uses, so the two refresh together and one trial can never show two chains at once.
+-
+-**Silent unless asked.** Off without the caller's switch, a project id, and a finished run; with any missing it issues no request at all.
+-
+-The route needed an entry in `authFetch`'s bearer allowlist, and the existing eval-chain test already pinned it in the negative list — so this is a **move**, not an addition, and the test now pins that the trace and per-iteration paths beneath it are still *not* granted. Without the entry the read ships no `Authorization` and the 401 surfaces as "could not be loaded", which reads as a backend outage while the API is fine. That has happened three times before on this surface.
+diff --git a/.changeset/uvc-per-trial-stage-cards.md b/.changeset/uvc-per-trial-stage-cards.md
+deleted file mode 100644
+index 22d11bf1e..000000000
+--- a/.changeset/uvc-per-trial-stage-cards.md
 +++ /dev/null
 @@ -1,17 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Server-served skills are named in the prompt, so the model can actually choose one
+-Every failing trial now shows its own user-value chain, as cards
 -
--Progressive disclosure has three levels: every skill's **name and description** are always in context, the `SKILL.md` body loads when the model judges it relevant, and supporting files load after that. Level 1 is never lazy — a model cannot choose a skill whose description it has never read.
+-The run-level funnel answers "how much of this run was measured, and where did it stop". The question a reader actually arrives with is narrower: **this** trial did not deliver value — how far did it get, and why. That answer already existed and was rendered as six lines of flat text inside a collapsed diagnostic row: `Connection: passed`, `Response: failed — the server reported a tool error`.
 -
--The server-skills stanza skipped it. It said *"call `listSkills` to see those"* and named nothing, so picking a skill meant guessing that a relevant one might exist and spending a tool call to find out. Most turns never did. Asked how to import a corpus of promptfoo tests — with `mcpjam-eval-import` connected and its description matching almost word for word — the model never called `listSkills` and improvised a conversion process instead.
+-It is now the same six numbered cards the suite page uses, reading left to right, with a "what happened" card underneath the one a reader selects. The chain opens on the stage the contract named as the first failure, so a reader lands on the break rather than hunting for it.
 -
--That is the irony of the old shape: `skills/list` **is** the progressive-disclosure mechanism. SEP-2640 returns frontmatter separately from content precisely so a host can put the catalog in front of the model without fetching a single body. We implemented that wire correctly and then called it lazily, discarding the thing it was designed for.
+-**A trial is not a population, and the card row says so.** The aggregate chip counts (`failed in 2 of 3 measured`); a trial's chip states (`failed`). There are no rates on a trial's card — "100% (1/1)" over a single observation is a statistic manufactured from one trial — and no latency, which is deliberately not a field on a stage row. What a trial's card carries instead is what a trial actually has: one state, one reason, and that row's own evidence.
 -
--The catalog is now rendered into the system prompt, budgeted and formatted with the same helpers the Cloud Skills catalog uses — so the two halves of one feature cannot drift on wording, sort order, or what happens when metadata outgrows its share of the context. Each line keeps its origin (`MCP server "…"`), because these descriptions are third-party text and one that reads like an instruction should still show who wrote it. Unloadable skills stay listed and marked rather than hidden, so the model stops retrying them and a server author can see MCPJam declined.
+-**The reason stays off the chip and on the detail card.** Some reason labels are whole sentences, six cards at their minimum width would wrap into unreadable columns, and — the part that matters — keeping the chip to the state word keeps the "never says passed when nothing was decided" invariant total over the five states rather than dependent on the twenty-nine-member reason vocabulary. Two reason labels contain the word "made", which that invariant's own regex matches.
 -
--The stanza also leads with what to do and follows with how to distrust it. The trust wording is unchanged and still unconditional — a digest match shows the bytes are consistent with what the server advertised, which is not the same as the content being trustworthy — but it no longer buries the only actionable sentence under three warnings.
+-**Which card opens is a UI choice; where the chain stopped is the contract's.** The default selection is `firstFailedStage`, read from the chain and never re-derived by scanning rows — the day a second derivation disagreed, the UI would be the one that was wrong while looking authoritative. When the contract established no failed stage at all, the card that opens is the first non-passing row carrying a reason: that is the setup-abort and policy-block shape, where every stage reads `not measured` and the single sentence explaining the trial would otherwise sit behind a click nobody knows to make.
 -
--Cost is one `skills/list` per turn per declaring server, shared with any `loadSkill` in the same turn, and the same per-turn catalog fetch Cloud Skills already pay. Caching it against the `ttlMs` servers already send — the worker serves an hour, and we currently surface that TTL and ignore it — would remove even that, and is worth doing for both paths at once.
+-A withheld (`unverified`) or absent chain renders its existing notice and no cards. An empty six-card row would read as measured, which is exactly what those two states exist to prevent.
+diff --git a/.changeset/uvc-trial-chain-on-trace-pane.md b/.changeset/uvc-trial-chain-on-trace-pane.md
+deleted file mode 100644
+index a04e2ca20..000000000
+--- a/.changeset/uvc-trial-chain-on-trace-pane.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The trace pane opens with the chain, not just the transcript
+-
+-"View trace" lands a reader on one trial's transcript — the place they arrive when they want to know why that trial did not deliver value. The answer was not on that screen. It was back on the run page, inside a diagnostic row they had already navigated away from, and for a trial that PASSED it did not exist anywhere.
+-
+-The chain now sits above the transcript: six cards, opened on the break, with the "what happened" card under whichever one the reader selects. A passing trial reads as the delivery story end to end — Session connected → Tools and resources discovered → … → Request satisfied — which is the first time that story has been visible for a trial that worked.
+-
+-**`IterationDetails` does not fetch it.** It has five hosts and knows only its iteration: not the run, not the project, not whether the Evaluate opt-in is on — and the chain read needs all three. So it takes a slot, and the one host that can answer those questions builds the node. The other four pass nothing and issue no request, which keeps a shared component free of a read four of its callers never asked for.
+-
+-**The hooks sit above the early return, and that placement is load-bearing.** The editor returns a loading state before its test case resolves, so a hook called below it runs on some renders and not others — React reports that as "rendered more hooks than during the previous render". A test caught exactly that, on the first draft.
+-
+-Selection uses the same `undefined`-is-not-`null` rule as the run page: `undefined` means "not chosen yet" and derives the default at render time, `null` means the reader closed the card. The distinction is what makes the trace pane work at all — the chain arrives *after* mount there, so a state initialized once from an empty chain would compute `null` and never auto-open the break.
+-
+-An absent map key means "not loaded", never "no chain": a trial the page walk has not reached renders nothing rather than a false absence.
+diff --git a/.changeset/uvc-trial-chain-table-chip.md b/.changeset/uvc-trial-chain-table-chip.md
+deleted file mode 100644
+index 3f6eefb1c..000000000
+--- a/.changeset/uvc-trial-chain-table-chip.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A run's case table says where each trial stopped
+-
+-The run-scoped case view lists every trial of one case and told you, per row, whether it passed. "Failed" is the least useful true thing you can say about a trial: the reader's next question is always *where*, and answering it meant opening rows one at a time.
+-
+-Each row now carries a one-line summary of its chain — `broke at Tool response`, `Request satisfied`, `chain withheld` — from the same read the trace pane uses, so the whole table costs one request rather than one per row.
+-
+-**The table takes a lookup, not a run.** The chain is scoped by run, and only the run-scoped host of this table knows which run its rows belong to; the cross-run case view passes nothing and issues no read, because filling that column there would mean one request per run.
+-
+-Three shades of nothing stay distinct, which is the whole reason this is a function of the chain rather than of the row's result:
+-
+-- a row whose chain has not loaded renders **no chip** — an absent map key means "not loaded", never "no chain";
+-- a chain the server withheld says `chain withheld`, not silence, because the rows exist and did not validate;
+-- a trial with no failed stage says `Request satisfied` **only when user value actually passed**. A policy-blocked trial has no failed stage either, and calling that satisfied would claim an outcome from an absence of evidence; it reads `not measured` instead.
+diff --git a/cli/package.json b/cli/package.json
+index 1c6efcdcf..5ba2a0a7b 100644
+--- a/cli/package.json
++++ b/cli/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/cli",
+-  "version": "5.5.0",
++  "version": "5.5.1",
+   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+   "type": "module",
+   "main": "dist/index.js",
+@@ -19,7 +19,7 @@
+     "prepublishOnly": "npm run build"
+   },
+   "dependencies": {
+-    "@mcpjam/sdk": "^8.5.0",
++    "@mcpjam/sdk": "^8.5.1",
+     "@modelcontextprotocol/server": "2.0.0",
+     "commander": "^14.0.3",
+     "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 3b506c2e9..09b331f69 100644
+index 46ee8a20e..e21bd031a 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.3.0",
-+  "version": "3.3.1",
+-  "version": "3.3.3",
++  "version": "3.3.4",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -133,7 +133,7 @@
+@@ -136,7 +136,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.3.0",
-+    "@mcpjam/sdk": "^8.3.1",
+-    "@mcpjam/sdk": "^8.5.0",
++    "@mcpjam/sdk": "^8.5.1",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 2a69474f3..e093dab5b 100644
+index 38c1e205a..03043e5ed 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -399,7 +399,7 @@
+@@ -62,9 +62,9 @@
+     },
+     "cli": {
+       "name": "@mcpjam/cli",
+-      "version": "5.5.0",
++      "version": "5.5.1",
+       "dependencies": {
+-        "@mcpjam/sdk": "^8.5.0",
++        "@mcpjam/sdk": "^8.5.1",
+         "@modelcontextprotocol/server": "2.0.0",
+         "commander": "^14.0.3",
+         "posthog-node": "^5.24.10",
+@@ -400,7 +400,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.3.0",
-+      "version": "3.3.1",
+-      "version": "3.3.3",
++      "version": "3.3.4",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -432,7 +432,7 @@
+@@ -435,7 +435,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.3.0",
-+        "@mcpjam/sdk": "^8.3.1",
+-        "@mcpjam/sdk": "^8.5.0",
++        "@mcpjam/sdk": "^8.5.1",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37869,7 +37869,7 @@
+@@ -39240,7 +39240,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.3.0",
-+      "version": "8.3.1",
+-      "version": "8.5.0",
++      "version": "8.5.1",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 23cb75f32..70d451835 100644
+index 8c6372fff..41bd3125d 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.3.0",
-+  "version": "8.3.1",
+-  "version": "8.5.0",
++  "version": "8.5.1",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
