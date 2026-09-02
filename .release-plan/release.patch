@@ -1,155 +1,916 @@
-diff --git a/.changeset/drop-suite-stage-funnel.md b/.changeset/drop-suite-stage-funnel.md
+diff --git a/.changeset/bb-63-swarm-server-readiness.md b/.changeset/bb-63-swarm-server-readiness.md
 deleted file mode 100644
-index 099acb0ae..000000000
---- a/.changeset/drop-suite-stage-funnel.md
+index 71ed75b25..000000000
+--- a/.changeset/bb-63-swarm-server-readiness.md
++++ /dev/null
+@@ -1,25 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-"No servers to run against" stops telling you to connect a server you already have
+-
+-Opening Swarms → New with a server in your project but none attached to the setup produced an amber warning whose remedy was "Connect a server and turn on Auto-connect on the Servers tab" — an instruction to redo work already done, next to a picker plainly listing the server you had. That is the whole of BB-63's "what did I do wrong?".
+-
+-The readiness check now separates the three situations that shared one sentence, because each has a different fix:
+-
+-- **Your project has a usable server, it just isn't in this setup.** The common case, and the one the old copy got wrong. The notice now names the server — "Your project has draw. Pick what this run should use." — which is both the next step and the evidence that nothing you did was wrong. Past two servers it names two and counts the rest rather than growing into a paragraph.
+-- **Your project is empty.** The only case where "connect a server" was ever the right instruction, and it keeps it.
+-- **Your servers exist but none is reachable from a cloud run.** Previously indistinguishable from the empty case, so the advice was to connect yet another server that would fail the same way. It now points at the same reachability remedy `local_only` gives.
+-
+-`attachable` deliberately excludes stdio and localhost servers: offering one would have walked the user into the `local_only` failure on the very next click.
+-
+-Alongside that, a new server group no longer opens as a form whose only answer was never in doubt. In a project with three or fewer servers the group arrives with them already ticked and Create already live, and the name is derived from the contents — `draw`, or `draw + 2` — instead of `group 1`. BB-3 reported a `group 1` holding a server called `rabona`; groups still cannot be renamed, so a name that starts out meaning something is worth more here than usual.
+-
+-The launch gate itself is unchanged. A setup that would resolve to zero servers is still blocked before it writes personas and goals — that block exists because of a real `ENV_NO_SERVERS` failure (BB-36) and removing it would only move the failure later.
+-
+-The band itself is calmer, too. "Less warning coded" is not only a copy problem: a calm sentence inside an amber box with an alert triangle still reads as an alarm. The notice now takes a tone, decided next to the copy rather than in the component that paints it, and the line it draws is which situation this is — nothing attached yet is a step in setup and renders quietly; servers that ARE attached and still cannot run keep the amber, because that one really is a problem to act on. `warning` stays the default, so the two callers that already had one — the swarm sandbox block and the evals suite pin — are untouched.
+-
+-And the hint under the disabled Continue says what is missing instead of ordering a repair: "Pick a server to continue." rather than "Fix where it runs to continue." Nothing was broken; a required field simply has not been filled in.
+-
+-An empty project also gets the one button that resolves it. "Connect a server and it shows up here" named an action the user could not take from where they were standing, and for a project with nothing in it that navigation is unavoidable — there is nothing on the screen to pick. The block now carries a Connect a server button, and the sentence drops the imperative so the prose explains while the button acts. Only the empty case gets one: a project that already has servers is fixed by choosing one right here, and sending that user to Connect would be the original misdiagnosis wearing a button. The draft survives the trip — the flow already mirrors name, description and targets into session storage on every change.
+diff --git a/.changeset/cursor-auto-sentinel-is-not-a-provider.md b/.changeset/cursor-auto-sentinel-is-not-a-provider.md
+deleted file mode 100644
+index c00f0b446..000000000
+--- a/.changeset/cursor-auto-sentinel-is-not-a-provider.md
++++ /dev/null
+@@ -1,140 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A Cursor CLI host no longer asks for a model-provider key that cannot exist, and its sessions record the model they actually ran
+-
+-The `cursor-cli` host template seeds `modelId: "cursor/auto"` — a neutral
+-sentinel, deliberately not a real provider model. The Cursor CLI has no provider
+-routing: it authenticates with a `CURSOR_API_KEY`, every request transits
+-Cursor's servers, and the adapter passes no model at all, so Cursor Auto picks
+-one on the customer's own account. Seeding a concrete `anthropic/...` was
+-rejected precisely because it would put a model id into traces and eval metadata
+-that nothing ever ran.
+-
+-Registering `cursor` as a `ModelProvider` — which is what stops the sentinel
+-falling through the bare-id rule and classifying as `ollama` — had a second
+-effect nobody asked for: every path that resolves a model through provider
+-configuration started treating it as a BYOK provider needing a configured org
+-key. A turn sent as `model: "cursor/auto"` came back
+-`provider_not_configured: cursor is not enabled for this project/workspace
+-organization`, which reads as a setup mistake the customer could fix. They
+-cannot; there is no `cursor` key to configure, and there never will be.
+-
+-The sentinel is now exempted from provider resolution at one chokepoint,
+-`deriveOrgProviderKey`. Both rails that derive a key from it — the web chat rail
+-and the local desktop rail — now refuse the sentinel with a sentence that says
+-what is actually wrong, instead of asking Convex a question about a model no
+-provider serves.
+-
+-The synthetic/swarm classifier answers a different question and gets a different
+-answer: `resolveSyntheticModelSource` does not refuse the sentinel, it
+-CLASSIFIES it, returning `external-account` — the label that already means "not
+-charged to MCPJam, and no configured provider either" — ahead of the key
+-derivation, with no `orgRuntime` to reuse. That is what lets a session row carry
+-honest attribution for a turn nobody billed.
+-
+-Classifying it is not the same as running it, and `resolveTurnRuntime` now says
+-so out loud: it refuses an `external-account` turn outright rather than handing
+-back a runnable runtime. Without a harness the sentinel is unrunnable by
+-construction. WITH one it is unrunnable on that surface specifically — an
+-external-account runtime authenticates with the customer's own vendor
+-credential, `runHarnessTurn` takes that credential only from the caller's
+-materialized project secrets, and `runUnifiedAssistantTurn` (the facade every
+-caller of the resolver drives) has no `runtimeSecrets` seam at all. Returning a
+-"hosted + harness" runtime there advertised a turn that then died inside the
+-harness telling the user to add a `CURSOR_API_KEY` secret they may already have
+-set. Both refusals land before the caller marks the turn as possibly-spent.
+-
+-On the public sessions API, which has no harness at all, the refusal moved up to
+-`assertUnambiguousModelId`, ahead of the turn lease: the lease is what creates
+-the `chatSessions` row, so failing after it left a session that had run on
+-nothing.
+-
+-`resolveHostModelDefinition` also stops asking the org's model config about the
+-sentinel. Only an enabled provider that LISTS an id can win there and none can
+-list `cursor/auto`, so on a live external-account turn that call was pure
+-latency (its lookup carries a 15 s timeout) plus a failure mode, between the
+-request and the first token.
+-
+-The same registration gap made the local `/api/mcp/chat-v2` rail send every
+-Cursor host down the org-BYOK branch, so the harness was never reached — the
+-preflight would call the host ready and the turn would then fail on a
+-configuration error. That rail now takes the external-account exemption the web
+-rail already had, and tags the turn `modelSource: 'external-account'` rather than
+-`'mcpjam'`, which is what keeps it out of the org's MCPJam spend limit. The same
+-exemption reaches the bearer mint that branch depends on: it was keyed on "MCPJam
+-provides this model", so an anonymous Cursor turn arrived at the branch with no
+-bearer and answered 503 ("Unable to authenticate with MCPJam servers") before the
+-harness ever started, on a host the preflight had just called ready.
+-
+-Separately, a successful Cursor turn persisted a session that named the wrong
+-model, or none. The Playground picker cannot hold `cursor/auto` (it is not a
+-selectable entry, so the host-reseed effect skips it), and the host-model
+-override was gated on scenario turns only — so the browser sent whatever model
+-was last selected and the server recorded it verbatim, attributing the turn to a
+-model Cursor never touched. Where the body carried no usable id at all, the row
+-was written blank and the session read as having run on nothing: the harness rail
+-is the one live path with no downstream model-id check, since it skips both the
+-provider-key derivation and the harness model gates by design. The host's model
+-is now authoritative for an external-account harness on every surface — the
+-runtime ignores the body's model, so the sentinel is the only honest record — and
+-the chat route validates the model's `id`, not just that a `model` object was
+-sent (a null, empty or whitespace-only id is a 400 before the engine runs and
+-before anything is persisted).
+-
+-A host whose harness is external-account but whose model is an ordinary id is now
+-a refused configuration rather than a silently mis-attributed run. Cursor ignores
+-whatever id such a host carries, so the turn would run Cursor Auto while the
+-session row, the trace and the eval metadata all named that id as the model that
+-ran. The shared harness gate refuses it, naming the id it found so its owner can
+-reset it. Where the two model rules were skipped for external-account harnesses,
+-this one replaces them — same principle, applied to the arm where the runtime
+-does the choosing.
+-
+-Two details of that rule are what make it hold rather than look like it holds.
+-
+-It is asked of the HOST's configured model, passed to the gate as its own
+-`hostModelId` input, and not of the model the turn resolved. Nothing consumes
+-the turn's model on this arm, so validating it would let a caller satisfy the
+-rule by POSTing `cursor/auto` at a host that pins an ordinary id — the same
+-mis-configured host, admitted from the other side. For the same reason the
+-host-wins promotion above is unconditional for an external-account harness
+-rather than scoped to hosts that already carry the sentinel: narrowing it leaves
+-the body's model standing on exactly the hosts that must be refused. (With no
+-model pinned at all, the turn's own model is the only description of what the
+-host runs, and is held to the rule instead.)
+-
+-And an ineligible model on this arm now THROWS at the dispatch instead of
+-falling back to the emulated engine. `runAssistantTurn` reads a `false` from the
+-shared eligibility helper as "run the emulated engine and surface a warning",
+-which is right for a brokered harness — that engine runs the refused model
+-itself, on org BYOK — and wrong here twice over: the emulated engine cannot run
+-a sentinel at all, and the id a mis-configured host carries is one the runtime
+-would have ignored. What the fallback produced was worse than the bug the rule
+-was added for: a swarm or eval turn that completes, reports success, records
+-`executionEngineLabel: harness:cursor`, and never ran Cursor — indistinguishable
+-in the transcript from a real run. The interactive rails fail closed at the
+-pre-flight; this is the same refusal for the paths that never call it.
+-
+-Eval is where the host's model was NOT yet authoritative, and the two ends
+-disagreed because of it. Admission reads the host's id, so it accepted a case
+-whose own model was an ordinary one; execution then carried that case model to
+-the dispatch, whose eligibility check saw a non-sentinel on an external-account
+-harness and refused a run it had already admitted. A per-case model is normal
+-and legitimate in evals — a suite names one per case and is then pointed at a
+-host — so this hit ordinary Cursor suites. An eval case on an external-account
+-host now runs the host's model, resolved once in `runTestCase` so the canonical
+-id, the MCPJam-vs-BYOK split, the org-BYOK lookup, the engine's wire payload and
+-what the iteration reports all agree. Promoted rather than refused at admission,
+-because the model pickers cannot hold `cursor/auto` — refusing would make every
+-Cursor eval suite unrunnable. A host whose model is an ordinary id still
+-promotes nothing and is still refused: that is a broken configuration, not a
+-case-level choice.
+-
+-Wherever a model label is rendered, the sentinel now reads "Cursor Auto" rather
+-than the raw id, and the Playground shows it locked with the real reason ("this
+-host's runtime chooses its own model on your own account") instead of the
+-sign-in wall it inherited. The id itself is never rewritten: what traces and eval
+-metadata record is still `cursor/auto`, because the whole point of the sentinel
+-is that the model is unknown to MCPJam.
+diff --git a/.changeset/cursor-harness-brokered-credential.md b/.changeset/cursor-harness-brokered-credential.md
+deleted file mode 100644
+index d8c625952..000000000
+--- a/.changeset/cursor-harness-brokered-credential.md
++++ /dev/null
+@@ -1,47 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The Cursor CLI harness accepts a BROKERED credential, so it can run in hosted evals and swarms
+-
+-`harness: "cursor"` could not run in a hosted eval or a swarm in any
+-configuration. It authenticates on the customer's own Cursor account
+-(`modelAccess: "external-account"`), and the turn took its `CURSOR_API_KEY`
+-exclusively from the project's MATERIALIZED secrets — but eval sandboxes and
+-journey runs REFUSE an environment that selects a materialized secret
+-(`materialized_secrets_unsupported` / `ENV_MATERIALIZED_SECRETS_UNSUPPORTED`),
+-because only the chat path resolves and injects those values, so a
+-runner-claimed attempt would run with the credential silently absent and score a
+-healthy connector as broken. Configure the secret the turn demanded and the run
+-was refused at sandbox reservation; leave it out and the turn was refused for a
+-missing credential.
+-
+-An external-account credential can now be satisfied by a BROKERED project secret
+-as well. On that path the plaintext never enters the inspector process or the
+-sandbox: the backend composes the secret into the box's E2B egress transform,
+-which overwrites the credential header outside the VM, and the box carries only
+-a fixed, obviously-fake placeholder so the CLI has something to send. Both
+-refusals in the backend already say brokered secrets are fine on those surfaces;
+-this is the inspector half.
+-
+-Availability is decided at the **environment**, which is the grant boundary the
+-control plane actually composes a box's egress transform from — not project-wide.
+-A correctly bound brokered `CURSOR_API_KEY` that the run's environment does not
+-select is refused up front, naming the selection as the fix, instead of starting a
+-turn that provisions a box and then fails Cursor's auth against the placeholder.
+-Chat, swarm and eval launches all carry their environment id down to the harness
+-turn for this. Eval REPLAY is the one path that cannot: a replay inherits the
+-source run's environment on the backend, but nothing projects that reference
+-back out to the runner, so a replay refuses with copy that says exactly that and
+-tells the reader to launch the suite directly — rather than blaming a secret or
+-a selection that is already correct.
+-
+-Materialized delivery is unchanged and still wins when both are configured — it
+-is the one this process can prove reached the box. The refusal is still
+-fail-closed and now names both deliveries and the exact binding a brokered
+-`CURSOR_API_KEY` needs (`api2.cursor.sh`, `Authorization`, `Bearer {}`), read off
+-the adapter's own `credentialBrokering` declaration rather than invented. A
+-brokered row bound to the wrong host is refused by name instead of reaching
+-Cursor as a placeholder and coming back as an unexplained 401, and a brokered-only
+-credential on a persistent project Computer is refused too — the control plane
+-composes brokered secrets onto disposable boxes only.
+diff --git a/.changeset/eval-checks-connect-installation-ref.md b/.changeset/eval-checks-connect-installation-ref.md
+deleted file mode 100644
+index 21eaa5112..000000000
+--- a/.changeset/eval-checks-connect-installation-ref.md
++++ /dev/null
+@@ -1,36 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Connecting a GitHub Checks repository works from the CLI and MCP again
+-
+-`POST /v1/organizations/:organizationId/eval-check-repos` refused every connect
+-with "Repository is not accessible to the MCPJam GitHub App." — while the GET on
+-the same route listed that exact repository as `connectable` one request
+-earlier. Two commands, one truth, and they disagreed.
+-
+-`connectVerifiedRepo` reads an ABSENT `installationRef` not as "pick one for me"
+-but as a selector: it means the pinned compatibility branch, which resolves the
+-deployment-level `GITHUB_CHECKS_INSTALLATION_ID` env var. That var is a
+-deliberately retired migration pin and is unset in production, so the branch
+-resolved nothing and refused. The web picker never landed there — it sends the
+-reference and the numeric repository id it read out of the repository listing.
+-Every agent surface did, because it has no picker to read.
+-
+-The POST now resolves the name against the same `listInstallationRepos` the GET
+-exposes, and sends the `installationRef` and `repositoryId` that listing carries.
+-Matching is on trim + lowercase, the spelling the backend stores and looks a row
+-up under, so a correctly-typed `Acme/Widgets` is no longer refused. A repository
+-the listing does not hold is refused with the route's existing flat sentence and
+-no candidate names — a repository that does not exist and one the App cannot see
+-have to read identically, or the endpoint becomes an oracle for private
+-repository names. A name that matches two entries is refused rather than
+-resolved by guessing: the backend deduplicates its fan-out by numeric repository
+-id, not by name, so one name across two bindings is a real shape.
+-
+-A failed listing now fails the request instead of falling through. Continuing
+-without a reference would have taken the retired branch and produced that same
+-"not accessible" refusal for what is actually a GitHub blip — sending an admin
+-off to re-install an App that is installed fine. The backend's own "Could not
+-list repositories from GitHub." keeps its wording, and with it the advice to
+-retry.
+diff --git a/.changeset/eval-iteration-permalink.md b/.changeset/eval-iteration-permalink.md
+deleted file mode 100644
+index eaf367239..000000000
+--- a/.changeset/eval-iteration-permalink.md
++++ /dev/null
+@@ -1,26 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-`eval_iteration` is a platform permalink resource type
+-
+-An eval iteration is now addressable through the same registry as every other
+-MCPJam resource: `buildAppPermalink({ type: "eval_iteration", … })` mints
+-`/evals/suite/<suiteId>/runs/<runId>?iteration=<iterationId>&project=<projectId>`,
+-labelled **View iteration**, and `isPlatformResourceType("eval_iteration")` is
+-true. An iteration has no page of its own — the run detail reads `?iteration=`
+-off its query string — so the route is the run's path with an id selector.
+-
+-That route needs two ancestors (the run, and the run's suite), which the
+-single-`parent` ref could not express. `PlatformResourceRef.parent` is now a
+-`PlatformResourceParentRef` that may carry its own `parent`, and route
+-segments gained `":grandparent"` beside `":parent"`. The builder walks the
+-chain against the table — the iteration entry says only "under `eval_run`";
+-that a run lives under a suite is still stated once, on `eval_run` — and
+-refuses a chain that is short or wrong at any level. Existing single-parent
+-refs are unchanged in shape and mint identical URLs.
+-
+-`evalIterationRef(iterationId, runId, suiteId, projectId?)` is exported from
+-`@mcpjam/sdk/platform` operations for the follow-up that wires a caller:
+-`get_eval_iteration_trace` still declares no permalink, because its response
+-names no suite to reach the run through.
+diff --git a/.changeset/evaluate-run-launch-context.md b/.changeset/evaluate-run-launch-context.md
+deleted file mode 100644
+index b0ab4b937..000000000
+--- a/.changeset/evaluate-run-launch-context.md
++++ /dev/null
+@@ -1,27 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The Evaluate run header says what the run launched against, and the grading pair is always visible.
+-
+-**A host chip is not an environment.** The run header showed one chip reading
+-"Claude" and nothing else: not the model, not the MCP servers, not the
+-environment revision. `RunLaunchContext` replaces it with labelled facts —
+-client or environment, model, servers, revision — so none of them can be read as
+-leftover chrome, and the model is recovered from the run's iterations when the
+-list projection omitted `effectiveModelId`. `RunContextChip`'s host branch gains
+-the same model attribution it already gave the environment branch.
+-
+-**The verdict's own evidence was buried in the sentence.** Expected against
+-observed lived inside `RunVerdictHero` as a comma-joined line that only rendered
+-for a `brokeAt` verdict. It moves out into `RunGradingPeek` — an always-visible
+-"Graded against" pair of lists, with every expected call that was never observed
+-marked in place rather than left for the reader to diff by eye. The list itself
+-is now `EvaluateToolList`, shared with the case body so one miss reads the same
+-wherever it surfaces.
+-
+-**"Prompt to improve" and "Open failing trace" move to the page header.** They
+-were inline actions on the hero, scrolling away with it. `EvaluateRunPage` lifts
+-them into its header through context, and the hero drops its copies when the
+-header has them. Case rows lead with the disclosure chevron instead of a dashed
+-placeholder mark for cases that never had a verdict read.
+diff --git a/.changeset/evaluate-run-remedies-reuse.md b/.changeset/evaluate-run-remedies-reuse.md
+deleted file mode 100644
+index f5498cf9a..000000000
+--- a/.changeset/evaluate-run-remedies-reuse.md
++++ /dev/null
+@@ -1,25 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The Evaluate run page reads the contract's stage remedies instead of its own.
+-
+-`STAGE_REASON_REMEDIES` already answers "what is the one thing to go and
+-change", keyed on the stage reason for exactly the reason this page needed it:
+-the coarse failure category cannot tell "an expected tool call was never made"
+-from "a call was made that the case did not expect", and those want opposite
+-edits. Its sentences are byte-pinned to the backend's own mirror, so a second
+-map of the same advice would have drifted from the one the GitHub check writes.
+-
+-The absence carries as much as the text. That map is deliberately `Partial`,
+-and `STAGE_REASONS_WITHOUT_REMEDY` names the reasons it omits — a provider
+-failure of ours, an unverified egress, a stage that was not measured, an
+-earlier stage having failed, every passing reason. The run page now renders
+-nothing for those rather than a manufactured next step, because a sentence
+-there would send a reader after a system the run never implicated.
+-
+-What the page adds is a voice, derived rather than declared: the two judge
+-reasons that carry a remedy may only ask the reader to check, since a judge
+-score is one model's opinion of another's answer. Membership decides that, not
+-the shape of the reason's name — `judgeObserved`, `judgePending` and
+-`judgeNotRequested` share the same prefix and carry no remedy at all.
+diff --git a/.changeset/evaluate-run-verdict-first.md b/.changeset/evaluate-run-verdict-first.md
+deleted file mode 100644
+index 809c202aa..000000000
+--- a/.changeset/evaluate-run-verdict-first.md
++++ /dev/null
+@@ -1,47 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The Evaluate run page leads with what broke and what to do about it.
+-
+-**One failure, said five times, with the finding missing.** The run page opened
+-with a pass rate, repeated it in the runs rail, in the run-decision card and in
+-the triage header, and the one sentence naming the case that failed sat
+-mid-paragraph behind a "Show more". Meanwhile the panel headed "1 suggested fix"
+-listed three low-confidence workflow findings, two of them on cases that PASSED,
+-and the case that measurably failed had no action attached anywhere on the page.
+-
+-`EvaluateRunContent` inverts that. The verdict word comes first, then one
+-sentence naming the case, the stage its chain stopped at and the reason, then
+-the expected and observed tool calls, then "Prompt to improve". Cases are rows
+-carrying their own verdict, their iteration fraction, where they broke and a
+-six-cell chain; failures sort first and the first one opens onto its grouped
+-failures, evidence and a per-group fix prompt. The judge findings keep every row
+-and move below the failures, closed, under "Worth a look, never required". The
+-counting caveats keep every word under "How this verdict was counted".
+-
+-**Nothing is re-derived.** The verdict, the counts and the failing case come
+-from the canonical decision summary through the same LRU store the existing
+-decision card reads, so the two surfaces cost one request and cannot disagree
+-about a run. Chains come from the diagnostics for non-passing iterations and the
+-iteration read for the rest — both page-capped, so a row whose chains are
+-incomplete says how many it has rather than showing stages it never fetched.
+-
+-**A mark is a verdict, and only appears when one was read.** Per-case verdicts
+-live in `decision.cases[]`, keyed by an identity the platform mints and never
+-sends back, so `evaluate-case-identity` mirrors its four readable encodings with
+-a SYNC note to the backend file. The mirror is deliberately partial: the backend
+-hashes anything outside its id pattern and a browser cannot do that
+-synchronously, so an unencodable identity mints nothing. Every miss is stated —
+-a legacy run has no per-case verdict, an unmatched key says so, variants that
+-disagree get no single mark — and in all of them the iteration fraction stays
+-grey, because a population is not a decision.
+-
+-**New page only.** `/evals`, CI and the folded dashboard keep `RunDetailView`,
+-`RunDecisionSummaryCard`, `AiTriageCard` and the shared findings panel exactly as
+-they are; the new components are additive files under `components/evaluate/` and
+-the shared modules gained only new exports. The existing run-detail pane still
+-renders below the new content on `/evaluate` while the remaining pieces land, so
+-this commit removes nothing from the page.
+-
+-Behind `evaluate-enabled`, which stays default-off.
+diff --git a/.changeset/github-checks-feedback-comments-toggle.md b/.changeset/github-checks-feedback-comments-toggle.md
+deleted file mode 100644
+index dfabf1362..000000000
+--- a/.changeset/github-checks-feedback-comments-toggle.md
++++ /dev/null
+@@ -1,50 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Turn MCPJam's pull-request comments off per repository, and say at connect time that they exist
+-
+-MCPJam now posts one comment on each pull request in a connected repository and
+-updates that same comment in place on every later push. The check run already
+-said the same thing; the comment says it where a person — or a coding agent —
+-reading the pull request will actually find it. That makes it a write on
+-somebody else's repository, so this adds the two things a write like that owes
+-an administrator: a way to stop it, and a sentence before it starts.
+-
+-**Settings → Integrations → GitHub** gains a per-repository **Post feedback
+-comments on pull requests** toggle, and the connect section now says MCPJam will
+-comment before you click Connect rather than after.
+-
+-**Absent means ON, and reading it the ordinary way would have misreported every
+-repository.** `feedbackComments` inverts the default that every other optional
+-policy on the row follows: a comment blocks nothing, so it ships on for every
+-connected repository including the ones connected before it existed, and an
+-admin opts a repository OUT. `conformanceEnabled` beside it is absent ⇒ off for
+-the opposite reason — that one adds a check, and growing a required check under
+-a maintainer without asking is a merge-blocking surprise. A control that treated
+-the two the same would render OFF for every untouched row, which today is all of
+-them, and tell an administrator the opposite of what is happening on their pull
+-requests. The switch reads `!== "off"` and the flip derives from the same rule,
+-so the first click on an untouched row turns comments off rather than appearing
+-to do nothing.
+-
+-The toggle is deliberately NOT gated on the row's enable switch, unlike
+-conformance: this decides what MCPJam may WRITE, and a repository whose checks
+-are paused is still one an admin may want to settle that for.
+-
+-Its writes get their own pending set — three different writes now land on one
+-row, and a shared set would grey out a control nobody has touched. Success is
+-announced, unlike the outage-policy select, because turning comments off is the
+-setting an admin reaches for while worried about what MCPJam is publishing, and
+-the useful half of the answer is the half about the check: it still runs and
+-still reports. A refusal is shown exactly as the backend worded it, with a
+-comment-specific fallback only for a failure that carried no message —
+-"nothing changed" is worth saying about a write with this consequence.
+-
+-Docs: a new **GitHub Checks** page covers the `mcpjam.yaml` recipe, the comment
+-and its machine-readable JSON block, the review comments MCPJam leaves on a
+-removed tool name — a location, never a cause, and never a requested change —
+-and exactly what may and may not appear on a public pull request. The Settings
+-page's "Read the docs" link pointed at it before it existed. `cloud eval checks
+-connect` in the CLI reference now names the comment too, since that command
+-connects a repository without ever showing the settings page.
+diff --git a/.changeset/github-checks-listing-follows-bindings.md b/.changeset/github-checks-listing-follows-bindings.md
+deleted file mode 100644
+index 2af21112a..000000000
+--- a/.changeset/github-checks-listing-follows-bindings.md
++++ /dev/null
+@@ -1,19 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Connecting a GitHub account fills the repository picker, without a reload
+-
+-Finishing an installation claim in Settings → Integrations → GitHub left the page saying **"No repositories available. Connect a GitHub account above first."** The bind had succeeded: the backend was already answering with every repository the App could reach. Only a manual reload showed them. Looking at that list is the first thing anyone does after connecting an account, and it was telling them their bind had not worked.
+-
+-**The listing is a one-shot read of a live fact.** Repositories come from an action, which nothing re-runs on its own; which installations the organization holds comes from a query, which updates itself. The effect that fetched the listing depended on the organization, on availability, and on two memoized callbacks — and completing a bind changes none of them, so it never ran again.
+-
+-It now also depends on the bindings, through a **stable key** rather than the array: a Convex subscription hands back a fresh array on every delivery, including one re-sending identical rows, so depending on the array itself would ask GitHub again on every poll. The key is each binding's opaque installation reference and its status, sorted. That is exactly what changes which repositories the App can reach — an account connected, one disconnected, or one that GitHub suspended or removed — and nothing else: row order, account logins and timestamps do not move it.
+-
+-Three things the surface already guaranteed still hold, and one is now stated more precisely:
+-
+-- **A slow answer for the previous organization still cannot land on the new one.** The in-flight guard became a generation rather than a per-run flag, because the two rules differ: a re-run that merely learns the bindings' first answer must leave a request in flight alone, while one that supersedes it must guarantee that answer can never arrive.
+-- **The picker still resets when the organization changes** — the connect sends the current organization id, so a selection carried across would be submitted against an organization the repository does not belong to. It deliberately does **not** reset when a binding changes: the organization has not changed, and a repository that disappeared from the refreshed listing cannot be submitted anyway.
+-- **The bindings query answering for the first time is not a change.** It is not subscribed until availability says `enabled`, so it always answers after the first listing was requested — treating that as news would ask GitHub twice on every page load.
+-
+-The suite page's own connect section had the same staleness. No bind starts there, so the reported sequence cannot happen on it, but a binding changing elsewhere — another admin, a second tab, a webhook suspending an installation — left it just as stale. It follows the same key now.
+diff --git a/.changeset/openai-gpt-5-6-byok.md b/.changeset/openai-gpt-5-6-byok.md
+deleted file mode 100644
+index ed92b6c80..000000000
+--- a/.changeset/openai-gpt-5-6-byok.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-GPT-5.6 is selectable with your own OpenAI key.
+-
+-The BYOK OpenAI rows are hand-maintained and had stopped at GPT-5.1 while the
+-hosted catalog was already serving `gpt-5.6-luna`, `-sol` and `-terra`, so a
+-user with a valid key could not pick the models MCPJam already serves for free.
+-All three now lead the OpenAI group, with the 1,050,000-token context the
+-catalog reports.
+-
+-Token counting maps them to GPT-5, the closest id ai-tokenizer knows; an
+-approximate count beats dropping to the character-based fallback. Temperature
+-needed no new handling — the `gpt-5` carve-out in `modelSupportsTemperature`
+-already matches these ids, so the field is omitted rather than sent.
+diff --git a/.changeset/playground-connect-in-place.md b/.changeset/playground-connect-in-place.md
+deleted file mode 100644
+index 79b94d791..000000000
+--- a/.changeset/playground-connect-in-place.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Connect a server from the Playground without leaving it. The Tools rail's zero-server empty state offered a "Connect a server" button that navigated to Servers, so connecting a server dropped the user out of the Playground and they had to navigate back to use the server they had just connected. The button now opens the Add Server modal in place, the same one the composer's "+" menu and the header's Add Server button already use. Surfaces that mount the Playground state without a connect handler — the Evals embedded chat — keep the old navigation.
+diff --git a/.changeset/playground-records-its-execution-target.md b/.changeset/playground-records-its-execution-target.md
+deleted file mode 100644
+index 11ff1568e..000000000
+--- a/.changeset/playground-records-its-execution-target.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A Playground conversation now records the environment it actually ran in
+-
+-Reopening a Playground conversation could display a completely different host and model than the one it ran on, and a follow-up typed into it would then execute against that unrelated target without ever saying so. The cause was a data gap rather than a rendering bug: **a browser Playground turn never wrote down where it executed.** The direct-chat `resumeConfig` carried seven fields — the system prompt, the temperature, the approval and visibility policies, the tool-result settings, the selected servers — and not one of them was an execution target. With nothing recorded, reopening had nothing to restore from, and the view fell back to whatever the *viewer* happened to have selected in their own browser.
+-
+-Only sessions created through the v1 agent API wrote that pin. Everything typed into the browser was blind.
+-
+-The direct-chat turn now writes `resumeConfig.environmentId` — the same field the agent route has always written, already validated, already projected through the ingest allowlist, already served on the session read. No new surface, and nothing to migrate: a conversation that predates the field gets it filled in on its next turn.
+-
+-**Sent on every turn, not just the first, and that is deliberate.** These resume fields are first-write-wins at the ingest boundary, so a continuation cannot repin a conversation onto a different environment — which means re-sending is both harmless and the only way an older session ever gets a value at all. Trying to enforce the pin locally instead would leave every pre-existing conversation unpinned forever.
+-
+-**A turn with no environment records nothing rather than a placeholder.** An empty pin would read as "we know where this ran, and it was nowhere" — precisely the false certainty that the reopened-conversation disclosure exists to avoid. Absent stays absent, so the disclosure can keep telling the truth.
+-
+-Host-mode turns still record no target: the resume contract has no key for a host, so that half needs a backend change first and is not attempted here.
+diff --git a/.changeset/playground-reopened-conversation-target.md b/.changeset/playground-reopened-conversation-target.md
+deleted file mode 100644
+index e8141c7c3..000000000
+--- a/.changeset/playground-reopened-conversation-target.md
++++ /dev/null
+@@ -1,79 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A reopened Playground conversation no longer describes itself with your current settings
+-
+-Opening `/playground?conversation=<id>` restored the transcript and then framed
+-it with whatever the viewer happened to have selected. A conversation that had
+-run on a Cursor CLI harness host, against an environment, with the deepwiki
+-server attached, reopened showing an unrelated host chip, `Claude Sonnet 5`,
+-**Environment · none**, and another server's tools. The natural conclusion —
+-"this never ran on Cursor" — was wrong, and the more expensive one followed from
+-it: a reply typed under those chips ran on the target they named, so asking the
+-Cursor transcript "what harness are you" got a Claude answer.
+-
+-**The chips were never about the conversation.** The previewed host and
+-environment live in per-project browser storage (`use-previewed-client-id`,
+-`use-previewed-environment-id`), which restore does not touch — by design, since
+-they are the viewer's working state. What was missing is that the composer said
+-so nowhere.
+-
+-**What the session actually records**, and what it does not:
+-
+-- `modelId` and `resumeConfig.selectedServers` are persisted and were already
+-  restored.
+-- `resumeConfig.environmentId` is persisted **only** for Agent Playground
+-  (`origin: "api"`) sessions, and the browser ignored it entirely.
+-- The **host** and, for browser Playground turns, the **environment** are not
+-  persisted at all. `chatSessions.hostId` is stamped only for scenario- and
+-  swarm-sourced rows, which the direct-chat read never serves; the browser
+-  turn's `resumeConfig` carries no target field. `chatSessionTurnTraces` does
+-  hold `environmentAtTurn` and `hostConfigId` per turn, but neither is projected
+-  into the read the Playground uses.
+-
+-So the composer now says which of those it is standing on. A reopened
+-conversation that recorded no target gets **"As-run configuration unavailable"**
+-naming the target a reply would actually use; one that pinned an environment
+-different from the selected one is named outright. Nothing is inferred and no
+-default is dressed up as history — absence is reported as absence.
+-
+-Continuing on a different target is legitimate, so this is a one-click
+-acknowledgement rather than a refusal — but it has to be the user's act, which
+-is the part that was missing. Until it is given, the composer's Send is disabled
+-and **every** way to start a turn refuses, not just the button:
+-
+-- the composer submit (Enter, the Send button, eval Quick Run);
+-- widget-driven follow-ups, which bypass the composer entirely;
+-- starter chips, which are a one-click send from the empty state;
+-- "Ask agent to run" on a harness built-in tool, which the Tools rail requests
+-  from a sibling subtree through a store;
+-- editing a past message, which is a send **and** a fork — it would run the
+-  edited turn on the ambient target and mint a branch recording that it did.
+-  The edit action is shown disabled rather than failing on click.
+-
+-A gate that covered only the composer would have been theatre. The two prompt
+-paths keep their text as a composer draft rather than dropping it, so accepting
+-the target and sending is one more click, not a retype.
+-
+-And the gate is never reachable from a surface that cannot lift it, which would
+-be the worse failure — no send AND no way to allow one. The disclosure is built
+-once and every surface consumes it: the docked, centered and compare composers
+-through `ChatInput`; the desktop fullscreen overlay, which REPLACES those
+-composers, through its own slot above its input; and a mobile/tablet widget full
+-takeover, the one layout with no composer at all, as a notice pinned over the
+-thread — a widget can still request a follow-up there.
+-
+-The acknowledgement is per conversation and survives a reactive refresh of that
+-same conversation; New Chat, a detach and a rewind branch drop it.
+-
+-The disclosure is derived only on the two paths that EXPLICITLY open a
+-conversation — the history rail and the `?conversation=` restore — and never
+-from the reactive Convex refresh, which also runs for the live chat once it
+-adopts a session id. It is bound to the live session id, so a fork or reset
+-retires it without a second clear path to keep in step.
+-
+-Restoring the recorded environment automatically is deliberately **not** part of
+-this: selecting one changes the chat scope key, and the reset that follows wipes
+-the very transcript being restored. Naming it is honest today; adopting it needs
+-the restore to run after the scope settles.
+diff --git a/.changeset/releases-2026-09-02.md b/.changeset/releases-2026-09-02.md
+deleted file mode 100644
+index c2328dd41..000000000
+--- a/.changeset/releases-2026-09-02.md
 +++ /dev/null
 @@ -1,15 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
+-"@mcpjam/sdk": patch
 ----
 -
--The suite page stops opening with an aggregate
+-Release @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
 -
--The first thing labelled "user value chain" on the suite page was a funnel — a population statistic, sitting above the run history. It was the wrong introduction to the idea. The chain a reader arrives asking about is one request's journey, and the aggregate answers a different, later question.
+-Cuts a version for the unreleased work that landed without a changeset of its own:
 -
--It also read badly on real runs. On a three-trial suite it showed six green stages over "2 of 3 trials", the excluded one being precisely the trial that broke; on a ten-trial suite it showed `call` and `response` as `applicable=0`, which looks like a gap and only means those cases assert nothing there. The page's most prominent claim was its least reliable.
--
--The per-trial chain now answers "why did this not deliver value", on the run page, the trace pane and the case table. The run-level document still renders on the run page behind its existing flag, where it reads as the follow-up it is.
--
--Removed with the mount: `StageAnalyticsPanel`, `useEvalSuiteStageAnalytics`, `fetchEvalSuiteStageAnalytics` and the panel-state model — the suite-scoped reader had exactly one consumer, and dead code with passing tests is what drifts. `RunDocument`, `RateCell` and `useStageFindings` all stay; the run page uses them.
--
--**Two test files were re-aimed rather than deleted.** The findings tests ran through the panel, and the API tests covered only the suite listing — but their claims were never about which resource was fetched. The findings ones now assert against `RunDocument` + `StageFindingsCard`, the composition the run page actually builds; the API ones now cover `fetchEvalRunStageAnalytics`, which had no wrapper-level coverage at all (its hook test mocks the wrapper). Deleting them would have quietly dropped the guarantees they exist for: auth has one owner, the payload is validated not trusted, identity is bound, and the four failure kinds stay four.
-diff --git a/.changeset/environment-secret-selection-sdk.md b/.changeset/environment-secret-selection-sdk.md
+-- **Swarms** — a Findings tab that leads the run as the default landing tab with a persona-journey narrative, a live strip that no longer contradicts its own session count, and a running swarm that keeps its thread.
+-- **Local Claude Code** — the real agent runs natively on the user's machine.
+-- **Codex over app-server** — a transport that can actually pause a run.
+-- **WebMCP viewport** — sharp at rest, honest geometry, and a stream that answers a slow link.
+-- **Models** — brand logos for 11 catalog providers, with `spacexai` wired to xAI.
+diff --git a/.changeset/releases-2026-09-02b.md b/.changeset/releases-2026-09-02b.md
 deleted file mode 100644
-index dbb5edcca..000000000
---- a/.changeset/environment-secret-selection-sdk.md
+index 76432eabe..000000000
+--- a/.changeset/releases-2026-09-02b.md
 +++ /dev/null
-@@ -1,21 +0,0 @@
+@@ -1,12 +0,0 @@
 ----
+-"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
+-"@mcpjam/sdk": patch
+----
+-
+-Release @mcpjam/inspector, @mcpjam/cli, and @mcpjam/sdk.
+-
+-Cuts a version for the work that landed without a changeset of its own:
+-
+-- **Member-only surfaces gate on the Convex actor, not the WorkOS user object.** A signed-in user is served a guest bearer in their HTML too, so for one render WorkOS says member while the socket still carries `guest|<uuid>`. Three surfaces asked member-only Convex functions in that window; they now check who the socket is actually authenticated as.
+-- **A swarm shows its own name as its Overview title.** `swarmWaveTitle` hardcoded `Swarm <short id>`, so the name typed in the create flow was invisible after setup. It now prefers the authored name and keeps the short id as the fallback, in both the Overview list and the Swarm Run detail page.
+diff --git a/.changeset/stage-reason-remedies-contract.md b/.changeset/stage-reason-remedies-contract.md
+deleted file mode 100644
+index d22d3175e..000000000
+--- a/.changeset/stage-reason-remedies-contract.md
++++ /dev/null
+@@ -1,46 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-The eval contract now says what to DO about a stage reason, not just what it means
+-
+-`STAGE_REASON_LABELS` renders a reason as words — "an expected tool call was
+-never made". Every surface that shows one then has to answer the reader's next
+-question on its own, and the only thing the contract offered for that was
+-`NEXT_ACTION_BY_FAILURE_CATEGORY`, which is keyed on the seven coarse buckets. A
+-category can name a system to go and look at; it cannot name the assertion, the
+-schema field or the recipe line that actually moved. So four renderers were each
+-one step away from inventing their own advice, and the surface that invents it
+-best is the one nobody notices is wrong.
+-
+-`STAGE_REASON_REMEDIES` is that step, taken once. One sentence per stage reason,
+-saying the one thing to go and change. `NEXT_ACTION_BY_FAILURE_CATEGORY` stays
+-exactly as it is, and stays the fallback for a reason with no remedy.
+-
+-**It is `Partial`, and the gap is the content.** Every other map in
+-`decision-labels.ts` is total over its vocabulary, and says so to the compiler,
+-because a missing label prints a wire spelling at a human. A missing REMEDY is
+-different: a reason that says nothing about the server — MCPJam's own provider
+-failure, an unverified egress, a stage that simply was not measured, an earlier
+-stage having failed, and every passing reason — has no next step a reader can
+-take, and writing one anyway would send a pull-request author to go and fix a
+-system that is not involved. Naming a provider outage as something the author
+-can fix is the specific mistake here, and a test pins that `providerError` has
+-no entry.
+-
+-So the forcing function the compiler gives the total maps is replaced with one
+-the test gives this one. `STAGE_REASONS_WITHOUT_REMEDY` records the deliberate
+-complement in the contract rather than in a hand list inside the test, and the
+-two are asserted to partition `STAGE_REASONS` exactly — union is the whole
+-vocabulary, intersection is empty. Adding a reason therefore breaks the test
+-until somebody decides which side it belongs on, instead of silently shipping a
+-failing case with no next step and no way to see the omission.
+-
+-None of these sentences diagnoses, which is the same rule the rest of the module
+-follows: a first failed stage is where the chain stopped, never why. Where the
+-honest answer is that either side could be the one that moved — the pull request
+-changed the response, or the case asserts something the server no longer
+-promises — the remedy says both and leaves the choice to the reader, who can see
+-the diff.
+-
+-Both are exported from `@mcpjam/sdk/contract`.
+diff --git a/.changeset/structured-refusals-and-composed-grants.md b/.changeset/structured-refusals-and-composed-grants.md
+deleted file mode 100644
+index e7f8edb2c..000000000
+--- a/.changeset/structured-refusals-and-composed-grants.md
++++ /dev/null
+@@ -1,57 +0,0 @@
+----
+-"@mcpjam/inspector": patch
 -"@mcpjam/sdk": patch
 -"@mcpjam/cli": patch
 ----
 -
--An environment's secret grant is reachable from the SDK, CLI and MCP again
+-A backend refusal reaches the caller, and a composed stack can carry a credential
 -
--`secretSelection` is how a project secret is granted to the runs an environment launches. The API takes it on create and on update, the `/api/v1` route takes it on both, and `PlatformEnvironmentCreateBody` / `PlatformEnvironmentUpdateBody` have always declared it — but the two operation schemas in `platform/operations.ts` never did, so the only surfaces an agent or a script can use dropped it on the floor.
+-**A named refusal stopped arriving as `INTERNAL_ERROR`.** Launching an eval run
+-whose environment selects a materialized secret answered
+-`{"code":"INTERNAL_ERROR","message":"[Request ID: …] Server Error"}` in
+-production. The backend had refused it deliberately — a `ConvexError` carrying
+-`ENV_MATERIALIZED_SECRETS_UNSUPPORTED` and a sentence naming the remedy
+-("switch those secrets to brokered delivery") — and the v1 error boundary threw
+-both away, so the cause was readable only by tailing `convex logs --prod`. The
+-boundary now translates a structured `ConvexError` before the runtime
+-classifier sees it: a 400 carrying the backend's own message, with its code in
+-`details.code`. Codes the shared translator already knows keep their canonical
+-status, so a plan cap is still a 429 and a stale precondition still a 409.
 -
--Both halves were silent in the way that costs the most time:
+-The gate is `{ code, message }` both being non-blank strings on the error's
+-`data`, and that is the whole safety argument: a `ConvexError` is not an
+-accident, a `code` is a contract someone wrote down, and a `message` is prose
+-written for the caller. Nothing reads `error.message`, so an unstructured
+-throw — a `TypeError`, a dead socket, a validator rejection whose text names
+-our internals — keeps the opaque 500 and the on-call page it had before.
 -
--- **Create** parses through a `z.object`, which STRIPS what it does not declare. A create carrying a grant returned 201 with `secretSelection: null` and no error anywhere — the environment simply had no credentials, and the failure surfaced much later as a run refusing to start for want of a secret that had apparently been attached.
--- **Update** validated fine, but the at-least-one-field `.refine` did not list the field, so a PATCH changing ONLY the grant was rejected client-side with a message that enumerated eight other fields and not the one the caller had passed.
+-The unknown-code branch runs behind every canonical code mapping and ahead of
+-the translator's prose sniffing. Those patterns test `error.message`, which for
+-a `ConvexError` is Convex's framing wrapped around the JSON of its data — the
+-backend's own sentence included — so a refusal whose remedy reads "not found"
+-would otherwise be answered as a 404 with a generic noun, losing both the
+-message and the code. It is also logged (to Axiom, not Sentry), so a code that
+-deserves its own status is still discoverable once it stops reaching the 500.
 -
--Together those meant a secret could be attached by neither path: not on create, and not afterwards. The route's own comment says as much about what unclearable would cost — "an environment's credential grant can only ever grow, and revoking it would require deleting the environment" — and that was the state the SDK was in.
+-**A composed stack has a credential axis.** `secretSelection` reached the named
+-environment operations and stopped there: the compose schemas and resolver
+-carried only skills and plugin versions, and a `z.object` strips what it does
+-not declare, so a grant handed to `ensure_adhoc_environment` or to a run's
+-`compose` vanished between the caller and the wire. The REST route, the OpenAPI
+-schema and the backend mutation had accepted it the whole time. The cost was
+-not cosmetic: a harness run that needed a credential could not be composed at
+-all — it had to be given a named environment. Both compose surfaces now take
+-`secrets`, and the CLI grew `eval run --compose-secret`, `eval cases run
+---compose-secret` and `environments ensure-adhoc --secret`.
 -
--The field now rides a single shared `secretSelectionInput` used by both operations, matching how `skillSelection` and `pluginVersionIds` are already shared, with the same tri-state on update: omit to leave unchanged, `null` to REVOKE, a value to replace. `secretIds: []` is rejected rather than read as "remove every credential" — that is what `null` is for.
--
--The CLI's `--file`/`--json` help on `environments create` and `environments update` listed every other body field but this one; it lists it now.
--
--Not changed: `ensure_adhoc_environment` and the run operations' `compose` still have no secrets axis, though the route accepts one. A composed stack cannot carry a grant, so a run that needs a credential still needs a named environment.
-diff --git a/.changeset/uvc-iteration-chain-read.md b/.changeset/uvc-iteration-chain-read.md
+-**Sending a grant to a deployment too old for one now refuses cleanly.**
+-`PlatformEnvironmentCapabilities.secretGrants` joins `modelOverrides` and
+-`skillVersionPins`, and the CLI probes it before a grant-bearing write — the
+-same preflight `modelId` has always had, spent only by the calls that carry a
+-grant. A composed LAUNCH is covered too, in the SDK's compose policy beside the
+-model-override refusal, so the CLI, the remote MCP surface and the in-app agent
+-all get the same answer; it costs no round trip, because the compose path
+-already reads that capability route before it mints anything. Note the ordering
+-this implies: a deployment that supports secret grants but does not yet publish
+-the flag reads as "unsupported", so the backend half publishes `secretGrants`
+-first.
+diff --git a/.changeset/v1-chat-host-targeting.md b/.changeset/v1-chat-host-targeting.md
 deleted file mode 100644
-index f3712cedd..000000000
---- a/.changeset/uvc-iteration-chain-read.md
+index 9a446c518..000000000
+--- a/.changeset/v1-chat-host-targeting.md
 +++ /dev/null
-@@ -1,20 +0,0 @@
+@@ -1,101 +0,0 @@
 ----
+-"@mcpjam/inspector": patch
 -"@mcpjam/sdk": patch
--"@mcpjam/inspector": patch
+-"@mcpjam/cli": patch
 ----
 -
--A passing trial can have its chain read too
+-Agent chat turns can drive a harness host, and never silently emulate one
 -
--D9's decision summary carries a per-trial user-value chain, and the browser already fetches it — for **non-passing trials only**. That filter lives in the contract assembler and is deliberate: diagnostics are evidence beneath a verdict, and a trial that passed is not evidence of anything going wrong. The consequence is that a reader who opens a trial that succeeded has nothing to read, and "how far did value travel here" is exactly as good a question about a passing trial as a failing one.
+-`POST /v1/chat-sessions/messages` — the route behind `mcpjam cloud sessions send`
+-and the Platform MCP `send_chat_message` — had no host concept at all. It took a
+-model plus an `environmentId`/`serverIds` target, and the environment was
+-consulted only for its SERVER selection. Aim a turn at an environment whose host
+-declares `harness: "cursor"` and it ran MCPJam's emulated engine, answered 200,
+-and reported a plain `anthropic/…` model. The product said it had driven Cursor
+-CLI and had driven something else. Every agent surface was in that position; only
+-the browser could drive a harness at all.
 -
--The iterations resource projects the same stage columns over every row of a run, passing included — verified against production, where all ten trials of a run came back carrying six rows each. This adds the client read for it.
+-The turn now resolves a HOST, server-side, and that host decides the engine.
+-An environment carries its own — the backend resolves it in the same atomic read
+-as the server set — so a harness environment runs its harness with nothing new in
+-the request, on continuations included, because `environmentId` is a resume pin.
+-A new `hostId` names one directly: alone it also connects the host's own selected
+-servers, and alongside an environment it is an assertion that the environment's
+-host is the one you think it is.
 -
--**One chain type, one validator.** The rows go through the contract's own chain assembler, now exported as `assembleEvalRunDecisionChain`, which is the same function D9's summary is built from. So the result is `EvalRunDecisionChain` — the type the decision card and the trial cards already render, with no adapter and no second shape — and the **whole derivation** is validated rather than the rows one at a time. Row-level validation accepts five rows, or six in the wrong order, and a renderer that numbers cards `01`–`06` by position would then publish a different claim about which stages were blocked, because `notReached` is derived from position. A test feeds it both shapes and pins that they come back `unverified`.
+-The security properties are the browser route's, not a lighter version of them.
+-`harness` and `computer` are read ONLY from the config the server fetched for the
+-pointer; the request schema is strict, so a body carrying either is a 400. A host
+-config that cannot be loaded fails the turn instead of falling back to "no host,
+-therefore emulated" — a host we cannot read might be a harness host. A `hostId`
+-that contradicts the environment's own is rejected (`HOST_TARGET_CONFLICT`)
+-rather than resolved by precedence, the same rule `normalizeExecutionTarget`
+-applies on the browser side.
 -
--**Three absences stay three facts.** A bare 404 from a router that never had the path is a deployment that does not serve iterations; an enveloped `NOT_FOUND` is a run that is not there; a row with no derivation is `absent`. Reading the first as the third would report every trial on an undeployed build as having no chain.
+-Refusals are pre-stream and named, never a downgrade. The turn runs the SAME
+-`checkHarnessRuntimeAvailable` gate chat, swarms and eval admission call, so a
+-missing computer plane, a disabled broker, an enterprise-managed host or an
+-ineligible model answers 422 with `details.reason: "HARNESS_UNAVAILABLE"` and a
+-machine-readable `details.kind`, before the lease has spent anything. Two
+-refusals are this surface's own: it runs `auto-deny` approvals, so a host that
+-requires tool approval has nobody to ask; and `toolMode`/`allowedTools`/
+-`maxToolCalls` are applied by withholding tools from the engine this route
+-builds, which a harness — building its own set inside its sandbox — never sees.
+-A `read_only` harness turn is refused rather than run with the whole tool surface
+-live while the response still reports the narrowing.
 -
--**Keyed on the run's revision, not just terminal status.** A terminal run is not frozen — a judge landing minutes later rewrites `judgePending` into `judgeObserved`, which is a different chain for the same trial. The read keys its cache on the same revision marker the decision-summary store uses, so the two refresh together and one trial can never show two chains at once.
+-And every turn now names its engine. `engine` is `"emulated"` or
+-`"harness:<id>"` on every response, harness or not. A turn that said nothing was
+-indistinguishable from one that ran the harness, which is what let this go
+-unnoticed.
 -
--**Silent unless asked.** Off without the caller's switch, a project id, and a finished run; with any missing it issues no request at all.
+-A CONTINUATION cannot fall through to the other engine either. `hostId` is
+-per-turn — the ingest boundary's `resumeConfig` projection is an allowlist that
+-carries no host, so pinning it would validate, answer 200 and be dropped — and a
+-session established by `hostId` alone therefore pins no target of its own. A bare
+-continuation of one is REFUSED (400, `details.reason: "HOST_TARGET_REQUIRED"`,
+-before the lease) rather than resolved as "no host pointer, therefore emulated":
+-the session's earlier turns may have run a real harness, and splicing a second
+-engine into the same transcript is the original bug arriving one turn later. The
+-caller re-sends the `hostId` the first turn's response reported, and the host's
+-CURRENT server selection is re-resolved from it — a host edit is visible to the
+-session it was made for, which a copy of the first turn's set would have hidden.
+-Making the engine durable instead is a backend change: `AGENT_RESUME_PIN_KEYS`
+-and the ingest projection would both have to carry a host.
 -
--The route needed an entry in `authFetch`'s bearer allowlist, and the existing eval-chain test already pinned it in the negative list — so this is a **move**, not an addition, and the test now pins that the trace and per-iteration paths beneath it are still *not* granted. Without the entry the read ships no `Authorization` and the 401 surfaces as "could not be loaded", which reads as a backend outage while the API is fine. That has happened three times before on this surface.
-diff --git a/.changeset/uvc-per-trial-stage-cards.md b/.changeset/uvc-per-trial-stage-cards.md
-deleted file mode 100644
-index 22d11bf1e..000000000
---- a/.changeset/uvc-per-trial-stage-cards.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
+-The one shape that guard cannot recognise is refused where it would be CREATED.
+-A session pinning its own `serverIds` continues as an ordinary `serverIds` turn
+-— indistinguishable from one that never named a host — so `hostId` alongside
+-`serverIds` on a HARNESS host is refused up front (422,
+-`details.kind: "surface-unpinnable-host"`) instead of producing a session whose
+-turn two silently changes engine. Both escapes are lossless and named in the
+-error: an `environmentId` pins its host durably, and `hostId` alone plus
+-per-turn `allowedServerIds` narrows the same set. On an emulated host the
+-pairing is untouched — there is no engine to lose.
 -
--Every failing trial now shows its own user-value chain, as cards
+-The harness refusals are ordered most-fundamental-first, since only the first
+-one is ever seen: runtime availability, then the session shape, then the host's
+-approval setting, then the per-turn tool policy — measured by how much of the
+-request a caller has to abandon to get past each. A shape that can never work
+-is reported before a `toolMode` the caller could have fixed in the next
+-request, so nobody spends a round trip on a fix that was not going to be
+-enough.
 -
--The run-level funnel answers "how much of this run was measured, and where did it stop". The question a reader actually arrives with is narrower: **this** trial did not deliver value — how far did it get, and why. That answer already existed and was rendered as six lines of flat text inside a collapsed diagnostic row: `Connection: passed`, `Response: failed — the server reported a tool error`.
+-An environment-backed harness turn now delivers the ENVIRONMENT's resolved
+-skills. The emulated engine already honoured them; the harness read
+-`runtimeSkillsOverride`, which nothing set here, so it fell back to the live
+-project-wide catalog and wrote the whole project's skills into the sandbox — the
+-environment's decision honoured on one engine and discarded on the other, from
+-two responses that look identical. Presence is authoritative, so an environment
+-resolving zero skills delivers zero — while an environment resolver too old to
+-carry `skills` at all (an additive, deploy-skew field) stays ABSENT and keeps
+-the live fetch, because "we were not told" must not be published as "this
+-environment has none". Per-skill supporting files and pinned plugin
+-versions still do not cross (they travel as `effectiveCapabilities`, which the
+-`runAssistantTurn` facade does not expose): a harness turn here delivers the
+-environment's skill bodies, narrower than the Playground but no longer a
+-different set.
 -
--It is now the same six numbered cards the suite page uses, reading left to right, with a "what happened" card underneath the one a reader selects. The chain opens on the stage the contract named as the first failure, so a reader lands on the break rather than hunting for it.
--
--**A trial is not a population, and the card row says so.** The aggregate chip counts (`failed in 2 of 3 measured`); a trial's chip states (`failed`). There are no rates on a trial's card — "100% (1/1)" over a single observation is a statistic manufactured from one trial — and no latency, which is deliberately not a field on a stage row. What a trial's card carries instead is what a trial actually has: one state, one reason, and that row's own evidence.
--
--**The reason stays off the chip and on the detail card.** Some reason labels are whole sentences, six cards at their minimum width would wrap into unreadable columns, and — the part that matters — keeping the chip to the state word keeps the "never says passed when nothing was decided" invariant total over the five states rather than dependent on the twenty-nine-member reason vocabulary. Two reason labels contain the word "made", which that invariant's own regex matches.
--
--**Which card opens is a UI choice; where the chain stopped is the contract's.** The default selection is `firstFailedStage`, read from the chain and never re-derived by scanning rows — the day a second derivation disagreed, the UI would be the one that was wrong while looking authoritative. When the contract established no failed stage at all, the card that opens is the first non-passing row carrying a reason: that is the setup-abort and policy-block shape, where every stage reads `not measured` and the single sentence explaining the trial would otherwise sit behind a click nobody knows to make.
--
--A withheld (`unverified`) or absent chain renders its existing notice and no cards. An empty six-card row would read as measured, which is exactly what those two states exist to prevent.
-diff --git a/.changeset/uvc-trial-chain-on-trace-pane.md b/.changeset/uvc-trial-chain-on-trace-pane.md
-deleted file mode 100644
-index a04e2ca20..000000000
---- a/.changeset/uvc-trial-chain-on-trace-pane.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--The trace pane opens with the chain, not just the transcript
--
--"View trace" lands a reader on one trial's transcript — the place they arrive when they want to know why that trial did not deliver value. The answer was not on that screen. It was back on the run page, inside a diagnostic row they had already navigated away from, and for a trial that PASSED it did not exist anywhere.
--
--The chain now sits above the transcript: six cards, opened on the break, with the "what happened" card under whichever one the reader selects. A passing trial reads as the delivery story end to end — Session connected → Tools and resources discovered → … → Request satisfied — which is the first time that story has been visible for a trial that worked.
--
--**`IterationDetails` does not fetch it.** It has five hosts and knows only its iteration: not the run, not the project, not whether the Evaluate opt-in is on — and the chain read needs all three. So it takes a slot, and the one host that can answer those questions builds the node. The other four pass nothing and issue no request, which keeps a shared component free of a read four of its callers never asked for.
--
--**The hooks sit above the early return, and that placement is load-bearing.** The editor returns a loading state before its test case resolves, so a hook called below it runs on some renders and not others — React reports that as "rendered more hooks than during the previous render". A test caught exactly that, on the first draft.
--
--Selection uses the same `undefined`-is-not-`null` rule as the run page: `undefined` means "not chosen yet" and derives the default at render time, `null` means the reader closed the card. The distinction is what makes the trace pane work at all — the chain arrives *after* mount there, so a state initialized once from an empty chain would compute `null` and never auto-open the break.
--
--An absent map key means "not loaded", never "no chain": a trial the page walk has not reached renders nothing rather than a false absence.
-diff --git a/.changeset/uvc-trial-chain-table-chip.md b/.changeset/uvc-trial-chain-table-chip.md
-deleted file mode 100644
-index 3f6eefb1c..000000000
---- a/.changeset/uvc-trial-chain-table-chip.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--A run's case table says where each trial stopped
--
--The run-scoped case view lists every trial of one case and told you, per row, whether it passed. "Failed" is the least useful true thing you can say about a trial: the reader's next question is always *where*, and answering it meant opening rows one at a time.
--
--Each row now carries a one-line summary of its chain — `broke at Tool response`, `Request satisfied`, `chain withheld` — from the same read the trace pane uses, so the whole table costs one request rather than one per row.
--
--**The table takes a lookup, not a run.** The chain is scoped by run, and only the run-scoped host of this table knows which run its rows belong to; the cross-run case view passes nothing and issues no read, because filling that column there would mean one request per run.
--
--Three shades of nothing stay distinct, which is the whole reason this is a function of the chain rather than of the row's result:
--
--- a row whose chain has not loaded renders **no chip** — an absent map key means "not loaded", never "no chain";
--- a chain the server withheld says `chain withheld`, not silence, because the rows exist and did not validate;
--- a trial with no failed stage says `Request satisfied` **only when user value actually passed**. A policy-blocked trial has no failed stage either, and calling that satisfied would claim an outcome from an absence of evidence; it reads `not measured` instead.
+-`hostId` is threaded through the SDK client and the `send_chat_message`
+-operation, and reaches the wire rather than merely passing validation. The CLI
+-gains `mcpjam cloud sessions send --client <hostId>`.
 diff --git a/cli/package.json b/cli/package.json
-index 1c6efcdcf..5ba2a0a7b 100644
+index 5ba2a0a7b..d1b3ea28f 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "5.5.0",
-+  "version": "5.5.1",
+-  "version": "5.5.1",
++  "version": "5.5.2",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -157,46 +918,46 @@ index 1c6efcdcf..5ba2a0a7b 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^8.5.0",
-+    "@mcpjam/sdk": "^8.5.1",
+-    "@mcpjam/sdk": "^8.5.1",
++    "@mcpjam/sdk": "^8.5.2",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 46ee8a20e..e21bd031a 100644
+index c05e5fb95..bbdd10137 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.3.3",
-+  "version": "3.3.4",
+-  "version": "3.3.4",
++  "version": "3.3.5",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -136,7 +136,7 @@
+@@ -137,7 +137,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.5.0",
-+    "@mcpjam/sdk": "^8.5.1",
+-    "@mcpjam/sdk": "^8.5.1",
++    "@mcpjam/sdk": "^8.5.2",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 38c1e205a..03043e5ed 100644
+index 03043e5ed..fccd59c0f 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -62,9 +62,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "5.5.0",
-+      "version": "5.5.1",
+-      "version": "5.5.1",
++      "version": "5.5.2",
        "dependencies": {
--        "@mcpjam/sdk": "^8.5.0",
-+        "@mcpjam/sdk": "^8.5.1",
+-        "@mcpjam/sdk": "^8.5.1",
++        "@mcpjam/sdk": "^8.5.2",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -204,8 +965,8 @@ index 38c1e205a..03043e5ed 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.3.3",
-+      "version": "3.3.4",
+-      "version": "3.3.4",
++      "version": "3.3.5",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -213,29 +974,77 @@ index 38c1e205a..03043e5ed 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.5.0",
-+        "@mcpjam/sdk": "^8.5.1",
+-        "@mcpjam/sdk": "^8.5.1",
++        "@mcpjam/sdk": "^8.5.2",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -39240,7 +39240,7 @@
+@@ -498,6 +498,7 @@
+         "sonner": "^2.0.6",
+         "streamdown": "^2.1.0",
+         "tailwind-merge": "^3.3.1",
++        "tar": "^7.5.22",
+         "tokenlens": "^1.3.1",
+         "update-electron-app": "^3.1.1",
+         "url-template": "^3.1.1",
+@@ -35270,7 +35271,6 @@
+       "version": "7.5.22",
+       "resolved": "https://registry.npmjs.org/tar/-/tar-7.5.22.tgz",
+       "integrity": "sha512-MFO/QzvtAOmJbkhOaCTvbGcFN9L9b+JunIsDwaKljSOdcLMea3NJ1k9Usz/rjdfSXTq4dfzfeS7W4p4YOAAHeA==",
+-      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "dependencies": {
+         "@isaacs/fs-minipass": "^4.0.0",
+@@ -35287,7 +35287,6 @@
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/chownr/-/chownr-3.0.0.tgz",
+       "integrity": "sha512-+IxzY9BZOQd/XuYPRmrvEVjF/nqj5kgT4kEq7VofrDoM1MxoRjEWkrCC3EtLi59TVawxTAn+orJwFQcrqEN1+g==",
+-      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": ">=18"
+@@ -35297,7 +35296,6 @@
+       "version": "7.1.3",
+       "resolved": "https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz",
+       "integrity": "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==",
+-      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": ">=16 || 14 >=14.17"
+@@ -35307,7 +35305,6 @@
+       "version": "3.1.0",
+       "resolved": "https://registry.npmjs.org/minizlib/-/minizlib-3.1.0.tgz",
+       "integrity": "sha512-KZxYo1BUkWD2TVFLr0MQoM8vUUigWD3LlD83a/75BqC+4qE0Hb1Vo5v1FgcfaNXvfXzr+5EhQ6ing/CaBijTlw==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "minipass": "^7.1.2"
+@@ -35320,7 +35317,6 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz",
+       "integrity": "sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==",
+-      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": ">=18"
+@@ -39240,7 +39236,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.5.0",
-+      "version": "8.5.1",
+-      "version": "8.5.1",
++      "version": "8.5.2",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 8c6372fff..41bd3125d 100644
+index 41bd3125d..57f8709b6 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.5.0",
-+  "version": "8.5.1",
+-  "version": "8.5.1",
++  "version": "8.5.2",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
