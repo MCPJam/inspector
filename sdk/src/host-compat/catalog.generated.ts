@@ -420,7 +420,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1788307200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -491,10 +491,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           hover: true,
         },
         safeAreaInsets: {
-          top: 0,
-          right: 0,
-          bottom: 0,
-          left: 0,
+          top: 12,
+          right: 12,
+          bottom: 12,
+          left: 12,
         },
         styles: {
           variables: {

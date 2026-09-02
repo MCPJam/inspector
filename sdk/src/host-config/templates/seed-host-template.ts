@@ -579,7 +579,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         platform: "web",
         deviceCapabilities: { touch: false, hover: true },
-        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        // The 2026-09-02 capture reports a uniform 12px inset on every edge;
+        // the widget iframe is inset from its card rather than flush to it.
+        safeAreaInsets: { top: 12, right: 12, bottom: 12, left: 12 },
         // SEP-1865 hostContext.styles. Anthropic Sans @font-face URLs
         // require `assets.claude.ai` in apps.sandbox.csp.resourceDomains
         // (set below). Variables use CSS `light-dark()` so they pick the

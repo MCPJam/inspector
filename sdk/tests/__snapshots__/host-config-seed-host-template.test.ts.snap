@@ -581,10 +581,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "locale": "en-US",
       "platform": "web",
       "safeAreaInsets": {
-        "bottom": 0,
-        "left": 0,
-        "right": 0,
-        "top": 0,
+        "bottom": 12,
+        "left": 12,
+        "right": 12,
+        "top": 12,
       },
       "styles": {
         "css": {
@@ -937,10 +937,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "locale": "en-US",
       "platform": "web",
       "safeAreaInsets": {
-        "bottom": 0,
-        "left": 0,
-        "right": 0,
-        "top": 0,
+        "bottom": 12,
+        "left": 12,
+        "right": 12,
+        "top": 12,
       },
       "styles": {
         "css": {
