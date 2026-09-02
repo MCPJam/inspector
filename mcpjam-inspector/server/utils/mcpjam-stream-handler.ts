@@ -670,6 +670,22 @@ export interface MCPJamHandlerOptions {
    */
   environmentId?: string;
   /**
+   * Why {@link environmentId} is absent on a turn whose run DOES have one.
+   *
+   * Absent `environmentId` normally means "no environment, therefore no grant",
+   * and the harness refusal says exactly that. On EVAL REPLAY it would be a
+   * lie: the replay run inherits the source run's `configSnapshot.environmentRef`
+   * verbatim, so the box may genuinely carry a brokered transform — but no
+   * public backend read projects that ref back out, so this process cannot name
+   * the environment or check its selection.
+   *
+   * Set by such a caller to make the refusal honest. It changes no decision:
+   * an environment we cannot name is one whose grant we cannot verify, and the
+   * turn is refused either way. Only the copy differs, and only so a reader is
+   * not told to fix a selection that may already be correct.
+   */
+  environmentUnresolvedReason?: string;
+  /**
    * This turn's MATERIALIZED project secrets, already resolved by the caller.
    *
    * THE ONLY SOURCE. The harness turn does not fetch secrets for itself, and

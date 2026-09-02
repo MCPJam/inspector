@@ -1011,6 +1011,16 @@ async function runJourneyFanOut(
               // legacy live-pool). The shared core routes them to prepareChatV2
               // (`skillsSource`) or the harness pinned path — never a live query.
               ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
+              // The target's Project Environment — the GRANT BOUNDARY for its
+              // project secrets, and the same id `resolveGrantForSandbox`
+              // derives for this attempt's box from the run snapshot. Threaded
+              // so a harness turn's BROKERED external-account credential is
+              // checked against what THIS environment selects rather than
+              // against the whole project. Absent for a legacy host target,
+              // which has no environment and so no grant.
+              ...(target.environmentRef?.environmentId
+                ? { environmentId: target.environmentRef.environmentId }
+                : {}),
               // Swarm authorizes via project membership — no scenario access
               // version, no scenario id.
             },
