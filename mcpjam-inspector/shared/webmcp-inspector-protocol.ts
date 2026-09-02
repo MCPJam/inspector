@@ -244,6 +244,17 @@ export type WebMcpCommand =
   | { type: "go_back" }
   | {
       type: "invoke_tool";
+      /**
+       * The CALLER's id for this invocation, making the call idempotent.
+       *
+       * Optional so every existing client keeps working — omitted, the server
+       * issues one, exactly as before. A client that can be retried sends it:
+       * a hosted request may be dropped in flight or land on a different
+       * replica, and the id is what lets the second attempt be recognised as
+       * the same invocation instead of running a side-effecting page tool
+       * twice.
+       */
+      invokeId?: string;
       toolKey: string;
       input: Record<string, unknown>;
       source: WebMcpInvocationSource;

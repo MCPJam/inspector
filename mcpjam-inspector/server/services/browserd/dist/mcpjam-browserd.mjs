@@ -25,6 +25,9 @@ var DEFAULT_COMMAND_QUEUE_OPTIONS = {
 function queueKeyFor(command) {
   return command.tabId ?? DEFAULT_QUEUE_KEY;
 }
+function isReplayable(command) {
+  return command.action.kind === "observe";
+}
 function normalizeError(err) {
   return { ok: false, error: err instanceof Error ? err.message : String(err) };
 }
@@ -58,13 +61,19 @@ var CommandQueue = class {
     this.maxCommandsPerBoot = options.maxCommandsPerBoot ?? DEFAULT_COMMAND_QUEUE_OPTIONS.maxCommandsPerBoot;
     this.now = options.now ?? Date.now;
     if (!Number.isInteger(this.maxRetained) || this.maxRetained < 0) {
-      throw new RangeError(`maxRetained must be an integer >= 0, got ${this.maxRetained}`);
+      throw new RangeError(
+        `maxRetained must be an integer >= 0, got ${this.maxRetained}`
+      );
     }
     if (!Number.isInteger(this.perQueueDepthCap) || this.perQueueDepthCap < 1) {
-      throw new RangeError(`perQueueDepthCap must be an integer >= 1, got ${this.perQueueDepthCap}`);
+      throw new RangeError(
+        `perQueueDepthCap must be an integer >= 1, got ${this.perQueueDepthCap}`
+      );
     }
     if (!Number.isFinite(this.retainTtlMs) || this.retainTtlMs < 0) {
-      throw new RangeError(`retainTtlMs must be a finite number >= 0, got ${this.retainTtlMs}`);
+      throw new RangeError(
+        `retainTtlMs must be a finite number >= 0, got ${this.retainTtlMs}`
+      );
     }
     if (!Number.isInteger(this.maxCommandsPerBoot) || this.maxCommandsPerBoot < this.maxRetained) {
       throw new RangeError(
@@ -73,6 +82,7 @@ var CommandQueue = class {
     }
   }
   async submit(command) {
+    if (isReplayable(command)) return this.runUntracked(command);
     const existing = this.lookup(command.commandId);
     if (existing) {
       const result2 = existing.state === "running" ? await existing.promise : existing.result;
@@ -93,7 +103,10 @@ var CommandQueue = class {
     const raw = prior.catch(() => void 0).then(() => this.executor(command));
     this.tails.set(key, raw);
     const normalized = raw.then((r) => r, normalizeError);
-    this.commands.set(command.commandId, { state: "running", promise: normalized });
+    this.commands.set(command.commandId, {
+      state: "running",
+      promise: normalized
+    });
     let result;
     try {
       result = await normalized;
@@ -103,6 +116,28 @@ var CommandQueue = class {
     }
     this.settle(command.commandId, result);
     return { status: "ok", result, bootId: this.bootId };
+  }
+  /**
+   * Run a command without claiming its id: no result cache, no tombstone, no
+   * charge against the per-boot ceiling. Still queued and still depth-capped,
+   * so it cannot stampede the browser.
+   */
+  async runUntracked(command) {
+    const key = queueKeyFor(command);
+    if ((this.depth.get(key) ?? 0) >= this.perQueueDepthCap) {
+      return { status: "busy", bootId: this.bootId };
+    }
+    this.depth.set(key, (this.depth.get(key) ?? 0) + 1);
+    const prior = this.tails.get(key) ?? Promise.resolve();
+    const raw = prior.catch(() => void 0).then(() => this.executor(command));
+    this.tails.set(key, raw);
+    try {
+      const result = await raw.then((r) => r, normalizeError);
+      return { status: "ok", result, bootId: this.bootId };
+    } finally {
+      this.depth.set(key, (this.depth.get(key) ?? 1) - 1);
+      if (this.tails.get(key) === raw) this.tails.delete(key);
+    }
   }
   /** Current retained-result count. Exposed for tests. */
   get retainedCount() {

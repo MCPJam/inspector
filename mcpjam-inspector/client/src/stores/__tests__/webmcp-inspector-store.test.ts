@@ -400,11 +400,15 @@ describe("webmcp inspector store", () => {
     const source = await openSession();
     // The POST answers with the id, and the settle arrives on the stream
     // before the caller can park on it — a fast tool always races this way.
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-      source.emit(activityEvent(settled("a2", "inv-1"), 2));
-      return new Response(JSON.stringify({ invokeId: "inv-1" }), {
-        status: 202,
-      });
+    //
+    // The id comes off the REQUEST, because the client mints it now: it has to
+    // be stable across a retry, and a server-issued one cannot be (the retry
+    // would get a different one, and a side-effecting page tool would run
+    // twice). The server echoes whatever it was sent.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const invokeId = JSON.parse(String((init as RequestInit).body)).invokeId;
+      source.emit(activityEvent(settled("a2", invokeId), 2));
+      return new Response(JSON.stringify({ invokeId }), { status: 202 });
     });
 
     // Without the early-settle cache this would sit out the 90s timeout and

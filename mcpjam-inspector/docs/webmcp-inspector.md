@@ -107,7 +107,7 @@ Four properties hold this together, and each one is a bug if it is dropped:
   page leaves the pane stale forever.
 - **Frames do not tick the idle clock.** A CSS spinner paints forever, and a
   session that could not be reaped while animating would hold a capacity slot
-  nobody is using. Asking for the stream *does* tick it — that is a person
+  nobody is using. Asking for the stream _does_ tick it — that is a person
   opening the pane.
 
 Streaming is demand-driven through the `set_screencast` command, sent when the
@@ -251,15 +251,156 @@ That is identical to the native window it replaces — the human could always
 click — and no approval semantics change. The MODEL's path to the page remains
 the gated tool calls; this is the person's own hands, on their own page.
 
-## Three gates
+## Where the browser runs, and what gates each case
 
-1. `/api/mcp/*` mounts only when `!HOSTED_MODE` — a hosted replica has no
-   machine to open a browser on.
-2. `MCPJAM_WEBMCP_INSPECTOR_ENABLED` — server-side emergency stop, forced off
-   hosted. Off means 404, not 403: a disabled capability should not be
-   discoverable.
-3. `webmcp-inspector-enabled` (PostHog) — client visibility. The nav item's key
-   must stay in `SIDEBAR_RESOLVED_FLAG_KEYS` or the item is invisible forever.
+`transport` is a per-session choice, not a deployment fact. `local` opens
+Chromium on the machine running the inspector; `hosted` drives one on the
+member's own MCPJam computer through browserd, and reports
+`remote-interactive-url` so the UI embeds the Browser panel instead of claiming
+a window opened.
+
+| Gate               | Local                                                 | Hosted                                                                   |
+| ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------ |
+| Route mount        | `/api/mcp/webmcp` (the family is `!HOSTED_MODE` only) | `/api/web/webmcp`, behind `bearerAuthMiddleware` + `requireVerifiedAuth` |
+| Server kill switch | `MCPJAM_WEBMCP_INSPECTOR_ENABLED` (default on)        | same                                                                     |
+| Reachability       | —                                                     | `MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED=1`                               |
+| Backend verdict    | —                                                     | `desktopProvisionable` from the runtime-config bootstrap                 |
+| Client visibility  | `webmcp-inspector-enabled` (PostHog)                  | same                                                                     |
+
+Off means **404, not 403**: a disabled capability should not be discoverable.
+The nav item's flag key must stay in `SIDEBAR_RESOLVED_FLAG_KEYS` or the item is
+invisible forever.
+
+`MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED` is deliberately **not**
+`HOSTED_BROWSER_TOOLS_ENABLED`. Both switches lead to the same hosted browser,
+but one lets a person drive their own page and the other hands six `browser_*`
+tools to a model — with bash co-tenancy and approval threading behind it. One
+variable would make turning on the first turn on the second.
+
+### Authentication is not inherited from the bearer middleware
+
+`bearerAuthMiddleware` validates `sk_` keys and guest tokens, then lets an
+unrecognized WorkOS JWT through labelled `unverified_passthrough` — on the
+stated understanding that routes forward the bearer to Convex and let Convex
+judge it. This router does that only when it _establishes_ a session; every
+command afterwards is served from an in-process map. Hence `requireVerifiedAuth`
+on the mount, and an owner recorded on every hosted runtime, checked on every
+request. A mismatch is a **404**, never a 403: hosted ids are derived, so they
+are guessable, and a 403 would confirm which ones exist.
+
+## Hosted sessions survive replicas, but not by pinning
+
+A hosted session id is derived from its inputs — `hosted:<projectId>:<computerId>`
+— because there is one persistent browser per desktop computer and therefore one
+inspector session for it. Any replica can work out what an id refers to, attach
+to the daemon the `browserSessions` row describes, and serve the request. Three
+rules keep that safe (`services/webmcp-inspector/hosted-session-resolver.ts`):
+
+- **Never reserve.** Re-hydration is reached from reads — a refresh, a
+  reconnecting stream — and provisioning from those would wake a computer its
+  owner deliberately let sleep, and bill for it. An asleep machine is reported
+  as `409 hosted-desktop-asleep`, never woken.
+- **Never serve someone else's session.** Ownership is proved by asking the
+  control plane with the _caller's_ bearer; a computer that is not theirs comes
+  back with a different id, or none.
+- **Never register an empty tool map.** Invocations resolve their `toolKey` at
+  dequeue, so a runtime registered before its first snapshot would answer "the
+  page no longer offers that" for a tool the person is looking at.
+
+Eviction of a hosted session publishes `detached`, not `closed`. The browser is
+still running; only this replica's handle went away, and the client re-fetches.
+
+## Invocations are idempotent, and can end in `unknown`
+
+A hosted request can be dropped mid-flight or retried onto another replica, so
+the client mints the `invokeId` and it flows all the way to the daemon's
+at-most-once queue as its `commandId`. Both ends de-duplicate: the runtime
+replays a settled outcome rather than enqueueing a second invocation (which
+would write a second timeline entry and a second pair of screenshots for one
+call), and the daemon recognises the id if a retry gets that far.
+
+Hosted invocations answer **inline** rather than pointing at the event stream,
+because the subscriber watching that stream may be attached to a different
+replica than the one running the tool.
+
+`unknown` is a real terminal state, not a hedge. The daemon's `webmcp_invoke` is
+synchronous — it reports an `invocationId` only once the tool has settled — so
+an aborted request stops our wait but not the tool, and there is no id to cancel
+with. Reporting `cancelled` would be a lie about a tool that may still be
+filling in a form; reporting `failed` would tell someone a payment did not go
+through when it may have. The client re-queries the same `invokeId` to find out.
+(A daemon that returned `invocationId` early would replace this with a real
+mid-flight cancel — see the follow-ups.)
+
+## Keeping the machine awake
+
+The idle sweep hibernates a computer 30 minutes after its `lastActiveAt`, and
+only bash commands and terminal I/O used to bump it. A person can watch a hosted
+browser, drive it by hand, and invoke page tools for an hour without the control
+plane seeing anything it counts — so the machine hibernates underneath them.
+
+Two clocks, both touched from the route: the session row's (`kind: "command"` per
+command, `kind: "panel"` on stream presence) and the computer's, throttled to
+once a minute per computer by `utils/computers/activity-touch.ts`. The backend
+applies its own 2-hour ceiling to presence touches, so a tab left open over a
+weekend cannot hold a machine awake indefinitely. Closing the tab does **not**
+hibernate: only the 30-minute sweep does, because there is no browser-close hook
+the way there is for a terminal.
+
+## The tool poll has a budget
+
+Tool discovery is polled, not pushed. Every `observe` used to be a `commandId`
+the daemon had to remember for the life of its boot, against a 50,000 ceiling —
+about a day of one watched session before it answered `at_capacity` to
+_everything_. Two changes: reads are exempt from at-most-once tracking (they have
+no side effects to protect, and re-running one returns something fresher), and
+the poll is gated on somebody actually watching, backing off to 10s when nothing
+has driven the page for a minute. It also pauses entirely while a person holds
+the handoff lease, since the daemon refuses to observe then anyway.
+
+The real fix is push: `daemon/webmcp-bridge.ts` already has an `onChange`
+channel emitting complete snapshots. What is missing is a transport out of the
+sandbox.
+
+## The stream password never reaches the browser
+
+The Browser panel used to embed E2B's noVNC page with the desktop password in
+the iframe `src`. That password is not a view credential — the daemon's lease
+gates model-driven commands, not VNC input, and `view_only` is a flag the client
+applies to itself — so anyone who read it out of the DOM had full keyboard and
+mouse on the member's desktop.
+
+`routes/web/computer-browser-stream.ts` proxies RFB instead: it authenticates
+upstream with the password from the session row, offers the browser security
+type `None` on a socket the panel's own ~60s token already authenticated, and
+pipes bytes. `GET /session` no longer returns `streamUrl` or `streamPassword`.
+
+Proxying is also what makes the lease real for a _human_ viewer, since the
+daemon never sees VNC packets. `utils/computers/rfb-client-filter.ts` is an
+**allowlist** — not a denylist — because noVNC sends `QEMUExtendedKeyEvent`
+(type 255) for every keystroke once the QEMU pseudo-encoding is negotiated, so
+dropping only `KeyEvent`/`PointerEvent`/`ClientCutText` is a complete bypass.
+`xvp` (power control) and `SetDesktopSize` are refused under any lease.
+
+Two handshake details that fail silently when wrong: Node exposes no single-DES
+cipher, so `des-ede3` with the key repeated three times is used (EDE with equal
+keys _is_ single DES); and the VNC key is the password's first 8 bytes with each
+byte bit-reversed — E2B mints 16 characters and `x11vnc -storepasswd` keeps 8.
+
+The upstream websockify path is written to E2B's own recipe and marked
+`VALIDATE-ON-STAGING`; the handshake itself is unit-tested against the protocol.
+
+## Known gaps
+
+- **Playground page tools are local-only.** `routes/mcp/chat-v2.ts` reads
+  `pageTools` and classifies their approvals; the hosted route at
+  `/api/web/chat-v2` never looks at the field. `WebmcpPageToolsSection` is
+  hidden hosted rather than rendering a capability that would be silently
+  ignored. Threading page tools through the hosted chat path is its own change.
+- **Viewport constants disagree**: `BROWSERD_OBSERVATION_VIEWPORT` is 1024×768
+  and `WEBMCP_VIEWPORT` is 1280×800. Cosmetic while hosted input goes over VNC
+  rather than the pane — `dispatchInput` is a no-op on the hosted provider — but
+  a pane that ever forwarded input to a hosted session would be off by 25%.
 
 ## What the CDP domain actually does
 

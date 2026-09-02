@@ -137,7 +137,11 @@ export const APP_SURFACES = [
     id: "servers",
     scope: "project",
     canonicalPath: "/servers",
-    routePatterns: ["servers", "servers/plugins/:pluginId", "servers/:serverId"],
+    routePatterns: [
+      "servers",
+      "servers/plugins/:pluginId",
+      "servers/:serverId",
+    ],
     // `client-config` renders nothing of its own (it redirects here), but it
     // IS still a tab segment that resolves to this surface, so it stays a
     // valid `ui_navigate` target and a valid `pathnameToActiveTab` result.
@@ -773,10 +777,12 @@ export const APP_SURFACES = [
       "Invoke a page tool with structured input and read its result",
       "Review the activity timeline across navigations, with screenshots",
     ],
-    // The browser runs on the machine running this inspector, so a hosted
-    // replica has nothing to open. The routes are local-only for the same
-    // reason; this keeps the tab from appearing where it cannot work.
-    hostedBlocked: true,
+    // No longer hostedBlocked. It was, because the browser ran on the machine
+    // running this inspector and a hosted replica had nothing to open — but a
+    // hosted session drives a browser on the member's own MCPJam computer
+    // instead, so the surface works there. Client visibility is still gated on
+    // the `webmcp-inspector-enabled` flag, and the server on its own hosted
+    // switch.
     agentTools: {
       kind: "none",
       reason:
@@ -800,7 +806,7 @@ export function listAppSurfaces(): readonly AppSurfaceManifest[] {
 }
 
 const surfacesById = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().map((s) => [s.id, s])
+  listAppSurfaces().map((s) => [s.id, s]),
 );
 
 export function getAppSurface(id: string): AppSurfaceManifest | undefined {
@@ -812,7 +818,7 @@ export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
 }
 
 const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s]))
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
 );
 
 /**
@@ -821,7 +827,7 @@ const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
  * the coverage test asserts no segment is claimed by two surfaces.
  */
 export function getAppSurfaceByNavSegment(
-  segment: string
+  segment: string,
 ): AppSurfaceManifest | undefined {
   return surfacesByNavSegment.get(segment);
 }
@@ -864,7 +870,7 @@ export function listHostedBlockedNavSegments(): string[] {
  */
 export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   const surfaces = listAppSurfaces().filter(
-    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked)
+    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked),
   );
   return [
     "## The MCPJam inspector, screen by screen",
@@ -880,7 +886,7 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
         `### ${s.title} (${s.navSegments[0]})`,
         s.purpose,
         ...s.userActivities.map((a) => `- ${a}`),
-      ].join("\n")
+      ].join("\n"),
     ),
   ].join("\n");
 }

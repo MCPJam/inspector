@@ -1,0 +1,291 @@
+/**
+ * The store's hosted behaviour: a different base path, a different transport
+ * for events, and an invocation identity the CLIENT owns.
+ *
+ * Its own file because `isHostedMode()` is read once at module load — the mode
+ * is a build constant and cannot change under a running tab, so the two modes
+ * cannot share a module instance.
+ */
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+vi.mock("@/lib/apis/mode-client", () => ({ isHostedMode: () => true }));
+
+const fetches = vi.hoisted(() => ({
+  calls: [] as Array<{ url: string; init?: RequestInit }>,
+  /** url → response, consulted in order of insertion. */
+  handlers: [] as Array<{
+    match: (url: string) => boolean;
+    respond: (url: string, init?: RequestInit) => Response;
+  }>,
+}));
+
+vi.mock("@/lib/session-token", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/session-token")>();
+  return {
+    ...actual,
+    authFetch: vi.fn(async (url: string, init?: RequestInit) => {
+      fetches.calls.push({ url, init });
+      const handler = fetches.handlers.find((h) => h.match(url));
+      if (handler) return handler.respond(url, init);
+      return new Response(JSON.stringify({}), { status: 200 });
+    }),
+  };
+});
+
+import { useWebmcpInspectorStore } from "../webmcp-inspector-store";
+import type { WebMcpSessionPublic } from "@/shared/webmcp-inspector-protocol";
+
+const SESSION: WebMcpSessionPublic = {
+  sessionId: "hosted:proj-1:comp-1",
+  status: "ready",
+  url: "https://shop.test/",
+  createdAt: 0,
+  expiresAt: 0,
+  hardExpiresAt: 0,
+  viewportTransport: { kind: "remote-interactive-url", url: "" },
+  protocolVersion: 1,
+};
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** A never-ending SSE body, so `connect` does not immediately reconnect. */
+function openStream(): Response {
+  return new Response(new ReadableStream({ start() {} }), {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+beforeEach(() => {
+  fetches.calls.length = 0;
+  fetches.handlers.length = 0;
+  fetches.handlers.push({
+    match: (url) => url.includes("/events"),
+    respond: () => openStream(),
+  });
+  useWebmcpInspectorStore.setState({
+    session: undefined,
+    tools: [],
+    pending: [],
+    activity: [],
+    error: undefined,
+  });
+});
+
+describe("hosted store — where it talks", () => {
+  it("uses the hosted mount, not the local-only /api/mcp family", async () => {
+    // `/api/mcp/*` is 410'd on a hosted replica, so the local base path would
+    // fail every call with a message about a feature not being supported.
+    await useWebmcpInspectorStore.getState().sendCommand({
+      type: "capture_screenshot",
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    await useWebmcpInspectorStore
+      .getState()
+      .sendCommand({ type: "capture_screenshot" });
+
+    const commandCall = fetches.calls.find((c) => c.url.includes("/command"));
+    expect(commandCall?.url).toContain("/api/web/webmcp/");
+    expect(commandCall?.url).not.toContain("/api/mcp/");
+  });
+
+  it("sends the events stream through authFetch rather than EventSource", async () => {
+    // `EventSource` cannot set headers, and hosted auth is a bearer. The
+    // local query-string token means nothing here.
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    // `reconnect()` is the public entry to the stream; `connect` is internal.
+    useWebmcpInspectorStore.getState().reconnect();
+    await vi.waitFor(() =>
+      expect(fetches.calls.some((c) => c.url.includes("/events"))).toBe(true),
+    );
+    const stream = fetches.calls.find((c) => c.url.includes("/events"))!;
+    expect(stream.url).toContain("/api/web/webmcp/");
+    expect(stream.url).not.toContain("token=");
+  });
+});
+
+describe("hosted store — one identity per invocation", () => {
+  it("mints the invokeId itself and sends it", async () => {
+    // A server-issued id cannot survive a retry: the retry would get a new
+    // one, and the daemon would run a side-effecting page tool twice.
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/command"),
+      respond: () => json({ ok: true, invokeId: "ignored" }),
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    await useWebmcpInspectorStore
+      .getState()
+      .invokeTool("origin::pay", { amount: 1 });
+
+    const call = fetches.calls.find((c) => c.url.includes("/command"))!;
+    const body = JSON.parse(String(call.init?.body));
+    expect(body.invokeId).toEqual(expect.any(String));
+    expect(body.invokeId.length).toBeGreaterThan(8);
+  });
+
+  it("takes the inline outcome as authoritative", async () => {
+    // The event stream carrying the settle may be attached to a different
+    // replica than the one that ran the tool, so hosted answers inline.
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/command"),
+      respond: () =>
+        json({
+          ok: true,
+          invokeId: "inv-1",
+          outcome: { state: "succeeded", output: { ok: true } },
+        }),
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    const result = await useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult("origin::pay", {});
+    expect(result).toMatchObject({ state: "succeeded" });
+  });
+
+  it("surfaces an `unknown` outcome as itself, not as a failure", async () => {
+    // It RAN. Reporting "failed" would tell someone their payment did not go
+    // through when it may well have.
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/command"),
+      respond: () =>
+        json({
+          ok: true,
+          invokeId: "inv-2",
+          outcome: { state: "unknown", error: "outcome not knowable" },
+        }),
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    const result = await useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult("origin::pay", {});
+    expect(result.state).toBe("unknown");
+  });
+
+  it("reuses the SAME id when the caller retries the same invocation", async () => {
+    const seen: string[] = [];
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/command"),
+      respond: (_url, init) => {
+        seen.push(JSON.parse(String(init?.body)).invokeId);
+        return json({
+          ok: true,
+          invokeId: "x",
+          outcome: { state: "succeeded" },
+        });
+      },
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    // Two DISTINCT invocations get distinct ids — the id identifies a call,
+    // not a tool.
+    await useWebmcpInspectorStore.getState().invokeToolForResult("t", {});
+    await useWebmcpInspectorStore.getState().invokeToolForResult("t", {});
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toBe(seen[1]);
+  });
+});
+
+describe("hosted store — a detached session is not a dead one", () => {
+  it("re-fetches the session instead of tearing it down", async () => {
+    // `detached` means this replica let go of a browser that is still running
+    // on the member's computer, and any replica can pick it up again.
+    // Treating it like `closed` would tell someone their live browser had
+    // ended and drop a timeline they can still add to.
+    let push: ((chunk: string) => void) | undefined;
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/events"),
+      respond: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              push = (chunk) => controller.enqueue(encoder.encode(chunk));
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+    fetches.handlers.unshift({
+      match: (url) =>
+        /\/sessions\/[^/]+(\?|$)/.test(url) && !url.includes("/events"),
+      respond: () =>
+        json({
+          session: { ...SESSION, url: "https://shop.test/cart" },
+          tools: [{ toolKey: "origin::checkout", name: "checkout" }],
+        }),
+    });
+
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    // `reconnect()` is the public entry to the stream; `connect` is internal.
+    useWebmcpInspectorStore.getState().reconnect();
+    await vi.waitFor(() => expect(push).toBeDefined());
+
+    push!(
+      `data: ${JSON.stringify({
+        type: "session",
+        seq: 9,
+        session: { ...SESSION, status: "detached" },
+      })}\n\n`,
+    );
+
+    await vi.waitFor(() => {
+      const state = useWebmcpInspectorStore.getState();
+      // Recovered, and NOT reported as an error or cleared away.
+      expect(state.session?.status).toBe("ready");
+      expect(state.session?.url).toBe("https://shop.test/cart");
+      expect(state.tools).toHaveLength(1);
+      expect(state.error).toBeUndefined();
+    });
+  });
+
+  it("reports a refusal when the session cannot be picked back up", async () => {
+    // An asleep computer is the interesting one: recoverable, but only by
+    // starting it again, which a view must not do on its own.
+    let push: ((chunk: string) => void) | undefined;
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/events"),
+      respond: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              push = (chunk) => controller.enqueue(encoder.encode(chunk));
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+    fetches.handlers.unshift({
+      match: (url) =>
+        /\/sessions\/[^/]+(\?|$)/.test(url) && !url.includes("/events"),
+      respond: () =>
+        json(
+          { error: "Your computer is asleep.", code: "hosted-desktop-asleep" },
+          409,
+        ),
+    });
+
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    // `reconnect()` is the public entry to the stream; `connect` is internal.
+    useWebmcpInspectorStore.getState().reconnect();
+    await vi.waitFor(() => expect(push).toBeDefined());
+
+    push!(
+      `data: ${JSON.stringify({
+        type: "session",
+        seq: 9,
+        session: { ...SESSION, status: "detached" },
+      })}\n\n`,
+    );
+
+    await vi.waitFor(() => {
+      expect(useWebmcpInspectorStore.getState().error?.code).toBe(
+        "hosted-desktop-asleep",
+      );
+    });
+  });
+});
