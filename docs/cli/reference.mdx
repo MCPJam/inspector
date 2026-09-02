@@ -752,10 +752,27 @@ Promote an ad-hoc environment to a named one **in place** — the same id every 
 
 ### What can be pinned
 
-Both pin fields are narrower than they look:
+The pin fields are narrower than they look:
 
 - **`skillSelection`** accepts project-shared skills only. Personal skills, skills with supporting files or extra frontmatter, and plugin-component skills are all rejected.
 - **`pluginVersionIds`** accepts a plugin version only when its plugin is installed and enabled, the version is `ready`, at most one version per plugin is pinned, and none of the version's skills carry supporting files.
+- **`secretSelection`** is a GRANT, not a pin: the environment is the boundary, so a run receives the secrets it lists and nothing else. There is no "all of them" mode, an empty list is rejected (revoke with `"secretSelection": null` on update), and a `sharing: "user"` secret still reaches only sessions its owner started.
+
+### Deployment support for model overrides and secret grants
+
+<Note>
+  `--model` / `"modelId"` and `--secret` / `"secretSelection"` are answered by
+  the deployment, not by your account: a self-hosted or older MCPJam whose
+  environment surface predates a field rejects it outright. The CLI asks first
+  — `GET /projects/:id/environments/capabilities` reports `modelOverrides` and
+  `secretGrants` — and refuses with **"This MCPJam deployment does not support
+  environment model overrides / secret grants"** rather than letting the field
+  die in a validator. Absence reads as a no, so a deployment too old to answer
+  the probe at all is treated as not supporting either.
+
+  Every other flag on these commands works regardless; only the calls that
+  actually carry a model or a grant are checked.
+</Note>
 
 ---
 
@@ -1189,6 +1206,12 @@ naming a saved environment, refined by `--compose-computer`, `--compose-model`,
 `--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
 content-addressed environment (the same one `environments ensure-adhoc`
 produces), so composing the same stack twice reuses one environment.
+
+`--compose-model` and `--compose-secret` carry the deployment requirement
+described under [Deployment support for model overrides and secret
+grants](#deployment-support-for-model-overrides-and-secret-grants): a launch that names
+either is refused before it composes anything if this deployment does not
+publish the capability.
 
 <Warning>
   **This edits the suite.** The composed environment is appended to the suite's

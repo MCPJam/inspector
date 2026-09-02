@@ -18,12 +18,20 @@ classifier sees it: a 400 carrying the backend's own message, with its code in
 `details.code`. Codes the shared translator already knows keep their canonical
 status, so a plan cap is still a 429 and a stale precondition still a 409.
 
-The gate is `{ code, message }` both being non-empty strings on the error's
+The gate is `{ code, message }` both being non-blank strings on the error's
 `data`, and that is the whole safety argument: a `ConvexError` is not an
 accident, a `code` is a contract someone wrote down, and a `message` is prose
 written for the caller. Nothing reads `error.message`, so an unstructured
 throw — a `TypeError`, a dead socket, a validator rejection whose text names
 our internals — keeps the opaque 500 and the on-call page it had before.
+
+The unknown-code branch runs behind every canonical code mapping and ahead of
+the translator's prose sniffing. Those patterns test `error.message`, which for
+a `ConvexError` is Convex's framing wrapped around the JSON of its data — the
+backend's own sentence included — so a refusal whose remedy reads "not found"
+would otherwise be answered as a 404 with a generic noun, losing both the
+message and the code. It is also logged (to Axiom, not Sentry), so a code that
+deserves its own status is still discoverable once it stops reaching the 500.
 
 **A composed stack has a credential axis.** `secretSelection` reached the named
 environment operations and stopped there: the compose schemas and resolver
@@ -40,6 +48,10 @@ all — it had to be given a named environment. Both compose surfaces now take
 `PlatformEnvironmentCapabilities.secretGrants` joins `modelOverrides` and
 `skillVersionPins`, and the CLI probes it before a grant-bearing write — the
 same preflight `modelId` has always had, spent only by the calls that carry a
-grant. Note the ordering this implies: a deployment that supports secret grants
-but does not yet publish the flag reads as "unsupported", so the backend half
-publishes `secretGrants` first.
+grant. A composed LAUNCH is covered too, in the SDK's compose policy beside the
+model-override refusal, so the CLI, the remote MCP surface and the in-app agent
+all get the same answer; it costs no round trip, because the compose path
+already reads that capability route before it mints anything. Note the ordering
+this implies: a deployment that supports secret grants but does not yet publish
+the flag reads as "unsupported", so the backend half publishes `secretGrants`
+first.
