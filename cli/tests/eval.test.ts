@@ -267,6 +267,15 @@ const INCONCLUSIVE_DECISION_SUMMARY = INCONCLUSIVE_CORPUS_CASE.expected;
  * about, and the one whose request body must stay byte-identical.
  */
 interface EvalFixtureOptions {
+  /**
+   * Publish `secretGrants: true` from the environment-capabilities route.
+   *
+   * Absent is the DEFAULT and it is the interesting case: a deployment that
+   * predates credential grants does not publish the flag at all, and the CLI
+   * must refuse a grant with a sentence rather than let it die in a backend
+   * validator.
+   */
+  environmentSecretGrants?: boolean;
   suiteDetail?: {
     environmentIds?: string[];
     hosts?: Array<{ id: string; name: string }>;
@@ -510,6 +519,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           modelOverrides: true,
           modelMatrix: true,
           ephemeralEnvironmentLaunch: true,
+          ...(options.environmentSecretGrants ? { secretGrants: true } : {}),
         })
       );
       return;
@@ -6048,6 +6058,130 @@ test("eval run --compose-secret still needs --compose-host", async () => {
     assert.notEqual(run.result.exitCode, 0);
     assert.match(run.stderr, /--compose-\* flags need --compose-host/);
     assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The version-skew probe for credential grants.
+ *
+ * `secretSelection` is a field an older deployment has never heard of, and an
+ * unknown argument dies in a Convex validator with a message that names
+ * neither the field nor a remedy. `modelId` has had a capability probe since
+ * it shipped; this is the same probe for the same reason, and the refusal is
+ * the half worth pinning — it is the behaviour a user meets.
+ */
+test("environments ensure-adhoc --secret refuses a deployment that cannot grant", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "environments",
+          "ensure-adhoc",
+          "--project",
+          "proj-alpha",
+          "--host",
+          "Claude Code",
+          "--secret",
+          "secret-vercel-token",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support environment secret grants/);
+    // Refused BEFORE the write: nothing was composed against a backend that
+    // would have dropped or rejected the grant.
+    assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("environments ensure-adhoc --secret sends the grant when the deployment publishes the flag", async () => {
+  const fixture = await startEvalFixture({ environmentSecretGrants: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "environments",
+          "ensure-adhoc",
+          "--project",
+          "proj-alpha",
+          "--host",
+          "Claude Code",
+          "--secret",
+          "secret-vercel-token",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      secretSelection: {
+        mode: "explicit",
+        secretIds: ["secret-vercel-token"],
+      },
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("environments ensure-adhoc pays for no preflight when it sends no grant", async () => {
+  // The probe costs a round trip, so it must only be spent by the calls that
+  // need it — the same rule the model-override probe follows.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "environments",
+          "ensure-adhoc",
+          "--project",
+          "proj-alpha",
+          "--host",
+          "Claude Code",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(
+      fixture.requests.filter((path) => path.endsWith("/capabilities")).length,
+      0
+    );
   } finally {
     await fixture.close();
   }

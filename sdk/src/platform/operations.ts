@@ -9074,7 +9074,7 @@ export const getEnvironmentCapabilitiesOperation: PlatformOperation<
   name: "get_project_environment_capabilities",
   title: "Check what an MCPJam deployment's environment surface supports",
   description:
-    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
+    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override or a secret grant: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",

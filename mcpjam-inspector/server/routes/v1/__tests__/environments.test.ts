@@ -683,6 +683,42 @@ describe("v1 project environment routes", () => {
       expect(await res.json()).toMatchObject({ skillVersionPins: false });
     });
 
+    it("reports secretGrants when the backend accepts a credential grant", async () => {
+      mockQuery({
+        "projectEnvironments:getCapabilities": {
+          modelOverrides: true,
+          modelMatrix: true,
+          secretGrants: true,
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities",
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ secretGrants: true });
+    });
+
+    it("reports secretGrants false when the backend predates secret grants", async () => {
+      // The skew this flag exists for: `secretSelection` reaches a backend
+      // that has never heard of it and dies in a validator, with a message
+      // that names neither the field nor the remedy. Absent reads FALSE, so a
+      // client that probes gets a usable answer rather than undefined.
+      mockQuery({
+        "projectEnvironments:getCapabilities": {
+          modelOverrides: true,
+          modelMatrix: true,
+          skillVersionPins: true,
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/capabilities",
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ secretGrants: false });
+    });
+
     it("answers false — not an error — when the deployment is too OLD", async () => {
       // ABSENCE IS THE SIGNAL. An older deployment does not export the query;
       // a 500 here would break clients that are perfectly able to fall back.

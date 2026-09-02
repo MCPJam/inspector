@@ -19389,6 +19389,10 @@
           "skillVersionPins": {
             "type": "boolean",
             "description": "`skillSelection.versionPins` and `serverSkillSelection.versionPins` are accepted, and a pinned revision survives into run snapshots. Absent or false on older backends, which reject the unknown field outright — probe this before offering a version picker."
+          },
+          "secretGrants": {
+            "type": "boolean",
+            "description": "`secretSelection` is accepted on environment create, update and ensure-adhoc, so an environment can carry a credential grant. Absent or false on older backends, which reject the unknown field with a validator error naming nothing — probe this before sending a grant."
           }
         }
       },
