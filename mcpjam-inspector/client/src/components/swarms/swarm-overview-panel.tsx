@@ -23,7 +23,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, usePaginatedQuery } from "convex/react";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   Select,
@@ -525,7 +525,7 @@ function SwarmOverviewPanelBody({
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-4 px-6 py-5">
+      <div className="flex flex-col gap-2 px-6 py-3">
         {waves.length === 0 ? (
           <NoRunsEmptyState />
         ) : (
@@ -618,7 +618,7 @@ function GoalTrendStrip({
 
 // ── swarm runs list ─────────────────────────────────────────────────────────
 
-/** Shared with row buttons so Env / Client / Model / Score line up. */
+/** Shared with row buttons so Env / Client / Model line up. */
 const SWARM_RUN_ROW_PAD = "flex w-full items-center gap-3 px-4";
 
 /**
@@ -705,7 +705,6 @@ function SwarmRunsList({
 }) {
   const [clientFilter, setClientFilter] = useState<string | null>(null);
   const [envFilter, setEnvFilter] = useState<string | null>(null);
-  const [sort, setSort] = useState<SwarmRunsSort>("newest");
 
   const clientOptions = useMemo(() => {
     const names = new Set<string>();
@@ -745,9 +744,9 @@ function SwarmRunsList({
       filterAndSortSwarmWaves(waves, {
         clientFilter,
         envFilter: environmentsEnabled ? envFilter : null,
-        sort,
+        sort: "newest",
       }),
-    [waves, clientFilter, envFilter, environmentsEnabled, sort]
+    [waves, clientFilter, envFilter, environmentsEnabled]
   );
 
   const showEnvFilter = environmentsEnabled && envOptions.length > 0;
@@ -755,7 +754,7 @@ function SwarmRunsList({
 
   return (
     <section data-testid="swarm-overview-runs">
-      {/* One inline header: Env/Client filters + Score sort in column slots. */}
+      {/* One inline header: Env / Client filters + Model in column slots. */}
       <header
         className="mb-2 rounded-lg border border-transparent"
         data-testid="swarm-overview-filters"
@@ -825,23 +824,6 @@ function SwarmRunsList({
               Model
             </SwarmColumnLabel>
           </div>
-          <div className="flex w-20 shrink-0 justify-end">
-            <SwarmInlineSelect
-              value={sort}
-              onValueChange={(value) => {
-                if (value === "newest" || value === "lowest-score") {
-                  setSort(value);
-                }
-              }}
-              ariaLabel="Sort swarm runs"
-              testId="swarm-overview-sort"
-              triggerLabel={sort === "lowest-score" ? "Lowest" : "Score"}
-            >
-              <SelectItem value="newest">Newest</SelectItem>
-              <SelectItem value="lowest-score">Lowest score</SelectItem>
-            </SwarmInlineSelect>
-          </div>
-          <span className="size-4 shrink-0" aria-hidden />
         </div>
       </header>
 
@@ -877,7 +859,6 @@ function SwarmWaveRow({
   onOpen: () => void;
   environmentsEnabled: boolean;
 }) {
-  const rate = waveScoreRate(wave.runs);
   const title = swarmWaveTitle(wave);
   const sessions = waveSessionTotals(wave.runs);
   const findingCount = wave.runs.reduce((n, run) => n + run.findings.length, 0);
@@ -955,13 +936,6 @@ function SwarmWaveRow({
         >
           {modelLabel}
         </span>
-        <span
-          className="w-20 shrink-0 text-right text-sm font-semibold tabular-nums"
-          data-testid="swarm-overview-run-score"
-        >
-          {rate != null ? formatPercent(rate) : "—"}
-        </span>
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
       </button>
     </li>
   );

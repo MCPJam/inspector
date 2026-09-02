@@ -11,7 +11,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
   SelectContent,
@@ -26,7 +25,6 @@ import {
   SwarmSessionsGroupCount,
 } from "@/components/swarms/SwarmSessionsGroupedList";
 import { SwarmSessionsMetricStrip } from "@/components/swarms/swarm-sessions-metric-strip";
-import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   DEFAULT_PAGE_SIZE,
@@ -40,13 +38,6 @@ import {
 type SessionsGroupBy = "session" | "run" | "goal";
 import { buildSwarmSessionPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
-
-/**
- * How many extra pages the deep-link walk may pull looking for its target.
- * The flat project feed is unbounded, so this is what stops a link naming a
- * session outside this list (or one that no longer exists) from paging forever.
- */
-const MAX_DEEP_LINK_PAGE_PULLS = 10;
 
 export function SwarmsSessionsPanel({
   projectId,
@@ -107,7 +98,7 @@ export function SwarmsSessionsPanel({
 
   // Host / run-id filters — client-side over the loaded pages (there is no
   // per-host backend query; the persona filter stays server-side as before).
-  // "Load more" keeps paginating the unfiltered list.
+  // Remaining pages keep arriving as each one lands.
   const allRows = useMemo(
     () =>
       runIdSet
@@ -161,17 +152,13 @@ export function SwarmsSessionsPanel({
     }
   }, [hostFilter, rows, selectedThreadId]);
 
-  // Apply deep-link once the matching row appears (may need Load more).
+  // Apply deep-link once the matching row appears. Later pages keep arriving
+  // on their own, so a target past the first page still applies when it lands.
   const appliedInitialRef = useRef(false);
-  const initialPagesPulledRef = useRef(0);
-  // A NEW target (an Overview finding drilling into a second session while the
-  // panel stays mounted) re-arms both the claim and the page budget — without
-  // this the walk below would be spent and the second link would never apply.
   const prevInitialThreadRef = useRef(initialThreadId);
   if (prevInitialThreadRef.current !== initialThreadId) {
     prevInitialThreadRef.current = initialThreadId;
     appliedInitialRef.current = false;
-    initialPagesPulledRef.current = 0;
   }
   useEffect(() => {
     if (appliedInitialRef.current || !initialThreadId) return;
@@ -181,24 +168,12 @@ export function SwarmsSessionsPanel({
     }
   }, [initialThreadId, rows]);
 
-  // The effect above only searches LOADED rows, so a target past the first
-  // page never applies and the viewer lands on a session list that ignored
-  // their click. Pull pages until it turns up or the budget runs out — same
-  // shape as the run-detail deep-link walk in `run-sessions-context.tsx`.
-  //
-  // BOUNDED on purpose: the project feed is unbounded, so an unlimited walk
-  // over a large project would page forever for a session that (after a host
-  // filter, say) is not in this list at all.
+  // Walk the rest of the feed as each page lands. Convex flips the status to
+  // LoadingMore on every call, so this is one page at a time — not a click,
+  // and not every remaining row in one request.
   useEffect(() => {
-    if (appliedInitialRef.current || !initialThreadId) return;
-    if (status !== "CanLoadMore") return;
-    if (initialPagesPulledRef.current >= MAX_DEEP_LINK_PAGE_PULLS) return;
-    initialPagesPulledRef.current += 1;
-    loadMore(DEFAULT_PAGE_SIZE);
-    // `rows` is a dependency so each landed page re-evaluates: the effect above
-    // runs first on that commit and sets the applied ref when the target is
-    // present, which stops the walk without an extra query.
-  }, [initialThreadId, rows, status, loadMore]);
+    if (status === "CanLoadMore") loadMore(DEFAULT_PAGE_SIZE);
+  }, [status, loadMore]);
 
   const threads = useMemo(
     () => rows.map((r) => journeySessionRowToThread(r, personaName)),
@@ -210,7 +185,8 @@ export function SwarmsSessionsPanel({
   );
   const runGroups = useMemo(() => groupSwarmSessionsByRun(rows), [rows]);
   const goalGroups = useMemo(() => groupSwarmSessionsByGoal(rows), [rows]);
-  const canLoadMore = status === "CanLoadMore";
+  const canLoadMore =
+    status === "CanLoadMore" || status === "LoadingMore";
   const isGrouped = groupBy === "run" || groupBy === "goal";
 
   const selectedRow = useMemo(
@@ -246,7 +222,7 @@ export function SwarmsSessionsPanel({
       className="flex h-full min-h-0 flex-col"
       data-testid="swarms-sessions-panel"
     >
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-4 py-2.5">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border/40 px-4 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           {status === "LoadingFirstPage" ? (
             <p className="shrink-0 truncate text-xs text-muted-foreground">
@@ -343,19 +319,6 @@ export function SwarmsSessionsPanel({
             </Select>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          {status === "CanLoadMore" ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="rounded-xl"
-              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-            >
-              Load more
-            </Button>
-          ) : null}
-        </div>
       </div>
 
       <div className="shrink-0 px-4 pt-3">
@@ -366,24 +329,6 @@ export function SwarmsSessionsPanel({
           />
         </ErrorBoundary>
       </div>
-
-      {/* D8: one funnel PER RUN, never one folded across runs — two runs
-          against different hosts have different denominators and a combined
-          bar would describe neither. Rendered only on the run-scoped mount:
-          without `journeyRunIds` this panel is project-wide, which is not a
-          population any single funnel can honestly describe. */}
-      {/* The spacing rides on the component rather than on a wrapper here:
-          `runIdSet` is an empty-but-TRUTHY Set when the caller passes an empty
-          list, and a wrapper would then reserve `pt-3` of blank band above the
-          session list for a funnel that never appears. Owning its own class
-          means the component that decides whether to render anything also
-          decides whether anything takes up space. */}
-      {runIdSet ? (
-        <SwarmRunStageFunnelPanels
-          journeyRunIds={[...runIdSet]}
-          className="shrink-0 space-y-2 px-4 pt-3"
-        />
-      ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">

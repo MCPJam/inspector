@@ -535,30 +535,17 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
     ).toHaveAttribute("title", "—");
   });
 
-  it("scores a wave from the aggregate graded rollup across its journeys", async () => {
+  it("does not render a score column on the list", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
-
-    // Latest wave: (4+3)/(4+6) = 70%.
-    expect(
-      within(waveRow("run-2b")).getByTestId("swarm-overview-run-score")
-        .textContent
-    ).toBe("70%");
-    // run-1 wave: 4 of 10.
-    expect(
-      within(waveRow("run-1")).getByTestId("swarm-overview-run-score")
-        .textContent
-    ).toBe("40%");
-    expect(
-      within(waveRow("run-old")).getByTestId("swarm-overview-run-score")
-        .textContent
-    ).toBe("—");
+    expect(screen.queryByTestId("swarm-overview-run-score")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-sort")).toBeNull();
+    expect(document.querySelector(".lucide-chevron-right")).toBeNull();
   });
 
-  it("renders the filter / sort toolbar", async () => {
+  it("renders the filter toolbar", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-filters");
-    expect(screen.getByTestId("swarm-overview-sort")).toBeTruthy();
     expect(screen.getByTestId("swarm-overview-client-filter")).toBeTruthy();
     expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
   });
@@ -567,8 +554,8 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
    * Asserted on classes rather than pixels because the regression is invisible
    * to jsdom layout: the filtering headers kept `SelectTrigger`'s
    * `dark:bg-input/30` (tailwind-merge won't drop it for an unprefixed
-   * `bg-transparent`), so in dark mode Client and Score sat in form-field
-   * boxes while the inert Model label stayed flat.
+   * `bg-transparent`), so in dark mode Client sat in a form-field box while
+   * the inert Model label stayed flat.
    */
   it("gives every column header the same ghost treatment, dark mode included", async () => {
     renderTab();
@@ -578,7 +565,6 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
       screen.getByTestId("swarm-overview-env-filter"),
       screen.getByTestId("swarm-overview-client-filter"),
       screen.getByTestId("swarm-overview-model-label"),
-      screen.getByTestId("swarm-overview-sort"),
     ];
 
     for (const header of headers) {
@@ -928,57 +914,30 @@ describe("Overview — empty and loading states", () => {
   });
 });
 
-describe("Swarm header body copy", () => {
-  // BB-120: the line explains what a swarm buys you, so it has to survive the
-  // page having data — it is not part of the empty state.
+describe("Swarm header chrome", () => {
   const SUBTITLE =
     "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
 
-  it("shows the body copy on the empty state", async () => {
+  it("keeps tabs inline and drops the subtitle on the empty state", async () => {
     personasData = [];
     renderTab();
     await screen.findByTestId("swarms-empty-hero");
-    expect(screen.getByText(SUBTITLE)).toBeTruthy();
+    const header = screen.getByTestId("swarms-tab-header-chrome");
+    const title = within(header).getByRole("heading", { name: "Swarm" });
+    const row = title.closest("div.flex.items-center.justify-between");
+    expect(row?.contains(within(header).getByRole("button", { name: "Overview" }))).toBe(
+      true,
+    );
+    expect(screen.queryByText(SUBTITLE)).toBeNull();
   });
 
-  it("still shows it once the project has personas and runs", async () => {
+  it("keeps that chrome once the project has personas and runs", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
     expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
-    expect(screen.getByText(SUBTITLE)).toBeTruthy();
-  });
-});
-
-describe("Swarm header body copy — per tab", () => {
-  // Personas is a library of reusable personas, not a run surface, so the swarm
-  // pitch says nothing about it (BB-123).
-  const SWARM_PITCH =
-    "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
-  const PERSONAS_LINE = "The library of user personas you send into swarms.";
-
-  const switchTo = (label: RegExp) => {
-    const nav = screen.getByLabelText("Swarm view");
-    fireEvent.click(within(nav).getByRole("button", { name: label }));
-  };
-
-  it("swaps the line on the Personas tab", async () => {
-    renderTab();
-    await screen.findByTestId("swarms-tab-header-chrome");
-    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
-
-    switchTo(/personas/i);
-
-    expect(screen.getByText(PERSONAS_LINE)).toBeVisible();
-    expect(screen.queryByText(SWARM_PITCH)).not.toBeInTheDocument();
-  });
-
-  it("keeps the swarm pitch on Sessions", async () => {
-    renderTab();
-    await screen.findByTestId("swarms-tab-header-chrome");
-
-    switchTo(/sessions/i);
-
-    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
-    expect(screen.queryByText(PERSONAS_LINE)).not.toBeInTheDocument();
+    expect(screen.queryByText(SUBTITLE)).toBeNull();
+    expect(
+      screen.queryByText("The library of user personas you send into swarms."),
+    ).toBeNull();
   });
 });

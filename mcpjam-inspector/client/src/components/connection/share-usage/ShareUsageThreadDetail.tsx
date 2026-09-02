@@ -30,7 +30,6 @@ import {
   useSessionBrowserArtifacts,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
-import { SessionUserValueChain } from "@/components/shared/user-value-chain/SessionUserValueChain";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import {
@@ -50,9 +49,24 @@ const EMPTY_SPANS: EvalTraceSpan[] = [];
  * Goal-completion judge section for SWARM sessions — auto-runs on open when
  * no verdict exists yet. States: pending/running → judging placeholder;
  * completed → shared JudgeVerdictCard + Re-judge; failed → "Judge unavailable"
- * + Retry. Calls `requestSwarmSessionJudge` (sessionId only) and refreshes
- * via the reactive thread subscription.
+ * + Retry. A session that is not yet gradeable (no succeeded attempt) is a
+ * skip, not a failure: no toast, no stuck spinner. Calls
+ * `requestSwarmSessionJudge` (sessionId only) and refreshes via the reactive
+ * thread subscription.
  */
+export function isNotGradeableSwarmSessionError(err: unknown): boolean {
+  const data =
+    err && typeof err === "object" && "data" in err
+      ? (err as { data?: unknown }).data
+      : undefined;
+  const fromData = typeof data === "string" ? data : "";
+  const fromMessage = err instanceof Error ? err.message : "";
+  return (
+    fromData.includes("not a gradeable swarm session") ||
+    fromMessage.includes("not a gradeable swarm session")
+  );
+}
+
 export function SwarmJudgeSection({
   threadId,
   goalScore,
@@ -64,33 +78,51 @@ export function SwarmJudgeSection({
     "swarmJudge:requestSwarmSessionJudge" as never
   ) as unknown as (args: { sessionId: string }) => Promise<unknown>;
   const [requesting, setRequesting] = useState(false);
+  const [notGradeable, setNotGradeable] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const autoAttemptedRef = useRef(false);
 
-  const rerun = useCallback(async () => {
-    setRequesting(true);
-    try {
-      await requestJudge({ sessionId: threadId });
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to run the judge"
-      );
-    } finally {
-      setRequesting(false);
-    }
-  }, [requestJudge, threadId]);
+  const rerun = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      setRequesting(true);
+      setRequestError(null);
+      try {
+        const result = await requestJudge({ sessionId: threadId });
+        // Current backend returns null for an honest skip. Older deploys
+        // still throw; both mean the same thing.
+        setNotGradeable(result == null);
+      } catch (err) {
+        if (isNotGradeableSwarmSessionError(err)) {
+          setNotGradeable(true);
+          return;
+        }
+        setNotGradeable(false);
+        const message =
+          err instanceof Error ? err.message : "Failed to run the judge";
+        setRequestError(message);
+        if (!silent) {
+          toast.error(message);
+        }
+      } finally {
+        setRequesting(false);
+      }
+    },
+    [requestJudge, threadId]
+  );
 
   useEffect(() => {
     autoAttemptedRef.current = false;
+    setNotGradeable(false);
+    setRequestError(null);
   }, [threadId]);
 
   useEffect(() => {
     if (goalScore || autoAttemptedRef.current) return;
     autoAttemptedRef.current = true;
-    void rerun();
+    void rerun({ silent: true });
   }, [goalScore, rerun]);
 
-  const judging =
-    requesting || goalScore?.status === "running" || !goalScore;
+  const judging = requesting || goalScore?.status === "running";
 
   return (
     <div className="shrink-0 space-y-1.5 px-4 pt-2">
@@ -99,7 +131,48 @@ export function SwarmJudgeSection({
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
           Judging against the journey goal…
         </div>
-      ) : goalScore.status === "completed" &&
+      ) : !goalScore && notGradeable ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
+          <Gavel className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1">
+            Not ready to judge — this session has no succeeded attempt yet.
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+          >
+            <RotateCcw className="mr-1.5 size-3.5" />
+            Retry
+          </Button>
+        </div>
+      ) : !goalScore && requestError ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
+          <Gavel
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <span className="font-medium uppercase tracking-wide text-muted-foreground">
+            Judge unavailable
+          </span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+            {requestError}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+          >
+            <RotateCcw className="mr-1.5 size-3.5" />
+            Retry
+          </Button>
+        </div>
+      ) : goalScore &&
+        goalScore.status === "completed" &&
         typeof goalScore.score === "number" &&
         Number.isFinite(goalScore.score) &&
         typeof goalScore.passed === "boolean" ? (
@@ -126,7 +199,7 @@ export function SwarmJudgeSection({
             <RotateCcw className="size-3.5" />
           </Button>
         </div>
-      ) : goalScore.status === "failed" ? (
+      ) : goalScore?.status === "failed" ? (
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
           <Gavel
             className="size-3.5 shrink-0 text-muted-foreground"
@@ -469,12 +542,6 @@ export function ShareUsageThreadDetail({
     if (thread.sourceType === "swarm") {
       return (
         <div className="flex h-full flex-col">
-          {/* Same reasoning as the main body: a transcript-less attempt is
-              exactly where an unmeasured chain is the honest answer. */}
-          <SessionUserValueChain
-            derivation={thread.stageDerivation}
-            className="mx-3 mb-3"
-          />
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm text-muted-foreground">
@@ -623,15 +690,6 @@ export function ShareUsageThreadDetail({
           </div>
         </div>
       </div>
-
-      {/* D8: the chain EXPLAINS the outcome the surfaces above decided; it
-          never replaces one. Rendered unconditionally so a session with no
-          chain says "not measured" rather than vanishing — a panel that hides
-          itself when there is nothing reads as "nothing to report". */}
-      <SessionUserValueChain
-        derivation={thread.stageDerivation}
-        className="mx-3 mb-3"
-      />
 
       {/* Swarm-only: render before the first score exists so deployments with
           automatic judging disabled still expose the on-demand entry point. */}

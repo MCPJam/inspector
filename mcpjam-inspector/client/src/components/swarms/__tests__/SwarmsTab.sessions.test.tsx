@@ -93,6 +93,9 @@ const session = {
 // Capture every paginated-query dispatch so we can assert the session query's
 // arg NAME is `journeyRunId`.
 const paginatedCalls: Array<{ name: string; args: unknown }> = [];
+let projectSessionsStatus: "CanLoadMore" | "LoadingMore" | "Exhausted" =
+  "Exhausted";
+const projectSessionsLoadMore = vi.fn();
 
 vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
@@ -162,8 +165,8 @@ vi.mock("convex/react", () => ({
             firstMessagePreview: "hola",
           },
         ],
-        status: "Exhausted",
-        loadMore: vi.fn(),
+        status: projectSessionsStatus,
+        loadMore: projectSessionsLoadMore,
         isLoading: false,
       };
     }
@@ -227,6 +230,8 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   paginatedCalls.length = 0;
+  projectSessionsStatus = "Exhausted";
+  projectSessionsLoadMore.mockReset();
 });
 
 afterEach(() => {
@@ -421,6 +426,21 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 });
 
 describe("SwarmsTab — top-level Journeys view", () => {
+  it("pages the project feed automatically instead of asking for Load more", async () => {
+    projectSessionsStatus = "CanLoadMore";
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
+    openSessionsTab();
+
+    const panel = await screen.findByTestId("swarms-sessions-panel");
+    expect(
+      within(panel).queryByRole("button", { name: /load more/i })
+    ).toBeNull();
+    await waitFor(() => {
+      expect(projectSessionsLoadMore).toHaveBeenCalled();
+    });
+  });
+
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();

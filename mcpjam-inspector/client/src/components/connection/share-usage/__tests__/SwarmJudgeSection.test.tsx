@@ -43,7 +43,10 @@ vi.mock("@/components/scenarios/session-readiness", () => ({
   SessionInsightBar: () => null,
 }));
 
-import { SwarmJudgeSection } from "../ShareUsageThreadDetail";
+import {
+  isNotGradeableSwarmSessionError,
+  SwarmJudgeSection,
+} from "../ShareUsageThreadDetail";
 
 describe("SwarmJudgeSection", () => {
   afterEach(() => {
@@ -53,6 +56,13 @@ describe("SwarmJudgeSection", () => {
   });
 
   it("absent → auto-invokes the judge action on mount", async () => {
+    let resolveJudge: ((value: unknown) => void) | undefined;
+    requestJudgeMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveJudge = resolve;
+        })
+    );
     render(<SwarmJudgeSection threadId="session-1" />);
 
     await waitFor(() => {
@@ -62,6 +72,45 @@ describe("SwarmJudgeSection", () => {
       screen.getByText(/Judging against the journey goal/)
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /run judge/i })).not.toBeInTheDocument();
+    resolveJudge?.(null);
+  });
+
+  it("a null skip is not a failure — quiet copy, no toast, no stuck spinner", async () => {
+    requestJudgeMock.mockResolvedValueOnce(null);
+    render(<SwarmJudgeSection threadId="session-1" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Not ready to judge/)
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/Judging against the journey goal/)
+    ).not.toBeInTheDocument();
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("the legacy ConvexError skip is quiet too", async () => {
+    requestJudgeMock.mockRejectedValueOnce(
+      new Error("This session is not a gradeable swarm session")
+    );
+    render(<SwarmJudgeSection threadId="session-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Not ready to judge/)).toBeInTheDocument();
+    });
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("an unexpected auto-run error stays off the toast (silent) but is retryable", async () => {
+    requestJudgeMock.mockRejectedValueOnce(new Error("OPENROUTER_API_KEY"));
+    render(<SwarmJudgeSection threadId="session-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Judge unavailable")).toBeInTheDocument();
+    });
+    expect(screen.getByText("OPENROUTER_API_KEY")).toBeInTheDocument();
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it("completed → verdict card with score/reason + a Re-judge affordance", async () => {
@@ -125,6 +174,22 @@ describe("SwarmJudgeSection", () => {
       screen.getByText(/Judging against the journey goal/)
     ).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("isNotGradeableSwarmSessionError matches the Convex payload and the message", () => {
+    expect(
+      isNotGradeableSwarmSessionError(
+        new Error("This session is not a gradeable swarm session")
+      )
+    ).toBe(true);
+    expect(
+      isNotGradeableSwarmSessionError({
+        data: "This session is not a gradeable swarm session",
+      })
+    ).toBe(true);
+    expect(isNotGradeableSwarmSessionError(new Error("OPENROUTER"))).toBe(
+      false
+    );
   });
 
   it("a rerun failure surfaces a toast instead of throwing", async () => {
