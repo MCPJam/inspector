@@ -84,9 +84,9 @@ import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   canCommit,
+  committedSuiteSettingsValues,
   describeDraft,
   initSuiteSettingsDraft,
-  normalizeSuiteSettingsValues,
   readSuiteSettingsValues,
   suiteSettingsReducer,
 } from "./suite-settings-draft";
@@ -544,13 +544,14 @@ export function SuiteIterationsView({
         // Convex subscription has not delivered the new one yet. Rebasing onto
         // the stale snapshot would flash the old values back into the controls
         // and re-arm the unsaved-changes guard for edits already saved.
-        // NORMALIZED, because that is what the server stored: `toUpdateArgs`
-        // trims the name, so rebasing onto the raw draft would leave the
-        // person looking at their own whitespace until the subscription
-        // corrected it.
+        // What the save actually WROTE: the normalized form of the keys it
+        // carried, and the untouched keys exactly as they were. `toUpdateArgs`
+        // trims a dirty name, so rebasing onto the raw draft would leave the
+        // person looking at their own whitespace — and normalizing a name this
+        // save never sent would make the draft disagree with the database.
         dispatchDraft({
           type: "commitSucceeded",
-          live: normalizeSuiteSettingsValues(draft.current),
+          live: committedSuiteSettingsValues(draft),
         });
       } else if (outcome.status === "conflict") {
         // The draft SURVIVES. Throwing away someone's edits because a

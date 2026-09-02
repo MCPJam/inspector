@@ -230,6 +230,26 @@ export function normalizeSuiteSettingsValues(
 }
 
 /**
+ * What the draft should hold after a save, given what that save actually sent.
+ *
+ * Normalization applies ONLY to the dirty keys, because those are the only
+ * ones the mutation carried. A suite whose stored name happens to have
+ * surrounding whitespace, edited on some other row, must keep that name as the
+ * server still holds it — normalizing it here would make the draft disagree
+ * with the database about a field this save never touched.
+ */
+export function committedSuiteSettingsValues(
+  draft: SuiteSettingsDraft,
+): SuiteSettingsValues {
+  const normalized = normalizeSuiteSettingsValues(draft.current);
+  const out = { ...draft.current } as SuiteSettingsValues;
+  for (const key of dirtyKeys(draft)) {
+    (out as Record<string, unknown>)[key] = normalized[key];
+  }
+  return out;
+}
+
+/**
  * The mutation arguments for exactly the keys that changed.
  *
  * NULL SEMANTICS ARE PRESERVED EXACTLY as the per-control writers had them:

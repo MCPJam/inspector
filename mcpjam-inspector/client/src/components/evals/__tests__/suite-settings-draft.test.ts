@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   canCommit,
+  committedSuiteSettingsValues,
   describeChange,
   describeDraft,
   dirtyKeys,
@@ -269,14 +270,25 @@ describe("what is saved is what the draft then holds", () => {
     expect(normalizeSuiteSettingsValues(draft.current).name).toBe("Renamed");
   });
 
-  test("committing the normalized values leaves nothing dirty", () => {
+  test("committing the saved values leaves nothing dirty", () => {
     let draft = edit(draftOf(), "name", "  Renamed  ");
     draft = suiteSettingsReducer(draft, {
       type: "commitSucceeded",
-      live: normalizeSuiteSettingsValues(draft.current),
+      live: committedSuiteSettingsValues(draft),
     });
     expect(dirtyKeys(draft)).toEqual([]);
     expect(draft.current.name).toBe("Renamed");
+  });
+
+  test("a name this save never sent is left exactly as the server has it", () => {
+    // A stored name with surrounding whitespace, and an edit to some other
+    // row. `toUpdateArgs` omits `name`, so the server still holds the padded
+    // value — trimming it locally would make the draft disagree with the
+    // database about a field nobody touched.
+    const padded = draftOf({ name: "  Padded  " });
+    const draft = edit(padded, "minIterations", 7);
+    expect("name" in toUpdateArgs(draft, "s")).toBe(false);
+    expect(committedSuiteSettingsValues(draft).name).toBe("  Padded  ");
   });
 });
 
