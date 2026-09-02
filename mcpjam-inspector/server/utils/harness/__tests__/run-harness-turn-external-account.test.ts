@@ -538,6 +538,54 @@ describe("runHarnessTurn — external-account BROKERED credential", () => {
     expect(registryState.createHarness).not.toHaveBeenCalled();
   });
 
+  it("blames the REPLAY path, not the reader, when it cannot name the environment", async () => {
+    // A replay run inherits the source run's environmentRef on the backend, so
+    // its box may really carry the transform — this process just cannot read
+    // that ref back. Still refused (an unverifiable grant is not a grant), but
+    // the copy must not send the reader to change a correct configuration.
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        environmentId: undefined,
+        environmentUnresolvedReason:
+          "replaying a run does not carry the original run's Project " +
+          "Environment through to the runner.",
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("replaying a run");
+    expect(err.message).not.toMatch(/no Project Environment/i);
+    expect(err.message).not.toMatch(/does not select it/i);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale unresolved reason once the environment IS known", async () => {
+    // Belt and braces: a caller that sets both must not turn a real
+    // selection failure into "MCPJam could not tell".
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    secretsClientState.selection = ["secret-something-else"];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        environmentUnresolvedReason: "should be ignored",
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toMatch(/does not select it/i);
+    expect(err.message).not.toContain("should be ignored");
+  });
+
   it("refuses when the brokered row is bound to the wrong host", async () => {
     secretsClientState.rows = [
       { ...BROKERED_CURSOR_ROW, brokerHosts: ["api.example.com"] },

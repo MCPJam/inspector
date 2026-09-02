@@ -295,6 +295,12 @@ export interface RunAssistantTurnOptions {
   environmentId?: MCPJamHandlerOptions["environmentId"];
 
   /**
+   * Why `environmentId` is absent on a run that HAS one (eval replay). Copy
+   * only — see the option's docblock on `MCPJamHandlerOptions`.
+   */
+  environmentUnresolvedReason?: MCPJamHandlerOptions["environmentUnresolvedReason"];
+
+  /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
    * `handleHostedOrgChatModel` (org BYOK delegation chain) keeps
    * working — `runAssistantTurn` is the same engine, and the org BYOK
@@ -519,6 +525,9 @@ function buildHandlerOptions(
     // selected into THIS environment, and an absent id means "no grant" rather
     // than "ask the project".
     ...(opts.environmentId ? { environmentId: opts.environmentId } : {}),
+    ...(opts.environmentUnresolvedReason
+      ? { environmentUnresolvedReason: opts.environmentUnresolvedReason }
+      : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),

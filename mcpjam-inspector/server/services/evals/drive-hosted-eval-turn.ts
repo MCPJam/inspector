@@ -181,6 +181,13 @@ export interface DriveHostedEvalTurnParams {
    */
   environmentId?: string;
   /**
+   * Why `environmentId` is absent on a run that HAS an environment — set by the
+   * REPLAY path, which inherits the source run's `environmentRef` on the
+   * backend but cannot read it back out. Copy only; see the option's docblock
+   * on `MCPJamHandlerOptions`.
+   */
+  environmentUnresolvedReason?: string;
+  /**
    * THIS iteration's disposable box, handed to the harness.
    *
    * The SAME box the tool resolver already exposes as `bash` — one box per
@@ -623,6 +630,12 @@ export async function driveHostedEvalTurn(
             // external-account credential check is scoped to.
             ...(params.environmentId
               ? { environmentId: params.environmentId }
+              : {}),
+            ...(!params.environmentId && params.environmentUnresolvedReason
+              ? {
+                  environmentUnresolvedReason:
+                    params.environmentUnresolvedReason,
+                }
               : {}),
             // THIS iteration's box, so the harness runs on it instead of
             // reserving the acting member's personal computer.

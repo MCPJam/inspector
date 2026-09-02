@@ -154,6 +154,39 @@ describe("fetchBrokeredCredentialNames", () => {
     expect(clientState.selectionCalls).toBe(0);
   });
 
+  it("carries a caller's UNRESOLVED reason through, without changing the answer", async () => {
+    // Eval replay: the run has an environment, this process cannot name it.
+    // The availability answer is identical to any other unnamed environment —
+    // refused — but the reason rides along so the copy can be honest.
+    clientState.rows = [brokeredRow()];
+    const result = await fetchBrokeredCredentialNames(
+      ask({
+        environmentId: undefined,
+        environmentUnresolvedReason: "replaying a run does not carry it.",
+      }),
+    );
+    expect(result?.available.size).toBe(0);
+    expect(result?.unselected.has("CURSOR_API_KEY")).toBe(true);
+    expect(result?.environmentMissing).toBe(true);
+    expect(result?.environmentUnresolvedReason).toBe(
+      "replaying a run does not carry it.",
+    );
+    expect(clientState.selectionCalls).toBe(0);
+  });
+
+  it("ignores an unresolved reason when the environment IS known", async () => {
+    // Defensive: a caller that sets both must not have its selection check
+    // downgraded into an excuse.
+    clientState.rows = [brokeredRow()];
+    clientState.selection = ["secret-something-else"];
+    const result = await fetchBrokeredCredentialNames(
+      ask({ environmentUnresolvedReason: "should be ignored" }),
+    );
+    expect(result?.environmentMissing).toBe(false);
+    expect(result?.environmentUnresolvedReason).toBeUndefined();
+    expect(result?.unselected.has("CURSOR_API_KEY")).toBe(true);
+  });
+
   it("skips the environment read when the project brokers nothing", async () => {
     // A project with no brokered row for this credential gets the same "add it"
     // refusal it always got — one query, not two.
@@ -378,6 +411,34 @@ describe("planExternalAccountCredentials", () => {
     }
     expect(message).toMatch(/no Project Environment/i);
     expect(message).toMatch(/grant boundary/i);
+  });
+
+  it("blames the PATH, not the user, when the environment could not be named", () => {
+    // The replay refusal. The reader's secret and selection may both be
+    // perfect, so the copy must not tell them to change either — and must not
+    // claim the run has no environment, because it does.
+    let message = "";
+    try {
+      planExternalAccountCredentials({
+        ...base,
+        secretEnv: undefined,
+        brokeredAvailable: new Set(),
+        unselected: new Set(["CURSOR_API_KEY"]),
+        environmentMissing: true,
+        environmentUnresolvedReason:
+          "replaying a run does not carry the original run's Project " +
+          "Environment through to the runner.",
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain("CURSOR_API_KEY");
+    expect(message).toContain("replaying a run");
+    // NOT the remediation for a selection the reader never made…
+    expect(message).not.toMatch(/does not select it/i);
+    expect(message).not.toMatch(/no Project Environment/i);
+    // …and it says plainly that the secret is fine.
+    expect(message).toMatch(/nothing about the secret itself needs to change/i);
   });
 
   it("prefers the MISBOUND complaint over the unselected one", () => {

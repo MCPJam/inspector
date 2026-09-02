@@ -125,8 +125,18 @@ type UnsatisfiedName =
    * not grant it — either because the environment does not select it, or
    * because the turn resolved no environment at all. Distinct from `absent`
    * because the fix is a selection, not a new secret.
+   *
+   * `unresolvedReason`, when present, means something else again: the run HAS
+   * an environment and this process could not learn WHICH. That is MCPJam's
+   * limitation, not a misconfiguration, and the copy must not send the reader
+   * to fix a selection they never made.
    */
-  | { name: string; reason: "unselected"; environmentMissing: boolean };
+  | {
+      name: string;
+      reason: "unselected";
+      environmentMissing: boolean;
+      unresolvedReason?: string;
+    };
 
 /**
  * Does a brokered row's binding actually deliver this credential?
@@ -213,6 +223,10 @@ export type BrokeredCredentialAvailability = {
    *  Sharpens the `unselected` copy — "there is no environment" and "the
    *  environment does not select it" are different fixes. */
   environmentMissing: boolean;
+  /** Set when the caller KNOWS the run has an environment but could not supply
+   *  its id (see `fetchBrokeredCredentialNames`). Sharpens the copy a third
+   *  way: nothing the reader configured is wrong. */
+  environmentUnresolvedReason?: string;
 };
 
 export async function fetchBrokeredCredentialNames(args: {
@@ -225,6 +239,20 @@ export async function fetchBrokeredCredentialNames(args: {
    * with `environmentMissing`, never as an available credential.
    */
   environmentId?: string;
+  /**
+   * Why `environmentId` is absent, when the caller knows the run HAS one and
+   * simply cannot reach it. Purely for the refusal copy — availability is
+   * decided identically either way, because an environment we cannot name is
+   * an environment whose selection we cannot check.
+   *
+   * The one caller today is EVAL REPLAY. A replay run inherits the source run's
+   * `configSnapshot.environmentRef` verbatim (`testSuites.ts`, and
+   * `resolveGrantForSandbox` follows that id), so the box really may carry the
+   * transform — but no public read projects that ref back out, so this process
+   * cannot confirm it. Refusing is still right; blaming the user's environment
+   * selection would not be.
+   */
+  environmentUnresolvedReason?: string;
   /** Which box the turn runs on. Only `sandbox` (an ephemeral `evalSandboxes`
    *  row) can carry brokered secret transforms. */
   boxKind: "sandbox" | "computer";
@@ -314,7 +342,15 @@ export async function fetchBrokeredCredentialNames(args: {
   // A row that is granted but misbound is the sharper complaint: it says the
   // binding is wrong rather than that the secret is not granted.
   for (const name of Object.keys(misboundHosts)) unselected.delete(name);
-  return { available, misboundHosts, unselected, environmentMissing };
+  return {
+    available,
+    misboundHosts,
+    unselected,
+    environmentMissing,
+    ...(environmentMissing && args.environmentUnresolvedReason
+      ? { environmentUnresolvedReason: args.environmentUnresolvedReason }
+      : {}),
+  };
 }
 
 /**
@@ -363,6 +399,8 @@ export function planExternalAccountCredentials(args: {
   unselected?: ReadonlySet<string>;
   /** True when the turn resolved no Project Environment at all. */
   environmentMissing?: boolean;
+  /** Why the environment could not be named, when the run has one. */
+  environmentUnresolvedReason?: string;
 }): ExternalAccountCredentialPlan {
   const auth: Record<string, string> = {};
   const materializedNames: string[] = [];
@@ -391,6 +429,9 @@ export function planExternalAccountCredentials(args: {
         name,
         reason: "unselected",
         environmentMissing: args.environmentMissing === true,
+        ...(args.environmentUnresolvedReason
+          ? { unresolvedReason: args.environmentUnresolvedReason }
+          : {}),
       });
       continue;
     }
@@ -454,6 +495,21 @@ function externalAccountCredentialRefusal(args: {
   );
   if (unselected.length > 0) {
     const entry = unselected[0]!;
+    // NOT the user's misconfiguration. The run has an environment and may well
+    // grant this credential; MCPJam cannot see which environment it is, so it
+    // cannot promise the box will carry the transform. Say that, and do not
+    // send the reader to edit a selection that may already be correct.
+    if (entry.unresolvedReason) {
+      return (
+        `The ${args.harnessDisplayName} harness needs a brokered ` +
+        `${entry.name}, and MCPJam cannot confirm this run will receive one: ` +
+        `${entry.unresolvedReason} Brokered secrets are granted per Project ` +
+        `Environment, so without knowing this run's environment the ` +
+        `credential cannot be verified before the sandbox starts. Launch the ` +
+        `suite directly instead — nothing about the secret itself needs to ` +
+        `change.`
+      );
+    }
     return entry.environmentMissing
       ? `The ${args.harnessDisplayName} harness found a brokered ` +
           `${entry.name} project secret, but this run resolved no Project ` +

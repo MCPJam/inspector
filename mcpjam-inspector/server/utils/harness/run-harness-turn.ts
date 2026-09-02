@@ -597,6 +597,7 @@ export async function runHarnessTurn(
     runtimeSkillsOverride,
     effectiveCapabilities,
     environmentId,
+    environmentUnresolvedReason,
     runtimeSecrets: runtimeSecretsOverride,
     secretsUnavailable,
     onSecretEnvDelivered,
@@ -1335,6 +1336,12 @@ export async function runHarnessTurn(
                 ...(authHeader ? { bearer: authHeader } : {}),
                 ...(projectId ? { projectId } : {}),
                 ...(environmentId ? { environmentId } : {}),
+                // Copy only — an environment this process cannot name is one
+                // whose selection it cannot check, so the answer is the same
+                // either way and only the refusal wording changes.
+                ...(!environmentId && environmentUnresolvedReason
+                  ? { environmentUnresolvedReason }
+                  : {}),
                 boxKind: harnessSandboxBinding ? "sandbox" : "computer",
                 required: Object.fromEntries(
                   unresolved.map((name) => [name, brokerBinding[name]!]),
@@ -1371,6 +1378,12 @@ export async function runHarnessTurn(
                 misboundHosts: brokered.misboundHosts,
                 unselected: brokered.unselected,
                 environmentMissing: brokered.environmentMissing,
+                ...(brokered.environmentUnresolvedReason
+                  ? {
+                      environmentUnresolvedReason:
+                        brokered.environmentUnresolvedReason,
+                    }
+                  : {}),
               }
             : {}),
         });

@@ -551,6 +551,15 @@ export type RunEvalSuiteOptions = {
    * scoped to. Absent for a legacy (non-environment) run, which grants none.
    */
   projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
@@ -1666,6 +1675,15 @@ type RunIterationBaseParams = {
    * Absent on a legacy (non-environment) suite run, which grants no secrets.
    */
   projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   /** Run caller's Convex bearer — used to provision/release the reproducible
    * eval sandbox when the suite pins a computerEnvironment. */
   convexAuthToken: string;
@@ -2057,6 +2075,8 @@ const executeTestCase = async (params: {
   /** The run's PROJECT ENVIRONMENT id (see RunEvalSuiteOptions) — the grant
    *  boundary a harness iteration's brokered credential check is scoped to. */
   projectEnvironmentId?: string;
+  /** See {@link RunEvalSuiteOptions.projectEnvironmentUnresolvedReason}. */
+  projectEnvironmentUnresolvedReason?: string;
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
   /** The run's frozen skills in harness shape (see
@@ -2101,6 +2121,7 @@ const executeTestCase = async (params: {
     suiteHostConfig,
     environment,
     projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
     tasks,
@@ -2331,6 +2352,9 @@ const executeTestCase = async (params: {
         // A `projectEnvironments` doc id, not the servers snapshot above and
         // not a sandbox image — see `RunIterationBaseParams`.
         ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
@@ -2396,6 +2420,9 @@ const executeTestCase = async (params: {
         // A `projectEnvironments` doc id, not the servers snapshot above and
         // not a sandbox image — see `RunIterationBaseParams`.
         ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
@@ -2502,6 +2529,7 @@ export const runEvalSuiteWithAiSdk = async ({
   hostExecutionPolicy,
   suiteHostConfig,
   projectEnvironmentId,
+  projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
   pinnedHarnessSkills,
   toolPolicy,
@@ -2735,6 +2763,9 @@ export const runEvalSuiteWithAiSdk = async ({
         // The run's PROJECT ENVIRONMENT id — unrelated to `config.environment`
         // above (a servers snapshot) despite the shared word.
         ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         ...(toolPolicy
           ? {
               toolPolicy,
@@ -4175,6 +4206,7 @@ const runHostedIterationWithBrowser = async (
     // the local runner).
     environment,
     projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
     tasks,
@@ -4798,6 +4830,13 @@ const runHostedIterationWithBrowser = async (
     // credential and would only carry an unused field.
     ...(resolvedExecution.harness && projectEnvironmentId
       ? { environmentId: projectEnvironmentId }
+      : {}),
+    // Replay only: the run HAS an environment and this process cannot name it.
+    // Keeps the refusal honest instead of blaming a selection.
+    ...(resolvedExecution.harness &&
+    !projectEnvironmentId &&
+    projectEnvironmentUnresolvedReason
+      ? { environmentUnresolvedReason: projectEnvironmentUnresolvedReason }
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>

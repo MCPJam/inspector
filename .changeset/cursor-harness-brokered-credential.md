@@ -30,7 +30,11 @@ A correctly bound brokered `CURSOR_API_KEY` that the run's environment does not
 select is refused up front, naming the selection as the fix, instead of starting a
 turn that provisions a box and then fails Cursor's auth against the placeholder.
 Chat, swarm and eval launches all carry their environment id down to the harness
-turn for this.
+turn for this. Eval REPLAY is the one path that cannot: a replay inherits the
+source run's environment on the backend, but nothing projects that reference
+back out to the runner, so a replay refuses with copy that says exactly that and
+tells the reader to launch the suite directly — rather than blaming a secret or
+a selection that is already correct.
 
 Materialized delivery is unchanged and still wins when both are configured — it
 is the one this process can prove reached the box. The refusal is still

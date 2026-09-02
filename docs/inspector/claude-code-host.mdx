@@ -128,6 +128,15 @@ message that names the fix:
 | Brokered secret exists but the environment does not select it | Says so, and asks you to select it into that environment — not to create a second one |
 | The host is not running from a Project Environment at all | Says there is no grant boundary, so no brokered secret can reach the box |
 | Brokered secret bound to the wrong host | Names the host it found and the host the runtime needs |
+| The run is a **replay** of an earlier eval run | Says MCPJam cannot confirm the credential for a replay, and that nothing about the secret needs changing — launch the suite directly instead |
+
+<Note>
+  **Replaying** an eval run cannot verify a brokered credential. A replay keeps
+  the original run's environment internally, but MCPJam's runner is not told
+  which environment that was, so it cannot check the grant before the sandbox
+  starts and refuses rather than guess. Launch the suite directly to run a
+  Cursor CLI host; nothing about the secret or the environment needs to change.
+</Note>
 
 <Note>
   A **persistent project Computer** (the ordinary playground chat box) does not
