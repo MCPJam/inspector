@@ -7,6 +7,7 @@ import {
   LOCAL_HARNESS_MANIFEST,
   resolveLocalCompatibility,
   type LocalHarnessCompatibility,
+  localPermissionModeFor,
 } from "../compatibility.js";
 import {
   LOCAL_PERMISSION_PROFILES,
@@ -52,18 +53,38 @@ describe("the shipped manifest", () => {
     }
   });
 
-  it("ships placeholder digests that cannot match a real tree", () => {
-    // A real bundle can never hash to all zeroes, so an install that somehow
-    // shipped without the CI-recorded digest fails verification instead of
-    // launching an unverified runtime.
+  it("names no runtime it cannot verify, whether or not a pack has been built", () => {
+    // Pack digests are per TARGET (`<os>-<arch>`) and written by the pack
+    // build. Written this way rather than "the map is empty" so it keeps
+    // meaning something after a release fills it: what must hold is that every
+    // digest present is a real one. An absent target answers `bundle-absent` —
+    // the same honest answer a missing directory gets — instead of launching
+    // an unverified runtime.
     for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
       expect(manifest.bridgeBundleDigest).toBe(`sha256:${"0".repeat(64)}`);
-      // The one `resolveManagedBundle` actually compares a real tree against,
-      // so it is the one that keeps an unverified runtime from launching.
-      expect(manifest.runtime).toMatchObject({
-        source: "managed-bundle",
-        bundleDigest: `sha256:${"0".repeat(64)}`,
-      });
+      expect(manifest.runtime).toMatchObject({ source: "managed-bundle" });
+      if (manifest.runtime.source !== "managed-bundle") continue;
+      for (const [target, digest] of Object.entries(
+        manifest.runtime.bundleDigest,
+      )) {
+        // The exact five, not a shape: `win32-arm64` matches a regex and is
+        // not a target anything builds, so a generated entry naming one would
+        // have passed while resolving to a pack that does not exist.
+        expect([
+          "darwin-arm64",
+          "darwin-x64",
+          "linux-x64",
+          "linux-arm64",
+          "win32-x64",
+        ]).toContain(target);
+        expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+        expect(digest).not.toBe(`sha256:${"0".repeat(64)}`);
+      }
+      // The launcher is the pack's loopback wrapper, never the bridge itself:
+      // the bridge stays byte-identical to the pinned adapter's copy so the
+      // recipe compare can hold.
+      expect(manifest.runtime.launcherRelativePath).toBe("launcher.mjs");
+      expect(manifest.runtime.nodeLauncherRelativePath).toBe("bin/node");
     }
   });
 
@@ -339,5 +360,55 @@ describe("claude-code native resolution", () => {
         manifests,
       ),
     ).toMatchObject({ status: "platform-not-supported" });
+  });
+});
+
+// The mode an agent is built with, for a LOCAL turn, comes from here and
+// nowhere else. Taking the adapter's default instead meant a user who
+// consented to `read-only` got an agent at `allow-all` — the consent sheet's
+// central promise, unenforced.
+describe("localPermissionModeFor", () => {
+  it("maps each offered profile to its narrower mode", () => {
+    expect(localPermissionModeFor("claude-code", "read-only", "local-native")).toBe(
+      "allow-reads",
+    );
+    expect(
+      localPermissionModeFor("claude-code", "workspace-edits", "local-native"),
+    ).toBe("allow-edits");
+  });
+
+  it("never resolves `unrestricted` for a native target", () => {
+    // Native has no host containment, so this profile has no mode there — and
+    // the caller must fail closed rather than fall back to a default.
+    expect(
+      localPermissionModeFor("claude-code", "unrestricted", "local-native"),
+    ).toBeNull();
+  });
+
+  it("returns null for a harness with no local mapping", () => {
+    expect(
+      localPermissionModeFor("not-a-harness", "read-only", "local-native"),
+    ).toBeNull();
+  });
+
+  it("returns null for inherited Object keys rather than throwing", () => {
+    // `toString`, `constructor` and `__proto__` are not `undefined` on a plain
+    // object literal, so a bare index would pass a presence check and then
+    // throw on `.permissionProfileMapping`. "not-a-harness" above cannot catch
+    // that — it is not on the prototype — which is why the first version of
+    // this test passed over the hole.
+    for (const id of ["toString", "constructor", "__proto__", "valueOf"]) {
+      expect(localPermissionModeFor(id, "read-only", "local-native")).toBeNull();
+    }
+  });
+
+  it("never answers `allow-all` for any profile a native target can consent to", () => {
+    // The property that matters, independent of the table's current contents:
+    // nothing a user can agree to natively may resolve to the widest mode.
+    for (const profile of ["read-only", "workspace-edits", "unrestricted"] as const) {
+      expect(
+        localPermissionModeFor("claude-code", profile, "local-native"),
+      ).not.toBe("allow-all");
+    }
   });
 });

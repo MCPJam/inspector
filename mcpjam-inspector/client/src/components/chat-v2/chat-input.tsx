@@ -14,6 +14,7 @@ import type {
   DragEvent,
   FormEvent,
   KeyboardEvent,
+  ReactNode,
 } from "react";
 import { cn } from "@/lib/chat-utils";
 import { track } from "@/lib/analytics";
@@ -382,6 +383,17 @@ interface ChatInputProps {
    */
   environmentServersOverridden?: boolean;
   onResetEnvironmentServers?: () => void;
+  /**
+   * Banner rendered inside the composer, above everything else.
+   *
+   * Exists for statements the composer has to make ABOUT ITSELF — today, that
+   * a reopened conversation's as-run host/environment was never recorded, so
+   * these controls are the viewer's current selection rather than history (see
+   * `ConversationTargetNotice`). Rendered here rather than by each caller
+   * because there are six `<ChatInput>` sites and the notice must not be
+   * reachable from only some of them.
+   */
+  notice?: ReactNode;
 }
 
 export function ChatInput({
@@ -446,6 +458,7 @@ export function ChatInput({
   onEnvironmentServerToggle,
   environmentServersOverridden = false,
   onResetEnvironmentServers,
+  notice,
 }: ChatInputProps) {
   // The project LIBRARY half of the `/` picker: list/load skills from the
   // project's Convex source (Playground carries the id via `clientSelector`).
@@ -1422,6 +1435,8 @@ export function ChatInput({
               {DROP_OVERLAY_TEXT}
             </div>
           )}
+
+          {notice}
 
           <PromptsPopover
             anchor={caret}

@@ -130,15 +130,84 @@ export function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null 
  * not "did the judge like it".
  */
 export function waveStatusDotClass(runs: readonly SwarmOverviewRun[]): string {
+  // Derived from `waveRunState`, never from its own scan of `status`. The two
+  // used to disagree on precedence — this tested `failed`/`stale` first while
+  // `waveRunState` puts `running` first — so a wave holding one failed goal and
+  // one still fanning out painted a red dot beside a "Running" pill on the same
+  // row. One source, one answer.
+  switch (waveRunState(runs)) {
+    case "running":
+      // The run's own accent, and animated at the call sites: a live wave used
+      // to wear the same muted grey as everything else, so the list could not
+      // answer "is this still going?" — the question a returning viewer
+      // arrives with.
+      return "bg-primary";
+    case "failed":
+      return "bg-red-500";
+    case "issues":
+      return "bg-amber-500";
+    case "complete":
+      return "bg-emerald-500";
+  }
+}
+
+/**
+ * One wave's state as the UI must SAY it, shared by the list row and the run
+ * page so the two can never disagree.
+ *
+ * `running` wins over every terminal status: a wave whose first goal failed
+ * while three others are still fanning out is running, and calling it failed
+ * sends the viewer away from a run that is still producing results.
+ *
+ * A deliberately STOPPED run is not distinguishable here: the marker that
+ * separates it from a failure lives on `journeyRuns.error`, which
+ * `getSwarmOverview` does not project. The run page substitutes `stopped` from
+ * its own local evidence when the viewer is the one who stopped it.
+ */
+export type SwarmWaveRunState = "running" | "complete" | "issues" | "failed";
+
+export function waveRunState(
+  runs: readonly SwarmOverviewRun[]
+): SwarmWaveRunState {
   const statuses = new Set(runs.map((r) => r.status));
-  if (statuses.has("failed") || statuses.has("stale")) return "bg-red-500";
-  if (statuses.has("partial") || statuses.has("rate_limited")) {
-    return "bg-amber-500";
+  if (statuses.has("running") || statuses.has("pending")) return "running";
+  if (statuses.has("failed") || statuses.has("stale")) return "failed";
+  if (statuses.has("partial") || statuses.has("rate_limited")) return "issues";
+  return "complete";
+}
+
+/**
+ * Chip treatment per wave state. `running` gets the run's own accent rather
+ * than `runStatusChipClass`'s default neutral — the whole point of the pill is
+ * that an active run is impossible to miss on return. `issues` stays neutral
+ * for the reason `runStatusChipClass` already documents: an outcome, not a
+ * verdict.
+ */
+export function swarmWaveRunStateChipClass(state: SwarmWaveRunState): string {
+  switch (state) {
+    case "running":
+      return "bg-primary/15 text-primary";
+    case "failed":
+      return "bg-red-500/10 text-red-700 dark:text-red-400";
+    case "issues":
+      return "bg-muted text-muted-foreground";
+    case "complete":
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
   }
-  if (statuses.has("running") || statuses.has("pending")) {
-    return "bg-muted-foreground/50";
+}
+
+/** Short label for a wave state — list row pill and run-page strip. */
+export function swarmWaveRunStateLabel(state: SwarmWaveRunState): string {
+  switch (state) {
+    case "running":
+      return "Running";
+    case "failed":
+      return "Failed";
+    case "issues":
+      return "Completed with issues";
+    case "complete":
+      return "Complete";
   }
-  return "bg-emerald-500";
 }
 
 export type SwarmWave = {
@@ -883,6 +952,7 @@ function SwarmWaveRow({
   const findingCount = wave.runs.reduce((n, run) => n + run.findings.length, 0);
   const personaCount = new Set(wave.runs.map((r) => r.personaName)).size;
   const targets = waveTargets(wave.runs);
+  const runState = waveRunState(wave.runs);
   const environmentLabel = formatWaveEnvironmentLabel(targets);
   const clientLabel = formatWaveClientLabel(targets);
   const modelLabel = formatWaveModelLabel(targets);
@@ -904,7 +974,8 @@ function SwarmWaveRow({
         <span
           className={cn(
             "size-2 shrink-0 rounded-full",
-            waveStatusDotClass(wave.runs)
+            waveStatusDotClass(wave.runs),
+            runState === "running" ? "animate-pulse" : null
           )}
           aria-hidden
         />
@@ -915,6 +986,19 @@ function SwarmWaveRow({
               title={title}
             >
               {title}
+            </span>
+            {/* State in WORDS, not just a coloured dot: a returning viewer had
+                no way to tell an active run from a finished one, and a dot is
+                not an answer to that. */}
+            <span
+              className={cn(
+                "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                swarmWaveRunStateChipClass(runState)
+              )}
+              data-testid="swarm-overview-run-state"
+              data-run-state={runState}
+            >
+              {swarmWaveRunStateLabel(runState)}
             </span>
             <span className="shrink-0 text-xs text-muted-foreground">
               {formatJourneyRelativeTime(wave.createdAt)}
@@ -976,7 +1060,12 @@ export function SwarmWaveFindingsList({
   onOpenSession,
 }: {
   runs: readonly SwarmOverviewRun[];
-  onOpenSession: (sessionId: string) => void;
+  /**
+   * Open one session. The criterion is passed alongside it so the run page can
+   * state WHAT was followed — a viewer who clicks a finding and lands on a bare
+   * transcript has been given evidence with the claim removed.
+   */
+  onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
   const runsWithFindings = runs.filter((run) => run.findings.length > 0);
   if (runsWithFindings.length === 0) {
@@ -1013,7 +1102,7 @@ function WaveFindingsBlock({
 }: {
   run: SwarmOverviewRun;
   showJourneyLabel: boolean;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
   return (
     <div
@@ -1051,7 +1140,7 @@ function FindingRow({
 }: {
   finding: SwarmOverviewFinding;
   runId: string;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const severity = findingSeverity(finding);
@@ -1128,7 +1217,7 @@ function FindingSessions({
 }: {
   runId: string;
   criterionId: string;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
   const { results, status, loadMore } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
@@ -1179,7 +1268,7 @@ function FindingSessions({
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded px-1 py-1.5 text-left hover:bg-muted/60"
-                onClick={() => onOpenSession(row.id)}
+                onClick={() => onOpenSession(row.id, criterionId)}
                 data-testid="swarm-overview-finding-session"
                 data-session-id={row.id}
               >

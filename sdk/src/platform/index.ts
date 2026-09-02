@@ -50,6 +50,7 @@ export {
   type PlatformPermalink,
   type PlatformPermalinkContext,
   type PlatformPermalinkPolicy,
+  type PlatformResourceParentRef,
   type PlatformResourceRef,
   type PlatformResourceType,
 } from "./permalinks.js";
@@ -307,6 +308,7 @@ export {
 } from "./show-servers.js";
 
 export {
+  evalIterationRef,
   buildImageOperation,
   callServerToolOperation,
   renderServerWidgetOperation,

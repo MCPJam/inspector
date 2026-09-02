@@ -66,6 +66,49 @@ const FN = {
    * comment on `markSecretsDelivered`.
    */
   markDelivered: "projectSecretsNode:markSecretsDelivered",
+  /**
+   * DELIVERY METADATA for every secret in a project the caller can see — names
+   * and binding shape, never a value (the backend view type has no `value`
+   * field at all).
+   *
+   * Read by the harness turn to answer ONE question a value-returning call
+   * cannot: does a BROKERED secret exist for the credential an
+   * external-account harness needs? Brokered values never enter this process,
+   * so the only way to distinguish "the project brokers this credential" from
+   * "the project has not configured it at all" is to ask about the row.
+   */
+  listMetadata: "projectSecrets:listSecrets",
+  /**
+   * The ENVIRONMENT's own secret SELECTION — which of the project's secret rows
+   * a run launched from this environment is actually granted.
+   *
+   * Read alongside `listMetadata` because project scope is not grant scope. The
+   * environment is the grant boundary (`projectEnvironments` →
+   * `secretSelection.secretIds`), and `projectSecretsEgress` composes a box's
+   * egress transform from exactly that selection — so a brokered row that
+   * exists in the project but is NOT selected here is never delivered to the
+   * box, and must never be reported as available.
+   *
+   * WHAT KEEPS THIS READ CONFIDENTIAL, precisely — because the obvious answer
+   * is the weaker one.
+   *
+   * The Convex query DOES filter the selection per viewer today
+   * (`toView(row, await visibleSecretIdsFor(...))`), so another member's
+   * personal secret id is absent here just as the row is absent from
+   * `listSecrets`. But that filter is NOT what this module's safety rests on,
+   * and writing it down as though it were invites exactly the wrong repair if
+   * it ever changes.
+   *
+   * The load-bearing guarantee is the OTHER read. Candidate rows come from
+   * `listMetadata`, which is visibility-filtered at the row level, and the
+   * selection is consulted only to ADMIT one of those candidates
+   * (`selectedIds.has(row.secretId)`). A selection id with no matching
+   * candidate is inert: it can never name a row the caller could not already
+   * see, so an unfiltered selection would leak nothing and change no decision.
+   * Intersect in that direction and the filter above is a second lock, not the
+   * lock.
+   */
+  environment: "projectEnvironments:getEnvironment",
 } as const;
 
 function stripBearer(token: string): string {
@@ -120,4 +163,93 @@ export async function convexMarkSecretsDelivered(
   args: { projectId: string; environmentId: string },
 ): Promise<{ marked: number }> {
   return await makeClient(bearer).action(FN.markDelivered as any, args);
+}
+
+/**
+ * One project secret's DELIVERY METADATA. A hand-mirrored subset of the
+ * backend's `projectSecrets:toSecretView`, carrying only what a delivery
+ * decision needs.
+ *
+ * There is deliberately no `value` here, and there is nothing to add one from:
+ * `listSecrets` is a metadata query whose return type has never had one.
+ */
+export interface ProjectSecretBinding {
+  /**
+   * The row id. Not the secret's identity — the NAME is — but it is what an
+   * environment's `secretSelection` names, so it is the only way to ask whether
+   * THIS run's environment actually grants THIS row. Always present:
+   * `toSecretView` has returned it since the view existed.
+   */
+  secretId: string;
+  /** The env-var name. This IS the secret's identity. */
+  name: string;
+  delivery: "brokered" | "materialized";
+  /** Brokered rows only — the hosts the egress proxy injects the header on. */
+  brokerHosts?: string[];
+  /** Brokered rows only — lowercased at write time by the backend. */
+  brokerHeader?: string;
+  /** Brokered rows only — `{}` is where the plaintext is substituted. */
+  brokerTemplate?: string;
+}
+
+/**
+ * List the project's secret bindings (metadata only).
+ *
+ * Throws on any failure, like its sibling above; the caller decides what a
+ * failure means. For the harness credential path it means "we could not
+ * establish that this credential is brokered", which is refused rather than
+ * assumed either way.
+ *
+ * PROJECT-SCOPED. That is the only shape the backend exposes, and it is NOT the
+ * grant boundary — pair it with {@link convexGetEnvironmentSecretSelection} to
+ * narrow it to the rows a run launched from a given environment receives.
+ */
+export async function convexListProjectSecretBindings(
+  bearer: string,
+  args: { projectId: string },
+): Promise<ProjectSecretBinding[]> {
+  const rows = (await makeClient(bearer).query(FN.listMetadata as any, {
+    projectId: args.projectId,
+  })) as ProjectSecretBinding[] | null;
+  return rows ?? [];
+}
+
+/**
+ * The secret row ids ONE environment grants — the caller-visible subset of its
+ * `secretSelection`.
+ *
+ * An empty array is a real answer and the fail-closed default: an environment
+ * with no selection grants NO secrets, which is exactly what the schema says
+ * ("absent ⇒ NO secrets … the reason there is no 'all project secrets' mode").
+ *
+ * Throws on any failure, like its siblings; the caller decides what a failure
+ * means. For the harness credential path it means "we could not establish that
+ * this credential is granted", which is refused rather than assumed either way.
+ *
+ * A MISSING OR CROSS-PROJECT ENVIRONMENT IS A THROW, NOT AN EMPTY ANSWER, and
+ * the distinction is worth stating because the shapes look alike from here.
+ * `getEnvironment` resolves the row through `loadEnvironment`, which calls
+ * `fail('NOT_FOUND', …)` — a thrown `ConvexError` — for both a row that does
+ * not exist and one belonging to another project; its declared return type is
+ * `EnvironmentView`, never `EnvironmentView | null`. (An unparseable id does
+ * not even reach the handler: `v.id('projectEnvironments')` rejects it first.)
+ * So there is no null result to flatten, and the only thing `?? []` covers is
+ * the one genuinely empty answer: an environment that exists and selects
+ * NOTHING, which grants nothing and is the schema's own fail-closed default.
+ *
+ * Both throws therefore land in the caller's "could not establish" arm rather
+ * than in "the environment grants nothing" — which is the fail-closed side, and
+ * the reason the caller logs the underlying message: a NOT_FOUND here is a
+ * wiring bug (environments are archived, never hard-deleted), and it should be
+ * diagnosable as one instead of reported as a missing secret.
+ */
+export async function convexGetEnvironmentSecretSelection(
+  bearer: string,
+  args: { projectId: string; environmentId: string },
+): Promise<string[]> {
+  const environment = (await makeClient(bearer).query(FN.environment as any, {
+    projectId: args.projectId,
+    environmentId: args.environmentId,
+  })) as { secretSelection?: { secretIds?: string[] } };
+  return environment?.secretSelection?.secretIds ?? [];
 }

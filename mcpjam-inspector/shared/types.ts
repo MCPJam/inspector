@@ -151,6 +151,7 @@ export type CanonicalModelCandidate = { id: string | Model; provider: string };
 // the prefix. Everything else uses the prefix verbatim.
 const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
   "x-ai": "xai",
+  spacexai: "xai",
   "meta-llama": "meta",
   mistralai: "mistral",
 };
@@ -366,6 +367,9 @@ export enum Model {
   GPT_5_1 = "gpt-5.1",
   GPT_5_1_CODEX = "gpt-5.1-codex",
   GPT_5_1_CODEX_MINI = "gpt-5.1-codex-mini",
+  GPT_5_6_LUNA = "gpt-5.6-luna",
+  GPT_5_6_SOL = "gpt-5.6-sol",
+  GPT_5_6_TERRA = "gpt-5.6-terra",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
@@ -460,6 +464,24 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "Claude Haiku 4.5",
     provider: "anthropic",
     contextLength: 200000,
+  },
+  {
+    id: Model.GPT_5_6_LUNA,
+    name: "GPT-5.6 Luna",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: Model.GPT_5_6_SOL,
+    name: "GPT-5.6 Sol",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: Model.GPT_5_6_TERRA,
+    name: "GPT-5.6 Terra",
+    provider: "openai",
+    contextLength: 1050000,
   },
   {
     id: Model.GPT_5_1,

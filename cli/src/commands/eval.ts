@@ -234,6 +234,7 @@ function composeField(options: {
   composeServerGroup?: string;
   composeHostServers?: boolean;
   composeSkill?: string[];
+  composeSecret?: string[];
   withClientDefault?: boolean;
   saveTargets?: boolean;
 }): {
@@ -248,6 +249,7 @@ function composeField(options: {
     saveTargets?: boolean;
     computer?: string;
     skills?: { mode: "explicit"; skillIds: string[] };
+    secrets?: { mode: "explicit"; secretIds: string[] };
   };
 } {
   const models = Array.isArray(options.composeModel)
@@ -262,6 +264,7 @@ function composeField(options: {
     options.composeServerGroup !== undefined ||
     options.composeHostServers === true ||
     (options.composeSkill?.length ?? 0) > 0 ||
+    (options.composeSecret?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
     options.saveTargets === true;
   if (!options.composeHost) {
@@ -319,6 +322,17 @@ function composeField(options: {
             skills: {
               mode: "explicit" as const,
               skillIds: options.composeSkill,
+            },
+          }
+        : {}),
+      // The credential axis. Absent means the composed cells grant NOTHING —
+      // the environment is the grant boundary, so a run that needs a token
+      // used to have no choice but a named environment.
+      ...(options.composeSecret?.length
+        ? {
+            secrets: {
+              mode: "explicit" as const,
+              secretIds: options.composeSecret,
             },
           }
         : {}),
@@ -3008,6 +3022,10 @@ export function registerEvalCommands(program: Command): void {
         "Project-shared skill IDs to pin on the composed stack"
       )
       .option(
+        "--compose-secret <id...>",
+        "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
+      )
+      .option(
         "--allow-approximated <case...>",
         "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason."
       )
@@ -3028,6 +3046,7 @@ export function registerEvalCommands(program: Command): void {
         composeServerGroup?: string;
         composeHostServers?: boolean;
         composeSkill?: string[];
+        composeSecret?: string[];
         project?: string;
         suite?: string;
         file?: string;
@@ -4839,6 +4858,10 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--compose-secret <id...>",
+        "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
       ).action(
     async (
       options: PlatformOptions & {
@@ -4849,6 +4872,7 @@ export function registerEvalCommands(program: Command): void {
         composeServerGroup?: string;
         composeHostServers?: boolean;
         composeSkill?: string[];
+        composeSecret?: string[];
         project?: string;
         suite: string;
         case: string;

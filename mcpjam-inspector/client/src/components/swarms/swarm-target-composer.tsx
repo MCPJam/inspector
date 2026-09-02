@@ -10,6 +10,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
+import type { CloudServerBlockCopy } from "@/lib/cloud-server-readiness";
 import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
 import {
@@ -51,7 +52,7 @@ export function SwarmTargetComposer({
    * gates its primary action on it; this only paints it, next to the pickers
    * that fix it.
    */
-  serverBlock?: { message: string; detail: string } | null;
+  serverBlock?: CloudServerBlockCopy | null;
   /** Renders the required marker beside the label. The caller still owns gating. */
   required?: boolean;
 }) {
@@ -94,6 +95,8 @@ export function SwarmTargetComposer({
     value.stack.skillSelection,
   ]);
 
+  const blockAction = serverBlock?.action;
+
   return (
     <div className="space-y-3" data-testid="new-swarm-target-composer">
       <div className="space-y-1">
@@ -129,6 +132,17 @@ export function SwarmTargetComposer({
           data-testid="new-swarm-server-unreachable"
           message={serverBlock.message}
           detail={serverBlock.detail}
+          // The copy module grades the tone and decides whether there is a way
+          // out; this layer only knows how to get there.
+          tone={serverBlock.tone}
+          {...(blockAction
+            ? {
+                action: {
+                  label: blockAction.label,
+                  onClick: () => navigateApp(routePaths[blockAction.route]),
+                },
+              }
+            : {})}
         />
       ) : null}
 
