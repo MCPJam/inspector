@@ -118,6 +118,8 @@ let server: any = null;
 let serverPort: number = 0;
 let shutdownLocalTerminals: (() => void) | null = null;
 let killLocalTerminals: (() => void) | null = null;
+let shutdownWebMcpFrames: (() => void) | null = null;
+let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
 
@@ -399,6 +401,8 @@ async function startHonoServer(): Promise<number> {
       injectWebSocket,
       shutdownLocalComputerTerminals,
       killLocalComputerTerminals,
+      shutdownWebMcpFrameSockets,
+      killWebMcpFrameSockets,
     } = await createHonoApp();
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
@@ -406,6 +410,11 @@ async function startHonoServer(): Promise<number> {
     // `window-all-closed`, after which macOS may restart this same server.
     shutdownLocalTerminals = shutdownLocalComputerTerminals;
     killLocalTerminals = killLocalComputerTerminals;
+    // The WebMCP frame sockets are the same story: established WebSockets that
+    // `server.close()` leaves attached, with a latching variant for a real quit
+    // and a non-latching one for `window-all-closed`.
+    shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
+    killWebMcpFrames = killWebMcpFrameSockets;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -894,6 +903,9 @@ app.on("window-all-closed", () => {
   // does it anyway; this makes it unconditional) but do NOT latch shutdown, or
   // every terminal handshake after reopening would be refused.
   killLocalTerminals?.();
+  // Same non-latching kill: latching here would 4503 every frame handshake
+  // after the user reopened the window from the dock.
+  killWebMcpFrames?.();
   if (server) {
     server.close?.();
     serverPort = 0;
@@ -1016,6 +1028,7 @@ app.on("before-quit", (event) => {
     return;
   }
   shutdownLocalTerminals?.();
+  shutdownWebMcpFrames?.();
   if (server) {
     server.close?.();
   }

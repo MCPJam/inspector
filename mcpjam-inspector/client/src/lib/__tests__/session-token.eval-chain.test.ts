@@ -56,6 +56,11 @@ describe("authFetch bearer on the eval chain routes", () => {
     // D5c — stage analytics, both the suite page and the run-scoped reader.
     "/api/v1/projects/proj_1/eval-suites/suite_1/stage-analytics",
     "/api/v1/projects/proj_1/eval-runs/run_1/stage-analytics",
+    // The per-trial chains: one page of iterations, each carrying its own
+    // stage rows. MOVED here from the negative list below — it was correctly
+    // pinned as unreachable until a reader needed it, and the entry it now
+    // requires is the one that would otherwise 401 as "could not be loaded".
+    "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });
@@ -75,7 +80,6 @@ describe("authFetch bearer on the eval chain routes", () => {
     // The blanket prefix these patterns exist to avoid: a sibling
     // project-scoped route must NOT inherit the UI's bearer.
     "/api/v1/projects/proj_1/eval-runs/run_1",
-    "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
     "/api/v1/projects/proj_1/eval-suites/suite_1",
     "/api/v1/projects/proj_1/eval-suites/suite_1/runs",
     // Paths that merely start the same way.
@@ -86,6 +90,13 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-suites/suite_1/stage-analytics/overall",
     // The run-scoped suffix is a closed set, not a wildcard.
     "/api/v1/projects/proj_1/eval-runs/run_1/insights",
+    // Granting the iterations LIST must not grant what hangs beneath it. A
+    // trace is a transcript and steps are authored results; both are read by
+    // other paths with their own auth, and a pattern that swallowed them
+    // would be the blanket prefix these tests exist to catch.
+    "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1/trace",
+    "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1",
+    "/api/v1/projects/proj_1/eval-runs/run_1/steps",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });

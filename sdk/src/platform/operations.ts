@@ -78,6 +78,7 @@ import type {
   PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalStageAnalytics,
   PlatformGateWaiver,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
@@ -6077,7 +6078,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -6286,6 +6287,267 @@ export const getEvalIterationTraceOperation: PlatformOperation<
       runId: input.runId,
       iterationId: input.iterationId,
       trace,
+    };
+  },
+};
+
+// ── stage analytics ──────────────────────────────────────────────────────────
+/**
+ * The comparability contract, said once and spliced into both descriptions.
+ *
+ * Both operations return the SAME document, and the way to misuse it is the
+ * same in both places. Writing it twice would let the two drift, and the one
+ * that drifts is the one a reader happens to be looking at.
+ */
+const STAGE_ANALYTICS_READING_RULES =
+  "Counts are returned; RATES ARE NOT. Derive a rate only with its denominator in hand, and a ZERO DENOMINATOR MEANS NOT MEASURED — never 0% and never 100%: `0/0` read as either is the single failure mode this contract is built against. " +
+  "Never sum tallies ACROSS stages: one trial is counted in every stage's tally, so adding the six counts the same trial six times. " +
+  "Never merge documents ACROSS runs: each describes one run's population, and two funnels averaged together describe no run. " +
+  "`excludedTrials` names why observations left a denominator, and the classes are not interchangeable — `notApplicable` and `notMeasured` are population facts, `reachUnknown` is deliberately kept out of the reach denominator (a trial that captured nothing is not evidence of a drop-off), and `integrity` IS A BUG REPORT: a non-zero count there means something upstream is producing chains or measurements that do not validate, and reading it as a population fact hides that. " +
+  "`materializationState` is `provisional` while any applicable judge fanout is still pending — stage attribution can still be rewritten under it — and `final` once the counts have stopped moving. " +
+  "There is NO BACKFILL: a run that terminalized before stage measurement shipped has no document and never will, and that absence is unmeasured, never zeros. " +
+  "The `user-value-chain-glossary` skill on this server defines every stage, state, reason, category and exclusion class this document uses.";
+
+export type GetEvalRunStageAnalyticsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  /**
+   * Whether this run has a funnel at all.
+   *
+   * `measured` — `analytics` is the run's document. `unmeasured` — the run was
+   * RETRIEVED and has no document, which is the only path on which that claim
+   * is honest. A deployment that does not serve the route, and a run that could
+   * not be retrieved, are errors instead: see the operation's execute body.
+   */
+  analyticsState: "measured" | "unmeasured";
+  analytics: PlatformEvalStageAnalytics | null;
+};
+
+/**
+ * A bare 404 — the route is not there — as opposed to the route saying "no".
+ *
+ * Mirrors the web wrapper's `isRouteUnavailable`, and reads `codeSource` for
+ * the reason that wrapper documents: `STATUS_FALLBACK_CODES` maps a bare 404
+ * to `NOT_FOUND`, exactly like an enveloped one, so the CODE cannot separate
+ * them. Only the SOURCE of the code can.
+ *
+ * Getting this wrong is not cosmetic during a dark ship. A deployment without
+ * the route would report every run on it as "never measured" — a claim about
+ * the platform's history dressed up as a claim about each run.
+ */
+function isStageAnalyticsRouteUnavailable(error: unknown): boolean {
+  if (!(error instanceof PlatformApiError)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+/** The error a deployment without the route earns, in both operations. */
+function stageAnalyticsRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval stage analytics. That is a fact about the deployment, not about the run — do not report the run as unmeasured.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunStageAnalyticsOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunStageAnalyticsResult
+> = {
+  name: "get_eval_run_stage_analytics",
+  title: "Get MCPJam eval run stage analytics",
+  description:
+    "Get ONE run's materialized user-value-chain funnel: for each of the six stages (connection → discovery → selection → call → response → userValue), how many trials the stage applied to, how many reached it, how many were measured there, how many passed and failed, and how many were excluded and why — overall and sliced marginally by intent, model and host. This is the DENOMINATOR half of the chain story: `get_eval_run`'s `decisionSummary` says what one trial did and where it stopped, and this says how much was measured at all. " +
+    STAGE_ANALYTICS_READING_RULES +
+    ' ABSENCE IS THREE DIFFERENT FACTS and this operation keeps them apart. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run WAS retrieved and its document is absent does the result say `analyticsState: "unmeasured"` with `analytics: null` — and that state is permanent, because there is no backfill.',
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    // THE RUN FIRST, and this ordering is the whole point. The analytics route
+    // answers 404 for two different facts on purpose — the run is not visible,
+    // or it has no document — and the API declines to separate them so it does
+    // not leak the existence of runs in projects the caller cannot see. So the
+    // separation happens HERE, where the caller's own scope is already
+    // resolved: retrieving the run first turns "404" into "this run exists and
+    // has no funnel", which is the only footing on which "unmeasured" is an
+    // honest claim rather than a guess that reads identically to a typo.
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const analytics = await client.getEvalRunStageAnalytics(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        analyticsState: "measured",
+        analytics,
+      };
+    } catch (error) {
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw stageAnalyticsRouteUnavailableError();
+      }
+      if (error instanceof PlatformApiError && error.status === 404) {
+        return {
+          project: toSelectedProjectInfo(project),
+          runId: run.id,
+          suiteId: run.suiteId,
+          analyticsState: "unmeasured",
+          analytics: null,
+        };
+      }
+      throw error;
+    }
+  },
+};
+
+const listEvalSuiteStageAnalyticsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Project the suite belongs to (name or ID), as returned by list_eval_suites."
+    ),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  runGroupId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Narrow to ONE comparison group. The parity contract requires a shared runGroupId before two funnels may be read as a trend, so this is how you fetch a partition rather than filtering one out of a mixed page yourself."
+    ),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Opaque cursor from a previous response's nextCursor."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      "Documents per page (1-100, default 25). These are large; ask for what you will read."
+    ),
+  from: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Inclusive lower bound on the run's completion time, in epoch MILLISECONDS (not an ISO string). Runs that never completed carry no stamp and are excluded by any bound."
+    ),
+  to: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Inclusive upper bound on the run's completion time, in epoch MILLISECONDS. Must not be earlier than `from`."
+    ),
+});
+
+export type ListEvalSuiteStageAnalyticsInput = z.infer<
+  typeof listEvalSuiteStageAnalyticsInput
+>;
+
+export type ListEvalSuiteStageAnalyticsResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  /** One complete document PER RUN, newest completion first. Never merged. */
+  items: PlatformEvalStageAnalytics[];
+  nextCursor?: string;
+};
+
+export const listEvalSuiteStageAnalyticsOperation: PlatformOperation<
+  ListEvalSuiteStageAnalyticsInput,
+  ListEvalSuiteStageAnalyticsResult
+> = {
+  name: "list_eval_suite_stage_analytics",
+  title: "List MCPJam eval suite stage analytics",
+  description:
+    "List a suite's materialized user-value-chain funnels, newest run-completion first — one complete document PER RUN. This is a TREND SERIES, not an aggregate: the runs are returned side by side so you can look along them, and nothing here sums or averages them. " +
+    'BEFORE CLAIMING ANY TREND, PARTITION. Two funnels drawn beside each other IS a comparability claim, and it holds only within a partition on every field the parity contract pins: `runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`, `measurementsSchemaVersion`, and `materializationState: "final"`. An ABSENT `runGroupId`, `configRevision` or `caseSetFingerprint` BLOCKS comparability — it is never assumed compatible, because two runs that both record nothing compare equal while sharing nothing at all. A row carrying `sourceStageAnalyzerVersions` or `sourceMeasurementsSchemaVersions` aggregated more than one version and is comparable to nothing, itself included. `stageAnalyticsParityBlockers` in @mcpjam/sdk/contract names all eleven blockers and is the authority. ' +
+    'So "which stage has been failing this month" is answerable only WITHIN one parity partition, and reporting it across partitions is reporting a change in what was measured as a change in the server. ' +
+    STAGE_ANALYTICS_READING_RULES,
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((document) =>
+      evalRunRef(document.runId, document.suiteId, result.project?.id)
+    )
+  ),
+  inputSchema: listEvalSuiteStageAnalyticsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    // An inverted window is a guaranteed 400, so it is refused before the
+    // request is built. In `execute` rather than a schema refinement, per the
+    // rule `operationInputError` states: a caller that invokes `execute`
+    // directly never parses the input schema, and a refine-only guard would
+    // simply not fire for it.
+    if (
+      input.from !== undefined &&
+      input.to !== undefined &&
+      input.to < input.from
+    ) {
+      throw operationInputError(
+        "`to` must not be earlier than `from` — the window is inclusive over the run's completion time in epoch milliseconds."
+      );
+    }
+    let page;
+    try {
+      page = await client.listEvalSuiteStageAnalytics(
+        {
+          projectId: project.id,
+          suiteId: suite.id,
+          ...(input.runGroupId !== undefined
+            ? { runGroupId: input.runGroupId }
+            : {}),
+          ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          ...(input.from !== undefined ? { from: input.from } : {}),
+          ...(input.to !== undefined ? { to: input.to } : {}),
+        },
+        { signal }
+      );
+    } catch (error) {
+      // Same discrimination as the run op, and needed for the same reason: an
+      // undeployed route must not be reported as a suite with no measured runs.
+      // The suite itself was already resolved above, so a 404 from HERE cannot
+      // mean "no such suite".
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw stageAnalyticsRouteUnavailableError();
+      }
+      throw error;
+    }
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
   },
 };
@@ -7908,7 +8170,7 @@ const clientFieldSet = z
       .optional()
       .describe("null clears the host-level opt-in."),
     harness: z
-      .enum(["claude-code", "codex"])
+      .enum(["claude-code", "codex", "cursor"])
       .nullable()
       .optional()
       .describe(
@@ -8878,6 +9140,32 @@ const pluginVersionIdsInput = z
     "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files."
   );
 
+/**
+ * The ONE secret-selection schema, shared by `create_project_environment` and
+ * `update_project_environment` so a grant means the same thing on both.
+ *
+ * Deliberately simpler than {@link skillSelectionInput}: no version pins,
+ * because a secret has exactly one current value and "pin the previous value"
+ * is the opposite of what rotation is for.
+ *
+ * `.min(1)` for the same reason every other selection has it: `[]` reads as
+ * "remove every credential" but the API rejects it, so revoking is `null` on
+ * update — a distinction worth an immediate validation error.
+ */
+const secretSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    secretIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project SECRET ids this environment grants. The environment is the GRANT BOUNDARY: no selection means a run receives no secrets, and there is no \"all of them\" mode. A `sharing: \"user\"` secret still reaches only sessions its owner started."
+      ),
+  })
+  .describe(
+    "Which project secrets runs launched from this environment receive."
+  );
+
 const createEnvironmentInput = z.object({
   project: z
     .string()
@@ -8918,6 +9206,7 @@ const createEnvironmentInput = z.object({
       'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
     ),
   skillSelection: skillSelectionInput.optional(),
+  secretSelection: secretSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
   sandboxImageId: z
     .string()
@@ -8937,7 +9226,7 @@ export const createEnvironmentOperation: PlatformOperation<
   name: "create_project_environment",
   title: "Create an MCPJam project environment",
   description:
-    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, and pinned plugin versions. Requires project admin.",
+    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, granted project secrets, and pinned plugin versions. Requires project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: createEnvironmentInput,
@@ -8961,6 +9250,9 @@ export const createEnvironmentOperation: PlatformOperation<
           ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
           ...(input.skillSelection !== undefined
             ? { skillSelection: input.skillSelection }
+            : {}),
+          ...(input.secretSelection !== undefined
+            ? { secretSelection: input.secretSelection }
             : {}),
           ...(input.pluginVersionIds !== undefined
             ? { pluginVersionIds: input.pluginVersionIds }
@@ -9433,6 +9725,12 @@ const updateEnvironmentInput = z
       .describe(
         "New pinned skill selection, or null to clear it. Omit to leave unchanged."
       ),
+    secretSelection: secretSelectionInput
+      .nullable()
+      .optional()
+      .describe(
+        "New credential grant, or null to REVOKE it entirely. Omit to leave unchanged. An empty `secretIds` is rejected — it is not a way to revoke."
+      ),
     pluginVersionIds: pluginVersionIdsInput
       .nullable()
       .optional()
@@ -9457,11 +9755,12 @@ const updateEnvironmentInput = z
       value.serverAttachmentId !== undefined ||
       value.modelId !== undefined ||
       value.skillSelection !== undefined ||
+      value.secretSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
@@ -9473,7 +9772,7 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: updateEnvironmentInput,
@@ -9501,6 +9800,8 @@ export const updateEnvironmentOperation: PlatformOperation<
     if (input.modelId !== undefined) body.modelId = input.modelId;
     if (input.skillSelection !== undefined)
       body.skillSelection = input.skillSelection;
+    if (input.secretSelection !== undefined)
+      body.secretSelection = input.secretSelection;
     if (input.pluginVersionIds !== undefined)
       body.pluginVersionIds = input.pluginVersionIds;
     if (input.sandboxImageId !== undefined)
@@ -14056,6 +14357,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,

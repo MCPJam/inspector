@@ -62,6 +62,10 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import {
+  createWebMcpFramesWsHandler,
+  shutdownWebMcpFrameSockets,
+} from "./routes/web/webmcp-frames.js";
 import { shutdownWebMcpSessions } from "./services/webmcp-inspector/session-registry";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
@@ -541,6 +545,16 @@ if (!HOSTED_MODE) {
     createLocalComputerTerminalWsHandler(upgradeWebSocket),
   );
 }
+// WebMCP Inspector frame stream WebSocket. Local only, for the same reason the
+// `/api/mcp/webmcp/*` routes are: a hosted replica runs no local browser to
+// stream. Auth is the ordinary session token on `Sec-WebSocket-Protocol` —
+// see routes/web/webmcp-frames.
+if (!HOSTED_MODE) {
+  app.get(
+    "/api/web/webmcp/sessions/:id/frames",
+    createWebMcpFramesWsHandler(upgradeWebSocket),
+  );
+}
 // Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
 // auth as the WS above; its own 30MB bodyLimit (the global /api/web/* 1MB cap
 // excludes this path). See routes/web/computer-upload.
@@ -1005,6 +1019,9 @@ async function shutdown() {
     // does NOT tear down established sockets, so a live shell would otherwise
     // outlive the inspector.
     shutdownLocalComputerTerminals();
+    // Same reason, same moment: a frame socket is an established connection
+    // that `server.close()` would leave attached to an exiting process.
+    shutdownWebMcpFrameSockets();
     // Also before server.close(), and awaited: a WebMCP session owns a real
     // Chromium — a visible window when it is headed — and a fire-and-forget
     // teardown loses the race against the process.exit(0) below.

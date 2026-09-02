@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.3.2",
+  "version": "3.3.4",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -92,7 +92,7 @@
     "icons:win": "node scripts/generate-windows-icon.mjs",
     "icons:mac": "node scripts/generate-mac-icon.mjs",
     "electron:make": "npm run icons:win && npm run icons:mac && electron-forge make",
-    "electron:install": "killall 'MCPJam Inspector' 2>/dev/null || true && rm -rf '/Applications/MCPJam Inspector.app' && cp -r 'out/MCPJam Inspector-darwin-arm64/MCPJam Inspector.app' /Applications/ && open '/Applications/MCPJam Inspector.app'",
+    "electron:install": "APP='out/MCPJam Inspector-darwin-arm64/MCPJam Inspector.app'; test -d \"$APP\" || { echo \"electron:install: $APP not found; run 'npm run electron:package' first (this script only copies a packaged app, and it removes the installed one before copying)\" >&2; exit 1; }; killall 'MCPJam Inspector' 2>/dev/null || true; rm -rf '/Applications/MCPJam Inspector.app' && cp -r \"$APP\" /Applications/ && open '/Applications/MCPJam Inspector.app'",
     "electron:publish": "electron-forge publish",
     "electron:dev": "electron-forge start",
     "pretest": "node scripts/bundle-sandbox-proxy-html.js && node scripts/bundle-browser-harness.mjs && node scripts/bundle-plugin-shim.mjs",
@@ -112,6 +112,7 @@
     "@ai-sdk/harness": "^1.0.96",
     "@ai-sdk/harness-claude-code": "^1.0.100",
     "@ai-sdk/harness-codex": "^1.0.98",
+    "@ai-sdk/harness-cursor": "^1.0.9",
     "@ai-sdk/mistral": "^3.0.18",
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.156",
@@ -135,7 +136,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.4.0",
+    "@mcpjam/sdk": "^8.5.1",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.0.2",

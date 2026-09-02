@@ -710,7 +710,17 @@ describe("the human renderer", () => {
   }));
 
   it("never prints a raw wire enum at a human", () => {
-    for (const { name, text } of rendered) {
+    // BOTH LAYERS. The compact default and the `stages` detail read from the
+    // same label maps, and a row renderer that reached for `row.state`
+    // directly would only show up here.
+    const everyLayer = [
+      ...rendered,
+      ...corpus.cases.map((row) => ({
+        name: `${row.__name} (stages)`,
+        text: formatEvalRunDecisionSummary(row.expected, { stages: true }),
+      })),
+    ];
+    for (const { name, text } of everyLayer) {
       // `userValue` is the worst of them and the one a reader is most likely
       // to meet: it is the last stage, so it is where a mechanically perfect
       // run still fails.
@@ -718,6 +728,9 @@ describe("the human renderer", () => {
       expect(text, name).not.toContain("argumentMismatch");
       expect(text, name).not.toContain("notEstablished");
       expect(text, name).not.toContain("caseVariant");
+      // The two the chain rows would have leaked.
+      expect(text, name).not.toContain("notMeasured");
+      expect(text, name).not.toContain("notApplicable");
     }
   });
 
@@ -750,6 +763,250 @@ describe("the human renderer", () => {
     expect(text).toContain(
       EVAL_VERDICT_DECISION_REASON_LABELS.evaluatorErrorRateAboveMaximum
     );
+  });
+
+  it("leads a non-pass with where the chain broke, above the per-trial detail", () => {
+    // THE DEFAULT, not a flag. The verdict says what was decided and the
+    // diagnostics headline says how much was measured; this says how far value
+    // travelled before it stopped, and a reader who scrolls no further has it.
+    const text = rendered.find(
+      (row) => row.name === "measured-failure-at-every-stage"
+    )!.text;
+    const lines = text.split("\n");
+    const headline = lines.findIndex((line) =>
+      line.startsWith("  Diagnostics:")
+    );
+    const first = lines.findIndex((line) => line.startsWith("  First break:"));
+    expect(first).toBe(headline + 1);
+    // EARLIEST IN CHAIN ORDER, which is what "first" means everywhere else in
+    // this contract — never "the most common". This fixture breaks once at
+    // each of the six stages, so any other rule would pick a different one.
+    expect(lines[first]).toContain("First break: Connection");
+    expect(lines[first]).toContain(STAGE_REASON_LABELS.connectFailed);
+    // And the count is what keeps that honest: one of six, and five other
+    // stages also broke.
+    expect(lines[first]).toContain("(1 of 6 measured trials");
+    expect(lines[first]).toContain("earliest of 6 stages that broke");
+  });
+
+  it("never calls a partial page the RUN's first break", () => {
+    // `earliest in chain order` is a claim about the rows in hand. On an
+    // incomplete page an unlisted trial can have broken further up the chain,
+    // so a reader told "First break: Response" would act on a stage the run
+    // may not have stopped at. The diagnostics headline directly above already
+    // refuses to present a page as the whole failure set; this line must not
+    // undo that one line later.
+    const partial = rendered.find(
+      (row) => row.name === "partial-diagnostics-page"
+    )!.text;
+    expect(partial).toContain("PARTIAL");
+    if (partial.includes("First break")) {
+      expect(partial).toContain("First break ON THIS PAGE");
+      expect(partial).not.toMatch(/ {2}First break: /);
+    }
+    // And the complete pages keep the unqualified claim.
+    const complete = rendered.find(
+      (row) => row.name === "measured-failure-at-every-stage"
+    )!.text;
+    expect(complete).toContain("  First break: Connection");
+    expect(complete).not.toContain("ON THIS PAGE");
+  });
+
+  it("names the bucket when no measured trial reached a stage at all", () => {
+    // A setup abort and an evaluator error carry a category and no stage. The
+    // line must not invent a location for a run that never reached one.
+    const text = rendered.find(
+      (row) => row.name === "category-without-first-failed-stage"
+    )!.text;
+    expect(text).toContain(
+      `  First break: no stage was reached — grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 2 measured trials)`
+    );
+  });
+
+  it("counts only the trials that actually carry a category", () => {
+    // A readable chain can establish neither a stage nor a category. Folding
+    // those into the count would attribute them to a bucket nothing put them
+    // in — the same over-claim the spread clause avoids on the stage line.
+    const base = byName("category-without-first-failed-stage").expected;
+    const uncategorized = {
+      ...base.diagnostics.items[0]!,
+      iterationId: "it-3",
+      iterationNumber: 3,
+      chain: {
+        status: "verified" as const,
+        stages: [],
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+      },
+    };
+    const text = formatEvalRunDecisionSummary({
+      ...base,
+      diagnostics: {
+        ...base.diagnostics,
+        items: [...base.diagnostics.items, uncategorized],
+        scannedIterations: base.diagnostics.scannedIterations + 1,
+      },
+    });
+    expect(text).toContain(
+      `grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 3 measured trials; 1 established no category)`
+    );
+  });
+
+  it("says how many chains it could not read, beside the ones it could", () => {
+    // Without this the denominator quietly shrinks to the trials that happened
+    // to validate, and "1 of 1" is read as "all of them" on a run where half
+    // the chains were withheld.
+    const text = rendered.find(
+      (row) => row.name === "unverified-and-version-ahead"
+    )!.text;
+    expect(text).toContain(
+      "(1 of 1 measured trial; 1 more had no readable chain)"
+    );
+  });
+
+  it("establishes no break when nothing in the run establishes one", () => {
+    // A timed-out trial with neither a stage nor a category. Saying anything
+    // here would be an invention; the diagnostics headline above already says
+    // what was examined.
+    const text = rendered.find(
+      (row) => row.name === "inconclusive-no-gradeable-trials"
+    )!.text;
+    expect(text).not.toContain("First break:");
+  });
+
+  it("prints no chain line for a passing run", () => {
+    expect(
+      rendered.find((row) => row.name === "policyV2-passing")!.text
+    ).not.toContain("First break:");
+  });
+
+  it("keeps the six chain rows behind the `stages` opt-in", () => {
+    const summary = byName("measured-failure-at-every-stage").expected;
+    const compact = formatEvalRunDecisionSummary(summary);
+    const detailed = formatEvalRunDecisionSummary(summary, { stages: true });
+    expect(compact).not.toContain("    Chain:");
+    // Six rows per diagnostic, six diagnostics — the volume that has to stay
+    // opt-in so existing callers' output does not grow underneath them.
+    expect(detailed.split("\n").filter((l) => l === "    Chain:")).toHaveLength(
+      6
+    );
+    expect(detailed).toContain(
+      `      Connection: ${STAGE_STATE_LABELS.failed} — ${STAGE_REASON_LABELS.connectFailed}`
+    );
+    // A `notReached` row's state already says "an earlier stage failed"; the
+    // reason must not repeat it back.
+    expect(detailed).toContain(
+      `      Discovery: ${STAGE_STATE_LABELS.notReached}\n`
+    );
+    // Every value through the label maps, on the detailed layer too.
+    expect(detailed).not.toContain("notReached");
+    expect(detailed).not.toContain("earlierStageFailed");
+  });
+
+  it("treats an inherited property name as an unknown member, not a label", () => {
+    // The TYPE says these keys are closed; the runtime value came off the wire
+    // and nothing on this path validates it. `labels[member]` alone resolves
+    // `constructor`/`toString`/`valueOf` through `Object.prototype` to a
+    // FUNCTION — truthy — and prints `function Object() { [native code] }` at
+    // a human, which is the raw-enum failure in a worse costume.
+    const withMember = (member: string): EvalRunDecisionSummary => ({
+      ...byName("measured-failure-at-every-stage").expected,
+      diagnostics: {
+        complete: true,
+        scannedIterations: 1,
+        items: [
+          {
+            iterationId: "it-1",
+            iterationNumber: 1,
+            status: "completed",
+            result: "failed",
+            chain: {
+              status: "verified",
+              analyzerVersion: STAGE_ANALYZER_VERSION,
+              stages: [
+                {
+                  stage: member,
+                  state: member,
+                  reason: member,
+                } as unknown as EvalRunDecisionSummary["diagnostics"]["items"][number]["chain"] extends {
+                  stages: (infer TRow)[];
+                }
+                  ? TRow
+                  : never,
+              ],
+              firstFailedStage: member as unknown as "connection",
+            },
+            evidence: {
+              runId: "run-1",
+              iterationId: "it-1",
+              tracePath: "/projects/p/eval-runs/run-1/iterations/it-1/trace",
+            },
+            nextAction:
+              "inspect the case trace; no failure category was recorded",
+          },
+        ],
+      },
+    });
+
+    for (const member of ["constructor", "toString", "valueOf", "__proto__"]) {
+      for (const options of [{}, { stages: true }]) {
+        const text = formatEvalRunDecisionSummary(withMember(member), options);
+        expect(text, `${member} ${JSON.stringify(options)}`).not.toContain(
+          "native code"
+        );
+        expect(text, `${member} ${JSON.stringify(options)}`).not.toContain(
+          "function "
+        );
+      }
+    }
+  });
+
+  it("names an unrecognized verdict, source or undecided reason instead of blanking it", () => {
+    // Guarding the lookups stopped `function Object() { [native code] }` from
+    // reaching a human, but a bare `?? ""` traded one broken sentence for
+    // another: `Decision summary:  ()` and a naked `Why:` read as a rendering
+    // bug rather than as a member this SDK predates. A vocabulary gaining a
+    // member is the EXPECTED case — an agent reading `Why: judgeNewThing` can
+    // go look it up, where a blank sends it nowhere.
+    const base = byName("measured-failure-at-every-stage").expected;
+    const text = formatEvalRunDecisionSummary({
+      ...base,
+      verdict: "verdictFromTheFuture" as unknown as typeof base.verdict,
+      verdictSource:
+        "sourceFromTheFuture" as unknown as typeof base.verdictSource,
+      undecided: {
+        reason: "reasonFromTheFuture",
+      } as unknown as typeof base.undecided,
+    });
+    expect(text).toContain("verdictFromTheFuture");
+    expect(text).toContain("sourceFromTheFuture");
+    expect(text).toContain("Why: reasonFromTheFuture");
+    // The specific malformations the `?? ""` fallbacks produced.
+    expect(text).not.toContain("Decision summary:  ");
+    expect(text.split("\n")).not.toContain("  Why: ");
+    // An inherited property name is still not a member, and must not print
+    // as one now that unknown members reach the page verbatim.
+    for (const member of ["constructor", "toString", "valueOf"]) {
+      const inherited = formatEvalRunDecisionSummary({
+        ...base,
+        verdict: member as unknown as typeof base.verdict,
+        undecided: { reason: member } as unknown as typeof base.undecided,
+      });
+      expect(inherited, member).not.toContain("native code");
+      expect(inherited, member).not.toContain("function ");
+    }
+  });
+
+  it("prints no chain rows for a chain that was withheld or never recorded", () => {
+    // `unverified` had its rows refused at the boundary and `absent` never had
+    // any. Six "not measured" rows for either would state as measured-and-empty
+    // exactly what was never measured.
+    const detailed = formatEvalRunDecisionSummary(
+      byName("unverified-and-version-ahead").expected,
+      { stages: true }
+    );
+    expect(
+      detailed.split("\n").filter((line) => line === "    Chain:")
+    ).toHaveLength(1);
   });
 
   it("names the stage the evidence was read from", () => {

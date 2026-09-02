@@ -81,6 +81,7 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import { harnessUsesExternalAccount } from "./harness/registry.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
@@ -933,6 +934,23 @@ export async function streamWebChatTurn(
       String(prepare.modelDefinition.id),
       prepare.modelDefinition.provider,
     );
+  // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
+  //
+  // Without this the branch below sends a Cursor turn down the org-BYOK path,
+  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
+  // approve the turn and the turn would then run on a completely different
+  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
+  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
+  // product just told the user was ready.
+  //
+  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
+  // model", and an external-account turn is exactly the case where it does not.
+  // The two reasons to take the non-BYOK branch are different facts, so they
+  // stay separate values.
+  const isExternalAccountHarnessTurn =
+    !!persist.harness && harnessUsesExternalAccount(persist.harness);
+  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
 
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
@@ -947,7 +965,7 @@ export async function streamWebChatTurn(
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok",
+    modelSource: "mcpjam" | "byok" | "local_byok" | "external-account",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
@@ -1060,7 +1078,7 @@ export async function streamWebChatTurn(
     };
   };
 
-  if (!isMCPJam) {
+  if (!usesMcpjamFreePath) {
     const providerKeyResult = deriveOrgProviderKeyResult(
       prepare.modelDefinition,
     );
@@ -1189,9 +1207,19 @@ export async function streamWebChatTurn(
 
   // MCPJam-free path.
   const mcpjamModelId = String(prepare.modelDefinition.id);
+  // …except when the HARNESS pays for its own model. An external-account
+  // runtime (Cursor) reaches its provider on the customer's account with the
+  // runtime vendor, so MCPJam is not charged for the turn and must not record
+  // it as though it were — `'mcpjam'` is what makes a turn consume the org's
+  // MCPJam spend limit.
+  //
+  // `'external-account'` rather than `'byok'`, though both mean "not charged to
+  // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
+  // which this turn does not have. See `chatModelSourceValidator` in the
+  // backend for the two surfaces that read it that way.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam",
+    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 

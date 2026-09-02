@@ -672,7 +672,7 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--file <path>` | No | Environment JSON file (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
-\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, and `pluginVersionIds`:
+\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, `secretSelection`, and `pluginVersionIds`:
 
 ```bash
 mcpjam cloud environments create --project Acme --json '{
@@ -695,7 +695,7 @@ mcpjam cloud environments create --project Acme --json '{
 | `--file <path>` | No | Environment JSON with the fields to change (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
-Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
+Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, `secretSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
 
 ```bash
 mcpjam cloud environments update --environment Staging --expected-revision 3 \
@@ -1400,11 +1400,34 @@ Get the status and summary of an eval run.
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--diagnostics-limit <n>` | No | Failure diagnostics per page (1–200; default 20) |
+| `--diagnostics-cursor <cursor>` | No | Cursor from a previous response's `decisionSummary.diagnostics.nextCursor` |
+| `--stages` | No | Print all six user-value chain rows for each failing trial (`--format human`) |
 
 The response carries a `judges` block with each advisory grader's state and
 per-case grades. `status: null` means that judge was never requested for the
 run — different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
+
+The failure diagnostics inside `decisionSummary` are **paginated**, and a page
+that is not the whole set says so: `diagnostics.complete` is `false` and
+`diagnostics.nextCursor` carries the next page. Without `--diagnostics-cursor`
+a run with more failures than the page size reports only its first 20, so a
+script that concludes "only these failed" from one page is reading a sample.
+Walk the pages:
+
+```bash
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 --format json
+# then, while .decisionSummary.diagnostics.complete is false:
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 \
+  --diagnostics-cursor "$NEXT_CURSOR" --format json
+```
+
+`--stages` expands each failing trial from one first-failed-stage line to all
+six chain rows — connection, discovery, selection, tool call, response, user
+value — with each row's state and reason in words. It is off by default because
+six rows per trial is a lot of terminal on a run with twenty failures; the
+first-break line above the per-trial detail is printed either way.
 
 ### `cloud eval judge`
 
@@ -1425,6 +1448,54 @@ for the suite does not reach a run that was already recorded — `--enable` is
 what grades it, and it changes nothing beyond that run. Passing neither
 `--judge-model` nor `--judge-threshold` grades with the suite's own config,
 clearing any override a previous request left on the run.
+
+### `cloud eval stage-analytics`
+
+Read the user-value chain funnel — how far value travelled through
+`connection → discovery → selection → call → response → userValue`, and how
+much of the run was measured at each stage.
+
+Address it two ways, and exactly one of them per invocation:
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | XOR `--suite` | One run's funnel, as a single document |
+| `--suite <id-or-name>` | XOR `--run` | One page of that suite's runs, newest completion first — one document per run |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous response (`--suite` only) |
+| `--limit <n>` | No | Documents per page, 1–100 (`--suite` only) |
+
+```bash
+mcpjam cloud eval stage-analytics --run "$RUN_ID" --format json
+mcpjam cloud eval stage-analytics --suite checkout --limit 10 --format json
+```
+
+**Counts are returned; rates are not.** Every field is a count of trials, and
+the arithmetic is stated on the document: `passed + failed = measured`,
+`measured + notMeasured = reached`, `reached + notReached + reachUnknown =
+applicable`. Derive a rate only with its denominator in hand — **a zero
+denominator means not measured**, never 0% and never 100%.
+
+**Never sum across stages, and never merge across runs.** One trial is counted
+in every stage's tally, so adding the six counts the same trial six times. Each
+document describes one run's population; the `--suite` listing renders runs
+side by side as a trend series and never aggregates them.
+
+**A listing is only comparable within a partition.** Two funnels drawn beside
+each other *is* a comparability claim, and it holds only across runs that share
+`runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`
+and `measurementsSchemaVersion`, and whose `materializationState` is `final`.
+An **absent** `runGroupId`, `configRevision` or `caseSetFingerprint` blocks
+comparability rather than being assumed compatible — two runs that both record
+nothing compare equal while sharing nothing at all.
+
+**Three absences, three different answers.** A run that does not exist fails as
+a run-not-found error. A deployment that does not serve this route fails with a
+message saying so — that is a fact about the deployment, not about the run. Only
+a run that was retrieved and has no document reports `analyticsState:
+"unmeasured"` with `analytics: null`, and that state is permanent: there is no
+backfill, so a run that finished before stage measurement shipped will never
+gain a funnel.
 
 ### `cloud eval iterations`
 
