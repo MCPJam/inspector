@@ -1842,7 +1842,7 @@ function buildBrowserdLaunchArgs(extra = []) {
 }
 
 // server/services/browserd/daemon/profile-lock.ts
-import { unlink } from "node:fs/promises";
+import { readlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
@@ -2153,6 +2153,7 @@ async function launchBrowserdContext(options) {
   const { chromium } = await import("playwright");
   const launchArgs = {
     headless: options.headless ?? false,
+    ...options.channel ? { channel: options.channel } : {},
     // Chromium cannot start its renderer sandbox as uid 0 (the image builds
     // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,

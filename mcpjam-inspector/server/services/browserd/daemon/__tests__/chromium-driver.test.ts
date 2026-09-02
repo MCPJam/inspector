@@ -3,7 +3,7 @@ import { ChromiumDriver } from "../chromium-driver";
 import { shortHash } from "../state-token";
 import type { BrowserCommand } from "../../protocol";
 import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
-import { fakeContext, fakePage, type FakePage } from "./fake-page";
+import { fakeContext, fakePage } from "./fake-page";
 
 function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
   return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };

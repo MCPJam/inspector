@@ -149,8 +149,3 @@ export function fakeContext(init: { pages?: FakePage[]; connected?: boolean } = 
   };
   return { context, created, setConnected: (v: boolean) => (connected = v), wasClosed: () => closed };
 }
-
-function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
-  return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };
-}
-

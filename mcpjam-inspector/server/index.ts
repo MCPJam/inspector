@@ -63,6 +63,7 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import { shutdownLocalBrowserSessions } from "./services/browserd/local/local-browser-session";
 import {
   createWebMcpFramesWsHandler,
   shutdownWebMcpFrameSockets,
@@ -1032,6 +1033,10 @@ async function shutdown() {
     // Chromium — a visible window when it is headed — and a fire-and-forget
     // teardown loses the race against the process.exit(0) below.
     await shutdownWebMcpSessions();
+    // The agent's own browser, for the same reason and with one more: closing
+    // the context is what makes Chromium release its profile's singleton lock,
+    // so a skipped teardown here is a browser the NEXT run cannot launch.
+    await shutdownLocalBrowserSessions();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

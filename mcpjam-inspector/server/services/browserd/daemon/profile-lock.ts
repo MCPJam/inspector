@@ -14,7 +14,8 @@
  * missing file is success (nothing to clear), and a lock we cannot remove is
  * surfaced, not thrown — the caller decides whether to proceed.
  */
-import { unlink } from "node:fs/promises";
+import { readlink, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 
 /** The singleton artifacts Chromium leaves in a user-data dir. */
@@ -62,4 +63,52 @@ function isNotFound(err: unknown): boolean {
     err !== null &&
     (err as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+/**
+ * Is a LIVE process holding this profile, or is the lock just debris?
+ *
+ * The hosted engine never has to ask: it `pkill`s the daemon before every
+ * relaunch, so any lock it finds is by construction stale. On a laptop the
+ * owner may be a second inspector server, or the user's own Chrome pointed at
+ * the same directory — and unlinking the lock out from under either of those
+ * corrupts a profile someone is using.
+ *
+ * Chromium writes `SingletonLock` as a symlink whose TARGET is `host-pid`. A
+ * target naming this host with a pid that still exists is a live owner; a
+ * missing link, a foreign host (a shared home directory over NFS), or a dead
+ * pid is not. Unreadable or unparseable is reported as NOT live — the lock is
+ * then cleared, which is the behaviour that existed before this probe and is
+ * still the right default for a directory this process is about to own.
+ */
+export async function probeSingletonOwner(
+  userDataDir: string,
+  isAlive: (pid: number) => boolean = defaultIsAlive,
+): Promise<{ live: boolean; pid?: number }> {
+  let target: string;
+  try {
+    target = await readlink(join(userDataDir, "SingletonLock"));
+  } catch {
+    return { live: false };
+  }
+  // `host-pid`, where the host may itself contain dashes.
+  const separator = target.lastIndexOf("-");
+  if (separator <= 0) return { live: false };
+  const host = target.slice(0, separator);
+  const pid = Number(target.slice(separator + 1));
+  if (!Number.isInteger(pid) || pid <= 0) return { live: false };
+  if (host !== hostname()) return { live: false };
+  return isAlive(pid) ? { live: true, pid } : { live: false, pid };
+}
+
+function defaultIsAlive(pid: number): boolean {
+  try {
+    // Signal 0 checks for existence and permission without delivering
+    // anything. EPERM means the process exists but belongs to another user —
+    // still a live owner, and emphatically not ours to clear.
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
 }

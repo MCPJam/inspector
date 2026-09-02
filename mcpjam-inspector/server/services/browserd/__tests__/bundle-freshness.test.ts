@@ -36,7 +36,6 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../../..");
 const daemonDir = resolve(root, "server/services/browserd/daemon");
-const protocolFile = resolve(root, "server/services/browserd/protocol.ts");
 const bundleFile = resolve(
   root,
   "server/services/browserd/dist/mcpjam-browserd.mjs",

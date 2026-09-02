@@ -338,6 +338,19 @@ export interface LaunchBrowserdContextOptions {
    * inherit the previous one's cookies.
    */
   contextMode?: "persistent" | "ephemeral";
+  /**
+   * Which Chromium build to launch.
+   *
+   * Unset means Playwright's own default, which is what the hosted desktop
+   * wants (headed under Xfce, from the template's install). The local engine
+   * passes `"chromium"` deliberately: without a channel, `headless: true`
+   * resolves to the `chromium-headless-shell` binary — the OLD headless, a
+   * different executable with a different compositor path and a fingerprint
+   * public sites recognise. "No window" must not mean "a browser sites
+   * refuse", so the local engine runs the same full build a headed launch
+   * would and merely declines to show it.
+   */
+  channel?: string;
 }
 
 /**
@@ -352,6 +365,7 @@ export async function launchBrowserdContext(
   const { chromium } = await import("playwright");
   const launchArgs = {
     headless: options.headless ?? false,
+    ...(options.channel ? { channel: options.channel } : {}),
     // Chromium cannot start its renderer sandbox as uid 0 (the image builds
     // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,

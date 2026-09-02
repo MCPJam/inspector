@@ -20,7 +20,7 @@
  *          grant's rotated capability), unconditional otherwise.
  */
 import { Hono } from "hono";
-import { LOCAL_COMPUTER_ENABLED } from "../../config.js";
+import { LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
@@ -32,6 +32,12 @@ import {
 } from "../../utils/computers/local-consent.js";
 import { getLocalTerminalAvailability } from "../../utils/computers/local-pty.js";
 import { issueLocalTerminalNonce } from "../../utils/computers/local-terminal-auth.js";
+import {
+  getChromiumInstallState,
+  isChromiumInstalled,
+  startChromiumInstall,
+} from "../../utils/browser-rendering-setup.js";
+import { listLocalBrowserSessions } from "../../services/browserd/local/local-browser-session.js";
 
 const computers = new Hono();
 
@@ -137,6 +143,71 @@ computers.post("/local-terminal-token", async (c) => {
   } catch {
     return c.json({ error: "Invalid project for the local terminal" }, 400);
   }
+});
+
+/**
+ * The agent browser's own gates, identical in shape to the terminal mint's and
+ * separate in substance: `MCPJAM_LOCAL_BROWSER_ENABLED` is its own switch, so
+ * an operator can allow a browser without a shell or the reverse.
+ */
+computers.use(
+  "/local-browser/*",
+  bearerAuthMiddleware,
+  requireVerifiedAuth(),
+);
+computers.use("/local-browser/*", async (c, next) => {
+  if (!LOCAL_BROWSER_ENABLED) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  if (c.get("guestId")) {
+    return c.json({ error: "Guests cannot use the local browser" }, 403);
+  }
+  return next();
+});
+
+/**
+ * Is there a Chromium on this machine for the agent to drive, and is one
+ * running?
+ *
+ * Consent is NOT required to read this: the consent screen itself needs to
+ * know whether it should offer an install, and a screen that cannot describe
+ * the machine until you have already authorized it is a screen that cannot
+ * explain what it is asking for. Nothing here is machine-identifying — no
+ * paths, no profile directories, no process ids.
+ */
+computers.get("/local-browser/status", async (c) => {
+  const install = getChromiumInstallState();
+  const sessions = listLocalBrowserSessions();
+  return c.json({
+    installed: await isChromiumInstalled(),
+    install,
+    running: sessions.length > 0,
+    // Whether a person currently holds any local browser. The rail shows this
+    // so a second tab cannot silently believe it has control.
+    leaseHeld: sessions.some((session) => session.leaseHeld),
+  });
+});
+
+/**
+ * Download Chromium, with progress, from the consent screen.
+ *
+ * This is the ONE place the install may start, and the reason it exists as a
+ * route at all: the download is hundreds of megabytes, and doing it lazily
+ * inside a chat turn means a model sitting in a tool call for minutes with no
+ * way to say why. Requires consent — it is a large, unprompted download onto
+ * someone's machine, which is exactly the class of thing consent is for.
+ *
+ * Idempotent: two clicks join one install rather than racing two `playwright
+ * install` runs over the same browser cache.
+ */
+computers.post("/local-browser/install", async (c) => {
+  const consent = await verifyLocalComputerConsent(
+    c.req.header(LOCAL_CONSENT_HEADER),
+  );
+  if (!consent) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  return c.json({ install: await startChromiumInstall() });
 });
 
 export default computers;

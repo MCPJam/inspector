@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile, readdir, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, rm, symlink, writeFile, readdir, mkdir } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearStaleSingletonLock } from "../profile-lock";
+import { clearStaleSingletonLock, probeSingletonOwner } from "../profile-lock";
 
 describe("clearStaleSingletonLock (L8)", () => {
   let dir: string;
@@ -41,5 +41,39 @@ describe("clearStaleSingletonLock (L8)", () => {
     expect(result.removed).toEqual([]);
     expect(result.failed).toHaveLength(1);
     expect(result.failed[0].name).toBe("SingletonLock");
+  });
+});
+
+describe("probeSingletonOwner — is anyone actually using this profile?", () => {
+  it("reports a live owner when the lock names this host and a running pid", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+    expect(await probeSingletonOwner(dir, () => true)).toEqual({
+      live: true,
+      pid: 4242,
+    });
+  });
+
+  it("reports a dead pid as clearable debris", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+    expect(await probeSingletonOwner(dir, () => false)).toEqual({
+      live: false,
+      pid: 4242,
+    });
+  });
+
+  it("does not claim a pid on ANOTHER host is ours to judge", async () => {
+    // A shared home directory over NFS: the pid is real, on a machine we
+    // cannot see, and `process.kill` here would be asking about a local
+    // process that happens to share the number.
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink("some-other-box-4242", join(dir, "SingletonLock"));
+    expect(await probeSingletonOwner(dir, () => true)).toEqual({ live: false });
+  });
+
+  it("treats a missing or unreadable lock as free", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    expect(await probeSingletonOwner(dir, () => true)).toEqual({ live: false });
   });
 });

@@ -29,7 +29,11 @@
  *                           misconfigured remote URL can't forward in a loop.
  */
 import { Hono } from "hono";
-import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../config.js";
+import {
+  HOSTED_MODE,
+  LOCAL_BROWSER_ENABLED,
+  LOCAL_HARNESS_ENABLED,
+} from "../../config.js";
 import { z } from "zod";
 import { executionScopeSchema } from "../../utils/execution-scope.js";
 import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
@@ -97,6 +101,12 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
           workspaceDisplayRoot: localEngine.available
             ? "~/.mcpjam/computer"
             : null,
+          // Whether this server would let the agent drive a browser here. A
+          // capability bit, deliberately NOT whether Chromium is downloaded —
+          // that is machine state and lives behind the authenticated
+          // `/api/mcp/computers/local-browser/status`, alongside the install
+          // that acts on it.
+          browserAvailable: LOCAL_BROWSER_ENABLED,
           ...(localEngine.available ? {} : { reason: localEngine.reason }),
         },
         cloud: { available: personalCloudAvailable },

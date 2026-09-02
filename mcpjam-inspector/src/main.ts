@@ -121,6 +121,14 @@ let serverPort: number = 0;
 let localHarnessSessionToken: string | null = null;
 let shutdownLocalTerminals: (() => void) | null = null;
 let killLocalTerminals: (() => void) | null = null;
+/**
+ * The agent's own browser, held for teardown for the same reason as the PTYs:
+ * it is a real Chromium this process started, and nothing else closes it.
+ * Async, unlike the PTY pair — closing the browser context is what makes
+ * Chromium release the profile's singleton lock.
+ */
+let shutdownLocalBrowsers: (() => Promise<void>) | null = null;
+let killLocalBrowsers: (() => Promise<void>) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
@@ -443,6 +451,8 @@ async function startHonoServer(): Promise<number> {
       killLocalComputerTerminals,
       shutdownWebMcpFrameSockets,
       killWebMcpFrameSockets,
+      shutdownLocalBrowserSessions,
+      killLocalBrowserSessions,
     } = await createHonoApp();
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
@@ -455,6 +465,11 @@ async function startHonoServer(): Promise<number> {
     // and a non-latching one for `window-all-closed`.
     shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
     killWebMcpFrames = killWebMcpFrameSockets;
+    // The agent's browser is a real Chromium this process started. Quitting the
+    // app without closing it leaves an orphan holding the profile lock, which
+    // the next launch then has to refuse.
+    shutdownLocalBrowsers = shutdownLocalBrowserSessions;
+    killLocalBrowsers = killLocalBrowserSessions;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -948,6 +963,10 @@ app.on("window-all-closed", () => {
   // does it anyway; this makes it unconditional) but do NOT latch shutdown, or
   // every terminal handshake after reopening would be refused.
   killLocalTerminals?.();
+  // Same non-latching kill for the agent's browser: on macOS this is not a
+  // quit, and latching would refuse every browser the user opened after
+  // reopening the window from the dock.
+  void killLocalBrowsers?.();
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
@@ -1074,6 +1093,7 @@ app.on("before-quit", (event) => {
   }
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
+  void shutdownLocalBrowsers?.();
   if (server) {
     server.close?.();
   }

@@ -23,6 +23,28 @@ interface BrowserRenderingSetupOptions {
   logger?: BrowserRenderingSetupLogger;
 }
 
+/**
+ * What an explicit, user-triggered Chromium install is doing right now.
+ *
+ * The background install at server startup can afford to be silent; this one
+ * cannot. It is hundreds of megabytes started by someone who just clicked
+ * "install", and the alternative to reporting progress is a screen that looks
+ * broken for several minutes. It deliberately does NOT run inside a chat turn:
+ * a model waiting on a tool call has no way to say what is taking so long.
+ */
+export type ChromiumInstallState =
+  | { status: "idle" }
+  | { status: "installing"; percent?: number }
+  | { status: "ready" }
+  | { status: "failed"; error: string };
+
+let explicitInstallState: ChromiumInstallState = { status: "idle" };
+let explicitInstallPromise: Promise<boolean> | null = null;
+
+export function getChromiumInstallState(): ChromiumInstallState {
+  return explicitInstallState;
+}
+
 let installPromise: Promise<boolean> | null = null;
 let lastInstallFailureAt = 0;
 
@@ -108,6 +130,104 @@ export async function installPlaywrightChromium(): Promise<void> {
       }
     });
   });
+}
+
+/**
+ * Run the install with its output PARSED rather than inherited.
+ *
+ * `installPlaywrightChromium` inherits stdio, which shows progress in the
+ * server's own terminal — useless to a browser tab. This reads the same output
+ * and reports percentages, at the cost of no longer echoing to the console;
+ * both exist because the startup path genuinely wants the console and the
+ * user-triggered path genuinely wants the number.
+ */
+export async function installPlaywrightChromiumWithProgress(
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  const cliPath = resolvePlaywrightCli();
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [cliPath, "install", "chromium"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // Playwright reports "|████ | 37% of 168.4 MiB". Take the last percentage
+    // on each chunk: the downloader redraws one line, so a chunk can carry
+    // several and only the newest is true.
+    const read = (chunk: Buffer) => {
+      const matches = [...chunk.toString().matchAll(/(\d{1,3})%/g)];
+      const last = matches[matches.length - 1]?.[1];
+      if (last !== undefined) onProgress(Math.min(100, Number(last)));
+    };
+    child.stdout?.on("data", read);
+    child.stderr?.on("data", read);
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      reject(
+        new Error(
+          `playwright install chromium exited with ${
+            signal ? `signal ${signal}` : `code ${code}`
+          }`,
+        ),
+      );
+    });
+  });
+}
+
+/**
+ * Start (or join) an explicit Chromium install and report its progress.
+ *
+ * Idempotent by design: the consent screen polls the state and may click
+ * twice, and two concurrent `playwright install` runs writing the same browser
+ * cache is a corrupted install.
+ */
+export async function startChromiumInstall(options: {
+  isInstalled?: () => Promise<boolean>;
+  runInstall?: (onProgress: (percent: number) => void) => Promise<void>;
+} = {}): Promise<ChromiumInstallState> {
+  const isInstalled = options.isInstalled ?? isChromiumInstalled;
+  if (explicitInstallPromise) return explicitInstallState;
+  if (await isInstalled()) {
+    explicitInstallState = { status: "ready" };
+    return explicitInstallState;
+  }
+
+  const runInstall = options.runInstall ?? installPlaywrightChromiumWithProgress;
+  explicitInstallState = { status: "installing" };
+  explicitInstallPromise = (async () => {
+    try {
+      await runInstall((percent) => {
+        explicitInstallState = { status: "installing", percent };
+      });
+      const ready = await isInstalled();
+      explicitInstallState = ready
+        ? { status: "ready" }
+        : {
+            status: "failed",
+            error:
+              "the install finished but no launchable Chromium was found on this machine",
+          };
+      return ready;
+    } catch (error) {
+      explicitInstallState = {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+      return false;
+    }
+  })().finally(() => {
+    explicitInstallPromise = null;
+  });
+
+  return explicitInstallState;
+}
+
+/** Test seam: install state is process-wide by design. */
+export function resetChromiumInstallStateForTests(): void {
+  explicitInstallState = { status: "idle" };
+  explicitInstallPromise = null;
 }
 
 export async function ensureLocalChromiumInstalled(
