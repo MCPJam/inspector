@@ -338,12 +338,16 @@ vi.mock("@/components/chat-v2/thread", () => ({
     loadingIndicatorVariant,
     onEditUserMessage,
     editDisabled,
+    sendFollowUpMessage,
   }: {
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
     onEditUserMessage?: (message: any, text: string) => void;
     editDisabled?: boolean;
+    // Widget-driven follow-ups bypass the composer, so tests need the handler
+    // itself — a rendered button could never stand in for that path.
+    sendFollowUpMessage?: (text: string) => void;
   }) =>
     (() => {
       mockThread({
@@ -352,6 +356,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
         loadingIndicatorVariant,
         onEditUserMessage,
         editDisabled,
+        sendFollowUpMessage,
       });
       return (
         <div data-testid="thread">
@@ -393,6 +398,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onChangeSkillResults?: (results: unknown[]) => void;
     skillResults?: unknown[];
     onModelSelectorOpenChange?: (open: boolean) => void;
+    notice?: React.ReactNode;
   }) => {
     // Captures the FULL props object (not just the fields this stub renders)
     // so tests can reach into props the rendered markup below never surfaces
@@ -412,6 +418,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
       clientSelector,
       onChangeSkillResults,
       skillResults,
+      notice,
     } = props;
     return (
       <form
@@ -424,6 +431,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
           onSubmit(e);
         }}
       >
+        {notice}
         <input
           data-testid="chat-input-field"
           value={value}
@@ -938,6 +946,14 @@ describe("PlaygroundMain", () => {
         const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
         await Promise.resolve(bridge?.onSelectThread(session));
       });
+
+      // A rail-opened conversation records no host or environment, so the
+      // composer discloses that and holds the first reply until the user
+      // accepts the target it will actually run on. Accept it here — this test
+      // is about the pre-send SYNC, not about the target disclosure.
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
 
       // Control: with the sync healthy the send goes through, so the assertions
       // below are about the failure and not about a submit path that never runs.
@@ -3055,6 +3071,162 @@ describe("PlaygroundMain", () => {
         rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
       });
       expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+    });
+  });
+  /**
+   * A reopened conversation renders under the viewer's AMBIENT host and
+   * environment — those live in per-project browser storage, not on the
+   * session — so the composer describes the viewer, not the chat. Left
+   * unlabelled that reads as history, and the reply goes to whatever is
+   * selected: a Cursor-harness transcript answering as Claude.
+   */
+  describe("as-run execution target", () => {
+    const RESTORED_SESSION_ID = "restored-target-session";
+
+    const arriveAtRestoredConversation = (
+      resumeConfig: Record<string, unknown>
+    ) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${RESTORED_SESSION_ID}`
+      );
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: {
+          _id: "history-restored-target",
+          chatSessionId: RESTORED_SESSION_ID,
+          firstMessagePreview: "what harness are you",
+          status: "active" as const,
+          directVisibility: "private" as const,
+          version: 3,
+          createdAt: 1,
+          updatedAt: 1,
+          lastActivityAt: 1,
+          isPinned: false,
+          manualUnread: false,
+          isUnread: false,
+          messagesBlobUrl: "https://storage.test/blob",
+          resumeConfig,
+        },
+        widgetSnapshots: [],
+      });
+    };
+
+    /**
+     * Open the conversation and let the chat hook adopt its session id, which
+     * is what binds the disclosure to the thread on screen.
+     */
+    const openRestoredConversation = async (
+      resumeConfig: Record<string, unknown>
+    ) => {
+      arriveAtRestoredConversation(resumeConfig);
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />
+      );
+      await waitFor(() => {
+        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
+        );
+      });
+      mockUseChatSession.chatSessionId = RESTORED_SESSION_ID;
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+      return { rerender };
+    };
+
+    beforeEach(() => {
+      invalidateChatHistoryPrefetch();
+    });
+
+    afterEach(() => {
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("says nothing about a live chat the user started here", () => {
+      render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+
+      expect(
+        screen.queryByTestId("conversation-target-notice")
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("discloses that a reopened conversation recorded no target, instead of passing the current selection off as history", async () => {
+      // The shape every `origin: "playground"` row has: prompt/servers, no
+      // host and no environment anywhere on the session.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+
+      const notice = await screen.findByTestId("conversation-target-notice");
+      expect(notice).toHaveAttribute("data-disclosure", "unrecorded");
+      expect(notice.textContent).toContain("As-run configuration unavailable");
+    });
+
+    it("blocks the reply until the user accepts the target it will actually run on", async () => {
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+
+      await screen.findByTestId("conversation-target-notice");
+      expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
+
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("conversation-target-notice")
+        ).not.toBeInTheDocument();
+      });
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("refuses the send outright, not just the button, while the target is unaccepted", async () => {
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "what harness are you" },
+      });
+      fireEvent.submit(screen.getByTestId("chat-input"));
+
+      await act(async () => {});
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("holds a widget-driven follow-up to the same gate", async () => {
+      // A widget follow-up bypasses the composer entirely, so a disabled Send
+      // button is no protection: it would be the first thing to run on a
+      // target the transcript never used.
+      const { rerender } = await openRestoredConversation({
+        selectedServers: ["deepwiki"],
+      });
+      mockUseChatSession.messages = [
+        { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any;
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+
+      const sendFollowUpMessage =
+        mockThread.mock.calls.at(-1)?.[0].sendFollowUpMessage;
+      expect(sendFollowUpMessage).toBeDefined();
+      await act(async () => {
+        sendFollowUpMessage("follow up from a widget");
+      });
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("names the environment a conversation pinned when the composer points elsewhere", async () => {
+      // `resumeConfig.environmentId` is the one execution target that IS
+      // persisted (Agent Playground turns pin it), and the browser ignored it.
+      await openRestoredConversation({ environmentId: "env_recorded" });
+
+      const notice = await screen.findByTestId("conversation-target-notice");
+      expect(notice).toHaveAttribute("data-disclosure", "mismatch");
+      expect(notice.textContent).toContain("env_recorded");
     });
   });
 });
