@@ -309,10 +309,7 @@ describe("verification cost", () => {
     clearRuntimeVerificationCache();
     const root = await writeBundle("concurrent-bad", { "bridge.mjs": "x" });
     const wrong = `sha256:${"2".repeat(64)}`;
-    await Promise.all([
-      verifyRuntime(root, wrong),
-      verifyRuntime(root, wrong),
-    ]);
+    await Promise.all([verifyRuntime(root, wrong), verifyRuntime(root, wrong)]);
     // Now with the digest it really has: a fresh verification, not a cached
     // refusal.
     await expect(

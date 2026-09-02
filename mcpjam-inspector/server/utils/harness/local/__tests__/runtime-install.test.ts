@@ -23,6 +23,7 @@ import {
   runtimeInstallRoot,
 } from "../runtime-install.js";
 import { computeTreeDigest } from "../runtime-identity.js";
+import { localPackTarget } from "../targets.js";
 import * as packDigests from "../pack-digests.generated.js";
 
 let base: string;
@@ -43,24 +44,33 @@ function spyOnPackRecords() {
 }
 
 /**
- * A digest table for the machine the tests are running on.
+ * A digest table where every target carries a DIFFERENT digest, and only this
+ * machine's is the one the fixture pack really hashes to.
  *
- * Every target, not just this one: the point of keying on `<os>-<arch>` is
- * that a lookup for another target must not find this digest, and a fixture
- * that only ever filled one entry could not tell the two apart.
+ * The distinctness is the point. A table that gave every target the same
+ * digest would pass whether the lookup used the right architecture or the
+ * wrong one — which is precisely the bug the `<os>-<arch>` keying exists to
+ * prevent, so a fixture that cannot tell them apart proves nothing.
  */
 function tableFor(treeDigest: string): typeof packDigests.PACK_RECORDS {
-  const record = { packVersion: PACK_VERSION, treeDigest };
-  return {
-    "claude-code": {
-      "darwin-arm64": record,
-      "darwin-x64": record,
-      "linux-x64": record,
-      "linux-arm64": record,
-      "win32-x64": record,
-    },
-    codex: {},
+  const decoy = (seed: string) => ({
+    packVersion: PACK_VERSION,
+    // Valid in shape, and not the digest of anything: a lookup that finds one
+    // of these instead of the real entry refuses, loudly.
+    treeDigest: `sha256:${seed.repeat(64).slice(0, 64)}`,
+  });
+  const byTarget: Record<string, { packVersion: string; treeDigest: string }> = {
+    "darwin-arm64": decoy("a"),
+    "darwin-x64": decoy("b"),
+    "linux-x64": decoy("c"),
+    "linux-arm64": decoy("d"),
+    "win32-x64": decoy("e"),
   };
+  byTarget[PLATFORM_KEY] = { packVersion: PACK_VERSION, treeDigest };
+  return {
+    "claude-code": byTarget,
+    codex: {},
+  } as typeof packDigests.PACK_RECORDS;
 }
 
 const PACK_VERSION = "test-pack-1";
@@ -174,7 +184,38 @@ afterAll(async () => {
 describe("where a pack lives", () => {
   it("honours the Electron-supplied runtime root", () => {
     expect(runtimeInstallRoot()).toBe(installRoot);
-    expect(packVersionRoot("7")).toBe(join(installRoot, "7"));
+    // Under a TARGET segment: an arm64 and a Rosetta x64 Inspector share a
+    // home directory, and the same version of two different artifacts must not
+    // activate at the same path.
+    expect(packVersionRoot("7")).toBe(join(installRoot, PLATFORM_KEY, "7"));
+  });
+
+  it("keeps two architectures of one version apart on disk", () => {
+    expect(packVersionRoot("7", "darwin-arm64")).not.toBe(
+      packVersionRoot("7", "darwin-x64"),
+    );
+    expect(packVersionRoot("7", "darwin-arm64")).toBe(
+      join(installRoot, "darwin-arm64", "7"),
+    );
+  });
+
+  it("refuses a target no pack is built for", () => {
+    // A machine nobody builds for resolves the same way a missing directory
+    // does — `unsupported-platform`, not a download that could never verify.
+    expect(expectedPackFor("claude-code", "linux-x64")).not.toBeNull();
+    expect(localPackTarget("linux", "riscv64")).toBeNull();
+  });
+
+  it("does not find one architecture's digest under another's key", () => {
+    // The lookup this keying exists for. Every target carries a distinct
+    // digest, so a mis-keyed lookup returns the wrong one rather than
+    // accidentally the right one.
+    const mine = expectedPackFor("claude-code", PLATFORM_KEY as never);
+    const others = (["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"] as const)
+      .filter((target) => target !== PLATFORM_KEY)
+      .map((target) => expectedPackFor("claude-code", target)?.treeDigest);
+    expect(mine?.treeDigest).toBe(realDigest);
+    expect(others).not.toContain(realDigest);
   });
 
   it("falls back to the release asset for a version it has no override for", () => {

@@ -484,7 +484,10 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // is under a session root, so it goes through the same symlink-aware check
     // the rest of the file API uses.
     const sup = supervisor();
-    const { session, workRoot, sessionStateDir } = await buildSession("bootlink", sup);
+    const { session, workRoot, sessionStateDir } = await buildSession(
+      "bootlink",
+      sup,
+    );
     const marker = join(
       workRoot,
       ".harness-bootstrap",
@@ -557,7 +560,10 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("keeps the framework's bootstrap marker out of the user's checkout", async () => {
     const sup = supervisor();
-    const { session, workRoot, sessionStateDir } = await buildSession("bootmarker", sup);
+    const { session, workRoot, sessionStateDir } = await buildSession(
+      "bootmarker",
+      sup,
+    );
     const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
     const marker = join(bootstrapDir, ".bootstrap-claude-code-1.ok");
 
@@ -644,13 +650,10 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
   it("runs the verified bundle with a sanitized environment, and cleans up", async () => {
     const sup = supervisor();
     const started: Array<{ pid: number; port: number }> = [];
-    const { session, workRoot, sessionStateDir, bridgePort } = await buildSession(
-      "bridge",
-      sup,
-      async (a) => {
+    const { session, workRoot, sessionStateDir, bridgePort } =
+      await buildSession("bridge", sup, async (a) => {
         started.push(a);
-      },
-    );
+      });
 
     const workDir = join(workspace, "claude-code-bridge");
     const bridgeStateDir = join(workspace, ".agent-runs", "bridge", "bridge");
@@ -756,10 +759,8 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
   it("destroy takes the tree down and removes the session state", async () => {
     const sup = supervisor();
-    const { session, workRoot, sessionStateDir, bridgePort } = await buildSession(
-      "destroy",
-      sup,
-    );
+    const { session, workRoot, sessionStateDir, bridgePort } =
+      await buildSession("destroy", sup);
     const proc = await session.spawn({
       command:
         `node '${join(
@@ -780,7 +781,10 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
   it("refuses to launch when the verified bundle changed after consent", async () => {
     const sup = supervisor();
-    const { session, workRoot, bridgePort } = await buildSession("swapped", sup);
+    const { session, workRoot, bridgePort } = await buildSession(
+      "swapped",
+      sup,
+    );
     // Replace the bundle AFTER the session resolved its runtime identity.
     await writeFile(join(bundleRoot, "bridge.mjs"), "console.log('swapped')");
     await expect(

@@ -293,11 +293,28 @@ jobs:
           HOME="$CONFORMANCE_ROOT/home" \
             npx tsx server/utils/harness/local/conformance/run-lifecycle.ts abort
 
+      # Asserted here too, not just printed. The POSIX legs fail on a
+      # survivor; a Windows step that only echoed `tasklist` could report a
+      # clean run over a live agent, which is the outcome this whole suite
+      # exists to make impossible.
+      #
+      # Matched on the pack path rather than `node.exe`: the runner has its own
+      # Node processes, and failing on those would be a red job with no
+      # survivor.
       - name: No supervised process survived the run
         if: always()
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
         run: |
-          survivors="$(tasklist //FI "IMAGENAME eq node.exe" //FO CSV //NH || true)"
-          echo "$survivors"
+          set -euo pipefail
+          root="$(cygpath -w "$CONFORMANCE_ROOT/runtime/claude-code" 2>/dev/null || echo "$CONFORMANCE_ROOT/runtime/claude-code")"
+          survivors="$(wmic process get ProcessId,CommandLine /format:csv 2>/dev/null \
+            | grep -F "$root" || true)"
+          echo "${survivors:-(no supervised process)}"
+          if [ -n "$survivors" ]; then
+            echo "supervised processes survived the conformance run" >&2
+            exit 1
+          fi
 
   summarize:
     name: conformance version

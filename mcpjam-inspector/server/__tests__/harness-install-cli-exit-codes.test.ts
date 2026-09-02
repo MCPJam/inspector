@@ -15,6 +15,7 @@
  * `harness status` reported success on a machine with no runtime pack.
  */
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -59,14 +60,33 @@ describe("the harness subcommand reports its answer in the exit code", () => {
     expect(run(["harness"]).code).toBe(2);
   });
 
-  it("exits non-zero, and says why, when the server build is absent", () => {
-    // The suite runs from source, where `dist/server/harness-install-cli.js`
-    // has not been built — which is also the state a user meets after cloning,
-    // so the message has to send them somewhere useful.
+  it("reports 'not installed' as a non-zero exit, however it got there", () => {
+    // Branches on whether `dist/` exists, because BOTH states are real and
+    // this suite runs in both: from source before a build (where the CLI
+    // reports the missing bundle) and after `build:server` in CI (where it
+    // loads the real installer, finds no pack, and prints a status). The one
+    // thing that has to hold in either is the exit code — which is what was
+    // broken, and what a script consuming this command reads.
+    const built = existsSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "..",
+        "dist",
+        "server",
+        "harness-install-cli.js",
+      ),
+    );
     const { code, output } = run(["harness", "status"]);
     expect(code).toBe(1);
-    expect(output).toMatch(
-      /server build is missing|does not expose|could not load/,
-    );
+    if (built) {
+      // The installer answered: a state, as JSON, and never `ready` here —
+      // no pack is installed in a test environment.
+      expect(JSON.parse(output.trim()).state).not.toBe("ready");
+    } else {
+      expect(output).toMatch(
+        /server build is missing|does not expose|could not load/,
+      );
+    }
   });
 });

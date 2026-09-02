@@ -252,9 +252,12 @@ correct failure but an invisible one.
 
       ```
       # 1. build the packs (workflow_dispatch on "Local harness runtime pack")
-      # 2. take the `digests` output and write the table
+      # 2. take the FLAT map the collect job prints — `{target: digest}`, the
+      #    step's `flat` output, not the nested `digests` one — and pass EVERY
+      #    target it built. A missing target is a platform the release then
+      #    cannot serve, and the release gate fails on the difference.
       node scripts/write-pack-digests.mjs --version <release> \
-        --digests '{"darwin-arm64":"sha256:…","linux-x64":"sha256:…"}'
+        --digests '{"darwin-arm64":"sha256:…","darwin-x64":"sha256:…","linux-x64":"sha256:…","linux-arm64":"sha256:…","win32-x64":"sha256:…"}'
       # 3. commit it, then release
       ```
 

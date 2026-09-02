@@ -33,9 +33,9 @@ import { resolveNodeLauncher } from "../node-launcher.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
+import { installedAdapterVersion } from "./adapter-version.js";
 import { probeProcessGroup, probeProcess } from "../process-identity.js";
 
-import { createRequire } from "node:module";
 
 const execFileP = promisify(execFile);
 const ROOT = process.env.CONFORMANCE_ROOT!;
@@ -124,9 +124,29 @@ function stopHelpers(): void {
   }
 }
 
+/**
+ * The environment a conformance helper needs, and nothing else.
+ *
+ * Deliberately narrow — these servers stand in for the gateway and for
+ * Anthropic, and inheriting the runner's whole environment would let a
+ * variable set for something else change what they do. But narrow is not the
+ * same as empty: on Windows a process with no `SystemRoot` cannot initialize
+ * Winsock, so `http.createServer().listen()` fails and the helper exits before
+ * printing its port — which is exactly what the Windows conformance leg has
+ * been doing on every run.
+ */
+function helperEnv(extra: Record<string, string>): Record<string, string> {
+  const base: Record<string, string> = { PATH: process.env.PATH ?? "" };
+  for (const name of ["SystemRoot", "SYSTEMROOT", "windir", "TEMP", "TMP"]) {
+    const value = process.env[name];
+    if (value !== undefined) base[name] = value;
+  }
+  return { ...base, ...extra };
+}
+
 async function startChild(script: string, env: Record<string, string>) {
   const child = spawn(process.execPath, [join(SCRIPT_DIR, script)], {
-    env: { PATH: process.env.PATH ?? "", ...env },
+    env: helperEnv(env),
     stdio: ["ignore", "pipe", "pipe"],
   });
   helpers.push(child);
@@ -149,7 +169,16 @@ async function startChild(script: string, env: Record<string, string>) {
         reject(new Error(`${script} printed ${JSON.stringify(line)}: ${error}`));
       }
     });
-    child.on("exit", (code) => reject(new Error(`${script} exited ${code}`)));
+    // With the child's own stderr, because without it a helper that dies at
+    // startup says only "exited 1" and the next reader has to guess.
+    child.on("exit", (code) =>
+      reject(
+        new Error(
+          `${script} exited ${code}` +
+            (stderr.length > 0 ? `\n${stderr.slice(-10).join("\n")}` : ""),
+        ),
+      ),
+    );
   });
   return { child, port, stderr };
 }
@@ -317,18 +346,7 @@ async function main() {
   });
   mark("consent_granted");
 
-  const adapterVersion = JSON.parse(
-    await readFile(
-      // Resolved through the package manager, never as a path relative to
-      // this file: the adapter hoists to the workspace root, and a
-      // source-layout-relative URL breaks the moment it does (which is
-      // what `check:bundled-runtime-paths` exists to catch).
-      createRequire(import.meta.url).resolve(
-        "@ai-sdk/harness-claude-code/package.json",
-      ),
-      "utf8",
-    ),
-  ).version;
+  const adapterVersion = await installedAdapterVersion();
   const tAvail = performance.now();
   const availability = await resolveLocalHarnessAvailability({
     target, actor: { isGuest: false, isScenarioSession: false, isJourneySession: false }, userId: "conformance-user", projectId: "conformance-project",

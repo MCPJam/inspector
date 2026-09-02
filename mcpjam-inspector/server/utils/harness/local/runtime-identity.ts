@@ -460,16 +460,21 @@ export async function resolveManagedBundle(args: {
     };
   }
 
-  const target = localPackTarget(platform, args.arch ?? process.arch);
+  const arch = args.arch ?? process.arch;
+  const target = localPackTarget(platform, arch);
   const expectedDigest =
     target === null ? undefined : policy.bundleDigest[target];
   if (expectedDigest === undefined) {
     return {
       ok: false,
       status: "bundle-absent",
+      // The TARGET, not just the OS: on a machine whose architecture nobody
+      // builds for, "no pack for darwin" reads as a platform outage when the
+      // real answer is "no pack for darwin-x64". A user comparing that against
+      // the release assets needs the string that appears there.
       message:
         `no ${manifest.harnessId} runtime pack has been built for ` +
-        `${platform}, so there is no digest to verify one against`,
+        `${platform}-${arch}, so there is no digest to verify one against`,
     };
   }
 

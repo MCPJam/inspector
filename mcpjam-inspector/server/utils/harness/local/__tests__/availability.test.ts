@@ -103,7 +103,10 @@ beforeAll(async () => {
   const bundleRoot = join(runtimeRoot, "claude-code");
   await mkdir(join(bundleRoot, "bin"), { recursive: true });
   await writeFile(join(bundleRoot, "bridge.mjs"), "console.log(1)");
-  await writeFile(join(bundleRoot, "launcher.mjs"), 'await import("./bridge.mjs");');
+  await writeFile(
+    join(bundleRoot, "launcher.mjs"),
+    'await import("./bridge.mjs");',
+  );
   await writeFile(join(bundleRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
   await chmod(join(bundleRoot, "bin", "node"), 0o755);
 
@@ -119,15 +122,15 @@ beforeAll(async () => {
       runtime: {
         ...LOCAL_HARNESS_MANIFEST["claude-code"].runtime,
         bundleDigest: {
-        // Every target, so a fixture built on one machine resolves on any
-        // other: the lookup is by `<os>-<arch>` and a partial map would
-        // make these tests pass or fail by architecture.
-        "linux-x64": digest,
-        "linux-arm64": digest,
-        "darwin-arm64": digest,
-        "darwin-x64": digest,
-        "win32-x64": digest,
-      },
+          // Every target, so a fixture built on one machine resolves on any
+          // other: the lookup is by `<os>-<arch>` and a partial map would
+          // make these tests pass or fail by architecture.
+          "linux-x64": digest,
+          "linux-arm64": digest,
+          "darwin-arm64": digest,
+          "darwin-x64": digest,
+          "win32-x64": digest,
+        },
       },
     } as LocalHarnessCompatibility,
   };

@@ -66,7 +66,16 @@ describe("the shipped manifest", () => {
       for (const [target, digest] of Object.entries(
         manifest.runtime.bundleDigest,
       )) {
-        expect(target).toMatch(/^(darwin|linux|win32)-(arm64|x64)$/);
+        // The exact five, not a shape: `win32-arm64` matches a regex and is
+        // not a target anything builds, so a generated entry naming one would
+        // have passed while resolving to a pack that does not exist.
+        expect([
+          "darwin-arm64",
+          "darwin-x64",
+          "linux-x64",
+          "linux-arm64",
+          "win32-x64",
+        ]).toContain(target);
         expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
         expect(digest).not.toBe(`sha256:${"0".repeat(64)}`);
       }

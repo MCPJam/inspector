@@ -87,10 +87,27 @@ export function runtimeInstallRoot(): string {
   return join(homedir(), ".mcpjam", "harness-local", "runtime");
 }
 
-/** The versioned directory a pack activates into, and the `runtimeRoot` the
- *  availability gate is then given. */
-export function packVersionRoot(packVersion: string): string {
-  return join(runtimeInstallRoot(), packVersion);
+/**
+ * The directory a pack activates into, and the `runtimeRoot` the availability
+ * gate is then given.
+ *
+ * Keyed by TARGET as well as version. On an Apple Silicon Mac an arm64
+ * Inspector and a Rosetta x64 one share a home directory and would otherwise
+ * activate two different artifacts — same version, different machine code — at
+ * the same path: installing either would delete the other's runtime out from
+ * under any session using it. A target segment makes them neighbours instead,
+ * and gives the version sweep a scope that cannot reach across architectures.
+ */
+export function packVersionRoot(
+  packVersion: string,
+  target: LocalPackTarget | null = localPackTarget(),
+): string {
+  return join(targetInstallRoot(target), packVersion);
+}
+
+/** Where every version for one target lives. */
+function targetInstallRoot(target: LocalPackTarget | null): string {
+  return join(runtimeInstallRoot(), target ?? packPlatformKey());
 }
 
 export type RuntimeInstallStatus =
@@ -251,7 +268,7 @@ export async function readRuntimeInstallStatus(args: {
   const inFlight = active.get(expected.packVersion);
   if (inFlight !== undefined) return inFlight.status;
 
-  const root = packVersionRoot(expected.packVersion);
+  const root = packVersionRoot(expected.packVersion, target);
   try {
     const marker = JSON.parse(
       await readFile(join(root, INSTALL_MARKER), "utf8"),
@@ -378,8 +395,11 @@ async function performInstall(args: {
 }): Promise<RuntimeInstallStatus> {
   const { expected, setStatus } = args;
   const platformKey = packPlatformKey(args.platform, args.arch);
-  const versionRoot = packVersionRoot(expected.packVersion);
-  const installRoot = runtimeInstallRoot();
+  const target = localPackTarget(args.platform, args.arch);
+  const versionRoot = packVersionRoot(expected.packVersion, target);
+  // Per TARGET, so staging and the version sweep below are confined to this
+  // architecture's directory and cannot touch another one's runtime.
+  const installRoot = targetInstallRoot(target);
   await mkdir(installRoot, { recursive: true, mode: 0o700 });
 
   const staging = join(installRoot, `.mcpjam-tmp-${randomUUID()}`);

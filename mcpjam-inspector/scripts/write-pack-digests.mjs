@@ -61,8 +61,35 @@ function parseArgs(argv) {
   return args;
 }
 
+/**
+ * A flag's value, insisting it was actually given one.
+ *
+ * `--version --digests '{…}'` parses as `version: true`, and `String(true)` is
+ * the perfectly plausible-looking release version `"true"` — which would have
+ * been written into the table and then into every asset URL and install path.
+ * A missing value is a usage error, not a value.
+ */
+function stringArg(name) {
+  const value = args[name];
+  if (value === undefined) return null;
+  if (typeof value !== "string") {
+    fail(`--${name} needs a value`);
+  }
+  return value.trim();
+}
+
 const args = parseArgs(process.argv.slice(2));
-const version = String(args.version ?? "").trim();
+
+// `--check` is a FLAG. A stray value after it made `args.check` a string, the
+// `=== true` below then fell through to the write branch, and a release's
+// verification step would have silently rewritten the digest table it was
+// supposed to be checking. Fails closed instead.
+if (args.check !== undefined && args.check !== true) {
+  fail("--check takes no value");
+}
+const checkOnly = args.check === true;
+
+const version = stringArg("version") ?? "";
 if (version.length === 0) fail("--version is required");
 // The version reaches an asset URL and a directory name, so it is checked
 // rather than trusted: this runs in a workflow whose input a person types.
@@ -72,7 +99,7 @@ if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(version)) {
 
 let digests;
 try {
-  digests = JSON.parse(String(args.digests ?? ""));
+  digests = JSON.parse(stringArg("digests") ?? "");
 } catch {
   fail("--digests must be a JSON object of target to digest");
 }
@@ -143,7 +170,7 @@ next = replaceBlock(
   "EXPECTED_PACK_VERSION",
 );
 
-if (args.check === true) {
+if (checkOnly) {
   if (next !== source) {
     console.error(
       "write-pack-digests: the checked-in digest table does not match the " +
