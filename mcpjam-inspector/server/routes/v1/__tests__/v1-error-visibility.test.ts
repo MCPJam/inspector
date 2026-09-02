@@ -468,3 +468,54 @@ describe("translateConvexReadError — argument validation is warned, not paged"
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe("v1 capture boundary — a backend's structured refusal", () => {
+  /** A `ConvexError` as the production error mask actually delivers it. */
+  function convexError(data: unknown) {
+    return Object.assign(new Error("[Request ID: 9f2] Server Error"), { data });
+  }
+
+  it("answers the caller with the backend's code and message, not a 500", () => {
+    // The production failure: `startTestSuiteRun` refused a launch with a
+    // machine code and the remedy, and the boundary answered
+    // `INTERNAL_ERROR: Server Error` — an hour of `convex logs --prod`.
+    const result = mapErrorToV1(
+      convexError({
+        code: "ENV_MATERIALIZED_SECRETS_UNSUPPORTED",
+        message: "Switch those secrets to brokered delivery.",
+      }),
+      INTERNAL,
+    );
+
+    expect(result.code).toBe("VALIDATION_ERROR");
+    expect(result.message).toBe("Switch those secrets to brokered delivery.");
+  });
+
+  it("does not page for it — a refusal is not our incident", () => {
+    // The boundary declares `mcpjam_internal`, so anything that reaches the
+    // classifier unclassified pages. A deliberate refusal must be translated
+    // BEFORE that, or fixing the status would have bought a Sentry event per
+    // customer mistake.
+    mapErrorToV1(
+      convexError({
+        code: "ENV_ARCHIVED",
+        message: "That environment is archived.",
+      }),
+      INTERNAL,
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("still pages for an unstructured throw on the same path", () => {
+    // The guard rail: only a `{ code, message }` payload is treated as
+    // deliberate. Everything else keeps the opaque 500 AND the page.
+    const result = mapErrorToV1(
+      new Error("Uncaught Error: journeyRuns.js:785 exploded"),
+      INTERNAL,
+    );
+
+    expect(result.code).toBe("INTERNAL_ERROR");
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+});

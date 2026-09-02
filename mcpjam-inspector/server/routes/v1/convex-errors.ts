@@ -28,6 +28,13 @@
  *   - **Infrastructure failures are 5xx.** A timeout or a reset socket is not
  *     the caller's bad input; those defer to `mapRuntimeError` so a transient
  *     outage is not reported as a validation error.
+ *   - **A structured code with no branch of its own still answers 400**, with
+ *     the backend's own message and its code in `details`. A `ConvexError`
+ *     carrying `{ code, message }` is a refusal somebody wrote down; the
+ *     branches above give the ones we know a better status, and this keeps the
+ *     rest actionable instead of collapsing them into the 500 below. See
+ *     `translateStructuredConvexRefusal` at the foot of this file for the v1
+ *     error BOUNDARY's use of the same rule.
  *   - **An unrecognized failure is a 500, and it is logged.** Everything above
  *     is a recognized outcome; what falls past all of it is a write path we do
  *     not understand, which is ours. It used to answer 400 with Convex's prose
@@ -589,6 +596,46 @@ export function translateConvexWriteError(
     );
   }
 
+  // ── A structured code with no branch of its own. ─────────────────────────
+  //
+  // The backend raised `ConvexError({ code, message })` DELIBERATELY: it chose
+  // a machine code and wrote a sentence for the caller. Every branch above
+  // claims a code it knows; what reaches here is a refusal shipped by the
+  // backend that nobody has taught this table about yet — and until this
+  // branch existed, that meant the terminal 500 below, which drops the message
+  // on purpose and pages the on-call. Production hit exactly that with
+  // `ENV_MATERIALIZED_SECRETS_UNSUPPORTED` (mcpjam-backend
+  // `convex/journeyRuns.ts`): a launch refusal naming the remedy, delivered to
+  // the customer as `INTERNAL_ERROR: Server Error` and discoverable only by
+  // tailing `convex logs --prod`.
+  //
+  // 400, because the caller has something to change: a refusal that carries
+  // customer-facing prose is by construction about the request, and a code
+  // that deserves a different status (a 409 conflict, a 429 cap) earns an
+  // explicit branch above — that is what the branches are for. The generic
+  // answer only has to be honest and actionable, not perfectly specific.
+  //
+  // BOTH fields are required. `code` alone is what marks the throw as
+  // deliberate; `message` is the only prose allowed out, because a
+  // ConvexError's `error.message` is the JSON of its data wrapped in Convex's
+  // own framing — request ids, function names, argument-validator output with
+  // the arguments in it. Nothing here reads `error.message`, so an
+  // unstructured throw cannot reach a caller through this branch: it falls to
+  // the 500 below, exactly as before.
+  if (code && structuredMessage) {
+    // `code` travels in `details` rather than as the public error code: the v1
+    // union is CLOSED (see `contract.ts`), so a backend code that is not in
+    // `INTERNAL_TO_V1_CODE` has no public member to become. `details.code` is
+    // the same channel `translateResolveError` (environments.ts) and the
+    // registry install family already publish theirs on.
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      structuredMessage,
+      { code },
+    );
+  }
+
   // ── Nothing recognized it. That is OUR bug, and it answers 500. ──────────
   //
   // This used to be a 400 VALIDATION_ERROR carrying Convex's prose, which got
@@ -628,4 +675,53 @@ export function translateConvexWriteError(
     detail: redactForLog(error),
   });
   return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, fallbackMessage);
+}
+
+/**
+ * A DELIBERATELY structured Convex refusal, translated — or `undefined` for
+ * anything else. The v1 ERROR BOUNDARY's view of the table above.
+ *
+ * Twenty-odd write routes call `translateConvexWriteError` themselves. The
+ * ones that do not — the eval-run launch is the one that cost an hour of
+ * production debugging — let a `ConvexError` escape to `v1OnError`, where the
+ * runtime classifier has nothing to key on and answers
+ * `500 INTERNAL_ERROR: Server Error`. The backend had already done the work:
+ * a machine code, and a sentence naming the remedy. Only the last hop threw it
+ * away.
+ *
+ * The gate is `{ code, message }` both being non-empty strings, and that is
+ * the whole safety argument:
+ *
+ *   - a `ConvexError` is not an accident — the backend imported a class and
+ *     handed it an object;
+ *   - a `code` on it is a machine contract someone wrote down;
+ *   - a `message` on it is prose written FOR the caller (Convex's production
+ *     redaction preserves `ConvexError` data and nothing else, which is why
+ *     the backend puts customer copy there).
+ *
+ * Anything without both — a `TypeError`, a dead socket, a Convex validator
+ * rejection, a plain `throw new Error(...)` whose text may name our internals
+ * — returns `undefined` here and keeps its opaque 500. This function never
+ * reads `error.message`.
+ *
+ * Copy is deliberately GENERIC: at the boundary there is no route to say which
+ * noun was addressed, so a 404 reads "Not found" rather than borrowing a wrong
+ * one. A route that wants better copy calls the translator directly and gets
+ * its own `resource`.
+ */
+export function translateStructuredConvexRefusal(
+  error: unknown,
+): WebRouteError | undefined {
+  // A route that already decided owns the answer; the boundary maps it as-is.
+  if (error instanceof WebRouteError) return undefined;
+  const data = convexErrorData(error);
+  const code = typeof data?.code === "string" ? data.code.trim() : "";
+  const message = typeof data?.message === "string" ? data.message.trim() : "";
+  if (!code || !message) return undefined;
+  return translateConvexWriteError(error, {
+    resource: "Resource",
+    fallbackMessage: "The platform refused this request.",
+    notFoundMessage: "Not found",
+    conflictMessage: "This resource changed since you loaded it.",
+  });
 }
