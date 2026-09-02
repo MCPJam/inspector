@@ -343,6 +343,35 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
 }
 
 /**
+ * Run pnpm, on a platform where "run pnpm" is not one thing.
+ *
+ * pnpm installs on Windows as `pnpm.CMD`, and since Node's 2024 mitigation for
+ * CVE-2024-27980 `execFile` refuses to run a `.cmd` without a shell — so the
+ * bare name that works everywhere else reports "pnpm is not on PATH" on the one
+ * platform where it plainly is.
+ *
+ * A shell is acceptable HERE and nowhere near the supervised command path: this
+ * is a build script whose arguments are constants and build-chosen paths, not
+ * a translator handing a user's tool call to a process. What a shell does bring
+ * is word splitting, so an argument containing a space would silently become
+ * two — refused outright rather than mis-parsed.
+ */
+function runPnpm(args, options) {
+  if (process.platform !== "win32") {
+    return execFileSync("pnpm", args, options);
+  }
+  const unsafe = args.filter((a) => /\s/.test(String(a)));
+  if (unsafe.length > 0) {
+    fail(
+      `cannot pass an argument containing whitespace to pnpm through the ` +
+        `Windows shell: ${JSON.stringify(unsafe)}. Build to a path with no ` +
+        `spaces in it.`,
+    );
+  }
+  return execFileSync("pnpm", args, { ...options, shell: true });
+}
+
+/**
  * Refuse a pnpm too old for the adapter's recipe, before it fails obscurely.
  *
  * The recipe's `pnpm-workspace.yaml` carries one key, `allowBuilds` — pnpm 10
@@ -354,7 +383,7 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
 function assertPnpmVersion() {
   let version;
   try {
-    version = execFileSync("pnpm", ["--version"], {
+    version = runPnpm(["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
@@ -457,8 +486,7 @@ function main() {
   //    step, which is what materializes the native CLI.
   assertPnpmVersion();
   console.log("[pack] installing the adapter's frozen dependency graph…");
-  execFileSync(
-    "pnpm",
+  runPnpm(
     [
       "install",
       "--frozen-lockfile",
