@@ -97,6 +97,19 @@ beforeAll(async () => {
   );
   await writeFile(join(outside, "secret.txt"), "shh");
   await writeFile(join(bundleRoot, "bridge.mjs"), FAKE_BRIDGE);
+  // The pack's real loopback launcher, so these tests exercise the file that
+  // actually ships rather than a stand-in for it.
+  await mkdir(join(bundleRoot, "bin"), { recursive: true });
+  await writeFile(
+    join(bundleRoot, "launcher.mjs"),
+    await readFile(join(import.meta.dirname, "..", "pack", "launcher.mjs")),
+  );
+  // A pack carries its own Node, and resolution refuses one that is missing or
+  // not executable. Copying a 110 MB binary into every fixture would cost more
+  // than it proves, so this is a stub: the provider is handed the real node as
+  // its launcher below, which is the seam its options already have.
+  await writeFile(join(bundleRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
+  await chmod(join(bundleRoot, "bin", "node"), 0o755);
   // The bundle carries the adapter's dependency manifest too — a CI build runs
   // the same recipe, so the bytes the adapter would write are already here.
   await writeFile(join(bundleRoot, "package.json"), BUNDLE_PACKAGE_JSON);
@@ -115,18 +128,47 @@ async function buildSession(
   onBridgeStarted?: (a: { pid: number; port: number }) => Promise<void>,
   bridgeSource: string = FAKE_BRIDGE,
   maxFileBytes?: number,
+  /**
+   * The pack's launcher. Defaults to the real one, which forces every listener
+   * onto loopback. A test that needs to prove the exposure probe still catches
+   * a bridge binding `0.0.0.0` passes a pass-through launcher instead — that
+   * is what a pack whose loopback wrapper was removed or subverted looks like.
+   */
+  launcherSource?: string,
 ): Promise<{
   session: HarnessV1NetworkSandboxSession;
   sessionStateDir: string;
+  /**
+   * The session's default working directory: session-owned state, NOT the
+   * user's checkout. The framework resolves `.harness-bootstrap` and its own
+   * `.agent-runs` against this, and requires the agent's working directory to
+   * be a proper subdirectory of it — which is why the workspace is reached
+   * through the `project` symlink inside it rather than being it.
+   */
+  workRoot: string;
   bridgePort: number;
 }> {
   await writeFile(join(bundleRoot, "bridge.mjs"), bridgeSource);
+  await writeFile(
+    join(bundleRoot, "launcher.mjs"),
+    launcherSource ??
+      (await readFile(join(import.meta.dirname, "..", "pack", "launcher.mjs"))),
+  );
   const digest = await computeTreeDigest(bundleRoot);
   const manifest = {
     ...LOCAL_HARNESS_MANIFEST["claude-code"],
     runtime: {
       ...LOCAL_HARNESS_MANIFEST["claude-code"].runtime,
-      bundleDigest: digest,
+      bundleDigest: {
+        // Every target, so a fixture built on one machine resolves on any
+        // other: the lookup is by `<os>-<arch>` and a partial map would
+        // make these tests pass or fail by architecture.
+        "linux-x64": digest,
+        "linux-arm64": digest,
+        "darwin-arm64": digest,
+        "darwin-x64": digest,
+        "win32-x64": digest,
+      },
     },
   } as (typeof LOCAL_HARNESS_MANIFEST)["claude-code"];
   const resolved = await resolveManagedBundle({
@@ -149,7 +191,10 @@ async function buildSession(
     manifest,
     runtime: resolved.runtime,
     supervisor,
-    launcher: resolveNodeLauncher({ isElectron: false }),
+    // The pack's `bin/node` is a stub in these fixtures (see above), so the
+    // launcher is this process's real Node. Everything else — the launcher
+    // script, the bridge, the work dir — comes from the resolved runtime.
+    launcher: resolveNodeLauncher({ bundledNodePath: process.execPath }),
     workspacePath: workspace,
     workspaceGrantId: "ws_test",
     sessionStateDir,
@@ -161,7 +206,12 @@ async function buildSession(
     ...(onBridgeStarted ? { onBridgeStarted } : {}),
   });
   const session = await provider.createSession({ sessionId });
-  return { session, sessionStateDir, bridgePort };
+  return {
+    session,
+    sessionStateDir,
+    workRoot: join(sessionStateDir, "work"),
+    bridgePort,
+  };
 }
 
 function supervisor() {
@@ -332,12 +382,38 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await session.stop();
   });
 
-  it("answers the framework's pwd probe from the session root", async () => {
+  it("reaches the workspace through the project link, and no further", async () => {
+    // The work-dir layout puts a `project` symlink to the granted workspace
+    // inside the 0700 session directory. The link resolves INTO the workspace
+    // root, which is already one of the two confinement roots — so it adds a
+    // path to the same place, not a path to a new place. The escape link
+    // planted in the workspace is still refused through it.
     const sup = supervisor();
-    const { session } = await buildSession("home", sup);
+    const { session, workRoot } = await buildSession("worklink", sup);
+    const viaLink = join(workRoot, "project", "src", "existing.ts");
+    await expect(session.readTextFile({ path: viaLink })).resolves.toBe(
+      "export const a = 1;\n",
+    );
+    await symlink(outside, join(workspace, "escape")).catch(() => {});
+    await expect(
+      session.readTextFile({
+        path: join(workRoot, "project", "escape", "secret.txt"),
+      }),
+    ).rejects.toThrow(/outside every directory/);
+    await session.stop();
+  });
+
+  it("answers the framework's pwd probe from the session's work root", async () => {
+    // NOT the user's checkout. The framework resolves its own scaffolding
+    // against this directory and requires the agent's working directory to be
+    // a proper subdirectory of it, so pointing it at the checkout put bridge
+    // state — including a 0644 start-config.json carrying the session's model
+    // capability — inside somebody's repository.
+    const sup = supervisor();
+    const { session, workRoot } = await buildSession("home", sup);
     await expect(session.run({ command: "pwd" })).resolves.toEqual({
       exitCode: 0,
-      stdout: workspace,
+      stdout: workRoot,
       stderr: "",
     });
     await session.stop();
@@ -345,8 +421,8 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("satisfies the bootstrap sequence without running a package manager", async () => {
     const sup = supervisor();
-    const { session } = await buildSession("bootstrap", sup);
-    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+    const { session, workRoot } = await buildSession("bootstrap", sup);
+    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
     const invocations = [
       {
         command: 'mkdir -p "$BOOTSTRAP_DIR"',
@@ -382,8 +458,8 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // where they would sit in their VCS status and never be read, because
     // every reference to them is remapped onto the bundle.
     const sup = supervisor();
-    const { session } = await buildSession("bootfiles", sup);
-    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+    const { session, workRoot } = await buildSession("bootfiles", sup);
+    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
 
     await session.writeTextFile({
       path: join(bootstrapDir, "package.json"),
@@ -408,9 +484,12 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // is under a session root, so it goes through the same symlink-aware check
     // the rest of the file API uses.
     const sup = supervisor();
-    const { session, sessionStateDir } = await buildSession("bootlink", sup);
+    const { session, workRoot, sessionStateDir } = await buildSession(
+      "bootlink",
+      sup,
+    );
     const marker = join(
-      workspace,
+      workRoot,
       ".harness-bootstrap",
       "claude-code",
       ".bootstrap-linked.ok",
@@ -436,7 +515,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // ...and an ordinary marker under the overlay still works, so the
     // confinement is not simply refusing the whole overlay.
     const plain = join(
-      workspace,
+      workRoot,
       ".harness-bootstrap",
       "claude-code",
       ".bootstrap-plain.ok",
@@ -448,8 +527,8 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("fails closed when the adapter's recipe and the bundle disagree", async () => {
     const sup = supervisor();
-    const { session } = await buildSession("bootmismatch", sup);
-    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+    const { session, workRoot } = await buildSession("bootmismatch", sup);
+    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
 
     // Same file, different bytes: the bundle was built for another adapter
     // version, so this session would not run what the adapter bootstrapped.
@@ -481,8 +560,11 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("keeps the framework's bootstrap marker out of the user's checkout", async () => {
     const sup = supervisor();
-    const { session, sessionStateDir } = await buildSession("bootmarker", sup);
-    const bootstrapDir = join(workspace, ".harness-bootstrap", "claude-code");
+    const { session, workRoot, sessionStateDir } = await buildSession(
+      "bootmarker",
+      sup,
+    );
+    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
     const marker = join(bootstrapDir, ".bootstrap-claude-code-1.ok");
 
     await expect(session.readTextFile({ path: marker })).resolves.toBeNull();
@@ -506,13 +588,13 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // if the translator did not: a `--workdir` pointed through a symlink out
     // of the workspace would start the agent outside its grant.
     const sup = supervisor();
-    const { session } = await buildSession("bridge-args", sup);
+    const { session, workRoot } = await buildSession("bridge-args", sup);
     await symlink(outside, join(workspace, "escape-args")).catch(() => {});
     await expect(
       session.spawn({
         command:
           `node '${join(
-            workspace,
+            workRoot,
             ".harness-bootstrap",
             "claude-code",
           )}/bridge.mjs' ` +
@@ -524,7 +606,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       session.spawn({
         command:
           `node '${join(
-            workspace,
+            workRoot,
             ".harness-bootstrap",
             "claude-code",
           )}/bridge.mjs' ` +
@@ -568,13 +650,10 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
   it("runs the verified bundle with a sanitized environment, and cleans up", async () => {
     const sup = supervisor();
     const started: Array<{ pid: number; port: number }> = [];
-    const { session, sessionStateDir, bridgePort } = await buildSession(
-      "bridge",
-      sup,
-      async (a) => {
+    const { session, workRoot, sessionStateDir, bridgePort } =
+      await buildSession("bridge", sup, async (a) => {
         started.push(a);
-      },
-    );
+      });
 
     const workDir = join(workspace, "claude-code-bridge");
     const bridgeStateDir = join(workspace, ".agent-runs", "bridge", "bridge");
@@ -583,7 +662,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     const proc = await session.spawn({
       command:
         `node '${join(
-          workspace,
+          workRoot,
           ".harness-bootstrap",
           "claude-code",
         )}/bridge.mjs' ` +
@@ -621,7 +700,8 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     expect(observed.token).toBe("channel-token");
     // …and a name the adapter offered outside the allowlist does not.
     expect(observed.leaked).toBeUndefined();
-    expect(observed.cwd).toBe(workspace);
+    // The bridge runs in the session's own work root, not the user's checkout.
+    expect(observed.cwd).toBe(workRoot);
 
     // It is the session ROOT, so it is durably recorded for the janitor, and
     // the mandatory loopback probe ran before it was admitted.
@@ -644,11 +724,15 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     // session must stop rather than proceed — and the process must not be left
     // running behind the refusal.
     const sup = supervisor();
-    const { session, bridgePort } = await buildSession(
+    const { session, workRoot, bridgePort } = await buildSession(
       "lan-bridge",
       sup,
       undefined,
       LAN_BRIDGE,
+      undefined,
+      // A pack whose loopback wrapper does nothing. The probe, not the
+      // launcher, is what makes the loopback guarantee enforceable.
+      'await import("./bridge.mjs");',
     );
     const hasLan = nonLoopbackLocalAddresses().some((a) => !a.includes(":"));
     if (!hasLan) {
@@ -659,7 +743,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
       session.spawn({
         command:
           `node '${join(
-            workspace,
+            workRoot,
             ".harness-bootstrap",
             "claude-code",
           )}/bridge.mjs' ` +
@@ -675,14 +759,12 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
   it("destroy takes the tree down and removes the session state", async () => {
     const sup = supervisor();
-    const { session, sessionStateDir, bridgePort } = await buildSession(
-      "destroy",
-      sup,
-    );
+    const { session, workRoot, sessionStateDir, bridgePort } =
+      await buildSession("destroy", sup);
     const proc = await session.spawn({
       command:
         `node '${join(
-          workspace,
+          workRoot,
           ".harness-bootstrap",
           "claude-code",
         )}/bridge.mjs' ` +
@@ -699,14 +781,17 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
   it("refuses to launch when the verified bundle changed after consent", async () => {
     const sup = supervisor();
-    const { session, bridgePort } = await buildSession("swapped", sup);
+    const { session, workRoot, bridgePort } = await buildSession(
+      "swapped",
+      sup,
+    );
     // Replace the bundle AFTER the session resolved its runtime identity.
     await writeFile(join(bundleRoot, "bridge.mjs"), "console.log('swapped')");
     await expect(
       session.spawn({
         command:
           `node '${join(
-            workspace,
+            workRoot,
             ".harness-bootstrap",
             "claude-code",
           )}/bridge.mjs' ` +

@@ -64,7 +64,10 @@ import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ModelMessage, ToolSet } from "ai";
-import { MODEL_ID_PREFIX_TO_PROVIDER } from "@/shared/model-provider";
+import {
+  MODEL_ID_PREFIX_TO_PROVIDER,
+  runtimeChosenModelSentinelName,
+} from "@/shared/model-provider";
 import { isBedrockModelId, type ModelProvider } from "@/shared/types";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { createManualHostedConnection } from "../web/auth.js";
@@ -298,6 +301,28 @@ function releaseTurnSlot(key: string): void {
  */
 function assertUnambiguousModelId(modelId: string): void {
   const id = modelId.trim();
+  // A RUNTIME-CHOSEN SENTINEL is unambiguous and still unrunnable HERE. This
+  // route has no harness — the runtime that would pick the model cannot be
+  // reached from it — so `cursor/auto` names nothing this surface can execute.
+  //
+  // Refused at this line, and not one line later, on purpose: everything below
+  // is downstream of `claimTurnLease`, which CREATES the `chatSessions` row
+  // (`newSession: { projectId }`) before the model is resolved. A turn that
+  // dies after the claim leaves a session row whose `modelId` was never
+  // written — blank in the sessions list, a session that looks like it ran on
+  // nothing. Failing before the claim means no row is minted at all.
+  //
+  // The sentinel is deliberately NOT rewritten into some real model: the whole
+  // point of it is that the model is unknown to MCPJam.
+  const sentinelName = runtimeChosenModelSentinelName(id);
+  if (sentinelName) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `modelId "${modelId}" (${sentinelName}) is a placeholder for a runtime that chooses its own model on your own account, not a model this API can run. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
+      { reason: "MODEL_NOT_RUNNABLE" },
+    );
+  }
   if (id.startsWith("custom:") || isBedrockModelId(id)) return;
   const slashIdx = id.indexOf("/");
   if (

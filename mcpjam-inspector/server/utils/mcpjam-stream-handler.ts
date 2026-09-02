@@ -607,6 +607,37 @@ export interface MCPJamHandlerOptions {
    * because `runHarnessTurn` does not go through the tool resolver at all.
    */
   harnessSandboxBinding?: TrustedHarnessSandboxBinding;
+  /**
+   * Run this harness turn on the USER'S OWN MACHINE rather than in a cloud
+   * computer.
+   *
+   * Opaque ids only, and every one of them is RE-DERIVED or re-verified by
+   * `resolveLocalHarnessAvailability` before anything runs: the machine id
+   * against this installation's own, the runtime id against the digest of what
+   * is actually on disk, the workspace against its registered canonical path,
+   * and the whole set against the consent grant. The caller states which target
+   * it means; it does not state what that target may do.
+   *
+   * `grantToken` is the plaintext consent capability, read from the
+   * `x-mcpjam-local-harness-grant` HEADER and never from the body — a body
+   * field would enter persisted transcripts. It is never stored, never logged,
+   * and never leaves this process.
+   *
+   * Absent ⇒ the hosted path, byte for byte as before this existed.
+   */
+  harnessExecutionTarget?: {
+    kind: "local-native";
+    workspaceGrantId: string;
+    runtimeId: string;
+    machineId: string;
+    permissionProfile: "read-only" | "workspace-edits" | "unrestricted";
+    policyVersion: string;
+    grantToken: string;
+    /** The acting user, resolved by the ROUTE from the verified bearer — never
+     *  from the request body. Consent binds to a user, so a user the caller
+     *  names is a user the caller chose. */
+    actingUserId: string;
+  };
   authHeader?: string;
   scenarioId?: string;
   accessVersion?: number;
