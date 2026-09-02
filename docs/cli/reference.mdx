@@ -765,10 +765,20 @@ The pin fields are narrower than they look:
   the deployment, not by your account: a self-hosted or older MCPJam whose
   environment surface predates a field rejects it outright. The CLI asks first
   — `GET /projects/:id/environments/capabilities` reports `modelOverrides` and
-  `secretGrants` — and refuses with **"This MCPJam deployment does not support
-  environment model overrides / secret grants"** rather than letting the field
+  `secretGrants` — and refuses before sending, rather than letting the field
   die in a validator. Absence reads as a no, so a deployment too old to answer
   the probe at all is treated as not supporting either.
+
+  The refusal opens with one of these two sentences:
+
+  - **This MCPJam deployment does not support environment model overrides.**
+  - **This MCPJam deployment does not support environment secret grants.**
+
+  A second sentence then names what to drop, and it differs by surface —
+  `--model` / `--clear-model` / `"modelId"` on the environment writes,
+  `--compose-model` / `compose.models` on a composed launch, and the
+  `--secret` / `--compose-secret` equivalents. Grep for the sentence above,
+  not for the whole message.
 
   Every other flag on these commands works regardless; only the calls that
   actually carry a model or a grant are checked.
