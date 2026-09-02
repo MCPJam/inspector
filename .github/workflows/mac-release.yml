@@ -37,11 +37,11 @@ jobs:
       ARTIFACT_VERSION: ${{ inputs.version != '' && inputs.version || github.sha }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download release patch
         if: inputs.apply_release_patch == true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-plan
           path: .release-plan
@@ -51,7 +51,7 @@ jobs:
         run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
@@ -243,7 +243,7 @@ jobs:
           security delete-keychain build.keychain || true
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: inspector-macos-${{ env.ARTIFACT_VERSION }}
           path: |
