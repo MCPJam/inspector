@@ -672,7 +672,7 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--file <path>` | No | Environment JSON file (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
-\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, and `pluginVersionIds`:
+\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, `secretSelection`, and `pluginVersionIds`:
 
 ```bash
 mcpjam cloud environments create --project Acme --json '{
