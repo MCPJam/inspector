@@ -182,6 +182,23 @@ describe("CreateSuitePage", () => {
     expect(screen.getByTestId("create-suite-servers-servers-picker")).toBeTruthy();
   });
 
+  it("labels the models pill with the seeded client's default model", async () => {
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-suite-models-picker")).toHaveTextContent(
+        "GPT-4",
+      );
+    });
+  });
+
   it("seeds a default suite name so Continue is enabled without typing", async () => {
     render(
       <CreateSuitePage

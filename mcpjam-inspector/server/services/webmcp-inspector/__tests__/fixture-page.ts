@@ -36,6 +36,24 @@ export const FIXTURE_TOOLS = {
 /** Bytes the `big` tool returns — deliberately over the 256 KiB result cap. */
 export const FIXTURE_BIG_OUTPUT_BYTES = 300_000;
 
+/**
+ * Targets for forwarded input, at FIXED coordinates.
+ *
+ * Fixed-positioned and given generous hit areas on purpose: a test that clicked
+ * at coordinates derived from layout would be a test about CSS. Each one
+ * registers a WebMCP tool when it is used, so a forwarded click or keystroke is
+ * observable through the inspector's OWN surface — no page evaluation, and no
+ * second channel that could pass while the real one is broken.
+ */
+export const FIXTURE_INPUT_TARGETS = {
+  /** Clicking here registers `clicked_tool`. */
+  button: { x: 100, y: 100 },
+  /** Clicking here focuses a field; typing `hi` registers `typed_hi_tool`. */
+  field: { x: 100, y: 260 },
+  clickedTool: "clicked_tool",
+  typedTool: "typed_hi_tool",
+} as const;
+
 const MAIN_HTML = (subOrigin: string) => `<!doctype html><html><body>
 <h1>WebMCP fixture</h1>
 <iframe id="sub" src="${subOrigin}" allow="tools"></iframe>
@@ -88,6 +106,39 @@ const MAIN_HTML = (subOrigin: string) => `<!doctype html><html><body>
       return { content: [{ type: "text", text: "x".repeat(${FIXTURE_BIG_OUTPUT_BYTES}) }] };
     },
   });
+  // Input targets. Each registers a tool when it is used, so a forwarded click
+  // or keystroke is observable through the tool registry rather than through a
+  // second channel that could pass while the registry path is broken.
+  const button = document.createElement("button");
+  button.id = "click-target";
+  button.textContent = "click me";
+  button.style.cssText =
+    "position:fixed;left:0;top:0;width:400px;height:200px;z-index:9999;font-size:40px";
+  button.addEventListener("click", () => {
+    mc.registerTool({
+      name: "${FIXTURE_INPUT_TARGETS.clickedTool}",
+      description: "Registered when the fixture button was clicked",
+      inputSchema: { type: "object", properties: {} },
+      async execute() { return { content: [{ type: "text", text: "clicked" }] }; },
+    });
+  });
+  document.body.appendChild(button);
+
+  const field = document.createElement("input");
+  field.id = "type-target";
+  field.style.cssText =
+    "position:fixed;left:0;top:220px;width:400px;height:80px;z-index:9999;font-size:40px";
+  field.addEventListener("input", () => {
+    if (field.value !== "hi") return;
+    mc.registerTool({
+      name: "${FIXTURE_INPUT_TARGETS.typedTool}",
+      description: "Registered when 'hi' was typed into the fixture field",
+      inputSchema: { type: "object", properties: {} },
+      async execute() { return { content: [{ type: "text", text: field.value }] }; },
+    });
+  });
+  document.body.appendChild(field);
+
   window.__webmcpReady = true;
 </script></body></html>`;
 

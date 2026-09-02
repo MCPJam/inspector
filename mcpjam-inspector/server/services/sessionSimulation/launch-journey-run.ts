@@ -583,6 +583,29 @@ export async function launchJourneyRun(
               : {}),
           }
         );
+        // `MCPClientManager` starts eager connections in the background. Do
+        // not hand that manager to a session while its servers are still only
+        // "registered": the first model turn can otherwise race initialization
+        // and report that an MCP server is not connected (or give the model no
+        // tools, which looks like the server is unavailable).
+        //
+        // `listTools` is deliberately used as the readiness barrier instead
+        // of reaching into the manager's private connection state. It waits
+        // for the initial connection, exercises the same retry/reconnect path
+        // used by normal requests, and populates the SDK's tool cache before
+        // `prepareChatV2` runs. The manager remains owned by this session and
+        // is disposed only after the session finishes.
+        try {
+          await Promise.all(
+            serverIds.map((serverId) => manager.listTools(serverId))
+          );
+        } catch (error) {
+          // The factory has not returned yet, so the runner cannot call its
+          // dispose hook. Clean up any sibling connections before propagating
+          // the failure and letting the session classify it.
+          await manager.disconnectAllServers().catch(() => {});
+          throw error;
+        }
         return {
           manager,
           connectedServerIds: serverIds,

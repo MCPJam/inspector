@@ -1,6 +1,6 @@
 {
   "id": "hosted-0008",
-  "note": "no trace at all — an untraced run is not judgeable",
+  "note": "no trace at all \u2014 an untraced run is not judgeable",
   "origin": "synthetic",
   "authored": {
     "mode": "model_driven",
@@ -55,6 +55,6 @@
         "reason": "traceAbsent"
       }
     ],
-    "stageAnalyzerVersion": 5
+    "stageAnalyzerVersion": 8
   }
 }

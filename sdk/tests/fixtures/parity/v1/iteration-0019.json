@@ -1,6 +1,6 @@
 {
   "id": "hosted-0019",
-  "note": "assertions authored but nothing captured — the row a judge can fill",
+  "note": "assertions authored but nothing captured \u2014 the row a judge can fill",
   "origin": "synthetic",
   "authored": {
     "mode": "model_driven",
@@ -88,6 +88,6 @@
         "reason": "noEvidenceCaptured"
       }
     ],
-    "stageAnalyzerVersion": 5
+    "stageAnalyzerVersion": 8
   }
 }

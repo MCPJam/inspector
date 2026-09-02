@@ -20,7 +20,11 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
+import {
+  SessionListChrome,
+  ShareUsageThreadList,
+} from "@/components/connection/share-usage/ShareUsageThreadList";
+import { sessionCountLabel } from "@/components/connection/share-usage/session-list-format";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { buildUserTestingScenarioPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
@@ -237,9 +241,11 @@ export function ScenarioUsagePanel({
         <ResizablePanelGroup direction="horizontal">
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
             <div className="flex h-full flex-col overflow-hidden">
-              {/* min-h matches the thread-detail header across the resize
-                  handle so the two border-b lines read as one. */}
-              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+              <SessionListChrome
+                countLabel={sessionCountLabel(sortedThreads?.length ?? 0, {
+                  loading: sortedThreads === undefined,
+                })}
+              >
                 <Select
                   value={ratingFilter}
                   onValueChange={(value) =>
@@ -248,10 +254,10 @@ export function ScenarioUsagePanel({
                 >
                   <SelectTrigger
                     data-testid="scenario-sessions-rating-filter"
-                    className="h-8 w-[min(100%,10rem)] text-xs"
+                    className="h-7 w-auto min-w-0 gap-1.5 px-2.5 text-xs"
                     aria-label="Filter sessions by rating"
                   >
-                    <SelectValue placeholder="All ratings" />
+                    <SelectValue placeholder="Ratings" />
                   </SelectTrigger>
                   <SelectContent>
                     {(
@@ -263,7 +269,7 @@ export function ScenarioUsagePanel({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </SessionListChrome>
               <div className="min-h-0 flex-1 overflow-hidden">
                 {/* `filterState` reaches an already-filtered list, so it only
                     feeds the empty-state copy. It carries the rating selection
@@ -297,7 +303,7 @@ export function ScenarioUsagePanel({
                   }
                 />
               ) : (
-                <div className="flex h-full items-center justify-center">
+                <div className="flex h-full items-center justify-center px-6">
                   <div className="text-center">
                     <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
                     <p className="text-sm text-muted-foreground">

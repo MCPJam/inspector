@@ -1,7 +1,10 @@
 /**
- * The suite header's "where this runs" bar.
+ * The suite's "where this runs" bar.
  *
- * One strip, two write modes, because a suite can express its target two ways:
+ * Lives on the suite settings sheet (not the overview header): clients,
+ * models, servers, skills, and named environments are configuration, not
+ * a run-time switch. One strip, two write modes, because a suite can
+ * express its target two ways:
  *
  *  - ENVIRONMENT mode (`suite.environmentIds`) — the modern one. Run all fans
  *    out one run per environment and the backend resolves each at launch. Every
@@ -60,8 +63,14 @@ export interface SuiteEnvironmentComposerBarProps {
   /** Legacy-mode server-group write. */
   onUpdateServerAttachment?: (serverAttachmentId: string) => Promise<void>;
   className?: string;
-  /** `panel` = card surface. `inline` = no chrome, for the header row. */
+  /** `panel` = card surface. `inline` = no chrome, for a tight row. */
   containerVariant?: "panel" | "inline";
+  /**
+   * Hide the computer/sandbox pill when the settings sheet already has
+   * its own Computer environment row, so the two don't sit on the same
+   * page offering the same pin.
+   */
+  omitComputers?: boolean;
 }
 
 export function SuiteEnvironmentComposerBar({
@@ -71,6 +80,7 @@ export function SuiteEnvironmentComposerBar({
   onUpdateServerAttachment,
   className,
   containerVariant = "panel",
+  omitComputers = false,
 }: SuiteEnvironmentComposerBarProps) {
   const projectId = suite.projectId ?? null;
   const environmentsEnabled = useProjectEnvironmentsEnabled();
@@ -95,6 +105,7 @@ export function SuiteEnvironmentComposerBar({
         suite={suite}
         projectId={projectId}
         disabled={!editable}
+        omitComputers={omitComputers}
       />
     </BarShell>
   ) : (
@@ -104,6 +115,7 @@ export function SuiteEnvironmentComposerBar({
         editable={editable}
         onUpdate={onUpdate}
         onUpdateServerAttachment={onUpdateServerAttachment}
+        omitComputers={omitComputers}
       />
     </BarShell>
   );
@@ -147,10 +159,12 @@ function EnvironmentModeBar({
   suite,
   projectId,
   disabled,
+  omitComputers,
 }: {
   suite: EvalSuite;
   projectId: string;
   disabled: boolean;
+  omitComputers: boolean;
 }) {
   // Ad-hoc rows included: once the composer has been used, the suite's own
   // attachments ARE ad-hoc, and seeding has to see them.
@@ -337,7 +351,11 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
-          slots={EVALS_COMPOSER_SLOTS}
+          slots={
+            omitComputers
+              ? EVALS_COMPOSER_SLOTS.filter((slot) => slot !== "computers")
+              : EVALS_COMPOSER_SLOTS
+          }
           // Also disabled while the environment list is still loading: resolving
           // against an empty live list would miss a matching NAMED environment
           // and mint an unnamed twin of it.
@@ -360,7 +378,7 @@ function EnvironmentModeBar({
           {unresolvedCount === 1
             ? "One attached environment is archived or unavailable."
             : `${unresolvedCount} attached environments are archived or unavailable.`}{" "}
-          Detach it in suite settings before changing where this runs.
+          Detach it from the Environments pill before changing other slots.
         </p>
       ) : collapsesByHost ? (
         <p
@@ -370,7 +388,8 @@ function EnvironmentModeBar({
           This suite&apos;s environments don&apos;t fit one editable setup —
           they differ by client, server group, skills, model or image, or pin
           plugin versions — so this strip can&apos;t change them without changing
-          what some of them run. Adjust them in suite settings.
+          what some of them run. Edit them individually on the Environments
+          page.
         </p>
       ) : null}
     </div>
@@ -386,11 +405,13 @@ function LegacyModeBar({
   editable,
   onUpdate,
   onUpdateServerAttachment,
+  omitComputers,
 }: {
   suite: EvalSuite;
   editable: boolean;
   onUpdate?: (attachments: HostAttachmentDraft[]) => Promise<void>;
   onUpdateServerAttachment?: (serverAttachmentId: string) => Promise<void>;
+  omitComputers: boolean;
 }) {
   const initialAttachments = useMemo<HostAttachmentDraft[]>(
     () =>
@@ -535,7 +556,7 @@ function LegacyModeBar({
         )}
       </div>
 
-      {computersEnabled && editable && suite.projectId ? (
+      {computersEnabled && !omitComputers && editable && suite.projectId ? (
         <div className="shrink-0">
           <SandboxImagePill
             projectId={suite.projectId}

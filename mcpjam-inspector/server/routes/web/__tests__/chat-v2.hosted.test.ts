@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const {
+  checkHarnessRuntimeAvailableMock,
   prepareChatV2Mock,
   listCloudRuntimeSkillsMock,
   handleMCPJamFreeChatModelMock,
@@ -20,6 +21,7 @@ const {
   buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
+  checkHarnessRuntimeAvailableMock: vi.fn(() => ({ ok: true })),
   prepareChatV2Mock: vi.fn(),
   listCloudRuntimeSkillsMock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
@@ -131,6 +133,21 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
+// Only the PREFLIGHT is stubbed, and only so a harness-typed host can reach the
+// dispatch in a unit test (the real gate needs a computers data plane). Every
+// other export stays real — `harnessModelEligibleForRuntime` in particular,
+// which is the shared eligibility answer the dispatch reads.
+vi.mock("../../../utils/harness/harness-availability.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/harness-availability.js")
+  >("../../../utils/harness/harness-availability.js");
+  return {
+    ...actual,
+    checkHarnessRuntimeAvailable: (...args: unknown[]) =>
+      checkHarnessRuntimeAvailableMock(...(args as [])),
+  };
+});
+
 vi.mock("../../../utils/scenario-runtime-config.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/scenario-runtime-config.js")
@@ -179,6 +196,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
 
+    checkHarnessRuntimeAvailableMock.mockReturnValue({ ok: true });
     prepareChatV2Mock.mockResolvedValue({
       allTools: {},
       enhancedSystemPrompt: "system",
@@ -1311,6 +1329,294 @@ describe("web routes — chat-v2 hosted mode", () => {
       // `{ kind: "none" }` here would take those down with the project's.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
       expect(args.skillsSource).toBeUndefined();
+    });
+  });
+
+  /**
+   * The Cursor CLI host seeds `modelId: "cursor/auto"` — a neutral sentinel.
+   * The adapter passes NO model (`toNativeModel: () => undefined`) and Cursor
+   * Auto picks one on the customer's own account, so the sentinel is the only
+   * honest thing a Cursor turn can record.
+   *
+   * It could not survive the round trip. The Playground picker cannot hold the
+   * sentinel (it is not in `availableModels`), so the browser sent whatever
+   * model was last selected, and the non-scenario host-model override refused
+   * to correct it — leaving the session row naming a model the turn never
+   * touched, or nothing at all.
+   */
+  describe("an external-account harness host records ITS OWN model", () => {
+    const cursorHost = {
+      ok: true,
+      config: {
+        selectedServerIds: ["server-1"],
+        modelId: "cursor/auto",
+        harness: "cursor",
+      },
+    };
+
+    it("persists the host's cursor/auto sentinel, not the browser's leftover pick", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-1",
+          messages: [{ role: "user", content: "preview request" }],
+          // What the picker actually holds on a Cursor host: an unrelated
+          // model, because the sentinel is not a selectable entry.
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      // The sentinel — never blank, and never the Haiku id that nothing ran.
+      expect(persisted.modelId).toBe("cursor/auto");
+      // And not billed to MCPJam: the turn ran on the customer's Cursor account.
+      expect(persisted.modelSource).toBe("external-account");
+      expect(persisted.hostConfig?.modelId).toBe("cursor/auto");
+    });
+
+    it("routes the turn to the harness instead of demanding an org `cursor` provider key", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-2",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      // `cursor/auto` is not an MCPJam-hosted model, so without the
+      // external-account exemption this turn takes the org-BYOK branch and
+      // asks Convex for a `cursor` provider key — which answers
+      // `provider_not_configured: cursor`.
+      expect(response.status).toBe(200);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+      const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(engineArgs.harness).toBe("cursor");
+      expect(engineArgs.modelId).toBe("cursor/auto");
+    });
+
+    it("leaves a NON-harness host's model to the body, as before", async () => {
+      // The exemption is scoped to external-account harnesses. A Playground
+      // preview of an ordinary host must keep letting the owner's in-session
+      // model choice win — that is the whole point of `override-wins`.
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          selectedServerIds: ["server-1"],
+          modelId: "openai/gpt-5-mini",
+        },
+      });
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-plain",
+          chatSessionId: "chat-plain-1",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      expect(persisted.modelId).toBe("anthropic/claude-haiku-4.5");
+    });
+
+    // Every shape a browser can actually put in `model.id`. `model` arrives
+    // through an unvalidated body cast (`hostedChatSchema` does not describe
+    // it), so `ModelDefinition.id` being REQUIRED in TypeScript says nothing
+    // about what was posted — and the harness rail is the one live path with no
+    // downstream model-id check (it skips both `deriveOrgProviderKey` and the
+    // harness model gates), so an unusable id used to run a whole turn and
+    // write `String(undefined)` / `""` into the session row.
+    //
+    // The assertion that matters is not the 400 but WHEN: before the engine and
+    // before any persist, so a rejected turn leaves no trace of a session that
+    // ran on nothing.
+    it.each([
+      ["missing", { provider: "anthropic", name: "Haiku" }],
+      ["null", { id: null, provider: "anthropic", name: "Haiku" }],
+      ["empty", { id: "", provider: "anthropic", name: "Haiku" }],
+      ["whitespace-only", { id: "   ", provider: "anthropic", name: "Haiku" }],
+    ])(
+      "refuses a body whose model id is %s, before running or persisting anything",
+      async (label, model) => {
+        fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+        const { app, token } = createWebTestApp();
+
+        const response = await postJson(
+          app,
+          "/api/web/chat-v2",
+          {
+            projectId: "project-1",
+            selectedServerIds: ["server-1"],
+            hostId: "host-cursor",
+            chatSessionId: `chat-cursor-invalid-${label}`,
+            messages: [{ role: "user", content: "preview request" }],
+            model,
+          },
+          token
+        );
+
+        expect(response.status).toBe(400);
+        expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+        expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+      }
+    );
+
+    /**
+     * The mis-configured host — an external-account harness whose model is an
+     * ordinary id. It is refused, and refused EARLY: before the host model is
+     * resolved (a Convex org-model-config call carrying a 15 s timeout) and
+     * before the shared pre-flight it would fail anyway.
+     *
+     * The refusal itself is asserted against the real gate in
+     * `harness/__tests__/harness-availability.test.ts`; the pre-flight is
+     * stubbed `{ ok: true }` here, which is what makes these two tests sharp —
+     * a 503 can only be the route's own early check, and a call to the stub is
+     * proof the early check did NOT fire.
+     */
+    const misconfiguredCursorHost = {
+      ok: true,
+      config: {
+        selectedServerIds: ["server-1"],
+        modelId: "anthropic/claude-sonnet-4.5",
+        harness: "cursor",
+      },
+    };
+
+    it("refuses a mis-configured host before resolving its model", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(misconfiguredCursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor-misconfigured",
+          chatSessionId: "chat-cursor-4",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(503);
+      const body = (await response.json()) as { error?: { message?: string } };
+      expect(JSON.stringify(body)).toContain("chooses its own model");
+      // The id its owner has to fix, named in the refusal.
+      expect(JSON.stringify(body)).toContain("anthropic/claude-sonnet-4.5");
+      // EARLY: the pre-flight sits after the model resolution, so reaching it
+      // would mean the 15 s org-config call had already been paid for.
+      expect(checkHarnessRuntimeAvailableMock).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+      expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+    });
+
+    it("a body-supplied sentinel cannot stand in for the host's own model", async () => {
+      // The bypass this closes: POST `cursor/auto` at a host that pins an
+      // ordinary id. Every check on this rail has to read the HOST's id —
+      // nothing consumes the turn's model on an external-account harness, so a
+      // rule held to the body's model is a rule a caller can satisfy.
+      fetchHostRuntimeConfigMock.mockResolvedValue(misconfiguredCursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor-misconfigured",
+          chatSessionId: "chat-cursor-5",
+          messages: [{ role: "user", content: "preview request" }],
+          model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
+        },
+        token
+      );
+
+      expect(response.status).toBe(503);
+      expect(JSON.stringify(await response.json())).toContain(
+        "anthropic/claude-sonnet-4.5"
+      );
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+      expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+    });
+
+    it("hands the pre-flight the sentinel host's id under `hostModelId`", async () => {
+      // The correctly configured host runs, and the gate is told which id is
+      // the HOST's — the input the external-account rule reads, and the one a
+      // request body must never be able to supply.
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-6",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      expect(checkHarnessRuntimeAvailableMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          // Promoted: the host's model, not the body's.
+          model: expect.objectContaining({ id: "cursor/auto" }),
+          hostModelId: "cursor/auto",
+        })
+      );
     });
   });
 });

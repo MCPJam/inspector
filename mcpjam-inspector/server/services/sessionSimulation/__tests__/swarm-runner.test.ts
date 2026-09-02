@@ -153,6 +153,10 @@ describe("swarm single-host runner — attempt ordering", () => {
       "anthropic/claude-haiku-4.5"
     );
     expect(adapter.runtime.scenarioId).toBeUndefined();
+    // A legacy host target pins no environment, so there is no grant boundary
+    // to forward — and inventing one would let a harness turn believe a
+    // brokered credential is granted when nothing composed it onto the box.
+    expect(adapter.runtime.environmentId).toBeUndefined();
     expect(adapter.persist).toMatchObject({
       sourceType: "swarm",
       origin: "swarm",
@@ -881,6 +885,27 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       .map((c) => c[2] as any)
       .filter((a) => a.status !== "running");
     expect(terminals.every((a) => typeof a.targetId === "string")).toBe(true);
+  });
+
+  it("forwards each target's environment id as the session's secret GRANT BOUNDARY", async () => {
+    // What a harness turn scopes its BROKERED external-account credential check
+    // to. It has to be the TARGET's own environment: two targets sharing one
+    // host can grant different secrets, and `resolveGrantForSandbox` derives
+    // exactly this id for the attempt's box from the run snapshot.
+    fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
+
+    await startJourneyRun(
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
+    );
+
+    const bySession = new Map(
+      runSyntheticHostSessionMock.mock.calls.map((c) => [
+        (c[0] as any).chatSessionId,
+        (c[0] as any).runtime.environmentId,
+      ])
+    );
+    expect(bySession.get("synth_run-1_env_envA_0")).toBe("envA");
+    expect(bySession.get("synth_run-1_env_envB_0")).toBe("envB");
   });
 
   it("delivers pinned skill BODIES to the session runtime (authoritative array), and an empty pin set as []", async () => {

@@ -51,6 +51,25 @@ export const PROJECT_DEEP_LINK_PARAM = "project";
  */
 export const DEFAULT_MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
+/**
+ * One ancestor in a ref's parent chain.
+ *
+ * Recursive rather than a flat list: the table already says, once, that an
+ * eval run lives under its suite, so a ref for something under a RUN only
+ * has to say "here is the run, and here is the run's parent". The builder
+ * walks the chain against the table, so a link is refused when any level
+ * names the wrong type, not just the first.
+ */
+export interface PlatformResourceParentRef {
+  type: PlatformResourceType;
+  id: string;
+  /**
+   * The parent's own parent, required when the parent's route itself declares
+   * a `parent` — an iteration nests under its run, which nests under its suite.
+   */
+  parent?: PlatformResourceParentRef;
+}
+
 /** A reference to a resource, before it becomes a URL. */
 export interface PlatformResourceRef {
   type: PlatformResourceType;
@@ -65,9 +84,10 @@ export interface PlatformResourceRef {
    * The resource whose route this one nests under — an eval case and an
    * eval run are both addressed through their suite. Required for the types
    * that declare `parent`; supplying the wrong type is an error, not a
-   * silent fallback to the collection.
+   * silent fallback to the collection. Carries its own `parent` when the
+   * route nests two levels deep (an eval iteration: run, then suite).
    */
-  parent?: { type: PlatformResourceType; id: string };
+  parent?: PlatformResourceParentRef;
   /** Overrides the route's default label ("View run", "Open suite", …). */
   label?: string;
 }
@@ -156,9 +176,10 @@ interface PlatformPermalinkRoute {
   /** Default link text. Imperative, short enough for a chat line. */
   label: string;
   /**
-   * Path segments, with `":id"` standing for the resource's own id and
-   * `":parent"` for its parent's. Every segment is percent-encoded on the
-   * way out; none of them may be assembled by a caller.
+   * Path segments, with `":id"` standing for the resource's own id,
+   * `":parent"` for its parent's and `":grandparent"` for its parent's
+   * parent's. Every segment is percent-encoded on the way out; none of them
+   * may be assembled by a caller.
    */
   segments: readonly string[];
   /** Static query the route needs to land on the right view. */
@@ -169,7 +190,12 @@ interface PlatformPermalinkRoute {
    * `":id"` segment in practice, though nothing here forbids both.
    */
   idParam?: string;
-  /** The parent type a `":parent"` segment resolves against. */
+  /**
+   * The parent type a `":parent"` segment resolves against. When that type
+   * declares a `parent` of its own, `":grandparent"` resolves against it and
+   * the ref must carry the whole chain — the nesting is stated once, on the
+   * parent's entry, never restated here.
+   */
   parent?: string;
   /**
    * False only for resources that live above a project (organizations).
@@ -231,6 +257,20 @@ export const PLATFORM_PERMALINK_ROUTES = {
     label: "View run",
     segments: ["evals", "suite", ":parent", "runs", ":id"],
     parent: "eval_suite",
+  },
+  /**
+   * One iteration of a run, selected on the run's page.
+   *
+   * An iteration has no page of its own: the run detail reads `?iteration=`
+   * off its query string and opens that trial. So the route is the RUN's
+   * path with an id selector, and it nests two levels deep — the run is the
+   * parent, and the run's own entry above says the suite is the run's.
+   */
+  eval_iteration: {
+    label: "View iteration",
+    segments: ["evals", "suite", ":grandparent", "runs", ":parent"],
+    idParam: "iteration",
+    parent: "eval_run",
   },
   /**
    * A grouped launch (one suite fanned across several targets).
@@ -363,6 +403,18 @@ function normalizeAppOrigin(appOrigin: string): URL {
 }
 
 /**
+ * Which level of a ref's parent chain each ancestor segment reads.
+ *
+ * `:parent` is the immediate parent, `:grandparent` the one above it. The
+ * vocabulary stops there on purpose: nothing in the app nests deeper, and a
+ * third token would be adding a route shape no screen has.
+ */
+const ANCESTOR_SEGMENT_DEPTH: Readonly<Record<string, number>> = {
+  ":parent": 0,
+  ":grandparent": 1,
+};
+
+/**
  * Build one resource's permalink.
  *
  * Uses `URL`/`URLSearchParams` throughout rather than string concatenation:
@@ -394,32 +446,57 @@ export function buildAppPermalink(
   const origin = normalizeAppOrigin(options.appOrigin);
   const url = new URL(origin.toString());
 
-  let parentId: string | undefined;
-  if (route.parent) {
-    if (!resource.parent) {
+  // Walk the parent chain as far as the TABLE says it goes: the route names
+  // its parent type, that type's own entry names the next, and so on. Each
+  // level of the ref is checked against the level the table expects, so an
+  // iteration handed a run whose parent is a chat session fails here rather
+  // than minting `/evals/suite/<session id>/…`.
+  const ancestorIds: string[] = [];
+  let expectedType = route.parent;
+  let ancestor = resource.parent;
+  let through = resource.type;
+  while (expectedType) {
+    if (!ancestor) {
       throw new PlatformPermalinkError(
-        `A ${resource.type} permalink needs its ${route.parent} parent; without it the URL would address the wrong resource.`
+        `A ${resource.type} permalink needs its ${expectedType} parent${
+          through === resource.type ? "" : ` (through ${through})`
+        }; without it the URL would address the wrong resource.`
       );
     }
-    if (resource.parent.type !== route.parent) {
+    if (ancestor.type !== expectedType) {
       throw new PlatformPermalinkError(
-        `A ${resource.type} permalink nests under ${route.parent}, not ${resource.parent.type}.`
+        `A ${through} permalink nests under ${expectedType}, not ${ancestor.type}.`
       );
     }
-    parentId = resource.parent.id?.trim();
-    if (!parentId) {
+    const ancestorId = ancestor.id?.trim();
+    if (!ancestorId) {
       throw new PlatformPermalinkError(
-        `A ${resource.type} permalink needs a non-empty ${route.parent} id.`
+        `A ${resource.type} permalink needs a non-empty ${expectedType} id.`
       );
     }
+    ancestorIds.push(ancestorId);
+    through = ancestor.type;
+    expectedType = (
+      PLATFORM_PERMALINK_ROUTES[ancestor.type] as PlatformPermalinkRoute
+    ).parent;
+    ancestor = ancestor.parent;
   }
 
   // `URL.pathname =` would re-interpret `%2F` inside a value as a separator,
   // so each segment is encoded and joined here instead.
   const segments = route.segments.map((segment) => {
     if (segment === ":id") return encodeURIComponent(id);
-    if (segment === ":parent") return encodeURIComponent(parentId as string);
-    return segment;
+    const depth = ANCESTOR_SEGMENT_DEPTH[segment];
+    if (depth === undefined) return segment;
+    const ancestorId = ancestorIds[depth];
+    if (ancestorId === undefined) {
+      // A table mistake, not a caller's: the route names an ancestor deeper
+      // than its declared parent chain reaches.
+      throw new PlatformPermalinkError(
+        `Route for ${resource.type} uses "${segment}" but declares no ancestor at that depth.`
+      );
+    }
+    return encodeURIComponent(ancestorId);
   });
   url.pathname = `/${segments.join("/")}`;
 

@@ -312,6 +312,7 @@ describe("eval-run detail — judges envelope", () => {
       cases: [
         {
           caseKey: "ui_abc",
+          iterationId: "it_1",
           score: 0.9,
           passed: true,
           reason: "named the right tool",
@@ -344,6 +345,9 @@ describe("eval-run detail — judges envelope", () => {
           // The persisted AUTHORED-case identity, kept under its own name so
           // nobody joins it against a case row id.
           caseKey: "ui_abc",
+          // The join key. Without it a caller can only pair a judge case with
+          // its iteration by array POSITION.
+          iterationId: "it_1",
           score: 0.9,
           passed: true,
           reason: "named the right tool",
@@ -351,6 +355,38 @@ describe("eval-run detail — judges envelope", () => {
         },
       ],
     });
+  });
+
+  it("omits iterationId on a judge result persisted without one", async () => {
+    // Rows written before the join key was projected must not grow a key
+    // whose value would be a guess.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          cases: [
+            {
+              caseKey: "ui_legacy",
+              score: 0.4,
+              passed: false,
+              reason: "missed the goal",
+              rubricHits: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.cases[0]).not.toHaveProperty(
+      "iterationId",
+    );
+    expect(body.judges.goalCompletion.cases[0].caseKey).toBe("ui_legacy");
   });
 
   it("reports a never-requested judge as status null, not as an absent field", async () => {
@@ -407,6 +443,7 @@ describe("eval-run detail — judges envelope", () => {
           cases: [
             {
               caseKey: "ui_abc",
+              iterationId: "it_9",
               score: 0.2,
               passed: false,
               reason: "invented a total",
@@ -424,12 +461,73 @@ describe("eval-run detail — judges envelope", () => {
     expect(body.judges.groundedness.cases).toEqual([
       {
         caseKey: "ui_abc",
+        // Groundedness projects through its OWN callback, so the join key
+        // needs its own assertion — a regression in one mapper must not pass
+        // because the other is covered.
+        iterationId: "it_9",
         score: 0.2,
         passed: false,
         reason: "invented a total",
         unsupportedClaims: ["the 42 figure"],
       },
     ]);
+  });
+
+  it.each([
+    ["null", null],
+    ["an empty string", ""],
+    ["a non-string", 42],
+  ])("omits a %s iterationId on both judges", async (_label, persisted) => {
+    // The DTO promises a join key a caller can use. `""` is a string but joins
+    // to nothing, and a non-string is not a key at all — all three have to be
+    // ABSENT rather than echoed, so "no join key on this row" stays one state.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...RUN_ROW,
+        goalCompletionStatus: "completed",
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          cases: [
+            {
+              caseKey: "ui_abc",
+              iterationId: persisted,
+              score: 0.9,
+              passed: true,
+              reason: "named the right tool",
+              rubricHits: [],
+            },
+          ],
+        },
+        groundednessStatus: "completed",
+        groundedness: {
+          summary: "One answer overreached.",
+          generatedAt: 11,
+          modelUsed: "openai/gpt-5.4-mini",
+          threshold: 0.6,
+          cases: [
+            {
+              caseKey: "ui_abc",
+              iterationId: persisted,
+              score: 0.2,
+              passed: false,
+              reason: "invented a total",
+              unsupportedClaims: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.cases[0]).not.toHaveProperty(
+      "iterationId",
+    );
+    expect(body.judges.groundedness.cases[0]).not.toHaveProperty("iterationId");
   });
 });
 

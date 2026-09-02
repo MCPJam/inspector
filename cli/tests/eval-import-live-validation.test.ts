@@ -394,6 +394,20 @@ type FixtureOptions = {
    * `[...updates, ...creates]` rather than authored file order.
    */
   existingCases?: Array<{ declaredId: string; title: string }>;
+  /**
+   * Paginate `tools/list` for one server NAME, so the walk has to follow a
+   * cursor to see everything.
+   *
+   * `pages` is the tool names each page carries; `cursors` is the `nextCursor`
+   * each page returns (`undefined` ends the listing). Kept as raw parallel
+   * arrays rather than a page-builder so a test can hand back a deliberately
+   * odd cursor — an empty string, or the same one twice.
+   */
+  paginatedTools?: {
+    server: string;
+    pages: string[][];
+    cursors: Array<string | undefined>;
+  };
 };
 
 type Fixture = {
@@ -404,6 +418,8 @@ type Fixture = {
   updateBodies: unknown[];
   runBodies: unknown[];
   toolListings: string[];
+  /** The `cursor` on each `tools/list` request, in order (absent -> undefined). */
+  toolCursors: Array<string | undefined>;
   close: () => Promise<void>;
 };
 
@@ -429,6 +445,7 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
   const updateBodies: unknown[] = [];
   const runBodies: unknown[] = [];
   const toolListings: string[] = [];
+  const toolCursors: Array<string | undefined> = [];
   const casesByDeclaredId = new Map<
     string,
     { id: string; declaredId: string; title: string }
@@ -496,6 +513,36 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
       const serverId = decodeURIComponent(toolsMatch[1]);
       const named = servers.find((entry) => entry.id === serverId);
       toolListings.push(serverId);
+      const requestCursor = (body as { cursor?: unknown }).cursor as
+        | string
+        | undefined;
+      toolCursors.push(requestCursor);
+      const paginated = options.paginatedTools;
+      if (paginated && named?.name === paginated.server) {
+        // Which page a cursor refers to is this fixture's business, not the
+        // client's: the cursor is opaque, so page N's cursor simply selects
+        // page N+1. That keeps `""` a perfectly ordinary token here.
+        const raw =
+          requestCursor === undefined
+            ? 0
+            : paginated.cursors.findIndex(
+                (issued) => issued === requestCursor
+              ) + 1;
+        // Clamp past the end onto the last entry, so a one-page script whose
+        // cursor points back at itself models a server that reissues ONE
+        // CONSTANT TOKEN forever rather than one that simply runs out.
+        const index = Math.min(raw, paginated.pages.length - 1);
+        json({
+          items: (paginated.pages[index] ?? []).map((name) => ({
+            name,
+            description: name,
+          })),
+          ...(paginated.cursors[index] !== undefined
+            ? { nextCursor: paginated.cursors[index] }
+            : {}),
+        });
+        return;
+      }
       json({
         items: (toolsByServer[named?.name ?? ""] ?? []).map((name) => ({
           name,
@@ -736,6 +783,7 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
     updateBodies,
     runBodies,
     toolListings,
+    toolCursors,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve()))
@@ -885,6 +933,95 @@ describe("eval validate --project", () => {
         const envelope = JSON.parse(run.stdout) as ValidateEnvelope;
         assert.equal(envelope.projectValidation?.valid, true);
         assert.deepEqual(envelope.projectValidation?.findings, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results". Stopping on
+  // one here does not merely truncate a list — the set this walk builds is
+  // what decides "this tool name does not exist", so a short walk REJECTS a
+  // perfectly valid suite at import.
+  test("follows an empty-string cursor rather than reporting page two's tool as missing", async () => {
+    const fixture = await startFixture({
+      paginatedTools: {
+        server: "billing",
+        pages: [["render_refund"], ["render_gone"]],
+        // Page one's cursor is the empty string. `render_gone` — which the
+        // file references — is only reachable by following it.
+        cursors: ["", undefined],
+      },
+    });
+    try {
+      await withSuiteFile(IMPORTED_WITH_TOOL_CALLS, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            validateArgv(
+              file,
+              "--project",
+              "Alpha",
+              "--api-key",
+              "sk_test",
+              "--api-url",
+              fixture.baseUrl
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        // Validates CLEAN: the walk read both pages, so neither referenced
+        // tool is reported as nonexistent.
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const envelope = JSON.parse(run.stdout) as ValidateEnvelope;
+        assert.equal(envelope.projectValidation?.valid, true);
+        assert.deepEqual(envelope.projectValidation?.findings, []);
+        // And the second request genuinely carried `cursor: ""` — a truthiness
+        // forward would have dropped it and silently re-read page one.
+        assert.deepEqual(fixture.toolCursors, [undefined, ""]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  // A repeated cursor is FOLLOWED, not read as an ending: the spec forbids
+  // making determinations on a cursor's value, and a server may legally
+  // reissue one constant token — `""` included. MAX_TOOL_PAGES is the bound,
+  // and it REFUSES rather than validating against a list it could not finish.
+  test("walks a constant cursor to the page cap and refuses rather than validating a partial list", async () => {
+    const fixture = await startFixture({
+      paginatedTools: {
+        server: "billing",
+        // One page whose cursor points back at itself: a server reissuing the
+        // same token forever.
+        pages: [["render_refund"]],
+        cursors: [""],
+      },
+    });
+    try {
+      await withSuiteFile(IMPORTED_WITH_TOOL_CALLS, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            validateArgv(
+              file,
+              "--project",
+              "Alpha",
+              "--api-key",
+              "sk_test",
+              "--api-url",
+              fixture.baseUrl
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        // Refusal, not a verdict: an unreadable tool list means the file was
+        // never checked, which must not be reported as "invalid".
+        assert.equal(run.result.exitCode, 2);
+        const output = `${run.stdout}${run.stderr}`;
+        assert.match(output, /TOOL_DISCOVERY_UNAVAILABLE/);
+        // Not stopped at page two — bounded by our own cap.
+        assert.ok(fixture.toolCursors.length > 2);
       });
     } finally {
       await fixture.close();

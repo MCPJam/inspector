@@ -473,9 +473,6 @@ export function SwarmLiveStreamPane({
           <p className="truncate text-[12px] font-semibold">
             Session #{selection.sessionIndex + 1}
           </p>
-          <p className="truncate font-mono text-[10px] text-muted-foreground">
-            {selection.chatSessionId}
-          </p>
         </div>
         <span className="inline-flex items-center gap-1.5 shrink-0">
           {autoFollowing ? (
@@ -498,14 +495,9 @@ export function SwarmLiveStreamPane({
         </span>
       </div>
 
-      {(live?.errorMessage || convexSession?.readiness) && (
-        <p className="text-[11px] text-muted-foreground">
-          {live?.errorMessage ??
-            (convexSession?.readiness?.verdict
-              ? `Readiness: ${convexSession.readiness.verdict}`
-              : null)}
-        </p>
-      )}
+      {live?.errorMessage ? (
+        <p className="text-[11px] text-muted-foreground">{live.errorMessage}</p>
+      ) : null}
 
       {/* Setup notes for this session — e.g. a host built-in that was
           deliberately not advertised. Shown as its own line, not folded into

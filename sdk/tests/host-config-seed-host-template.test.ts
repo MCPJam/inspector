@@ -18,6 +18,7 @@ const ALL_IDS: HostTemplateId[] = [
   "goose",
   "slack",
   "cursor",
+  "cursor-cli",
   "codex",
   "copilot",
   "vscode",

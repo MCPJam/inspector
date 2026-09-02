@@ -52,6 +52,11 @@ interface ToolListProps {
    * Defaults to true so callers that don't track connections keep the old copy.
    */
   hasConnectedServer?: boolean;
+  /**
+   * Connect a server in place. Callers without their own Add Server modal omit
+   * it and the empty state keeps navigating to Servers.
+   */
+  onAddServerRequested?: () => void;
 }
 
 export function ToolList({
@@ -68,6 +73,7 @@ export function ToolList({
   selectedBuiltinKey = null,
   onSelectBuiltin,
   hasConnectedServer = true,
+  onAddServerRequested,
 }: ToolListProps) {
   const navigate = useAppNavigate();
   // App-provided tools are widget-lifecycle. Pull them out of the registry
@@ -170,7 +176,13 @@ export function ToolList({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate(routePaths.servers)}
+                onClick={() => {
+                  if (onAddServerRequested) {
+                    onAddServerRequested();
+                    return;
+                  }
+                  navigate(routePaths.servers);
+                }}
               >
                 <Plug className="h-3.5 w-3.5" />
                 Connect a server

@@ -96,15 +96,27 @@ const MAX_BUFFERED_EVENTS_PER_SERVER = 500;
  * worth gigabytes. INSPECTOR-ELECTRON-W3 died with 2.24 GB live in a 2.27 GB
  * old space after a full mark-compact.
  *
- * 256 KB leaves ordinary frames — including most tool results anyone actually
- * reads in the Logs panel — completely intact, and turns the ones nobody can
- * read anyway into a marker.
+ * 1 MB leaves ordinary frames — including most tool results anyone actually
+ * reads in the Logs panel — completely intact, and truncates the ones nobody
+ * can read anyway to a head plus their true size.
+ *
+ * This bounds what the LOGS PANEL retains, never what a tool may return. A
+ * response over this size is still delivered and rendered in full; only its
+ * Logs row is shortened. Reading the number as a response limit gets the
+ * direction of the constraint backwards.
+ *
+ * Nor does the exact value bound this process — `MAX_BUFFERED_BYTES_PER_SERVER`
+ * below is the ceiling that actually holds, and eviction enforces it whatever a
+ * single frame weighs. The crash above was unbounded RETENTION, not one large
+ * frame. What this value buys is that frames someone opens in the panel are
+ * usually there whole; what keeps a dropped one legible is `truncateRpcPayload`
+ * leaving a head and a byte count rather than a bare marker.
  */
-const MAX_MESSAGE_BYTES = 256 * 1024;
+const MAX_MESSAGE_BYTES = 1024 * 1024;
 
 /**
  * Per-server TOTAL retention cap, and the one that really bounds the process:
- * the per-frame cap alone still permits 500 x 256 KB per server, times every
+ * the per-frame cap alone still permits 500 frames per server, times every
  * server id ever seen.
  */
 const MAX_BUFFERED_BYTES_PER_SERVER = 8 * 1024 * 1024;

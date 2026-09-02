@@ -50,8 +50,12 @@ import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
-import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
+import {
+  excludedFlagGatedHostIds,
+  FLAG_GATED_HOST_IDS,
+} from "@/lib/host-compat/feature-visibility";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import type {
@@ -238,6 +242,7 @@ export function HostConfigCompareView({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
   // The flags gate the New Host template picker, not this matrix — so they
   // apply only to the signed-in surface, where a preset column sits next to
   // hosts you can actually create. In public (caniuse) mode the matrix is
@@ -245,13 +250,19 @@ export function HostConfigCompareView({
   // gating it there hid Claude Code and Codex from every anonymous visitor,
   // since the hooks read an unresolved flag as off and the flags are scoped
   // to @mcpjam.com users.
+  //
+  // DERIVED from the shared FLAG_GATED_HOSTS map, not typed out per host: the
+  // hand-written version gated each id with its own `if`, so a newly gated host
+  // was hidden on the five surfaces that share the map and silently offered
+  // here.
   const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<string>();
-    if (presetOnly) return excluded;
-    if (!claudeCodeEnabled) excluded.add("claude-code");
-    if (!codexEnabled) excluded.add("codex");
-    return excluded;
-  }, [claudeCodeEnabled, codexEnabled, presetOnly]);
+    if (presetOnly) return new Set<string>();
+    return excludedFlagGatedHostIds({
+      claudeCode: claudeCodeEnabled,
+      codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
+    });
+  }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, presetOnly]);
   // Public caniuse still displays flag-gated hosts as reference data, but must
   // not offer their verify links because those links auto-create a host, and
   // the app refuses to create one until the rollout flag is on. The flags

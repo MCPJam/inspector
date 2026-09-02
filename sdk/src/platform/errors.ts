@@ -52,6 +52,8 @@ export type PlatformApiErrorOptions = SdkErrorOptions & {
   retryAfter?: number;
   /** Request path that failed, for diagnostics. */
   endpoint?: string;
+  /** See `PlatformApiError.codeSource`. Omit when the code was not wire-derived. */
+  codeSource?: "envelope" | "status";
 };
 
 export class PlatformApiError extends SdkError {
@@ -59,6 +61,25 @@ export class PlatformApiError extends SdkError {
   public readonly details?: Record<string, unknown>;
   public readonly retryAfter?: number;
   public readonly endpoint?: string;
+  /**
+   * Did `code` come from the response's own `{ code }` envelope, or was it
+   * ASSUMED from the HTTP status?
+   *
+   * The two are indistinguishable in `code` alone, and for 404 that ambiguity
+   * has a caller-visible cost: an API answering `{ code: "NOT_FOUND" }` is
+   * saying the resource does not exist, while a bare 404 with no envelope is
+   * usually the route not being there at all — an older deployment, a function
+   * not yet shipped. `STATUS_FALLBACK_CODES` maps both to `NOT_FOUND`, so a
+   * caller wanting to fall back on an undeployed endpoint (rather than render
+   * "no such thing") had nothing to branch on.
+   *
+   * `"status"` says the server offered no code of its own. It does NOT by
+   * itself mean the route is missing — a proxy can strip a body from any
+   * status — so treat it as one signal, alongside the status, not a verdict.
+   *
+   * Optional so an error constructed anywhere else keeps its current shape.
+   */
+  public readonly codeSource?: "envelope" | "status";
 
   constructor(message: string, code: string, options: PlatformApiErrorOptions) {
     super(message, code, options);
@@ -67,6 +88,7 @@ export class PlatformApiError extends SdkError {
     this.details = options.details;
     this.retryAfter = options.retryAfter;
     this.endpoint = options.endpoint;
+    this.codeSource = options.codeSource;
   }
 }
 

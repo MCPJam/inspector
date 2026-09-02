@@ -227,7 +227,13 @@ describe("skills/list", () => {
     );
   });
 
-  it("stops on a repeated cursor rather than looping forever", async () => {
+  // A repeated cursor is FOLLOWED, not treated as an ending: MCP 2026-07-28
+  // `server/utilities/pagination` forbids reading anything off a cursor's
+  // value beyond whether one was provided, and comparing two cursors for
+  // equality is exactly that — a server may legally reissue one constant token
+  // for every page. The page cap is the bound, and it stops the walk loudly
+  // rather than handing back a partial listing as if it were whole.
+  it("bounds a server that reissues one cursor forever with the page cap, not a cycle check", async () => {
     const fixture = await serve({
       pageSize: 1,
       misbehavior: { repeatCursor: true },
@@ -235,7 +241,7 @@ describe("skills/list", () => {
     const manager = await connect(fixture.url);
     await expect(
       listAllServerSkills(manager, { serverId: SERVER_ID })
-    ).rejects.toThrow(/repeated cursor/);
+    ).rejects.toThrow(/Exceeded \d+ pages while draining skills\/list/);
   });
 });
 

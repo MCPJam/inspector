@@ -29,6 +29,7 @@ import {
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { hasSelectedMcpServersForAdmission } from "../evals/harness-admission.js";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
@@ -523,10 +524,11 @@ async function runJourneyFanOut(
         //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
         //     policy out of it for the MCP manager — this feeds the same value to
         //     the harness gate.
-        //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
-        //     host-executed tools but NOT tools delivered through `.mcp.json`, so
-        //     `requireToolApproval` + selected servers is a hole the adapter
-        //     declares it cannot close (`supportsMcpToolApproval: false`).
+        //   - APPROVAL vs MCP TOOLS. Whether a harness can pause on the surface
+        //     its MCP tools actually run on. Claude Code now can, on all three
+        //     (`supportsMcpToolApproval: true`, via the bridge's `canUseTool`
+        //     under "allow-reads"); Codex cannot pause at all, so
+        //     `requireToolApproval` still refuses a Codex target outright.
         //
         // Deliberately NOT re-derived as a local subset: a rule added to the chat
         // preflight later must apply here too, and the only way to guarantee that
@@ -545,9 +547,12 @@ async function runJourneyFanOut(
                 // this is an admission decision, and over-counting refuses a host
                 // that advertises an approval gate it cannot enforce — the
                 // fail-closed direction.
-                hasSelectedMcpServers:
-                  (target.serverIds ?? []).length > 0 ||
-                  (target.pluginServerIds ?? []).length > 0,
+                hasSelectedMcpServers: hasSelectedMcpServersForAdmission({
+                  ...(target.serverIds ? { serverIds: target.serverIds } : {}),
+                  ...(target.pluginServerIds
+                    ? { pluginServerIds: target.pluginServerIds }
+                    : {}),
+                }),
                 // The RESOLVED definition — the SAME one the turn runs on. The
                 // gate derives eligibility and the canonical id from it, so this
                 // cannot disagree with what `resolveTurnRuntime` decides. Passing
@@ -559,6 +564,11 @@ async function runJourneyFanOut(
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
                 },
+                // The same pinned id under the name the external-account rule
+                // reads. Identical to `model.id` here — a swarm target has no
+                // request body to override it — and passed explicitly so it
+                // STAYS identical if that ever stops being true.
+                hostModelId: modelId,
                 // TRI-STATE, read without throwing, and INVALID counts as ON —
                 // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
                 // (the web route's variant) THROWS a 409 on a malformed profile,
@@ -1006,6 +1016,16 @@ async function runJourneyFanOut(
               // legacy live-pool). The shared core routes them to prepareChatV2
               // (`skillsSource`) or the harness pinned path — never a live query.
               ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
+              // The target's Project Environment — the GRANT BOUNDARY for its
+              // project secrets, and the same id `resolveGrantForSandbox`
+              // derives for this attempt's box from the run snapshot. Threaded
+              // so a harness turn's BROKERED external-account credential is
+              // checked against what THIS environment selects rather than
+              // against the whole project. Absent for a legacy host target,
+              // which has no environment and so no grant.
+              ...(target.environmentRef?.environmentId
+                ? { environmentId: target.environmentRef.environmentId }
+                : {}),
               // Swarm authorizes via project membership — no scenario access
               // version, no scenario id.
             },

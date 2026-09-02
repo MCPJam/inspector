@@ -356,7 +356,6 @@ async function walkListing<Entry>(
   const headers = sessionId ? { "mcp-session-id": sessionId } : undefined;
 
   const entries: Entry[] = [];
-  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let pagesWalked = 0;
   let paginationCapHit = false;
@@ -370,7 +369,8 @@ async function walkListing<Entry>(
       options,
       idBase + page,
       method,
-      cursor ? { cursor } : {},
+      // Presence, not truthiness: `""` is a valid continuation cursor.
+      cursor !== undefined ? { cursor } : {},
       headers,
     );
     pagesWalked += 1;
@@ -417,15 +417,15 @@ async function walkListing<Entry>(
     if (entryCapHit) break;
 
     const next = asString(result.nextCursor);
-    if (!next) break;
-    if (seenCursors.has(next)) {
-      error = `${method} repeated cursor ${JSON.stringify(
-        next,
-      )}; the walk was stopped`;
-      paginationCapHit = true;
-      break;
-    }
-    seenCursors.add(next);
+    // ABSENCE ends the walk, not emptiness — MCP 2026-07-28
+    // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
+    // read as the end of results.
+    //
+    // No repeated-cursor guard: comparing two cursors for equality is itself a
+    // determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page. The page cap is the
+    // bound, and it bounds the distinct-cursor case identically.
+    if (next === undefined) break;
     cursor = next;
     if (page === maxPages - 1) paginationCapHit = true;
   }

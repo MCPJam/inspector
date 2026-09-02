@@ -1349,6 +1349,13 @@ export function assertClaimExecutable(job: ClaimedBenchmarkJob): void {
       assertCaseMetadataPinned({
         resolved: cell.caseSideEffects,
         expectedCaseMetadataHash: job.pins?.caseMetadataHash,
+        // `pins.suiteRevision` IS the canonical suite content hash — the
+        // backend pins sha256(suite.configRevision) under both legacy names
+        // (`suiteRevision` and the manifest's `suiteHash`), and its resolver
+        // refuses a definition where they diverge. So forwarding the
+        // revision as the expected suite hash is exact, not a coincidence;
+        // see ResolvedAgentEvalPolicy in mcpjam-backend
+        // convex/lib/benchmarkDefinition.ts.
         ...(job.pins?.suiteRevision
           ? { expectedSuiteHash: job.pins.suiteRevision }
           : {}),

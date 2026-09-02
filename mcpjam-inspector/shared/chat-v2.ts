@@ -96,6 +96,20 @@ export interface ChatV2Request {
    */
   builtInToolIds?: string[];
   /**
+   * What the hosted `browser_*` tools may do in an UNATTENDED run (eval,
+   * swarm, journey). Those runs never pause, so approval — the mechanism
+   * every interactive surface relies on — does not exist for them; a declared
+   * policy is the substitute, and WITHOUT one the browser tools are simply
+   * not advertised (fail-closed, see `built-in-tools/browser.ts`).
+   *
+   * Ignored on interactive surfaces, which gate through approval instead.
+   */
+  browserToolPolicy?: {
+    mode: "allow_all" | "read_only" | "allowlist";
+    originAllowlist?: string[];
+    toolAllowlist?: string[];
+  };
+  /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
    * every tool definition every turn). Sourced from the project's default

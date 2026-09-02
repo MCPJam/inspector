@@ -91,6 +91,17 @@ export type ToolsListWalk = {
  * previous one: a server that alternates `A → B → A` never repeats
  * back-to-back, so a one-step comparison would re-read the same pages until the
  * cap and report the same offending tool dozens of times.
+ *
+ * THIS IS THE ONE PLACE THAT COMPARES CURSOR VALUES, and it is deliberate.
+ * Everywhere else in the codebase a repeated cursor is followed like any other,
+ * because MCP 2026-07-28 `server/utilities/pagination` forbids a client from
+ * making determinations on a cursor's value and a server may legally reissue a
+ * constant token (`""` included) for every page. Here the point is not to
+ * consume the listing but to CHARACTERIZE the server: the repeat is recorded as
+ * its own terminal state and surfaced to the operator. It is never treated as
+ * the end of a complete listing — `repeated-cursor` is not `complete`, and
+ * callers turn it into a "could not run" skip, never a failure — so no check
+ * passes or fails on the strength of this comparison.
  */
 export async function walkToolsList(options: {
   /** First JSON-RPC id; incremented per page. */
@@ -127,10 +138,19 @@ export async function walkToolsList(options: {
     }
 
     const next = payload?.nextCursor;
-    // Only ABSENT (or empty) means "that was the last page". A non-string
-    // `nextCursor` is a malformed response, not an ending — folding the two
-    // together would let a check certify a listing it stopped reading early.
-    if (next === undefined || next === null || next === "") {
+    // Only ABSENT means "that was the last page". Two things are deliberately
+    // NOT endings:
+    //   - An EMPTY STRING. MCP 2026-07-28 `server/utilities/pagination` makes
+    //     it explicit: clients "MUST NOT" make any determination from a
+    //     cursor's value beyond whether a non-null one was provided, and "an
+    //     empty string is a valid cursor and thus MUST NOT be treated as the
+    //     end of results". `""` is fed back verbatim like any other token; a
+    //     server that keeps answering `""` trips the repeated-cursor guard
+    //     below on the second occurrence instead of spinning.
+    //   - A NON-STRING `nextCursor`, which is a malformed response. Folding
+    //     that into "complete" would let a check certify a listing it stopped
+    //     reading early.
+    if (next === undefined || next === null) {
       termination = "complete";
       break;
     }

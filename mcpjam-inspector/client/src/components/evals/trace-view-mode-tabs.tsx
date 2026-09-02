@@ -236,6 +236,7 @@ export function ChatTraceViewModeHeaderBar({
       <div className="px-4 py-2.5">
         <TraceViewModeTabs
           layout="fullWidth"
+          appearance="segment"
           mode={mode}
           onModeChange={onModeChange}
           showToolsTab={false}

@@ -93,7 +93,8 @@ export async function listSkillsExt(
   const result = await sendSkillsExtRequest(
     ctx,
     SkillsExtListMethod,
-    params?.cursor ? { cursor: params.cursor } : {}
+    // Presence, not truthiness: `""` is a valid continuation cursor.
+    params?.cursor !== undefined ? { cursor: params.cursor } : {}
   );
   return assertSkillsListResult(result);
 }

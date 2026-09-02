@@ -306,10 +306,6 @@ export function SessionFlowSankey({
   // What the first column is called on this surface, for banner copy —
   // "journeys" on the swarm panel, "goals" on the scenario one.
   const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
-  const foldedTotal = STAGE_ORDER.reduce(
-    (sum, stage) => sum + (sankey.foldedByStage?.[stage] ?? 0),
-    0,
-  );
   const selectedKeys = new Set(
     (selection?.themes ?? []).map(
       (theme) => `${theme.dimension}:${theme.clusterId}`,
@@ -349,14 +345,8 @@ export function SessionFlowSankey({
             </TooltipContent>
           </Tooltip>
         </div>
-        {foldedTotal > 0 || headerActions || tuningControl ? (
+        {headerActions || tuningControl ? (
           <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-            {foldedTotal > 0 ? (
-              <span>
-                {foldedTotal} smaller {foldedTotal === 1 ? "theme" : "themes"}{" "}
-                folded
-              </span>
-            ) : null}
             {headerActions}
             {tuningControl}
           </div>

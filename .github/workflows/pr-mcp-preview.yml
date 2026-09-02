@@ -52,9 +52,13 @@ env:
 jobs:
   upsert-mcp-preview:
     # Same fork-PR exclusion as pr-preview.yml — external PRs don't get
-    # access to Cloudflare secrets.
+    # access to Cloudflare secrets. Dependabot PRs are excluded for the
+    # same reason: GitHub gives Dependabot-triggered runs the Dependabot
+    # secret store, not the Actions one, so the Cloudflare credentials
+    # arrive empty and the job can only ever fail.
     if: >
       github.event.action != 'closed' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -203,8 +207,11 @@ jobs:
           echo "- MCP endpoint: \`${DEPLOYMENT_URL%/}/mcp\`" >> "$GITHUB_STEP_SUMMARY"
 
   destroy-mcp-preview:
+    # Mirrors upsert-mcp-preview's exclusions: nothing was ever created for
+    # a Dependabot or fork PR, so there is nothing to tear down.
     if: >
       github.event.action == 'closed' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10

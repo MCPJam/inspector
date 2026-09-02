@@ -24,6 +24,23 @@ function extractCookie(setCookie: string, name: string): string {
   return `${name}=${match[1]}`;
 }
 
+/**
+ * The ONE `Set-Cookie` header that carries `name`, with its own attributes.
+ *
+ * `headers.get("set-cookie")` joins every cookie into a single string, so
+ * asserting a flag against that tells you only that SOME cookie in the
+ * response carries it — a check that passes even when the cookie you meant is
+ * missing the flag entirely. Attributes are per-cookie, so the assertions have
+ * to be too.
+ */
+function setCookieFor(res: Response, name: string): string {
+  const entry = res.headers
+    .getSetCookie()
+    .find((cookie) => cookie.startsWith(`${name}=`));
+  if (!entry) throw new Error(`Missing Set-Cookie for ${name}`);
+  return entry;
+}
+
 describe("workos authkit local session bridge", () => {
   beforeEach(() => {
     process.env.MCPJAM_WORKOS_SESSION_SECRET = "test-workos-session-secret";
@@ -247,5 +264,89 @@ describe("workos authkit local session bridge", () => {
       error_description: "No local WorkOS session",
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  // The hosted path. Everything above runs on localhost, where the refresh
+  // token goes in a plain local jar; a deployed origin takes the other branch
+  // entirely — sealed `__Host-` cookie, Secure flags — and that branch is what
+  // staging and previews now depend on.
+  describe("on a deployed https origin", () => {
+    it("seals the refresh token into a Secure __Host- cookie", async () => {
+      const app = createTestApp();
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "access-token-1",
+          refresh_token: "refresh-token-1",
+          user: { id: "user_1" },
+        })
+      );
+
+      const res = await app.request(
+        "https://staging.mcpjam.com/user_management/authenticate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: "client_123",
+            grant_type: "authorization_code",
+            code: "code_123",
+            code_verifier: "verifier_123",
+          }),
+        }
+      );
+
+      expect(res.status).toBe(200);
+      const sessionCookie = setCookieFor(res, "__Host-mcpjam_workos_session");
+      expect(sessionCookie).toContain("HttpOnly");
+      // The `__Host-` prefix is not decoration: a browser silently REJECTS a
+      // cookie carrying it without Secure and Path=/, or with any Domain at
+      // all. Dropped here, the session would vanish on the next page load —
+      // the exact failure this whole change exists to fix, reintroduced one
+      // attribute at a time.
+      expect(sessionCookie).toContain("Secure");
+      expect(sessionCookie).toContain("Path=/");
+      expect(sessionCookie).not.toContain("Domain=");
+      // The refresh token must never reach the deployed browser in the clear.
+      expect(sessionCookie).not.toContain("refresh-token-1");
+    });
+
+    // THE regression. Without this cookie on the app's own origin, AuthKit's
+    // initialize() short-circuits before making any request and the user is
+    // silently demoted to a guest on the next page load — which is exactly how
+    // staging behaved while it pointed at api.workos.com.
+    it("sets workos-has-session on this origin so AuthKit will attempt a refresh", async () => {
+      const app = createTestApp();
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "access-token-1",
+          refresh_token: "refresh-token-1",
+          user: { id: "user_1" },
+        })
+      );
+
+      const res = await app.request(
+        "https://staging.mcpjam.com/user_management/authenticate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: "client_123",
+            grant_type: "authorization_code",
+            code: "code_123",
+            code_verifier: "verifier_123",
+          }),
+        }
+      );
+
+      const hasSessionCookie = setCookieFor(res, "workos-has-session");
+      expect(hasSessionCookie).toContain("workos-has-session=true");
+      // Secure asserted on THIS cookie specifically: a deployed browser drops
+      // an insecure cookie on an https origin, and AuthKit would then skip its
+      // refresh and demote the user to a guest.
+      expect(hasSessionCookie).toContain("Secure");
+      // Readable by the page — this is the one cookie AuthKit inspects from
+      // JavaScript, so HttpOnly on it would break the flow it exists to drive.
+      expect(hasSessionCookie).not.toContain("HttpOnly");
+    });
   });
 });

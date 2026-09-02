@@ -33,10 +33,24 @@ function makeState(overrides: Partial<MrtrOperationState> = {}): MrtrOperationSt
 
 /** A minimal Hono-like context capturing the JSON response. */
 function makeCtx(body: Record<string, unknown>, getters: Record<string, string> = {}) {
-  const captured: { payload?: unknown; status?: number } = {};
+  const captured: {
+    payload?: unknown;
+    status?: number;
+    // `webError` stashes here for `requestLogContextMiddleware`; a fake
+    // without `set` silently skips that branch, which is how the missing
+    // attribution below went unnoticed.
+    webErrorMeta?: Record<string, unknown>;
+  } = {};
+  const vars: Record<string, unknown> = {};
   return {
     ctx: {
-      get: (k: string) => getters[k],
+      get: (k: string) => getters[k] ?? vars[k],
+      set: (k: string, v: unknown) => {
+        vars[k] = v;
+        if (k === "webErrorMeta") {
+          captured.webErrorMeta = v as Record<string, unknown>;
+        }
+      },
       req: { json: async () => body },
       json: (payload: unknown, status: number) => {
         captured.payload = payload;
@@ -352,5 +366,45 @@ describe("runHostedDirectMrtrOperation — surfaces a real verb error honestly",
     const payload = captured.payload as Record<string, unknown>;
     expect(payload.status).not.toBe("input_required");
     expect(fake.disconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The three hosted direct ops — `tools/execute`, `resources/read`,
+ * `prompts/get` — all fail through this one catch, and it called `webError` by
+ * hand with the mapped error's status/code/message but neither its
+ * `normalized` block nor its promoted `origin`. That is the exact omission
+ * `webErrorFromRoute` was written to prevent, and it meant every failure on
+ * these routes reached `http.request.failed` with no `origin` and no `slug`:
+ * measured 2026-08-22 to 08-25, 22 of 22 rows on `resources/read` and 10 of 10
+ * on `tools/execute`. An origin-keyed monitor reads that as nothing at all.
+ */
+describe("runHostedDirectMrtrOperation — attributes its failures", () => {
+  it("records origin and slug for a failure reaching the user's server", async () => {
+    const fake = makeFakeConnect();
+    const { ctx, captured } = makeCtx({
+      projectId: "proj-1",
+      serverId: "srv-1",
+      toolName: "do_thing",
+      parameters: {},
+      hostedMrtrVersion: HOSTED_MRTR_VERSION,
+    });
+
+    await runHostedDirectMrtrOperation(
+      ctx as never,
+      {} as never,
+      { method: "tools/call" },
+      async () => {
+        throw Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3000"), {
+          code: "ECONNREFUSED",
+        });
+      },
+      { rpcLogs: false, seams: seams(fake.connect) },
+    );
+
+    // Driven through the real classifier, not asserted against a fixture.
+    expect(captured.webErrorMeta?.origin).toBe("user_config");
+    expect(captured.webErrorMeta?.slug).toBe("transport/econnrefused");
+    expect(captured.webErrorMeta?.status).toBe(captured.status);
   });
 });

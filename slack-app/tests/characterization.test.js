@@ -69,10 +69,59 @@ test('formatRunOutcome — the watcher’s terminal messages', () => {
     formatRunOutcome({ status: 'timed_out', summary: { passed: 0, total: 2 } }, url, user),
     `:hourglass: Run timed out (0/2 passed) — started by <@${user}>, <${url}|details>.`,
   );
+  // A NO-VERDICT IS NOT A FAILURE. This line used to be the red one.
+  assert.equal(
+    formatRunOutcome({ status: 'completed', result: 'inconclusive', summary: { passed: 0, total: 3 } }, url, user),
+    `:warning: Run inconclusive (0/3 passed) — it did not measure the server well enough to judge it — started by <@${user}>, <${url}|see what it measured>.`,
+  );
   // An unknown terminal status falls through to the red branch and names itself.
   assert.equal(
     formatRunOutcome({ status: 'exploded' }, url, user),
     `:red_circle: Run exploded — started by <@${user}>, <${url}|see what broke>.`,
+  );
+});
+
+test('formatRunOutcome — the chain line a non-pass carries beneath its verdict', () => {
+  const url = 'https://app.mcpjam.com/evals/suite/s1/runs/r1?project=p1';
+  const user = 'U123';
+  /** One page of diagnostics, as `GET …/decision-summary` returns it. */
+  const summary = {
+    diagnostics: {
+      items: [
+        {
+          chain: {
+            status: 'verified',
+            stages: [
+              { stage: 'connection', state: 'passed', reason: 'observed' },
+              { stage: 'response', state: 'failed', reason: 'toolError' },
+            ],
+            firstFailedStage: 'response',
+            failureCategory: 'serverData',
+          },
+        },
+      ],
+    },
+  };
+
+  assert.equal(
+    formatRunOutcome({ status: 'completed', result: 'failed', summary: { passed: 1, total: 4 } }, url, user, summary),
+    `:red_circle: Run failed (1/4 passed) — started by <@${user}>, <${url}|see what broke>.\n` +
+      'First break: Response — the server reported a tool error',
+  );
+
+  // A run that reached NO stage names its bucket instead of inventing one.
+  assert.equal(
+    formatRunOutcome({ status: 'failed' }, url, user, {
+      diagnostics: { items: [{ chain: { status: 'verified', stages: [], failureCategory: 'evaluator' } }] },
+    }),
+    `:red_circle: Run failed — started by <@${user}>, <${url}|see what broke>.\n` +
+      'No stage was reached — grouped under evaluator',
+  );
+
+  // FAIL-SOFT: the enrichment is absent and the line is what it always was.
+  assert.equal(
+    formatRunOutcome({ status: 'completed', result: 'failed', summary: { passed: 1, total: 4 } }, url, user, null),
+    `:red_circle: Run failed (1/4 passed) — started by <@${user}>, <${url}|see what broke>.`,
   );
 });
 

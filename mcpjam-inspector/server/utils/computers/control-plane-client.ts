@@ -28,6 +28,13 @@ export type ComputerStatus =
   | "deleted"
   | "error";
 
+/**
+ * Which runtime a computer boots. Hand-mirrored from the backend
+ * (`projectComputers.runtimeKind`, PR d/e2); absent ⇒ terminal, so every
+ * existing caller keeps the terminal behaviour it had before desktop existed.
+ */
+export type RuntimeKind = "terminal" | "desktop-browser";
+
 export interface ReservedComputer {
   computerId: string;
   status: ComputerStatus;
@@ -42,6 +49,9 @@ export interface ComputerSandboxInfo {
   status: ComputerStatus;
   projectId: string;
   ownerUserId: string;
+  /** Hand-mirrored from the backend `ComputerView` (PR e2). */
+  runtimeKind?: RuntimeKind;
+  bootedRuntimeCapabilities?: string[];
 }
 
 export type ControlPlaneResult<T> =
@@ -451,14 +461,19 @@ export async function reserveComputer(args: {
   bearer: string;
   projectId: string;
   executionScope?: ExecutionScope;
+  /** Request a specific runtime (PR e2 forwards this at the reserve boundary).
+   *  Absent ⇒ terminal, so existing callers are byte-for-byte unchanged. */
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ReservedComputer>> {
+  const body: Record<string, unknown> = args.executionScope
+    ? { executionScope: args.executionScope }
+    : { projectId: args.projectId };
+  if (args.runtimeKind) body.runtimeKind = args.runtimeKind;
   return postJson<ReservedComputer>(
     "/computers/reserve",
     bearerHeader(args.bearer),
-    args.executionScope
-      ? { executionScope: args.executionScope }
-      : { projectId: args.projectId },
+    body,
     args.signal
   );
 }
@@ -609,6 +624,8 @@ export async function ensureComputerReady(args: {
   projectId: string;
   /** Phase 3 scope; forwarded verbatim to reserveComputer (legacy when absent). */
   executionScope?: ExecutionScope;
+  /** Forwarded to reserveComputer on every poll so the desktop kind sticks. */
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
   /** Overall budget. E2B cold provision is seconds; waking ~1s. */
   timeoutMs?: number;

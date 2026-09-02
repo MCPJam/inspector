@@ -31,7 +31,11 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
-import { harnessControlState } from "@/lib/harness-capabilities";
+import {
+  ENFORCED_CONTROL,
+  harnessControlState,
+} from "@/lib/harness-capabilities";
+import { useHarnessCapabilities } from "@/hooks/useHarnessCapabilities";
 import type { ModelDefinition } from "@/shared/types";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -51,14 +55,14 @@ const TRI_SELECTOR_ACTIVE_CLASSES =
   "data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground";
 
 function progressiveValueToTri(
-  value: boolean | undefined
+  value: boolean | undefined,
 ): ProgressiveTriState {
   if (value === true) return "on";
   if (value === false) return "off";
   return "auto";
 }
 function triToProgressiveValue(
-  value: ProgressiveTriState
+  value: ProgressiveTriState,
 ): boolean | undefined {
   if (value === "on") return true;
   if (value === "off") return false;
@@ -160,7 +164,7 @@ function ImagePolicyRow({
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
   /**
@@ -209,40 +213,71 @@ export function BehaviorTab({
   const fApproval = hostConfigField("requireToolApproval");
   const fVisibility = hostConfigField("respectToolVisibility");
   const fDirectImages = hostConfigField(
-    "modelVisibleMcpToolResults.directContent.image"
+    "modelVisibleMcpToolResults.directContent.image",
   );
   const fEmbeddedImages = hostConfigField(
-    "modelVisibleMcpToolResults.embeddedResources.blob.image"
+    "modelVisibleMcpToolResults.embeddedResources.blob.image",
   );
   const fLinkedImages = hostConfigField(
-    "modelVisibleMcpToolResults.linkedResources.blob.image"
+    "modelVisibleMcpToolResults.linkedResources.blob.image",
   );
   const fRenderImages = hostConfigField("mcpToolResultImageRendering");
   const fRenderDirectImages = hostConfigField(
-    "mcpToolResultImageRendering.directContent.image"
+    "mcpToolResultImageRendering.directContent.image",
   );
   const fRenderEmbeddedImages = hostConfigField(
-    "mcpToolResultImageRendering.embeddedResources.blob.image"
+    "mcpToolResultImageRendering.embeddedResources.blob.image",
   );
   const fRenderLinkedImages = hostConfigField(
-    "mcpToolResultImageRendering.linkedResources.blob.image"
+    "mcpToolResultImageRendering.linkedResources.blob.image",
   );
   const fProgressive = hostConfigField("progressiveToolDiscovery");
   const fSystemPrompt = hostConfigField("systemPrompt");
   const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
-    draft.mcpToolResultImageRendering
+    draft.mcpToolResultImageRendering,
   );
   const imageRenderSourcesDisabled =
     readOnly || imageRenderPlacement === "none";
 
   // A real harness (e.g. Claude Code) runs its own loop, so some knobs don't
   // cross into its runtime until the MCP proxy mediates them — and a few never
-  // can. Gray those out per-control (model + system prompt always apply, so
-  // they stay enabled) with an honest note, instead of letting the toggle look
+  // can. Gray those out per-control (the system prompt always applies, so it
+  // stays enabled) with an honest note, instead of letting the control look
   // live while doing nothing. Un-graying is a one-line change in
   // `harness-capabilities.ts` as each proxy phase lands.
+  //
+  // The MODEL is gated too, for one harness: Cursor authenticates with the
+  // customer's own Cursor account and that account picks the model, so a
+  // selection would persist onto the host and reach nothing.
+  const modelState = harnessControlState(draft.harness, "modelId");
   const tempState = harnessControlState(draft.harness, "temperature");
-  const approvalState = harnessControlState(draft.harness, "requireToolApproval");
+  /*
+   * Tool approval is the one control whose answer is NOT a property of the
+   * harness name.
+   *
+   * Codex has two transports and only the app-server one can pause, so whether
+   * this switch should be available depends on what the deployment enabled —
+   * something a static map cannot know. The server is asked, and its answer
+   * wins when it arrives; the static map stays the fallback for a slow or
+   * unreachable endpoint, which keeps the pre-existing behaviour rather than
+   * guessing in either direction.
+   *
+   * The direction of the override matters: `enforced` may only be turned ON by
+   * a server that says the runtime really can pause. A server answer never
+   * takes a control away that the static map allowed.
+   */
+  const { capabilities: harnessCapabilities } = useHarnessCapabilities(
+    draft.harness ?? null,
+  );
+  const staticApprovalState = harnessControlState(
+    draft.harness,
+    "requireToolApproval",
+  );
+  const approvalState =
+    !staticApprovalState.enforced &&
+    harnessCapabilities?.supportsNativeToolApproval === true
+      ? ENFORCED_CONTROL
+      : staticApprovalState;
   const visibilityState = harnessControlState(
     draft.harness,
     "respectToolVisibility",
@@ -260,7 +295,11 @@ export function BehaviorTab({
       <FocusBlock title="Agent tooling">
         <FieldRow
           label={fModel.label}
-          description={fModel.description}
+          description={
+            modelState.enforced
+              ? fModel.description
+              : `${fModel.description} ${modelState.note}`
+          }
           control={
             <div
               className={
@@ -273,7 +312,7 @@ export function BehaviorTab({
                 currentModel={currentModel}
                 availableModels={availableModels}
                 onModelChange={(model) => update({ modelId: String(model.id) })}
-                disabled={readOnly}
+                disabled={readOnly || !modelState.enforced}
                 align="end"
                 analyticsLocation="client_builder"
               />
@@ -302,7 +341,9 @@ export function BehaviorTab({
             disabled={readOnly || !tempState.enforced}
           />
           {!tempState.enforced ? (
-            <p className="text-[11px] text-muted-foreground">{tempState.note}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {tempState.note}
+            </p>
           ) : null}
         </div>
 
@@ -394,7 +435,7 @@ export function BehaviorTab({
                 if (!value) return;
                 update({
                   progressiveToolDiscovery: triToProgressiveValue(
-                    value as ProgressiveTriState
+                    value as ProgressiveTriState,
                   ),
                 });
               }}
@@ -469,7 +510,7 @@ export function BehaviorTab({
                       mcpToolResultImageRendering:
                         setMcpToolResultImageRenderPlacement(
                           draft.mcpToolResultImageRendering,
-                          value
+                          value,
                         ),
                     });
                   }
@@ -533,16 +574,16 @@ export function BehaviorTab({
               modelLabel={fDirectImages.label}
               renderLabel={fRenderDirectImages.label}
               modelChecked={isMcpDirectContentImageVisible(
-                draft.modelVisibleMcpToolResults
+                draft.modelVisibleMcpToolResults,
               )}
               renderChecked={isMcpDirectContentImageRendered(
-                draft.mcpToolResultImageRendering
+                draft.mcpToolResultImageRendering,
               )}
               onModelChange={(checked) =>
                 update({
                   modelVisibleMcpToolResults: setMcpDirectContentImageVisible(
                     draft.modelVisibleMcpToolResults,
-                    checked
+                    checked,
                   ),
                   ...(checked
                     ? {}
@@ -550,7 +591,7 @@ export function BehaviorTab({
                         mcpToolResultImageRendering:
                           setMcpDirectContentImageRendered(
                             draft.mcpToolResultImageRendering,
-                            false
+                            false,
                           ),
                       }),
                 })
@@ -559,7 +600,7 @@ export function BehaviorTab({
                 update({
                   mcpToolResultImageRendering: setMcpDirectContentImageRendered(
                     draft.mcpToolResultImageRendering,
-                    checked
+                    checked,
                   ),
                 })
               }
@@ -587,17 +628,17 @@ export function BehaviorTab({
               modelLabel={fEmbeddedImages.label}
               renderLabel={fRenderEmbeddedImages.label}
               modelChecked={isMcpEmbeddedResourceBlobImageVisible(
-                draft.modelVisibleMcpToolResults
+                draft.modelVisibleMcpToolResults,
               )}
               renderChecked={isMcpEmbeddedResourceBlobImageRendered(
-                draft.mcpToolResultImageRendering
+                draft.mcpToolResultImageRendering,
               )}
               onModelChange={(checked) =>
                 update({
                   modelVisibleMcpToolResults:
                     setMcpEmbeddedResourceBlobImageVisible(
                       draft.modelVisibleMcpToolResults,
-                      checked
+                      checked,
                     ),
                   ...(checked
                     ? {}
@@ -605,7 +646,7 @@ export function BehaviorTab({
                         mcpToolResultImageRendering:
                           setMcpEmbeddedResourceBlobImageRendered(
                             draft.mcpToolResultImageRendering,
-                            false
+                            false,
                           ),
                       }),
                 })
@@ -615,7 +656,7 @@ export function BehaviorTab({
                   mcpToolResultImageRendering:
                     setMcpEmbeddedResourceBlobImageRendered(
                       draft.mcpToolResultImageRendering,
-                      checked
+                      checked,
                     ),
                 })
               }
@@ -643,17 +684,17 @@ export function BehaviorTab({
               modelLabel={fLinkedImages.label}
               renderLabel={fRenderLinkedImages.label}
               modelChecked={isMcpLinkedResourceBlobImageVisible(
-                draft.modelVisibleMcpToolResults
+                draft.modelVisibleMcpToolResults,
               )}
               renderChecked={isMcpLinkedResourceBlobImageRendered(
-                draft.mcpToolResultImageRendering
+                draft.mcpToolResultImageRendering,
               )}
               onModelChange={(checked) =>
                 update({
                   modelVisibleMcpToolResults:
                     setMcpLinkedResourceBlobImageVisible(
                       draft.modelVisibleMcpToolResults,
-                      checked
+                      checked,
                     ),
                   ...(checked
                     ? {}
@@ -661,7 +702,7 @@ export function BehaviorTab({
                         mcpToolResultImageRendering:
                           setMcpLinkedResourceBlobImageRendered(
                             draft.mcpToolResultImageRendering,
-                            false
+                            false,
                           ),
                       }),
                 })
@@ -671,7 +712,7 @@ export function BehaviorTab({
                   mcpToolResultImageRendering:
                     setMcpLinkedResourceBlobImageRendered(
                       draft.mcpToolResultImageRendering,
-                      checked
+                      checked,
                     ),
                 })
               }

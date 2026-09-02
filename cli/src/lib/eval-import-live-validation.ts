@@ -557,7 +557,10 @@ async function listToolNames(
       {
         project: projectId,
         server: server.id,
-        ...(cursor ? { cursor } : {}),
+        // Presence, not truthiness: MCP 2026-07-28
+        // `server/utilities/pagination` makes `""` a valid cursor, and
+        // dropping it here would silently re-read page one.
+        ...(cursor !== undefined ? { cursor } : {}),
       },
       { client, signal }
     );
@@ -565,8 +568,14 @@ async function listToolNames(
       const name = (tool as { name?: unknown }).name;
       if (typeof name === "string" && name.length > 0) names.add(name);
     }
-    if (!result.nextCursor) return names;
-    cursor = result.nextCursor;
+    // ABSENCE ends the walk, not emptiness. `""` is a valid cursor that MUST
+    // NOT be treated as the end of results — stopping on one would drop every
+    // tool past page one, and a name this walk never read is reported as a
+    // name that does not exist.
+    const next =
+      typeof result.nextCursor === "string" ? result.nextCursor : undefined;
+    if (next === undefined) return names;
+    cursor = next;
   }
   throw cliError(
     "TOOL_DISCOVERY_UNAVAILABLE",

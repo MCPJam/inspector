@@ -21,6 +21,7 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import {
+  EVIDENCE_UNAVAILABLE_MESSAGE,
   handleJsonRpc,
   parseAndValidateJsonRpc,
 } from "../../services/mcp-http-bridge";
@@ -55,6 +56,15 @@ import {
 } from "../../utils/harness/harness-scope-step-up.js";
 import { scopeStepUpInfoFromToolError } from "../../utils/insufficient-scope-step-up.js";
 import { createRequestStreamFailureReporter } from "../../utils/stream-failure-reporter.js";
+import { randomUUID } from "node:crypto";
+import { isCallToolResultError } from "@mcpjam/sdk";
+import { HARNESS_EVIDENCE_TURN_HEADER } from "../../utils/harness/mcp-config.js";
+import {
+  createConvexEvidenceTransport,
+  createHarnessEvidenceClient,
+  isHarnessEvidenceConfigured,
+} from "../../utils/harness/harness-evidence-client.js";
+import type { ToolCallEvidenceHook } from "../../services/mcp-http-bridge.js";
 
 const harnessMcp = new Hono();
 
@@ -101,6 +111,108 @@ function readScopeStepUpCorrelationId(c: any): string | undefined {
   );
 }
 
+/**
+ * The turn a proxied call belongs to.
+ *
+ * Bounded, and bounded because it is caller-supplied: it only ever selects a
+ * turn WITHIN the iteration the token's verified claim already authorizes, so
+ * the worst a wrong value can do is file a row under a turn of the same
+ * iteration. Length-capped so a hostile sandbox cannot make the row's index
+ * key arbitrarily large.
+ */
+function readEvidenceTurnId(c: any): string | undefined {
+  const raw = c.req.header(HARNESS_EVIDENCE_TURN_HEADER);
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 && trimmed.length <= 128 ? trimmed : undefined;
+}
+
+/**
+ * Arm evidence capture for this request, or return `undefined` to leave the
+ * bridge's hook inert.
+ *
+ * Three things must all be true, and each absence is a different, legitimate
+ * case rather than an error: the token carries an AUTHORIZED eval scope (not
+ * playground traffic), the harness named a turn, and this deployment can
+ * actually reach the evidence routes. Anything else runs the proxy exactly as
+ * it ran before evidence existed.
+ */
+function armToolCallEvidence(
+  c: any,
+  claims: { runId?: string; iterationId?: string }
+): ToolCallEvidenceHook | undefined {
+  if (!claims.runId || !claims.iterationId) return undefined;
+  const turnId = readEvidenceTurnId(c);
+  if (!turnId) return undefined;
+  if (!isHarnessEvidenceConfigured()) {
+    // The run's mint said capture is on and this instance cannot write. Loud,
+    // because a silent skip is the failure mode the whole protocol exists to
+    // prevent: the turn would record nothing and read afterwards as a turn
+    // that made no tool calls.
+    logger.error(
+      "[harness-mcp] evidence-scoped token but no evidence transport configured",
+      undefined,
+      { iterationId: claims.iterationId, turnId }
+    );
+    return undefined;
+  }
+
+  const client = createHarnessEvidenceClient({
+    scope: {
+      runId: claims.runId,
+      iterationId: claims.iterationId,
+      turnId,
+    },
+    transport: createConvexEvidenceTransport(),
+  });
+
+  // One request id per proxied HTTP request. JSON-RPC batches are rejected
+  // upstream (`parseAndValidateJsonRpc`), so one request is one `tools/call`,
+  // and this id is both the idempotency key for start/settle replays and the
+  // join key from a trace span back to its evidence row.
+  const requestId = randomUUID();
+  const startedAtMs = Date.now();
+
+  return {
+    beforeExecute: async ({ serverId, toolName, arguments: args }) => {
+      const recorded = await client.recordStart({
+        requestId,
+        serverId,
+        toolName,
+        arguments: args,
+        startedAtMs,
+      });
+      // THE shared constant, not a copy: the evidence merge detects a
+      // narrated refusal by this exact text, so a reworded local copy here
+      // would silently kill detection with every test still green.
+      return recorded
+        ? { ok: true }
+        : { ok: false, reason: EVIDENCE_UNAVAILABLE_MESSAGE };
+    },
+    afterExecute: async ({ outcome }) => {
+      await client.recordSettlement({
+        requestId,
+        outcomeKind:
+          outcome.kind === "error"
+            ? "jsonrpc_error"
+            : isCallToolResultError(outcome.result)
+              ? "call_tool_error"
+              : "success",
+        // For a thrown failure, the bridge hands over the EXACT error member
+        // of the envelope it responds with (message fallback chain,
+        // `data.normalized` and all) — recorded verbatim, never
+        // reconstructed, so the evidence of a failed call is what the
+        // harness actually received.
+        response:
+          outcome.kind === "error"
+            ? { error: outcome.errorEnvelope }
+            : outcome.result,
+        settledAtMs: Date.now(),
+      });
+    },
+  };
+}
+
 async function handle(c: any) {
   const serverId = c.req.param("serverId");
 
@@ -125,6 +237,11 @@ async function handle(c: any) {
   if (rateLimited(`${claims.userId}:${serverId}`)) {
     return c.json({ error: "Rate limited" }, 429);
   }
+
+  // Armed once per REQUEST, not per call: JSON-RPC batches are rejected
+  // upstream, so one request is one `tools/call`, and the request id this
+  // holds is what makes start/settle replays idempotent.
+  const evidenceHook = armToolCallEvidence(c, claims);
 
   const method = c.req.method;
 
@@ -341,6 +458,10 @@ async function handle(c: any) {
           }
         }
         return handleJsonRpc(serverId, body, manager, "adapter", {
+          // Inert unless this token carries an authorized eval scope AND the
+          // harness named a turn — so playground traffic and capture-off runs
+          // pay nothing and behave identically.
+          ...(evidenceHook ? { toolCallEvidence: evidenceHook } : {}),
           // Bridge failures answer 200 with a JSON-RPC error envelope —
           // invisible to http.request.failed; this is their typed record.
           failureReporter: createRequestStreamFailureReporter(

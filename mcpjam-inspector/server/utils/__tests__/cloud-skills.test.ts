@@ -156,10 +156,47 @@ describe("cloud-skills (Convex-sourced)", () => {
     });
   });
 
+  it("maps a kind:'forbidden' ConvexError → 403", async () => {
+    // The actor-authorization marker, which carries no `code` — so before this
+    // branch existed it fell to the message regex, which does not match
+    // "Authenticated user required", and a pure authz refusal was booked as a
+    // 500 and captured as an internal error. That is the inspector-side half of
+    // Sentry CONVEX-19R.
+    const convexErr = Object.assign(new Error("[CONVEX] redacted"), {
+      data: { kind: "forbidden", message: "Authenticated user required" },
+    });
+    vi.mocked(convexListSkills).mockRejectedValue(convexErr);
+    await expect(listCloudSkills(ctx)).rejects.toMatchObject({
+      status: 403,
+      message: "Authenticated user required",
+    });
+  });
+
+  it("maps a kind:'forbidden' membership refusal → 403 with its own message", async () => {
+    const convexErr = Object.assign(new Error("[CONVEX] redacted"), {
+      data: { kind: "forbidden", message: "Not authorized for this project" },
+    });
+    vi.mocked(convexListSkills).mockRejectedValue(convexErr);
+    await expect(listCloudSkills(ctx)).rejects.toMatchObject({
+      status: 403,
+      message: "Not authorized for this project",
+    });
+  });
+
   it("wraps unknown errors as CloudSkillsError 500", async () => {
     vi.mocked(convexCreateSkill).mockRejectedValue(new Error("kaboom"));
     await expect(
       createCloudSkill(ctx, { name: "x", description: "d", content: "c" }),
     ).rejects.toBeInstanceOf(CloudSkillsError);
+  });
+
+  it("still books an unmarked redacted fault as an opaque 500", async () => {
+    // The counterfactual that gives the branch above its point: a genuine fault
+    // carries neither `code` nor `kind`, and must stay a 500 rather than being
+    // dressed up as a refusal.
+    vi.mocked(convexListSkills).mockRejectedValue(
+      Object.assign(new Error("Server Error"), { data: undefined }),
+    );
+    await expect(listCloudSkills(ctx)).rejects.toMatchObject({ status: 500 });
   });
 });

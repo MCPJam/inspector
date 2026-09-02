@@ -64,6 +64,17 @@ describe("mapModelIdToTokenizerBackend", () => {
         "openai/gpt-5-mini"
       );
     });
+
+    it("maps the GPT-5.6 family to the closest id ai-tokenizer knows", () => {
+      for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
+        expect(mapModelIdToTokenizerBackend(id)).toBe("openai/gpt-5");
+        // The prefixed form resolves through the unprefixed lookup, so it
+        // needs no entry of its own.
+        expect(mapModelIdToTokenizerBackend(`openai/${id}`)).toBe(
+          "openai/gpt-5"
+        );
+      }
+    });
   });
 
   describe("DeepSeek models", () => {
@@ -144,6 +155,10 @@ describe("mapModelIdToTokenizerBackend", () => {
   describe("fallback behavior", () => {
     it("returns null for completely unknown models", () => {
       expect(mapModelIdToTokenizerBackend("unknown-model-xyz")).toBe(null);
+    });
+
+    it("returns null for an empty model id", () => {
+      expect(mapModelIdToTokenizerBackend("")).toBe(null);
     });
   });
 });

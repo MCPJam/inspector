@@ -31,6 +31,9 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   goose: gooseLogoLight,
   slack: slackLogo,
   cursor: cursorLogo,
+  // Same mark as the IDE: one Cursor brand, two products. Mapped explicitly
+  // because an id absent from this record falls back to the anonymous MCP mark.
+  "cursor-cli": cursorLogo,
   codex: codexLogo,
   copilot: copilotLogo,
   vscode: vscodeLogo,
@@ -57,7 +60,7 @@ const LOGO_BY_HOST_ID_AND_THEME: Record<
 
 export function getHostLogoSrc(
   hostId: string,
-  themeMode?: HostThemeMode | null
+  themeMode?: HostThemeMode | null,
 ): string {
   return (
     (themeMode ? LOGO_BY_HOST_ID_AND_THEME[hostId]?.[themeMode] : undefined) ??
@@ -71,5 +74,5 @@ export const HOST_LOGO_OPTIONS = Object.entries(LOGO_BY_HOST_ID).map(
     id,
     logoSrc,
     logoSrcByTheme: LOGO_BY_HOST_ID_AND_THEME[id],
-  })
+  }),
 );

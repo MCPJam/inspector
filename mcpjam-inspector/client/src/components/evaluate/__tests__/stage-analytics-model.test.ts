@@ -14,16 +14,21 @@ import {
 import {
   NOT_MEASURED_LABEL,
   describeExclusions,
-  deriveStageAnalyticsPanelState,
+  excludedDetailSummary,
   formatLatency,
   overallSlice,
   sliceTitle,
   slicesOfDimension,
   toRunHeaderView,
   toSetupView,
+  toSliceView,
   toStageRowView,
 } from "../stage-analytics-model";
-import type { EvalStageTally } from "@mcpjam/sdk/contract";
+import {
+  FAILURE_CATEGORY_LABELS,
+  STAGE_REASON_LABELS,
+  type EvalStageTally,
+} from "@mcpjam/sdk/contract";
 
 function tally(overrides: Partial<EvalStageTally> = {}): EvalStageTally {
   return {
@@ -43,82 +48,6 @@ function tally(overrides: Partial<EvalStageTally> = {}): EvalStageTally {
   } as EvalStageTally;
 }
 
-describe("panel state derivation", () => {
-  const base = {
-    rows: [],
-    error: null,
-    runCount: 0,
-    runsLoading: false,
-  } as const;
-
-  it("treats a service failure as unsupported, not as empty", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "upstream is down", kind: "requestFailed" },
-    });
-    expect(state.kind).toBe("unsupported");
-  });
-
-  it("treats a missing route as unsupported", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "not served here", kind: "routeUnavailable" },
-    });
-    expect(state.kind).toBe("unsupported");
-  });
-
-  it("treats a contract failure as an error, not as unsupported", () => {
-    // A payload that did not validate is a BUG REPORT, not a deployment gap.
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "did not match the contract", kind: "invalidContract" },
-    });
-    expect(state.kind).toBe("error");
-  });
-
-  it("renders a vanished suite as an error, never as empty analytics", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "error",
-      error: { message: "Eval suite not found", kind: "notFound" },
-    });
-    expect(state.kind).toBe("error");
-  });
-
-  it("distinguishes pre-analytics runs from a suite with no runs", () => {
-    const legacy = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "ready",
-      runCount: 12,
-    });
-    expect(legacy).toEqual({ kind: "unmeasuredLegacy", runCount: 12 });
-
-    const empty = deriveStageAnalyticsPanelState({ ...base, status: "ready" });
-    expect(empty).toEqual({ kind: "empty" });
-  });
-
-  it("holds the loading frame while the run list is still arriving", () => {
-    // Guessing here would flash "no runs yet" at a suite that has hundreds.
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "ready",
-      runsLoading: true,
-    });
-    expect(state.kind).toBe("loading");
-  });
-
-  it("is ready when documents arrived", () => {
-    const state = deriveStageAnalyticsPanelState({
-      ...base,
-      status: "ready",
-      rows: [GOLDEN_STAGE_ANALYTICS],
-    });
-    expect(state.kind).toBe("ready");
-  });
-});
 
 describe("rate formatting", () => {
   it("renders words, not a zero, when there is nothing to divide", () => {
@@ -293,5 +222,92 @@ describe("setup", () => {
     // The asymmetry is the point: one attempt can block many trials.
     expect(typeof setup[0]?.impactedTrials).toBe("number");
     expect(typeof setup[0]?.uniqueAttempts).toBe("number");
+  });
+});
+
+describe("human words, never a wire enum", () => {
+  it("labels a stage reason from the contract's own map", () => {
+    const view = toStageRowView(
+      tally({
+        applicable: 3,
+        reached: 3,
+        measured: 0,
+        notMeasured: 3,
+        reasons: [{ reason: "noEvidenceCaptured", count: 3 }],
+      }),
+    );
+    expect(view.reasons).toEqual([
+      {
+        reason: "noEvidenceCaptured",
+        label: STAGE_REASON_LABELS.noEvidenceCaptured,
+        count: 3,
+      },
+    ]);
+    // The wire spelling SURVIVES beside the words — it is what a `data-`
+    // attribute and a later join match on — but it is never the label.
+    expect(view.reasons[0]!.label).not.toBe("noEvidenceCaptured");
+  });
+
+  it("labels a failure category from the contract's own map", () => {
+    const overall = overallSlice(GOLDEN_STAGE_ANALYTICS)!;
+    const view = toSliceView(overall, 0);
+    expect(view.failureCategories[0]).toEqual({
+      category: "selection",
+      label: FAILURE_CATEGORY_LABELS.selection,
+      count: 1,
+    });
+  });
+
+  it("regression: no raw enum reaches a label, anywhere in the golden document", () => {
+    // The bug this whole pass exists to kill: `noEvidenceCaptured (3)` and
+    // `serverData (4)` printed at a human. A camelCase identifier in a LABEL
+    // is the shape of that bug, whatever the specific enum member is.
+    const camelCase = /[a-z][A-Z]/;
+    for (const [index, row] of GOLDEN_STAGE_ANALYTICS.slices.entries()) {
+      const view = toSliceView(row, index);
+      for (const category of view.failureCategories) {
+        expect(category.label).not.toMatch(camelCase);
+      }
+      for (const stage of view.stages) {
+        for (const reason of stage.reasons) {
+          expect(reason.label).not.toMatch(camelCase);
+        }
+      }
+    }
+  });
+});
+
+describe("the fine-grained exclusion detail", () => {
+  it("renders each reason in words, omitting the ones that excluded nothing", () => {
+    const header = toRunHeaderView(GOLDEN_STAGE_ANALYTICS);
+    // The golden document carries exactly three of the fourteen keys.
+    expect(header.excludedDetail.map((entry) => entry.key).sort()).toEqual([
+      "cancelled",
+      "chainUnverified",
+      "chainVersionAhead",
+    ]);
+    for (const entry of header.excludedDetail) {
+      expect(entry.label).not.toMatch(/[a-z][A-Z]/);
+      expect(entry.count).toBeGreaterThan(0);
+    }
+  });
+
+  it("is empty when nothing was excluded, so the disclosure can be absent", () => {
+    const header = toRunHeaderView(
+      stageAnalyticsVariation({
+        excludedTrialDetail: {},
+        excludedTrials: {},
+        includedTrials: 4,
+        totalTrials: 4,
+      }),
+    );
+    expect(header.excludedDetail).toEqual([]);
+  });
+
+  it("names the population before the reasons", () => {
+    const header = toRunHeaderView(GOLDEN_STAGE_ANALYTICS);
+    // 3 of 7 excluded. A list of reasons with no denominator lets a reader
+    // take three excluded trials out of seven for three out of three hundred.
+    expect(excludedDetailSummary(header)).toContain("3 of 7 trials excluded");
   });
 });

@@ -16,8 +16,8 @@
  * never a dead end — the message that says "running…" is the same message that
  * later says how it went.
  */
-import { watchRunUntilDone as watchCoreRunUntilDone } from '@mcpjam/surface-core';
-import { getEvalRun } from '../../agent/mcpjam-client.js';
+import { formatFirstBreak, watchRunUntilDone as watchCoreRunUntilDone } from '@mcpjam/surface-core';
+import { getEvalRun, getEvalRunDecisionSummary } from '../../agent/mcpjam-client.js';
 
 const POLL_INTERVAL_MS = 10_000;
 const POLL_MAX_MS = 15 * 60 * 1000;
@@ -31,22 +31,46 @@ const POLL_MAX_MS = 15 * 60 * 1000;
 export const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
 
 /**
+ * Slack's mrkdwn-and-emoji rendering of a terminal run.
+ *
+ * A DUPLICATE OF `surface-core`'s `formatRunOutcome` on purpose — the emoji
+ * tiers are what Slack readers scan, and the core returns structured parts
+ * rather than a string. What is NOT duplicated is the chain derivation:
+ * `formatFirstBreak` is imported, so the six stages, seven categories and
+ * twenty-nine reasons have exactly one spelling across both surfaces.
+ *
  * @param {{ status: string, result: string | null, summary?: { passed?: number, total?: number } }} run
  * @param {string} url
  * @param {string} userId
+ * @param {any} [decisionSummary] the run's `decision-summary`, or null. Absent
+ *   on a pass, on an older deployment, and whenever the read failed — the line
+ *   then reads exactly as it did before the chain existed.
  */
-export function formatRunOutcome(run, url, userId) {
+export function formatRunOutcome(run, url, userId, decisionSummary) {
   const counts = run.summary?.total !== undefined ? ` (${run.summary.passed ?? 0}/${run.summary.total} passed)` : '';
   if (run.status === 'completed' && run.result === 'passed') {
     return `:large_green_circle: Run passed${counts} — started by <@${userId}>, <${url}|see the details>.`;
   }
+  // The chain sentence goes on its OWN line under the verdict, for everything
+  // that is not a clean pass. Empty whenever the summary establishes no break.
+  const firstBreak = formatFirstBreak(decisionSummary);
+  const chain = firstBreak ? `\n${firstBreak}` : '';
   if (run.status === 'cancelled') {
-    return `:heavy_minus_sign: Run cancelled — started by <@${userId}>, <${url}|details>.`;
+    return `:heavy_minus_sign: Run cancelled — started by <@${userId}>, <${url}|details>.${chain}`;
   }
   if (run.status === 'timed_out') {
-    return `:hourglass: Run timed out${counts} — started by <@${userId}>, <${url}|details>.`;
+    return `:hourglass: Run timed out${counts} — started by <@${userId}>, <${url}|details>.${chain}`;
   }
-  return `:red_circle: Run ${run.result === 'failed' ? 'failed' : run.status}${counts} — started by <@${userId}>, <${url}|see what broke>.`;
+  // A NO-VERDICT IS NOT A FAILURE. `inconclusive` is a decision the validity
+  // phase reached — the run did not measure the server well enough to judge it
+  // — and the red branch below rendered it as ":red_circle: Run inconclusive …
+  // see what broke", sending a reader to hunt for a defect nothing found.
+  // Both conjuncts, mirroring the pass branch: the watcher only calls this on a
+  // terminal status, so the status half is defensive symmetry.
+  if (run.status === 'completed' && run.result === 'inconclusive') {
+    return `:warning: Run inconclusive${counts} — it did not measure the server well enough to judge it — started by <@${userId}>, <${url}|see what it measured>.${chain}`;
+  }
+  return `:red_circle: Run ${run.result === 'failed' ? 'failed' : run.status}${counts} — started by <@${userId}>, <${url}|see what broke>.${chain}`;
 }
 
 /**
@@ -84,7 +108,7 @@ export { isFailedOutcome } from '@mcpjam/surface-core';
  */
 export async function watchRunUntilDone(client, args) {
   return watchCoreRunUntilDone({
-    apiClient: { getEvalRun },
+    apiClient: { getEvalRun, getEvalRunDecisionSummary },
     ctx: args.ctx,
     runId: args.runId,
     url: args.url,
@@ -92,7 +116,7 @@ export async function watchRunUntilDone(client, args) {
     pollIntervalMs: POLL_INTERVAL_MS,
     maxMs: POLL_MAX_MS,
     statusHandle: { id: args.statusTs, channelId: args.channelId },
-    formatOutcome: (run, url, actorId) => formatRunOutcome(run, url, actorId),
+    formatOutcome: (run, url, actorId, decisionSummary) => formatRunOutcome(run, url, actorId, decisionSummary),
     logger: args.logger,
     onTerminal: args.onTerminal,
     delivery: {

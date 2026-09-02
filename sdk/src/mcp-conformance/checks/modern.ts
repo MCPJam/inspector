@@ -1068,6 +1068,10 @@ async function runCacheScopePaginationCheck(
   for (const method of paginatedCacheableMethods(capabilities)) {
     const scopes: unknown[] = [];
     let cursor: string | undefined;
+    // Every cursor already issued, not just the previous one: an `A → B → A`
+    // alternation never repeats back-to-back, and `""` needs to be caught on
+    // its second appearance now that it no longer ends the walk.
+    const seenCursors = new Set<string>();
 
     // Bounded to a handful of pages: this asserts consistency, not coverage,
     // and a server handing out cursors forever must not hang the run.
@@ -1084,7 +1088,12 @@ async function runCacheScopePaginationCheck(
       if (!payload) break;
       scopes.push(payload.cacheScope);
       const next = payload.nextCursor;
-      if (typeof next !== "string" || next === "" || next === cursor) break;
+      // `""` is a valid continuation cursor (MCP 2026-07-28
+      // `server/utilities/pagination`), so only a non-string ends the walk.
+      // The cycle guard catches a server that reissues any token — `""`
+      // included — instead of making progress.
+      if (typeof next !== "string" || seenCursors.has(next)) break;
+      seenCursors.add(next);
       cursor = next;
     }
 

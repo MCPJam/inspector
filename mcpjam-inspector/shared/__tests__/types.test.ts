@@ -226,6 +226,11 @@ describe("modelSupportsTemperature", () => {
   it("still strips temperature for own-provider GPT-5 models", () => {
     expect(modelSupportsTemperature("gpt-5")).toBe(false);
     expect(modelSupportsTemperature("gpt-5.1-codex")).toBe(false);
+    // Each shipped 5.6 row, not just one: the carve-out is a substring match,
+    // so a rename that drops "gpt-5" would start sending temperature.
+    expect(modelSupportsTemperature("gpt-5.6-luna")).toBe(false);
+    expect(modelSupportsTemperature("gpt-5.6-sol")).toBe(false);
+    expect(modelSupportsTemperature("gpt-5.6-terra")).toBe(false);
   });
 
   it("strips temperature for a hosted GPT-5 too", () => {

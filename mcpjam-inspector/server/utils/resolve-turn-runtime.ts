@@ -21,6 +21,12 @@
  *   - local BYOK → direct engine (model built via `buildOrgModelFromResolvedConfig`)
  *     and `finalizeUsage` posts `/stream/org/local-usage` with the identical
  *     body `runLocalOrgChatTurnHeadless`'s `postLocalUsage` emitted.
+ *   - external account → REFUSED. A runtime-chosen sentinel (`cursor/auto`)
+ *     never asks the org-provider config a question, and it never runs here
+ *     either: the runtime authenticates with the customer's own vendor
+ *     credential, which reaches `runHarnessTurn` only through the caller's
+ *     materialized project secrets — a seam `runUnifiedAssistantTurn` does not
+ *     have. See the branch for what wiring it would take.
  */
 
 import type { ToolSet } from "ai";
@@ -230,6 +236,54 @@ export async function resolveTurnRuntime(
       finalizeUsage,
       classifyFailure: classifyTurnFailure,
     };
+  }
+
+  // --- Runtime-chosen sentinel → REFUSED on this surface ---
+  //
+  // The host's model id names no provider model (`cursor/auto`), so there is no
+  // org provider to resolve and no MCPJam credential to spend. That much is
+  // what `resolveSyntheticModelSource` already decided; what is left is whether
+  // this resolver's callers can actually RUN such a turn, and none of them can.
+  //
+  // Both refusals happen BEFORE the caller marks the turn as possibly-spent, so
+  // a v1 session turn that named `cursor/auto` releases its lease and gets a
+  // sentence that explains itself — where it previously reached Convex and came
+  // back `provider_not_configured: cursor`, i.e. "go configure a key" for a
+  // provider that has no keys.
+  //
+  // WITHOUT a harness the sentinel is unrunnable by construction: nothing else
+  // reaches the runtime that would choose the model.
+  //
+  // WITH a harness it is unrunnable HERE, and the difference matters enough to
+  // say separately. An external-account runtime authenticates with the
+  // customer's own vendor credential, and `runHarnessTurn` takes that credential
+  // from ONE place — the caller's materialized project secrets
+  // (`runtimeSecretsOverride`), because delivering a value into the box and
+  // scrubbing it out of the persisted transcript are two uses of one list and
+  // only the caller can wire the second. `runUnifiedAssistantTurn` — the facade
+  // every caller of this resolver drives — has no `runtimeSecrets` seam at all,
+  // so the credential cannot arrive. Returning a "hosted + harness" runtime here
+  // would advertise a turn that then dies inside `runHarnessTurn` telling the
+  // user to add a `CURSOR_API_KEY` secret they may well have already added — a
+  // wrong diagnosis for a turn this surface was never able to run.
+  //
+  // The fix is not a bigger error message: it is wiring the secrets fetch AND
+  // the transcript scrubber into the synthetic runner, which would also start
+  // delivering project secrets to the existing harnesses' synthetic turns
+  // (today they receive none). That is a security-relevant change with its own
+  // review; see the matching note in `run-harness-turn.ts`. Until then, refuse.
+  if (resolution.source === "external-account") {
+    throw new Error(
+      args.harness
+        ? `"${modelId}" is a placeholder for a runtime that reaches its model ` +
+            "on your own account with the runtime vendor, and this turn " +
+            "surface cannot deliver that credential — it has no path for the " +
+            "project secrets the runtime authenticates with. Run this host " +
+            "from chat, which materializes them."
+        : `"${modelId}" is a placeholder for a runtime that chooses its own ` +
+            "model, not a model MCPJam can run. Send this turn to a host " +
+            "whose harness provides that runtime, or pick a real model.",
+    );
   }
 
   // --- MCPJam-provided → hosted `/stream` ---

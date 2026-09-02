@@ -180,8 +180,8 @@ export function RunAccuracyHeroBand({
     stats.total > 0
       ? normalizeRunPassRatePercent(stats.passRate)
       : run.summary
-        ? normalizeRunPassRatePercent(run.summary.passRate)
-        : null;
+      ? normalizeRunPassRatePercent(run.summary.passRate)
+      : null;
 
   const trendChips = useMemo(() => {
     if (runTrendData.length < 2) return { points: [], hiddenCount: 0 };
@@ -251,10 +251,7 @@ export function RunAccuracyHeroBand({
       {runClient || runServers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {runClient ? (
-            <HostChip
-              name={runClient.displayName}
-              hostId={runClient.hostId}
-            />
+            <HostChip name={runClient.displayName} hostId={runClient.hostId} />
           ) : null}
           {visibleServers.map((name) => (
             <Badge
@@ -306,31 +303,32 @@ export function RunAccuracyHeroBand({
     </div>
   );
 
-  const recentRunsBlock = hasRecentRuns && !hideRecentRuns ? (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
-      <div className="flex min-w-0 items-baseline gap-2">
-        <p className={runDetailSectionLabelClass}>Recent runs</p>
-        {trendChips.hiddenCount > 0 ? (
-          <p className={runDetailSupportingClass}>
-            Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
-          </p>
-        ) : null}
+  const recentRunsBlock =
+    hasRecentRuns && !hideRecentRuns ? (
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <p className={runDetailSectionLabelClass}>Recent runs</p>
+          {trendChips.hiddenCount > 0 ? (
+            <p className={runDetailSupportingClass}>
+              Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
+            </p>
+          ) : null}
+        </div>
+        <div
+          className="flex w-full min-w-0 gap-3 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
+          aria-label={`${metricLabel} across recent suite runs`}
+        >
+          {trendChips.points.map((point) => (
+            <RunAccuracyRunCard
+              key={point.runId}
+              point={point}
+              isCurrent={point.isCurrent}
+              onSelectRun={onSelectRun}
+            />
+          ))}
+        </div>
       </div>
-      <div
-        className="flex w-full min-w-0 gap-3 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
-        aria-label={`${metricLabel} across recent suite runs`}
-      >
-        {trendChips.points.map((point) => (
-          <RunAccuracyRunCard
-            key={point.runId}
-            point={point}
-            isCurrent={point.isCurrent}
-            onSelectRun={onSelectRun}
-          />
-        ))}
-      </div>
-    </div>
-  ) : null;
+    ) : null;
 
   // With run identity: title/stats and recent runs share one row; accuracy on the right.
   if (includeRunIdentity) {
@@ -380,8 +378,8 @@ export function shouldShowRunAccuracyHero({
     stats.total > 0
       ? normalizeRunPassRatePercent(stats.passRate)
       : run.summary
-        ? normalizeRunPassRatePercent(run.summary.passRate)
-        : null;
+      ? normalizeRunPassRatePercent(run.summary.passRate)
+      : null;
   return passRatePercent !== null;
 }
 
@@ -411,12 +409,54 @@ export function RunDetailMetricsCharts({
   );
 }
 
+/**
+ * Whether the run-detail INSIGHT BAND should exist at all.
+ *
+ * The outer half of the same decision `RunInsightRail` makes below, and the
+ * one that runs first: the band wraps the rail, so a rail that correctly
+ * decides to open is never seen if this says no. They are separate conditions
+ * because they count different things — the band also counts the actionable-
+ * findings panel, which the rail does not render — but they must agree about
+ * the chain, and this is where that agreement is written down.
+ *
+ * `hasStageFunnel` is the member worth naming. Like `userValueChainHasContent`
+ * below it is a fact about the DATA, not about a node: the chain card is a
+ * fragment whose two halves each self-suppress while the fragment itself stays
+ * truthy, so counting the node would keep an otherwise-empty band alive as
+ * dead space. Dropping it, conversely, hides the band on exactly the runs
+ * whose chain is the only thing there is to show — the bug this lane exists to
+ * fix, and one the rail's own tests cannot catch from inside a band that never
+ * rendered.
+ */
+export function runHasInsightContent({
+  serverQualityTriage,
+  goalCompletionPanel,
+  groundednessPanel,
+  actionableFindingsPanel,
+  hasStageFunnel,
+}: {
+  serverQualityTriage?: ReactNode;
+  goalCompletionPanel?: ReactNode;
+  groundednessPanel?: ReactNode;
+  actionableFindingsPanel?: ReactNode;
+  hasStageFunnel?: boolean;
+}): boolean {
+  return Boolean(
+    serverQualityTriage ||
+      goalCompletionPanel ||
+      groundednessPanel ||
+      actionableFindingsPanel ||
+      hasStageFunnel,
+  );
+}
+
 /** Right column: AI insights only. */
 export function RunInsightRail({
   triageCard,
   goalCompletionCard,
   groundednessCard,
   userValueChainCard,
+  userValueChainHasContent = false,
   className,
   embedded = false,
 }: {
@@ -433,18 +473,38 @@ export function RunInsightRail({
    * diagram beside it is bought per pass and waits for a click. Same traces,
    * different price, so different affordance.
    *
-   * Deliberately NOT part of the emptiness check below. Both halves render
-   * nothing of their own when there is no derived chain and no analyzable
-   * cohort, and the node itself is truthy either way — counting it would keep
-   * an otherwise-empty rail alive as a full-height column of dead space on
-   * every run with no insight content at all.
+   * The NODE is deliberately still not part of the emptiness check below.
+   * Both halves render nothing of their own when there is no derived chain and
+   * no analyzable cohort, yet the node itself is truthy either way — counting
+   * it would keep an otherwise-empty rail alive as a full-height column of
+   * dead space on every run with no insight content at all.
+   *
+   * What the check reads instead is `userValueChainHasContent`, a fact about
+   * the DATA rather than about the node. That is what lets a run whose only
+   * insight is its chain open the rail — the case this card was previously
+   * invisible on — without reintroducing the empty column.
    */
   userValueChainCard?: ReactNode;
+  /**
+   * Whether the chain card will actually draw something.
+   *
+   * Supplied by the caller, which asks a probe mounted outside this rail: the
+   * rail cannot ask the card, because it does not mount the card until it has
+   * already decided to exist.
+   */
+  userValueChainHasContent?: boolean;
   className?: string;
   /** Flush layout inside the run-detail split (shared dividers, no card gaps). */
   embedded?: boolean;
 }) {
-  if (!triageCard && !goalCompletionCard && !groundednessCard) return null;
+  if (
+    !triageCard &&
+    !goalCompletionCard &&
+    !groundednessCard &&
+    !userValueChainHasContent
+  ) {
+    return null;
+  }
 
   return (
     <aside

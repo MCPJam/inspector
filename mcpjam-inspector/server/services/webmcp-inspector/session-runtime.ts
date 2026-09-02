@@ -17,6 +17,8 @@ import {
   WEBMCP_INVOKE_QUEUE_LIMIT,
   WEBMCP_INVOKE_TIMEOUT_MS,
   type WebMcpActivityEntry,
+  type WebMcpFrame,
+  type WebMcpInputEvent,
   type WebMcpInvocationSource,
   type WebMcpInvocationState,
   type WebMcpSessionPublic,
@@ -150,6 +152,11 @@ export class WebMcpSessionRuntime {
   private readonly invokeTimeoutMs: number;
   private readonly queueLimit: number;
   private readonly onActivity: () => void;
+  /**
+   * The quality the provider's stream is encoding at, when it has an adaptive
+   * one. Reported, never decided here: the provider owns the ladder.
+   */
+  private streamQuality: number | undefined;
   /** Set by the registry; the runtime reports it but does not own it. */
   expiresAt = 0;
   hardExpiresAt = 0;
@@ -175,6 +182,11 @@ export class WebMcpSessionRuntime {
       onToolsChanged: (tools) => this.applyTools(tools),
       onNavigated: (url, origin) => {
         this.url = url;
+        // The retained frame depicts a page that is gone. Held, it would be
+        // replayed to a reconnecting client as the current one — the same class
+        // of lie as serving the previous page's tools, which is why the
+        // provider drops those here too.
+        this.hub.clearFrame();
         this.setStatus("ready");
         this.pushActivity({ kind: "navigated", url, origin });
       },
@@ -193,6 +205,23 @@ export class WebMcpSessionRuntime {
             : undefined,
         }),
       onActivityObserved: () => this.onActivity(),
+      onFrame: (frame) => this.publishFrame(frame),
+      onStreamQualityChanged: (quality) => {
+        // Republished only on a real change: the provider may re-report the
+        // same rung after a restart, and a session event per frame-rate wobble
+        // would be chatter on a stream the timeline shares.
+        if (this.streamQuality === quality) return;
+        this.streamQuality = quality;
+        // NOT before `attach`, and the ordering is real: an embedded session
+        // starts its screencast inside the provider's own `start()`, which
+        // runs before this runtime has a browser or the registry has adopted
+        // it. Publishing there would put a session event in the replay ring
+        // advertising `native-window` and an expiry at the epoch — the same
+        // reason `attach` sets its status without publishing. The quality is
+        // remembered either way, and rides the first session event the
+        // registry does publish.
+        if (this.session) this.publishSession();
+      },
       onCrashed: (message) => {
         this.setStatus("error", message);
         this.pushActivity({ kind: "session_error", message });
@@ -229,6 +258,11 @@ export class WebMcpSessionRuntime {
       viewportTransport: this.session?.viewportTransport() ?? {
         kind: "native-window",
       },
+      // Spread rather than sent as undefined, so a provider with no adaptive
+      // stream reports a session shaped exactly as it always has been.
+      ...(this.streamQuality !== undefined
+        ? { streamQuality: this.streamQuality }
+        : {}),
       protocolVersion: WEBMCP_INSPECTOR_PROTOCOL_VERSION,
       ...(this.statusDetail ? { detail: this.statusDetail } : {}),
     };
@@ -306,6 +340,49 @@ export class WebMcpSessionRuntime {
     const shot = await this.requireSession().captureScreenshot();
     this.onActivity();
     return shot;
+  }
+
+  /**
+   * Start or stop the viewport stream, reporting whether frames are flowing.
+   *
+   * `false` is a real answer, not a failure: this browser cannot screencast, or
+   * the provider has no such thing. The caller turns it into the screenshot
+   * fallback, which is the difference between a degraded pane and a pane stuck
+   * on "Waiting for the first frame…".
+   *
+   * Ticks the idle clock only when TURNING IT ON. Asking for frames is a person
+   * opening the pane — interest worth postponing a reap for. Withdrawing them
+   * is the opposite, and since the client withdraws on every visibility change,
+   * ticking there would let a flapping background tab keep an abandoned session
+   * alive indefinitely.
+   */
+  async setScreencast(enabled: boolean): Promise<boolean> {
+    const streaming = await this.requireSession().setScreencast(enabled);
+    if (enabled) this.onActivity();
+    // Nothing is going to replace that retained frame now, and replay promises
+    // a reconnecting client the CURRENT paint rather than the last one before
+    // the stream stopped.
+    if (!streaming) this.hub.clearFrame();
+    return streaming;
+  }
+
+  /**
+   * Drive the page from the pane.
+   *
+   * Ticks the idle clock — a human working the pane is the clearest possible
+   * signal that the session is in use, and reaping it out from under them would
+   * be the worst version of this feature.
+   *
+   * Writes NO timeline entry, mirroring `capture_screenshot`. The timeline
+   * records protocol happenings: tools registering, invocations starting and
+   * settling. Input's consequences already produce entries — a click that
+   * navigates writes `navigated`, one that fires a page tool writes
+   * `external_invocation` — so logging the clicks themselves would bury those
+   * under a mouse trail.
+   */
+  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
+    await this.requireSession().dispatchInput(events);
+    this.onActivity();
   }
 
   private requireSession(): WebMcpBrowserSession {
@@ -540,6 +617,26 @@ export class WebMcpSessionRuntime {
     });
   }
 
+  /**
+   * A viewer's transport could not take a frame and dropped one.
+   *
+   * Forwarded straight to the provider, which owns the quality ladder, and
+   * NOT treated as activity: a struggling link is not somebody using the
+   * session, and ticking the idle clock from it would keep an abandoned tab
+   * alive for as long as its network stayed bad.
+   *
+   * Every viewer of a session reports into the same funnel, so the WORST
+   * transport governs the quality for all of them. That is the right default
+   * for the case this exists for — one person, one pane, on a link that cannot
+   * keep up — and the wrong one for a session watched from two places at once,
+   * where a slow viewer lowers the picture for a fast one. Accepted: the
+   * alternative is per-subscriber encoding, which is a second encoder per
+   * viewer.
+   */
+  noteFramePressure(): void {
+    this.session?.noteFramePressure?.();
+  }
+
   /** Re-publish the session (used when the registry moves its clocks). */
   publishSession(): void {
     this.publish({
@@ -547,6 +644,22 @@ export class WebMcpSessionRuntime {
       seq: this.nextSeq(),
       session: this.toPublic(),
     });
+  }
+
+  /**
+   * Publish one painted frame.
+   *
+   * Its own path rather than an activity entry, for two independent reasons.
+   * A frame is not a protocol happening, so it does not belong on the timeline
+   * or in an export — and `pushActivity` writes to the replay ring, which a
+   * 10fps stream would empty of everything else within seconds.
+   *
+   * It also does NOT call `onActivity()`. A page with a CSS spinner paints
+   * forever; ticking the idle clock from a paint would make every abandoned
+   * animated page unreapable.
+   */
+  private publishFrame(frame: WebMcpFrame): void {
+    this.publish({ type: "frame", seq: this.nextSeq(), frame });
   }
 
   private pushActivity(entry: WebMcpActivityDraft): void {

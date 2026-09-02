@@ -613,19 +613,59 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
     expect(body.metadataSources.csp).toBe("listing");
   });
 
-  it("stops paginating when the server repeats a cursor", async () => {
-    // A server that keeps reissuing the same cursor would otherwise spin to
-    // the page cap on every single render.
-    mockResource({});
-    managerState.listResources.mockImplementation(async () => ({
-      resources: [{ uri: "ui://other/a.html" }],
-      nextCursor: "same-cursor-forever",
-    }));
+  it("follows an empty-string nextCursor and sends it back verbatim", async () => {
+    // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a
+    // valid cursor and thus MUST NOT be treated as the end of results".
+    // Reading `""` as the end reported a declared App as undeclared.
+    managerState.readResource.mockResolvedValue({
+      contents: [
+        { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
+      ],
+    });
+    const cursors: Array<string | undefined> = [];
+    managerState.listResources.mockImplementation(
+      async (_serverId: string, params?: { cursor?: string }) => {
+        cursors.push(params?.cursor);
+        if (params?.cursor === undefined) {
+          return {
+            resources: [{ uri: "ui://other/a.html" }],
+            nextCursor: "",
+          };
+        }
+        return {
+          resources: [{ uri: RESOURCE_URI, _meta: { ui: { csp: ESM_CSP } } }],
+        };
+      }
+    );
 
-    const res = await postWidgetContent(makeApp());
-    expect(res.status).toBe(200);
-    // First page, then one more with the cursor — then the repeat is caught.
-    expect(managerState.listResources).toHaveBeenCalledTimes(2);
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp).toEqual(ESM_CSP);
+    expect(body.metadataSources.csp).toBe("listing");
+    expect(cursors).toEqual([undefined, ""]);
+  });
+
+  // A repeated cursor is FOLLOWED, not read as an ending: MCP 2026-07-28
+  // `server/utilities/pagination` forbids reading anything off a cursor's
+  // value beyond whether one was provided, and a server may legally reissue
+  // one constant token — `""` included. LISTING_LOOKUP_MAX_PAGES bounds it.
+  it("keeps paginating a constant cursor and stops at the page cap", async () => {
+    for (const constant of ["", "same-cursor-forever"]) {
+      managerState.listResources.mockClear();
+      mockResource({});
+      managerState.listResources.mockImplementation(async () => ({
+        resources: [{ uri: "ui://other/a.html" }],
+        nextCursor: constant,
+      }));
+
+      const res = await postWidgetContent(makeApp());
+      expect(res.status).toBe(200);
+      // Not stopped at page two, and still bounded — the App renders rather
+      // than hanging behind an unbounded enumeration.
+      const calls = managerState.listResources.mock.calls.length;
+      expect(calls).toBeGreaterThan(2);
+      expect(calls).toBeLessThanOrEqual(20);
+    }
   });
 
   it("caps the pagination walk instead of enumerating a huge catalog", async () => {
@@ -635,8 +675,6 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
         { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
       ],
     });
-    // Distinct cursors each time, so this exercises the page cap rather than
-    // the repeated-cursor guard.
     let page = 0;
     managerState.listResources.mockImplementation(async () => ({
       resources: [{ uri: "ui://other/a.html" }],

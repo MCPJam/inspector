@@ -270,8 +270,8 @@ export function parseUserTestingDetailTab(
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
 export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
-/** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
-export type SwarmDetailTab = "insights" | "sessions";
+/** Detail tabs on `/swarms/:swarmId`. Findings is the default landing tab. */
+export type SwarmDetailTab = "findings" | "insights" | "sessions";
 
 /**
  * Build a path to one Swarm Run (wave) detail. `swarmId` is the durable
@@ -283,20 +283,29 @@ export function buildSwarmPath(
     tab?: SwarmDetailTab;
     session?: string;
     sel?: string;
+    /**
+     * Rubric criterion the viewer FOLLOWED here (`criterionId`). Carried so the
+     * run page can name the finding behind a session it was deep-linked to —
+     * landing on a transcript with no statement of what was found is what made
+     * a followed finding unreadable. An id, not a sentence: the label is
+     * resolved from the wave's own findings, so it cannot go stale in a URL.
+     */
+    finding?: string;
   } = {}
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
+  if (opts.tab && opts.tab !== "findings") search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
+  if (opts.finding) search.set("finding", opts.finding);
   const query = search.toString();
   return query ? `${base}?${query}` : base;
 }
 
 /**
  * Parse the detail-tab query on a Swarm Run path. Missing / unknown →
- * insights. Legacy `overview` / `personas` → insights (personas live there).
+ * findings. Legacy `overview` / `personas` → insights (personas lived there).
  * A `session` deep-link without an explicit tab still opens Sessions.
  */
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
@@ -306,8 +315,9 @@ export function parseSwarmDetailTab(search: string): SwarmDetailTab {
   if (value === "insights" || value === "personas" || value === "overview") {
     return "insights";
   }
+  if (value === "findings") return "findings";
   if (params.get("session")) return "sessions";
-  return "insights";
+  return "findings";
 }
 
 /**

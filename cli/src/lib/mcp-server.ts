@@ -554,7 +554,8 @@ export function createMcpJamMcpServer(
     async ({ server: name, cursor, templates }) =>
       runTool(async () => {
         requireConnected(name);
-        const params = cursor ? { cursor } : undefined;
+        // Presence, not truthiness: `""` is a valid continuation cursor.
+        const params = cursor !== undefined ? { cursor } : undefined;
         return templates
           ? manager.listResourceTemplates(name, params)
           : manager.listResources(name, params);
@@ -687,7 +688,11 @@ export function createMcpJamMcpServer(
     async ({ server: name, cursor }) =>
       runTool(async () => {
         requireConnected(name);
-        return manager.listPrompts(name, cursor ? { cursor } : undefined);
+        // Presence, not truthiness: `""` is a valid continuation cursor.
+        return manager.listPrompts(
+          name,
+          cursor !== undefined ? { cursor } : undefined,
+        );
       }),
   );
 

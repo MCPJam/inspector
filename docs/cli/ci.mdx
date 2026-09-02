@@ -468,12 +468,22 @@ customer data in it.
 
 #### Decision summary
 
-`eval run --wait`, `eval status`, `eval gate` and `eval compare` all read one versioned object — the **run decision summary** — and every output format restates it. In `--format human` it is printed as a block; in `--format json` and in `--out`/`--reporter` artifacts it rides on the report as `decisionSummary`, verbatim.
+`eval run --wait`, `eval status`, `eval gate` and `eval compare` all read one versioned object — the **run decision summary** — and every output format restates it. Where each command puts it:
+
+| Command | `--format json` | `--format human` | `--out` / `--reporter` |
+|---|---|---|---|
+| `eval run --wait` | `decisionSummary` on the stdout receipt | block on stdout, after the receipt | `decisionSummary` on the report |
+| `eval status` | `decisionSummary` on the stdout document | block on stdout, above the `View:` line | — |
+| `eval gate` | `decisionSummary` beside `gate` | block on **stderr**, under the gate report | `decisionSummary` on the report |
+| `eval compare` | `decisionSummary` beside `compare` | block on **stderr**, under the gate report | `decisionSummary` on the report |
+
+Two scoping rules that are easy to miss. `eval run --wait` attaches a summary only when the invocation launched **one** run: a fan-out has several, and labelling a receipt about N runs with the decision of one would be a false claim rather than a partial one. `eval compare` reports the **compare side's** decision only — the baseline's failures are a different run's diagnostics, and printing them here would read as this run's.
 
 ```text
 Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 failed
   Why: a case did not meet its pass threshold
   Diagnostics: 2 non-passing of 9 trials examined (the complete set)
+  First break: Tool call — the call arguments did not match what the case expects (1 of 2 measured trials)
   Fetch order (c_orders, iteration 2) — failed
     First failed stage: Tool call — the call arguments did not match what the case expects
     Failure category: call arguments
@@ -501,7 +511,19 @@ Four things about it are worth knowing before you script against it.
 
 Evidence is scoped to the claim it supports: for a measured failure the span ids, prompt indexes and reasons come from the first failed stage's row alone, and a setup abort or evaluator error keeps a stage-less pointer rather than naming a stage nothing established.
 
-`eval status` prints the block only when a terminal run did not pass, and `eval gate` and `eval compare` write theirs to stderr alongside the gate report. `--format json` is unaffected in every case: it stays exactly one parseable document. If the summary cannot be fetched, the block is omitted rather than failing the command.
+`eval status` prints the block only when a terminal run did not pass — a clean pass has nothing to diagnose. `--format json` stays exactly one parseable document in every case: the summary rides *inside* it, never as a second block appended after it. If the summary cannot be fetched, it is omitted rather than failing the command.
+
+**The human block leads with where the chain broke.** Under the diagnostics headline, before any per-trial detail, a non-passing run gets one line naming the earliest stage at which a readable trial stopped, why, and how many trials stopped there:
+
+```text
+  First break: Tool call — the call arguments did not match what the case expects (2 of 3 measured trials)
+```
+
+"First" means earliest in chain order — `connection → discovery → selection → call → response → userValue` — never "most common", so the count beside it is what tells you whether the run had one problem or several. When the breaks are spread the line says so (`earliest of 3 stages that broke`), and when some chains could not be read it says that too (`1 more had no readable chain`), because otherwise the denominator quietly shrinks to the trials that happened to validate. A run that reached no stage at all — a setup abort, an evaluator error — names its bucket instead of inventing a location.
+
+The line is **not** a diagnosis. A first failed stage is a location and a failure category is a bucket; neither on its own says what to change.
+
+`eval status --stages` expands each failing trial to all six chain rows with their states and reasons. It is off by default: six rows per trial is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
 
 Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
 

@@ -15,15 +15,20 @@ import {
   isRevisionConflictError,
   useCreateProjectEnvironment,
   useUpdateProjectEnvironment,
+  type ProjectEnvironmentSecretSelection,
   type ProjectEnvironmentSkillSelection,
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { ProjectEnvironmentSkillsPicker } from "./ProjectEnvironmentSkillsPicker";
+import { ProjectEnvironmentSecretsPicker } from "./ProjectEnvironmentSecretsPicker";
 // Re-exported from the composer's shared helper rather than kept as a second
 // copy: a dirty-check that missed version pins would silently discard a "hold
 // this skill at v1" edit, and two implementations means one of them eventually
 // does.
-import { sameSkillSelection } from "@/components/environment-composer/environment-stack";
+import {
+  sameSecretSelection,
+  sameSkillSelection,
+} from "@/components/environment-composer/environment-stack";
 
 type EnvironmentDraft = {
   name: string;
@@ -31,6 +36,13 @@ type EnvironmentDraft = {
   hostId: string | null;
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  /**
+   * The environment's CREDENTIAL GRANT. Deliberately NOT flag-gated like skills
+   * and sandbox images: there is no `secrets-enabled` flag, and a picker that
+   * could vanish would be a picker whose stored grant could not be revoked from
+   * the UI.
+   */
+  secretSelection: ProjectEnvironmentSecretSelection | null;
   computerEnvironmentId: string | null;
 };
 
@@ -45,6 +57,7 @@ function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
     hostId: env.hostId,
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    secretSelection: env.secretSelection ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
   };
 }
@@ -111,6 +124,7 @@ export function ProjectEnvironmentEditor({
           hostId: null,
           serverAttachmentId: null,
           skillSelection: null,
+          secretSelection: null,
           computerEnvironmentId: null,
           ...initialDraft,
         },
@@ -141,6 +155,10 @@ export function ProjectEnvironmentEditor({
           draft.skillSelection,
           environment.skillSelection ?? null,
         )) ||
+      !sameSecretSelection(
+        draft.secretSelection,
+        environment.secretSelection ?? null,
+      ) ||
       (computersEnabled &&
         draft.computerEnvironmentId !==
           (environment.computerEnvironmentId ?? null))
@@ -149,6 +167,7 @@ export function ProjectEnvironmentEditor({
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
       (skillsEnabled && draft.skillSelection !== null) ||
+      draft.secretSelection !== null ||
       (computersEnabled && draft.computerEnvironmentId !== null);
 
   // Reactivity observed someone else's edit while this draft diverged.
@@ -182,6 +201,10 @@ export function ProjectEnvironmentEditor({
             hostId: null,
             serverAttachmentId: null,
             skillSelection: null,
+            // Dropped along with the rest: a grant naming the previous
+            // project's secrets would be rejected at save, and holding it
+            // would let a form submit ids the new project cannot resolve.
+            secretSelection: null,
             computerEnvironmentId: null,
           },
     );
@@ -218,6 +241,9 @@ export function ProjectEnvironmentEditor({
           // shipping it then would contradict the fail-closed contract.
           ...(skillsEnabled && draft.skillSelection
             ? { skillSelection: draft.skillSelection }
+            : {}),
+          ...(draft.secretSelection
+            ? { secretSelection: draft.secretSelection }
             : {}),
           ...(computersEnabled && draft.computerEnvironmentId
             ? { computerEnvironmentId: draft.computerEnvironmentId }
@@ -260,6 +286,17 @@ export function ProjectEnvironmentEditor({
           environment.skillSelection ?? null,
         )
           ? { skillSelection: draft.skillSelection }
+          : {}),
+        // NOT flag-gated, unlike the two fields around it — the picker is
+        // always rendered, so the "hidden picker must omit the field" rule has
+        // nothing to protect against here. Still tri-state: unchanged omits,
+        // and clearing the last selection sends `null`, which REVOKES the
+        // grant.
+        ...(!sameSecretSelection(
+          draft.secretSelection,
+          environment.secretSelection ?? null,
+        )
+          ? { secretSelection: draft.secretSelection }
           : {}),
         ...(computersEnabled &&
         draft.computerEnvironmentId !==
@@ -399,6 +436,18 @@ export function ProjectEnvironmentEditor({
           />
         </div>
       ) : null}
+
+      <div className="space-y-1.5">
+        <Label className="text-xs">Secrets</Label>
+        <ProjectEnvironmentSecretsPicker
+          projectId={projectId}
+          value={draft.secretSelection}
+          onChange={(secretSelection) =>
+            setDraft((d) => ({ ...d, secretSelection }))
+          }
+          disabled={readOnly}
+        />
+      </div>
 
       {computersEnabled ? (
         <div className="space-y-1.5">

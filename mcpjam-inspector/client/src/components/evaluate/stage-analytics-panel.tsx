@@ -1,10 +1,22 @@
 /**
- * The stage-analytics panel on the Evaluate (New) suite page (D5c).
+ * ONE RUN's stage-analytics document (D5c), rendered.
  *
- * WHERE the chain stopped — not why, and never a root cause. Each run's
- * document says where trials fell out of the six-stage chain and whether that
- * differs by intent, model or host; it explains measured behavior and never
- * replaces the run's verdict, which stays the verdict policy's to decide.
+ * WHERE the chain stopped — not why, and never a root cause. The document says
+ * where trials fell out of the six-stage chain and whether that differs by
+ * intent, model or host; it explains measured behavior and never replaces the
+ * run's verdict, which stays the verdict policy's to decide.
+ *
+ * ── This is a run's AGGREGATE, and it lives on the run page only ─────────────
+ *
+ * It used to be mounted on the suite page too, above the run history, where it
+ * was the first thing labelled "user value chain" that a reader met. That was
+ * the wrong introduction: a funnel is a POPULATION statistic, and the chain a
+ * reader arrives asking about is one request's journey. Worse, the suite mount
+ * routinely showed six green stages over a partial population — the excluded
+ * trial being precisely the interesting one — so the page's most prominent
+ * claim was also its least reliable. The per-trial chain now answers "why did
+ * this not deliver value"; this answers "how much of the run was measured",
+ * which is a follow-up question and is placed like one.
  *
  * ── Why this is not the shared `StageFunnel` ─────────────────────────────────
  *
@@ -20,23 +32,17 @@
  *
  * ── Run-scoped, never aggregated ─────────────────────────────────────────────
  *
- * Each row is ONE run's complete document, and there is no cross-run merge in
- * the SDK on purpose. So this lists the runs and renders the SELECTED one.
- * Paging browses further back; it never accumulates into a combined funnel.
+ * Each document is ONE run's, and there is no cross-run merge in the SDK on
+ * purpose. Nothing here accumulates across runs.
  */
-import { useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
-import { cn } from "@/lib/utils";
-import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
-import {
-  evalSurfaceCardClass,
-  evalSurfaceHeaderClass,
-} from "../evals/eval-surface-chrome";
-import { useEvalSuiteStageAnalytics } from "@/hooks/use-eval-suite-stage-analytics";
+import { useMemo, useState, type ReactNode } from "react";
+import type {
+  EvalStageAnalyticsV1,
+  UserValueStage,
+} from "@mcpjam/sdk/contract";
 import {
   NOT_MEASURED_LABEL,
-  deriveStageAnalyticsPanelState,
+  excludedDetailSummary,
   overallSlice,
   slicesOfDimension,
   toRunHeaderView,
@@ -46,14 +52,25 @@ import {
   type StageRateView,
   type StageRowView,
 } from "./stage-analytics-model";
+import { StageChainCards } from "./stage-chain-cards";
+import { StageDetailCard } from "./stage-detail-card";
+import { defaultSelectedStage, toStageCardViews } from "./stage-chain-model";
 
 function formatCompletedAt(epochMs: number | null): string {
   if (epochMs === null) return "no completion stamp";
   return new Date(epochMs).toLocaleString();
 }
 
-/** One rate, with its arithmetic and its exclusions. Words when unmeasured. */
-function RateCell({ rate }: { rate: StageRateView }) {
+/**
+ * One rate, with its arithmetic and its exclusions. Words when unmeasured.
+ *
+ * Exported for the stage detail card, which shows the same three rates for the
+ * selected stage. Re-implementing it there would put a second renderer in
+ * front of the one rule this whole surface rests on — words instead of a bar
+ * when the denominator is zero — and the second copy is the one that gets it
+ * wrong the day somebody "simplifies" a `null` check.
+ */
+export function RateCell({ rate }: { rate: StageRateView }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] text-muted-foreground">{rate.label}</span>
@@ -120,11 +137,21 @@ function StageRow({ stage }: { stage: StageRowView }) {
         </p>
       ) : null}
       {stage.reasons.length > 0 ? (
-        <p className="mt-1 text-[10px] text-muted-foreground/80">
-          {stage.reasons
-            .map((entry) => `${entry.reason} (${entry.count})`)
-            .join(", ")}
-        </p>
+        // ONE LINE EACH, not comma-joined. The labels are "…because <fragment>"
+        // sentences ("nothing eligible for that stage was captured"), and three
+        // of them spliced together with commas reads as one long claim about
+        // one population rather than three separate counts.
+        <ul className="mt-1 space-y-0.5" data-testid="stage-reasons">
+          {stage.reasons.map((entry) => (
+            <li
+              key={entry.reason}
+              data-reason={entry.reason}
+              className="text-[10px] text-muted-foreground/80"
+            >
+              {entry.count} — {entry.label}
+            </li>
+          ))}
+        </ul>
       ) : null}
     </li>
   );
@@ -158,9 +185,14 @@ function SliceBlock({ slice }: { slice: SliceView }) {
         </p>
       ) : null}
       {slice.failureCategories.length > 0 ? (
-        <p className="mt-1 text-[10px] text-muted-foreground/80">
+        <p
+          className="mt-1 text-[10px] text-muted-foreground/80"
+          data-testid="stage-slice-failure-categories"
+        >
+          {/* Comma-joined here and NOT above, because these labels are noun
+              phrases ("tool selection", "server data") rather than sentences. */}
           {slice.failureCategories
-            .map((entry) => `${entry.category} (${entry.count})`)
+            .map((entry) => `${entry.label} (${entry.count})`)
             .join(", ")}
         </p>
       ) : null}
@@ -176,26 +208,119 @@ function SliceBlock({ slice }: { slice: SliceView }) {
 function SliceGroup({ title, slices }: { title: string; slices: SliceView[] }) {
   if (slices.length === 0) return null;
   return (
-    <section className="mt-3">
-      <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <details className="mt-3" data-testid={`stage-slice-group-${title}`}>
+      {/* COLLAPSED by default. The markup inside is unchanged — this is a
+          disclosure around the existing group, not a rewrite of it. A reader
+          who has not yet found the break in the chain is not asking whether it
+          differs by host. */}
+      <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {title}
-      </h4>
+      </summary>
       <div className="mt-1.5 grid gap-2">
         {slices.map((slice) => (
           <SliceBlock key={slice.key} slice={slice} />
         ))}
       </div>
-    </section>
+    </details>
   );
 }
 
-function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
+/**
+ * One run's document, rendered from PROPS alone.
+ *
+ * Exported so a second surface (the eval run detail) can render the canonical
+ * document without inheriting this file's suite-scoped fetching. The panel
+ * below self-fetches a suite and lists its runs; a run detail already has its
+ * run and needs none of that. Reusing the PANEL there would drag a suite
+ * listing, its paging and its run selector onto a page that has exactly one
+ * run — and would make the run detail's population quietly a suite's.
+ *
+ * Pure props, no hooks, no queries: the same document renders identically on
+ * both surfaces, which is the whole point of there being one contract.
+ */
+export function RunDocument({
+  row,
+  renderFindings,
+  runLevelFindings,
+}: {
+  row: EvalStageAnalyticsV1;
+  /**
+   * The evidence for one stage's failures, when a caller can join it.
+   *
+   * A RENDER PROP, so this component stays pure props with no hooks and no
+   * queries — the property that lets the same document render identically on
+   * the suite page and the run page. The diagnostics that fill it come from a
+   * different read with its own loading and failure states, and every rate
+   * above is true whether or not that read landed.
+   */
+  renderFindings?: (stage: UserValueStage) => ReactNode;
+  /**
+   * A line under the cards for the non-passing trials no stage accounts for.
+   *
+   * Its own slot rather than part of `renderFindings`, because it is a
+   * different claim about a different population: these trials did not pass
+   * and the chain does not say where, so they sit under the row rather than
+   * inside any one stage.
+   */
+  runLevelFindings?: ReactNode;
+}) {
   const header = toRunHeaderView(row);
   const overall = overallSlice(row);
   const intents = slicesOfDimension(row, "intent");
   const models = slicesOfDimension(row, "model");
   const hosts = slicesOfDimension(row, "host");
   const setup = row.setup.map(toSetupView);
+
+  const overallView = useMemo(
+    () => (overall ? toSliceView(overall, 0) : null),
+    [overall],
+  );
+  const cards = useMemo(
+    () => (overallView ? toStageCardViews(overall!.stages) : []),
+    [overallView, overall],
+  );
+
+  /**
+   * Which stage's detail is open.
+   *
+   * Local state, and held HERE rather than by either caller, so both mounts of
+   * this document — the suite panel and the run-detail slot — inherit the
+   * behaviour without either one knowing the other exists.
+   *
+   * `undefined` means "the reader has not chosen yet", which is a different
+   * thing from the `null` they get by closing a card. Without that
+   * distinction, auto-selecting the first break would fight every attempt to
+   * close it.
+   */
+  const [chosenStage, setChosenStage] = useState<
+    UserValueStage | null | undefined
+  >(undefined);
+  /**
+   * The run the current selection belongs to, held in STATE rather than a ref.
+   *
+   * React's own "adjusting state when a prop changes" pattern, and the reason
+   * it is state matters under concurrent rendering: a ref mutation during
+   * render is a side effect that SURVIVES a discarded render, while the
+   * `setChosenStage` beside it does not. The retry would then see the identity
+   * already updated, skip the reset, and open the previous run's stage on the
+   * new run. Two state updates are discarded or committed together.
+   */
+  const [selectionRunId, setSelectionRunId] = useState(row.runId);
+  if (selectionRunId !== row.runId) {
+    // A different run is a different chain. Carrying a selection across would
+    // open a stage the new run may not have broken at.
+    setSelectionRunId(row.runId);
+    if (chosenStage !== undefined) setChosenStage(undefined);
+  }
+
+  const selectedStage =
+    chosenStage === undefined ? defaultSelectedStage(cards) : chosenStage;
+  const selectedRow =
+    overallView?.stages.find((stage) => stage.stage === selectedStage) ?? null;
+
+  const setSelectedStage = (
+    update: (current: UserValueStage | null) => UserValueStage | null,
+  ) => setChosenStage(update(selectedStage));
 
   return (
     <div data-testid="stage-analytics-document">
@@ -229,26 +354,105 @@ function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
         </ul>
       ) : null}
 
-      {overall ? (
+      {/* The fine-grained exclusion reasons, COLLAPSED.
+
+          The coarse "Excluded: 1 never produced a comparable observation" line
+          is already in the disclosures above, and these say the same trials
+          over again at a finer grain — two lines that look like two findings
+          and are one. Collapsed, and labelled as "why", so the second is
+          plainly the first explained rather than more of it.
+
+          Absent entirely when nothing was excluded: a control that opens onto
+          nothing is a worse answer than no control. */}
+      {header.excludedDetail.length > 0 ? (
+        <details
+          className="mt-1.5"
+          data-testid="stage-analytics-excluded-detail"
+        >
+          <summary className="cursor-pointer text-[10px] text-muted-foreground/80">
+            {excludedDetailSummary(header)}
+          </summary>
+          <ul className="mt-1 space-y-0.5 pl-3">
+            {header.excludedDetail.map((entry) => (
+              <li
+                key={entry.key}
+                data-exclusion={entry.key}
+                className="text-[10px] text-muted-foreground/80"
+              >
+                {entry.count} — {entry.label}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {overallView ? (
         <section className="mt-3">
           <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Overall — where the chain stopped
           </h4>
+          {/* The D9/D5c boundary, said in the UI's own words rather than left
+              as an internal rule. A reader looking at six health chips has to
+              know they are not a second verdict — otherwise a `failed` chip on
+              a run whose verdict is `passed` reads as a contradiction, when in
+              fact policy v2 lets a case pass with a failing trial in it. */}
+          <p className="mt-0.5 text-[10px] text-muted-foreground/80">
+            Stage health explains the request-delivery path; it does not
+            determine the evaluation verdict.
+          </p>
           <div className="mt-1.5">
-            <SliceBlock slice={toSliceView(overall, 0)} />
+            <StageChainCards
+              cards={cards}
+              selected={selectedStage}
+              onSelect={(stage) =>
+                // Toggling off returns the reader to the row. A second click
+                // on the open card should close it, not re-open it.
+                setSelectedStage((current) =>
+                  current === stage ? null : stage,
+                )
+              }
+            />
+            {runLevelFindings ?? null}
+            {selectedRow ? (
+              <StageDetailCard
+                stage={selectedRow}
+                {...(renderFindings
+                  ? { findings: renderFindings(selectedRow.stage) }
+                  : {})}
+              />
+            ) : null}
+            {/* The full three-rate table for all six stages, kept VERBATIM and
+                collapsed. The cards answer "where did it break"; this is the
+                complete measurement the cards summarize, and the honesty rules
+                the existing tests pin live in here. */}
+            <details
+              className="mt-2"
+              data-testid="stage-analytics-overall-rows"
+            >
+              <summary className="cursor-pointer text-[10px] text-muted-foreground/80">
+                All six stages, with reach, coverage and pass rates
+              </summary>
+              <div className="mt-1.5">
+                <SliceBlock slice={overallView} />
+              </div>
+            </details>
           </div>
         </section>
       ) : null}
 
+      {/* The marginals keep their existing markup exactly, behind collapsed
+          expanders. They answer a follow-up question ("is this one model?"),
+          and a reader who has not yet located the break in the chain is not
+          asking it. */}
       <SliceGroup title="By intent" slices={intents} />
       <SliceGroup title="By model" slices={models} />
       <SliceGroup title="By host" slices={hosts} />
 
       {setup.length > 0 ? (
-        <section className="mt-3" data-testid="stage-analytics-setup">
-          <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <details className="mt-3" data-testid="stage-analytics-setup">
+          <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Setup
-          </h4>
+          </summary>
           <div className="mt-1.5 grid gap-2">
             {setup.map((phase) => (
               <div
@@ -275,179 +479,8 @@ function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
               </div>
             ))}
           </div>
-        </section>
+        </details>
       ) : null}
     </div>
-  );
-}
-
-export function StageAnalyticsPanel({
-  projectId,
-  suiteId,
-  runCount,
-  runsLoading,
-}: {
-  projectId: string | null | undefined;
-  suiteId: string | null | undefined;
-  /** How many runs this suite has — the legacy/empty distinction. */
-  runCount: number;
-  runsLoading: boolean;
-}) {
-  const {
-    status,
-    rows,
-    error,
-    canLoadMore,
-    isLoadingMore,
-    pageError,
-    loadMore,
-    retryFailedPage,
-  } = useEvalSuiteStageAnalytics({ projectId, suiteId });
-
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-
-  const panelState = useMemo(
-    () =>
-      deriveStageAnalyticsPanelState({
-        status,
-        rows,
-        error,
-        runCount,
-        runsLoading,
-      }),
-    [status, rows, error, runCount, runsLoading],
-  );
-
-  // Default to the newest run, and fall back to it whenever the selected run
-  // leaves the list (a filter change, a fresh walk).
-  const selected =
-    rows.find((row) => row.runId === selectedRunId) ?? rows[0] ?? null;
-
-  return (
-    <section
-      className={cn(evalSurfaceCardClass, "overflow-hidden")}
-      data-testid="suite-detail-stage-analytics"
-    >
-      <div className={cn(evalSurfaceHeaderClass, "px-4 py-3")}>
-        <h3 className="text-sm font-medium text-foreground">Stage analytics</h3>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Where trials stopped in the user-value chain, per run. Explains
-          measured behavior; it does not decide the run&apos;s verdict.
-        </p>
-      </div>
-
-      <div className="px-4 py-3">
-        {panelState.kind === "loading" ? (
-          <p
-            className="flex items-center gap-2 text-xs text-muted-foreground"
-            data-testid="stage-analytics-loading"
-          >
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Loading stage analytics…
-          </p>
-        ) : null}
-
-        {panelState.kind === "unsupported" ? (
-          // A SERVICE state, visibly distinct from "there is nothing here".
-          // An empty chart would read as "measured, and it was all zero".
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-unsupported"
-          >
-            Stage analytics could not be loaded, so this run&apos;s chain is not
-            measured here. {panelState.message}
-          </p>
-        ) : null}
-
-        {panelState.kind === "error" ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-error"
-          >
-            {panelState.message}
-          </p>
-        ) : null}
-
-        {panelState.kind === "empty" ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-empty"
-          >
-            No completed runs yet.
-          </p>
-        ) : null}
-
-        {panelState.kind === "unmeasuredLegacy" ? (
-          // NOT a zero and NOT empty: these runs finished before the chain was
-          // measured, and there is no honest way to reconstruct it after the
-          // fact.
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-unmeasured-legacy"
-          >
-            These {panelState.runCount} runs predate stage analytics, so their
-            chain was never measured. Runs from here on will be.
-          </p>
-        ) : null}
-
-        {panelState.kind === "ready" && selected ? (
-          <>
-            {rows.length > 1 ? (
-              <div
-                className="mb-3 flex flex-wrap gap-1.5"
-                data-testid="stage-analytics-run-list"
-              >
-                {rows.map((row) => (
-                  <button
-                    key={row.runId}
-                    type="button"
-                    onClick={() => setSelectedRunId(row.runId)}
-                    className={cn(
-                      "rounded-md border px-2 py-1 text-[10px]",
-                      row.runId === selected.runId
-                        ? "border-foreground/40 bg-muted text-foreground"
-                        : "border-border/60 text-muted-foreground",
-                    )}
-                  >
-                    {formatCompletedAt(row.runCompletedAt ?? null)}
-                    {row.materializationState === "provisional"
-                      ? " · provisional"
-                      : ""}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <RunDocument row={selected} />
-
-            {pageError ? (
-              // A later page failing never clears the pages already read.
-              <div className="mt-3 flex items-center gap-2">
-                <span className="text-[11px] text-muted-foreground">
-                  Could not load more runs. {pageError.message}
-                </span>
-                <Button size="sm" variant="ghost" onClick={retryFailedPage}>
-                  Retry
-                </Button>
-              </div>
-            ) : null}
-
-            {canLoadMore ? (
-              <div className="mt-3">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={loadMore}
-                  disabled={isLoadingMore}
-                  data-testid="stage-analytics-load-more"
-                >
-                  {isLoadingMore ? "Loading…" : "Load more runs"}
-                </Button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-    </section>
   );
 }

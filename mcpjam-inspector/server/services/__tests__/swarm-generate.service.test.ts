@@ -116,6 +116,27 @@ describe("swarm-generate service — response shape validation", () => {
     expect(result.journeys.map((j) => j.goal)).toEqual(["1", "2"]);
   });
 
+  it("strips per-tool suggestedChecks — this flow does not carry them", async () => {
+    mockOk({
+      ok: true,
+      persona: { name: "P", role: "R" },
+      journeys: [
+        {
+          goal: "Refund the charge",
+          suggestedChecks: [
+            { type: "toolCalledAtLeastOnce", toolName: "refund_charge" },
+          ],
+        },
+      ],
+    });
+
+    const result = await generateSwarmPersona(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      journeyCount: 1,
+    });
+    expect(result.journeys).toEqual([{ goal: "Refund the charge" }]);
+  });
+
   it("accepts a batch slate and clamps both counts", async () => {
     mockOk({
       ok: true,

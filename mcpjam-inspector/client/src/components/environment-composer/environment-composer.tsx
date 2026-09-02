@@ -21,6 +21,7 @@
  * need a Convex provider.
  */
 import { useCallback, useMemo, type ReactNode } from "react";
+import { useConvexAuth } from "convex/react";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
@@ -40,6 +41,7 @@ import {
   type EnvironmentStack,
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
+import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -99,7 +101,11 @@ export function EnvironmentComposer({
    * cannot silently shed its override.
    */
   slots?: readonly ComposerSlot[];
-  /** Secondary text on the Client-defaults row (previewed host's model). */
+  /**
+   * Inherited model id (or display name) for the Client-defaults row. When
+   * omitted, the strip derives it from the selected clients: one shared
+   * modelId becomes the pill label; mixed or missing models stay generic.
+   */
   clientDefaultLabel?: string | null;
   /**
    * Empty-state label and info tooltip for the servers pill. The defaults are
@@ -129,11 +135,16 @@ export function EnvironmentComposer({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const { isAuthenticated } = useConvexAuth();
   const modelsOptedIn = slots.includes("models");
   const modelMatrix = useModelMatrixCapability(
     modelsOptedIn ? projectId : null
   );
   const modelsEnabled = modelsOptedIn && modelMatrix === true;
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId: modelsEnabled ? projectId : null,
+  });
   // `slots` NARROWS, never widens: a slot must be both asked for by the caller
   // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
   // every existing surface renders exactly the strip it rendered before.
@@ -190,6 +201,18 @@ export function EnvironmentComposer({
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
   const choiceCount = modelChoiceCount(value.stack.modelSelection);
+  const inheritedClientDefaultLabel = useMemo(() => {
+    if (clientDefaultLabel) return clientDefaultLabel;
+    const selected = new Set(value.stack.hostIds);
+    const modelIds = [
+      ...new Set(
+        hosts
+          .filter((host) => selected.has(host.hostId) && host.modelId)
+          .map((host) => host.modelId)
+      ),
+    ];
+    return modelIds.length === 1 ? modelIds[0] : null;
+  }, [clientDefaultLabel, hosts, value.stack.hostIds]);
   const budget: TargetBudgetContext = {
     hostCount: value.stack.hostIds.length,
     choiceCount,
@@ -362,7 +385,7 @@ export function EnvironmentComposer({
             testId={testId("models-picker")}
             inModal={inModal}
             budget={budget}
-            clientDefaultLabel={clientDefaultLabel}
+            clientDefaultLabel={inheritedClientDefaultLabel}
           />
         ) : null}
         {showServersSlot ? (

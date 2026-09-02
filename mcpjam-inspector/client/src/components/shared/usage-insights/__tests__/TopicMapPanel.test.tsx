@@ -699,10 +699,16 @@ describe("colorForNode", () => {
     );
   });
 
-  it("renders unclear with the same neutral as no outcome at all", () => {
-    expect(
-      colorForNode({ clusterId: "cluster-a", outcome: "unclear" }, "outcome", 0)
-    ).toBe(NO_OUTCOME_COLOR);
+  it("renders unclear as its own tint, not the missing-outcome grey", () => {
+    const unclear = colorForNode(
+      { clusterId: "cluster-a", outcome: "unclear" },
+      "outcome",
+      0
+    );
+    expect(unclear).not.toBe(NO_OUTCOME_COLOR);
+    expect(unclear).toBe(
+      colorForNode({ clusterId: "cluster-b", outcome: "unclear" }, "outcome", 5)
+    );
   });
 
   it("falls back to neutral for an unrecognized outcome value", () => {
@@ -756,7 +762,8 @@ describe("TopicMapPanel color-by mode", () => {
       "true"
     );
     expect(screen.getByText("Unresolved")).toBeInTheDocument();
-    expect(screen.getByText("Unclear / not analyzed")).toBeInTheDocument();
+    expect(screen.getByText("Unclear")).toBeInTheDocument();
+    expect(screen.getByText("Not analyzed")).toBeInTheDocument();
   });
 
   it("disables outcome mode on a pre-bump snapshot instead of painting it neutral", () => {
@@ -970,51 +977,48 @@ describe("TopicMapPanel cluster halos", () => {
     );
   }
 
-  it("paints halos with the theme colour in both modes", async () => {
-    // A halo denotes the CLUSTER. Deriving it from a member node's colour means
-    // that in outcome mode a mixed-outcome cluster gets whichever outcome the
-    // first-iterated node had — an order-dependent halo asserting one outcome
-    // for the whole goal. Halos are therefore mode-independent.
+  it("paints theme-coloured halos only in theme mode", async () => {
     const user = userEvent.setup();
     mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
 
     const themeHalos = haloColors();
     expect(themeHalos.length).toBeGreaterThan(0);
+    const themeRgb = rgbTriple(
+      colorForNode({ clusterId: "cluster-a" }, "theme", 0)
+    );
+    expect(themeHalos.some((stop) => stop.includes(themeRgb))).toBe(true);
 
     await user.click(screen.getByRole("button", { name: "Outcome" }));
-    expect(haloColors()).toEqual(themeHalos);
+    expect(haloColors()).not.toEqual(themeHalos);
+    expect(
+      haloColors()
+        .filter((stop) => !stop.startsWith("rgba(0,0,0"))
+        .some((stop) => stop.includes(themeRgb))
+    ).toBe(false);
   });
 
   it("does not paint an outcome colour into a halo", async () => {
-    // Two things this test has to get right to mean anything:
-    //  1. Compare decimal RGB triples, not hex. The gradient is built with
-    //     hexToRgba, which emits `rgba(74, 222, 128, …)`, so asserting against
-    //     the hex substring "4ade80" could never fail whatever colour was used.
-    //  2. Assert in OUTCOME mode. In theme mode a node's colour already IS the
-    //     cluster colour, so the bug this guards against cannot show up there.
+    // Outcome-mode halos are a neutral grouping ring. A mixed-outcome cluster
+    // must not pick one member's colour and assert it for the whole goal.
     const user = userEvent.setup();
     mockUseScenarioTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
     await user.click(screen.getByRole("button", { name: "Outcome" }));
 
-    const outcomeRgb = rgbTriple(
-      colorForNode({ clusterId: "cluster-a", outcome: "completed" }, "outcome")
+    const completed = colorForNode(
+      { clusterId: "cluster-a", outcome: "completed" },
+      "outcome"
     );
     const themeRgb = rgbTriple(
       colorForNode({ clusterId: "cluster-a" }, "theme", 0)
     );
-    // If these ever coincide the assertions below prove nothing, so say so
-    // loudly rather than passing for the wrong reason.
-    expect(outcomeRgb).not.toBe(themeRgb);
 
     const stops = haloColors().filter((stop) => !stop.startsWith("rgba(0,0,0"));
     expect(stops.length).toBeGreaterThan(0);
-    // The theme colour is present...
-    expect(stops.some((stop) => stop.includes(themeRgb))).toBe(true);
-    // ...and no outcome colour is.
+    expect(stops.some((stop) => stop.includes(themeRgb))).toBe(false);
     for (const stop of stops) {
-      expect(stop).not.toContain(outcomeRgb);
+      expect(stop).not.toContain(completed);
     }
   });
 });

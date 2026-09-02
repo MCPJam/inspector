@@ -29,6 +29,7 @@
  *                           misconfigured remote URL can't forward in a loop.
  */
 import { Hono } from "hono";
+import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../config.js";
 import { z } from "zod";
 import { executionScopeSchema } from "../../utils/execution-scope.js";
 import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
@@ -103,6 +104,24 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
       capabilities: {
         personalCloudAvailable,
         ephemeralCloudAvailable: localConfigured,
+      },
+      // Harness EXECUTION targets, which are a different axis from the
+      // computer engines above: an engine decides where a bash tool call runs,
+      // a target decides where the whole vendor agent runs. Reported here so a
+      // client can render the selector without a second round trip.
+      //
+      // This endpoint is OPEN (no bearer), so the answer is deliberately
+      // coarse: whether the capability exists on this server at all, and
+      // nothing about this machine. The runtime's digest, the machine id, the
+      // key fingerprint and the workspace display root all live behind the
+      // authenticated `/api/mcp/local-harness/availability`.
+      harnessTargets: {
+        localNative: {
+          // The server-side capability only. A flag-gated client still hides
+          // everything, and the authenticated route is what decides whether a
+          // pack is installed and a turn can actually run.
+          serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+        },
       },
       // Honest tri-state: `null` when NO engine can serve this inspector —
       // a "cloud" default with every availability flag false would tell the

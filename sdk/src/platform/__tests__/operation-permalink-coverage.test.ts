@@ -60,6 +60,12 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   create_persona: "swarms/personas/:personaId",
   update_persona: "swarms/personas/:personaId",
   generate_personas: "swarms/personas/:personaId",
+  // Project secrets: the Secrets tab lives inside project settings and selects
+  // a row as component state, so there is nothing to address. Note that a
+  // permalink here would be to the METADATA row — a secret's value is not
+  // readable anywhere, by anyone, so there is no page that could show one.
+  list_secrets: "secrets/:secretId",
+  get_secret: "secrets/:secretId",
 };
 
 const VALID_REASONS: ReadonlySet<PlatformNoPermalinkReason> = new Set([

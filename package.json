@@ -9,7 +9,7 @@
     "chat-ui",
     "widget-react",
     "soundcheck",
-        "mcp",
+    "mcp",
     "slack-app",
     "surface-core",
     "discord-app",
@@ -34,6 +34,11 @@
     "verify": "npm run typecheck && npm run test && npm run build:inspector",
     "docs:sync-tokens": "node scripts/sync-docs-tokens.mjs",
     "docs:check-tokens": "node scripts/sync-docs-tokens.mjs --check",
+    "chatui:sync-tokens": "node scripts/sync-chat-ui-tokens.mjs",
+    "chatui:check-tokens": "node scripts/sync-chat-ui-tokens.mjs --check",
+    "design:sync": "node scripts/sync-design-md.mjs && npm run chatui:sync-tokens && npm run docs:sync-tokens",
+    "design:check": "node scripts/sync-design-md.mjs --check && npm run chatui:check-tokens && npm run docs:check-tokens",
+    "design:lint": "designmd lint DESIGN.md",
     "claude-policy:sync": "node scripts/sync-claude-policy-manifest.mjs",
     "claude-policy:check": "node scripts/sync-claude-policy-manifest.mjs --check",
     "openai-policy:sync": "node scripts/sync-openai-policy-manifest.mjs",
@@ -44,6 +49,7 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
+    "@google/design.md": "0.4.0",
     "@types/dagre": "^0.7.54",
     "concurrently": "^9.1.0"
   },

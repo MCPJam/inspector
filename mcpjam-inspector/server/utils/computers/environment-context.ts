@@ -74,7 +74,9 @@ export function formatEnvironmentContextPrompt(
       "",
     );
     for (const step of context.maintenance) {
-      lines.push(step.name ? `- ${step.name}: \`${step.run}\`` : `- \`${step.run}\``);
+      lines.push(
+        step.name ? `- ${step.name}: \`${step.run}\`` : `- \`${step.run}\``,
+      );
     }
   }
   return lines.join("\n");
@@ -132,6 +134,22 @@ const SANDBOX_NOTICE_MODEL_CONTEXT: Record<SandboxNoticeReason, string> = {
     "bash tool this conversation. Do not claim to have run commands or " +
     "inspected files; if a step needs a shell, say plainly that it can't be " +
     "done here.",
+  secrets_undelivered:
+    "This environment selects one or more MATERIALIZED project secrets, but " +
+    "this conversation has no project-provisioned sandbox to receive them, so " +
+    "they were NOT set and no command you run can see them. Do not try to " +
+    "work around it by asking the user to paste a credential into the chat. " +
+    "If a step needs one of those secrets, say plainly that it is unavailable " +
+    "in this conversation.",
+  secrets_unavailable:
+    "This turn could not read the project's secrets, so you have NO bash " +
+    "tool for it. The sandbox itself is intact and untouched — the shell is " +
+    "withheld only because this conversation's box may still hold a " +
+    "credential from an earlier turn and nothing this turn can enumerate " +
+    "would redact it from the transcript. Do not claim to have run commands " +
+    "or inspected files. If a step needs a shell, say plainly that it is " +
+    "unavailable for this turn and that it should work again shortly; do not " +
+    "ask the user to paste a credential into the chat instead.",
 };
 
 /**

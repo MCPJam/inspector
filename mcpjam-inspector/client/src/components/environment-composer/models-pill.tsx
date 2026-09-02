@@ -62,9 +62,21 @@ export function ModelsPill({
   );
   const staleExplicit = explicit.filter((id) => !catalogIds.has(id));
   const includeDefaults = value.includeClientDefaults;
+  const catalogNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const model of availableModels) {
+      const id = String(model.id);
+      byId.set(id, compactModelLabel(model.name) || id);
+    }
+    return byId;
+  }, [availableModels]);
   const triggerLabel = useMemo(
-    () => modelsPillTriggerLabel(value),
-    [value]
+    () =>
+      modelsPillTriggerLabel(value, {
+        clientDefaultLabel,
+        modelName: (id) => catalogNameById.get(id) || compactModelLabel(id) || id,
+      }),
+    [value, clientDefaultLabel, catalogNameById]
   );
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
@@ -156,7 +168,7 @@ export function ModelsPill({
         portalled={!inModal}
       >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {mode === "single" ? "Model" : "Models · fan-out"}
+          {mode === "single" ? "Model" : "Models"}
         </div>
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
           <Label
@@ -263,11 +275,28 @@ export function ModelsPill({
   );
 }
 
-export function modelsPillTriggerLabel(value: ModelSelection): string {
+export function modelsPillTriggerLabel(
+  value: ModelSelection,
+  options?: {
+    /** Inherited model id or display name when Client defaults is the only pick. */
+    clientDefaultLabel?: string | null;
+    /** Resolve a catalog id (or already-display string) to a compact label. */
+    modelName?: (id: string) => string;
+  }
+): string {
   const n = value.explicitModelIds.length;
-  if (value.includeClientDefaults && n === 0) return "Client defaults";
-  if (value.includeClientDefaults && n > 0) return `Client defaults +${n}`;
-  if (n === 1) return "1 model";
+  const inheritedRaw = options?.clientDefaultLabel?.trim() ?? "";
+  const inherited = inheritedRaw
+    ? options?.modelName?.(inheritedRaw) || inheritedRaw
+    : "";
+  if (value.includeClientDefaults && n === 0) return inherited || "models";
+  if (value.includeClientDefaults && n > 0) {
+    return inherited ? `${inherited} +${n}` : `models +${n}`;
+  }
+  if (n === 1) {
+    const id = value.explicitModelIds[0];
+    return options?.modelName?.(id) || "1 model";
+  }
   if (n > 1) return `${n} models`;
   return "No models · pick some";
 }

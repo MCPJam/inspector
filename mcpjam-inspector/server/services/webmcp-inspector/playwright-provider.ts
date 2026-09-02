@@ -16,68 +16,138 @@ import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
 import { existsSync } from "node:fs";
 import { ensureLocalChromiumInstalled } from "../../utils/browser-rendering-setup";
 import {
+  WEBMCP_FRAME_BOOST_INTERVAL_MS,
+  WEBMCP_FRAME_BOOST_WINDOW_MS,
+  WEBMCP_FRAME_MAX_BYTES,
+  WEBMCP_FRAME_MIN_INTERVAL_MS,
+  WEBMCP_HOUSEKEEPING_INTERVAL_MS,
+  WEBMCP_QUALITY_PRESSURE_DROPS,
+  WEBMCP_QUALITY_PRESSURE_WINDOW_MS,
+  WEBMCP_QUALITY_RECOVER_QUIET_MS,
+  WEBMCP_QUALITY_STEP_HOLD_MS,
+  WEBMCP_SETTLE_QUIET_MS,
+  WEBMCP_SETTLE_STILL_QUALITIES,
+  WEBMCP_STREAM_QUALITY_LADDER,
+  WEBMCP_SUBSTITUTE_QUALITY_LADDER,
   WEBMCP_VIEWPORT,
+  type WebMcpFrame,
+  type WebMcpInputEvent,
+  type WebMcpInputModifiers,
   type WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
+import { readJpegDimensions } from "@/shared/jpeg-dimensions";
+import { createFrameThrottle, type FrameThrottle } from "./frame-throttle";
+import { logger } from "../../utils/logger.js";
 import {
   buildWebMcpLaunchArgs,
   PAGE_API_PROBE,
   webMcpHeadlessRequested,
 } from "./launch-args";
+import { WebMcpBridge, type CdpLike } from "../browserd/daemon/webmcp-bridge";
+import { SCREENSHOT_MAX_BYTES, translateBridgeError } from "./provider-shared";
 import {
   WebMcpChromiumNotInstalledError,
-  WebMcpInvocationCancelledError,
   WebMcpNoDisplayError,
-  WebMcpToolGoneError,
   WebMcpUnsupportedError,
   type CreateWebMcpSessionOptions,
-  type ProviderToolDescriptor,
   type WebMcpBrowserProvider,
   type WebMcpBrowserSession,
   type WebMcpInvokeRequest,
   type WebMcpSessionCallbacks,
+  type WebMcpViewportMode,
 } from "./provider";
 
 /** Cap on how long a browser teardown may block shutdown. */
 const CLOSE_TIMEOUT_MS = 5_000;
-/** Thumbnail width; small enough that a timeline of them stays cheap. */
-const SCREENSHOT_WIDTH = 640;
-const SCREENSHOT_MAX_BYTES = 64 * 1024;
-/** Grace period for the browser's own Canceled response after we ask to cancel. */
-const CANCEL_SETTLE_GRACE_MS = 1_000;
+/**
+ * Cap on how long one `Page.captureScreenshot` may take.
+ *
+ * The same 5s Playwright's own `page.screenshot()` was given before these
+ * captures moved to raw CDP, and it is load-bearing in a way that is easy to
+ * lose with the Playwright call: raw `send` has no timeout of its own, so a
+ * wedged browser or a dead CDP session would hang the caller forever — the
+ * screenshot poll accumulating requests that never answer, and the still path
+ * holding its single-flight latch for the life of the session, which disables
+ * the settle still and the oversize substitute permanently.
+ */
+export const STILL_TIMEOUT_MS = 5_000;
+/**
+ * How much of a frame's base64 to decode when reading its SOF marker.
+ *
+ * A prefix, because the answer is in the first few hundred bytes and decoding
+ * a 200 KiB base64 string per frame to read four of them would be a per-frame
+ * allocation the size of the frame. A multiple of 4 so the slice is a whole
+ * number of base64 groups.
+ */
+const JPEG_PROBE_BASE64_CHARS = 4_096;
+/**
+ * Qualities tried for a timeline screenshot, best first.
+ *
+ * Lower than the stream's baseline, because these are PERSISTED evidence at a
+ * 64 KiB budget rather than a picture the next paint replaces.
+ */
+const SCREENSHOT_QUALITY_LADDER = [50, 30, 20] as const;
+/** The modifier keys a pointer event's snapshot can name, in Playwright's spelling. */
+const MODIFIER_KEYS = ["Alt", "Control", "Meta", "Shift"] as const;
 
-/** CDP payloads, as the domain definition declares them. */
-interface CdpTool {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, unknown>;
-  annotations?: {
-    readOnly?: boolean;
-    untrustedContent?: boolean;
-    consequential?: boolean;
-    autosubmit?: boolean;
+/**
+ * The one CDP payload this file still names.
+ *
+ * Everything the WebMCP domain declares — tools, responses, invocations — lives
+ * in `webmcp-bridge.ts` now. The screencast is a Page-domain concern and stays
+ * here with the rest of the viewport.
+ */
+interface CdpScreencastFrame {
+  data: string;
+  sessionId: number;
+  metadata?: {
+    deviceWidth?: number;
+    deviceHeight?: number;
+    timestamp?: number;
   };
-  frameId: string;
-  backendNodeId?: number;
-  stackTrace?: { callFrames: unknown[] };
 }
-interface CdpRemovedTool {
-  name: string;
-  frameId: string;
+
+/**
+ * `work`, or `undefined` if it takes longer than `ms`.
+ *
+ * The abandoned promise is left to settle on its own — it is one CDP reply,
+ * and nothing is waiting on it once the caller has given up.
+ */
+function withTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    timer.unref?.();
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
-interface CdpToolResponded {
-  invocationId: string;
-  status: "Completed" | "Canceled" | "Error";
-  output?: unknown;
-  errorText?: string;
-  exception?: { description?: string };
-}
-interface CdpToolInvoked {
-  toolName: string;
-  frameId: string;
-  invocationId: string;
-  input: string;
-}
+
+/**
+ * What one `Page.captureScreenshot` attempt produced.
+ *
+ * Three outcomes, not two, because "no picture" hides a distinction the
+ * callers need: a capture the browser REFUSED is final, while one this
+ * provider declined to send — because another was already outstanding, see
+ * `captureInFlight` — is a picture that is still owed. Collapsing them drops
+ * the substitute a refused frame asked for, on the one page that cannot
+ * recover from it: one whose last paint was over the cap and which then
+ * stopped painting, so no later frame and no timer comes back for it.
+ */
+type StillAttempt =
+  | { got: "picture"; data: string }
+  | { got: "busy" }
+  | { got: "failed" };
 
 /** As in the widget harness: a hung close must not block shutdown. */
 async function waitForClose(promise: Promise<unknown> | undefined) {
@@ -96,30 +166,190 @@ function originOf(url: string): string {
   }
 }
 
-class PlaywrightWebMcpSession implements WebMcpBrowserSession {
-  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
-  private readonly tools = new Map<string, CdpTool>();
-  /** frameId to last known URL, for origin labelling and subframe detection. */
-  private readonly frames = new Map<string, string>();
-  private readonly pending = new Map<
-    string,
-    {
-      resolve: (value: { output: unknown }) => void;
-      reject: (error: Error) => void;
-      /**
-       * Why WE asked the browser to stop, if we did.
-       *
-       * The browser answers a cancel with `Canceled` whatever the reason, so
-       * without remembering it here a timed-out invocation would be recorded on
-       * the timeline as a user cancellation — the one place where the
-       * difference actually matters to whoever reads it later.
-       */
-      cancelReason?: "cancelled" | "timeout";
-    }
-  >();
+/**
+ * Exported for `__tests__/playwright-provider.screencast.test.ts`, which drives
+ * the CDP wiring with fakes. The screencast path is the one part of this file
+ * whose ordering (ack before anything else) cannot be observed from the
+ * provider's public surface, and the Chromium-gated integration suite only runs
+ * where a WebMCP-capable build exists.
+ */
+export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
+  /**
+   * The WebMCP state machine, shared with the daemon.
+   *
+   * ONE copy of it now. This file used to carry its own — tool map, frame map,
+   * pending invocations, cancel-reason bookkeeping — beside an identical one in
+   * `browserd/daemon/webmcp-bridge.ts`, and every hard-won behaviour in it (a
+   * navigation fires no `toolsRemoved`; the browser answers every cancel
+   * `Canceled` whatever the reason; a cancel the page never answers must still
+   * settle) had to be fixed twice or drift. The bridge imports nothing, so
+   * Playwright's `CDPSession` satisfies its `CdpLike` structurally and this is
+   * a plain instantiation.
+   *
+   * What stays HERE is everything outside the WebMCP domain: the screencast,
+   * input dispatch, navigation, screenshots and lifecycle.
+   */
+  private readonly bridge: WebMcpBridge;
   private url: string;
-  private mainFrameId = "";
   private disposed = false;
+  /** Whether the browser is currently painting frames at us. */
+  private screencasting = false;
+  private readonly frameThrottle: FrameThrottle<WebMcpFrame>;
+  /** One in-flight still at a time; see `publishStill`. */
+  private stillInFlight = false;
+  /**
+   * A `Page.captureScreenshot` the browser has not answered yet.
+   *
+   * Set before the command is sent and cleared only when THAT command
+   * settles, which is what makes it a bound rather than a hint. Both halves
+   * are load-bearing, and both were wrong in the first version of this:
+   *
+   * Set on TIMEOUT instead of on send, it does not engage for five seconds —
+   * and a screenshot poll asking every second has already put five commands in
+   * flight by then. Cleared by whichever command happens to settle, it reopens
+   * the gate while a permanently stuck one is still registered, so the pile
+   * grows again every time a later one comes back.
+   *
+   * Why a bound is needed at all: `STILL_TIMEOUT_MS` frees the CALLER, not the
+   * command. Playwright keeps a timed-out `send`'s callback registered until
+   * the browser replies, and CDP cannot cancel one — so without this, a wedged
+   * renderer accumulates a pending command per poll tick for as long as
+   * somebody leaves the pane open.
+   *
+   * The cost is that two callers wanting a capture at the same instant get one
+   * picture between them — an invocation's evidence screenshot overlapping a
+   * settle still, in practice. That path is best-effort already (the timeline
+   * may say "no screenshot"), and a hard bound of one outstanding command is
+   * worth more than the occasional thumbnail.
+   */
+  private captureInFlight = false;
+  /**
+   * An oversize frame arrived while a still was already being captured.
+   *
+   * Remembered rather than dropped, because oversize frames come in BURSTS: the
+   * page paints five times while one capture is in flight, and every one of
+   * them is refused by the single-flight guard. Without this the pane would
+   * settle on the picture that happened to be current when the first of the
+   * burst arrived, which is the oldest of them.
+   *
+   * Drained by `oversizeTick` rather than by the capture that set it, so that
+   * a page painting continuously above the cap is paced at the housekeeping
+   * cadence instead of spinning captures back to back.
+   */
+  private oversizePending = false;
+  /**
+   * Every frame the browser has handed us, oversize ones INCLUDED.
+   *
+   * Distinct from `framesReceived` on purpose. This is the settle latch's
+   * clock, and it has to count paints the stream could not carry: a page whose
+   * every paint exceeds the cap never bumps `framesReceived`, so a latch keyed
+   * on that would take one settle still and then believe the page had gone
+   * quiet forever.
+   */
+  private paintsSeen = 0;
+  /** When the last paint arrived; the quiet window is measured from it. */
+  private lastPaintAt = -Infinity;
+  /**
+   * When input was last dispatched.
+   *
+   * Part of the same quiet window, because a gesture that changes nothing on
+   * screen — a click on dead space, a key the page swallows — produces no paint
+   * to reset the window with, and taking a full-quality still in the middle of
+   * someone typing spends a CDP round trip on a picture that is about to be
+   * wrong.
+   */
+  private lastInputAt = -Infinity;
+  /**
+   * The `paintsSeen` value the last settle still was taken for.
+   *
+   * The latch that makes it ONE still per quiet page rather than one every
+   * housekeeping tick: an idle page stays quiet indefinitely, and re-capturing
+   * it four times a second would be a screenshot loop nobody asked for.
+   */
+  private settleGeneration = -1;
+  /** Drives the settle window. Armed with the stream, cleared with it. */
+  private housekeeping?: ReturnType<typeof setInterval>;
+  /**
+   * Bumped whenever the picture a capture would describe stops being the
+   * picture the pane is showing: a main-frame navigation, or the stream being
+   * stopped and started.
+   *
+   * `framesReceived` cannot cover those. A navigation clears the runtime's
+   * retained frame without producing one, so a still that began on the old
+   * document would pass a frame-count check and repaint the pane with a page
+   * the person has already left — while their clicks go to the new one.
+   */
+  private captureGeneration = 0;
+  /**
+   * The bytes of the last screencast frame, for the redundancy check in
+   * `wireScreencast`.
+   *
+   * One string reference, not a copy: the frame is allocated either way, and
+   * holding the newest one until the next arrives costs a delayed collection.
+   */
+  private lastFrameData: string | undefined;
+  /**
+   * Which rung of {@link WEBMCP_STREAM_QUALITY_LADDER} the stream is on.
+   *
+   * PERSISTS across `setScreencast` cycles, deliberately. The client withdraws
+   * the stream whenever its tab is hidden and asks for it again on return, and
+   * a rung reset per cycle would make a session on a slow link re-discover the
+   * same pressure at full quality every time somebody switched tabs.
+   */
+  private rungIndex = 0;
+  /**
+   * The rung the encoder is actually RUNNING at, as opposed to the one the
+   * governor has decided on.
+   *
+   * They differ for exactly as long as a restart is in flight, which is also
+   * the only window in which a start can be refused — and when one is, this is
+   * the rung to fall back to: the one the browser has already accepted.
+   */
+  private appliedRungIndex = 0;
+  /** Recent drops, for the "3 inside 2 seconds" test. */
+  private dropTimestamps: number[] = [];
+  /** The last drop of any kind, for the much longer recovery quiet window. */
+  private lastDropAt = -Infinity;
+  /** When the rung last moved, for the hold that keeps steps apart. */
+  private lastRungChangeAt = -Infinity;
+  /** A stop/start cycle is in flight; a second one would race it. */
+  private restartInFlight = false;
+  /**
+   * A rung change stopped the encoder and then failed to start it again.
+   *
+   * Held so the governor can try once more. There is nobody else to tell: a
+   * restart is fire-and-forget, so unlike the client's own `set_screencast`
+   * there is no caller to hand a `false` to and no fallback to trigger.
+   */
+  private restartPending = false;
+  /**
+   * Monotonic count of frames ACCEPTED from the browser, for a still's
+   * staleness check.
+   *
+   * Counted on receipt rather than on publication, because the throttle holds
+   * the newest frame of a burst in its trailing slot without emitting it yet.
+   * A still compared against a published count would sail past that check
+   * and overwrite a newer frame that had simply not been flushed — and if no
+   * later paint arrived, the pane would settle on the older picture.
+   */
+  private framesReceived = 0;
+  /** Modifier keys Playwright currently believes are down. See `syncModifiers`. */
+  private readonly heldModifiers = new Set<string>();
+  /**
+   * Where Playwright's virtual pointer was last put, so a `mouse.move` that
+   * would change nothing can be skipped. Forgotten on navigation: a new
+   * document starts with no hover state, and skipping the move into it would
+   * leave the page believing the pointer had never arrived.
+   */
+  private pointerAt: { x: number; y: number } | undefined;
+  /**
+   * Bumped by every main-frame navigation, so a `mouse.move` still in flight
+   * when the page changes cannot write its coordinate back afterwards.
+   * Clearing `pointerAt` alone is not enough: the clear happens during the
+   * await, and the assignment after it would restore a coordinate that
+   * describes the previous document.
+   */
+  private pointerGeneration = 0;
 
   constructor(
     private readonly browser: Browser,
@@ -129,24 +359,77 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     private readonly callbacks: WebMcpSessionCallbacks,
     startUrl: string,
     private readonly headless: boolean,
+    private readonly viewportMode: WebMcpViewportMode = "window",
+    /**
+     * Device pixels per CSS pixel this session's context renders at.
+     *
+     * Read back onto every frame rather than trusted: what the browser
+     * actually hands over is what the client has to scale clicks against.
+     */
+    private readonly dpr: number = 1,
   ) {
     this.url = startUrl;
+    this.frameThrottle = createFrameThrottle<WebMcpFrame>({
+      minIntervalMs: WEBMCP_FRAME_MIN_INTERVAL_MS,
+      emit: (frame) => this.callbacks.onFrame(frame),
+    });
+    this.bridge = new WebMcpBridge(cdp as unknown as CdpLike, {
+      // The bridge's descriptors are already the raw browser facts this
+      // interface asks for, frame id included, so the snapshot passes straight
+      // through. Identity policy — stable keys, collision suffixes — is the
+      // runtime's, one layer up, because that is the layer that sees the whole
+      // registry at once.
+      onChange: (tools) => this.callbacks.onToolsChanged(tools),
+      onExternalInvocation: (toolName) =>
+        this.callbacks.onExternalInvocation(
+          "A tool was invoked from outside this inspector.",
+          toolName || undefined,
+        ),
+    });
   }
 
   async start(url: string): Promise<void> {
-    this.wireCdp();
+    // Wired BEFORE the bridge, so its `Page.frameNavigated` handler runs first
+    // and the runtime still sees `navigated` ahead of the tool snapshot the
+    // bridge publishes from the same event. CDP dispatches handlers in
+    // registration order, and the timeline reads badly the other way round.
+    this.wireNavigation();
+    this.wireScreencast();
     this.wirePage();
-    await this.cdp.send("Page.enable" as never).catch(() => {});
-    await this.cdp.send("WebMCP.enable" as never);
-    await this.navigate(url);
-
-    // `WebMCP.enable` resolves even on a browser with the feature switched off
-    // - it just never reports a tool. So support is probed in the page, after
-    // the first navigation, where the API either exists or does not.
-    const supported = await this.page
-      .evaluate(PAGE_API_PROBE)
-      .catch(() => false);
-    if (!supported) {
+    // The first navigation happens INSIDE the bridge's probe callback, because
+    // both of its neighbours pin it there: the domains must be enabled first or
+    // tools registered during page load are never reported, and the page must
+    // be loaded before `document.modelContext` can be asked about — the domain
+    // is never the probe, since `WebMCP.enable` resolves even where the feature
+    // is switched off.
+    //
+    // The bridge treats a throwing probe as "unsupported", which is right for a
+    // probe and wrong for a navigation: a DNS failure or a refused connection
+    // would be reported as "this browser cannot do WebMCP" and send someone
+    // chasing a browser problem they do not have. So the navigation's own
+    // failure is carried out and rethrown as itself.
+    let navigationFailure: unknown;
+    await this.bridge.start(async () => {
+      try {
+        await this.navigate(url);
+      } catch (error) {
+        navigationFailure = error;
+        return false;
+      }
+      return (
+        (await this.page.evaluate(PAGE_API_PROBE).catch(() => false)) === true
+      );
+    });
+    if (navigationFailure) throw navigationFailure;
+    // Before the unsupported check: an embedded session has no window, so the
+    // stream is the ONLY view of it. A page that turns out to have no WebMCP
+    // support still deserves to be visible while the person reads why.
+    if (this.viewportMode === "embedded") await this.setScreencast(true);
+    // Detected HERE rather than left to the bridge's own per-invocation
+    // refusal, so creating a session on a browser that cannot do WebMCP fails
+    // immediately with an explanation instead of succeeding into an empty tool
+    // list that looks like the page's fault.
+    if (!this.bridge.isSupported()) {
       throw new WebMcpUnsupportedError(
         "This browser build does not expose the WebMCP page API " +
           "(document.modelContext), so no tools can be discovered. The page " +
@@ -157,96 +440,585 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     }
   }
 
-  private wireCdp(): void {
-    this.cdp.on("WebMCP.toolsAdded", (event) => {
-      const { tools } = event as { tools: CdpTool[] };
-      for (const tool of tools) {
-        this.tools.set(this.key(tool.frameId, tool.name), tool);
-      }
-      this.emitTools();
-    });
-
-    // Chromium does emit this for an explicit page-side unregister; it just
-    // never fires on navigation. Both paths converge on a fresh snapshot.
-    this.cdp.on("WebMCP.toolsRemoved", (event) => {
-      const { tools } = event as { tools: CdpRemovedTool[] };
-      for (const tool of tools) {
-        this.tools.delete(this.key(tool.frameId, tool.name));
-      }
-      this.emitTools();
-    });
-
-    this.cdp.on("WebMCP.toolInvoked", (event) => {
-      const invoked = event as CdpToolInvoked;
-      // Every invocation we start is registered before the command is sent, so
-      // anything unknown here was started by someone else: the page's own
-      // agent, or a devtools panel. Worth surfacing, because it explains state
-      // changes the timeline would otherwise attribute to nothing.
-      if (!this.pending.has(invoked.invocationId)) {
-        this.callbacks.onExternalInvocation(
-          "A tool was invoked from outside this inspector.",
-          invoked.toolName,
-        );
-      }
-    });
-
-    this.cdp.on("WebMCP.toolResponded", (event) => {
-      const responded = event as CdpToolResponded;
-      const waiter = this.pending.get(responded.invocationId);
-      if (!waiter) return;
-      this.pending.delete(responded.invocationId);
-      if (responded.status === "Completed") {
-        waiter.resolve({ output: responded.output });
-        return;
-      }
-      if (responded.status === "Canceled") {
-        const reason = waiter.cancelReason ?? "cancelled";
-        waiter.reject(
-          new WebMcpInvocationCancelledError(
-            reason === "timeout"
-              ? "The tool did not respond in time."
-              : "The invocation was cancelled.",
-            reason,
-          ),
-        );
-        return;
-      }
-      // On Error, `errorText` is empty in practice and the usable message is on
-      // the exception's description.
-      waiter.reject(
-        new Error(
-          responded.exception?.description?.split("\n")[0] ||
-            responded.errorText ||
-            "The page tool failed without a message.",
-        ),
-      );
-    });
-
+  /**
+   * The one Page-domain fact this class still needs for itself: where we are.
+   *
+   * The bridge watches the same event for its own bookkeeping — it has to, to
+   * drop a navigated frame's tools — but the main-frame URL is a session fact,
+   * not a WebMCP one, so it is read here rather than routed back out of the
+   * bridge.
+   */
+  private wireNavigation(): void {
     this.cdp.on("Page.frameNavigated", (event) => {
       const { frame } = event as {
         frame: { id: string; url: string; parentId?: string };
       };
-      this.frames.set(frame.id, frame.url);
-      // Navigation fires NO toolsRemoved, and the main frame KEEPS its id, so
-      // nothing the browser tells us separates "tools of the page we just left"
-      // from "tools of the page we are on". Dropping the navigated frame's
-      // tools here is what stops the registry serving tools that no longer
-      // exist; the new page's registrations arrive immediately after.
-      this.dropToolsForFrame(frame.id);
-      if (!frame.parentId) {
-        this.mainFrameId = frame.id;
-        this.url = frame.url;
-        this.callbacks.onNavigated(frame.url, originOf(frame.url));
-      }
-      this.emitTools();
+      if (frame.parentId) return;
+      this.url = frame.url;
+      // A new document has no hover state, so the remembered coordinate no
+      // longer describes anything. Keeping it would let the wheel path skip
+      // the move that first tells the new page where the pointer is.
+      this.pointerAt = undefined;
+      this.pointerGeneration += 1;
+      // A capture already in flight describes the document being left.
+      this.captureGeneration += 1;
+      // The redundancy check compares bytes, and bytes do not know they belong
+      // to a different document. A reload of a static page paints identically,
+      // so its first frame would be dropped as a duplicate — while the runtime
+      // has just CLEARED the retained frame for this navigation, leaving a
+      // reconnecting pane with nothing at all until the page happened to
+      // repaint. Which, for a settled page, is never.
+      this.lastFrameData = undefined;
+      this.callbacks.onNavigated(frame.url, originOf(frame.url));
     });
+  }
 
-    this.cdp.on("Page.frameDetached", (event) => {
-      const { frameId } = event as { frameId: string };
-      this.frames.delete(frameId);
-      this.dropToolsForFrame(frameId);
-      this.emitTools();
+  private wireScreencast(): void {
+    this.cdp.on("Page.screencastFrame", (event) => {
+      const frame = event as CdpScreencastFrame;
+      // ACK FIRST, before any size check, throttling or publishing. Chromium
+      // sends the NEXT frame only once the current one is acknowledged, so an
+      // ack that waits on consumption lets a slow consumer starve the stream
+      // into stillness — and the pane would then show a page frozen at whatever
+      // it looked like when the consumer fell behind.
+      void this.cdp
+        .send(
+          "Page.screencastFrameAck" as never,
+          {
+            sessionId: frame.sessionId,
+          } as never,
+        )
+        .catch(() => {});
+
+      // A frame already in flight when the stream was stopped. Publishing it
+      // would repaint a pane the client has just cleared, with a picture
+      // nothing is going to correct afterwards.
+      if (!this.screencasting || this.disposed) return;
+
+      // Counted BEFORE the size check, and that ordering is the whole reason
+      // this counter is not `framesReceived`. A paint the stream cannot carry
+      // is still a paint: it means the page is busy, and the settle window has
+      // to restart from it.
+      // A frame whose bytes are identical to the one before it carries no
+      // news, and dropping it is not an optimisation — it is what makes the
+      // settle still work at all.
+      //
+      // EVERY `Page.captureScreenshot` makes Chromium produce a compositor
+      // frame to satisfy the copy request, and the screencast then encodes and
+      // sends that frame: on an idle page it is byte-for-byte the frame before
+      // it (measured against Chromium 141 headless — one induced frame per
+      // capture, identical bytes, and none at all while merely idle). Publish
+      // it and the sharp still we just took is replaced a tenth of a second
+      // later by the same picture at streaming quality; count it as a paint and
+      // the settle clock restarts, so the next quiet window takes another
+      // still, which induces another frame — a capture loop on a page that is
+      // doing nothing.
+      //
+      // The comparison is exact rather than a heuristic window: JPEG encoding
+      // is deterministic, so identical bytes mean identical pixels. A page that
+      // really did paint something produces different bytes and is treated as
+      // the activity it is.
+      if (frame.data === this.lastFrameData) return;
+      this.lastFrameData = frame.data;
+
+      this.paintsSeen += 1;
+      this.lastPaintAt = Date.now();
+
+      // A frame is transient — the next paint replaces it — so an oversized one
+      // is dropped rather than re-encoded in the hot path. But the throttle's
+      // trailing-frame guarantee does not cover THIS drop, so a complex page
+      // whose final paint never fits would leave the pane stale forever.
+      // Converge it with one budgeted still instead: lower fidelity, but the
+      // current paint.
+      const bytes = Buffer.byteLength(frame.data, "base64");
+      if (bytes > WEBMCP_FRAME_MAX_BYTES) {
+        // Pressure, and the STRONGEST kind: a frame over the cap reached no
+        // viewer at all, where a transport drop means one of them fell behind.
+        // The governor is also the cure for it — a rung down is a smaller
+        // encode, which is exactly what brings these frames back under the cap
+        // — and without this it never hears about them, because they are
+        // refused here rather than in a socket's send callback. A page that
+        // paints above the cap would otherwise sit at the baseline quality
+        // forever, publishing nothing but substitutes.
+        this.noteFramePressure();
+        void this.publishStill(WEBMCP_SUBSTITUTE_QUALITY_LADDER, "oversize");
+        return;
+      }
+
+      this.framesReceived += 1;
+      this.frameThrottle.push({
+        data: frame.data,
+        // The frame's own header, against the CSS viewport this session was
+        // created at. The screencast metadata is deliberately not consulted —
+        // see `frameGeometry`.
+        ...this.frameGeometry(frame.data, this.streamScale()),
+        ts: Date.now(),
+      });
     });
+  }
+
+  /**
+   * What a published frame should say about its own geometry.
+   *
+   * Read from the JPEG's own frame header wherever possible, because every
+   * other source is a claim by something that is not the picture: CDP reports
+   * screencast metadata in DIP whatever the device scale factor is, a frame
+   * can still be in flight from a cast started with different bounds, and the
+   * `sessionId` on a screencast frame is a counter rather than an identity. The
+   * client scales pointer coordinates against what a frame reports, so a frame
+   * that misdescribes itself puts every click in the wrong place.
+   *
+   * The CSS side of the ratio is {@link WEBMCP_VIEWPORT} — the size this
+   * session's context was created at — and NOT the screencast metadata's
+   * `deviceWidth`. That field's units are not portable: the CDP definition
+   * calls it DIP, Chromium 141 headless reports 1280 for a 2x session, and the
+   * build CI runs reports 2560 for the same session. Dividing by it produced a
+   * scale of 0.5 there, which would have had the client compute a 2560-wide
+   * CSS surface and send every click at half its true coordinate. The viewport
+   * is ours and cannot drift.
+   *
+   * `expectedScale` is what this capture path would produce if the bytes
+   * cannot be read. The fallback keeps the geometry self-consistent rather
+   * than exact — which is the property clicks actually depend on.
+   */
+  private frameGeometry(
+    data: string,
+    expectedScale: number,
+  ): { deviceWidth: number; deviceHeight: number; scale: number } {
+    const sof = readJpegDimensions(
+      Buffer.from(data.slice(0, JPEG_PROBE_BASE64_CHARS), "base64"),
+    );
+    if (sof && sof.width > 0) {
+      return {
+        deviceWidth: sof.width,
+        deviceHeight: sof.height,
+        // Three decimals: enough for the ratios a real display reports
+        // (1.25, 1.5, 1.75, 2) and for the wire's fixed-point field.
+        scale: Math.round((sof.width / WEBMCP_VIEWPORT.width) * 1_000) / 1_000,
+      };
+    }
+    return {
+      deviceWidth: Math.round(WEBMCP_VIEWPORT.width * expectedScale),
+      deviceHeight: Math.round(WEBMCP_VIEWPORT.height * expectedScale),
+      scale: expectedScale,
+    };
+  }
+
+  /**
+   * The scale the STREAM is currently producing.
+   *
+   * Chromium clamps a screencast to the CSS-pixel size of the surface —
+   * `Page.startScreencast`'s `maxWidth`/`maxHeight` can only ever scale a
+   * capture DOWN — so a session rendering at a device pixel ratio of 2 still
+   * receives 1280x800 frames, supersampled from a 2560x1600 raster. Measured
+   * against Chromium 141 headless, and the reason this is 1 rather than
+   * `this.dpr`: the frame's own bytes decide, and this is only the fallback
+   * when they cannot be read.
+   */
+  private streamScale(): number {
+    return 1;
+  }
+
+  /**
+   * One still of the current surface, as a base64 JPEG.
+   *
+   * Raw `Page.captureScreenshot` rather than Playwright's `page.screenshot()`,
+   * and the difference is not stylistic. Playwright's default `caret: "hide"`
+   * writes an inline `caret-color` onto every input, textarea and
+   * contenteditable in the document and restores it afterwards — two style
+   * mutations, which paint. Those paints reach the screencast handler, bump
+   * the counters this file's staleness checks read, and the still then
+   * discards ITSELF as overtaken. Reading the compositor surface instead
+   * touches no DOM at all.
+   *
+   * Bounded by `STILL_TIMEOUT_MS`, because raw `send` has none of its own: an
+   * unbounded capture would hang the screenshot poll and hold `publishStill`'s
+   * single-flight latch for the rest of the session.
+   *
+   * NO `clip`, ever. A clip is in document coordinates and goes through an
+   * emulation path that can relayout and paint — the same self-defeating
+   * mutation — and a cropped picture published as a full viewport would stretch
+   * part of the page across the pane and put every click at the wrong
+   * coordinate. This degrades QUALITY only, never geometry.
+   */
+  private async captureStill(quality: number): Promise<StillAttempt> {
+    // Nothing to gain by asking a browser that has not answered the last one,
+    // and something to lose — see `captureInFlight`.
+    if (this.captureInFlight) return { got: "busy" };
+    this.captureInFlight = true;
+    const free = () => {
+      this.captureInFlight = false;
+    };
+    try {
+      const sent = this.cdp.send(
+        "Page.captureScreenshot" as never,
+        {
+          format: "jpeg",
+          quality,
+          // The compositor's own surface: no relayout, no paint, and the
+          // picture the person is actually looking at.
+          fromSurface: true,
+        } as never,
+      );
+      // Released by the COMMAND settling, not by this function returning.
+      // Whatever it eventually is — a picture nobody is waiting for any more,
+      // or an error — it is the browser answering, which is the only thing
+      // that says the next capture is worth sending. Releasing it where the
+      // timeout gives up instead would leave the command registered and the
+      // gate open, which is the accumulation this exists to prevent.
+      void sent.then(free, free);
+      const result = (await withTimeout(sent, STILL_TIMEOUT_MS)) as
+        | { data?: string }
+        | undefined;
+      return typeof result?.data === "string"
+        ? { got: "picture", data: result.data }
+        : { got: "failed" };
+    } catch {
+      // A `send` that threw synchronously registered nothing to release it.
+      // Idempotent, so the settled-command path above may also have run.
+      free();
+      return { got: "failed" };
+    }
+  }
+
+  /**
+   * Publish one still as a frame, walking `qualities` until one fits the cap.
+   *
+   * TWO callers, ONE slot, deliberately. An oversize frame asks for a still
+   * because the page's own paint could not be carried; the settle timer asks
+   * for a sharp one because the page has stopped painting. Two independent
+   * single-flight captures would race — a low-quality substitute landing after
+   * a sharp settle still would overwrite the good picture with a worse one of
+   * the same frozen page — so both go through here and at most one is ever in
+   * flight.
+   *
+   * The generation check is against `framesReceived` (ACCEPTED frames), not
+   * `paintsSeen`: what makes a still stale is a real frame the pane is already
+   * showing, or one held in the throttle's trailing slot about to be shown.
+   *
+   * A capture that FAILS publishes nothing and does not fall down the ladder:
+   * the pane keeps the picture it has, which is the same outcome as before and
+   * strictly better than a wrong-geometry frame.
+   */
+  private async publishStill(
+    qualities: readonly number[],
+    reason: "oversize" | "settle",
+  ): Promise<void> {
+    if (this.disposed || !this.screencasting) return;
+    if (this.stillInFlight) {
+      // Only the oversize path re-runs: the settle path has its own latch and
+      // its own timer, and will simply try again on the next tick.
+      if (reason === "oversize") this.oversizePending = true;
+      return;
+    }
+    this.stillInFlight = true;
+    const frames = this.framesReceived;
+    const generation = this.captureGeneration;
+    try {
+      for (const quality of qualities) {
+        const attempt = await this.captureStill(quality);
+        // Re-checked after EVERY await: a still that lands behind a real frame
+        // would drag the pane backwards to an older picture, and one that
+        // lands after a navigation or a stream restart would repaint it with a
+        // page the person has already left.
+        if (this.disposed || !this.screencasting) return;
+        if (this.framesReceived !== frames) return;
+        if (this.captureGeneration !== generation) return;
+        if (attempt.got === "busy") {
+          // Not a refusal of this picture — another capture simply holds the
+          // slot — so it is still owed, and both callers leave a way back to
+          // it rather than dropping it.
+          //
+          // An oversize substitute is the ONLY picture its frame will ever
+          // produce: the frame itself was refused for its size, and a page
+          // that has stopped painting sends no other. The settle still
+          // un-latches instead, so the next quiet tick takes it — `-1` is the
+          // field's own "not taken yet".
+          if (reason === "oversize") this.oversizePending = true;
+          else this.settleGeneration = -1;
+          return;
+        }
+        if (attempt.got === "failed") return;
+        const data = attempt.data;
+        if (Buffer.byteLength(data, "base64") > WEBMCP_FRAME_MAX_BYTES) {
+          continue;
+        }
+        this.frameThrottle.push({
+          data,
+          // A still is captured from the surface itself rather than through
+          // the screencast's scaling, so if anything is going to come back at
+          // full device resolution it is this — measured Chromium hands back
+          // CSS resolution here too, and either way the bytes decide. The
+          // fallback only has to keep the geometry self-consistent, which is
+          // what the client divides by.
+          ...this.frameGeometry(data, this.dpr),
+          ts: Date.now(),
+        });
+        return;
+      }
+    } finally {
+      this.stillInFlight = false;
+      // `oversizePending` is deliberately LEFT SET, for `oversizeTick` to
+      // drain on the next housekeeping tick. Re-capturing from here instead
+      // looks like it converges — a burst of refused paints reaching the last
+      // of them in two captures — but only for a burst that ENDS. A page
+      // repainting continuously above the cap lands at least one refused frame
+      // inside every capture, so each `finally` would start the next one: an
+      // unpaced `Page.captureScreenshot` loop, running as fast as the browser
+      // will serve it, on top of an encode that is already too expensive.
+      // Draining from the timer bounds substitutes to the housekeeping
+      // cadence, and costs a terminating burst one tick of latency.
+    }
+  }
+
+  /**
+   * Arm the housekeeping timer, which is what notices a page has gone quiet.
+   *
+   * Idempotent, and armed only while frames are actually flowing: a timer left
+   * running on a stopped stream would capture stills for a pane nobody is
+   * watching.
+   */
+  private armHousekeeping(): void {
+    if (this.housekeeping !== undefined) return;
+    this.housekeeping = setInterval(
+      () => this.housekeepingTick(),
+      WEBMCP_HOUSEKEEPING_INTERVAL_MS,
+    );
+    // Never a reason to hold the process open.
+    this.housekeeping.unref?.();
+  }
+
+  private clearHousekeeping(): void {
+    if (this.housekeeping === undefined) return;
+    clearInterval(this.housekeeping);
+    this.housekeeping = undefined;
+  }
+
+  private housekeepingTick(): void {
+    if (!this.screencasting || this.disposed) return;
+    // The governor first: a rung change decides whether the settle still is
+    // worth taking at all, and reading a stale rung here would spend a big
+    // capture on a link that has just told us it cannot carry one.
+    this.governorTick();
+    this.oversizeTick();
+    this.settleTick();
+  }
+
+  /**
+   * Take the substitute a refused frame asked for while one was in flight.
+   *
+   * Ahead of `settleTick` on purpose. This is the only picture the pane gets
+   * of a page whose own paints do not fit, where a settle still is a luxury
+   * for a page that has already been carried — and `publishStill` takes the
+   * single-flight latch synchronously, so the settle tick below sees it and
+   * stands down for this tick rather than racing for the same slot.
+   */
+  private oversizeTick(): void {
+    if (!this.oversizePending || this.stillInFlight) return;
+    this.oversizePending = false;
+    void this.publishStill(WEBMCP_SUBSTITUTE_QUALITY_LADDER, "oversize");
+  }
+
+  /**
+   * Publish one SHARP still once the page has stopped painting.
+   *
+   * The stream is tuned for motion: 10fps of moderate-quality JPEG, which is
+   * the right trade while something is moving and the wrong one the moment it
+   * stops. What a person actually reads is the picture that is still there a
+   * second after they stopped scrolling, and this replaces it with one encoded
+   * well above the streaming baseline.
+   *
+   * KNOWN GAP: a focused text field blinks its caret at about 2Hz, so the
+   * quiet window never arrives while someone is typing into one. The still
+   * fires when focus leaves. Accepted rather than worked around — suppressing
+   * caret paints means telling the page not to draw a caret, which is a visible
+   * change to what the person is looking at.
+   */
+  private settleTick(): void {
+    // Nothing has ever painted, or nothing has painted since the last still.
+    if (this.paintsSeen === 0 || this.paintsSeen === this.settleGeneration) {
+      return;
+    }
+    // An oversize still is already running. Bailing BEFORE the latch is the
+    // point: latching here and then being refused by `publishStill`'s
+    // single-flight guard would lose the sharp still until the next paint.
+    if (this.stillInFlight) return;
+    const quietSince = Math.max(this.lastPaintAt, this.lastInputAt);
+    if (Date.now() - quietSince < WEBMCP_SETTLE_QUIET_MS) return;
+    // A link that is already dropping frames does not want a 200 KiB still on
+    // top of the stream it cannot carry. Latched all the same, so the still is
+    // SKIPPED for this quiet page rather than retried every tick until the
+    // governor recovers.
+    if (this.rungIndex > 0) {
+      this.settleGeneration = this.paintsSeen;
+      return;
+    }
+    // Latched BEFORE the await, so an idle page gets ONE still per paint
+    // generation rather than one per tick.
+    this.settleGeneration = this.paintsSeen;
+    void this.publishStill(WEBMCP_SETTLE_STILL_QUALITIES, "settle");
+  }
+
+  /** The quality the stream is encoding at right now. */
+  private rungQuality(): number {
+    return (
+      WEBMCP_STREAM_QUALITY_LADDER[this.rungIndex] ??
+      WEBMCP_STREAM_QUALITY_LADDER[WEBMCP_STREAM_QUALITY_LADDER.length - 1]!
+    );
+  }
+
+  /**
+   * A frame did not reach the pane.
+   *
+   * Two callers, and the first is the one this provider cannot observe for
+   * itself: it publishes into a fan-out and never learns what became of a
+   * frame, so a viewer whose transport dropped one reports it here. The
+   * second is local — a frame refused by the byte cap, which reached nobody.
+   * Both mean the same thing to the governor, which is that the stream is
+   * being encoded larger than something in the path can carry.
+   *
+   * Three inside two seconds is a link that cannot carry this quality; one is
+   * just two paints landing inside one round trip, which happens on any link.
+   *
+   * Called on hot paths — a socket's send callback, and the screencast handler
+   * — so it does arithmetic and returns; the restart it may schedule is not
+   * awaited here.
+   */
+  noteFramePressure(): void {
+    const now = Date.now();
+    this.lastDropAt = now;
+    this.dropTimestamps.push(now);
+    this.dropTimestamps = this.dropTimestamps.filter(
+      (at) => now - at <= WEBMCP_QUALITY_PRESSURE_WINDOW_MS,
+    );
+    if (this.dropTimestamps.length < WEBMCP_QUALITY_PRESSURE_DROPS) return;
+    // The frames already in flight when a step lands are still the old size,
+    // so a governor without this hold would read its own transition as more
+    // pressure and fall to the bottom of the ladder in one burst.
+    if (now - this.lastRungChangeAt < WEBMCP_QUALITY_STEP_HOLD_MS) return;
+    if (this.rungIndex >= WEBMCP_STREAM_QUALITY_LADDER.length - 1) return;
+    if (!this.screencasting || this.disposed || this.restartInFlight) return;
+    this.rungIndex += 1;
+    this.lastRungChangeAt = now;
+    // Cleared, not kept: the drops that justified this step must not also
+    // justify the next one.
+    this.dropTimestamps = [];
+    void this.restartScreencast();
+  }
+
+  /**
+   * Climb back toward the baseline once the link has been quiet for a while.
+   *
+   * Much more patient than the way down, and asymmetric on purpose: stepping
+   * down answers something a person is watching happen, while stepping up is
+   * an experiment whose failure costs them another stall.
+   */
+  private governorTick(): void {
+    if (this.restartInFlight) return;
+    const now = Date.now();
+    if (this.restartPending) {
+      // A restart that failed leaves the browser stopped and the client still
+      // believing it is watching. Retried on the hold, at the rung that was
+      // working, until it takes.
+      if (now - this.lastRungChangeAt < WEBMCP_QUALITY_STEP_HOLD_MS) return;
+      this.restartPending = false;
+      void this.restartScreencast();
+      return;
+    }
+    if (this.rungIndex === 0) return;
+    if (now - this.lastDropAt < WEBMCP_QUALITY_RECOVER_QUIET_MS) return;
+    if (now - this.lastRungChangeAt < WEBMCP_QUALITY_STEP_HOLD_MS) return;
+    this.rungIndex -= 1;
+    this.lastRungChangeAt = now;
+    void this.restartScreencast();
+  }
+
+  /**
+   * Re-encode at the current rung, without ever changing whether we are
+   * streaming.
+   *
+   * The screencast's quality is fixed when it starts, so a rung change is a
+   * stop and a start. Everything about that is a race with the client's own
+   * enable/disable, so the flags are re-read after every await and a start that
+   * lost the race is compensated with a stop — the alternative is a browser
+   * left encoding frames for a pane that has gone.
+   *
+   * `frameThrottle` is deliberately untouched: an in-flight boost belongs to
+   * the person's gesture, not to the encoder's settings, and resetting it here
+   * would drop the rate back to 10fps in the middle of a scroll.
+   */
+  private async restartScreencast(): Promise<void> {
+    if (this.restartInFlight || this.disposed || !this.screencasting) return;
+    this.restartInFlight = true;
+    try {
+      await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
+      // The first frame of the restarted cast is the current picture again,
+      // and it must not be dropped as a duplicate of the last frame of the
+      // previous one — that frame is what the pane is waiting for.
+      this.lastFrameData = undefined;
+      if (this.disposed || !this.screencasting) return;
+      // No compensating stop after this: CDP commands reach the browser in the
+      // order they are SENT, and there is no await between the check above and
+      // the send inside — so a disable racing this either arrives before the
+      // check (and is caught by it) or after the start (and stops it). The
+      // browser cannot end up streaming into a pane that has gone.
+      if (await this.sendStartScreencast()) return;
+      // The encoder is stopped and the client has no idea: it asked for a
+      // stream once, was told yes, and is watching a pane that will never
+      // update again. Nothing else is listening for this — a restart has no
+      // caller to answer.
+      //
+      // So: go back to the rung that WAS working (this one is unproven, and
+      // the refusal may well be about it), stay `screencasting` so the client
+      // is not lied to, and let the governor try again after its hold. A
+      // failure here is a transient refusal — the stream was running a moment
+      // ago — and the retry is what turns a frozen pane into a hiccup.
+      this.rungIndex = this.appliedRungIndex;
+      this.lastRungChangeAt = Date.now();
+      this.restartPending = true;
+    } finally {
+      this.restartInFlight = false;
+    }
+  }
+
+  /**
+   * Ask the browser to start painting at the current rung.
+   *
+   * Reports failure by clearing `screencasting` rather than throwing, which is
+   * what lets the client fall back to polling screenshots on a browser that
+   * cannot screencast at all.
+   */
+  private async sendStartScreencast(): Promise<boolean> {
+    const quality = this.rungQuality();
+    let started = true;
+    await this.cdp
+      .send(
+        "Page.startScreencast" as never,
+        {
+          format: "jpeg",
+          quality,
+          // Not multiplied by the session's device pixel ratio: Chromium
+          // clamps a screencast to the CSS size of the surface, so asking for
+          // more is a no-op that only makes this line look like a promise.
+          maxWidth: WEBMCP_VIEWPORT.width,
+          maxHeight: WEBMCP_VIEWPORT.height,
+        } as never,
+      )
+      .catch((error) => {
+        // Reported, not thrown. What the CALLER does with a refusal differs —
+        // see `setScreencast` and `restartScreencast` — and a throw here would
+        // be an error banner on a session whose only problem is that this
+        // browser cannot screencast.
+        started = false;
+        logger.debug("[webmcp] could not start the screencast", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    if (started) this.appliedRungIndex = this.rungIndex;
+    if (started && this.screencasting && !this.disposed) {
+      this.callbacks.onStreamQualityChanged?.(quality);
+    }
+    return started;
   }
 
   private wirePage(): void {
@@ -273,59 +1045,6 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     this.page.on("console", () => this.callbacks.onActivityObserved());
   }
 
-  private key(frameId: string, name: string): string {
-    return `${frameId} ${name}`;
-  }
-
-  private dropToolsForFrame(frameId: string): void {
-    for (const key of [...this.tools.keys()]) {
-      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
-    }
-  }
-
-  private emitTools(): void {
-    const descriptors: ProviderToolDescriptor[] = [...this.tools.values()].map(
-      (tool) => {
-        const frameUrl = this.frames.get(tool.frameId) ?? this.url;
-        return {
-          frameId: tool.frameId,
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          annotations: tool.annotations,
-          origin: originOf(frameUrl),
-          isMainFrame: tool.frameId === this.mainFrameId,
-          registrationKind:
-            tool.backendNodeId !== undefined
-              ? "declarative"
-              : tool.stackTrace
-                ? "imperative"
-                : "unknown",
-        };
-      },
-    );
-    this.callbacks.onToolsChanged(descriptors);
-  }
-
-  /**
-   * Resolve a tool name to the frame currently offering it, preferring the main
-   * frame. Frame ids churn across navigations, so this happens at invoke time
-   * rather than being carried around as identity.
-   */
-  private resolveFrame(toolName: string): string {
-    for (const tool of this.tools.values()) {
-      if (tool.name === toolName && tool.frameId === this.mainFrameId) {
-        return tool.frameId;
-      }
-    }
-    for (const tool of this.tools.values()) {
-      if (tool.name === toolName) return tool.frameId;
-    }
-    throw new WebMcpToolGoneError(
-      `The page no longer offers a tool named "${toolName}".`,
-    );
-  }
-
   async navigate(url: string): Promise<void> {
     await this.page.goto(url, {
       waitUntil: "domcontentloaded",
@@ -345,136 +1064,366 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     this.url = this.page.url();
   }
 
+  /**
+   * Run a page tool, translating the bridge's vocabulary into this interface's.
+   *
+   * The translation is the whole job here, and each mapping matters to someone
+   * reading the timeline afterwards: `webmcp_tool_gone` is "the page moved on",
+   * a cancel carries WHY it was cancelled (the browser's own answer never
+   * says), and the daemon's `{invocationId, output}` envelope loses its id
+   * because the runtime already has its own handle for this call.
+   */
   async invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }> {
-    const frameId = request.frameId || this.resolveFrame(request.toolName);
-    if (request.signal.aborted) {
-      throw new WebMcpInvocationCancelledError(
-        "Cancelled before it started.",
-        "cancelled",
-      );
-    }
-
-    let invocationId: string;
     try {
-      ({ invocationId } = (await this.cdp.send(
-        "WebMCP.invokeTool" as never,
-        {
-          frameId,
-          toolName: request.toolName,
-          input: request.input,
-        } as never,
-      )) as { invocationId: string });
+      const { output } = await this.bridge.invoke({
+        toolName: request.toolName,
+        // The frame the runtime resolved from its own registry, so a subframe's
+        // tool is not shadowed by a same-named one in the main frame.
+        ...(request.frameId ? { frameId: request.frameId } : {}),
+        input: request.input,
+        // Handing the signal over also hands the DEADLINE over: the bridge
+        // stops arming its own, so the runtime stays the single owner of what
+        // "too long" means and a timeout is not reported as a user cancel.
+        signal: request.signal,
+      });
+      return { output };
     } catch (error) {
-      // An unknown tool rejects here rather than settling as a response.
-      const message = error instanceof Error ? error.message : String(error);
-      if (/tool not found/i.test(message)) {
-        throw new WebMcpToolGoneError(
-          `The page no longer offers a tool named "${request.toolName}".`,
-        );
-      }
-      throw error;
+      throw translateBridgeError(error, request.toolName);
     }
-
-    return new Promise<{ output: unknown }>((resolve, reject) => {
-      const waiter = { resolve, reject } as {
-        resolve: (value: { output: unknown }) => void;
-        reject: (error: Error) => void;
-        cancelReason?: "cancelled" | "timeout";
-      };
-      this.pending.set(invocationId, waiter);
-
-      let aborting = false;
-      const onAbort = () => {
-        // Idempotent: this runs from the listener AND from the already-aborted
-        // re-check below, and both can be reached for one invocation.
-        if (aborting) return;
-        aborting = true;
-        const reason =
-          request.signal.reason === "timeout" ? "timeout" : "cancelled";
-        waiter.cancelReason = reason;
-        // Ask the browser to stop, then settle on its Canceled response. If
-        // that never arrives (the page died mid-invocation), settle anyway so
-        // the caller is never left waiting on a browser that is gone.
-        this.cdp
-          .send("WebMCP.cancelInvocation" as never, { invocationId } as never)
-          .catch(() => {});
-        setTimeout(() => {
-          if (!this.pending.has(invocationId)) return;
-          this.pending.delete(invocationId);
-          reject(
-            new WebMcpInvocationCancelledError(
-              reason === "timeout"
-                ? "The tool did not respond in time."
-                : "The invocation was cancelled.",
-              reason,
-            ),
-          );
-        }, CANCEL_SETTLE_GRACE_MS);
-      };
-
-      request.signal.addEventListener("abort", onAbort, { once: true });
-      // The listener is registered only after `WebMCP.invokeTool` resolves, so
-      // an abort during that round trip has already fired and will never reach
-      // it. Without this re-check the browser is never told to stop and the
-      // caller waits on a tool nobody is going to cancel.
-      if (request.signal.aborted) onAbort();
-    });
   }
 
+  /**
+   * A capture for the timeline — and for the client's screenshot POLL, which
+   * is the fallback whenever a screencast cannot be started.
+   *
+   * QUALITY degrades, geometry never. This used to retry as a crop of the
+   * top-left 640x400, which is defensible for a thumbnail viewed as-is and
+   * wrong for the poll: the pane renders whatever comes back as the whole
+   * 1280x800 surface and maps clicks across it, so a crop presented as a
+   * viewport puts every click at up to twice its true coordinate. A session
+   * rendering above one device pixel per CSS pixel made that retry far more
+   * likely, because a device-scaled full capture is four times the pixels and
+   * blows the 64 KiB budget on ordinary pages.
+   *
+   * The same surface capture the stills use, for the same reasons: no DOM
+   * mutation (Playwright's caret hiding paints), no clip (which resets the
+   * context's own device scale factor), and CSS resolution, which is the
+   * geometry the client scales against.
+   */
   async captureScreenshot(): Promise<string | undefined> {
-    try {
-      const buffer = await this.page.screenshot({
-        type: "jpeg",
-        quality: 50,
-        timeout: 5_000,
-      });
-      if (buffer.byteLength <= SCREENSHOT_MAX_BYTES) {
-        return buffer.toString("base64");
+    for (const quality of SCREENSHOT_QUALITY_LADDER) {
+      const attempt = await this.captureStill(quality);
+      // Both non-pictures answer the same way here, and the caller reads them
+      // the same way: "no new picture", which the client holds its current one
+      // through. The poll comes back in a second, which is sooner than any
+      // retry this could arrange.
+      if (attempt.got !== "picture") return undefined;
+      if (Buffer.byteLength(attempt.data, "base64") <= SCREENSHOT_MAX_BYTES) {
+        return attempt.data;
       }
-      // One retry at a smaller size. A frame that still will not fit the budget
-      // is dropped: the timeline can say "no screenshot", but it must not carry
-      // multi-megabyte entries.
-      const smaller = await this.page.screenshot({
-        type: "jpeg",
-        quality: 30,
-        clip: {
-          x: 0,
-          y: 0,
-          width: SCREENSHOT_WIDTH,
-          height: Math.round(
-            (SCREENSHOT_WIDTH * WEBMCP_VIEWPORT.height) / WEBMCP_VIEWPORT.width,
-          ),
-        },
-        timeout: 5_000,
-      });
-      return smaller.byteLength > SCREENSHOT_MAX_BYTES
-        ? undefined
-        : smaller.toString("base64");
-    } catch {
-      return undefined;
     }
+    // Nothing fit. The timeline can say "no screenshot"; it must not carry a
+    // multi-megabyte entry, and the pane must not be handed a wrong shape.
+    return undefined;
   }
 
   currentUrl(): string {
     return this.url;
   }
 
+  /**
+   * Apply a batch of input to the page, in order.
+   *
+   * Driven through Playwright's `page.mouse` / `page.keyboard` rather than raw
+   * `Input.dispatchMouseEvent` / `dispatchKeyEvent`. Those primitives take a
+   * modifier bitmask, a `text`/`unmodifiedText` pair, a `windowsVirtualKeyCode`
+   * and a `code`, all of which have to be derived per key and per layout —
+   * Playwright already carries that table, along with modifier state tracking
+   * and click counting. Reimplementing it here would be reimplementing it
+   * WRONGLY, quietly, for every key that is not a letter.
+   *
+   * Each event is applied under its own try/catch. One exotic key that
+   * Playwright refuses to map must not swallow the click queued behind it — a
+   * batch is a person's gesture, and losing the rest of it is far more visible
+   * than losing the one event that failed.
+   */
+  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
+    if (this.disposed) return;
+    // Part of the settle window, and stamped even when nothing is streaming:
+    // a gesture that changes nothing on screen produces no paint to push the
+    // window out with, and a still taken mid-gesture is a round trip spent on
+    // a picture that is about to be wrong.
+    this.lastInputAt = Date.now();
+    // BEFORE the first awaited operation, not after it. The paint caused by
+    // the very first event of a batch can reach the screencast handler while
+    // this method is still awaiting, and a boost applied afterwards would
+    // arrive too late to speed up the one frame the person is actually
+    // waiting to see.
+    //
+    // NOT gated on who is watching: input arriving IS the signal that a human
+    // wants to see the result, and that is as true for a client on the SSE
+    // stream — the ones that felt the lag — as for one on the socket. Gating
+    // it would need subscriber state plumbed from the transport down into the
+    // provider, which is a coupling this layering exists to avoid.
+    if (this.screencasting) {
+      this.frameThrottle.boost(
+        WEBMCP_FRAME_BOOST_INTERVAL_MS,
+        WEBMCP_FRAME_BOOST_WINDOW_MS,
+      );
+    }
+    for (const event of events) {
+      try {
+        await this.applyInput(event);
+      } catch (error) {
+        logger.debug("[webmcp] could not apply an input event", {
+          kind: event.kind,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Move the virtual pointer, remembering where it ended up.
+   *
+   * `skipIfUnchanged` is for the wheel path: a scroll is a run of wheels at
+   * one coordinate and each move is an awaited CDP round trip, so the ones
+   * after the first buy nothing.
+   */
+  private async moveTo(
+    x: number,
+    y: number,
+    skipIfUnchanged = false,
+  ): Promise<void> {
+    const [clampedX, clampedY] = this.clamp(x, y);
+    if (
+      skipIfUnchanged &&
+      this.pointerAt?.x === clampedX &&
+      this.pointerAt?.y === clampedY
+    ) {
+      return;
+    }
+    const generation = this.pointerGeneration;
+    await this.page.mouse.move(clampedX, clampedY);
+    // Only if the page is still the one this move was aimed at. A navigation
+    // during the await already cleared the remembered coordinate; writing it
+    // back here would let the next same-coordinate wheel skip the move that
+    // first tells the NEW document where the pointer is.
+    if (generation === this.pointerGeneration) {
+      this.pointerAt = { x: clampedX, y: clampedY };
+    }
+  }
+
+  private async applyInput(event: WebMcpInputEvent): Promise<void> {
+    // POINTER events only. Their snapshot is the only source of truth for a
+    // modifier that was held before the pane had focus — and note that "nothing
+    // held" is an ABSENT field, so this must run for events with no snapshot
+    // too, or a modifier could never be released. Key events are left alone:
+    // they carry their own state through the presses the client forwards, and
+    // syncing there would double-press the very key being reported.
+    if (
+      event.kind === "mouse_move" ||
+      event.kind === "mouse_down" ||
+      event.kind === "mouse_up" ||
+      event.kind === "wheel"
+    ) {
+      await this.syncModifiers(event.modifiers);
+    }
+    switch (event.kind) {
+      case "mouse_move":
+        await this.moveTo(event.x, event.y);
+        return;
+      case "mouse_down":
+        await this.moveTo(event.x, event.y);
+        await this.page.mouse.down({
+          button: event.button,
+          ...(event.clickCount ? { clickCount: event.clickCount } : {}),
+        });
+        return;
+      case "mouse_up":
+        await this.moveTo(event.x, event.y);
+        await this.page.mouse.up({
+          button: event.button,
+          ...(event.clickCount ? { clickCount: event.clickCount } : {}),
+        });
+        return;
+      case "wheel":
+        // Skip the positioning move when the pointer is provably already
+        // there. A wheel costs TWO awaited CDP round trips, and a scroll is a
+        // run of wheels at one coordinate — so this halves the server-side
+        // cost of the most latency-sensitive input there is. Only the move is
+        // skipped; the wheel itself always goes.
+        await this.moveTo(event.x, event.y, true);
+        await this.page.mouse.wheel(event.deltaX, event.deltaY);
+        return;
+      case "key_down":
+        await this.page.keyboard.down(event.key);
+        this.noteModifierKey(event.key, true);
+        return;
+      case "key_up":
+        await this.page.keyboard.up(event.key);
+        this.noteModifierKey(event.key, false);
+        return;
+      case "text":
+        // `insertText`, not a synthesized key sequence. Paste and IME
+        // composition have no keystrokes to replay, and reconstructing them
+        // would be wrong in a different way on every keyboard layout.
+        await this.page.keyboard.insertText(event.text);
+        return;
+    }
+  }
+
+  /**
+   * Make Playwright's modifier state match what the person was actually
+   * holding when they produced this event.
+   *
+   * Playwright tracks modifiers from the key events IT has seen, and the pane
+   * only forwards keys while it has focus. So someone who holds Shift, THEN
+   * clicks into the pane, produces a click whose snapshot says shift — and a
+   * page that receives it unmodified, because no keydown was ever forwarded.
+   * Shift-click to extend a selection, ctrl-click to open in a new tab and
+   * ctrl-scroll to zoom all fail exactly that way.
+   *
+   * The snapshot rides on every event rather than being tracked here for the
+   * same reason: focus can leave mid-chord, and a server holding its own idea
+   * of "shift is down" would apply it to every later click with nothing to
+   * correct it.
+   */
+  private async syncModifiers(
+    modifiers: WebMcpInputModifiers | undefined,
+  ): Promise<void> {
+    const wanted = new Set<string>();
+    if (modifiers?.alt) wanted.add("Alt");
+    if (modifiers?.ctrl) wanted.add("Control");
+    if (modifiers?.meta) wanted.add("Meta");
+    if (modifiers?.shift) wanted.add("Shift");
+
+    for (const key of MODIFIER_KEYS) {
+      const held = this.heldModifiers.has(key);
+      if (wanted.has(key) === held) continue;
+      if (wanted.has(key)) {
+        await this.page.keyboard.down(key);
+        this.heldModifiers.add(key);
+      } else {
+        await this.page.keyboard.up(key);
+        this.heldModifiers.delete(key);
+      }
+    }
+  }
+
+  /** Keep the tracked set honest when the client forwards a modifier key itself. */
+  private noteModifierKey(key: string, down: boolean): void {
+    if (!(MODIFIER_KEYS as readonly string[]).includes(key)) return;
+    if (down) this.heldModifiers.add(key);
+    else this.heldModifiers.delete(key);
+  }
+
+  /**
+   * Hold a pointer inside the viewport.
+   *
+   * The client scales against the frame it is looking at, so a coordinate
+   * arriving out of range means the two disagreed for a moment — a resize, or a
+   * frame that landed after the pane had already changed size. Clamping keeps
+   * that from dispatching at a negative coordinate, where Chromium's behaviour
+   * is its own business rather than anything the page would do.
+   */
+  private clamp(x: number, y: number): [number, number] {
+    return [
+      Math.min(Math.max(x, 0), WEBMCP_VIEWPORT.width - 1),
+      Math.min(Math.max(y, 0), WEBMCP_VIEWPORT.height - 1),
+    ];
+  }
+
+  async setScreencast(enabled: boolean): Promise<boolean> {
+    if (this.disposed) return false;
+    if (enabled === this.screencasting) return this.screencasting;
+    this.screencasting = enabled;
+    if (enabled) {
+      // Page-target-level, so it survives navigations: the pane keeps painting
+      // across a page load without anything re-arming it.
+      //
+      // Everything the PREVIOUS stream left behind is discarded here, BEFORE
+      // the start command rather than after it. `screencasting` is already
+      // true, so the browser can deliver a frame of the new cast while the
+      // start's own reply is still in flight — and a reset applied after that
+      // await would throw away the new stream's work: the substitute owed to
+      // its first oversized paint, the pressure that paint reported, and the
+      // generation of a capture it had already begun. The previous stream is
+      // over the moment this decides to start another; there is nothing to
+      // wait a round trip for.
+      //
+      // The retry belonged to the stream that is over.
+      this.restartPending = false;
+      // As does the substitute owed to one of its frames: it describes a
+      // picture this stream has not sent.
+      this.oversizePending = false;
+      // And a capture it began, for the same reason.
+      this.captureGeneration += 1;
+      // A fresh audience, and the replay burst that comes with it, is not
+      // evidence about the link: the drops that pressured the PREVIOUS stream
+      // are stale, and the hold keeps the first seconds of this one from being
+      // read as more of them. The RUNG itself survives — see the field.
+      this.dropTimestamps = [];
+      this.lastRungChangeAt = Date.now();
+      // Rides the session's existing CDPSession — the same one `Page.enable`
+      // and the WebMCP domain are on. A second session would double every
+      // event this class already handles.
+      //
+      // A browser that cannot screencast reports it here, and the caller turns
+      // that `false` into the client's screenshot fallback.
+      if (!(await this.sendStartScreencast())) this.screencasting = false;
+      // AFTER the start resolves, and only if the stream survived it. A stop
+      // that lands mid-start wins (see `setScreencast(false)` below), and an
+      // interval armed unconditionally here would outlive it — capturing
+      // stills for a stream nobody restarted.
+      if (this.screencasting && !this.disposed) this.armHousekeeping();
+      return this.screencasting;
+    }
+    this.clearHousekeeping();
+    // The retry belonged to the stream being stopped; carrying it forward
+    // would stop and start the NEXT one for no reason.
+    this.restartPending = false;
+    this.oversizePending = false;
+    this.captureGeneration += 1;
+    this.frameThrottle.reset();
+    // The next stream is a fresh picture. Keeping the old bytes would let the
+    // first frame of a restarted cast be dropped as a duplicate of the last
+    // frame of the previous one — which is exactly the frame the pane is
+    // waiting for.
+    this.lastFrameData = undefined;
+    await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
+    return false;
+  }
+
   viewportTransport(): WebMcpViewportTransport {
-    // V1 runs the browser on the developer's own machine, so the viewport IS
-    // the window in front of them — unless it was launched headless, where
-    // there is no window and the UI must not tell anyone to go look at one.
-    // A remote provider returns an interactive URL here instead, and the client
-    // renders that without further changes.
+    // An embedded session has no window by construction, so the streamed pane
+    // is the viewport — and it is interactive, which is what separates this
+    // from plain `headless`. Reporting `headless` here would tell the client
+    // there is nothing to drive.
+    if (this.viewportMode === "embedded") {
+      return { kind: "frame-stream", ...WEBMCP_VIEWPORT };
+    }
+    // Otherwise the browser runs on the developer's own machine, so the
+    // viewport IS the window in front of them — unless it was launched
+    // headless, where there is no window and the UI must not tell anyone to go
+    // look at one. A remote provider returns an interactive URL here instead,
+    // and the client renders that without further changes.
     return this.headless ? { kind: "headless" } : { kind: "native-window" };
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    for (const [, waiter] of this.pending) {
-      waiter.reject(new Error("The browser session was closed."));
+    // Before the context closes, so the browser stops encoding immediately
+    // rather than painting into a teardown that is racing a timeout.
+    this.clearHousekeeping();
+    this.frameThrottle.reset();
+    if (this.screencasting) {
+      this.screencasting = false;
+      await this.cdp.send("Page.stopScreencast" as never).catch(() => {});
     }
-    this.pending.clear();
+    // Rejects every in-flight invocation and clears their timers.
+    this.bridge.dispose();
     await waitForClose(this.context.close());
     await waitForClose(this.browser.close());
   }
@@ -500,10 +1449,20 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
 
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
+    const viewportMode = options.viewportMode ?? "window";
     // Headed for real sessions: the developer drives their own window. Tests
     // pass `headless` explicitly; `MCPJAM_WEBMCP_HEADLESS` is the escape hatch
     // for an inspector running where no display exists.
-    const headless = options.headless ?? webMcpHeadlessRequested();
+    //
+    // An embedded session is headless regardless of either, and not as a
+    // default someone can override: its whole proposition is that the page
+    // lives in the pane. A window would put a second, separately-driveable copy
+    // of the page on the developer's desktop, and the two would fight for the
+    // same clicks.
+    const headless =
+      viewportMode === "embedded"
+        ? true
+        : (options.headless ?? webMcpHeadlessRequested());
 
     try {
       // Chromium cannot start its sandbox as uid 0 (the pinned CI/browser
@@ -520,7 +1479,12 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
       });
       context = await browser.newContext({
         viewport: { ...WEBMCP_VIEWPORT },
-        deviceScaleFactor: 1,
+        // The VIEWER's ratio, so the page rasterises the way it would on their
+        // own screen: text at 2x is laid out and hinted for 2x and reaches the
+        // pane supersampled rather than merely upscaled. Set once, at context
+        // creation, rather than emulated per navigation — see the option's
+        // documentation for why a second override is the wrong instrument.
+        deviceScaleFactor: options.devicePixelRatio ?? 1,
         acceptDownloads: false,
         permissions: [],
       });
@@ -534,6 +1498,8 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
         options.callbacks,
         options.url,
         headless,
+        viewportMode,
+        options.devicePixelRatio ?? 1,
       );
       await session.start(options.url);
       return session;
@@ -549,7 +1515,9 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
           "The WebMCP Inspector opens a real browser window, and this machine has no display " +
             "to open one on. Set MCPJAM_WEBMCP_HEADLESS=true to run the browser headless — " +
             "tool discovery, invocation and screenshots all still work; only interacting with " +
-            "the page by hand does not.",
+            "the page by hand does not. If you need to interact with the page, use a hosted " +
+            "browser on an MCPJam computer instead: it runs on a machine with a display, and " +
+            "you drive it from the Browser panel.",
         );
       }
       if (/Executable doesn't exist|please run|install/i.test(message)) {

@@ -22,6 +22,20 @@ interface ElectronAPI {
     showMessageBox: (options: any) => Promise<any>;
   };
 
+  /**
+   * Local harness. `pickWorkspace` opens the OS directory dialog in the MAIN
+   * process and registers what the user chose, returning an opaque grant id and
+   * a tilde-shortened display root. The renderer never sees or sends a path —
+   * if it could name one, anything that can drive the renderer could name `/`.
+   */
+  localHarness: {
+    pickWorkspace: () => Promise<{
+      workspaceGrantId: string;
+      displayRoot: string;
+    } | null>;
+    keystoreAvailable: () => Promise<boolean>;
+  };
+
   // Window operations
   window: {
     minimize: () => void;
@@ -69,6 +83,12 @@ const electronAPI: ElectronAPI = {
     openDialog: (options) => ipcRenderer.invoke("dialog:open", options),
     saveDialog: (data) => ipcRenderer.invoke("dialog:save", data),
     showMessageBox: (options) => ipcRenderer.invoke("dialog:message", options),
+  },
+
+  localHarness: {
+    pickWorkspace: () => ipcRenderer.invoke("local-harness:pick-workspace"),
+    keystoreAvailable: () =>
+      ipcRenderer.invoke("local-harness:keystore-available"),
   },
 
   window: {
@@ -133,3 +153,22 @@ contextBridge.exposeInMainWorld("electronAPI", electronAPI);
 
 // Also expose a flag to indicate we're running in Electron
 contextBridge.exposeInMainWorld("isElectron", true);
+
+/**
+ * Whether this is the SHIPPED app rather than a dev run.
+ *
+ * `isElectron` alone cannot answer that — it is true in dev too — and the two
+ * differ on something the renderer has to act on: forge packages `.vite` only,
+ * with no `node_modules`, and `playwright` is externalized, so a Playwright
+ * browser can never launch in the packaged app. A UI that offered "Chrome
+ * window" there would be offering a button that always fails.
+ *
+ * Read from `process.argv` rather than `process.env`, because a sandboxed
+ * preload gets argv (the main window passes `--mcpjam-packaged` through
+ * `webPreferences.additionalArguments`) and does not get the main process's
+ * environment.
+ */
+contextBridge.exposeInMainWorld(
+  "isElectronPackaged",
+  process.argv.includes("--mcpjam-packaged"),
+);

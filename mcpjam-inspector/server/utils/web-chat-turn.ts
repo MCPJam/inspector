@@ -74,15 +74,23 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
+import {
+  fetchRuntimeSecrets,
+  resolveTurnRuntimeSecrets,
+} from "./harness/runtime-secrets.js";
+import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import { harnessUsesExternalAccount } from "./harness/registry.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import {
   classifyUiToolApprovals,
+  mergeUiToolApprovalClassifications,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
@@ -254,6 +262,63 @@ export interface WebChatTurnPersistContext {
    * resumed sandbox with stale plugin material ineligible.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
+   * project secrets.
+   *
+   * An id rather than the resolved spec, deliberately. `resolveEnvironmentForRuntime`
+   * and `ResolvedEnvironmentRuntime` never carry secrets: `toEnvironmentPreview`
+   * spreads nothing and must never see a value, and a resolved spec that could
+   * carry one would put a credential on the same object every preview, log line
+   * and telemetry field already reads. The harness turn fetches its own secrets
+   * from Convex with the user's own bearer instead, and this is the only thing
+   * it needs to do that.
+   *
+   * Absent ⇒ this turn has no grant, which is a normal state, not a failure.
+   *
+   * ALSO the direct-chat resume pin: written into
+   * `resumeConfig.environmentId` so a reopened Playground conversation can be
+   * restored onto the target it actually ran on rather than the viewer's
+   * current selection. See the persist site below for why sending it on every
+   * turn is safe.
+   */
+  environmentId?: string;
+  /**
+   * This turn's MATERIALIZED secrets, when the ROUTE already resolved them.
+   *
+   * Presence is semantic (even empty): supplied ⇒ do not fetch again. `chat-v2`
+   * resolves them before it builds the emulated `bash` tool, so by the time
+   * this helper runs the list already exists — and re-fetching would both cost
+   * a second KMS decrypt and risk the scrubber registering a different set than
+   * the box received. A caller that has not resolved them omits this and the
+   * helper fetches from {@link environmentId}.
+   */
+  runtimeSecrets?: { name: string; value: string }[];
+  /**
+   * The secrets fetch FAILED — distinct from "this turn has none".
+   *
+   * Forces the harness runtime fingerprint to change, so the session forks onto
+   * a fresh bridge instead of resuming one that may still hold previously
+   * delivered values this process can no longer enumerate (and therefore could
+   * not scrub out of the transcript). See `runtime-secrets.ts`.
+   */
+  secretsUnavailable?: boolean;
+  /**
+   * Fired when this turn's materialized secrets actually reach an execution
+   * surface — a bash command that carries them, or a started harness session
+   * holding them. Used to stamp delivery honestly; see `sandbox-bash`.
+   */
+  onSecretEnvDelivered?: () => void;
+  /**
+   * What this turn should RECORD about the configuration it ran with —
+   * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
+   * from the POST-narrowing spec so it reflects what actually ran.
+   *
+   * Separate from `runtimeSkillsOverride` and `effectiveCapabilities` on
+   * purpose: those decide what reaches the model, this only decides what gets
+   * written down. Delivery is byte-identical whether this is present or not.
+   */
+  turnProvenance?: TurnSkillProvenance;
 }
 
 /**
@@ -291,6 +356,15 @@ export interface WebChatTurnPrepareInputs {
   uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
+  /**
+   * Approval classification for the `browser_*` tools this turn advertises,
+   * produced by `resolveHostTools`. Merged with the `ui_*` classification
+   * below: the engines have ONE `uiToolApprovals` slot, and whichever
+   * namespace filled it alone left the other falling through to the
+   * `requireToolApproval` default (off by default) — which strands a turn
+   * whose gated call never gets its approval request.
+   */
+  browserToolApprovals?: UiToolApprovalClassification;
   /** Host-configured computer working directory (COMP-16); roots the harness
    *  Shell under the same dir the bash tool runs in. */
   computerWorkdir?: string;
@@ -523,8 +597,12 @@ export function stripUiContextModelParts(
 function uiToolApprovalsFrom(
   uiTools: UiToolEntry[] | undefined,
   requireToolApproval: boolean | undefined,
+  browserToolApprovals?: UiToolApprovalClassification,
 ): UiToolApprovalClassification {
-  return classifyUiToolApprovals(uiTools, requireToolApproval === true);
+  return mergeUiToolApprovalClassifications(
+    classifyUiToolApprovals(uiTools, requireToolApproval === true),
+    browserToolApprovals,
+  );
 }
 
 /**
@@ -666,13 +744,13 @@ export async function streamWebChatTurn(
           abortSignal: runtime.abortSignal,
         })
       : runtime.scopeStepUp?.cancelRequest
-        ? buildHostedScopeStepUpCancellation({
-            request: runtime.scopeStepUp.cancelRequest,
-            bearer: runtime.scopeStepUp.bearer,
-            messages: modelMessages,
-            tools: preparedTools,
-          })
-        : undefined;
+      ? buildHostedScopeStepUpCancellation({
+          request: runtime.scopeStepUp.cancelRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          messages: modelMessages,
+          tools: preparedTools,
+        })
+      : undefined;
   const createScopeStepUpContinuation =
     runtime.scopeStepUp && persist.chatSessionId
       ? async ({
@@ -783,6 +861,64 @@ export async function streamWebChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
+
+  // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
+  // very different things need the same list and must not disagree about it:
+  //
+  //   1. the SANDBOX, which receives the values as environment variables (the
+  //      harness turn takes them via `runtimeSecrets` below);
+  //   2. the SCRUBBER, which replaces those same values with `[secret:NAME]`
+  //      in everything this turn persists.
+  //
+  // Two fetches would mean two KMS decrypts per turn AND a window where the
+  // registry is missing something the box already has — which is the one way
+  // this feature leaks by accident. Values that reach the box but not the
+  // registry are values that get written to the transcript verbatim.
+  //
+  // ONE RESOLUTION PER TURN, and a caller's FAILURE is a resolution.
+  //
+  // The tri-state has three answers, and all three have to survive the trip:
+  // secrets, none, or "could not find out". An earlier version keyed only on
+  // `runtimeSecrets !== undefined`, which conflated the third with "the caller
+  // did not resolve" — so a caller that fetched and FAILED fell through to the
+  // fetch below and got a second attempt.
+  //
+  // That second attempt is what made it dangerous rather than merely wasteful.
+  // If it SUCCEEDED, this turn delivered real secrets into the box while the
+  // caller's established failure still forced `secretsUnavailable`, so the
+  // session persisted the `"unavailable"` fingerprint. A later turn whose
+  // fetches both fail computes that same fingerprint, RESUMES that
+  // secret-bearing bridge, and has no list to build a scrubber from — the exact
+  // unscrubbed resume the fork was introduced to prevent, reached by way of a
+  // recovery.
+  //
+  // So an established failure short-circuits: no retry, no delivery, and the
+  // fingerprint that says "unavailable" is only ever persisted by a turn that
+  // genuinely delivered nothing.
+  const secretsFetch = await resolveTurnRuntimeSecrets({
+    ...(persist.runtimeSecrets !== undefined
+      ? { callerSecrets: persist.runtimeSecrets }
+      : {}),
+    ...(persist.secretsUnavailable === true ? { callerUnavailable: true } : {}),
+    fetch: () =>
+      fetchRuntimeSecrets(runtime.authHeader, {
+        ...(persist.projectId ? { projectId: persist.projectId } : {}),
+        ...(persist.environmentId
+          ? { environmentId: persist.environmentId }
+          : {}),
+        ...(hostedChatSessionId ? { chatSessionId: hostedChatSessionId } : {}),
+      }),
+  });
+  const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+  // A failed fetch here forks the session for the same reason it does in
+  // `chat-v2`: we cannot enumerate what the box may already hold. Now exactly
+  // equivalent to `!secretsFetch.ok` — the caller's failure is already folded
+  // in above — and kept as one expression so the invariant is stated once.
+  const secretsUnavailable = !secretsFetch.ok;
+  const secretScrubber = runtimeSecrets
+    ? createSecretScrubber(runtimeSecrets)
+    : null;
+
   const cleanupStream = async () => {
     // Withdraw pending elicitation rows BEFORE dropping the connections: once
     // the stream is gone nobody can answer, and an abandoned row would stay
@@ -804,21 +940,38 @@ export async function streamWebChatTurn(
       String(prepare.modelDefinition.id),
       prepare.modelDefinition.provider,
     );
+  // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
+  //
+  // Without this the branch below sends a Cursor turn down the org-BYOK path,
+  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
+  // approve the turn and the turn would then run on a completely different
+  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
+  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
+  // product just told the user was ready.
+  //
+  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
+  // model", and an external-account turn is exactly the case where it does not.
+  // The two reasons to take the non-BYOK branch are different facts, so they
+  // stay separate values.
+  const isExternalAccountHarnessTurn =
+    !!persist.harness && harnessUsesExternalAccount(persist.harness);
+  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
 
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
-      : (persist.hostConfig ?? null);
+      ? persist.hostConfig({ resolvedTemperature }) ?? null
+      : persist.hostConfig ?? null;
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok",
+    modelSource: "mcpjam" | "byok" | "local_byok" | "external-account",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
@@ -855,6 +1008,11 @@ export async function streamWebChatTurn(
       // rather than inferring it from a version poll.
       return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
+        // Applied to the SERIALIZED ingest body, so it covers every payload
+        // this call can carry — session messages, the tool snapshot, assistant
+        // text, a nested JSON string a tool returned — without a per-field list
+        // somebody has to remember to extend.
+        ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
         modelSource,
         projectId: persist.projectId,
@@ -865,6 +1023,23 @@ export async function streamWebChatTurn(
           : {}),
         scenarioId: persist.scenarioId,
         authHeader: runtime.authHeader,
+        // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
+        // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
+        // replays.
+        //
+        // Those are different questions and the hosted path only ever answered
+        // the second, so Raw showed the bare host prompt while the model had
+        // been given more: the skills catalog, widget model context, the
+        // environment block. A debugger that cannot show what the model was
+        // told cannot answer "did it even know that skill existed?" — which is
+        // the first question anyone asks when an agent ignores a skill.
+        //
+        // Resume must NOT read this one. Turn-injected content is true of the
+        // turn that happened, not of the next one: replaying "your sandbox was
+        // reset" long after the fact is the confabulation `resumeConfig`'s raw
+        // prompt exists to prevent. Hence two fields, both already on the
+        // ingest contract — the local route has always filled this one.
+        systemPrompt: effectiveEnhancedSystemPrompt,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],
@@ -886,11 +1061,50 @@ export async function streamWebChatTurn(
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
                 selectedServers: resumableServers(persist),
+                // WHAT THIS CONVERSATION RAN ON — the missing half of resume.
+                //
+                // Every other field here restores how the turn was configured;
+                // none of them said WHERE it executed. So a browser Playground
+                // conversation reopened later had no recorded execution target
+                // at all, and the client fell back to whatever the VIEWER had
+                // selected in localStorage — a conversation that ran on a
+                // Cursor harness in a Project Environment reopened showing an
+                // unrelated host and model, and a follow-up typed there ran on
+                // that unrelated target without ever saying so.
+                //
+                // Only `origin: "api"` sessions wrote this before (see
+                // `routes/v1/chat-session-turn.ts`), which is why the browser
+                // half was blind.
+                //
+                // Sent on EVERY turn, not just the first, and that is correct:
+                // `preserveAgentResumePins` makes the four
+                // `AGENT_RESUME_PIN_KEYS` — this among them — first-write-wins
+                // at the ingest boundary, so a continuation cannot repin a
+                // conversation onto a different environment, while a session
+                // that started before this field existed still gets filled in
+                // on its next turn instead of staying unpinned forever.
+                //
+                // Absent ⇒ this turn had no environment (a plain host-mode or
+                // untargeted turn). Nothing is written rather than a
+                // placeholder: an empty pin would read as "recorded, and it
+                // was nothing", which is exactly the false certainty the
+                // client's "as-run configuration unavailable" disclosure
+                // exists to avoid.
+                ...(persist.environmentId
+                  ? { environmentId: persist.environmentId }
+                  : {}),
               },
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
           : {}),
-        turnTrace,
+        // Merged OUTSIDE the `isDirectChat` gate above: a scenario turn runs
+        // through an environment too, and skipping it there would leave User
+        // Testing's most environment-driven surface with no record of what it
+        // ran. Distinct from `resumeConfig`, which is gated because it is the
+        // restorable-resume surface; this is provenance and restores nothing.
+        turnTrace: persist.turnProvenance
+          ? { ...turnTrace, ...persist.turnProvenance }
+          : turnTrace,
         ...(persist.expectedVersion !== undefined
           ? { expectedVersion: persist.expectedVersion }
           : {}),
@@ -902,7 +1116,7 @@ export async function streamWebChatTurn(
     };
   };
 
-  if (!isMCPJam) {
+  if (!usesMcpjamFreePath) {
     const providerKeyResult = deriveOrgProviderKeyResult(
       prepare.modelDefinition,
     );
@@ -1007,6 +1221,7 @@ export async function streamWebChatTurn(
       uiToolApprovals: uiToolApprovalsFrom(
         effectiveUiTools,
         persist.requireToolApproval,
+        prepare.browserToolApprovals,
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
@@ -1030,9 +1245,19 @@ export async function streamWebChatTurn(
 
   // MCPJam-free path.
   const mcpjamModelId = String(prepare.modelDefinition.id);
+  // …except when the HARNESS pays for its own model. An external-account
+  // runtime (Cursor) reaches its provider on the customer's account with the
+  // runtime vendor, so MCPJam is not charged for the turn and must not record
+  // it as though it were — `'mcpjam'` is what makes a turn consume the org's
+  // MCPJam spend limit.
+  //
+  // `'external-account'` rather than `'byok'`, though both mean "not charged to
+  // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
+  // which this turn does not have. See `chatModelSourceValidator` in the
+  // backend for the two surfaces that read it that way.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam",
+    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1085,6 +1310,7 @@ export async function streamWebChatTurn(
     uiToolApprovals: uiToolApprovalsFrom(
       effectiveUiTools,
       persist.requireToolApproval,
+      prepare.browserToolApprovals,
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // Harness engine only: it builds its own MCP tool set (host-executed
@@ -1103,6 +1329,22 @@ export async function streamWebChatTurn(
       : {}),
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
+      : {}),
+    ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
+    // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
+    // (even empty) means "this turn's secrets are already resolved".
+    //
+    // ABSENT MEANS NO SECRETS ARE DELIVERED — it does not mean somebody else
+    // fetches them. `run-harness-turn` takes the list from its caller and never
+    // reads Convex itself (`runtimeSecretsOverride ?? null`), deliberately, so
+    // that delivery and transcript-scrubbing come from ONE read. A driver that
+    // has not wired secrets therefore runs with an empty env bag, silently.
+    // That is fail-closed, and it is exactly why the eval and swarm drivers
+    // need wiring rather than inheriting this for free.
+    ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
+    ...(secretsUnavailable ? { secretsUnavailable: true } : {}),
+    ...(persist.onSecretEnvDelivered
+      ? { onSecretEnvDelivered: persist.onSecretEnvDelivered }
       : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume

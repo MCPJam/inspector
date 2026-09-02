@@ -78,8 +78,16 @@ const URI_AUTHORITY = "mcpjam";
 export const WORKER_SKILL_ROOTS = [
   // The one skill here that teaches THIS server's tools rather than how to
   // author eval files elsewhere. Everything below it is about writing evals;
-  // this is about running them through the 22 eval tools the worker exposes.
+  // this is about running them through the eval tools the worker exposes.
   "skills/run-mcpjam-evals",
+  // REFERENCE MATERIAL, not a procedure — and the reason it is served rather
+  // than inlined. Every eval read hands a model wire enums (`userValue`,
+  // `argumentMismatch`, `evaluatorErrorRateAboveMaximum`) whose meanings are
+  // not derivable from their spellings; the full ~36-member vocabulary does
+  // not belong in a tool description, and a doc site is not fetchable
+  // mid-turn. This is the definition of every member, where an agent already
+  // looks for reference material.
+  "skills/user-value-chain-glossary",
   "skills/mcpjam-eval-import",
   "sdk/skills/create-mcp-eval",
   "sdk/skills/explore-to-sdk-evals",
