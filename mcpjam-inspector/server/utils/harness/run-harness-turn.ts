@@ -100,6 +100,10 @@ import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import {
+  prepareLocalHarnessTurn,
+  type PreparedLocalHarnessTurn,
+} from "./local/local-turn.js";
+import {
   resolveWorkingDirectory,
   HOME_ROOT,
 } from "../computers/path-confine.js";
@@ -494,6 +498,29 @@ export function harnessRuntimeFingerprint(parts: {
    */
   secretsHash?: string;
   /**
+   * WHERE this turn runs, and — for the local target — exactly what it runs.
+   *
+   * A resumed harness session reattaches to a bridge process that already
+   * exists, so a session created against a cloud box can never be resumed on a
+   * laptop, or the other way round. That much the kind alone settles.
+   *
+   * The runtime id, the workspace grant and the policy version are folded in
+   * for the reason every other dimension here is: a resumed session keeps the
+   * runtime, directory and permission policy it was CREATED with, so a change
+   * to any of them has to fork rather than silently continue under terms the
+   * user did not agree to. Consent is bound to exactly this set, so a resumed
+   * session that skipped the fork would be running under a grant that no longer
+   * describes it.
+   *
+   * Appended ONLY for a local turn, so every hosted turn hashes byte-identically
+   * to before this dimension existed and its sessions keep resuming.
+   */
+  localTarget?: {
+    runtimeId: string;
+    workspaceGrantId: string;
+    policyVersion: string;
+  };
+  /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
    * is why rather than an oversight. Their credential is a materialized project
    * secret, so a rotation already forks through `secretsHash`; and the harness
@@ -510,6 +537,16 @@ export function harnessRuntimeFingerprint(parts: {
     parts.permissionMode,
     ...(pluginDimension ? [pluginDimension] : []),
     ...(parts.secretsHash ? [parts.secretsHash] : []),
+    // Appended like every other optional dimension, and separated by the same
+    // 0x01 delimiter above — so a runtime id ending where a grant id begins
+    // cannot hash the same as a different pair.
+    ...(parts.localTarget
+      ? [
+          `local-native:${parts.localTarget.runtimeId}:` +
+            `${parts.localTarget.workspaceGrantId}:` +
+            `${parts.localTarget.policyVersion}`,
+        ]
+      : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -587,6 +624,7 @@ export async function runHarnessTurn(
     builtInTools,
     computerWorkdir,
     harnessSandboxBinding,
+    harnessExecutionTarget,
     executionScope,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
@@ -698,6 +736,17 @@ export async function runHarnessTurn(
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
   let brokerRevoked = false;
+  /**
+   * The LOCAL path's own teardown: revoke the gateway, revoke the lease, stop
+   * the supervised tree.
+   *
+   * Held out here, next to `brokerRunId`, because it has to run on EVERY
+   * terminal path — normal finish, abort, and the outer catch — for the same
+   * reason the broker revoke does. It is idempotent, so calling it from more
+   * than one of them is harmless and is what makes each of them able to stop
+   * caring which other one also ran.
+   */
+  let localTeardown: (() => Promise<void>) | null = null;
   // This turn's claim on the box, held across the preparation window (step 3a)
   // and given up the moment the lease is recorded — recording it consumes the
   // claim, and from then on the lease's own per-box fence is what excludes other
@@ -1397,6 +1446,17 @@ export async function runHarnessTurn(
           : runtimeSecrets !== null
           ? { secretsHash: deliveredSecretsFingerprint(runtimeSecrets) }
           : {}),
+        // WHERE, and on exactly what. A hosted turn omits this entirely and
+        // keeps hashing as it always did.
+        ...(harnessExecutionTarget
+          ? {
+              localTarget: {
+                runtimeId: harnessExecutionTarget.runtimeId,
+                workspaceGrantId: harnessExecutionTarget.workspaceGrantId,
+                policyVersion: harnessExecutionTarget.policyVersion,
+              },
+            }
+          : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "scenario"
@@ -1543,9 +1603,62 @@ export async function runHarnessTurn(
       //    `projectComputers` id, on the ephemeral path an `evalSandboxes` row
       //    id — distinct id spaces, so a resumed lane can never mistake one for
       //    the other.
-      let box: HarnessBrokerBox;
-      let sandboxId: string;
-      if (harnessSandboxBinding) {
+      // 3-LOCAL. The user's own machine, which takes NONE of the cloud path
+      // below: no box to reserve, none to wake, no egress transform to install,
+      // and a lease bound to an installation rather than a computer.
+      //
+      // Prepared in one call (`prepareLocalHarnessTurn`) rather than as a
+      // conditional inside each cloud step, because every one of those steps
+      // has a local answer that is not "the same thing with a flag" — and
+      // interleaving them would leave neither path legible.
+      //
+      // A refusal here is FINAL. It is not degraded to a hosted turn: silently
+      // relocating work the user deliberately scoped to their machine is the
+      // dishonesty this design exists to remove, so the message says what
+      // failed and the caller decides.
+      let localPrepared: PreparedLocalHarnessTurn | null = null;
+      if (harnessExecutionTarget) {
+        // Its own run id rather than the cloud path's `turnRunId`, which is
+        // minted further down for the broker's revoke key. The local lease is
+        // revoked by THIS id, and the two paths never both hold one.
+        const localRunId = crypto.randomUUID();
+        const preparation = await prepareLocalHarnessTurn({
+          target: harnessExecutionTarget,
+          harnessId: harnessAdapter.id,
+          modelId,
+          sessionId: `local-${localRunId}`,
+          runId: localRunId,
+          actor: {
+            isGuest: false,
+            isScenarioSession: Boolean(scenarioId),
+            isJourneySession: Boolean(journeyRunId),
+            ...(executionScope?.kind === "swarm"
+              ? { executionScopeKind: "swarm" as const }
+              : {}),
+          },
+          projectId,
+          bearer: authHeader,
+          requireToolApproval,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (!preparation.ok) {
+          throw new Error(
+            `Can't run this turn on your machine (${preparation.status}): ` +
+              preparation.message,
+          );
+        }
+        localPrepared = preparation.prepared;
+        localTeardown = preparation.prepared.teardown;
+      }
+
+      let box: HarnessBrokerBox | null = null;
+      let sandboxId: string | null = null;
+      if (localPrepared !== null) {
+        // No box exists. Both stay null, and every cloud step below is guarded
+        // on that rather than on the option — so a future caller that sets the
+        // target without going through the preparation cannot half-run the
+        // cloud path.
+      } else if (harnessSandboxBinding) {
         box = {
           kind: "sandbox",
           sandboxRowId: harnessSandboxBinding.sandboxRowId,
@@ -1572,8 +1685,19 @@ export async function runHarnessTurn(
       // in the session-state wire contract; broadening that contract to say
       // "box id" is a cross-repo rename with no behavioural gain, and the two
       // id spaces cannot collide.
+      //
+      // On the LOCAL path there is no box, so the continuity lane keys on the
+      // installation and the runtime instead: `<machineId>:<runtimeId>`. That
+      // is the right identity for the same reason a box id is on the cloud
+      // path — it is what a resumed session must still be attached to — and it
+      // cannot collide with either id space, both of which are Convex row ids
+      // with no colon in them.
       const computerId =
-        box.kind === "computer" ? box.computerId : box.sandboxRowId;
+        localPrepared !== null
+          ? `${harnessExecutionTarget!.machineId}:${localPrepared.plan.runtime.runtimeId}`
+          : box!.kind === "computer"
+            ? box!.computerId
+            : box!.sandboxRowId;
       // The id the CUMULATIVE-UPLOAD QUOTA is metered against — a real
       // `projectComputers` row, or nothing.
       //
@@ -1587,7 +1711,7 @@ export async function runHarnessTurn(
       // is deleted with its attempt. The per-turn `MATERIALIZE_BUDGET_BYTES`
       // still bounds the write either way.
       const uploadQuotaComputerId =
-        box.kind === "computer" ? box.computerId : undefined;
+        box !== null && box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
       // 3a. RESERVE the box, then start the baseline-preserving broker lease.
@@ -1615,7 +1739,7 @@ export async function runHarnessTurn(
       // condition a caller would otherwise meet at broker start, just detected
       // before we do any work.
       const reservation = await reserveHarnessBox({
-        box,
+        box: box!,
         harnessId: harnessAdapter.id,
         modelId,
         runId: turnRunId,
@@ -1632,7 +1756,7 @@ export async function runHarnessTurn(
       reservationHeld = true;
       releaseBoxReservation = async () => {
         await releaseHarnessBoxReservation({
-          box,
+          box: box!,
           harnessId: harnessAdapter.id,
           modelId,
           runId: turnRunId,
@@ -1644,7 +1768,7 @@ export async function runHarnessTurn(
         if (!reservationHeld || reservationRenewalInFlight) return;
         reservationRenewalInFlight = true;
         void renewHarnessBoxReservation({
-          box,
+          box: box!,
           harnessId: harnessAdapter.id,
           modelId,
           runId: turnRunId,
@@ -1695,8 +1819,15 @@ export async function runHarnessTurn(
       // ONE provider for the turn: the streaming session below attaches to the
       // box through it. One provider per turn is still the right shape even
       // without a separate prewarm pass.
-      const sandbox = createE2BHarnessSandboxProvider({
-        sandboxId,
+      // On the LOCAL path the provider was already built by
+      // `prepareLocalHarnessTurn`: it supervises a real process tree on this
+      // machine, so there is no sandbox id to attach to and nothing to
+      // construct here. The cloud provider is built only when there is a box.
+      const sandbox =
+        localPrepared !== null
+          ? localPrepared.sandbox
+          : createE2BHarnessSandboxProvider({
+        sandboxId: sandboxId!,
         defaultWorkingDirectory,
         // The materialized secrets, as a session-wide env bag on every `run`
         // and `spawn`. This is the whole of materialized delivery on the
@@ -1735,7 +1866,13 @@ export async function runHarnessTurn(
       // but the response is lost or aborted, teardown can still revoke by this
       // id (the backend keys revoke on runId). From here on a lease may exist.
       let auth: HarnessAuth;
-      if (externalAccountAuth) {
+      if (localPrepared !== null) {
+        // LOCAL: the lease was obtained in `prepareLocalHarnessTurn`, before
+        // anything was spawned, and it is held by the loopback gateway rather
+        // than by the child. What the child gets here is that gateway's URL and
+        // a per-session capability that means nothing anywhere else.
+        auth = localPrepared.auth;
+      } else if (externalAccountAuth) {
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
         // skipped rather than made conditional inside it. `brokerRunId` stays
         // unset, which is what keeps teardown from issuing a revoke for a lease
@@ -1755,7 +1892,7 @@ export async function runHarnessTurn(
           // arm (set where `box` is built, above), so the ephemeral path has no
           // way to send either: the backend derives project + billing org from
           // the sandbox row's run.
-          box,
+          box: box!,
           harnessId: harnessAdapter.id,
           modelId,
           runId: brokerRunId,
@@ -2022,7 +2159,7 @@ export async function runHarnessTurn(
                 logger.info("[harness] delivered plugin skills", {
                   // The BOX this material went to — a computer row id or an
                   // ephemeral sandbox row id. Provenance, not a pin.
-                  boxKind: box.kind,
+                  boxKind: box?.kind ?? "local-native",
                   boxId: computerId,
                   skills: pluginSkills,
                 });
@@ -2105,7 +2242,11 @@ export async function runHarnessTurn(
       const eligibility = getHarnessResumeEligibility({
         state: continuity?.state ?? null,
         computerId,
-        sandboxId,
+        // Null on the local path: there is no vendor sandbox id, and the
+        // continuity identity is the `<machineId>:<runtimeId>` in `computerId`
+        // above. Passing a placeholder would make a resumed local session look
+        // attachable to a box.
+        sandboxId: sandboxId ?? "",
       });
       const resumable = eligibility.resume
         ? continuity?.state ?? undefined
@@ -3250,6 +3391,27 @@ export async function runHarnessTurn(
     // enforce it — the call passed no signal, so a stalled backend parked this
     // await forever and took the whole turn's teardown with it. The deadline
     // below is what makes the assumption true.
+    // LOCAL teardown runs first, and for the same reason the broker revoke does:
+    // the model stream has ended, so the gateway must stop serving, the lease
+    // must be revoked, and the supervised tree must be stopped BEFORE the
+    // persistence callbacks below, which could hang and would otherwise leave a
+    // live credential and a running agent behind them.
+    //
+    // Idempotent by construction (`onceAsync` in `local-turn.ts`), so the abort
+    // path and this one can both call it without either having to know whether
+    // the other did. Bounded, because a stop that hangs must not take the whole
+    // turn's teardown with it — the same lesson the revoke deadline below
+    // encodes.
+    if (localTeardown) {
+      const teardown = localTeardown;
+      localTeardown = null;
+      await Promise.race([
+        teardown(),
+        new Promise<void>((resolvePromise) =>
+          setTimeout(resolvePromise, HARNESS_TEARDOWN_TIMEOUT_MS).unref?.(),
+        ),
+      ]).catch(() => {});
+    }
     if (!brokerRevoked && brokerRunId && authHeader) {
       brokerRevoked = true;
       // `runId` alone. The backend resolves the box to clear from the LEASE it

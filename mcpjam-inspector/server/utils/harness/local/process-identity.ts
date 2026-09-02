@@ -428,6 +428,57 @@ export async function probeProcessGroup(
 }
 
 /** `state ppid pgrp` are the three fields after `comm` in `/proc/<pid>/stat`. */
+/**
+ * The process-group id of ONE pid.
+ *
+ * Distinct from `probeProcessGroup`, which asks whether a GROUP still has live
+ * members. This asks which group a given process belongs to, so a caller that
+ * knows a session's root pid can decide whether some other process is a
+ * descendant of it — the supervisor puts every root in its own group, and a
+ * process it did not spawn directly (the vendor CLI, spawned by the bridge)
+ * inherits that group.
+ *
+ * `null` when the process is gone or the platform cannot be asked. Both are
+ * treated as "not ours" by every caller, which is the fail-closed answer.
+ */
+export async function readProcessGroupId(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<number | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (platform === "linux") {
+    try {
+      const raw = await readFile(`/proc/${pid}/stat`, "utf8");
+      return parseProcStatGroup(raw)?.pgrp ?? null;
+    } catch {
+      return null;
+    }
+  }
+  if (platform === "darwin") {
+    return new Promise((resolvePromise) => {
+      execFile(
+        "/bin/ps",
+        ["-o", "pgid=", "-p", String(pid)],
+        {
+          timeout: PS_TIMEOUT_MS,
+          maxBuffer: 4 * 1024,
+          encoding: "utf8",
+          env: {},
+        },
+        (error, stdout) => {
+          if (error) {
+            resolvePromise(null);
+            return;
+          }
+          const parsed = Number(String(stdout).trim());
+          resolvePromise(Number.isInteger(parsed) && parsed > 0 ? parsed : null);
+        },
+      );
+    });
+  }
+  return null;
+}
+
 export function parseProcStatGroup(
   raw: string,
 ): { state: string; pgrp: number } | null {

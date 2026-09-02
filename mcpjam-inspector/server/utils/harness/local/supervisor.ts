@@ -33,6 +33,7 @@ import { assertArgvAllowed } from "./argv-policy.js";
 import {
   listGroupMembers,
   probeProcessGroup,
+  readProcessGroupId,
   readProcessBirthIdentity,
   supportsOwnershipProof,
   terminateOwnedProcess,
@@ -781,4 +782,47 @@ export class LocalHarnessSupervisor {
     if (!bucket) return 0;
     return [...bucket].filter((entry) => !entry.exited).length;
   }
+
+  /**
+   * Is `pid` a process this session started, or a descendant of one?
+   *
+   * The loopback model gateway asks this before serving a connection, so a
+   * process that learned the session capability — it reaches the child in its
+   * environment and is written to the bridge's start config — still cannot use
+   * it unless it is part of this tree.
+   *
+   * Descendants count, and are matched by process GROUP rather than by walking
+   * a parent chain: the vendor CLI is spawned by the bridge, not by us, so it
+   * is never in `live`, but the supervisor puts every root in its own group and
+   * the CLI inherits it. A platform that cannot report a group id answers
+   * `false` for the descendant half and the direct check still holds.
+   */
+  async ownsPid(sessionId: string, pid: number): Promise<boolean> {
+    const bucket = this.live.get(sessionId);
+    if (!bucket) return false;
+    const roots: number[] = [];
+    for (const entry of bucket) {
+      if (entry.exited) continue;
+      if (entry.pid === pid) return true;
+      if (entry.role === "root") roots.push(entry.pid);
+    }
+    if (roots.length === 0) return false;
+
+    const cached = this.pidGroups.get(pid);
+    if (cached !== undefined) return roots.includes(cached);
+    const pgid = await readProcessGroupId(pid, this.platform);
+    if (pgid === null) return false;
+    this.pidGroups.set(pid, pgid);
+    return roots.includes(pgid);
+  }
+
+  /**
+   * Process-group cache for `ownsPid`.
+   *
+   * A group id does not change for the life of a process, and the gateway asks
+   * this on the model hot path — so the probe runs once per pid rather than
+   * once per request. Bounded by pruning entries for pids the session no longer
+   * has, on stop.
+   */
+  private readonly pidGroups = new Map<number, number>();
 }

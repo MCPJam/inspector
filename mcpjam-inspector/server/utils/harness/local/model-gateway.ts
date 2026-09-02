@@ -83,7 +83,7 @@ export interface LocalModelGatewayOptions {
    * Returns `null` when the platform cannot answer, which is NOT a refusal:
    * the capability check still stands.
    */
-  isSupervisedPid?: (pid: number) => boolean;
+  isSupervisedPid?: (pid: number) => boolean | Promise<boolean>;
   platform?: NodeJS.Platform;
   /** Test seam for the peer-pid lookup. */
   resolvePeerPid?: (
@@ -216,7 +216,7 @@ export async function startLocalModelGateway(
     // answer leaves this check silent rather than refusing everything.
     if (options.isSupervisedPid !== undefined) {
       const peerPid = await resolvePeer(req.socket, platform);
-      if (peerPid !== null && !options.isSupervisedPid(peerPid)) {
+      if (peerPid !== null && !(await options.isSupervisedPid(peerPid))) {
         refuse(res, 403, "caller not part of this session");
         return;
       }

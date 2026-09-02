@@ -20,7 +20,11 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
-import { WEBMCP_INSPECTOR_ENABLED } from "../../config";
+import {
+  HOSTED_MODE,
+  LOCAL_HARNESS_ENABLED,
+  WEBMCP_INSPECTOR_ENABLED,
+} from "../../config";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
@@ -100,6 +104,11 @@ import {
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
 import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
+import {
+  LOCAL_HARNESS_GRANT_HEADER,
+  parseHarnessExecutionTarget,
+  type RawHarnessTargetInput,
+} from "../../utils/harness/local/request-target.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -668,6 +677,12 @@ chatV2.post("/", async (c) => {
       // (computer still comes only from the server-resolved runtime config).
       // "local" additionally requires the consent capability header.
       computerEngine?: "local" | "cloud";
+      // Run a CLAUDE CODE HARNESS turn on this machine rather than in a cloud
+      // computer. Opaque ids only; the consent capability rides the
+      // `x-mcpjam-local-harness-grant` header, never the body, so it cannot
+      // enter a persisted transcript. Local-route only — `/api/web/chat-v2`
+      // parses it too, and refuses it, so the two cannot disagree about shape.
+      harnessTarget?: RawHarnessTargetInput;
     };
     const mcpClientManager = c.mcpClientManager;
     const rawScopeStepUpResume = body.scopeStepUpResume;
@@ -1088,10 +1103,37 @@ chatV2.post("/", async (c) => {
 
     // Harness preflight: fail closed with a clear message when a host-resolved
     // harness (claude-code | codex) can't run on this server (never silent-
+    // The HARNESS execution target, resolved BEFORE the availability gate,
+    // because it changes what that gate checks: a local turn reserves and wakes
+    // no E2B box, so the computers-data-plane requirement does not apply to it.
+    //
+    // Parsed by the same shared rules `/api/web/chat-v2` uses, so the two
+    // routes cannot disagree about shape. An explicit ask that cannot be
+    // honoured is REFUSED here, before a stream opens, rather than silently
+    // relocated to a cloud box: quietly moving a turn the user deliberately
+    // scoped to their machine is the dishonesty this design removes.
+    const harnessTargetParse = parseHarnessExecutionTarget({
+      body,
+      grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+      actorEligible:
+        !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
+    });
+    if (harnessTargetParse.kind === "refused") {
+      return c.json({ error: harnessTargetParse.reason }, 400);
+    }
+    const harnessExecutionTarget =
+      harnessTargetParse.kind === "local-native"
+        ? harnessTargetParse.target
+        : undefined;
+
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
+        // A local turn reserves and wakes nothing, so the computers-data-plane
+        // check does not apply to it. Every other rule still does.
+        ...(harnessExecutionTarget ? { localExecution: true } : {}),
         requireToolApproval: resolvedExecution.requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
         // The RESOLVED definition — eligibility and the canonical id are both
@@ -1173,6 +1215,7 @@ chatV2.post("/", async (c) => {
           : {}),
       localConsentValid,
     });
+
 
     // Filled by the resolver when browser tools are advertised; merged into
     // the engines' single `uiToolApprovals` slot below.
@@ -1635,6 +1678,10 @@ chatV2.post("/", async (c) => {
         ...(harnessComputerWorkdir
           ? { computerWorkdir: harnessComputerWorkdir }
           : {}),
+        // Run on the user's own machine. Opaque ids plus the consent
+        // capability, all re-verified by the availability gate before anything
+        // spawns.
+        ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).

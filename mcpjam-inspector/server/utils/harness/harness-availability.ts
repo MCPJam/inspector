@@ -175,6 +175,21 @@ export function checkHarnessRuntimeAvailable(args: {
    * claims (a hand-mirrored Convex↔inspector contract — separate PR).
    */
   xaaEnterprisePolicyOn?: boolean;
+  /**
+   * The turn will run the harness on the USER'S OWN MACHINE.
+   *
+   * When true, the computers-data-plane check below does not apply: that check
+   * asks whether this server can reserve and wake an E2B box, and a local turn
+   * never does either. Everything else — the model rules, the approval
+   * capability, the enterprise-policy refusal — applies unchanged, because
+   * those are properties of the harness and the host, not of where it runs.
+   *
+   * Whether the LOCAL target is itself usable is a separate and much longer
+   * question (kill switch, actor, platform, runtime digest, workspace grant,
+   * consent), answered by `resolveLocalHarnessAvailability` — the single
+   * chokepoint — rather than duplicated here.
+   */
+  localExecution?: boolean;
 }): HarnessAvailability {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
@@ -216,7 +231,11 @@ export function checkHarnessRuntimeAvailable(args: {
     };
   }
 
-  if (adapter.requiresComputer && !isComputersDataPlaneConfigured()) {
+  if (
+    adapter.requiresComputer &&
+    args.localExecution !== true &&
+    !isComputersDataPlaneConfigured()
+  ) {
     return {
       ok: false,
       kind: "computers-unconfigured",
