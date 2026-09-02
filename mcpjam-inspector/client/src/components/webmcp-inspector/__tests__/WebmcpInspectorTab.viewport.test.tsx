@@ -44,8 +44,19 @@ function session(
 }
 
 /** A `liveFrame` in the store's normalized shape. */
-function liveFrame(src: string, seq = 1) {
-  return { src, deviceWidth: 1280, deviceHeight: 800, ts: 1, seq };
+function liveFrame(src: string, seq = 1, scale = 1) {
+  return {
+    src,
+    rung: "ws" as const,
+    deviceWidth: 1280 * scale,
+    deviceHeight: 800 * scale,
+    // The page's own coordinate space, which is what the pane lays out and
+    // scales clicks against however many device pixels the capture used.
+    cssWidth: 1280,
+    cssHeight: 800,
+    ts: 1,
+    seq,
+  };
 }
 
 /** Spies for the two store actions the pane drives. */
@@ -68,6 +79,7 @@ describe("WebmcpInspectorTab — viewport", () => {
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
       chatEnabled: false,
     });
@@ -418,6 +430,212 @@ describe("WebmcpInspectorTab — viewport", () => {
       await runQueuedFrames();
       expect(frameStatsReport().captureToPaint.n).toBe(0);
     });
+  });
+
+  it("scales a click against the frame's CSS size, not its device pixels", async () => {
+    const sendInput = vi.fn<(events: WebMcpInputEvent[]) => Promise<void>>(
+      async () => {},
+    );
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+      sendInput,
+    });
+    stubViewportActions({ screencastAccepted: true });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    await act(async () => {
+      // A frame captured at two device pixels per CSS pixel: 2560x1600 of
+      // picture describing a 1280x800 page.
+      useWebmcpInspectorStore.setState({
+        liveFrame: liveFrame("data:image/jpeg;base64,retina", 1, 2),
+      });
+    });
+
+    const pane = screen.getByLabelText(
+      "The inspected page — click to interact",
+    );
+    const image = screen.getByAltText("Live view of the inspected page");
+    image.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1280, height: 800 }) as DOMRect;
+
+    await act(async () => {
+      fireEvent.pointerDown(pane, { clientX: 640, clientY: 400, button: 0 });
+    });
+
+    // The middle of the pane is the middle of the PAGE — 640,400 — and not the
+    // middle of the picture's device pixels, which would be 1280,800: a
+    // coordinate outside the page entirely, and one that would put every click
+    // on a retina session at double where the person pointed.
+    expect(sendInput).toHaveBeenCalledTimes(1);
+    expect(sendInput.mock.calls[0]![0]).toEqual([
+      expect.objectContaining({ kind: "mouse_down", x: 640, y: 400 }),
+    ]);
+  });
+
+  /**
+   * The badge that says the pane is not on the path it should be.
+   *
+   * Everything about the fallback ladder is silent by design — that is what
+   * keeps a pane painting through a dead socket — which leaves a session
+   * quietly running on the slowest transport it has and nobody any the wiser.
+   * The badge is the one place that shows up.
+   */
+  describe("transport badge", () => {
+    async function renderWith(frameTransport: {
+      rung: "ws" | "sse-frames" | "poll" | "none";
+      attempts: number;
+      latched: boolean;
+    }) {
+      useWebmcpInspectorStore.setState({
+        session: session({
+          viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+        }),
+      });
+      stubViewportActions({ screencastAccepted: true });
+      render(<WebmcpInspectorTab />);
+      await act(async () => {});
+      // Seeded AFTER mount: the tab's `reconnect()` effect tears the stream
+      // down for a session with no live socket, which resets the very field
+      // this is about.
+      await act(async () => {
+        useWebmcpInspectorStore.setState({ frameTransport });
+      });
+    }
+
+    it("says nothing while the socket is carrying frames", async () => {
+      await renderWith({ rung: "ws", attempts: 0, latched: false });
+      expect(screen.queryByText(/^Frames:/)).toBeNull();
+    });
+
+    it("says nothing while the ladder is still retrying", async () => {
+      // Degraded, but about to be fine. A badge that flickered on every
+      // reconnect would train people to ignore it.
+      await renderWith({ rung: "sse-frames", attempts: 2, latched: false });
+      expect(screen.queryByText(/^Frames:/)).toBeNull();
+    });
+
+    it("names the fallback once the ladder has given up", async () => {
+      await renderWith({ rung: "sse-frames", attempts: 4, latched: true });
+      const badge = screen.getByText("Frames: SSE");
+      // The attempt count rides in the tooltip rather than the badge: the
+      // number matters to whoever is diagnosing it, not to the person reading
+      // the header.
+      expect(badge).toHaveAttribute("title", expect.stringContaining("4"));
+    });
+
+    it("names the screenshot poll", async () => {
+      await renderWith({ rung: "poll", attempts: 0, latched: false });
+      expect(screen.getByText("Frames: polling")).toBeInTheDocument();
+    });
+  });
+
+  it("tells the store when it falls back to polling screenshots", async () => {
+    // The server refuses `set_screencast` — every server older than it does —
+    // and the pane starts its own screenshot loop. Without this report the
+    // store would describe a pane painting from screenshots as one with no
+    // transport at all.
+    useWebmcpInspectorStore.setState({
+      session: session({
+        viewportTransport: { kind: "frame-stream", width: 1280, height: 800 },
+      }),
+    });
+    stubViewportActions({ screencastAccepted: false });
+    const view = render(<WebmcpInspectorTab />);
+    await act(async () => {});
+
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+
+    view.unmount();
+    await act(async () => {});
+    // And stops saying so when the pane goes away, or the next session would
+    // inherit a poll that is not running.
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
+      "poll",
+    );
+  });
+
+  it("stops an inherited poll when the next session can stream", async () => {
+    // ONE pair of store actions for the whole test, deliberately: they are
+    // dependencies of the poll effect too, so restubbing them mid-test would
+    // re-run it for the wrong reason and pass with the session dependency
+    // removed. The session is the only thing that changes here.
+    const captureScreenshot = vi.fn(async () => {});
+    const setScreencast = vi.fn(
+      async () =>
+        useWebmcpInspectorStore.getState().session?.sessionId ===
+        "session-streams",
+    );
+    const streamKind = {
+      kind: "frame-stream" as const,
+      width: 1280,
+      height: 800,
+    };
+    useWebmcpInspectorStore.setState({
+      setScreencast,
+      captureScreenshot,
+      // The first session's browser refuses `set_screencast` — every server
+      // older than the command does — so the pane runs its own screenshot loop.
+      session: session({
+        sessionId: "session-refuses",
+        viewportTransport: streamKind,
+      }),
+    });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).toBe("poll");
+    const polledForFirstSession = captureScreenshot.mock.calls.length;
+
+    // A new session with the same transport KIND, so every other input to the
+    // effect is unchanged — and a browser that streams perfectly well.
+    useWebmcpInspectorStore.setState({
+      session: session({
+        sessionId: "session-streams",
+        viewportTransport: streamKind,
+      }),
+    });
+    await act(async () => {});
+
+    // The interval belonged to the session that needed it. Left running, it
+    // would fire a screenshot a second at a session that is streaming, and the
+    // badge would read "Frames: polling" over a working socket.
+    expect(setScreencast).toHaveBeenLastCalledWith(true);
+    expect(useWebmcpInspectorStore.getState().frameTransport.rung).not.toBe(
+      "poll",
+    );
+    expect(captureScreenshot.mock.calls.length).toBe(polledForFirstSession);
+  });
+
+  it("does not stop the replacement session's stream on the way out", async () => {
+    // Both sessions stream fine. What is under test is the CLEANUP a session
+    // change triggers, which runs while the store already holds the new
+    // session — so an unconditional stop there is aimed at the replacement.
+    const captureScreenshot = vi.fn(async () => {});
+    const setScreencast = vi.fn(async () => true);
+    const streamKind = {
+      kind: "frame-stream" as const,
+      width: 1280,
+      height: 800,
+    };
+    useWebmcpInspectorStore.setState({
+      setScreencast,
+      captureScreenshot,
+      session: session({ sessionId: "session-a", viewportTransport: streamKind }),
+    });
+    render(<WebmcpInspectorTab />);
+    await act(async () => {});
+    expect(setScreencast.mock.calls).toEqual([[true]]);
+
+    useWebmcpInspectorStore.setState({
+      session: session({ sessionId: "session-b", viewportTransport: streamKind }),
+    });
+    await act(async () => {});
+
+    // No `false` in between. It would be undone by the enable that follows it
+    // — but only because the store's command queue preserves that order, and a
+    // pane going dark is not a thing to leave resting on a coincidence.
+    expect(setScreencast.mock.calls).toEqual([[true], [true]]);
   });
 
   it("leaves a native-window session view-only", async () => {

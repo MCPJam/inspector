@@ -765,7 +765,7 @@ export function NewSwarmCreateFlow({
     if (!canContinue) {
       // The notice above carries the finding and the fix; repeating it here
       // would put the same two sentences on screen twice.
-      if (serverBlock) return "Fix where it runs to continue.";
+      if (serverBlock) return "Pick a server to continue.";
       if (!hasSwarmName) return "This swarm needs a name to continue.";
       if (wantsGenerate) {
         if (!workOsUser) {

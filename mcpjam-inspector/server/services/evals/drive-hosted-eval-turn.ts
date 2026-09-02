@@ -167,6 +167,27 @@ export interface DriveHostedEvalTurnParams {
    *  so a harness turn there fails fast with a clear projectId error). */
   projectId?: string;
   /**
+   * The Project Environment this run launched from — the GRANT BOUNDARY for its
+   * project secrets, and the same id `resolveGrantForSandbox` derives for this
+   * iteration's box from the run's `configSnapshot.environmentRef`.
+   *
+   * Forwarded (harness turns only) so an EXTERNAL-ACCOUNT credential delivered
+   * by a BROKERED secret is checked against what THIS environment selects. A
+   * project-wide check would report a bound-but-unselected secret available and
+   * start an iteration whose box carries no egress transform — it would
+   * provision, then fail vendor auth against a placeholder.
+   *
+   * Absent for a legacy (non-environment) suite run, which grants no secrets.
+   */
+  environmentId?: string;
+  /**
+   * Why `environmentId` is absent on a run that HAS an environment — set by the
+   * REPLAY path, which inherits the source run's `environmentRef` on the
+   * backend but cannot read it back out. Copy only; see the option's docblock
+   * on `MCPJamHandlerOptions`.
+   */
+  environmentUnresolvedReason?: string;
+  /**
    * THIS iteration's disposable box, handed to the harness.
    *
    * The SAME box the tool resolver already exposes as `bash` — one box per
@@ -605,6 +626,17 @@ export async function driveHostedEvalTurn(
             // (authHeader already rides authContext.token). Harness-gated so
             // emulated evals stay byte-identical.
             ...(params.projectId ? { projectId: params.projectId } : {}),
+            // The run's environment — the grant boundary the brokered
+            // external-account credential check is scoped to.
+            ...(params.environmentId
+              ? { environmentId: params.environmentId }
+              : {}),
+            ...(!params.environmentId && params.environmentUnresolvedReason
+              ? {
+                  environmentUnresolvedReason:
+                    params.environmentUnresolvedReason,
+                }
+              : {}),
             // THIS iteration's box, so the harness runs on it instead of
             // reserving the acting member's personal computer.
             ...(params.harnessSandboxBinding

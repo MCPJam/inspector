@@ -70,6 +70,7 @@ import {
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
+import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
@@ -132,6 +133,11 @@ export async function createHonoApp() {
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
+  // Reports whether a local-harness runtime pack is present. Deliberately
+  // only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
+  // kill switch and a consent grant is installed when the user asks, never
+  // at startup and never during a session start.
+  reportLocalHarnessRuntimeStatusInBackground();
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the

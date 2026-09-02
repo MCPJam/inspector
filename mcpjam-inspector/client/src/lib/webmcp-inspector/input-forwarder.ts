@@ -42,7 +42,13 @@ export const INPUT_FLUSH_MS = 50;
 export interface ViewportGeometry {
   /** The `<img>`'s own rectangle, in CSS pixels. */
   rect: { left: number; top: number; width: number; height: number };
-  /** The frame's surface, in device pixels. */
+  /**
+   * The frame's surface in CSS PIXELS — the page's own coordinate space.
+   *
+   * Not the frame's device pixels: a session may render at more than one
+   * device pixel per CSS pixel, and the events this produces are dispatched
+   * against the page, which knows nothing about that.
+   */
   frame: { width: number; height: number };
 }
 

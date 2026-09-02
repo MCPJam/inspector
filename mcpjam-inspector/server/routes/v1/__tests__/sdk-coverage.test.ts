@@ -385,6 +385,8 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "The agent's own operation registry, serialized for the org-settings Capabilities page. It describes the tools THIS build offers its agent — an implementation detail whose shape changes with every tool added, not a contract to program against.",
   "get /harness/{harnessId}/builtin-tools":
     "Static published-package metadata about a harness's NATIVE tools, which are not callable through MCPJam. Display-only for the UI; an SDK method would imply they can be invoked.",
+  "get /harness/{harnessId}/capabilities":
+    "Which runtime surfaces THIS build's harness adapter can pause on, read by the host editor so the approval switch reflects the transport actually installed. It moves with a server flag rather than a release, so an SDK method would publish a value no caller could pin.",
   "get /host-catalog":
     "Unauthenticated static host-compat metadata. The SDK already fetches it through `fetchHostCompatCatalog`, which needs no client and no credential — routing it through the authenticated client would be a step backwards.",
   "get /trace-exports/otlp":
