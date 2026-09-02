@@ -80,6 +80,13 @@ vi.mock("../registry.js", () => ({
     requiresComputer: true,
     modelAccess: "external-account",
     externalAccountCredentialEnv: ["CURSOR_API_KEY"],
+    externalAccountBrokerBinding: {
+      CURSOR_API_KEY: {
+        hosts: ["api2.cursor.sh"],
+        header: "authorization",
+        template: "Bearer {}",
+      },
+    },
     mcpDelivery: "native",
     mcpNativeDelivery: "session-config",
     // Never consulted on this path — declared so a regression that starts
@@ -88,6 +95,27 @@ vi.mock("../registry.js", () => ({
     createHarness: registryState.createHarness,
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
+}));
+
+/**
+ * The BROKERED delivery lookup. Metadata only — there is no function here that
+ * could return a brokered value, because there is none in the real client
+ * either: a brokered plaintext never enters this process.
+ */
+const secretsClientState = vi.hoisted(() => ({
+  rows: [] as Record<string, unknown>[],
+  /** What the run's ENVIRONMENT grants — the boundary the brokered check is
+   *  scoped to. Defaults (in `beforeEach`) to granting the Cursor row. */
+  selection: [] as string[],
+}));
+
+vi.mock("../../computers/convex-secrets-client.js", () => ({
+  convexListProjectSecretBindings: vi.fn(async () => secretsClientState.rows),
+  convexGetEnvironmentSecretSelection: vi.fn(
+    async () => secretsClientState.selection,
+  ),
+  convexListSecretsForRuntimeExecution: vi.fn(async () => []),
+  convexMarkSecretsDelivered: vi.fn(async () => ({ marked: 0 })),
 }));
 
 vi.mock("../resolve-sandbox.js", () => ({
@@ -198,6 +226,11 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
     requireToolApproval: false,
     sourceType: "eval",
     harness: "cursor",
+    // The run's Project Environment — the GRANT BOUNDARY. Every hosted surface
+    // that can run a Cursor host threads one (chat via `web-chat-turn`, swarm
+    // via the pinned target's `environmentRef`, eval via the run's
+    // `configSnapshot.environmentRef`), so the default here matches them.
+    environmentId: "env-1",
     runtimeSecrets: [CURSOR_KEY, OTHER_SECRET],
     ...overrides,
   };
@@ -206,6 +239,8 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   harnessState.finalText = "done";
   providerState.lastArgs = undefined;
+  secretsClientState.rows = [];
+  secretsClientState.selection = [CURSOR_SECRET_ROW_ID];
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 })),
@@ -339,5 +374,250 @@ describe("runHarnessTurn — external-account credential path", () => {
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
     expect(onEngineError).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The BROKERED arm. The turn accepts a credential it never sees: the backend
+ * composes the project secret into the box's E2B egress transform, and the box
+ * carries a placeholder the proxy overwrites on the way out of the VM.
+ *
+ * This is the delivery hosted evals and swarms accept — they refuse an
+ * environment that selects MATERIALIZED secrets outright (`evalSandboxes.ts`,
+ * `journeyRuns.ts`), so before this arm existed a Cursor host could not run on
+ * those surfaces in any configuration at all.
+ */
+const EPHEMERAL_BINDING = {
+  sandboxRowId: "sbxrow_1",
+  sandboxId: "e2b_ephemeral_1",
+  workdir: "/home/user/work",
+};
+
+const CURSOR_SECRET_ROW_ID = "secret-cursor";
+
+const BROKERED_CURSOR_ROW = {
+  secretId: CURSOR_SECRET_ROW_ID,
+  name: "CURSOR_API_KEY",
+  delivery: "brokered",
+  brokerHosts: ["api2.cursor.sh"],
+  brokerHeader: "authorization",
+  brokerTemplate: "Bearer {}",
+};
+
+describe("runHarnessTurn — external-account BROKERED credential", () => {
+  it("runs with no materialized secret, handing the adapter a placeholder", async () => {
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+
+    expect(onEngineError).not.toHaveBeenCalled();
+    const args = registryState.createHarness.mock.calls[0]![0] as unknown as {
+      auth: Record<string, string>;
+    };
+    // The REAL key is not here and cannot be: nothing in this process ever
+    // fetched it. What the CLI sends is overwritten outside the VM.
+    expect(args.auth.CURSOR_API_KEY).toBe("mcpjam-brokered-credential");
+    expect(args.auth.CURSOR_API_KEY).not.toContain("key_live");
+    // Still no lease — external-account means MCPJam brokers no MODEL access.
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+  });
+
+  it("does NOT stamp delivery for a brokered credential", async () => {
+    // `lastDeliveredAt` answers "did anything receive this from us". On this arm
+    // the answer is no: the backend delivered it into the egress transform.
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onSecretEnvDelivered = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onSecretEnvDelivered,
+      }) as never,
+      "none",
+    );
+    expect(onSecretEnvDelivered).not.toHaveBeenCalled();
+  });
+
+  it("still stamps delivery when the credential is MATERIALIZED", async () => {
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onSecretEnvDelivered = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: [CURSOR_KEY],
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onSecretEnvDelivered,
+      }) as never,
+      "none",
+    );
+    expect(onSecretEnvDelivered).toHaveBeenCalled();
+    const args = registryState.createHarness.mock.calls[0]![0] as unknown as {
+      auth: Record<string, string>;
+    };
+    // Materialized WINS when both are configured: it is the delivery this
+    // process can prove reached the box.
+    expect(args.auth.CURSOR_API_KEY).toBe(CURSOR_KEY.value);
+  });
+
+  it("keeps the placeholder out of the box's session env bag", async () => {
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: [OTHER_SECRET],
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+      }) as never,
+      "none",
+    );
+    const sessionEnv = providerState.lastArgs?.sessionEnv as
+      | Record<string, string>
+      | undefined;
+    expect(sessionEnv).not.toHaveProperty("CURSOR_API_KEY");
+    expect(sessionEnv).toHaveProperty("STRIPE_API_KEY", OTHER_SECRET.value);
+  });
+
+  it("refuses a brokered-only credential on a PERSISTENT computer", async () => {
+    // `listBrokeredSecretsForBox` answers `[]` for any box with no sandbox row,
+    // so this box will never carry the transform — starting it would send a
+    // placeholder to the vendor.
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({ runtimeSecrets: undefined, onEngineError }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+  });
+
+  it("refuses a correctly bound row the run's ENVIRONMENT does not select", async () => {
+    // The turn-level proof for the scoping fix. The project holds a brokered
+    // CURSOR_API_KEY bound exactly right, but this run's environment does not
+    // grant it, so `listBrokeredSecretsForBox` composes nothing onto the box.
+    // Before scoping, this STARTED the turn and failed vendor auth after the
+    // box was provisioned; now nothing is provisioned at all.
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    secretsClientState.selection = ["secret-something-else"];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("CURSOR_API_KEY");
+    expect(err.message).toMatch(/does not select it/i);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the turn resolved no environment at all", async () => {
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        environmentId: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toMatch(/no Project Environment/i);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+  });
+
+  it("blames the REPLAY path, not the reader, when it cannot name the environment", async () => {
+    // A replay run inherits the source run's environmentRef on the backend, so
+    // its box may really carry the transform — this process just cannot read
+    // that ref back. Still refused (an unverifiable grant is not a grant), but
+    // the copy must not send the reader to change a correct configuration.
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        environmentId: undefined,
+        environmentUnresolvedReason:
+          "replaying a run does not carry the original run's Project " +
+          "Environment through to the runner.",
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("replaying a run");
+    expect(err.message).not.toMatch(/no Project Environment/i);
+    expect(err.message).not.toMatch(/does not select it/i);
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale unresolved reason once the environment IS known", async () => {
+    // Belt and braces: a caller that sets both must not turn a real
+    // selection failure into "MCPJam could not tell".
+    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+    secretsClientState.selection = ["secret-something-else"];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        environmentUnresolvedReason: "should be ignored",
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toMatch(/does not select it/i);
+    expect(err.message).not.toContain("should be ignored");
+  });
+
+  it("refuses when the brokered row is bound to the wrong host", async () => {
+    secretsClientState.rows = [
+      { ...BROKERED_CURSOR_ROW, brokerHosts: ["api.example.com"] },
+    ];
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("api2.cursor.sh");
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+  });
+
+  it("names BOTH deliveries when neither is configured", async () => {
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        runtimeSecrets: undefined,
+        harnessSandboxBinding: EPHEMERAL_BINDING,
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("CURSOR_API_KEY");
+    expect(err.message).toMatch(/brokered/i);
+    expect(err.message).toMatch(/materialized/i);
   });
 });

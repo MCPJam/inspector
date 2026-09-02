@@ -1,13 +1,19 @@
 ---
-title: "Claude Code and Codex hosts"
-description: "Run the real Claude Code or Codex agent inside your project's Computer — observe native tools, MCP client, and execution behavior directly"
+title: "Harness hosts: Claude Code, Codex, and Cursor"
+description: "Run a real agent runtime — Claude Code, Codex, or the Cursor CLI — inside your project's Computer, and observe native tools, MCP client, and execution behavior directly"
 icon: "terminal"
 ---
 
-MCPJam supports two harness hosts that run a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+A harness host runs a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+
+Two of them run on **MCPJam's model access**, and everything below — turn mechanics, host settings, billing, failure modes — describes those two:
 
 - **Claude Code** — runs the real Claude Code agent with Anthropic models. Supports selected MCP servers and native tool approval.
 - **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills and selected MCP servers (through a host-executed relay — see the caveat below).
+
+The third runs on **your own vendor account**:
+
+- **Cursor CLI** — runs the real Cursor agent, signed in with your own `CURSOR_API_KEY` and billed to that Cursor account. MCPJam mints no model lease for it, so it needs a credential the other two do not. This page documents that credential in [Harness credentials on your own vendor account](#harness-credentials-on-your-own-vendor-account); its turn mechanics and host settings are not covered here yet.
 
 <Note>
   The Claude Code and Codex hosts are available to organizations where the
@@ -33,7 +39,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model. Bring-your-own-key models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
-| Require tool approval | Honored — the toggle is enabled for Claude Code hosts. When on, side-effecting built-ins (Bash, Write, etc.) and MCP server tools pause the turn for your decision; read-only tools run freely. Approval cannot be combined with selected MCP servers — that combination is rejected at pre-flight. |
+| Require tool approval | Honored — the toggle is enabled for Claude Code hosts. When on, the turn pauses for your decision before each side-effecting tool call — the runtime's own write-class built-ins (Bash, Write, Edit, and the like) and the tools of any selected MCP server. Read-only tools run freely. Approval and selected MCP servers can be combined. |
 | Selected MCP servers | Honored — delivered via the session's MCP config through MCPJam's proxy. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Claude Code runtime owns its own sampling. These controls are grayed out in the UI. |
@@ -75,7 +81,104 @@ Claude Code hosts are unaffected by all of the above — they use the runtime's 
 - For **Codex**: an MCPJam-provided OpenAI gpt-5 family model selected on the host.
 - A **signed-in project member** — guest sessions cannot run harness hosts.
 
-No credential configuration is needed. Broker delivery is on by default and the model proxy is always-on.
+No credential configuration is needed **for Claude Code and Codex**. Broker delivery is on by default and the model proxy is always-on.
+
+## Harness credentials on your own vendor account
+
+Not every harness runs on MCPJam's model access. A harness that authenticates
+against the **customer's own account with the runtime vendor** — the Cursor CLI
+host, which signs in with a `CURSOR_API_KEY` and bills every generation to that
+Cursor account — takes no MCPJam model lease at all. Its credential comes from a
+**project secret**, and the delivery you choose decides which surfaces can run it.
+
+| Delivery | Where the value lives | Works in playground chat | Works in hosted evals and swarms |
+|---|---|---|---|
+| **Brokered** (recommended) | Never leaves MCPJam's backend. The egress proxy injects it as a header on the way out of the sandbox; the sandbox holds a non-secret placeholder. | **No** — playground chat runs on your persistent project Computer, and brokered secrets are composed only onto the disposable boxes an eval, swarm or scenario run provisions | **Yes** |
+| **Materialized** | Resolved by MCPJam's server and exported as an environment variable inside the sandbox. | Yes | **No** |
+
+Hosted eval and swarm launches **refuse** an environment that selects a
+materialized secret. That is deliberate: only the chat path resolves and injects
+materialized values, so on a runner-claimed attempt the credential would simply
+be missing and the run would report a healthy connector as broken. A brokered
+secret has no such problem — the backend composes it into the box's network
+policy and the runner does not participate.
+
+So for a Cursor CLI host that you intend to run in an eval suite or a swarm,
+**create the secret as brokered**, under **Project Settings → Secrets**, bound to:
+
+| Field | Value |
+|---|---|
+| Name | `CURSOR_API_KEY` |
+| Delivery | Brokered |
+| Hosts | `api2.cursor.sh` |
+| Header | `Authorization` |
+| Template | `Bearer {}` |
+
+Then **select it into the environment the host runs in**. That selection is the
+grant, not a formality: brokered secrets are composed onto a box from its
+environment's selection, so a secret the environment does not grant is never
+delivered no matter how it is bound.
+
+Every way that can go wrong is refused **before the sandbox is touched**, with a
+message that names the fix:
+
+| What is wrong | What the turn says |
+|---|---|
+| Neither delivery configured | Names the variable and both deliveries, and points at Project Settings → Secrets |
+| Brokered secret exists but the environment does not select it | Says so, and asks you to select it into that environment — not to create a second one |
+| The host is not running from a Project Environment at all | Says there is no grant boundary, so no brokered secret can reach the box |
+| Brokered secret bound to the wrong host | Names the host it found and the host the runtime needs |
+| The run is a **replay** of an earlier eval run | Says MCPJam cannot confirm the credential for a replay, and that nothing about the secret needs changing — launch the suite directly instead |
+
+<Note>
+  **Replaying** an eval run cannot verify a brokered credential. A replay keeps
+  the original run's environment internally, but MCPJam's runner is not told
+  which environment that was, so it cannot check the grant before the sandbox
+  starts and refuses rather than guess. Launch the suite directly to run a
+  Cursor CLI host; nothing about the secret or the environment needs to change.
+</Note>
+
+<Note>
+  A **persistent project Computer** (the ordinary playground chat box) does not
+  receive brokered secrets today — they are composed onto the disposable boxes
+  that scenario, eval and swarm runs provision. Chat on a project Computer
+  therefore needs a **materialized** `CURSOR_API_KEY`. It is fine for one
+  environment to hold both.
+</Note>
+
+### Project secrets require KMS envelope encryption
+
+Storing **any** project secret requires the deployment to have envelope
+encryption turned on. Without it MCPJam refuses the write outright, with:
+
+> This deployment cannot store project secrets yet: envelope encryption
+> (SECRETS_KMS_WRITE) is not enabled.
+
+This is a deployment prerequisite, not a toggle: without envelope writes the
+stored value is not cryptographically bound to its project and its owner, and a
+credential store whose isolation rests on row checks alone is not the design.
+
+MCPJam Cloud has this configured. A **self-hosted or local development**
+deployment must set, on the Convex backend:
+
+| Variable | Purpose |
+|---|---|
+| `SECRETS_KMS_WRITE=1` | Turns envelope writes on. Nothing stores a project secret without it. |
+| `GCP_KMS_SA_EMAIL` | Service account that can use the key. |
+| `GCP_KMS_SA_PRIVATE_KEY` | That account's PKCS#8 PEM private key. |
+| `GCP_KMS_KEY_RESOURCE` | Full crypto key resource name (`projects/*/locations/*/keyRings/*/cryptoKeys/*`). |
+| `KMS_AAD_ENVIRONMENT` | The environment label bound into the additional authenticated data. |
+
+Set the four key variables **before** turning `SECRETS_KMS_WRITE` on, and prove
+the key actually works first — four correctly spelled variables are not the same
+as a usable key, and every way that can fail (missing IAM permission, wrong
+region, a private key truncated by a dashboard field) looks like success until
+the first real write. Reads are unaffected: a deployment holding older secrets
+keeps opening them.
+
+Until KMS is configured, a self-hosted deployment cannot store a
+`CURSOR_API_KEY` in either delivery, and so cannot run the Cursor CLI host.
+
 
 ## Billing
 
@@ -89,8 +192,7 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Condition | What you see |
 |---|---|
 | Enterprise-managed authorization policy on the host | Pre-flight error — the combination is rejected rather than silently bypassed. |
-| Require tool approval + selected MCP servers (Claude Code) | Pre-flight error — turn approval off or remove the MCP servers. |
-| Require tool approval + selected MCP servers (Codex) | Pre-flight error — Codex runs the host's MCP tools on MCPJam's server and cannot pause them for approval. Turn approval off or remove the MCP servers. |
+| Require tool approval on a Codex host | Pre-flight error — the Codex runtime doesn't pause for tool approval, so the turn is refused rather than run unapproved, whether or not any MCP server is selected. The toggle is disabled on Codex hosts, so a host that carried approval in from another harness keeps the stored value: clear `requireToolApproval` through the API or CLI, or switch the host off Codex to reach the toggle again. |
 | Computer data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not supported by the selected harness | Pre-flight error asking you to pick an eligible model. |
 | Computer at daily start cap | Start-limit dialog with upgrade option. |

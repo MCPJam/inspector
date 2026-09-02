@@ -114,6 +114,11 @@ import {
   externalAccountPlanWallError,
   isExternalAccountPlanWallTurn,
 } from "./external-account-plan-wall.js";
+import {
+  fetchBrokeredCredentialNames,
+  planExternalAccountCredentials,
+  type ExternalAccountCredentialPlan,
+} from "./external-account-credentials.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import { selectHarnessSkillSource } from "./skill-delivery.js";
@@ -494,6 +499,23 @@ export function harnessRuntimeFingerprint(parts: {
    */
   secretsHash?: string;
   /**
+   * WHICH TRANSPORT the adapter speaks, when a harness has more than one.
+   *
+   * Codex has two: the published `codex exec` adapter and MCPJam's own
+   * `codex app-server` one. They share a harness id — one Codex host, one
+   * history — but they are NOT resume-compatible: a session created over exec
+   * has no app-server thread to resume, and a live bridge speaks one protocol
+   * only. Flipping the transport flag under a running conversation would
+   * otherwise reattach it to a bridge that cannot understand the next frame.
+   *
+   * Appended ONLY when set and not the default `"exec"`, so every existing
+   * session — Codex and Claude Code and Cursor alike — hashes byte-identically
+   * to before this dimension existed and keeps resuming. An unconditional
+   * append would fork the whole fleet on deploy, which is the cost
+   * `HARNESS_RUNTIME_COMPAT_VERSION` exists to make deliberate.
+   */
+  transport?: string;
+  /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
    * is why rather than an oversight. Their credential is a materialized project
    * secret, so a rotation already forks through `secretsHash`; and the harness
@@ -510,6 +532,9 @@ export function harnessRuntimeFingerprint(parts: {
     parts.permissionMode,
     ...(pluginDimension ? [pluginDimension] : []),
     ...(parts.secretsHash ? [parts.secretsHash] : []),
+    ...(parts.transport && parts.transport !== "exec"
+      ? [`transport:${parts.transport}`]
+      : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -591,6 +616,8 @@ export async function runHarnessTurn(
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
+    environmentId,
+    environmentUnresolvedReason,
     runtimeSecrets: runtimeSecretsOverride,
     secretsUnavailable,
     onSecretEnvDelivered,
@@ -1264,71 +1291,130 @@ export async function runHarnessTurn(
         : undefined;
 
       // EXTERNAL-ACCOUNT CREDENTIAL. A harness that authenticates on the
-      // customer's own provider account takes its credential from the SAME
-      // materialized project secrets above — there is no broker lease to mint,
-      // so this is the only place the value can come from.
+      // customer's own provider account takes its credential from the project's
+      // secrets — there is no broker lease to mint, so this is the only place
+      // the value can come from.
+      //
+      // TWO DELIVERIES, and the second is what makes hosted evals and swarms
+      // possible at all:
+      //
+      //   MATERIALIZED — the plaintext is in `secretEnv` above and goes to the
+      //     adapter directly. Unchanged.
+      //   BROKERED — the plaintext never enters this process or the box. The
+      //     backend composes the secret into the box's E2B egress transform;
+      //     the adapter gets a PLACEHOLDER so the CLI has something to send,
+      //     and the proxy overwrites the header outside the VM.
+      //
+      // Eval and swarm runs REFUSE an environment that selects materialized
+      // secrets (`evalSandboxes.ts`, `journeyRuns.ts`) because only the chat
+      // path injects them — so before brokered delivery existed here, a Cursor
+      // host could not run on those surfaces in either configuration.
       //
       // Resolved HERE, before the sandbox provider is built, for two reasons:
-      // a missing secret must fail the turn before anything is provisioned,
-      // and the credential has to be REMOVED from the box's session env bag
-      // that the provider is about to be constructed with.
+      // an unsatisfiable credential must fail the turn before anything is
+      // provisioned, and a materialized credential has to be REMOVED from the
+      // box's session env bag that the provider is about to be constructed
+      // with.
       //
-      // What that removal does and does not buy: the key no longer rides on
-      // every `run`/`spawn` in the box, so an unrelated command the agent
-      // shells out to cannot read it out of its own environment. The Cursor
-      // process itself still receives it — it has to, that is how the CLI
-      // authenticates. Fully keeping it out of the VM needs the adapter's
-      // credential-brokering hook wired to E2B's egress transform, which is
-      // tracked separately.
+      // What that removal does and does not buy on the MATERIALIZED arm: the
+      // key no longer rides on every `run`/`spawn` in the box, so an unrelated
+      // command the agent shells out to cannot read it out of its own
+      // environment. The runtime process itself still receives it — it has to,
+      // that is how the CLI authenticates. The BROKERED arm has no such
+      // residue: the box never holds the value at any point.
       const externalAccountCredentialNames =
         harnessAdapter.modelAccess === "external-account"
           ? harnessAdapter.externalAccountCredentialEnv
           : undefined;
-      let externalAccountAuth: HarnessAuth | undefined;
+      let externalAccountPlan: ExternalAccountCredentialPlan | undefined;
       if (externalAccountCredentialNames) {
-        const missing = externalAccountCredentialNames.filter(
-          (name) => !secretEnv?.[name],
+        // Ask about brokered delivery ONLY for the names materialized delivery
+        // did not already satisfy. A project that materializes its key pays no
+        // round trip and cannot be refused by a secrets-service blip — the
+        // pre-existing behaviour, preserved exactly.
+        const brokerBinding = harnessAdapter.externalAccountBrokerBinding;
+        const unresolved = externalAccountCredentialNames.filter(
+          (name) => !secretEnv?.[name] && brokerBinding?.[name],
         );
-        if (missing.length > 0) {
-          // Preflight-shaped copy: names the variable and where to set it, so
-          // the reader can act on it without opening a runbook. NEVER defaulted
-          // or silently skipped — starting the CLI with no credential produces
-          // an opaque failure from inside the box instead.
-          //
-          // KNOWN LIMITATION, and this is where it surfaces: callers that do
-          // NOT wire secrets deliver none (see the note on `runtimeSecrets`
-          // above — that is the documented contract, not an oversight). The
-          // SYNTHETIC path (`sessionSimulation/runner.ts`, which drives
-          // scenario/swarm/eval turns through `runUnifiedAssistantTurn`) is one
-          // of them, so an external-account harness is refused there today even
-          // when the environment does hold the secret.
-          //
-          // Deliberately not fixed here. Wiring it means fetching the secrets
-          // AND building the scrubber in that runner — the pair is what keeps
-          // delivered values out of the persisted transcript — and doing so
-          // would also start delivering project secrets to the EXISTING
-          // harnesses' synthetic turns, which today receive none. That is a
-          // security-relevant behaviour change well outside this change's
-          // scope. The refusal above is the fail-closed, legible alternative.
-          const one = missing.length === 1;
-          throw new Error(
-            `The ${harnessAdapter.displayName} harness requires ` +
-              `${one ? "a " : ""}${missing.join(", ")} project ` +
-              `${one ? "secret" : "secrets"} in this environment — add ` +
-              `${one ? "it" : "them"} under Project Settings → Secrets.`,
-          );
-        }
-        externalAccountAuth = Object.fromEntries(
-          externalAccountCredentialNames.map((name) => [
-            name,
-            secretEnv![name] as string,
-          ]),
-        );
+        // The box kind is decided by the CALLER's binding (see step 3 below),
+        // and it is known here because `harnessSandboxBinding` arrives on the
+        // options. It matters: `projectSecretsEgress.listBrokeredSecretsForBox`
+        // answers `[]` for anything without a `sandboxRowId` — persistent
+        // computers receive no brokered secrets in v1 — so a chat turn on a
+        // project computer must never be told its credential is brokered.
+        //
+        // `environmentId` is the OTHER half of that question, and the reason it
+        // is threaded all the way down here rather than approximated: the
+        // backend composes a box's egress transform from the ENVIRONMENT's
+        // `secretSelection`, so a correctly bound brokered row the run's
+        // environment does not select is never delivered. Asking project-wide
+        // would report it available and start a turn that provisions a box and
+        // then fails vendor auth against a placeholder.
+        const brokered =
+          unresolved.length > 0 && brokerBinding
+            ? await fetchBrokeredCredentialNames({
+                ...(authHeader ? { bearer: authHeader } : {}),
+                ...(projectId ? { projectId } : {}),
+                ...(environmentId ? { environmentId } : {}),
+                // Copy only — an environment this process cannot name is one
+                // whose selection it cannot check, so the answer is the same
+                // either way and only the refusal wording changes.
+                ...(!environmentId && environmentUnresolvedReason
+                  ? { environmentUnresolvedReason }
+                  : {}),
+                boxKind: harnessSandboxBinding ? "sandbox" : "computer",
+                required: Object.fromEntries(
+                  unresolved.map((name) => [name, brokerBinding[name]!]),
+                ),
+              })
+            : {
+                available: new Set<string>(),
+                misboundHosts: {},
+                unselected: new Set<string>(),
+                environmentMissing: false,
+              };
+        // THROWS on an unsatisfiable credential, with copy that names the
+        // variable, BOTH deliveries, and where to set them. Never defaulted or
+        // silently skipped — starting the CLI with no credential produces an
+        // opaque failure from inside the box instead.
+        //
+        // KNOWN LIMITATION on the MATERIALIZED arm, and this is where it
+        // surfaces: callers that do NOT wire secrets deliver none (see the note
+        // on `runtimeSecrets` above — that is the documented contract, not an
+        // oversight). The SYNTHETIC path (`sessionSimulation/runner.ts`, which
+        // drives scenario/swarm/eval turns through `runUnifiedAssistantTurn`)
+        // is one of them. Those are exactly the surfaces that refuse
+        // materialized secrets anyway, so the answer for them is brokered
+        // delivery rather than wiring materialized secrets into a runner that
+        // has no scrubber to pair them with.
+        externalAccountPlan = planExternalAccountCredentials({
+          harnessDisplayName: harnessAdapter.displayName,
+          required: externalAccountCredentialNames,
+          secretEnv,
+          brokerBinding,
+          brokeredAvailable: brokered ? brokered.available : null,
+          ...(brokered
+            ? {
+                misboundHosts: brokered.misboundHosts,
+                unselected: brokered.unselected,
+                environmentMissing: brokered.environmentMissing,
+                ...(brokered.environmentUnresolvedReason
+                  ? {
+                      environmentUnresolvedReason:
+                        brokered.environmentUnresolvedReason,
+                    }
+                  : {}),
+              }
+            : {}),
+        });
       }
+      const externalAccountAuth = externalAccountPlan?.auth;
       // What the BOX's session env carries: everything the project materialized
       // MINUS the credentials handed to the adapter directly (see above). An
       // empty result is treated exactly like "no secrets" by the provider
-      // construction below.
+      // construction below. Filtering the full REQUIRED list, not just the
+      // materialized arm: on the brokered arm the name is absent from
+      // `secretEnv` anyway, so this is a no-op there and cannot drift.
       const sessionSecretEnv = externalAccountCredentialNames
         ? Object.fromEntries(
             Object.entries(secretEnv ?? {}).filter(
@@ -1396,6 +1482,12 @@ export async function runHarnessTurn(
           ? { secretsHash: "unavailable" }
           : runtimeSecrets !== null
           ? { secretsHash: deliveredSecretsFingerprint(runtimeSecrets) }
+          : {}),
+        // Two Codex transports share this harness id and are not
+        // resume-compatible; see the field's note. Absent or `"exec"` hashes
+        // exactly as before, so no existing session forks on deploy.
+        ...(harnessAdapter.transport
+          ? { transport: harnessAdapter.transport }
           : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
@@ -2186,7 +2278,16 @@ export async function runHarnessTurn(
       // secret is this one the bag is empty and nothing would ever stamp,
       // making a live credential read as dormant to whoever is deciding whether
       // it is safe to delete.
-      if (externalAccountAuth) onSecretEnvDelivered?.();
+      // BROKERED names are excluded on purpose: the backend delivered them
+      // into the box's egress transform, this process never held the value,
+      // and `markSecretsDelivered` re-resolves the MATERIALIZED grant — so
+      // stamping here would credit a delivery neither side made.
+      if (
+        externalAccountPlan &&
+        externalAccountPlan.materializedNames.length > 0
+      ) {
+        onSecretEnvDelivered?.();
+      }
 
       // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
       // license / …) for skills that carry it. The adapter's `skills` param

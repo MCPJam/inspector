@@ -7550,6 +7550,14 @@ const sendChatMessageInput = z.object({
     .describe(
       'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required on a first turn. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.'
     ),
+  hostId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the real runtime; without one the turn runs MCPJam's emulated engine. The server reads the host's own config for this: harness and computer are never accepted from the request. PER-TURN, not pinned to the session — re-send it on every turn, and read the response's `engine` field to confirm what ran. A continuation of a session that named ONLY a host must re-send it: omitting it is refused (details.reason: 'HOST_TARGET_REQUIRED') rather than answered by the emulated engine. An environment already pins its own host, so pass this alongside environmentId only to assert which host you expect (a mismatch is rejected). A harness turn requires toolMode:'auto' with no allowedTools/maxToolCalls, because a harness builds its own tool set and this surface cannot narrow it. It also cannot be sent together with serverIds: hostId cannot be pinned beside them, so a later turn that omitted it would run the emulated engine on a session established on the harness (refused with details.kind: 'surface-unpinnable-host'). Use environmentId, or hostId alone plus per-turn allowedServerIds."
+    ),
   environmentId: z
     .string()
     .trim()
@@ -7620,7 +7628,7 @@ export const sendChatMessageOperation: PlatformOperation<
   name: "send_chat_message",
   title: "Send one agent Playground message",
   description:
-    "Send one message to a project's MCP servers and get the model's reply PLUS the telemetry a participant could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage. Pass the returned sessionId back to continue the conversation. SPENDS model credits per call. Configuration (model, target, system prompt, tool mode) pins on the first turn; a continuation that resends it is refused. Tools default to read_only; toolMode:'auto' may cause real external side effects.",
+    "Send one message to a project's MCP servers and get the model's reply PLUS the telemetry a participant could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage. Pass the returned sessionId back to continue the conversation. SPENDS model credits per call. Configuration (model, target, system prompt, tool mode) pins on the first turn; a continuation that resends it is refused. Tools default to read_only; toolMode:'auto' may cause real external side effects. Pass hostId (or target an environment, which pins its own host) to run a saved host — including one that declares a real agent harness; the response's `engine` field always names what actually ran.",
   readOnly: false,
   // Unknowable upstream of the call in the SAME sense `call_server_tool` is:
   // under `auto` this executes arbitrary third-party tools, and softening the
@@ -7665,6 +7673,10 @@ export const sendChatMessageOperation: PlatformOperation<
         ...(projectId ? { projectId } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(input.modelId ? { modelId: input.modelId } : {}),
+        // Forwarded EXPLICITLY, like every other field: the client builds the
+        // body key by key, so an input the operation validates but never hands
+        // over is silently dropped on the way to the wire (#4598).
+        ...(input.hostId ? { hostId: input.hostId } : {}),
         ...(input.environmentId ? { environmentId: input.environmentId } : {}),
         ...(input.serverIds ? { serverIds: input.serverIds } : {}),
         ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),

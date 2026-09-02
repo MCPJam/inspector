@@ -62,7 +62,9 @@ export function useCloudServerReadiness({
     const groupById = new Map(
       serverAttachments.map((group) => [group._id, group])
     );
-    const catalog = servers ?? [];
+    // Passed through undefined on purpose: an unanswered query is not an
+    // empty project, and the two lead to opposite advice.
+    const catalog = servers;
 
     /** A client's own set, as a target. Absent count stays UNKNOWN. */
     const hostTarget = (
