@@ -100,7 +100,8 @@ describe("the stage strip", () => {
       document: null,
       error: { kind: "invalidContract" },
     });
-    if (contract.kind !== "unavailable") throw new Error("expected unavailable");
+    if (contract.kind !== "unavailable")
+      throw new Error("expected unavailable");
     expect(contract.message).toContain("did not match the published contract");
     // No status was recorded, so none is invented.
     expect(contract.message).not.toContain("HTTP");
@@ -112,6 +113,39 @@ describe("the stage strip", () => {
     });
     if (denied.kind !== "unavailable") throw new Error("expected unavailable");
     expect(denied.message).toContain("HTTP 401");
+  });
+
+  it("names the trials it left out, which is why the old funnel was deleted", () => {
+    // On a three-trial run the suite funnel showed six green stages over two
+    // trials, and the excluded one was precisely the trial that broke. The
+    // counts were right and the page was a lie; the exclusion line is what
+    // stops this strip repeating it.
+    const document = structuredClone(GOLDEN_STAGE_ANALYTICS);
+    const overall = document.slices.find(
+      (slice) => slice.slice.dimension === "overall",
+    );
+    if (!overall) throw new Error("fixture has no overall slice");
+    overall.excludedTrials = { ...overall.excludedTrials, chainUnverified: 1 };
+
+    const result = view(document);
+    if (result.kind !== "ready") throw new Error("expected a ready strip");
+    expect(result.excluded.length).toBeGreaterThan(0);
+    expect(result.excluded.join(" ")).toContain("1");
+  });
+
+  it("says nothing about exclusions when it dropped nothing", () => {
+    // Zero is omitted by the contract rather than sent as 0, so an empty
+    // exclusion block must produce no line at all — not "0 excluded".
+    const document = structuredClone(GOLDEN_STAGE_ANALYTICS);
+    const overall = document.slices.find(
+      (slice) => slice.slice.dimension === "overall",
+    );
+    if (!overall) throw new Error("fixture has no overall slice");
+    overall.excludedTrials = {};
+
+    const result = view(document);
+    if (result.kind !== "ready") throw new Error("expected a ready strip");
+    expect(result.excluded).toEqual([]);
   });
 
   it("says out loud when a judge fanout could still move the numbers", () => {

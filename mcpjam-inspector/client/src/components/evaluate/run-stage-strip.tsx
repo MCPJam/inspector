@@ -76,6 +76,17 @@ export function RunStageStrip({
           {view.trials === 1 ? "iteration" : "iterations"}, so cases with more
           repetitions weigh more
         </span>
+        {view.excluded.length > 0 ? (
+          // Louder than the rest of the header on purpose. Green cells over a
+          // population that dropped the failing trial is the exact reading the
+          // deleted suite funnel produced.
+          <span
+            className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10.5px] font-medium text-destructive"
+            data-testid="run-stage-strip-excluded"
+          >
+            {view.excluded.join(", ")} not counted here
+          </span>
+        ) : null}
         {view.provisional ? (
           <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-600 dark:text-amber-500">
             provisional

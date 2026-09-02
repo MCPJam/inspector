@@ -27,7 +27,11 @@ import {
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
 
-import { NOT_MEASURED_LABEL, overallSlice } from "./stage-analytics-model";
+import {
+  NOT_MEASURED_LABEL,
+  describeExclusions,
+  overallSlice,
+} from "./stage-analytics-model";
 
 export type StageStripCell = {
   stage: UserValueStage;
@@ -62,6 +66,16 @@ export type StageStripView =
       provisional: boolean;
       /** Trials the document counted, so a reader knows the population. */
       trials: number;
+      /**
+       * Trials this document LEFT OUT, in words, when it left any out.
+       *
+       * The single most important line on the strip, and the reason the old
+       * suite-level funnel was deleted rather than fixed: on a three-trial run
+       * it showed six green stages over two trials, and the excluded one was
+       * precisely the trial that broke. Six greens beside "2 of 2 measured"
+       * reads as a healthy run unless the missing trial is named out loud.
+       */
+      excluded: string[];
     };
 
 export type BuildStageStripInput = {
@@ -111,7 +125,9 @@ export function buildStageStrip(input: BuildStageStripInput): StageStripView {
     // The status code is the one thing that turns "could not be read" into
     // something a reader can act on: 401 is a permission, 500 is ours.
     const suffix =
-      typeof input.error?.status === "number" ? ` (HTTP ${input.error.status})` : "";
+      typeof input.error?.status === "number"
+        ? ` (HTTP ${input.error.status})`
+        : "";
     return { kind: "unavailable", message: `${base}${suffix}` };
   }
 
@@ -174,5 +190,6 @@ export function buildStageStrip(input: BuildStageStripInput): StageStripView {
     cells,
     provisional: input.document.materializationState === "provisional",
     trials: overall.includedTrials,
+    excluded: describeExclusions(overall.excludedTrials),
   };
 }
