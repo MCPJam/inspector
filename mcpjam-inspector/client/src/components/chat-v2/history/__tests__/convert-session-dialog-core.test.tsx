@@ -49,16 +49,11 @@ vi.mock("@/components/evals/server-attachment-picker", () => ({
     <div data-testid="server-attachment-picker" data-value={value ?? ""} />
   ),
 }));
-vi.mock("@/components/evals/client-attachments-editor", () => ({
-  ClientAttachmentsEditor: ({
-    value,
-  }: {
-    value: Array<{ namedHostId: string }>;
-  }) => (
-    <div
-      data-testid="client-attachments-editor"
-      data-hosts={value.map((v) => v.namedHostId).join(",")}
-    />
+// BB-163: the new-suite branch attaches ONE client through a single field,
+// so what's worth surfacing is the host id the core wires in.
+vi.mock("@/components/hosts/HostPicker", () => ({
+  HostPicker: ({ value }: { value: string | null }) => (
+    <div data-testid="client-picker" data-host={value ?? ""} />
   ),
 }));
 
@@ -139,9 +134,18 @@ describe("ConvertSessionDialogCore", () => {
     expect(submit.hasAttribute("disabled")).toBe(true);
   });
 
-  it("renders server chips resolved from the adapter-provided usedServerIds", () => {
+  /**
+   * BB-163 removed the always-on "Session servers" chip row. The session's
+   * servers still drive the generated suite name, which is where a reader
+   * now sees them — and it is the only place, because showing them twice was
+   * BB-93's "why do I see server selection twice?".
+   */
+  it("seeds the suite name from the adapter-provided usedServerIds, without a chip row", () => {
     renderCore();
-    expect(screen.getByText("Excalidraw")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Suite name") as HTMLInputElement).value
+    ).toContain("Excalidraw");
+    expect(screen.queryByText("Session servers")).toBeNull();
   });
 
   it("submits sessionId + projectId + picker selections on the new-suite branch", async () => {
@@ -171,14 +175,14 @@ describe("ConvertSessionDialogCore", () => {
   it("pre-seeds the client attachment from defaultHostId when it names a project host", () => {
     renderCore({ defaultHostId: "host-swarm" });
     expect(
-      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
+      screen.getByTestId("client-picker").getAttribute("data-host")
     ).toBe("host-swarm");
   });
 
   it("falls back to the first project host when defaultHostId is unknown", () => {
     renderCore({ defaultHostId: "host-deleted" });
     expect(
-      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
+      screen.getByTestId("client-picker").getAttribute("data-host")
     ).toBe("host-first");
   });
 
@@ -203,9 +207,10 @@ describe("ConvertSessionDialogCore", () => {
         onImported={vi.fn()}
       />
     );
-    expect(
-      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
-    ).toBe("");
+    // BB-163: while the detail is in flight the destination area is a
+    // spinner, so there is no client field to have seeded yet.
+    expect(screen.queryByTestId("client-picker")).toBeNull();
+    expect(screen.getByText(/Loading session details/)).toBeTruthy();
 
     rerender(
       <ConvertSessionDialogCore
@@ -219,7 +224,7 @@ describe("ConvertSessionDialogCore", () => {
       />
     );
     expect(
-      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
+      screen.getByTestId("client-picker").getAttribute("data-host")
     ).toBe("host-swarm");
   });
 
@@ -237,7 +242,7 @@ describe("ConvertSessionDialogCore", () => {
       />
     );
     expect(
-      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
+      screen.getByTestId("client-picker").getAttribute("data-host")
     ).toBe("");
 
     rerender(
@@ -253,8 +258,18 @@ describe("ConvertSessionDialogCore", () => {
       />
     );
     expect(
-      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
+      screen.getByTestId("client-picker").getAttribute("data-host")
     ).toBe("host-swarm");
+  });
+
+  it("shows only the new-suite fields when the project has no suites", () => {
+    // Spec: no radio nobody can answer, and explicitly no nested
+    // create-suite modal.
+    renderCore();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByLabelText("Suite name")).toBeTruthy();
+    expect(screen.getByTestId("client-picker")).toBeTruthy();
+    expect(screen.getByTestId("server-attachment-picker")).toBeTruthy();
   });
 
   it("skips the suite subscription while the database user is not ready", () => {
@@ -265,6 +280,95 @@ describe("ConvertSessionDialogCore", () => {
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
       "skip"
+    );
+  });
+});
+
+/**
+ * BB-163 — the two "Add to" states.
+ *
+ * The load-bearing claim of the redesign is that client and server belong to
+ * the SUITE, not the case: the existing-suite branch reports the destination's
+ * pair read-only and never asks for it, and only a brand-new suite gets
+ * pickers. These pin both halves, plus the default the spec calls for.
+ */
+describe("ConvertSessionDialogCore — Add to", () => {
+  const SUITE_ENTRIES = [
+    {
+      suite: {
+        _id: "suite-billing",
+        name: "Billing evals",
+        environment: { servers: ["Excalidraw"] },
+        hostAttachments: [{ hostName: "Claude" }],
+      },
+    },
+    {
+      suite: {
+        _id: "suite-other",
+        name: "Checkout evals",
+        environment: { servers: ["Excalidraw"] },
+        hostAttachments: [{ hostName: "Cursor" }],
+      },
+    },
+  ];
+
+  function renderWithSuites() {
+    mocks.useQuery.mockReturnValue(SUITE_ENTRIES);
+    return renderCore();
+  }
+
+  it("defaults to Existing suite and pre-selects the first one", () => {
+    renderWithSuites();
+    expect(
+      screen
+        .getByTestId("promote-destination-existing")
+        .getAttribute("data-selected")
+    ).toBe("true");
+    expect(screen.getByText("Billing evals")).toBeTruthy();
+  });
+
+  it("reports the selected suite's client and server read-only", () => {
+    renderWithSuites();
+    expect(
+      screen.getByTestId("promote-existing-suite-summary").textContent
+    ).toBe("Claude · Excalidraw");
+  });
+
+  it("does NOT ask for client or server on the existing-suite branch", () => {
+    renderWithSuites();
+    expect(screen.queryByTestId("client-picker")).toBeNull();
+    expect(screen.queryByTestId("server-attachment-picker")).toBeNull();
+    expect(screen.queryByLabelText("Suite name")).toBeNull();
+  });
+
+  it("reveals suite name, client and server once New suite is picked", () => {
+    renderWithSuites();
+    fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
+
+    expect(screen.getByLabelText("Suite name")).toBeTruthy();
+    expect(screen.getByTestId("client-picker")).toBeTruthy();
+    expect(screen.getByTestId("server-attachment-picker")).toBeTruthy();
+    // ...and the existing branch's picker folds away with it.
+    expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
+  });
+
+  it("submits into the pre-selected suite without re-asking for a destination", async () => {
+    importAction.mockResolvedValue({ suiteId: "suite-billing", testCaseId: "c" });
+    renderWithSuites();
+
+    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(importAction).toHaveBeenCalledTimes(1));
+    expect(importAction.mock.calls[0][0]).toMatchObject({
+      destinationSuiteId: "suite-billing",
+      testCaseTitle: "draw a dog",
+    });
+    // Suite-owned inputs are never sent from this branch.
+    expect(importAction.mock.calls[0][0]).not.toHaveProperty("newSuiteName");
+    expect(importAction.mock.calls[0][0]).not.toHaveProperty(
+      "newSuiteHostAttachments"
     );
   });
 });
