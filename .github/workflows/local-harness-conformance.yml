@@ -316,8 +316,17 @@ jobs:
         run: |
           set -euo pipefail
           root="$(cygpath -w "$CONFORMANCE_ROOT/runtime/claude-code" 2>/dev/null || echo "$CONFORMANCE_ROOT/runtime/claude-code")"
-          survivors="$(wmic process get ProcessId,CommandLine /format:csv 2>/dev/null \
-            | grep -F "$root" || true)"
+          # The QUERY's own failure is a failure. `wmic ... || true` turned a
+          # process table nobody could read into an empty survivor list, so the
+          # step reported a clean run without having looked at a single
+          # process — the exact shape of green-means-nothing this check exists
+          # to prevent. (wmic is deprecated on newer Windows images, so this
+          # can start failing without any code change.)
+          if ! process_table="$(wmic process get ProcessId,CommandLine /format:csv 2>/dev/null)"; then
+            echo "could not read the Windows process table, so this check proved nothing" >&2
+            exit 1
+          fi
+          survivors="$(printf '%s\n' "$process_table" | grep -F "$root" || true)"
           echo "${survivors:-(no supervised process)}"
           if [ -n "$survivors" ]; then
             echo "supervised processes survived the conformance run" >&2

@@ -340,8 +340,24 @@ function verificationCacheKey(root: string, expectedDigest: string): string {
   return `${root}\u0000${expectedDigest}`;
 }
 
+/**
+ * Bumped by every invalidation, and captured by every verification when it
+ * starts.
+ *
+ * Clearing the maps is not enough on its own, because a verification already
+ * running holds no reference to them until it finishes. Two things went wrong
+ * when one resolved after an activation: it wrote its now-obsolete snapshot
+ * into the freshly cleared cache — a `ok: true` for bytes that had since been
+ * replaced, which is the one answer this cache must never give — and its
+ * `finally` deleted whatever sat under its key, which by then was a NEWER
+ * caller's in-flight promise, forcing the next caller into another full
+ * ~515 MB digest.
+ */
+let cacheGeneration = 0;
+
 /** Test seam and pack-activation hook: drop everything the cache remembers. */
 export function clearRuntimeVerificationCache(): void {
+  cacheGeneration += 1;
   verifiedRuntimeCache.clear();
   // In-flight work as well: a pack activation replaces the tree under a
   // verification that is already reading it, and letting that one resolve into
@@ -375,12 +391,17 @@ export async function verifyRuntime(
   }
   const running = inFlightVerifications.get(key);
   if (running !== undefined) return running;
-  const started = digestOnce(root, expectedDigest, key);
+  const started = digestOnce(root, expectedDigest, key, cacheGeneration);
   inFlightVerifications.set(key, started);
   try {
     return await started;
   } finally {
-    inFlightVerifications.delete(key);
+    // OUR entry only. After an invalidation the map can hold a different,
+    // newer promise under this key, and deleting that one costs the next
+    // caller a full digest for nothing.
+    if (inFlightVerifications.get(key) === started) {
+      inFlightVerifications.delete(key);
+    }
   }
 }
 
@@ -388,6 +409,7 @@ async function digestOnce(
   root: string,
   expectedDigest: string,
   key: string,
+  generation: number,
 ): Promise<RuntimeVerification> {
   let snapshot: RuntimeTreeSnapshot;
   try {
@@ -401,6 +423,19 @@ async function digestOnce(
   }
   if (snapshot.digest !== expectedDigest) {
     return { ok: false, reason: "digest-mismatch", digest: snapshot.digest };
+  }
+  if (generation !== cacheGeneration) {
+    // The tree was replaced while this read was in progress. The bytes that
+    // matched are gone, so this cannot be published as the cached truth and
+    // cannot be reported as a pass: the caller re-verifies against whatever is
+    // there now. Refusing costs one re-digest in a rare race; accepting would
+    // admit a runtime that is no longer on disk.
+    return {
+      ok: false,
+      reason: "unreadable",
+      message:
+        "the runtime tree was replaced while it was being verified; verify again",
+    };
   }
   verifiedRuntimeCache.set(key, snapshot);
   return { ok: true, digest: snapshot.digest, snapshot, cached: false };

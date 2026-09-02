@@ -104,6 +104,13 @@ process.on("SIGTERM", () => {
   // only thing the parent learns about what the gateway saw.
   process.stdout.write(`${JSON.stringify({ stats })}\n`, () => {
     server.close(() => process.exit(0));
+    // `server.close` only stops ACCEPTING; it then waits for every open
+    // connection to finish. With a request in flight that is up to the
+    // upstream timeout, and with a stalled client it is forever — so a helper
+    // told to stop could outlive the scenario that started it and hold its
+    // port into the next one. The connections are a mock upstream's; there is
+    // nothing to drain.
+    server.closeAllConnections?.();
   });
 });
 server.listen(port, "127.0.0.1", () => {

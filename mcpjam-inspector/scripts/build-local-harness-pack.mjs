@@ -370,13 +370,25 @@ function nodeVersion(target, extractedRoot, platformKey) {
   if (native) {
     return execFileSync(target, ["--version"], { encoding: "utf8" }).trim();
   }
-  const named = /^node-(v\d+\.\d+\.\d+)-/.exec(extractedRoot ?? "");
+  // The ARCHITECTURE too, not just the version. nodejs.org names its archives
+  // `node-<version>-<os>-<arch>`, and matching only the version prefix accepted
+  // a linux-x64 tarball while building a pack stamped darwin-arm64 — a pack
+  // whose manifest says one target and whose `bin/node` is another. Nothing
+  // downstream could catch that: the digest would be computed over the wrong
+  // binary and would verify perfectly on the user's machine, right up to the
+  // exec that cannot run it.
+  const archiveSuffix = platformKey === "win32-x64" ? "win-x64" : platformKey;
+  const named = new RegExp(`^node-(v\\d+\\.\\d+\\.\\d+)-${archiveSuffix}$`).exec(
+    extractedRoot ?? "",
+  );
   if (named === null) {
     fail(
       `cross-building ${platformKey} on ${process.platform}-${process.arch}: ` +
-        `the bundled Node cannot be run here, and its archive directory ` +
-        `${JSON.stringify(extractedRoot ?? "(a bare binary)")} does not name a ` +
-        `version. Pass an official nodejs.org archive, or build on a ` +
+        `the bundled Node cannot be run here, so its archive directory has to ` +
+        `name both the version and the target. Expected ` +
+        `node-<version>-${archiveSuffix}, got ` +
+        `${JSON.stringify(extractedRoot ?? "(a bare binary)")}. Pass the ` +
+        `official nodejs.org archive for ${platformKey}, or build on a ` +
         `${platformKey} host.`,
     );
   }

@@ -7,7 +7,7 @@
  * Nothing here is product code. It exists to pin facts for the implementation:
  * timings, process-tree behaviour, what lands where, and what breaks.
  */
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
@@ -98,7 +98,7 @@ const note = (s: string) => {
  * the CI job — and left the granted consent in place. The next scenario then
  * failed for a reason that had nothing to do with it.
  */
-const helpers: Array<{ kill: (signal?: NodeJS.Signals) => boolean }> = [];
+const helpers: ChildProcess[] = [];
 
 /**
  * The supervised tree this run owns, so a FAILURE can stop it.
@@ -122,14 +122,47 @@ async function stopOwnedTree(): Promise<void> {
   }
 }
 
-function stopHelpers(): void {
-  for (const child of helpers.splice(0)) {
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      /* already gone */
-    }
-  }
+/**
+ * Stop every helper and WAIT for it, with an escalation.
+ *
+ * `process.exit` on the next line does not give a SIGTERM'd child time to run
+ * its handler, so a failing scenario could exit while its gateway was still
+ * listening — and the next scenario would inherit a server on a port it
+ * expects to be free. Bounded, because a helper that ignores SIGTERM must not
+ * hold the run open either: after the grace it gets SIGKILL, which nothing
+ * survives.
+ */
+async function stopHelpers(graceMs = 2_000): Promise<void> {
+  const stopping = helpers.splice(0);
+  await Promise.all(
+    stopping.map(
+      (child) =>
+        new Promise<void>((resolve) => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            resolve();
+            return;
+          }
+          const done = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              /* already gone */
+            }
+            resolve();
+          }, graceMs);
+          child.once("exit", done);
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            done();
+          }
+        }),
+    ),
+  );
 }
 
 /**
@@ -585,7 +618,7 @@ main().catch(async (e) => {
   // bridge tree or a live consent grant behind. The report below is what a
   // human reads; this is what the next scenario depends on.
   await stopOwnedTree();
-  stopHelpers();
+  await stopHelpers();
   await revokeLocalHarnessGrants().catch(() => {});
   console.error("[conformance] FAILED:", e?.stack ?? e);
   console.error("[conformance] marks:", JSON.stringify(marks));

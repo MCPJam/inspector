@@ -26,8 +26,14 @@ on:
         default: false
     outputs:
       digests:
-        description: JSON map of platform key to tree digest, for the manifest generator.
+        description: JSON map of platform key to {packVersion, treeDigest}.
         value: ${{ jobs.collect.outputs.digests }}
+      flat:
+        description: >-
+          JSON map of platform key to tree digest — the shape
+          `scripts/write-pack-digests.mjs --digests` takes. `digests` is the
+          nested form and is NOT interchangeable with it.
+        value: ${{ jobs.collect.outputs.flat }}
   workflow_dispatch:
     inputs:
       pack_version:
@@ -233,6 +239,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       digests: ${{ steps.merge.outputs.digests }}
+      # The FLAT map too. `docs/local-harness.md` tells an operator to paste
+      # this into `write-pack-digests.mjs`, and it was a step output only — so
+      # a `workflow_dispatch` run, which is how the digests are produced in the
+      # first place, exposed no way to read it.
+      flat: ${{ steps.merge.outputs.flat }}
     steps:
       - name: Download every pack
         uses: actions/download-artifact@v4
@@ -252,6 +263,11 @@ jobs:
           echo "digests=$map" >> "$GITHUB_OUTPUT"
           flat="$(jq -sc 'map({(.platform): .treeDigest}) | add' packs/*.manifest.json)"
           echo "flat=$flat" >> "$GITHUB_OUTPUT"
+          # Printed, because this is the string a human copies into
+          # `write-pack-digests.mjs --digests`. A value that exists only in an
+          # output variable is not reachable from a dispatch run's log.
+          echo "digest map for scripts/write-pack-digests.mjs --digests:"
+          echo "$flat"
           echo "$map"
 
       - name: Check out the Inspector sources

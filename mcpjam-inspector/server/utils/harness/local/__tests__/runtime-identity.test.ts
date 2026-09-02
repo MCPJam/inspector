@@ -305,16 +305,60 @@ describe("verification cost", () => {
 
   it("never remembers a verification that failed, even a concurrent one", async () => {
     // A promise cache that kept failures would answer "no" forever for a tree
-    // that was merely unreadable for a moment.
+    // that was merely wrong for a moment.
+    //
+    // The SAME (root, expectedDigest) key throughout, which is the only way
+    // this can test anything: the cache is keyed on the pair, so a version
+    // that failed against one digest and retried against another exercised two
+    // unrelated entries and would have passed even if failures were cached
+    // forever.
     clearRuntimeVerificationCache();
     const root = await writeBundle("concurrent-bad", { "bridge.mjs": "x" });
-    const wrong = `sha256:${"2".repeat(64)}`;
-    await Promise.all([verifyRuntime(root, wrong), verifyRuntime(root, wrong)]);
-    // Now with the digest it really has: a fresh verification, not a cached
-    // refusal.
-    await expect(
-      verifyRuntime(root, await computeTreeDigest(root)),
-    ).resolves.toMatchObject({ ok: true, cached: false });
+    const wanted = await computeTreeDigest(root);
+    clearRuntimeVerificationCache();
+
+    // Same key, but the tree does not match it yet.
+    await writeFile(join(root, "bridge.mjs"), "not-x-yet");
+    const failures = await Promise.all([
+      verifyRuntime(root, wanted),
+      verifyRuntime(root, wanted),
+    ]);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ ok: false, reason: "digest-mismatch" });
+    }
+
+    // The tree becomes what that key names. A cached refusal would still say no.
+    await writeFile(join(root, "bridge.mjs"), "x");
+    await expect(verifyRuntime(root, wanted)).resolves.toMatchObject({
+      ok: true,
+      cached: false,
+    });
+  });
+
+  it("refuses a verification whose tree was replaced under it, and caches nothing", async () => {
+    // An install activates a new pack while a verification is already reading
+    // the old one. That read must not become the cached truth: its bytes are
+    // gone, and answering `ok` for them would admit a runtime that is no
+    // longer on disk.
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("replaced-under-us", { "bridge.mjs": "x" });
+    const digest = await computeTreeDigest(root);
+    clearRuntimeVerificationCache();
+
+    const inFlight = verifyRuntime(root, digest);
+    // Exactly what `installRuntimePack` does at activation, while the read
+    // above is still walking the tree.
+    clearRuntimeVerificationCache();
+    await expect(inFlight).resolves.toMatchObject({
+      ok: false,
+      reason: "unreadable",
+    });
+
+    // Nothing stale was published: the next caller does the work itself.
+    await expect(verifyRuntime(root, digest)).resolves.toMatchObject({
+      ok: true,
+      cached: false,
+    });
   });
 
   it("keys the cache on the expected digest, so an upgrade re-verifies", async () => {

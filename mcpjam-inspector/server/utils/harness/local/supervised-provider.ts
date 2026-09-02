@@ -421,8 +421,22 @@ export function createSupervisedLocalHarnessProvider(
       // exists to prevent. Repointed rather than refused: `opts.workspacePath`
       // came through the availability gate and IS the authority, so making the
       // link agree with it keeps the invariant true by construction.
+      // Both the link's TEXT and what it actually resolves to. `readlink`
+      // alone compares a string: a link whose text still reads
+      // `/granted/path` passes it even after `/granted/path` itself became a
+      // symlink to somewhere else, and the agent's cwd would resolve into the
+      // redirected directory. `opts.workspacePath` is `workspace.canonicalPath`
+      // — already a `realpath` — so in the healthy case these agree exactly and
+      // nothing is repointed. A dangling link resolves to nothing and is stale
+      // by the same rule.
       const current = await readlink(workspaceLink);
-      if (current !== opts.workspacePath) {
+      const resolved = await realpath(workspaceLink).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        },
+      );
+      if (current !== opts.workspacePath || resolved !== opts.workspacePath) {
         logger.warn("[local-harness] repointing a stale workspace link", {
           sessionStateDir: opts.sessionStateDir,
         });

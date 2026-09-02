@@ -296,6 +296,36 @@ describe("the readiness-then-exposure sequence", () => {
     ).rejects.toThrow(/reachable from the local network/);
   });
 
+  it("probes every address at once, not one after another", async () => {
+    // D7's regression, made deterministic. The conformance scenario measures
+    // this against a real machine's interfaces, but a CI runner usually has
+    // one or two addresses that refuse instantly — so a probe that went back
+    // to being serial would still land inside that scenario's 3 s budget and
+    // the job would stay green.
+    //
+    // Here the address list and the connect are both injected: eight addresses
+    // at 120 ms each is 960 ms serially and about 120 ms in parallel. The
+    // threshold sits between the two, far enough from both that a loaded
+    // machine cannot flip it.
+    const SLOW_MS = 120;
+    const addresses = Array.from({ length: 8 }, (_, i) => `10.0.0.${i + 1}`);
+    const started = Date.now();
+    await expect(
+      assertBridgeLoopbackOnly({
+        port: 1234,
+        readinessTimeoutMs: 100,
+        addresses,
+        connect: async (host) => {
+          if (host === "127.0.0.1") return true;
+          await new Promise((r) => setTimeout(r, SLOW_MS));
+          return false;
+        },
+      }),
+    ).resolves.toBeUndefined();
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(SLOW_MS * addresses.length * 0.5);
+  });
+
   it("passes for a ready, loopback-only bridge", async () => {
     await expect(
       assertBridgeLoopbackOnly({

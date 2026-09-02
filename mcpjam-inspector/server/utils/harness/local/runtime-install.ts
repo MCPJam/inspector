@@ -500,12 +500,16 @@ async function performInstall(args: {
     // install just wrote and just verified.
     if (args.platform === "darwin") await clearQuarantine(extractRoot);
 
-    // Activate. The rename is the commit point: before it there is no version
-    // directory at all, after it there is a complete verified one.
-    await rm(versionRoot, { recursive: true, force: true });
-    await rename(extractRoot, versionRoot);
+    // The ownership marker goes in BEFORE the rename, so the rename is the one
+    // and only commit point. Written afterwards, a crash in the window between
+    // them left a fully activated ~515 MB version directory that carried no
+    // marker — and `sweepOtherVersions` refuses to delete an unmarked
+    // directory (correctly: it will not reap a tree it cannot prove is ours).
+    // The result was an orphan nothing would ever reclaim. It is a SIBLING of
+    // the digested `<harnessId>/` subtree, not a member of it, so writing it
+    // here cannot disturb the digest that was just verified.
     await writeFile(
-      join(versionRoot, INSTALL_MARKER),
+      join(extractRoot, INSTALL_MARKER),
       `${JSON.stringify(
         {
           packVersion: expected.packVersion,
@@ -519,6 +523,12 @@ async function performInstall(args: {
       )}\n`,
       { mode: 0o600 },
     );
+
+    // Activate. The rename is the commit point: before it there is no version
+    // directory at all, after it there is a complete, verified, self-identifying
+    // one.
+    await rm(versionRoot, { recursive: true, force: true });
+    await rename(extractRoot, versionRoot);
 
     // A previous process may have verified a DIFFERENT tree at this path.
     clearRuntimeVerificationCache();

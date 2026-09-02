@@ -16,7 +16,7 @@ import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import { createSupervisedLocalHarnessProvider, sessionStateDirFor } from "../supervised-provider.js";
 import { resolveLocalHarnessAvailability } from "../availability.js";
-import { getLocalMachineId, grantLocalHarnessConsent, localHarnessStateRoot, registerWorkspaceGrant } from "../grants.js";
+import { getLocalMachineId, grantLocalHarnessConsent, localHarnessStateRoot, registerWorkspaceGrant, revokeLocalHarnessGrants } from "../grants.js";
 import { computeTreeDigest, resolveManagedBundle } from "../runtime-identity.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
@@ -194,6 +194,11 @@ function mockLatencyEnv(): Record<string, string> {
 
 async function startChild(script: string, env: Record<string, string>) {
   const child = spawn(process.execPath, [join(SCRIPT_DIR, script)], { env: helperEnv(env), stdio: ["ignore", "pipe", "pipe"], detached: true });
+  // Registered HERE, not after the port handshake. `stopHelpers()` was a no-op
+  // in this runner, so a setup that failed between spawning a helper and
+  // returning it left a detached loopback server holding its port for the rest
+  // of the job — and the next scenario inherited it.
+  helpers.push(child);
   // Kept, not discarded: a helper that dies at startup has nothing else to
   // say for itself, and "exited 1" alone has cost one Windows debugging round
   // already.
@@ -348,6 +353,10 @@ main().catch(async (e) => {
   // crash it exists to simulate.
   await stopOwnedTree();
   stopHelpers();
+  // Consent is persistent state under HOME. A failed scenario that leaves a
+  // live grant behind hands the next one an authorization it did not ask for,
+  // which is the one kind of leftover this suite must never normalise.
+  await revokeLocalHarnessGrants().catch(() => {});
   console.error("[lifecycle] FAILED", e?.stack ?? e);
   process.exit(1);
 });

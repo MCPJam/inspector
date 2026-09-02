@@ -39,6 +39,10 @@ node scripts/build-local-harness-pack.mjs \
   --pack-version conformance \
   --node-tarball "$(command -v node)" \
   --out "$S/runtime-src" --skip-archive
+# `rm -rf` first: `cp -R` of a directory ONTO an existing directory of the
+# same name nests it (`runtime/claude-code/claude-code`), so re-running this
+# block after a first run silently produces a layout no scenario can resolve.
+rm -rf "$S/runtime/claude-code"
 cp -R "$S/runtime-src/claude-code" "$S/runtime/claude-code"
 
 for scenario in \
@@ -51,9 +55,16 @@ for scenario in \
   "timing-decomp.mts" \
   "group-settle.mts"
 do
+  # UNQUOTED on purpose: the entries carry a script AND its argument, and
+  # quoting makes `run-native-turn.ts full` one filename.
   HOME="$S/home" CONFORMANCE_ROOT="$S" MOCK_LATENCY_MS=50 npx tsx \
-    "server/utils/harness/local/conformance/$scenario" || echo "FAILED: $scenario"
+    server/utils/harness/local/conformance/$scenario \
+    || { echo "FAILED: $scenario"; failed=1; }
 done
+# The loop swallowed every non-zero exit and returned success after printing
+# `FAILED`, so the documented way to run this suite could not be used as its
+# result.
+exit "${failed:-0}"
 ```
 
 Every scenario ASSERTS and exits non-zero on failure. That is the whole

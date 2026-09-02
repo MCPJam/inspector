@@ -123,7 +123,10 @@ const server = http.createServer((req, res) => {
       }
     }
     if (req.method === "POST" && req.url?.startsWith("/v1/messages")) {
-      if (req.url.includes("count_tokens")) { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ input_tokens: 42 })); return; }
+      // Parsed BEFORE the count_tokens shortcut. That early return answered
+      // 200 without ever looking at the body, so the one endpoint that exists
+      // to price a request would certify a request Anthropic itself would
+      // reject — and a gateway that corrupted bodies could still pass here.
       let body;
       try {
         body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -135,6 +138,7 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: "malformed JSON body" }));
         return;
       }
+      if (req.url.includes("count_tokens")) { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ input_tokens: 42 })); return; }
       const messages = Array.isArray(body.messages) ? body.messages : [];
       const userTurns = messages.filter((m) => m.role === "user" && (typeof m.content === "string" || (Array.isArray(m.content) && m.content.some((b) => b.type === "text")))).length;
       const id = `msg_${requestCount}`;

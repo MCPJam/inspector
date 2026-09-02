@@ -40,6 +40,12 @@ function waitListen(
       settled = true;
       fn();
     };
+    // `error`, not just `exit`: a child that cannot be spawned at all (a pack
+    // whose `bin/node` is missing or not executable) emits `error` and never
+    // `exit`, so the only listener was one this waiter did not have — it sat
+    // until the deadline and reported a port that never listened, which says
+    // nothing about the real failure.
+    child.once("error", (error: Error) => finish(() => reject(error)));
     child.once("exit", (code: number | null) =>
       finish(() =>
         reject(new Error(`the bridge exited (${code}) before it listened`)),
@@ -58,6 +64,20 @@ function waitListen(
         return;
       }
       const sock = net.connect(port, "127.0.0.1");
+      // Bounded by what is LEFT of the deadline. The retry loop only advances
+      // on `error`; a connect that simply stays pending never fires one, so
+      // the deadline above was never re-reached and the detached bridge could
+      // outlive this step entirely.
+      sock.setTimeout(Math.max(1, LISTEN_TIMEOUT_MS - (performance.now() - t0)), () => {
+        sock.destroy();
+        finish(() =>
+          reject(
+            new Error(
+              `port ${port} never listened within ${LISTEN_TIMEOUT_MS}ms`,
+            ),
+          ),
+        );
+      });
       sock.once("connect", () => {
         sock.destroy();
         finish(() => resolve(Math.round(performance.now() - t0)));
@@ -119,8 +139,12 @@ for (let i = 0; i < 3; i++) {
     // used to abort the remaining iterations.
     try {
       process.kill(-child.pid!, "SIGKILL");
-    } catch {
-      /* already gone */
+    } catch (error) {
+      // ESRCH only. Swallowing everything turned EPERM — a group this process
+      // is not allowed to signal, i.e. a bridge tree that is still very much
+      // alive — into "already gone", and the scenario went on to report clean
+      // timings over a live detached process.
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
   }
 }

@@ -81,8 +81,14 @@ describe("the harness subcommand reports its answer in the exit code", () => {
     expect(code).toBe(1);
     if (built) {
       // The installer answered: a state, as JSON, and never `ready` here —
-      // no pack is installed in a test environment.
-      expect(JSON.parse(output.trim()).state).not.toBe("ready");
+      // no pack is installed in a test environment. Stripped of ANSI first:
+      // `bin/start.js` prints through `log`, which wraps every message in
+      // `colors.reset`, so the payload arrives wrapped in escape sequences
+      // that `trim()` does not touch. `JSON.parse` threw a SyntaxError
+      // instead of asserting anything — in the branch that only runs in CI
+      // after a build, which is why it never showed up locally.
+      const json = output.replace(/\u001b\[[0-9;]*m/g, "").trim();
+      expect(JSON.parse(json).state).not.toBe("ready");
     } else {
       expect(output).toMatch(
         /server build is missing|does not expose|could not load/,
