@@ -58,6 +58,12 @@ interface HostPickerProps {
    * placeholder — "Claude", never "Client".
    */
   triggerId?: string;
+  /**
+   * Extra classes for the trigger. `SelectTrigger` is `w-fit` by default, so a
+   * caller placing this in a grid column has to say `w-full` or the control
+   * shrinks to its content while its neighbour fills the cell.
+   */
+  triggerClassName?: string;
 }
 
 export function HostPicker({
@@ -71,6 +77,7 @@ export function HostPicker({
   disabled = false,
   priorityHostId,
   triggerId,
+  triggerClassName,
 }: HostPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
@@ -104,7 +111,7 @@ export function HostPicker({
       }}
       disabled={disabled || isLoading}
     >
-      <SelectTrigger id={triggerId}>
+      <SelectTrigger id={triggerId} className={triggerClassName}>
         <SelectValue placeholder={isLoading ? "Loading..." : placeholder} />
       </SelectTrigger>
       <SelectContent>

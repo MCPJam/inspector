@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Tests for the source-agnostic promote-dialog core. The per-source adapters
@@ -13,12 +13,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const importAction = vi.fn();
 const mocks = vi.hoisted(() => ({
   isUserReady: true,
-  useQuery: vi.fn((..._args: unknown[]) => [] as unknown[]),
+  // The real `useQuery` returns `undefined` BOTH while loading and while
+  // skipped. A mock that always hands back an array makes
+  // `suitesOverview === undefined` unreachable, which is exactly why the two
+  // seeding bugs in this file's subject went unnoticed.
+  useQuery: vi.fn((_ref: unknown, args: unknown) =>
+    args === "skip" ? undefined : ([] as unknown[])
+  ),
 }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
-  useQuery: (...args: unknown[]) => mocks.useQuery(...args),
+  useQuery: (ref: unknown, args: unknown) => mocks.useQuery(ref, args),
   useAction: () => importAction,
 }));
 
@@ -62,6 +68,25 @@ vi.mock("@/components/evals/server-attachment-picker", () => ({
 }));
 // BB-163: the new-suite branch attaches ONE client through a single field,
 // so what's worth surfacing is the host id the core wires in.
+// Heavy leaf, and not what this file is testing — but it must be mocked, or
+// its `useHostMutations` import blows past the `useClients` mock below.
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({
+    isOpen,
+    onCreated,
+  }: {
+    isOpen: boolean;
+    onCreated: (hostId: string) => void;
+  }) =>
+    isOpen ? (
+      <button
+        type="button"
+        data-testid="create-host-dialog"
+        onClick={() => onCreated("host-created")}
+      />
+    ) : null,
+}));
+
 vi.mock("@/components/hosts/HostPicker", () => ({
   HostPicker: ({
     value,
@@ -88,6 +113,7 @@ import {
   ConvertSessionDialogCore,
   type PromoteSessionDetailState,
 } from "../convert-session-dialog-core";
+import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 
 const SUMMARY = {
   sessionId: "chat-session-id-1",
@@ -123,11 +149,63 @@ function renderCore(
   );
 }
 
-afterEach(() => {
+beforeEach(() => {
   vi.clearAllMocks();
   mocks.isUserReady = true;
-  mocks.useQuery.mockReturnValue([]);
+  mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+    args === "skip" ? undefined : []
+  );
 });
+
+/**
+ * A suite-overview entry with the fields the dialog reads, and the required
+ * `EvalSuite` scaffolding it does not. Typed on purpose: an untyped literal
+ * let a backend rename of `resolvedServerNames` or `hostName` leave every test
+ * green while the summary line silently went blank.
+ */
+function suiteEntry(suite: {
+  _id: string;
+  name: string;
+  environment?: { servers: string[] };
+  serverAttachment?: EvalSuiteOverviewEntry["suite"]["serverAttachment"];
+  hostAttachments?: EvalSuiteOverviewEntry["suite"]["hostAttachments"];
+}): EvalSuiteOverviewEntry {
+  return {
+    suite: {
+      createdBy: "user-1",
+      description: "",
+      configRevision: "r1",
+      createdAt: 1,
+      updatedAt: 1,
+      environment: { servers: [] },
+      ...suite,
+    },
+    latestRun: null,
+    recentRuns: [],
+    passRateTrend: [],
+    totals: { passed: 0, failed: 0, runs: 0 },
+  };
+}
+
+/** Full standalone-group shape; `resolvedServerNames` is what the UI reads. */
+function serverGroup(...resolvedServerNames: string[]) {
+  return {
+    _id: "attachment-group",
+    name: "Group",
+    serverIds: resolvedServerNames.map((_, i) => `srv-${i}`),
+    resolvedServerNames,
+  };
+}
+
+/** Full `hostAttachments` shape; the hydrated fields are what the UI reads. */
+function hostAttachment(hostName: string) {
+  return {
+    namedHostId: `host-${hostName.toLowerCase()}`,
+    enabledOptionalServerIds: [],
+    hostName,
+    resolvedServerNames: [],
+  };
+}
 
 describe("ConvertSessionDialogCore", () => {
   it("renders the adapter's loading state", () => {
@@ -315,23 +393,19 @@ describe("ConvertSessionDialogCore", () => {
  * pickers. These pin both halves, plus the default the spec calls for.
  */
 describe("ConvertSessionDialogCore — Add to", () => {
-  const SUITE_ENTRIES = [
-    {
-      suite: {
-        _id: "suite-billing",
-        name: "Billing evals",
-        environment: { servers: ["Excalidraw"] },
-        hostAttachments: [{ hostName: "Claude" }],
-      },
-    },
-    {
-      suite: {
-        _id: "suite-other",
-        name: "Checkout evals",
-        environment: { servers: ["Excalidraw"] },
-        hostAttachments: [{ hostName: "Cursor" }],
-      },
-    },
+  const SUITE_ENTRIES: EvalSuiteOverviewEntry[] = [
+    suiteEntry({
+      _id: "suite-billing",
+      name: "Billing evals",
+      environment: { servers: ["Excalidraw"] },
+      hostAttachments: [hostAttachment("Claude")],
+    }),
+    suiteEntry({
+      _id: "suite-other",
+      name: "Checkout evals",
+      environment: { servers: ["Excalidraw"] },
+      hostAttachments: [hostAttachment("Cursor")],
+    }),
   ];
 
   function renderWithSuites() {
@@ -394,15 +468,13 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // (`createTestSuite` stores `args.environment?.servers ?? []`), so reading
     // only the environment showed the client alone for every modern suite.
     mocks.useQuery.mockReturnValue([
-      {
-        suite: {
+      suiteEntry({
           _id: "suite-grouped",
           name: "Billing evals",
           environment: { servers: [] },
-          serverAttachment: { resolvedServerNames: ["Stripe", "GitHub"] },
-          hostAttachments: [{ hostName: "Claude" }],
-        },
-      },
+          serverAttachment: serverGroup("Stripe", "GitHub"),
+          hostAttachments: [hostAttachment("Claude")],
+        }),
     ]);
     renderCore();
 
@@ -418,16 +490,14 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // Claiming otherwise collected a confirmation that changed nothing and
     // then ran the case without the server.
     mocks.useQuery.mockReturnValue([
-      {
-        suite: {
+      suiteEntry({
           _id: "suite-grouped",
           name: "Billing evals",
           environment: { servers: [] },
           // The group does NOT carry the session's Excalidraw server.
-          serverAttachment: { resolvedServerNames: ["Stripe"] },
-          hostAttachments: [{ hostName: "Claude" }],
-        },
-      },
+          serverAttachment: serverGroup("Stripe"),
+          hostAttachments: [hostAttachment("Claude")],
+        }),
     ]);
     renderCore();
 
@@ -448,15 +518,13 @@ describe("ConvertSessionDialogCore — Add to", () => {
   it("stays quiet when the pinned group already covers the session", async () => {
     // The common case, and the one the false positive was loudest in.
     mocks.useQuery.mockReturnValue([
-      {
-        suite: {
+      suiteEntry({
           _id: "suite-grouped",
           name: "Billing evals",
           environment: { servers: [] },
-          serverAttachment: { resolvedServerNames: ["Excalidraw"] },
-          hostAttachments: [{ hostName: "Claude" }],
-        },
-      },
+          serverAttachment: serverGroup("Excalidraw"),
+          hostAttachments: [hostAttachment("Claude")],
+        }),
     ]);
     renderCore();
 
@@ -470,22 +538,18 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // tick across a suite change would let a submit patch the new suite on a
     // confirmation nobody gave for it.
     mocks.useQuery.mockReturnValue([
-      {
-        suite: {
+      suiteEntry({
           _id: "suite-a",
           name: "Suite A",
           environment: { servers: [] },
-          hostAttachments: [{ hostName: "Claude" }],
-        },
-      },
-      {
-        suite: {
+          hostAttachments: [hostAttachment("Claude")],
+        }),
+      suiteEntry({
           _id: "suite-b",
           name: "Suite B",
           environment: { servers: [] },
-          hostAttachments: [{ hostName: "Claude" }],
-        },
-      },
+          hostAttachments: [hostAttachment("Claude")],
+        }),
     ]);
     renderCore();
 
@@ -508,6 +572,135 @@ describe("ConvertSessionDialogCore — Add to", () => {
         .getByRole("button", { name: "Promote to test case" })
         .hasAttribute("disabled")
     ).toBe(true);
+  });
+
+  it("still defaults to Existing suite when the users row lands late", async () => {
+    // Bug 2. `suitesQueryActive` requires `isUserReady`, so on the
+    // authed-but-bootstrapping path the query is SKIPPED, not resolved.
+    // Reading that `undefined` as "no suites" seeded New suite and stamped the
+    // default ref, and the ref then blocked re-seeding once the list arrived.
+    mocks.isUserReady = false;
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : SUITE_ENTRIES
+    );
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    // Nothing decided yet — a spinner, not a branch.
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+
+    mocks.isUserReady = true;
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getByTestId("promote-destination-existing")
+          .getAttribute("data-selected")
+      ).toBe("true")
+    );
+  });
+
+  it("keeps the chosen suite when the summary object changes identity", async () => {
+    // Bug 1. Both adapters build `summary` with `useMemo` over Convex results,
+    // so a subscription push hands the core an equal-but-new object. Clearing
+    // `selectedSuiteId` on that identity wiped the selection, and the seeding
+    // effect refused to restore it because its ref was already stamped.
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : SUITE_ENTRIES
+    );
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
+
+    // A user picks the second suite by hand.
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(await screen.findByRole("option", { name: "Checkout evals" }));
+    expect(screen.getByText("Checkout evals")).toBeTruthy();
+
+    // Same session, brand-new object — what every Convex push produces.
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={{ ...SUMMARY }}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Checkout evals")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled")
+    ).toBe(false);
+  });
+
+  it("does not re-seed over a user's choice when the suites array is reallocated", async () => {
+    // The guard ref exists for this, and no test reached it: the fixtures were
+    // a module-level constant, so `availableSuites` never changed identity and
+    // the effect never re-ran after mount. Convex allocates a new array on
+    // every update.
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : SUITE_ENTRIES.map((e) => ({ ...e }))
+    );
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
+    expect(
+      screen.getByTestId("promote-destination-new").getAttribute("data-selected")
+    ).toBe("true");
+
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByTestId("promote-destination-new").getAttribute("data-selected")
+    ).toBe("true");
   });
 
   it("submits into the pre-selected suite without re-asking for a destination", async () => {
