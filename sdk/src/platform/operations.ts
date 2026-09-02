@@ -847,6 +847,32 @@ function evalRunRef(
 }
 
 /**
+ * One iteration of an eval run, addressed through the run and the run's suite.
+ *
+ * Exported, unlike its siblings, because no catalog operation can compose it
+ * yet: the trace and iteration-list responses name the run but not the suite,
+ * and a ref needs both. The follow-up that stamps `suiteId` onto those DTOs
+ * is where this gets its first caller.
+ */
+export function evalIterationRef(
+  iterationId: string,
+  runId: string,
+  suiteId: string,
+  projectId?: string
+): PlatformResourceRef {
+  return {
+    type: "eval_iteration",
+    id: iterationId,
+    parent: {
+      type: "eval_run",
+      id: runId,
+      parent: { type: "eval_suite", id: suiteId },
+    },
+    ...(projectId ? { projectId } : {}),
+  };
+}
+
+/**
  * An eval case, addressed through its suite.
  *
  * Returns NOTHING when the suite is unknown rather than falling back to the
@@ -6342,7 +6368,7 @@ export const getEvalIterationTraceOperation: PlatformOperation<
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
-    "A trace payload for one iteration; iterations have no route of their own, and the response names no suite to reach the run through."
+    "A trace payload for one iteration. `eval_iteration` is addressable (the run page plus `?iteration=`), but the response names no suite to reach the run through, and the ref needs both."
   ),
   inputSchema: evalIterationTraceInput,
   async execute(input, { client, signal, onScopeResolved }) {
