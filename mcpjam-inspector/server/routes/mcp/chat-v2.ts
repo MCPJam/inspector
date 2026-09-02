@@ -25,7 +25,6 @@ import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config"
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -935,15 +934,15 @@ chatV2.post("/", async (c) => {
     // browser's leftover pick would attribute the turn to a model that never
     // ran.
     //
-    // …and only when the host carries the SENTINEL, matching the web rail: a
-    // Cursor host holding an ordinary id describes nothing that runs either, so
-    // promoting it would swap one wrong id for another. That host is refused by
-    // the harness preflight below.
+    // Unconditional for such a harness, matching the web rail: narrowing it to
+    // a host that carries the sentinel would leave the BODY's model standing on
+    // a mis-configured host, and the body's model is what the harness pre-flight
+    // below would then validate — a caller could satisfy the rule by sending
+    // `cursor/auto` while the host held an ordinary id.
     if (
       (isScenarioSession ||
         (resolvedExecution.harness &&
-          harnessUsesExternalAccount(resolvedExecution.harness) &&
-          isRuntimeChosenModelSentinel(resolvedExecution.modelId))) &&
+          harnessUsesExternalAccount(resolvedExecution.harness))) &&
       hostRuntimeConfig &&
       model &&
       resolvedExecution.modelId &&
@@ -1144,6 +1143,13 @@ chatV2.post("/", async (c) => {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
         },
+        // The HOST's own configured id, kept separate from the resolved model
+        // above. Only the external-account rule reads it, and only that rule
+        // should: it asks whether this HOST carries the runtime's sentinel, a
+        // question a request body must not be able to answer.
+        ...(resolvedExecution.modelId
+          ? { hostModelId: resolvedExecution.modelId }
+          : {}),
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).

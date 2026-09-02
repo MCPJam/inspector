@@ -1499,21 +1499,19 @@ describe("web routes — chat-v2 hosted mode", () => {
       }
     );
 
-    it("does not promote a host model that is NOT the sentinel", async () => {
-      // The host-wins exception is justified by one fact — the host's id is the
-      // only honest description of a Cursor turn — and that fact holds only for
-      // the sentinel. A Cursor host pinned to an ordinary id describes nothing
-      // that runs either (the adapter passes no model regardless), so promoting
-      // it would swap one wrong model id for another and call it a fix.
-      //
-      // Such a host is a broken configuration, and the SHARED harness preflight
-      // refuses it outright — that refusal is asserted directly, against the
-      // real gate, in `harness/__tests__/harness-availability.test.ts`
-      // ("refuses an external-account host that pins an ORDINARY model id");
-      // the preflight is stubbed here so this test can see the gate underneath
-      // it. What this asserts is that the gate hands the preflight the id it
-      // was actually given, rather than laundering the host's wrong one in
-      // first.
+    /**
+     * The mis-configured host — an external-account harness whose model is an
+     * ordinary id — reaches the SHARED harness pre-flight, which refuses it.
+     * That refusal is asserted against the real gate in
+     * `harness/__tests__/harness-availability.test.ts`; the pre-flight is
+     * stubbed here, so what these two assert is the input it is handed. Getting
+     * that input wrong is how the rule gets bypassed.
+     */
+    it("hands the pre-flight the HOST's model, promoted over the body's", async () => {
+      // The promotion is unconditional for an external-account harness — NOT
+      // narrowed to hosts that carry the sentinel. Narrowing it leaves the
+      // body's model standing on a mis-configured host, and the body's model is
+      // then what the gate sees.
       fetchHostRuntimeConfigMock.mockResolvedValue({
         ok: true,
         config: {
@@ -1545,11 +1543,51 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(response.status).toBe(200);
       expect(checkHarnessRuntimeAvailableMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          model: expect.objectContaining({ id: "anthropic/claude-haiku-4.5" }),
+          model: expect.objectContaining({
+            id: "anthropic/claude-sonnet-4.5",
+          }),
+          hostModelId: "anthropic/claude-sonnet-4.5",
         })
       );
-      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
-      expect(persisted.modelId).toBe("anthropic/claude-haiku-4.5");
+    });
+
+    it("a body-supplied sentinel cannot stand in for the host's own model", async () => {
+      // The bypass this closes: POST `cursor/auto` at a host that pins an
+      // ordinary id, and the gate — reading the turn's model — would see the
+      // sentinel and admit the turn. The host's id has to reach the gate as the
+      // host's id, both as the promoted model and under `hostModelId`.
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          selectedServerIds: ["server-1"],
+          modelId: "anthropic/claude-sonnet-4.5",
+          harness: "cursor",
+        },
+      });
+      const { app, token } = createWebTestApp();
+
+      await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor-misconfigured",
+          chatSessionId: "chat-cursor-5",
+          messages: [{ role: "user", content: "preview request" }],
+          model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
+        },
+        token
+      );
+
+      expect(checkHarnessRuntimeAvailableMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          hostModelId: "anthropic/claude-sonnet-4.5",
+        })
+      );
+      expect(checkHarnessRuntimeAvailableMock).not.toHaveBeenLastCalledWith(
+        expect.objectContaining({ hostModelId: "cursor/auto" })
+      );
     });
   });
 });

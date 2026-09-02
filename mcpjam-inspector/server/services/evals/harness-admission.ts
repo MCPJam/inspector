@@ -241,6 +241,11 @@ export function checkEvalHarnessStaticAdmission(args: {
     // rules rather than fail on a model nobody named: `checkModelEligibility`
     // below owns that decision once the run's cases are known.
     model: { id: hostModelId ?? "" },
+    // The same id again, under the name the external-account rule reads. It is
+    // not redundant on the FULL check below, where `model` becomes a per-case
+    // model and this stays the host's — an external-account host must carry the
+    // sentinel whatever a case asks for.
+    ...(hostModelId ? { hostModelId } : {}),
     // Same tri-state read the swarm gate makes: `invalid` is treated exactly
     // like `on`, because a malformed enterprise policy must never be MORE
     // permissive than a valid one.
@@ -299,6 +304,12 @@ export function checkEvalHarnessAdmission(args: {
   const xaaEnterprisePolicyOn =
     readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off";
   const requireToolApproval = hostConfig.requireToolApproval === true;
+  // Read once for the external-account rule below. Absent ⇒ the host pinned no
+  // model, and the gate holds the case's own model to the rule instead.
+  const fullCheckHostModelId =
+    typeof hostConfig.modelId === "string" && hostConfig.modelId.trim()
+      ? hostConfig.modelId.trim()
+      : undefined;
 
   // Model-bearing cases only. A model-free case runs pinned tool calls with no
   // runtime at all, so gating it on model eligibility would refuse a suite for
@@ -328,6 +339,10 @@ export function checkEvalHarnessAdmission(args: {
           id: String(test.model),
           ...(test.provider ? { provider: test.provider } : {}),
         },
+        // The HOST's id, not the case's: the external-account rule is about
+        // this host carrying the runtime's sentinel, and a case model can no
+        // more answer that than a request body can.
+        ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
       });
       verdict = availability.ok

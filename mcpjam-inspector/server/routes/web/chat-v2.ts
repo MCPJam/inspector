@@ -87,7 +87,6 @@ import { type ExecutionScope } from "../../utils/execution-scope.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import {
@@ -765,18 +764,17 @@ chatV2.post("/", async (c) => {
     // the turn never touched. Recording the sentinel is the whole reason it
     // exists.
     //
-    // Scoped to a host that actually carries the SENTINEL, not to every
-    // external-account harness. The justification above is "the host's id is
-    // the one honest description of the turn", and that is only true of the
-    // sentinel — a Cursor host holding an ordinary `anthropic/...` id describes
-    // nothing that runs, so promoting it over the body would swap one wrong
-    // model id for another. Such a host is a broken configuration and the
-    // harness preflight below refuses it outright; this gate simply declines to
-    // launder it first.
+    // UNCONDITIONAL for such a harness — deliberately NOT narrowed to a host
+    // that carries the sentinel. Narrowing it looks safer (why promote an id
+    // that is also wrong?) and is the opposite: it leaves the BODY's model
+    // standing on a mis-configured host, and the body's model is what the
+    // harness pre-flight below then validates. A caller could satisfy the
+    // sentinel rule by POSTing `cursor/auto` while the host itself carried an
+    // ordinary id. Promote first, always, and let the pre-flight refuse the
+    // host on what the host actually holds.
     const externalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-        harnessUsesExternalAccount(resolvedExecution.harness) &&
-        isRuntimeChosenModelSentinel(resolvedExecution.modelId),
+        harnessUsesExternalAccount(resolvedExecution.harness),
     );
     if (
       (isScenarioSession || externalAccountHarnessTurn) &&
@@ -843,6 +841,13 @@ chatV2.post("/", async (c) => {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
         },
+        // The HOST's own configured id, kept separate from the resolved model
+        // above. Only the external-account rule reads it, and only that rule
+        // should: it asks whether this HOST carries the runtime's sentinel, a
+        // question a request body must not be able to answer.
+        ...(resolvedExecution.modelId
+          ? { hostModelId: resolvedExecution.modelId }
+          : {}),
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).

@@ -83,18 +83,39 @@ the chat route validates the model's `id`, not just that a `model` object was
 sent (a null, empty or whitespace-only id is a 400 before the engine runs and
 before anything is persisted).
 
-That authority is scoped to a host that actually carries the SENTINEL, because
-the justification is "the host's id is the one honest description of the turn"
-and only the sentinel is that. A host whose harness is external-account but whose
-model is an ordinary id describes nothing that runs either — Cursor ignores it
-and picks its own model — so promoting it over the body would swap one wrong
-model id for another. That host is now a refused configuration rather than a
-silently mis-attributed run: the shared harness gate (`checkHarnessRuntimeAvailable`
-and the dispatch predicate `harnessModelEligibleForRuntime`, which must agree)
-rejects an external-account host that pins a model, naming the id it found so its
-owner can reset it. Where the two model rules were skipped for external-account
-harnesses, this one replaces them — same principle, applied to the arm where the
-runtime does the choosing.
+A host whose harness is external-account but whose model is an ordinary id is now
+a refused configuration rather than a silently mis-attributed run. Cursor ignores
+whatever id such a host carries, so the turn would run Cursor Auto while the
+session row, the trace and the eval metadata all named that id as the model that
+ran. The shared harness gate refuses it, naming the id it found so its owner can
+reset it. Where the two model rules were skipped for external-account harnesses,
+this one replaces them — same principle, applied to the arm where the runtime
+does the choosing.
+
+Two details of that rule are what make it hold rather than look like it holds.
+
+It is asked of the HOST's configured model, passed to the gate as its own
+`hostModelId` input, and not of the model the turn resolved. Nothing consumes
+the turn's model on this arm, so validating it would let a caller satisfy the
+rule by POSTing `cursor/auto` at a host that pins an ordinary id — the same
+mis-configured host, admitted from the other side. For the same reason the
+host-wins promotion above is unconditional for an external-account harness
+rather than scoped to hosts that already carry the sentinel: narrowing it leaves
+the body's model standing on exactly the hosts that must be refused. (With no
+model pinned at all, the turn's own model is the only description of what the
+host runs, and is held to the rule instead.)
+
+And an ineligible model on this arm now THROWS at the dispatch instead of
+falling back to the emulated engine. `runAssistantTurn` reads a `false` from the
+shared eligibility helper as "run the emulated engine and surface a warning",
+which is right for a brokered harness — that engine runs the refused model
+itself, on org BYOK — and wrong here twice over: the emulated engine cannot run
+a sentinel at all, and the id a mis-configured host carries is one the runtime
+would have ignored. What the fallback produced was worse than the bug the rule
+was added for: a swarm or eval turn that completes, reports success, records
+`executionEngineLabel: harness:cursor`, and never ran Cursor — indistinguishable
+in the transcript from a real run. The interactive rails fail closed at the
+pre-flight; this is the same refusal for the paths that never call it.
 
 Wherever a model label is rendered, the sentinel now reads "Cursor Auto" rather
 than the raw id, and the Playground shows it locked with the real reason ("this
