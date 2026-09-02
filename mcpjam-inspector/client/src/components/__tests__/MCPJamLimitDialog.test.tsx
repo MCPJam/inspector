@@ -91,11 +91,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagVariantKey: (...args: unknown[]) => guestVariantMock(...args),
-  // The guest wall waits for hasLoadedFlags before committing a variant; tests
-  // treat flags as already loaded so the resolved variant renders immediately.
-  usePostHog: () => ({
-    featureFlags: { hasLoadedFlags: flagsLoadedMock.value },
-  }),
+  // The guest wall waits for flags to load before committing a variant.
+  // undefined = still loading; an array = loaded. Tests default to loaded.
+  useActiveFeatureFlags: () => (flagsLoadedMock.value ? [] : undefined),
 }));
 
 vi.mock("convex/react", () => ({
@@ -156,6 +154,9 @@ beforeEach(() => {
 
 afterEach(() => {
   window.location.hash = originalHash;
+  // Restore any spies (e.g. window.open) even if an assertion threw first, so a
+  // mock can't leak into a later test.
+  vi.restoreAllMocks();
 });
 
 describe("MCPJamLimitDialog", () => {

@@ -9,7 +9,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useFeatureFlagVariantKey, usePostHog } from "posthog-js/react";
+import { useActiveFeatureFlags, useFeatureFlagVariantKey } from "posthog-js/react";
 import { useEffect, useRef, useState } from "react";
 import {
   canManageOrgCredits,
@@ -56,14 +56,20 @@ const GUEST_WALL_ILLUSTRATION_SIZE = 582;
 function GuestCreditWall() {
   const { signIn, signUp } = useAuth();
   const close = useMCPJamLimitDialogStore((s) => s.close);
-  const posthog = usePostHog();
+  // Reading the variant fires the PostHog exposure ($feature_flag_called).
   const rawVariant = useFeatureFlagVariantKey(GUEST_WALL_FLAG);
+  // Subscribe to flag *resolution* separately: when our flag is absent (the
+  // pre-experiment state), `useFeatureFlagVariantKey` stays undefined and never
+  // re-renders on load, so a render-time `hasLoadedFlags` read would never
+  // update and pin the wall to the control fallback. `useActiveFeatureFlags`
+  // returns undefined until flags load, then an array, and re-renders on that.
+  const activeFlags = useActiveFeatureFlags();
+  const flagsLoaded = activeFlags !== undefined;
 
   // Distinguish "flags still loading" from "flag resolved to control": both read
-  // as undefined here, but treating a still-loading flag as control would bucket
-  // a slow-network guest to control while PostHog's exposure already enrolled
-  // them in treatment. Wait for the flags to load before committing a variant.
-  const flagsLoaded = posthog?.featureFlags?.hasLoadedFlags ?? false;
+  // as undefined from the variant hook, but treating a still-loading flag as
+  // control would bucket a slow-network guest to control while PostHog's
+  // exposure already enrolled them in treatment. Wait for load before committing.
   const resolvedVariant: "control" | "treatment" | null = !flagsLoaded
     ? null
     : rawVariant === "treatment"
