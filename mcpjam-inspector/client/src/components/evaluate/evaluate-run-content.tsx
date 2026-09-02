@@ -38,6 +38,7 @@ import {
   buildEvaluateCaseRows,
   defaultOpenCaseRow,
 } from "./evaluate-case-row-model";
+import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
 import { RunVerdictCaveats } from "./run-verdict-caveats";
@@ -138,6 +139,17 @@ export function EvaluateRunContent({
    * iteration, and grouping them by case is the case-rows step's job. Capped so
    * a hundred-failure run does not produce a prompt nobody can paste.
    */
+  const triageRows = useMemo(
+    () =>
+      serverQuality.result
+        ? unifyTriageRows({
+            serverQuality: serverQuality.result,
+            iterations: [...iterations],
+          })
+        : [],
+    [serverQuality.result, iterations],
+  );
+
   const improvePrompt = useMemo(() => {
     const stagePrompts: string[] = [];
     const seenCases = new Set<string>();
@@ -176,16 +188,9 @@ export function EvaluateRunContent({
     }
     return buildEvaluateImprovePrompt({
       stagePrompts,
-      serverQuality: serverQuality.result
-        ? {
-            rows: unifyTriageRows({
-              serverQuality: serverQuality.result,
-              iterations: [...iterations],
-            }),
-          }
-        : null,
+      serverQuality: triageRows.length > 0 ? { rows: triageRows } : null,
     });
-  }, [detail.diagnostics, iterations, serverQuality.result]);
+  }, [detail.diagnostics, iterations, triageRows]);
 
   const copyImprovePrompt = useCallback(async () => {
     const ok = await copyToClipboard(improvePrompt);
@@ -254,6 +259,12 @@ export function EvaluateRunContent({
           )}
         />
       </div>
+
+      <RunAdvisorySection
+        suiteRunId={String(run._id)}
+        triageRows={triageRows}
+        showActionableFindings={Boolean(serverQuality.result)}
+      />
 
       {fallbackBody ? (
         <div className="flex min-h-0 flex-1 flex-col border-t border-border/40">
