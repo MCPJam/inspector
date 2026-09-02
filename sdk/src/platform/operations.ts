@@ -9140,6 +9140,32 @@ const pluginVersionIdsInput = z
     "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files."
   );
 
+/**
+ * The ONE secret-selection schema, shared by `create_project_environment` and
+ * `update_project_environment` so a grant means the same thing on both.
+ *
+ * Deliberately simpler than {@link skillSelectionInput}: no version pins,
+ * because a secret has exactly one current value and "pin the previous value"
+ * is the opposite of what rotation is for.
+ *
+ * `.min(1)` for the same reason every other selection has it: `[]` reads as
+ * "remove every credential" but the API rejects it, so revoking is `null` on
+ * update — a distinction worth an immediate validation error.
+ */
+const secretSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    secretIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project SECRET ids this environment grants. The environment is the GRANT BOUNDARY: no selection means a run receives no secrets, and there is no \"all of them\" mode. A `sharing: \"user\"` secret still reaches only sessions its owner started."
+      ),
+  })
+  .describe(
+    "Which project secrets runs launched from this environment receive."
+  );
+
 const createEnvironmentInput = z.object({
   project: z
     .string()
@@ -9180,6 +9206,7 @@ const createEnvironmentInput = z.object({
       'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
     ),
   skillSelection: skillSelectionInput.optional(),
+  secretSelection: secretSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
   sandboxImageId: z
     .string()
@@ -9199,7 +9226,7 @@ export const createEnvironmentOperation: PlatformOperation<
   name: "create_project_environment",
   title: "Create an MCPJam project environment",
   description:
-    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, and pinned plugin versions. Requires project admin.",
+    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, granted project secrets, and pinned plugin versions. Requires project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: createEnvironmentInput,
@@ -9223,6 +9250,9 @@ export const createEnvironmentOperation: PlatformOperation<
           ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
           ...(input.skillSelection !== undefined
             ? { skillSelection: input.skillSelection }
+            : {}),
+          ...(input.secretSelection !== undefined
+            ? { secretSelection: input.secretSelection }
             : {}),
           ...(input.pluginVersionIds !== undefined
             ? { pluginVersionIds: input.pluginVersionIds }
@@ -9695,6 +9725,12 @@ const updateEnvironmentInput = z
       .describe(
         "New pinned skill selection, or null to clear it. Omit to leave unchanged."
       ),
+    secretSelection: secretSelectionInput
+      .nullable()
+      .optional()
+      .describe(
+        "New credential grant, or null to REVOKE it entirely. Omit to leave unchanged. An empty `secretIds` is rejected — it is not a way to revoke."
+      ),
     pluginVersionIds: pluginVersionIdsInput
       .nullable()
       .optional()
@@ -9719,11 +9755,12 @@ const updateEnvironmentInput = z
       value.serverAttachmentId !== undefined ||
       value.modelId !== undefined ||
       value.skillSelection !== undefined ||
+      value.secretSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
@@ -9735,7 +9772,7 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: updateEnvironmentInput,
@@ -9763,6 +9800,8 @@ export const updateEnvironmentOperation: PlatformOperation<
     if (input.modelId !== undefined) body.modelId = input.modelId;
     if (input.skillSelection !== undefined)
       body.skillSelection = input.skillSelection;
+    if (input.secretSelection !== undefined)
+      body.secretSelection = input.secretSelection;
     if (input.pluginVersionIds !== undefined)
       body.pluginVersionIds = input.pluginVersionIds;
     if (input.sandboxImageId !== undefined)

@@ -1360,8 +1360,8 @@ export class PlatformApiClient {
 
   /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
-   * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
-   * a field leaves it alone.
+   * `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or
+   * `sandboxImageId` to CLEAR them; omitting a field leaves it alone.
    */
   updateEnvironment(
     params: {
