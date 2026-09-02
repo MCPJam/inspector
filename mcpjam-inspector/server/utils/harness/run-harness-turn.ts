@@ -103,6 +103,7 @@ import {
   prepareLocalHarnessTurn,
   type PreparedLocalHarnessTurn,
 } from "./local/local-turn.js";
+import { localPermissionModeFor } from "./local/compatibility.js";
 import {
   resolveWorkingDirectory,
   HOME_ROOT,
@@ -536,6 +537,16 @@ export function harnessRuntimeFingerprint(parts: {
     runtimeId: string;
     workspaceGrantId: string;
     policyVersion: string;
+    /**
+     * The CONSENTED profile, named rather than inferred.
+     *
+     * `permissionMode` above already differs per profile today, so this is
+     * redundant — right up until two profiles map to the same mode, at which
+     * point a profile change would stop forking the session and a resumed
+     * thread would keep terms the user has since changed. Consent binds to the
+     * profile, so the fingerprint names the profile.
+     */
+    permissionProfile: string;
   };
   /**
    * EXTERNAL-ACCOUNT harnesses need no field of their own here, and this note
@@ -570,7 +581,8 @@ export function harnessRuntimeFingerprint(parts: {
       ? [
           `local-native:${parts.localTarget.runtimeId}:` +
             `${parts.localTarget.workspaceGrantId}:` +
-            `${parts.localTarget.policyVersion}`,
+            `${parts.localTarget.policyVersion}:` +
+            `${parts.localTarget.permissionProfile}`,
         ]
       : []),
   ].join("");
@@ -1432,10 +1444,40 @@ export async function runHarnessTurn(
       // The adapter's default otherwise. Computed BEFORE the fingerprint:
       // flipping approval mode must fork the session (a resumed thread keeps
       // the mode it was created with).
+      //
+      // A LOCAL turn takes its mode from the CONSENTED PROFILE, not from the
+      // adapter default. Claude Code's default is `allow-all`; the profiles a
+      // user can actually agree to map to `allow-reads` and `allow-edits`. So
+      // consenting to "read-only" and getting an agent built at `allow-all` was
+      // an authorization bypass of the exact promise the consent sheet makes —
+      // and because the fingerprint is computed from this value, two different
+      // profiles hashed the same and a profile change resumed the old session
+      // at the old breadth instead of forking.
+      //
+      // Resolved here, before the fingerprint, from the same manifest mapping
+      // `prepareLocalHarnessTurn` uses; the two are reconciled below once
+      // preparation has run.
+      const localPermissionMode =
+        harnessExecutionTarget != null
+          ? localPermissionModeFor(
+              harnessAdapter.id,
+              harnessExecutionTarget.permissionProfile,
+              harnessExecutionTarget.kind,
+            )
+          : null;
       const permissionMode: HarnessV1PermissionMode =
-        requireToolApproval && harnessAdapter.supportsNativeToolApproval
-          ? harnessAdapter.approvalPermissionMode
-          : harnessAdapter.defaultPermissionMode;
+        harnessExecutionTarget != null
+          ? // A host asking for approval narrows further: `allow-reads` is the
+            // only mode under which tool calls pause. An unresolvable profile
+            // falls to the NARROWEST mode rather than the adapter's default —
+            // the turn is refused moments later in preparation, and until then
+            // it must not be the widest thing on the menu.
+            requireToolApproval || localPermissionMode === null
+            ? "allow-reads"
+            : localPermissionMode
+          : requireToolApproval && harnessAdapter.supportsNativeToolApproval
+            ? harnessAdapter.approvalPermissionMode
+            : harnessAdapter.defaultPermissionMode;
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
@@ -1486,6 +1528,7 @@ export async function runHarnessTurn(
                 runtimeId: harnessExecutionTarget.runtimeId,
                 workspaceGrantId: harnessExecutionTarget.workspaceGrantId,
                 policyVersion: harnessExecutionTarget.policyVersion,
+                permissionProfile: harnessExecutionTarget.permissionProfile,
               },
             }
           : {}),
@@ -1681,6 +1724,20 @@ export async function runHarnessTurn(
         }
         localPrepared = preparation.prepared;
         localTeardown = preparation.prepared.teardown;
+        // The mode the agent was already built around, against the mode the
+        // prepared plan actually launched under. They come from the same
+        // manifest mapping and should be identical; if they ever are not, the
+        // agent is enforcing something other than what the user consented to
+        // and the only safe answer is to stop. Cheap, and it is the assertion
+        // that keeps the split between "resolved early for the fingerprint"
+        // and "resolved during preparation" honest.
+        if (localPrepared.permissionMode !== permissionMode) {
+          throw new Error(
+            `Can't run this turn on your machine: the consented permission ` +
+              `profile resolves to ${localPrepared.permissionMode} but the ` +
+              `agent was configured for ${permissionMode}.`,
+          );
+        }
       }
 
       let box: HarnessBrokerBox | null = null;

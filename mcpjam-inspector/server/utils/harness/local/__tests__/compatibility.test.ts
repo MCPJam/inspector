@@ -7,6 +7,7 @@ import {
   LOCAL_HARNESS_MANIFEST,
   resolveLocalCompatibility,
   type LocalHarnessCompatibility,
+  localPermissionModeFor,
 } from "../compatibility.js";
 import {
   LOCAL_PERMISSION_PROFILES,
@@ -359,5 +360,44 @@ describe("claude-code native resolution", () => {
         manifests,
       ),
     ).toMatchObject({ status: "platform-not-supported" });
+  });
+});
+
+// The mode an agent is built with, for a LOCAL turn, comes from here and
+// nowhere else. Taking the adapter's default instead meant a user who
+// consented to `read-only` got an agent at `allow-all` — the consent sheet's
+// central promise, unenforced.
+describe("localPermissionModeFor", () => {
+  it("maps each offered profile to its narrower mode", () => {
+    expect(localPermissionModeFor("claude-code", "read-only", "local-native")).toBe(
+      "allow-reads",
+    );
+    expect(
+      localPermissionModeFor("claude-code", "workspace-edits", "local-native"),
+    ).toBe("allow-edits");
+  });
+
+  it("never resolves `unrestricted` for a native target", () => {
+    // Native has no host containment, so this profile has no mode there — and
+    // the caller must fail closed rather than fall back to a default.
+    expect(
+      localPermissionModeFor("claude-code", "unrestricted", "local-native"),
+    ).toBeNull();
+  });
+
+  it("returns null for a harness with no local mapping", () => {
+    expect(
+      localPermissionModeFor("not-a-harness", "read-only", "local-native"),
+    ).toBeNull();
+  });
+
+  it("never answers `allow-all` for any profile a native target can consent to", () => {
+    // The property that matters, independent of the table's current contents:
+    // nothing a user can agree to natively may resolve to the widest mode.
+    for (const profile of ["read-only", "workspace-edits", "unrestricted"] as const) {
+      expect(
+        localPermissionModeFor("claude-code", profile, "local-native"),
+      ).not.toBe("allow-all");
+    }
   });
 });

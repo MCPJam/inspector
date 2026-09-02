@@ -313,6 +313,41 @@ export interface LocalCompatibilityQuery {
  * Fail-closed at every step, and each failure names what a user or operator
  * can actually do about it.
  */
+/**
+ * The permission mode a CONSENTED profile maps to, for a local target.
+ *
+ * Exported because the turn path needs this answer BEFORE it can prepare the
+ * local turn: the agent's permission mode and the runtime fingerprint are both
+ * fixed earlier than that, and taking the adapter's default for a local turn
+ * meant a user who consented to `read-only` got an agent built at `allow-all`.
+ * The mapping lives in the manifest and this is the one way to read it, so the
+ * pre-flight answer and the prepared plan cannot drift apart by construction.
+ *
+ * `null` when the harness offers no local mapping for the profile — the caller
+ * must then fail closed rather than substitute a default, which is the whole
+ * point of asking.
+ */
+export function localPermissionModeFor(
+  harnessId: string,
+  permissionProfile: LocalPermissionProfile,
+  targetKind: "local-native" | "local-isolated",
+): "allow-reads" | "allow-edits" | "allow-all" | null {
+  const manifest = (
+    LOCAL_HARNESS_MANIFEST as Record<
+      string,
+      LocalHarnessCompatibility | undefined
+    >
+  )[harnessId];
+  if (manifest === undefined) return null;
+  // Mirrors the refusal in `resolveLocalCompatibility`: `unrestricted` never
+  // runs natively whatever a manifest says, so it can never resolve to a mode
+  // here either.
+  if (permissionProfile === "unrestricted" && targetKind === "local-native") {
+    return null;
+  }
+  return manifest.permissionProfileMapping[permissionProfile] ?? null;
+}
+
 export function resolveLocalCompatibility(
   query: LocalCompatibilityQuery,
   // A PARTIAL lookup, not the full record: `query.harnessId` is a plain string
