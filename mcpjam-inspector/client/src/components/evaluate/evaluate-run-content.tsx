@@ -17,16 +17,27 @@
  * run-detail pane still renders beneath the verdict, so no information is
  * removed from the page in the commit that adds the headline.
  */
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
+import { Copy } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@mcpjam/design-system/button";
 
+import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
 } from "@/lib/evals/eval-decision-summary-store";
 
+import { unifyTriageRows } from "../evals/ai-triage-helpers";
+import { useServerQuality } from "../evals/use-server-quality";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import { RunVerdictCaveats } from "./run-verdict-caveats";
+import {
+  buildEvaluateImprovePrompt,
+  buildStageFixPrompt,
+} from "./stage-fix-prompt";
+import { recommendationForDiagnostic } from "./stage-reason-recommendation";
 import { RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
 
@@ -74,6 +85,76 @@ export function EvaluateRunContent({
     [run, iterations, detail.status, detail.summary, detail.diagnostics],
   );
 
+  // Advisory only, and read from the same place the existing triage card reads
+  // it. `autoRequest` is deliberately off: a server-quality generation costs
+  // money, and this page's primary action does not depend on it.
+  const serverQuality = useServerQuality(run, { autoRequest: false });
+
+  /**
+   * Every failing case's prompt, measured failures first.
+   *
+   * One prompt per diagnostic rather than per case: a diagnostic is one
+   * iteration, and grouping them by case is the case-rows step's job. Capped so
+   * a hundred-failure run does not produce a prompt nobody can paste.
+   */
+  const improvePrompt = useMemo(() => {
+    const stagePrompts: string[] = [];
+    const seenCases = new Set<string>();
+    for (const diagnostic of detail.diagnostics) {
+      const caseKey = diagnostic.testCaseId ?? diagnostic.iterationId;
+      if (seenCases.has(caseKey)) continue;
+      const recommendation = recommendationForDiagnostic(diagnostic);
+      if (!recommendation) continue;
+      seenCases.add(caseKey);
+      const iteration = iterations.find(
+        (row) => row._id === diagnostic.iterationId,
+      );
+      stagePrompts.push(
+        buildStageFixPrompt({
+          caseTitle: diagnostic.title ?? "Untitled case",
+          stage: recommendation.stage,
+          reason: recommendation.reason,
+          ...(diagnostic.chain.status === "verified"
+            ? {
+                chain: diagnostic.chain.stages,
+                failureCategory: diagnostic.chain.failureCategory,
+              }
+            : {}),
+          nextAction: diagnostic.nextAction,
+          expectedToolCalls:
+            iteration?.testCaseSnapshot?.expectedToolCalls ??
+            diagnostic.expected?.toolNames.map((toolName) => ({ toolName })),
+          observedToolCalls:
+            iteration?.actualToolCalls ??
+            diagnostic.observed?.toolNames?.map((toolName) => ({ toolName })),
+          observedFailure: diagnostic.observed?.failure ?? null,
+          recommendation,
+        }),
+      );
+      if (stagePrompts.length >= 3) break;
+    }
+    return buildEvaluateImprovePrompt({
+      stagePrompts,
+      serverQuality: serverQuality.result
+        ? {
+            rows: unifyTriageRows({
+              serverQuality: serverQuality.result,
+              iterations: [...iterations],
+            }),
+          }
+        : null,
+    });
+  }, [detail.diagnostics, iterations, serverQuality.result]);
+
+  const copyImprovePrompt = useCallback(async () => {
+    const ok = await copyToClipboard(improvePrompt);
+    if (ok) {
+      toast.success("Prompt copied — paste it into your coding agent");
+    } else {
+      toast.error("Copy failed");
+    }
+  }, [improvePrompt]);
+
   const focusTarget = view.focus?.diagnostic;
   const openFailingTrace =
     onOpenIteration && focusTarget?.testCaseId
@@ -92,6 +173,20 @@ export function EvaluateRunContent({
       <RunVerdictHero
         view={view}
         {...(openFailingTrace ? { onOpenFailingTrace: openFailingTrace } : {})}
+        actions={
+          improvePrompt ? (
+            <Button
+              type="button"
+              size="sm"
+              className="h-8"
+              onClick={copyImprovePrompt}
+              data-testid="run-verdict-improve"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Prompt to improve
+            </Button>
+          ) : null
+        }
       />
 
       <div className="px-5 pb-4">

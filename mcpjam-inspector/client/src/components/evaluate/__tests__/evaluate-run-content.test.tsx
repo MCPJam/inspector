@@ -10,6 +10,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import {
+  evalRunDecisionDiagnosticSchema,
   evalRunDecisionSummaryStructuralSchema,
   type EvalRunDecisionDiagnostic,
   type EvalRunDecisionSummary,
@@ -40,6 +41,13 @@ vi.mock("@/hooks/use-eval-run-decision-summary", () => ({
   useEvalRunDecisionDetail: () => detailState.current,
 }));
 
+// Server quality reaches Convex through `useMutation`, which needs a provider
+// this test has no reason to stand up. It is advisory input to the improve
+// prompt, never a source of anything the page claims.
+vi.mock("../../evals/use-server-quality", () => ({
+  useServerQuality: () => ({ result: null }),
+}));
+
 /**
  * A summary fixture, PARSED rather than cast.
  *
@@ -64,7 +72,7 @@ function summary(
   }) as EvalRunDecisionSummary;
 }
 
-const DIAGNOSTIC = {
+const DIAGNOSTIC = evalRunDecisionDiagnosticSchema.parse({
   iterationId: "it_1",
   iterationNumber: 1,
   testCaseId: "case_1",
@@ -83,7 +91,7 @@ const DIAGNOSTIC = {
     ],
     firstFailedStage: "selection",
     failureCategory: "selection",
-    stageAnalyzerVersion: 8,
+    analyzerVersion: 8,
   },
   expected: { toolNames: ["export_to_excalidraw"] },
   observed: { toolNames: ["create_view"] },
@@ -94,7 +102,7 @@ const DIAGNOSTIC = {
     tracePath: "/trace",
   },
   nextAction: "review tool selection and the tool catalog",
-} as EvalRunDecisionDiagnostic;
+}) as EvalRunDecisionDiagnostic;
 
 const RUN = {
   _id: "run_1",

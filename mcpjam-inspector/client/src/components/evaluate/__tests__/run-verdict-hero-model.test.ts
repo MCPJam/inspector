@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   USER_VALUE_STAGES,
+  evalRunDecisionDiagnosticSchema,
   evalRunDecisionSummaryStructuralSchema,
   type EvalRunDecisionDiagnostic,
   type EvalRunDecisionSummary,
@@ -40,10 +41,11 @@ function chainRows(
   );
 }
 
+/** Parsed, not cast: a fixture the contract would reject proves nothing. */
 function diagnostic(
   overrides: Partial<EvalRunDecisionDiagnostic> = {},
 ): EvalRunDecisionDiagnostic {
-  return {
+  return evalRunDecisionDiagnosticSchema.parse({
     iterationId: "it_1",
     iterationNumber: 1,
     title: "Draw and share a diagram",
@@ -57,7 +59,7 @@ function diagnostic(
       ),
       firstFailedStage: "selection",
       failureCategory: "selection",
-      stageAnalyzerVersion: 8,
+      analyzerVersion: 8,
     },
     expected: { toolNames: ["export_to_excalidraw"] },
     observed: { toolNames: ["create_view"] },
@@ -69,7 +71,7 @@ function diagnostic(
     },
     nextAction: "review tool selection and the tool catalog",
     ...overrides,
-  } as EvalRunDecisionDiagnostic;
+  }) as EvalRunDecisionDiagnostic;
 }
 
 /**
@@ -231,7 +233,7 @@ describe("choosing what to lead with", () => {
           },
           { connection: "setupAborted" },
         ),
-        stageAnalyzerVersion: 8,
+        analyzerVersion: 8,
       },
     });
     const focus = selectHeroFocus([aborted]);
@@ -244,7 +246,7 @@ describe("choosing what to lead with", () => {
 
   it("still names a case when every chain is withheld", () => {
     const withheld = diagnostic({
-      chain: { status: "unverified", stageAnalyzerVersion: 8 },
+      chain: { status: "unverified", analyzerVersion: 8 },
     });
     const focus = selectHeroFocus([withheld]);
     expect(focus?.selectedBy).toBe("firstDiagnostic");
@@ -301,7 +303,7 @@ describe("the one sentence", () => {
           summary: summary(),
           diagnostics: [
             diagnostic({
-              chain: { status: "unverified", stageAnalyzerVersion: 8 },
+              chain: { status: "unverified", analyzerVersion: 8 },
             }),
           ],
         },
