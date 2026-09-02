@@ -151,6 +151,7 @@ export type CanonicalModelCandidate = { id: string | Model; provider: string };
 // the prefix. Everything else uses the prefix verbatim.
 const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
   "x-ai": "xai",
+  spacexai: "xai",
   "meta-llama": "meta",
   mistralai: "mistral",
 };

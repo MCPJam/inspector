@@ -409,6 +409,13 @@ export function NewSwarmCreateFlow({
     sessionId: string;
     swarmRunGroupId: string | null;
     runLabels: Map<string, string>;
+    /**
+     * Rubric criterion the finding was about, when the click came from one.
+     * Carried so the destination can STATE what was found: a viewer who
+     * followed a finding and landed on a bare transcript was handed the
+     * evidence with the claim removed.
+     */
+    criterionId?: string;
   }) => void;
   /** Leave create flow and open Personas for an existing persona. */
   /**
@@ -1575,11 +1582,12 @@ export function NewSwarmCreateFlow({
   // Labels ride along exactly as they do on `leaveRunning`: this is a leave
   // too, so the Sessions grouping must still be able to name the runs.
   const openRunningSession = useCallback(
-    (sessionId: string) => {
+    (sessionId: string, criterionId?: string) => {
       onOpenSession({
         sessionId,
         swarmRunGroupId: persistedRunGroupIdRef.current,
         runLabels: launchedRunLabelsRef.current,
+        ...(criterionId ? { criterionId } : {}),
       });
     },
     [onOpenSession],

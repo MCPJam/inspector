@@ -588,7 +588,8 @@ export function SwarmsTab({
        */
       opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
     ): Promise<
-      { status: "launched"; runId?: string } | { status: "already_launching" }
+      | { status: "launched"; runId?: string; swarmRunGroupId?: string }
+      | { status: "already_launching" }
     > => {
       if (!projectId) {
         throw new LaunchJourneyRunError(0, "No project is selected.");
@@ -621,7 +622,15 @@ export function SwarmsTab({
             : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
-        return { status: "launched", runId: result.runId };
+        // The wave this run ACTUALLY landed under, which is not always the one
+        // the caller asked for: a retry after a failed launch reuses the cached
+        // `pending` and its id. Reported so a caller offering a link into the
+        // new wave can tell whether the wave it minted exists.
+        return {
+          status: "launched",
+          runId: result.runId,
+          swarmRunGroupId: pending.swarmRunGroupId,
+        };
       } finally {
         // Retain the key (and its wave) on failure (handled by the thrown error
         // reaching the caller); only clear the in-flight marker.
@@ -635,10 +644,14 @@ export function SwarmsTab({
     async (journeyRefIds: string[]) => {
       const swarmRunGroupId = crypto.randomUUID();
       const errors: string[] = [];
+      let landedUnderNewWave = false;
       for (const journeyId of journeyRefIds) {
         try {
           const result = await launchJourney(journeyId, { swarmRunGroupId });
           if (result.status === "already_launching") continue;
+          if (result.swarmRunGroupId === swarmRunGroupId) {
+            landedUnderNewWave = true;
+          }
         } catch (err) {
           errors.push(
             err instanceof LaunchJourneyRunError
@@ -652,6 +665,20 @@ export function SwarmsTab({
       if (errors.length > 0) {
         throw new Error(errors[0]!);
       }
+      // The group id minted above IS the new wave's route id
+      // (`swarmWaveRouteId`), so the detail page can offer a way into the run
+      // it just started instead of leaving the viewer on the one they
+      // relaunched from.
+      //
+      // Only when a run actually landed under it, though. Two paths mint it and
+      // don't use it: a retry after a failed launch reuses the cached wave from
+      // `launchKeysRef`, and an `already_launching` goal is skipped without an
+      // error. Returning the id regardless offered "View run" into a wave no
+      // run carries — a link to "Swarm run not found." A confirmation with no
+      // link is the honest answer, and the caller already treats the field as
+      // optional.
+      if (!landedUnderNewWave) return {};
+      return { swarmRunGroupId };
     },
     [launchJourney],
   );
@@ -963,15 +990,27 @@ export function SwarmsTab({
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
-          onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
+          onOpenSession={({
+            sessionId,
+            swarmRunGroupId,
+            runLabels,
+            criterionId,
+          }) => {
             setSwarmRunLabels(runLabels);
             if (swarmRunGroupId) {
-              // Live-pane "open this completed session" — the transcript,
-              // not Findings. Findings is `onDone` / Open findings.
+              // Live-pane "open this completed session" — the wave's own
+              // page, on the session that produced the finding, showing the
+              // transcript rather than Findings (Findings is `onDone` / Open
+              // findings). It is a real URL, so this leave is reversible — and
+              // the run keeps streaming into that page while the user reads.
+              // The criterion rides along so the page can name the finding
+              // rather than dropping the viewer into an unexplained
+              // transcript.
               navigate(
                 buildSwarmPath(swarmRunGroupId, {
                   tab: "sessions",
                   session: sessionId,
+                  finding: criterionId,
                 }),
               );
               return;
@@ -1004,6 +1043,13 @@ export function SwarmsTab({
           />
         </ErrorBoundary>
         <SwarmRunDetail
+          // Remount per wave. Every piece of state in here is about the wave
+          // being looked at — the persona filter, the stop confirmation, and
+          // `stoppedHere` above all. Without a key, "Run again" → "View run"
+          // swaps `swarmId` on the SAME instance, and the new wave inherits
+          // the old one's "you stopped this", so a wave that later completes
+          // reads Stopped.
+          key={swarmId}
           swarmId={swarmId}
           projectId={effectiveProjectId}
           personas={personas ?? []}

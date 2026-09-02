@@ -185,10 +185,18 @@ type FirstFinding = {
   /**
    * The session that produced it. Kept so we only ping a finding that can
    * still be traced on the swarm page — a row without a session id is a
-   * claim, so it is skipped. The ping itself opens Findings, not this
-   * session; the session stays reachable from the finding.
+   * claim, so it is skipped. The ping opens THIS session on the swarm's own
+   * page; "Open findings" beside it is the route to Findings.
    */
   sessionId: string;
+  /**
+   * The criterion that failed, when exactly one did. Carried so the run page
+   * this link leaves for can NAME the finding — the wizard's own line says
+   * what was found, and that sentence used to be lost the moment the viewer
+   * followed it. Omitted for a multi-check failure: naming one of several
+   * would misreport which claim the viewer is looking at.
+   */
+  criterionId?: string;
 };
 
 function columnsFromRun(
@@ -610,7 +618,13 @@ function findFirstFinding(
       const reason =
         session.goalScore?.reason?.trim() ||
         `failed ${failed.length} ${failed.length === 1 ? "check" : "checks"}`;
-      return { text: `First finding: ${reason}`, sessionId: session.id };
+      return {
+        text: `First finding: ${reason}`,
+        sessionId: session.id,
+        ...(failed.length === 1 && failed[0]
+          ? { criterionId: failed[0].criterionId }
+          : {}),
+      };
     }
   }
   return null;
@@ -618,10 +632,10 @@ function findFirstFinding(
 
 function FirstFindingPing({
   finding,
-  onOpenFindings,
+  onOpen,
 }: {
   finding: FirstFinding;
-  onOpenFindings: () => void;
+  onOpen: () => void;
 }) {
   return (
     <div
@@ -635,8 +649,8 @@ function FirstFindingPing({
         type="button"
         className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
         data-testid="new-swarm-running-finding-open"
-        aria-label="Open findings for this swarm"
-        onClick={onOpenFindings}
+        aria-label="Open the session behind this finding"
+        onClick={onOpen}
       >
         Look now
       </button>
@@ -667,7 +681,7 @@ export function NewSwarmRunningStep({
    * Follow one session's transcript out of the wizard (the live pane's
    * completed-session control). Findings is a different exit — `onLeave`.
    */
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
   const hosts = useQuery(
     SWARM_QUERIES.listHosts as any,
@@ -933,7 +947,16 @@ export function NewSwarmRunningStep({
               </p>
             ) : null}
             {finding ? (
-              <FirstFindingPing finding={finding} onOpenFindings={onLeave} />
+              <FirstFindingPing
+                finding={finding}
+                // The session that produced the finding, with the criterion
+                // riding along so that page can NAME what was found instead of
+                // opening an unexplained transcript. "Open findings" beside it
+                // is the route to Findings; this one is not a duplicate of it.
+                onOpen={() =>
+                  onOpenSession(finding.sessionId, finding.criterionId)
+                }
+              />
             ) : null}
             {missingPlannedClients.length > 0 ? (
               <p
@@ -1138,6 +1161,10 @@ export function NewSwarmRunningStep({
           </div>
         )}
 
+        {/* main reworded the "Click a session…" hint and added a finding
+            banner here; this branch removed both from the footer — the banner
+            moved to the top as `FirstFindingPing` (same test ids, so keeping
+            main's copy would render it twice). */}
       </div>
 
       <aside

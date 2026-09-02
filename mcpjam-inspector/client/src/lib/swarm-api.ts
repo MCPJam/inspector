@@ -82,6 +82,13 @@ export const SWARM_MUTATIONS = {
   /** Sentry-ignore a finding; survives the finding re-firing in later waves. */
   dismissFinding: "swarmWaveInsights:dismissFinding",
   undismissFinding: "swarmWaveInsights:undismissFinding",
+  /**
+   * Stop an in-flight run. Membership-gated backend-side; idempotent, and it
+   * throws `CONFLICT` for a run that already settled on its own. Shipped in the
+   * backend with no caller — the Swarms UI had no stop control at all, so a run
+   * launched by mistake could only be waited out.
+   */
+  cancelJourneyRun: "journeyRuns:cancelJourneyRun",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────

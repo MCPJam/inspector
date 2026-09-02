@@ -307,12 +307,17 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     ).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("new-swarm-running-finding-open"));
-    expect(onLeave).toHaveBeenCalledTimes(1);
-    expect(onOpenSession).not.toHaveBeenCalled();
+    // The criterion rides along with the session (BB-74): the wizard's line
+    // says what was found, and the run page this leaves for has to be able to
+    // repeat it rather than presenting an unexplained transcript.
+    expect(onOpenSession).toHaveBeenCalledWith("thread-fail", "crit-refund");
+    expect(onLeave).not.toHaveBeenCalled();
 
+    // The button beside it is the one that goes to Findings, and it is a
+    // DIFFERENT destination — that separation is the point of the pair.
     fireEvent.click(screen.getByTestId("new-swarm-running-open-findings"));
-    expect(onLeave).toHaveBeenCalledTimes(2);
-    expect(onOpenSession).not.toHaveBeenCalled();
+    expect(onLeave).toHaveBeenCalledTimes(1);
+    expect(onOpenSession).toHaveBeenCalledTimes(1);
   });
 
   it("shows Done next to Open findings when the wave has finished", async () => {

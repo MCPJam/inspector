@@ -96,6 +96,26 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
+  // The canonical run verdict Evaluate (New) renders in Run History. A guest
+  // can already GET the run and its iterations — the two reads this route
+  // composes — so denying the summary left the verdict cell as LOAD FAILED
+  // while RATE still rendered from the local Convex rows. GET-only: there is
+  // no write at this path, and a method-less entry would hand a guest any
+  // future mutation for free.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/decision-summary$/,
+    methods: ["GET"],
+  },
+  // Stage measurements for one run, which the Evaluate run page reads for its
+  // stage strip. Same argument as the summary above and a narrower payload: it
+  // is counts over the iterations a guest can already GET, with no prompt,
+  // response or tool argument in it. Denying it rendered the strip as "could
+  // not be read", which reads as a broken backend rather than as a permission
+  // the guest was never granted. GET-only, for the reason stated above.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/stage-analytics$/,
+    methods: ["GET"],
+  },
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
   },
