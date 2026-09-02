@@ -32,7 +32,11 @@ import {
 import { computeTreeDigest, resolveManagedBundle } from "../runtime-identity.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
-import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
+import {
+  localPackTarget,
+  LOCAL_HARNESS_POLICY_VERSION,
+  type LocalPlatform,
+} from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
 import { installedAdapterVersion } from "./adapter-version.js";
 import { probeProcessGroup, probeProcess } from "../process-identity.js";
@@ -41,7 +45,9 @@ import { probeProcessGroup, probeProcess } from "../process-identity.js";
 const execFileP = promisify(execFile);
 const ROOT = process.env.CONFORMANCE_ROOT!;
 /** The pack is per platform, and so is the digest that admits it. */
-const PLATFORM = process.platform as "darwin" | "linux";
+// `LocalPlatform`, which includes win32 — the windows leg runs this script too,
+// and narrowing the type here was a lie that hid exactly that.
+const PLATFORM = process.platform as LocalPlatform;
 /**
  * …and per ARCHITECTURE, which is the key the digest table actually uses. The
  * pack the build step produced is for this machine, so this is the entry the
@@ -403,6 +409,20 @@ async function main() {
     ...base,
     runtime: { ...(base.runtime as any), bundleDigest: { [PACK_TARGET]: digest }, launcherRelativePath: MODE === "no-launcher" ? "bridge.mjs" : "launcher.mjs" },
     lifecycleConformanceVersion: CONFORMANCE_VERSION,
+    // THIS scenario's manifest, not the shipped one. `compatibility.ts` still
+    // lists only darwin and linux, and that is what a user meets — nothing here
+    // changes it.
+    //
+    // But a job whose entire purpose is to find out whether Windows WORKS
+    // cannot be gated on Windows already being declared to work. It was: the
+    // windows leg stopped at `native-not-eligible` without ever reaching the
+    // machinery it exists to exercise, so it could never produce the evidence
+    // that would earn the flip. The scenario declares the platform it is
+    // running on eligible for itself; the shipped manifest keeps refusing until
+    // a human moves it on the strength of a green run.
+    nativePlatforms: [
+      ...new Set([...base.nativePlatforms, process.platform as LocalPlatform]),
+    ],
     bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}`,
   } as typeof base;
   const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM });
