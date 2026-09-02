@@ -35,6 +35,28 @@ import {
   type ThemeRef,
 } from "@/hooks/scenario-usage-filters";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
+import { convexErrMessage } from "@/lib/convex-error";
+
+/**
+ * Did `cancelJourneyRun` refuse because the run had already settled?
+ *
+ * The backend answers `ConvexError({ code: 'CONFLICT' })` for any run whose
+ * status is no longer `running`. Matched on the structured `code` rather than
+ * on the text: Convex redacts `err.message` for an application error to a
+ * Request-ID string, so a message regex would silently never match in prod —
+ * the payload on `err.data` is the only reliable carrier.
+ */
+export function isRunAlreadySettled(reason: unknown): boolean {
+  if (!reason || typeof reason !== "object" || !("data" in reason)) {
+    return false;
+  }
+  const data = (reason as { data: unknown }).data;
+  return (
+    !!data &&
+    typeof data === "object" &&
+    (data as { code?: unknown }).code === "CONFLICT"
+  );
+}
 import {
   SWARM_MUTATIONS,
   SWARM_QUERIES,
@@ -313,8 +335,13 @@ export function SwarmRunDetail({
    * names how many actually stopped instead of claiming the whole wave on the
    * strength of the first success.
    *
-   * `CONFLICT` from a run that settled between the click and the call is not an
-   * error the viewer needs — they asked for it stopped, and it is stopped.
+   * Three outcomes per goal, not two. `cancelJourneyRun` throws `CONFLICT` for
+   * a goal that settled between the click and the call, and that is neither a
+   * success nor a refusal: nothing is running, so it is not a goal that "could
+   * not be stopped", but this viewer did not stop it either. Counting it as a
+   * failure produced an error toast for a run that had, in the viewer's terms,
+   * already done what they asked; counting it as a success would put "Stopped"
+   * over a goal that COMPLETED, which the backend calls materially wrong.
    */
   const handleStopRun = useCallback(async () => {
     if (runningRunIds.length === 0) return;
@@ -326,22 +353,39 @@ export function SwarmRunDetail({
           cancelJourneyRun({ journeyRunId: runId } as any),
         ),
       );
-      const failed = results.filter((r) => r.status === "rejected").length;
-      if (failed === results.length) {
-        const first = results.find((r) => r.status === "rejected");
-        const reason =
-          first && first.status === "rejected" ? first.reason : undefined;
-        toast.error(
-          reason instanceof Error ? reason.message : "Could not stop the run",
-        );
+      const rejections = results.flatMap((r) =>
+        r.status === "rejected" ? [r.reason] : [],
+      );
+      // A goal that settled between the click and the call answers `CONFLICT`.
+      // That is not a refusal — nothing is running any more, which is what the
+      // viewer asked for — so it must not be counted as a goal that "could not
+      // be stopped". Read off the structured `code`, not the message: for an
+      // application error Convex redacts `err.message` to a Request-ID string,
+      // which is also why the toast below goes through `convexErrMessage`.
+      const settled = rejections.filter((reason) => isRunAlreadySettled(reason));
+      const refused = rejections.filter(
+        (reason) => !isRunAlreadySettled(reason),
+      );
+      const canceled = results.length - rejections.length;
+
+      if (refused.length === results.length) {
+        toast.error(convexErrMessage(refused[0], "Could not stop the run"));
+        return;
+      }
+      if (canceled === 0 && settled.length > 0) {
+        // Every goal had already finished on its own. Nothing is running, but
+        // this viewer did not stop it — claiming otherwise would be wrong for a
+        // goal that COMPLETED, and would leave the strip reading "Stopped" over
+        // a run that succeeded. So: no `stoppedHere`, and not an error either.
+        toast.info("Run had already finished");
         return;
       }
       setStoppedHere(true);
       toast.success(
-        failed === 0
+        refused.length === 0
           ? "Run stopped"
-          : `Run stopped — ${failed} ${
-              failed === 1 ? "goal" : "goals"
+          : `Run stopped — ${refused.length} ${
+              refused.length === 1 ? "goal" : "goals"
             } could not be stopped`,
       );
     } finally {

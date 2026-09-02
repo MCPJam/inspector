@@ -130,18 +130,25 @@ export function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null 
  * not "did the judge like it".
  */
 export function waveStatusDotClass(runs: readonly SwarmOverviewRun[]): string {
-  const statuses = new Set(runs.map((r) => r.status));
-  if (statuses.has("failed") || statuses.has("stale")) return "bg-red-500";
-  if (statuses.has("partial") || statuses.has("rate_limited")) {
-    return "bg-amber-500";
+  // Derived from `waveRunState`, never from its own scan of `status`. The two
+  // used to disagree on precedence — this tested `failed`/`stale` first while
+  // `waveRunState` puts `running` first — so a wave holding one failed goal and
+  // one still fanning out painted a red dot beside a "Running" pill on the same
+  // row. One source, one answer.
+  switch (waveRunState(runs)) {
+    case "running":
+      // The run's own accent, and animated at the call sites: a live wave used
+      // to wear the same muted grey as everything else, so the list could not
+      // answer "is this still going?" — the question a returning viewer
+      // arrives with.
+      return "bg-primary";
+    case "failed":
+      return "bg-red-500";
+    case "issues":
+      return "bg-amber-500";
+    case "complete":
+      return "bg-emerald-500";
   }
-  if (statuses.has("running") || statuses.has("pending")) {
-    // The run's own accent, and animated at the call sites: a live wave used to
-    // wear the same muted grey as everything else, so the list could not answer
-    // "is this still going?" — the question a returning viewer arrives with.
-    return "bg-primary";
-  }
-  return "bg-emerald-500";
 }
 
 /**

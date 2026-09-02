@@ -17,6 +17,8 @@ import {
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
   waveLiveProgress,
+  waveRunState,
+  waveStatusDotClass,
 } from "../swarm-overview-panel";
 
 /**
@@ -330,7 +332,7 @@ vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/lib/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
@@ -432,6 +434,31 @@ describe("waveLiveProgress", () => {
         },
       ])
     ).toEqual({ done: 0, total: 0, liveRuns: 1 });
+  });
+});
+
+describe("waveStatusDotClass", () => {
+  // The dot ran its own scan of `status` and tested `failed`/`stale` first,
+  // while `waveRunState` puts `running` first. A wave holding one failed goal
+  // and one still fanning out therefore painted a red dot beside a "Running"
+  // pill on the same row.
+  it("keeps the dot on the state the pill reports", () => {
+    const [newest, second] = overview.runs;
+    const runs = [
+      { ...newest!, status: "failed" },
+      { ...second!, status: "running" },
+    ] as SwarmOverviewRun[];
+
+    expect(waveRunState(runs)).toBe("running");
+    expect(waveStatusDotClass(runs)).toBe("bg-primary");
+  });
+
+  it("still reds a wave whose goals have all settled badly", () => {
+    const [newest] = overview.runs;
+    const runs = [{ ...newest!, status: "failed" }] as SwarmOverviewRun[];
+
+    expect(waveRunState(runs)).toBe("failed");
+    expect(waveStatusDotClass(runs)).toBe("bg-red-500");
   });
 });
 
@@ -1188,6 +1215,103 @@ describe("Swarm run state and navigation", () => {
     expect(
       screen.getByTestId("swarm-run-detail-state-label").textContent
     ).toBe("Stopped");
+  });
+
+  it("does not call a run that finished on its own a failure to stop", async () => {
+    overviewData = runningOverview();
+    // The real shape: Convex redacts `message` for an application error and
+    // puts the payload on `data`, so only the structured code is readable.
+    mutationResult = (name) => {
+      if (name === "journeyRuns:cancelJourneyRun") {
+        throw Object.assign(new Error("[Request ID: abc123] Server Error"), {
+          data: {
+            code: "CONFLICT",
+            message: "Run already completed; only a running run can be canceled.",
+          },
+        });
+      }
+      return {};
+    };
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() => expect(toast.info).toHaveBeenCalled());
+    // Not an error — nothing is running, which is what was asked for. And not
+    // a success either: this viewer did not stop it, so the strip must keep
+    // reporting the run's own outcome.
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2" || run.runId === "run-2b"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).not.toBe("stopped");
+  });
+
+  it("does not carry one wave's stop onto the next wave", async () => {
+    overviewData = runningOverview();
+    const { rerender } = renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    // The route this PR builds: Run again, then "View run". Same component
+    // instance, different wave — the stop belonged to the wave left behind.
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2" || run.runId === "run-2b"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
+    rerender(
+      <SwarmsTab projectId="proj-1" isAuthenticated swarmId="run-1" />
+    );
+
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).not.toBe("stopped");
+  });
+
+  it("offers no link when the retry lands under the wave it already had", async () => {
+    // A failed launch keeps its wave id cached, so the NEXT attempt reuses it
+    // and ignores the freshly minted one. Offering "View run" into the new id
+    // was a link to "Swarm run not found."
+    // EVERY goal has to fail, or a goal that succeeded would have dropped its
+    // cached key and the retry would mint a fresh wave for it after all.
+    launchJourneyRunMock.mockRejectedValue(new Error("network down"));
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+
+    launchJourneyRunMock.mockReset();
+    launchJourneyRunMock.mockResolvedValue({
+      status: "launched",
+      runId: "run-new",
+    });
+    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    const call = (toast.success as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls.at(-1)!;
+    const action = (
+      call[1] as { action?: { label: string } } | undefined
+    )?.action;
+    expect(action).toBeUndefined();
   });
 
   it("confirms a new run in the viewer's terms and offers the run itself", async () => {
