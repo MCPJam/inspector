@@ -107,6 +107,43 @@ describe("checkHarnessRuntimeAvailable", () => {
     if (!r.ok) expect(r.reason).toMatch(/can't run this host's model/);
   });
 
+  // The gpt-5.6 line is hosted, Codex-mappable by the OLD `gpt-5` prefix rule,
+  // and equipped with ZERO tools by the pinned CLI (measured: gate P5 in
+  // `.spike-codex-appserver`). Left admitted it produces the worst outcome this
+  // gate exists to prevent — not an error, a confident chat-only answer from a
+  // host the user believes can act. The refusal has to come out as
+  // `model-unsupported` so eval admission keeps treating it as a re-decidable
+  // MODEL refusal rather than a host-level one.
+  it.each([
+    ["openai/gpt-5.6-terra"],
+    ["openai/gpt-5.6-sol"],
+    ["openai/gpt-5.6-luna"],
+  ])("refuses %s on Codex as model-unsupported", (modelId) => {
+    setFullyAvailable();
+    const r = checkHarnessRuntimeAvailable(
+      args({ harnessId: "codex", model: { id: modelId, provider: "openai" } }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.kind).toBe("model-unsupported");
+      expect(r.reason).toMatch(/can't run this host's model/);
+    }
+  });
+
+  it.each([
+    ["openai/gpt-5-nano"],
+    ["openai/gpt-5.1-codex"],
+    ["openai/gpt-5.4-mini"],
+    ["openai/gpt-5.5"],
+  ])("still admits %s on Codex", (modelId) => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({ harnessId: "codex", model: { id: modelId, provider: "openai" } }),
+      ),
+    ).toEqual({ ok: true });
+  });
+
   it("fails when the computers data plane is not configured", () => {
     setFullyAvailable();
     delete process.env.E2B_API_KEY;
