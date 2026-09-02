@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { BehaviorTab } from "../BehaviorTab";
@@ -8,6 +8,19 @@ import { BehaviorTab } from "../BehaviorTab";
 // test), not the model pipeline.
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
+}));
+// The approval switch now asks the server which transport a harness runs,
+// because that answer is no longer a property of the harness name. Default the
+// stub to "no answer" so every existing case still exercises the STATIC map;
+// the two cases at the bottom override it.
+const capabilitiesAnswer = vi.hoisted(() => ({
+  current: undefined as { supportsNativeToolApproval: boolean } | undefined,
+}));
+vi.mock("@/hooks/useHarnessCapabilities", () => ({
+  useHarnessCapabilities: () => ({
+    capabilities: capabilitiesAnswer.current,
+    loading: false,
+  }),
 }));
 vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
   // Carries `disabled` through: it is the prop the harness gating decides, and
@@ -20,7 +33,9 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
   ),
 }));
 
-function renderBehaviorTab(partial?: Parameters<typeof emptyHostConfigInputV2>[0]) {
+function renderBehaviorTab(
+  partial?: Parameters<typeof emptyHostConfigInputV2>[0],
+) {
   const draft = emptyHostConfigInputV2(partial);
   return render(
     <BehaviorTab draft={draft} onDraftChange={vi.fn()} attention={[]} />,
@@ -176,5 +191,37 @@ describe("BehaviorTab harness gray-out", () => {
     expect(
       screen.queryByText(/runs its own loop and ignores temperature/i),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("approval follows the server's answer about the runtime", () => {
+  afterEach(() => {
+    capabilitiesAnswer.current = undefined;
+  });
+
+  it("stays disabled for codex when the server reports no approval support", () => {
+    // The exec transport: its bridge hardcodes `approvalPolicy: "never"`, so
+    // the pre-flight refuses an approval host outright and the switch would be
+    // a lie.
+    capabilitiesAnswer.current = { supportsNativeToolApproval: false };
+    renderBehaviorTab({ harness: "codex" });
+    expect(screen.getByLabelText(/require tool approval/i)).toBeDisabled();
+  });
+
+  it("enables approval for codex when the server reports the app-server transport", () => {
+    // The capability this whole change exists to make reachable. Without the
+    // server answer the static map keeps the switch greyed out and a user can
+    // never turn approvals on for Codex, however the deployment is configured.
+    capabilitiesAnswer.current = { supportsNativeToolApproval: true };
+    renderBehaviorTab({ harness: "codex" });
+    expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
+  });
+
+  it("never lets the server TAKE AWAY a control the static map allowed", () => {
+    // The override is one-directional on purpose: a stale or wrong server
+    // answer must not be able to disable a switch that works.
+    capabilitiesAnswer.current = { supportsNativeToolApproval: false };
+    renderBehaviorTab({ harness: "claude-code" });
+    expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
   });
 });
