@@ -2541,6 +2541,7 @@ async function launchBrowserdContext(options) {
   const launchArgs = {
     headless: options.headless ?? false,
     ...options.channel ? { channel: options.channel } : {},
+    ...options.executablePath ? { executablePath: options.executablePath } : {},
     // Chromium cannot start its renderer sandbox as uid 0 (the image builds
     // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,

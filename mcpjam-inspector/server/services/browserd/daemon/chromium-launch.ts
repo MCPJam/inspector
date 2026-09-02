@@ -363,6 +363,15 @@ export interface LaunchBrowserdContextOptions {
    * would and merely declines to show it.
    */
   channel?: string;
+  /**
+   * An explicit Chromium binary.
+   *
+   * For environments that ship one at a path Playwright's resolver does not
+   * know (a prebuilt CI image). Production never sets it — a user's machine
+   * has the browser Playwright installed, and pinning a path here would make
+   * the engine depend on a filesystem layout we do not control.
+   */
+  executablePath?: string;
 }
 
 /**
@@ -378,6 +387,9 @@ export async function launchBrowserdContext(
   const launchArgs = {
     headless: options.headless ?? false,
     ...(options.channel ? { channel: options.channel } : {}),
+    ...(options.executablePath
+      ? { executablePath: options.executablePath }
+      : {}),
     // Chromium cannot start its renderer sandbox as uid 0 (the image builds
     // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
