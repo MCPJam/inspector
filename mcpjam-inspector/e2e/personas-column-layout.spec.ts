@@ -134,12 +134,14 @@ test.describe("personas sidebar column", () => {
     expect(overflow.by).toBe(0);
   });
 
-  test("holds the component's default width against a greedy main", async ({
-    page,
-  }) => {
-    // `shrink-0` is the load-bearing class: without it the flex row would pull
-    // the column narrower than the width the component set, and every wrapping
-    // assertion below would be measuring a layout nobody sees.
+  test("renders at the width the component opens with", async ({ page }) => {
+    // Every wrapping assertion below is a claim about THIS width, so if the
+    // column does not actually come up at the component's default the rest of
+    // this file is measuring a layout nobody sees.
+    //
+    // Deliberately not dressed up as a test of `shrink-0`: the column carries
+    // content with a min-content floor of its own, so at any width a user
+    // would plausibly see, it holds regardless of that class.
     const { width } = await fixture!;
     const box = await page.locator("[data-aside]").boundingBox();
     expect(box?.width).toBe(width);
