@@ -121,6 +121,17 @@ const startSchema = z.object({
    * checks below refuse it anywhere it could not be true.
    */
   webContentsId: z.number().int().positive().optional(),
+  /**
+   * The VIEWER's device pixel ratio, for a session whose page is rendered
+   * server-side and looked at here.
+   *
+   * Sent by the client because nothing on this side can know it: the browser
+   * runs headless, with no display to ask. Bounded at 2 — beyond that the
+   * bytes grow faster than the perceived sharpness, and this is a stream, not
+   * a print job — and optional, so every existing caller keeps the 1 it has
+   * always had.
+   */
+  devicePixelRatio: z.number().min(1).max(2).optional(),
 });
 
 /**
@@ -287,7 +298,14 @@ webmcpInspector.post("/sessions", async (c) => {
       400,
     );
   }
-  const { url, transport, projectId, display, webContentsId } = parsed.data;
+  const {
+    url,
+    transport,
+    projectId,
+    display,
+    webContentsId,
+    devicePixelRatio,
+  } = parsed.data;
 
   if (display === "in-app" && transport === "hosted") {
     // Refused rather than silently downgraded. A hosted browser already has a
@@ -351,7 +369,8 @@ webmcpInspector.post("/sessions", async (c) => {
     if (!projectId) {
       return c.json(
         {
-          error: "Pick a project first — a hosted browser runs on that project's computer.",
+          error:
+            "Pick a project first — a hosted browser runs on that project's computer.",
           code: "hosted-project-required",
         },
         400,
@@ -392,6 +411,9 @@ webmcpInspector.post("/sessions", async (c) => {
       // Omitted means `window`, so a caller that never heard of this field gets
       // the behaviour it has always had.
       ...(display === "in-app" ? { viewportMode: "embedded" as const } : {}),
+      // Omitted when the client did not say, so a session started by any
+      // older caller renders exactly as it does today.
+      ...(devicePixelRatio !== undefined ? { devicePixelRatio } : {}),
     });
     return c.json(session, 201);
   } catch (error) {
@@ -413,6 +435,35 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
   const replay = Number.isFinite(replayParam)
     ? Math.max(0, Math.min(500, replayParam))
     : 200;
+  /**
+   * `frames=off`: send everything BUT the viewport frames.
+   *
+   * For a client carrying frames on the binary WebSocket instead (see
+   * `routes/web/webmcp-frames.ts`). Filtered HERE rather than in the hub,
+   * which stays a clean fan-out: subscribers with different appetites are a
+   * property of the transport, not of the session.
+   *
+   * Absent or any other value means frames flow, so a client that has never
+   * heard of this parameter — every client older than the WebSocket — gets
+   * exactly the stream it gets today.
+   */
+  const framesSuppressed = c.req.query("frames") === "off";
+
+  /**
+   * The session this stream belongs to, resolved once.
+   *
+   * Held so a frame this consumer could not take can be reported back to the
+   * provider, which is the only thing that can act on it. Looked up here
+   * rather than per frame: `get` throws for a reaped session, and doing that
+   * inside a send would turn a dead session into an exception in the middle of
+   * the stream.
+   */
+  let runtime: ReturnType<typeof webMcpSessions.get> | undefined;
+  try {
+    runtime = webMcpSessions.get(sessionId);
+  } catch {
+    // Already gone; `subscribe` below reports it to the client properly.
+  }
 
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
@@ -462,14 +513,30 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
         }
       };
       const send = (payload: unknown) => {
-        const chunk = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
         const isFrame =
           typeof payload === "object" &&
           payload !== null &&
           (payload as { type?: unknown }).type === "frame";
+        // Dropped before it is even serialized, and dropped for REPLAYED
+        // frames as well as live ones: `subscribe` delivers the retained frame
+        // through this same closure, and a client on the binary socket would
+        // otherwise still pay the base64-in-JSON tax once per connect.
+        if (isFrame && framesSuppressed) return;
+        const chunk = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
         if (isFrame) {
           const room = controller.desiredSize;
           if (room !== null && room <= 0) {
+            // Replacing a held frame means a second one arrived before this
+            // consumer read the first: the same "could not take it" signal the
+            // socket's pacer reports, through the same funnel. The first hold
+            // is not a drop — that is the mechanism working.
+            if (pendingFrame !== undefined) {
+              try {
+                runtime?.noteFramePressure();
+              } catch {
+                /* a diagnostic must never break the stream */
+              }
+            }
             pendingFrame = chunk;
             return;
           }
@@ -584,11 +651,21 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           ok: true,
           cancelled: runtime.cancel(command.invokeId),
         });
-      case "capture_screenshot":
+      case "capture_screenshot": {
+        const screenshotBase64 = await runtime.screenshotNow();
         return c.json({
           ok: true,
-          screenshotBase64: await runtime.screenshotNow(),
+          screenshotBase64,
+          // Stamped where a streamed frame is stamped — the moment the server
+          // had the picture — so the poll's capture-to-paint figure is the
+          // SAME quantity as the socket's rather than a different one sharing
+          // a table with it. Only when there is a picture: a timestamp on an
+          // empty answer would date a paint that never happened.
+          ...(screenshotBase64 === undefined
+            ? {}
+            : { capturedAt: Date.now() }),
         });
+      }
       case "set_screencast":
         // `streaming` is the load-bearing half of this answer. A browser that
         // refuses `Page.startScreencast`, or a provider with no screencast at

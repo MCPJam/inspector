@@ -696,15 +696,25 @@ export class PlatformApiClient {
    * were called, with what arguments, what came back, and what it cost.
    *
    * Omit `sessionId` to start a session; pass the one this returns to
-   * continue it. Configuration (model, target, system prompt, tool mode) pins
-   * on the FIRST turn — a continuation that resends any of it is refused
-   * rather than silently repinning.
+   * continue it. The PINNED configuration is `modelId`, `environmentId`,
+   * `serverIds`, `systemPrompt`, `temperature` and `toolMode`: those pin on the
+   * FIRST turn, and a continuation that resends any of them is refused rather
+   * than silently repinning. `hostId` is NOT among them — it is per-turn, and a
+   * continuation is expected to resend it (see below), as are the other
+   * per-turn fields (`allowedTools`, `allowedServerIds`, `maxToolCalls`,
+   * `maxSteps`).
    *
    * `idempotencyKey` is REQUIRED and must be stable for the triggering intent,
    * NOT freshly minted per HTTP attempt. This call spends model credits, and a
    * per-attempt key deduplicates nothing: a timeout-and-retry would run and
    * bill the turn twice. With a stable key, a retry replays the completed
    * turn instead.
+   *
+   * `hostId` names the saved host (client) the turn executes as, which is what
+   * decides between MCPJam's emulated engine and a real agent harness. It is
+   * PER-TURN, not pinned: re-send it on every turn — a continuation of a
+   * session that named only a host is REFUSED without it, rather than run on
+   * the other engine. The response's `engine` field always names what ran.
    */
   sendChatMessage(
     params: {
@@ -713,6 +723,7 @@ export class PlatformApiClient {
       projectId?: string;
       sessionId?: string;
       modelId?: string;
+      hostId?: string;
       environmentId?: string;
       serverIds?: string[];
       systemPrompt?: string;
@@ -744,6 +755,7 @@ export class PlatformApiClient {
             ? { sessionId: params.sessionId }
             : {}),
           ...(params.modelId !== undefined ? { modelId: params.modelId } : {}),
+          ...(params.hostId !== undefined ? { hostId: params.hostId } : {}),
           ...(params.environmentId !== undefined
             ? { environmentId: params.environmentId }
             : {}),
@@ -1360,8 +1372,8 @@ export class PlatformApiClient {
 
   /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
-   * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
-   * a field leaves it alone.
+   * `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or
+   * `sandboxImageId` to CLEAR them; omitting a field leaves it alone.
    */
   updateEnvironment(
     params: {

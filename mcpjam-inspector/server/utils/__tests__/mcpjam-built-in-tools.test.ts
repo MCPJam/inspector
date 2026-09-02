@@ -164,6 +164,8 @@ describe("workspace tool catalog", () => {
       "run_eval_case",
       "run_eval_suite",
       "get_eval_run",
+      "get_eval_run_stage_analytics",
+      "list_eval_suite_stage_analytics",
       "compare_eval_run",
       // The gate-waiver trio. The READ is advertised alongside the writes on
       // purpose: a waiver only its grantors can see is not a visible waiver,

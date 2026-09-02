@@ -46,10 +46,17 @@ import {
   formatDecisionCounts,
   truncateUntrusted,
 } from "./run-decision-summary-presentation";
+import { StageChainCards } from "@/components/evaluate/stage-chain-cards";
+import { TrialStageDetailCard } from "@/components/evaluate/trial-stage-detail-card";
+import {
+  defaultSelectedTrialStage,
+  toTrialCardViews,
+} from "@/components/evaluate/stage-trial-model";
 import type { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import type {
   EvalRunDecisionDiagnostic,
   EvalRunDecisionSummary,
+  UserValueStage,
 } from "@mcpjam/sdk/contract";
 
 export interface RunDecisionSummaryCardProps {
@@ -361,6 +368,19 @@ function DiagnosticRow({
   }) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  /**
+   * Which stage's detail is open, with `undefined` kept apart from `null`.
+   *
+   * `undefined` means the reader has not chosen yet, so the default is derived
+   * AT RENDER TIME; `null` means they closed the card and it must stay closed.
+   * A plain initializer would work here — the chain is present at mount — but
+   * the same pair of components mounts on the trace pane, where the chain
+   * arrives after mount and an initializer would compute `null` once and never
+   * auto-open. One pattern in both places.
+   */
+  const [chosenStage, setChosenStage] = useState<
+    UserValueStage | null | undefined
+  >(undefined);
   const chain = describeDiagnosticChain(diagnostic);
   const evidence = describeDiagnosticEvidence(diagnostic);
   const title = truncateUntrusted(diagnostic.title) ?? "Untitled case";
@@ -369,6 +389,18 @@ function DiagnosticRow({
   // findings offering the same control get the same answer rather than a
   // second, drifting copy of the rule.
   const traceable = isDiagnosticTraceable(diagnostic, runId, onViewTrace);
+
+  // Only a `verified` chain carries rows. `unverified` withheld them because
+  // they did not validate and `absent` never had any — two different facts,
+  // and neither is an empty card row.
+  const rows =
+    diagnostic.chain.status === "verified" ? diagnostic.chain.stages : [];
+  const cards = toTrialCardViews(rows);
+  const selectedStage =
+    chosenStage === undefined
+      ? defaultSelectedTrialStage(diagnostic.chain)
+      : chosenStage;
+  const selectedRow = rows.find((row) => row.stage === selectedStage) ?? null;
 
   const detailId = `run-decision-diagnostic-${diagnostic.iterationId}`;
 
@@ -405,12 +437,26 @@ function DiagnosticRow({
       ) : null}
 
       <div id={detailId} hidden={!expanded}>
-        {chain.stageLines.length > 0 ? (
-          <ul className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
-            {chain.stageLines.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
+        {cards.length > 0 ? (
+          <div className="mt-2">
+            <StageChainCards
+              cards={cards}
+              selected={selectedStage}
+              onSelect={(stage) =>
+                // A second click on the open card closes it, which is what
+                // `null` is for — see the state's docblock.
+                setChosenStage(selectedStage === stage ? null : stage)
+              }
+            />
+            {selectedRow ? (
+              // No `nextAction` here: the row below already prints it once,
+              // for the whole trial, and it prints it even when there are no
+              // cards to show (a withheld or absent chain). One home beats a
+              // duplicate that appears only sometimes. The card's prop exists
+              // for the trace pane, which has no such line of its own.
+              <TrialStageDetailCard row={selectedRow} />
+            ) : null}
+          </div>
         ) : null}
         {observedFailure ? (
           <p className="mt-1 text-[11px] text-muted-foreground">

@@ -62,6 +62,25 @@ export type GithubChecksAvailability =
 export type GithubCheckOutagePolicy = "fail_open" | "fail_closed";
 
 /**
+ * Whether MCPJam comments on this repository's pull requests.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ABSENT MEANS `on`. This is the ONE optional policy on the repo row whose
+ * default is inverted, and reading it the ordinary way misreports every
+ * repository that has never been touched.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A comment blocks nothing — it is the same verdict the check run already
+ * published, written where somebody reading the pull request will find it — so
+ * the product decision is that it ships ON for every connected repository,
+ * including the ones connected before it existed, and an admin opts a
+ * repository OUT. `conformanceEnabled` beside it is absent ⇒ OFF for the
+ * opposite reason: that one adds a check, and growing one of those under a
+ * maintainer without asking is a merge-blocking surprise.
+ */
+export type GithubCheckFeedbackComments = "on" | "off";
+
+/**
  * How ready a connected repository actually is, DERIVED BY THE BACKEND.
  *
  * Never inferred here, and in particular never inferred from a missing
@@ -152,6 +171,15 @@ export type GithubCheckRepoConfigRow = {
    */
   conformanceEnabled?: boolean;
   conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
+  /**
+   * ABSENT IS `on`, NOT `off`. See {@link GithubCheckFeedbackComments}: an
+   * admin opts a repository out, so every row that predates the field — and
+   * every row nobody has touched — is a repository MCPJam comments on. A
+   * reader that treats absent the way it treats `conformanceEnabled` renders
+   * the control off for all of them and tells an admin the opposite of what is
+   * happening on their pull requests.
+   */
+  feedbackComments?: GithubCheckFeedbackComments;
   createdAt: number;
   updatedAt: number;
 };
@@ -277,6 +305,9 @@ export function useGithubChecksSettings(
   );
   const setRepoConformanceMutation = useMutation(
     "github/checkRepoConfigs:setRepoConformance" as any
+  );
+  const setRepoFeedbackCommentsMutation = useMutation(
+    "github/checkRepoConfigs:setRepoFeedbackComments" as any
   );
   const disconnectRepoMutation = useMutation(
     "github/checkRepoConfigs:disconnectRepo" as any
@@ -416,6 +447,27 @@ export function useGithubChecksSettings(
     [setRepoConformanceMutation, organizationId]
   );
 
+  /**
+   * `feedbackComments` is REQUIRED here, and is a literal rather than a
+   * boolean, because absent already means something on this field: `on`. A
+   * caller that could omit it would be sending "no policy stored", which the
+   * backend reads as the ON default — the opposite of what an admin reaching
+   * for this control almost always wants.
+   */
+  const setRepoFeedbackComments = useCallback(
+    (args: {
+      configId: string;
+      feedbackComments: GithubCheckFeedbackComments;
+    }) =>
+      setRepoFeedbackCommentsMutation({
+        organizationId,
+        ...args,
+      } as any) as Promise<{
+        changed: boolean;
+      }>,
+    [setRepoFeedbackCommentsMutation, organizationId]
+  );
+
   const disconnectRepo = useCallback(
     (args: { configId: string }) =>
       disconnectRepoMutation({ organizationId, ...args } as any),
@@ -441,6 +493,7 @@ export function useGithubChecksSettings(
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
     startInstallation,

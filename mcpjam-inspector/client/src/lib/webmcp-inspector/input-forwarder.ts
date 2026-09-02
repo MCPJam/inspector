@@ -13,6 +13,12 @@
  *     requests. Moves coalesce to the latest and flush on a short timer; button
  *     transitions flush IMMEDIATELY, because a click that waits out a batch
  *     window feels broken in a way a slightly-late mouse trail never does.
+ *     Wheels are their own case: a scroll is as latency-sensitive as a click,
+ *     so the first one of a gesture ships at once, and the ones behind it
+ *     COALESCE BY SUMMING their deltas while a request is in flight. That
+ *     bounds the flood by the transport's real capacity — one request per
+ *     completed round trip — rather than by a fixed timer that can pile up
+ *     behind a slow one, and it loses nothing: scroll distance is additive.
  *   - RELEASING HELD KEYS. The pane can lose focus mid-chord — alt-tab between
  *     keydown and keyup — and the browser never sends the keyup. Without an
  *     explicit release, that modifier stays down in the page forever and every
@@ -36,13 +42,28 @@ export const INPUT_FLUSH_MS = 50;
 export interface ViewportGeometry {
   /** The `<img>`'s own rectangle, in CSS pixels. */
   rect: { left: number; top: number; width: number; height: number };
-  /** The frame's surface, in device pixels. */
+  /**
+   * The frame's surface in CSS PIXELS — the page's own coordinate space.
+   *
+   * Not the frame's device pixels: a session may render at more than one
+   * device pixel per CSS pixel, and the events this produces are dispatched
+   * against the page, which knows nothing about that.
+   */
   frame: { width: number; height: number };
 }
 
 export interface InputForwarderOptions {
-  /** Deliver one batch. Rejections are swallowed by the caller's own handling. */
-  send: (events: WebMcpInputEvent[]) => void;
+  /**
+   * Deliver one batch.
+   *
+   * A returned promise is the in-flight CLOCK for wheel flushing: it must
+   * settle when the batch has actually reached the server, which for the
+   * store's `sendInput` means after its serialized chain and its POST. A
+   * `void` return is still accepted — the forwarder then behaves as it always
+   * has, flushing each wheel immediately — so a caller that cannot report
+   * completion is not broken by this.
+   */
+  send: (events: WebMcpInputEvent[]) => void | Promise<void>;
   /** Read the CURRENT geometry — it changes with every layout and every frame. */
   geometry: () => ViewportGeometry | undefined;
   flushMs?: number;
@@ -208,6 +229,17 @@ export function createInputForwarder(
 
   let buffer: WebMcpInputEvent[] = [];
   let timer: unknown;
+  /**
+   * Batches handed to `send` that have not settled yet.
+   *
+   * The wheel path's clock. Zero means the transport is idle and a wheel can
+   * go right now; above zero means one is already on the wire, and the newest
+   * wheel waits — by merging into the one already queued — rather than adding
+   * to a queue that grows for as long as the person keeps scrolling.
+   */
+  let sendsInFlight = 0;
+  /** A wheel arrived while busy; flush as soon as the transport frees up. */
+  let flushOnSettle = false;
   /** Keys and buttons the page believes are down because we told it so. */
   const heldKeys = new Set<string>();
   const heldButtons = new Set<WebMcpMouseButton>();
@@ -225,9 +257,22 @@ export function createInputForwarder(
       timer = undefined;
     }
     if (buffer.length === 0) return;
+    flushOnSettle = false;
     const batch = buffer;
     buffer = [];
-    options.send(batch);
+    const sent = options.send(batch);
+    // A caller that reports nothing leaves `sendsInFlight` at zero, which is
+    // exactly the old behaviour: every wheel flushes immediately.
+    if (!sent || typeof sent.then !== "function") return;
+    sendsInFlight += 1;
+    const settle = () => {
+      sendsInFlight -= 1;
+      // Also on REJECTION. A failed request that left the count raised would
+      // wedge the wheel path for the rest of the session — every later scroll
+      // silently coalescing into a batch nothing would ever flush.
+      if (sendsInFlight === 0 && flushOnSettle) flush();
+    };
+    sent.then(settle, settle);
   };
 
   /**
@@ -244,12 +289,39 @@ export function createInputForwarder(
       const last = buffer[buffer.length - 1];
       if (last?.kind === "mouse_move") buffer[buffer.length - 1] = event;
       else buffer.push(event);
+    } else if (event.kind === "wheel") {
+      const last = buffer[buffer.length - 1];
+      if (last?.kind === "wheel" && sameModifiers(last, event)) {
+        // SUM the deltas rather than keep the latest: scroll distance is
+        // additive, and keeping only the newest would make a fast flick move
+        // the page less than a slow one. The newest coordinate wins, because
+        // that is where the pointer is now.
+        buffer[buffer.length - 1] = {
+          ...event,
+          deltaX: last.deltaX + event.deltaX,
+          deltaY: last.deltaY + event.deltaY,
+        };
+      } else {
+        // Modifiers differ, so these are different gestures: a ctrl-wheel is a
+        // ZOOM, and folding it into a plain scroll would change what the page
+        // is being asked to do.
+        buffer.push(event);
+      }
     } else {
       buffer.push(event);
     }
 
     if (immediate) {
       flush();
+      return;
+    }
+    if (event.kind === "wheel") {
+      // Nothing on the wire: go now, so the FIRST wheel of a gesture costs no
+      // added latency at all. Otherwise mark it and let the settle flush it —
+      // the flood bound becomes the transport's real capacity rather than a
+      // fixed rate that can pile up behind a slow request.
+      if (sendsInFlight === 0) flush();
+      else flushOnSettle = true;
       return;
     }
     if (timer === undefined) timer = setTimer(flush, flushMs);
@@ -374,11 +446,36 @@ export function createInputForwarder(
         clearTimer(timer);
         timer = undefined;
       }
+      // Emptying the buffer is also what neutralises a settle still to come:
+      // its flush finds nothing to send. `sendsInFlight` is deliberately left
+      // alone — those requests are still on the wire and their settles are
+      // still the right bookkeeping.
       buffer = [];
       heldKeys.clear();
       heldButtons.clear();
     },
   };
+}
+
+/**
+ * Whether two events were produced with the same modifiers held.
+ *
+ * Compared field by field rather than by reference or JSON: the snapshots are
+ * built fresh per event and omit the flags that are off, so two "nothing held"
+ * events are both `undefined` and two shift-held ones are distinct objects.
+ */
+function sameModifiers(
+  a: { modifiers?: WebMcpInputModifiers },
+  b: { modifiers?: WebMcpInputModifiers },
+): boolean {
+  const left = a.modifiers ?? {};
+  const right = b.modifiers ?? {};
+  return (
+    !!left.alt === !!right.alt &&
+    !!left.ctrl === !!right.ctrl &&
+    !!left.meta === !!right.meta &&
+    !!left.shift === !!right.shift
+  );
 }
 
 function withModifiers(event: {
