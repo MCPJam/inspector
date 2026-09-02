@@ -38,6 +38,7 @@ import {
   type FrameStreamConnection,
 } from "@/lib/webmcp-inspector/frame-stream-connection";
 import {
+  noteFrameTransportRung,
   noteInputSent,
   resetFrameStats,
 } from "@/lib/webmcp-inspector/frame-stats";
@@ -72,6 +73,11 @@ export interface PageToolInvocationResult {
   output?: unknown;
   outputTruncated?: boolean;
   errorMessage?: string;
+  /**
+   * Present when the outcome is `unknown` and the caller may ask again: the
+   * same id re-queries the same invocation rather than starting a new one.
+   */
+  invokeId?: string;
 }
 
 /** How long to wait for a settle event before giving up on the stream. */
@@ -106,8 +112,101 @@ export interface WebMcpLiveFrame {
   src: string;
   deviceWidth: number;
   deviceHeight: number;
+  /**
+   * The same surface in CSS pixels — what the PAGE thinks its own coordinates
+   * are, and therefore what every forwarded click has to be expressed in.
+   *
+   * REQUIRED rather than derived at each use site. A session's frames need not
+   * all arrive at the same scale (a still captured at full device resolution
+   * can land between two streamed frames captured at CSS resolution), so a
+   * consumer that forgot to divide would be right for some frames of the same
+   * session and wrong for others — the hardest kind of coordinate bug to see.
+   */
+  cssWidth: number;
+  cssHeight: number;
   ts: number;
   seq: number;
+  /**
+   * The transport this frame ARRIVED on.
+   *
+   * Stamped here rather than read when the frame paints: a frame decodes for
+   * tens of milliseconds, the ladder can move inside that window, and a socket
+   * frame filed under the transport that replaced it makes the split
+   * percentiles describe neither.
+   */
+  rung: WebMcpFrameTransport["rung"];
+}
+
+/**
+ * The viewer's own device pixel ratio, as a request field — or nothing at all.
+ *
+ * OMITTED at 1, which is both the server's default and what every client older
+ * than this field sends, so the common case puts nothing new on the wire and an
+ * older server strips nothing. Clamped to the range the server accepts and
+ * rounded to THREE decimals, because `devicePixelRatio` on a zoomed browser is
+ * a long float and three decimals is what a frame's own `scale` carries — the
+ * two describe the same ratio and should not disagree in the third place.
+ */
+function devicePixelRatioField(): { devicePixelRatio?: number } {
+  if (typeof window === "undefined") return {};
+  const raw = window.devicePixelRatio;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return {};
+  const ratio = Math.round(Math.min(2, Math.max(1, raw)) * 1_000) / 1_000;
+  return ratio === 1 ? {} : { devicePixelRatio: ratio };
+}
+
+/**
+ * Normalize a frame from either transport into what the pane renders.
+ *
+ * One function for both, because the CSS-pixel arithmetic is the part that
+ * must not differ between them: two copies is how the SSE path and the socket
+ * path end up disagreeing about where a click landed.
+ */
+function toLiveFrame(
+  src: string,
+  frame: {
+    deviceWidth: number;
+    deviceHeight: number;
+    ts: number;
+    scale?: number;
+  },
+  seq: number,
+  rung: WebMcpFrameTransport["rung"],
+): WebMcpLiveFrame {
+  // A missing, zero or nonsense scale reads as 1: an older server never sends
+  // one, and dividing by a bad number would put the pane's geometry somewhere
+  // no click could reach.
+  const scale =
+    typeof frame.scale === "number" &&
+    Number.isFinite(frame.scale) &&
+    frame.scale > 0
+      ? frame.scale
+      : 1;
+  return {
+    src,
+    deviceWidth: frame.deviceWidth,
+    deviceHeight: frame.deviceHeight,
+    cssWidth: Math.round(frame.deviceWidth / scale),
+    cssHeight: Math.round(frame.deviceHeight / scale),
+    ts: frame.ts,
+    seq,
+    rung,
+  };
+}
+
+/**
+ * How the pane is getting its pixels, and how hard that was.
+ *
+ * `ws` is the binary socket, `sse-frames` the JSON stream it falls back to,
+ * `poll` the screenshot loop for a server too old to screencast at all, and
+ * `none` no stream at all.
+ */
+export interface WebMcpFrameTransport {
+  rung: "ws" | "sse-frames" | "poll" | "none";
+  /** Socket attempts spent on this session; reset by one that opens. */
+  attempts: number;
+  /** The ladder has given up climbing back to the socket. */
+  latched: boolean;
 }
 
 /** Where a session's browser runs. See `startSession`. */
@@ -154,7 +253,41 @@ interface WebMcpInspectorState {
    * collapsing them would make the thumbnail flicker with every paint.
    */
   liveFrame: WebMcpLiveFrame | undefined;
+  /**
+   * WHICH transport is actually carrying the pane's pixels right now.
+   *
+   * The ladder degrades silently on purpose — a pane that keeps painting
+   * through a dead socket is the whole point — which leaves no way to tell a
+   * working session from one quietly running on the slowest path it has. This
+   * is that way: `rung` is what pixels are arriving on, `attempts` is how many
+   * socket tries this session has spent, and `latched` says the ladder has
+   * stopped trying to climb back.
+   *
+   * DERIVED, never stored twice: the ladder and the screenshot poll are
+   * independent (an old server produces both — 1006 on the socket and a
+   * refused `set_screencast`), and two writers racing over one field is how a
+   * badge ends up contradicting the pane beside it.
+   */
+  frameTransport: WebMcpFrameTransport;
   lastScreenshot: string | undefined;
+  /**
+   * When the server captured the picture in `lastScreenshot`, IF the poll took
+   * it.
+   *
+   * Written in the same `set` as the picture itself, so the two cannot drift,
+   * and deliberately `undefined` for a manual capture. Its only reader is the
+   * frame-stats measurement, and what that records is a TRANSPORT: a person
+   * pressing the Screenshot button is not the pane polling, and filing it
+   * under `poll` would invent that transport for a session streaming happily —
+   * or for a headless one, where the button is the only way to see the page
+   * and nothing polls at all.
+   *
+   * The timestamp is the server's own, because the measurement needs the same
+   * definition of "captured" that a streamed frame's `ts` carries — otherwise
+   * the poll's percentile is a different quantity sharing a table with the
+   * socket's, which is the one thing that module exists to avoid.
+   */
+  lastScreenshotAt: number | undefined;
   /**
    * Whether chat turns may use this page's tools. Off by default and reset when
    * a session closes: a chat should never silently acquire tools because a
@@ -216,6 +349,14 @@ interface WebMcpInspectorState {
    * the surface unmounts and mounts again. Idempotent for the same session.
    */
   reconnect(): void;
+  /**
+   * Report that the screenshot POLL is running, or has stopped.
+   *
+   * Owned by the surface rather than inferred here, because the poll is the
+   * surface's own fallback: it starts it when `set_screencast` comes back
+   * refused, and only it knows when its pane went away.
+   */
+  noteScreenshotPolling(active: boolean): void;
   /** Test seam; also used when the surface unmounts. */
   disconnect(): void;
 }
@@ -254,6 +395,10 @@ let frameRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let frameAttempts = 0;
 /** Set once we stop trying: frames stay on SSE for the rest of the session. */
 let frameSocketLatched = false;
+/** Which stream the LADDER is currently on, before the poll is considered. */
+let ladderRung: "ws" | "sse-frames" | "none" = "none";
+/** Whether the surface's screenshot poll is running. */
+let polling = false;
 
 /**
  * Delays before the 2nd, 3rd and 4th attempt. FOUR TOTAL, then never again for
@@ -449,6 +594,38 @@ function inOrder<T>(run: () => Promise<T>): Promise<T> {
 export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
   (set, get) => {
     /**
+     * Recompute what the pane's pixels are arriving on, and publish it if it
+     * changed.
+     *
+     * DERIVED from the ladder's own variables rather than written at each
+     * site, which removes every ordering hazard between the two independent
+     * things that can degrade: the socket ladder and the screenshot poll. An
+     * older server produces BOTH — 1006 on the socket and a refused
+     * `set_screencast` — and two writers racing over one field is how a badge
+     * ends up contradicting the pane beside it.
+     */
+    function publishFrameTransport() {
+      const rung = polling ? "poll" : ladderRung;
+      const next: WebMcpFrameTransport = {
+        rung,
+        attempts: frameAttempts,
+        latched: frameSocketLatched,
+      };
+      const current = get().frameTransport;
+      if (
+        current.rung === next.rung &&
+        current.attempts === next.attempts &&
+        current.latched === next.latched
+      ) {
+        return;
+      }
+      set({ frameTransport: next });
+      // The measurement split follows the transport: a p95 that mixes socket
+      // frames with polled screenshots describes neither.
+      noteFrameTransportRung(rung);
+    }
+
+    /**
      * Apply one server event.
      *
      * An explicit ALLOWLIST of known types, with anything else ignored by
@@ -485,13 +662,16 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         if (event.seq <= lastAppliedFrameSeq) return;
         lastAppliedFrameSeq = event.seq;
         set({
-          liveFrame: {
-            src: `data:image/jpeg;base64,${event.frame.data}`,
-            deviceWidth: event.frame.deviceWidth,
-            deviceHeight: event.frame.deviceHeight,
-            ts: event.frame.ts,
-            seq: event.seq,
-          },
+          liveFrame: toLiveFrame(
+            `data:image/jpeg;base64,${event.frame.data}`,
+            event.frame,
+            event.seq,
+            // This frame came in on the event stream, whatever else is
+            // running: a screenshot poll alongside it does not change how THIS
+            // picture arrived, and tagging it `poll` would file its latency
+            // under a transport that did not carry it.
+            "sse-frames",
+          ),
         });
         return;
       }
@@ -549,13 +729,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       if (frame.seq <= lastAppliedFrameSeq) return;
       lastAppliedFrameSeq = frame.seq;
       set({
-        liveFrame: {
-          src: presenter.present(frame.jpeg),
-          deviceWidth: frame.deviceWidth,
-          deviceHeight: frame.deviceHeight,
-          ts: frame.ts,
-          seq: frame.seq,
-        },
+        liveFrame: toLiveFrame(
+          presenter.present(frame.jpeg),
+          frame,
+          frame.seq,
+          "ws",
+        ),
       });
     }
 
@@ -599,6 +778,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               // moment we stop being told it is current.
               liveFrame: undefined,
               lastScreenshot: undefined,
+              lastScreenshotAt: undefined,
             });
             failOutstandingWaiters(
               "The browser session went away before this tool finished.",
@@ -612,6 +792,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         }
       };
 
+      // Frames on this stream means the ladder is running on SSE — either
+      // because the socket was never opened, or because it fell back here.
+      if (frames === "on") {
+        ladderRung = "sse-frames";
+        publishFrameTransport();
+      }
+
       if (isHostedMode()) {
         // `EventSource` cannot set headers, and hosted auth is a bearer — the
         // query-string accommodation below is a LOCAL session token, which
@@ -621,6 +808,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         return;
       }
 
+      // The token rides in the query string because EventSource cannot send
+      // headers, which is the same accommodation the traffic-log stream makes.
       // The token rides in the query string because EventSource cannot send
       // headers, which is the same accommodation the traffic-log stream makes.
       source = new EventSource(addTokenToUrl(path));
@@ -732,6 +921,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
     function openFrameSocket(sessionId: string, generation: number) {
       if (frameSocketLatched) return;
       frameAttempts += 1;
+      publishFrameTransport();
       frameSocket = openWebMcpFrameStream({
         sessionId,
         onOpen: () => {
@@ -743,6 +933,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // session that has been working fine, permanently reverting it to
           // the latency this whole change removes.
           frameAttempts = 0;
+          ladderRung = "ws";
+          publishFrameTransport();
           // Frames are arriving here now, so stop paying for them twice. On
           // the first attempt this is already the case and does nothing; after
           // a successful retry it is what puts SSE back to carrying only the
@@ -783,6 +975,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       frameSocket = undefined;
       if (code === FRAME_WS_CLOSE.NORMAL || code === FRAME_WS_CLOSE.GONE) {
         frameSocketLatched = true;
+        // The session is over. Nothing is carrying pixels, and nothing will.
+        ladderRung = "none";
+        publishFrameTransport();
         return;
       }
       if (
@@ -791,6 +986,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       ) {
         frameSocketLatched = true;
         ensureSseFrames(sessionId, "on");
+        publishFrameTransport();
         return;
       }
       // Before the retry, not after it: a pane that went blank for two and a
@@ -800,8 +996,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       const retryIndex = frameAttempts - 1;
       if (retryIndex >= FRAME_WS_RETRY_DELAYS_MS.length) {
         frameSocketLatched = true;
+        publishFrameTransport();
         return;
       }
+      publishFrameTransport();
       frameRetryTimer = setTimeout(() => {
         frameRetryTimer = undefined;
         // The generation is the guarantee, not the clearTimeout below: a timer
@@ -888,6 +1086,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       frameSocket = undefined;
       frameAttempts = 0;
       frameSocketLatched = false;
+      ladderRung = "none";
+      // `polling` is deliberately NOT cleared: it belongs to the surface that
+      // owns the interval, and only that surface knows whether the interval
+      // has actually stopped. Clearing it from here would report a transport
+      // of `none` for a pane still visibly painting screenshots — this runs on
+      // every stream teardown, including ones the poll is unaffected by. The
+      // surface reports `false` when its poll really stops, which includes the
+      // session change that ends it (its effect is keyed on the session id).
       lastAppliedFrameSeq = 0;
       source?.close();
       source = undefined;
@@ -903,6 +1109,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       // otherwise be settled by an unrelated frame of the NEXT page and
       // recorded as that page's latency.
       resetFrameStats();
+      publishFrameTransport();
     }
 
     return {
@@ -913,8 +1120,15 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       starting: false,
       error: undefined,
       liveFrame: undefined,
+      frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
+      lastScreenshotAt: undefined,
       chatEnabled: false,
+
+      noteScreenshotPolling(active) {
+        polling = active;
+        publishFrameTransport();
+      },
 
       setChatEnabled(enabled) {
         set({ chatEnabled: enabled });
@@ -950,6 +1164,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // first frame arrives, so keeping it would present the previous
           // site's picture as this session's live view.
           lastScreenshot: undefined,
+          lastScreenshotAt: undefined,
         });
         const result = await request<WebMcpSessionPublic>("/sessions", {
           method: "POST",
@@ -971,6 +1186,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             ...(options?.webContentsId !== undefined
               ? { webContentsId: options.webContentsId }
               : {}),
+            // Only for a session whose page is rendered on the server and
+            // looked at here. A window session paints on a real display that
+            // already knows its own ratio, and a hosted one is watched from
+            // the Browser panel.
+            ...(options?.display === "in-app" ? devicePixelRatioField() : {}),
           }),
         });
         if (!result.ok) {
@@ -1002,6 +1222,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           chatEnabled: false,
           liveFrame: undefined,
           lastScreenshot: undefined,
+          lastScreenshotAt: undefined,
         });
         if (sessionId) {
           const result = await request(`/sessions/${sessionId}`, {
@@ -1038,16 +1259,22 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       },
 
       async invokeTool(toolKey, input) {
-        // The outcome arrives on the activity stream, not in this response:
-        // the server answers as soon as the call is queued (locally) or once
-        // the tool settles (hosted).
-        await get().sendCommand({
+        const invokeId = newInvokeId();
+        const response = (await get().sendCommand({
           type: "invoke_tool",
           toolKey,
           input,
           source: "manual",
-          invokeId: newInvokeId(),
-        });
+          invokeId,
+        })) as { outcome?: PageToolInvocationResult } | undefined;
+        // Locally the outcome arrives on the activity stream and this response
+        // is just an ack. Hosted, the response may be the ONLY settlement this
+        // tab ever sees — the stream it is subscribed to can be attached to a
+        // different replica than the one that ran the tool — so it is recorded
+        // here rather than waited for.
+        if (response?.outcome) {
+          rememberSettled(invokeId, response.outcome);
+        }
       },
 
       async invokeToolForResult(toolKey, input) {
@@ -1079,7 +1306,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         if (!response?.invokeId) {
           const message =
             get().error?.message ?? "The page tool could not be invoked.";
-          return { state: "failed", errorMessage: message };
+          // `unknown`, not `failed`, and the id is KEPT. The request may have
+          // reached the server and run the tool before its response was lost,
+          // and the difference matters for anything that charges a card. The
+          // id is what lets a retry be recognised as the same invocation
+          // instead of running it a second time.
+          return { state: "unknown", invokeId, errorMessage: message };
         }
 
         if (generation !== sessionGeneration) {
@@ -1138,11 +1370,38 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           captureApplied = ticket;
           return true;
         };
+        /**
+         * A picture, or nothing to say.
+         *
+         * An answer that carries no image is NOT a blank page — it is a
+         * capture the browser could not produce right now: nothing fit the
+         * byte budget, or another capture was already outstanding and the
+         * provider holds those at one. Writing it would replace a good picture
+         * with an empty pane, and — because a write claims the slot — would
+         * also reject the real capture still on its way. The poll runs once a
+         * second, so a browser that takes longer than that per capture would
+         * discard EVERY successful result and leave the pane blank for as long
+         * as it stayed slow.
+         *
+         * Same reasoning as the failure case above, one step further in: a
+         * successful response is not the same thing as a picture.
+         */
+        const applies = (shot: string | undefined) =>
+          shot !== undefined && newest();
         if (!options?.silent) {
           const result = (await get().sendCommand({
             type: "capture_screenshot",
-          })) as { screenshotBase64?: string } | undefined;
-          if (newest()) set({ lastScreenshot: result?.screenshotBase64 });
+          })) as { screenshotBase64?: string; capturedAt?: number } | undefined;
+          if (applies(result?.screenshotBase64)) {
+            set({
+              lastScreenshot: result?.screenshotBase64,
+              // Cleared, not carried: this picture is new, and pairing it with
+              // the previous POLL's timestamp would measure a paint that
+              // happened seconds ago. See the field — a manual capture is not
+              // a transport sample.
+              lastScreenshotAt: undefined,
+            });
+          }
           return;
         }
         // The polling path, which runs once a second and must be INVISIBLE in
@@ -1151,19 +1410,22 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // within a second of it appearing — usually before anyone read it.
         const sessionId = get().session?.sessionId;
         if (!sessionId) return;
-        const result = await request<{ screenshotBase64?: string }>(
-          `/sessions/${sessionId}/command`,
-          {
-            method: "POST",
-            body: JSON.stringify({ type: "capture_screenshot" }),
-          },
-        );
+        const result = await request<{
+          screenshotBase64?: string;
+          capturedAt?: number;
+        }>(`/sessions/${sessionId}/command`, {
+          method: "POST",
+          body: JSON.stringify({ type: "capture_screenshot" }),
+        });
         // The poll runs every second and the request outlives a close: landing
         // this write after the session changed would hang the OLD page's paint
         // in the new session's pane, where nothing would ever correct it.
         if (get().session?.sessionId !== sessionId) return;
-        if (result.ok && newest()) {
-          set({ lastScreenshot: result.data.screenshotBase64 });
+        if (result.ok && applies(result.data.screenshotBase64)) {
+          set({
+            lastScreenshot: result.data.screenshotBase64,
+            lastScreenshotAt: result.data.capturedAt,
+          });
         }
       },
 

@@ -5,6 +5,9 @@ import {
   emptyComposerState,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
+import type { CloudServerBlockCopy } from "@/lib/cloud-server-readiness";
+
+const { navigateAppMock } = vi.hoisted(() => ({ navigateAppMock: vi.fn() }));
 
 const flagState = vi.hoisted(() => ({
   skills: false,
@@ -97,8 +100,12 @@ vi.mock(
   })
 );
 vi.mock("@/lib/app-navigation", () => ({
-  navigateApp: vi.fn(),
-  routePaths: { hosts: "/hosts", environments: "/environments" },
+  navigateApp: navigateAppMock,
+  routePaths: {
+    hosts: "/hosts",
+    environments: "/environments",
+    servers: "/servers",
+  },
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -120,6 +127,7 @@ function Harness({
     },
   ],
   onChange,
+  serverBlock,
 }: {
   environments?: Array<{
     environmentId: string;
@@ -132,6 +140,7 @@ function Harness({
     pluginVersionIds?: string[];
   }>;
   onChange?: (next: EnvironmentComposerState) => void;
+  serverBlock?: CloudServerBlockCopy | null;
 }) {
   const [value, setValue] = useState<EnvironmentComposerState>(
     emptyComposerState
@@ -146,6 +155,7 @@ function Harness({
         onChange?.(next);
       }}
       draftNameHint="Billing"
+      serverBlock={serverBlock}
     />
   );
 }
@@ -417,5 +427,28 @@ describe("SwarmTargetComposer — multi-environment seeding", () => {
     expect(
       screen.getByTestId("new-swarm-environments-picker"),
     ).not.toBeDisabled();
+  });
+});
+
+/**
+ * The copy module names a route key; this layer turns it into a destination.
+ * Asserting the button exists would not catch an index that resolves to
+ * undefined, which is the only way this mapping can be wrong.
+ */
+describe("SwarmTargetComposer — the block's way out", () => {
+  it("sends the empty-project action to Servers", () => {
+    navigateAppMock.mockClear();
+    render(
+      <Harness
+        serverBlock={{
+          message: "Claude has no servers to run against.",
+          detail: "These sessions run against an MCP server.",
+          tone: "guidance",
+          action: { label: "Connect a server", route: "servers" },
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
+    expect(navigateAppMock).toHaveBeenCalledWith("/servers");
   });
 });

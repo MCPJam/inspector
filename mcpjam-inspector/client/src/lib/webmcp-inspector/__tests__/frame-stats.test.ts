@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   frameStatsEnabled,
   frameStatsReport,
+  noteFrameTransportRung,
   notePainted,
   noteInputSent,
   resetFrameStats,
@@ -44,7 +45,112 @@ describe("frame stats", () => {
     expect(frameStatsReport()).toEqual({
       captureToPaint: { n: 0, p50: undefined, p95: undefined },
       inputToPaint: { n: 0, p50: undefined, p95: undefined },
+      // No samples, so no buckets — rather than four empty ones for rungs this
+      // session never used.
+      byTransport: {},
     });
+  });
+
+  it("splits the percentiles by the transport that carried them", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+    notePainted({ ts: 999_980, seq: 2 });
+    // The socket dies and the pane falls back; a p95 that mixed the two would
+    // describe neither, and "did the socket help?" is exactly the question
+    // this file exists to answer.
+    noteFrameTransportRung("sse-frames");
+    notePainted({ ts: 999_900, seq: 3 });
+
+    const report = frameStatsReport();
+    // The top-level figures are unchanged — every existing reader asks for
+    // those — and the split rides beside them.
+    expect(report.captureToPaint.n).toBe(3);
+    expect(report.byTransport.ws).toMatchObject({ n: 2, p50: 10, p95: 20 });
+    expect(report.byTransport["sse-frames"]).toMatchObject({ n: 1, p50: 100 });
+    expect(report.byTransport.poll).toBeUndefined();
+  });
+
+  it("measures a polled screenshot, which carries no seq", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("poll");
+    noteInputSent(0);
+    // No `seq`: a screenshot is not part of the frame sequence. It still
+    // closes a capture-to-paint measurement, which is a property of the
+    // picture — and this is the rung somebody opening the report is most
+    // likely to be investigating, since it is the slowest.
+    notePainted({ ts: 999_500, rung: "poll" });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.poll).toMatchObject({ n: 1, p50: 500 });
+    // And it settles no input echo. At a fixed once-a-second cadence, "time
+    // from gesture to next paint" measures the POLL INTERVAL rather than the
+    // input path — a number that would sit in the same percentile as socket
+    // echoes while describing something else entirely.
+    expect(report.inputToPaint.n).toBe(0);
+  });
+
+  it("files a frame under the transport it ARRIVED on", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("ws");
+    // The frame came in on the socket, and the ladder moves while it decodes —
+    // which on a real pane is tens of milliseconds of window.
+    noteFrameTransportRung("sse-frames");
+    notePainted({ ts: 999_990, seq: 1, rung: "ws" });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.ws).toMatchObject({ n: 1 });
+    expect(report.byTransport["sse-frames"]).toBeUndefined();
+  });
+
+  it("keeps the active transport when the samples are cleared", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+
+    // This is `window.webmcpFrameStatsReset`, which a person runs mid-session
+    // to start a clean measurement. Clearing the rung with the samples would
+    // file every frame after it under `none` until the transport happened to
+    // change — which on a healthy session is never.
+    resetFrameStats();
+    notePainted({ ts: 999_980, seq: 2 });
+    const report = frameStatsReport();
+    expect(report.captureToPaint.n).toBe(1);
+    expect(report.byTransport.ws).toMatchObject({ n: 1 });
+    expect(report.byTransport.none).toBeUndefined();
+  });
+
+  it("resets the rung as well as the samples, for the test seam only", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+
+    // The seam is what every test's `beforeEach` calls. Leaving the rung set
+    // would carry one case's transport into the next, and a case that read
+    // `byTransport` without setting a rung would be describing whatever ran
+    // before it — the quiet kind of test pollution that only shows up as a
+    // reordering failure months later.
+    resetFrameStatsFlagForTests();
+    localStorage.setItem(FLAG, "1");
+    expect(frameStatsEnabled()).toBe(true);
+    notePainted({ ts: 999_980, seq: 2 });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.ws).toBeUndefined();
+    expect(report.byTransport.none).toMatchObject({ n: 1 });
   });
 
   it("treats an empty string as set, since presence is the flag", () => {

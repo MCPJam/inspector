@@ -126,7 +126,11 @@ export function measureClientMessage(
 
     case RFB_CLIENT_MESSAGE.SET_DESKTOP_SIZE: {
       if (buffer.length < 8) return { kind: "incomplete" };
-      const screens = buffer[7]!;
+      // type(1) padding(1) width(2) height(2) number-of-screens(1) padding(1).
+      // The count is at 6; 7 is padding. Reading 7 measures a one-screen
+      // message as 8 bytes instead of 24 and desynchronises the stream — and
+      // a fixture with zeros in both bytes cannot tell the two apart.
+      const screens = buffer[6]!;
       // Never allowed, lease or not. Resizing a desktop someone else is also
       // looking at is not part of taking control of it, and the panel has no
       // reason to ask.

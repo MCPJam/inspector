@@ -106,6 +106,8 @@ describe("useCloudServerReadiness", () => {
     expect(assess(composeState())).toEqual({
       status: "no_servers",
       labels: ["Claude"],
+      attachable: [],
+      poolSize: 0,
     });
   });
 
@@ -138,7 +140,12 @@ describe("useCloudServerReadiness", () => {
         },
         [environment()],
       ),
-    ).toEqual({ status: "no_servers", labels: ["Staging"] });
+    ).toEqual({
+      status: "no_servers",
+      labels: ["Staging"],
+      attachable: [],
+      poolSize: 0,
+    });
   });
 
   it("leaves an environment with pinned plugins to the resolver", () => {

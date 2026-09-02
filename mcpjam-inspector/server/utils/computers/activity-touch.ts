@@ -31,8 +31,13 @@ export function shouldTouchActivity(
   computerId: string,
   now: number = Date.now(),
 ): boolean {
-  const previous = lastActivityTouchAt.get(computerId) ?? 0;
-  if (now - previous < ACTIVITY_TOUCH_THROTTLE_MS) return false;
+  // `undefined` is kept distinct from a recorded 0: a computer nobody has
+  // touched must always be eligible for its first touch, and coalescing to 0
+  // makes that false whenever `now` is inside the window of the epoch.
+  const previous = lastActivityTouchAt.get(computerId);
+  if (previous !== undefined && now - previous < ACTIVITY_TOUCH_THROTTLE_MS) {
+    return false;
+  }
   lastActivityTouchAt.set(computerId, now);
   return true;
 }

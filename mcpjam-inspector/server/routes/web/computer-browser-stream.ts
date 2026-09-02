@@ -72,6 +72,12 @@ const HANDSHAKE_TIMEOUT_MS = 15_000;
  * the alternative is a control-plane round trip per mouse-move.
  */
 const LEASE_CACHE_MS = 2_000;
+/**
+ * ProtocolVersion (12) + the chosen security type (1) + ClientInit (1). Fixed,
+ * because we dictate the browser's handshake: one security type, `None`, so
+ * there is no challenge round in between.
+ */
+const CLIENT_HANDSHAKE_BYTES = 14;
 
 export interface BrowserStreamDeps {
   verifyToken?: typeof verifyComputerBrowserToken;
@@ -316,6 +322,20 @@ export function createComputerBrowserStreamWsHandler(
         }
         const live = session;
         const filter = new RfbClientFilter();
+        /**
+         * The browser's side of the handshake, which is NOT a message stream.
+         *
+         * After we send it ProtocolVersion, one security type and a success
+         * result, an RFB client replies with 12 bytes of ProtocolVersion, one
+         * byte selecting a security type, and one byte of ClientInit — before
+         * its first real message. Those are not typed messages: fed to the
+         * filter, `R` (0x52) reads as message type 82, which is unknown, so
+         * the socket would close on the very first thing every client says.
+         *
+         * Consumed here and NOT relayed: our own handshake upstream is already
+         * complete, including the ClientInit that asked to share the desktop.
+         */
+        let clientHandshakeRemaining = CLIENT_HANDSHAKE_BYTES;
         let upstream: UpstreamSocket | null = null;
         let ready = false;
         let closed = false;
@@ -419,14 +439,23 @@ export function createComputerBrowserStreamWsHandler(
           upstreamRef: () => upstream,
           ready: () => ready,
           shutdown,
+          /** Eat the browser's handshake reply; return whatever follows it. */
+          consumeHandshake: (chunk) => {
+            if (clientHandshakeRemaining === 0) return chunk;
+            const eaten = Math.min(clientHandshakeRemaining, chunk.length);
+            clientHandshakeRemaining -= eaten;
+            return chunk.subarray(eaten);
+          },
         });
       },
 
       onMessage: (event, ws) => {
         const state = socketState.get(ws as object);
         if (!state || !state.ready()) return;
-        const data = toBytes(event.data);
-        if (!data) return;
+        const incoming = toBytes(event.data);
+        if (!incoming) return;
+        const data = state.consumeHandshake(incoming);
+        if (data.length === 0) return;
         const result = state.filter.push(data);
         if (!result.ok) {
           // A stream we cannot parse is one whose input we cannot reliably
@@ -462,6 +491,7 @@ const socketState = new WeakMap<
     upstreamRef: () => UpstreamSocket | null;
     ready: () => boolean;
     shutdown: (code: number, reason: string) => void;
+    consumeHandshake: (chunk: Uint8Array) => Uint8Array;
   }
 >();
 

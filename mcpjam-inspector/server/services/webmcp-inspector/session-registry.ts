@@ -66,6 +66,17 @@ export interface WebMcpSessionRegistryOptions {
   now?: () => number;
 }
 
+/**
+ * How to describe letting go of a session.
+ *
+ * One helper so the sweep and the shutdown path cannot drift: a hosted
+ * session's browser outlives this process, so dropping our handle is
+ * `detached`, and only a local session's browser actually closes.
+ */
+function closeReasonFor(sessionId: string): "closed" | "detached" {
+  return sessionId.startsWith("hosted:") ? "detached" : "closed";
+}
+
 const DEFAULT_MAX_SESSIONS = 2;
 /**
  * The cap for HOSTED sessions, which are a different thing being counted.
@@ -376,9 +387,7 @@ export class WebMcpSessionRegistry {
         // by any replica; only this process's handle to it is going away.
         // `closed` is terminal to the client and would tell someone their
         // still-live browser had ended.
-        void this.close(id, {
-          reason: id.startsWith("hosted:") ? "detached" : "closed",
-        });
+        void this.close(id, { reason: closeReasonFor(id) });
       }
     }
   }
@@ -412,7 +421,12 @@ export class WebMcpSessionRegistry {
   async disposeAll(options: { permanent?: boolean } = {}): Promise<void> {
     if (options.permanent) this.shuttingDown = true;
     const ids = [...this.sessions.keys()];
-    await Promise.all(ids.map((id) => this.close(id)));
+    // Same rule as the sweep: a replica shutting down or being deployed over
+    // has not ended anybody's hosted browser, and saying `closed` — which is
+    // terminal to the client — would claim it had.
+    await Promise.all(
+      ids.map((id) => this.close(id, { reason: closeReasonFor(id) })),
+    );
     this.stopSweeping();
   }
 }
@@ -430,6 +444,8 @@ export interface StartWebMcpSessionOptions {
   sessionId?: string;
   /** Who may drive it; required whenever `sessionId` is guessable. */
   ownerId?: string;
+  /** The viewer's device pixel ratio; omitted means 1. See the provider. */
+  devicePixelRatio?: number;
 }
 
 /**
@@ -457,6 +473,11 @@ export async function startWebMcpSession(
       url: options.url,
       headless: options.headless,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
+      // Spread rather than passed as `undefined`: a provider that never heard
+      // of the field should see a request that does not mention it.
+      ...(options.devicePixelRatio !== undefined
+        ? { devicePixelRatio: options.devicePixelRatio }
+        : {}),
       callbacks: runtime.callbacks(),
     });
     runtime.attach(session);

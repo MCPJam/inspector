@@ -162,6 +162,10 @@ describe("resolveHostedSession", () => {
     runtime.hub.subscribe((event) => {
       if (event.type === "activity") seen.push(event.entry.kind);
     }, 200);
+    // A positive assertion first: without it, a replay that stopped arriving
+    // at all would leave `seen` empty and the real check below would pass
+    // having observed nothing.
+    expect(seen).toContain("tools_added");
     expect(seen).not.toContain("session_started");
   });
 

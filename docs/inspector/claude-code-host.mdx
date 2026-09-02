@@ -33,7 +33,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model. Bring-your-own-key models are not supported and fail closed. |
 | System prompt | Honored — passed to the runtime. |
-| Require tool approval | Honored — the toggle is enabled for Claude Code hosts. When on, side-effecting built-ins (Bash, Write, etc.) and MCP server tools pause the turn for your decision; read-only tools run freely. Approval cannot be combined with selected MCP servers — that combination is rejected at pre-flight. |
+| Require tool approval | Honored — the toggle is enabled for Claude Code hosts. When on, the turn pauses for your decision before each side-effecting tool call — the runtime's own write-class built-ins (Bash, Write, Edit, and the like) and the tools of any selected MCP server. Read-only tools run freely. Approval and selected MCP servers can be combined. |
 | Selected MCP servers | Honored — delivered via the session's MCP config through MCPJam's proxy. |
 | Skills | Honored — runtime skills are materialized into the sandbox. |
 | Temperature and other sampling controls | Not honored — the Claude Code runtime owns its own sampling. These controls are grayed out in the UI. |
@@ -89,8 +89,7 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Condition | What you see |
 |---|---|
 | Enterprise-managed authorization policy on the host | Pre-flight error — the combination is rejected rather than silently bypassed. |
-| Require tool approval + selected MCP servers (Claude Code) | Pre-flight error — turn approval off or remove the MCP servers. |
-| Require tool approval + selected MCP servers (Codex) | Pre-flight error — Codex runs the host's MCP tools on MCPJam's server and cannot pause them for approval. Turn approval off or remove the MCP servers. |
+| Require tool approval on a Codex host | Pre-flight error — the Codex runtime doesn't pause for tool approval, so the turn is refused rather than run unapproved, whether or not any MCP server is selected. The toggle is disabled on Codex hosts, so a host that carried approval in from another harness keeps the stored value: clear `requireToolApproval` through the API or CLI, or switch the host off Codex to reach the toggle again. |
 | Computer data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not supported by the selected harness | Pre-flight error asking you to pick an eligible model. |
 | Computer at daily start cap | Start-limit dialog with upgrade option. |

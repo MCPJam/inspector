@@ -150,6 +150,17 @@ const startSchema = z.object({
    * checks below refuse it anywhere it could not be true.
    */
   webContentsId: z.number().int().positive().optional(),
+  /**
+   * The VIEWER's device pixel ratio, for a session whose page is rendered
+   * server-side and looked at here.
+   *
+   * Sent by the client because nothing on this side can know it: the browser
+   * runs headless, with no display to ask. Bounded at 2 — beyond that the
+   * bytes grow faster than the perceived sharpness, and this is a stream, not
+   * a print job — and optional, so every existing caller keeps the 1 it has
+   * always had.
+   */
+  devicePixelRatio: z.number().min(1).max(2).optional(),
 });
 
 /**
@@ -481,7 +492,8 @@ webmcpInspector.post("/sessions", async (c) => {
       400,
     );
   }
-  const { url, projectId, display, webContentsId } = parsed.data;
+  const { url, projectId, display, webContentsId, devicePixelRatio } =
+    parsed.data;
   // Hosted mode FORCES the hosted transport rather than defaulting to it. A
   // hosted replica has no display to open a window on and no `<webview>` to
   // attach to, so `local` is not a thing it could honour on request; leaving
@@ -653,6 +665,9 @@ webmcpInspector.post("/sessions", async (c) => {
       // Omitted means `window`, so a caller that never heard of this field gets
       // the behaviour it has always had.
       ...(display === "in-app" ? { viewportMode: "embedded" as const } : {}),
+      // Omitted when the client did not say, so a session started by any
+      // older caller renders exactly as it does today.
+      ...(devicePixelRatio !== undefined ? { devicePixelRatio } : {}),
       // A hosted session gets a DERIVED id and an owner. The id is what lets
       // any replica find this session again; the owner is what stops anyone
       // else from doing so, since a derived id is guessable and a random one
@@ -756,6 +771,22 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
    */
   const framesSuppressed = c.req.query("frames") === "off";
 
+  /**
+   * The session this stream belongs to, resolved once.
+   *
+   * Held so a frame this consumer could not take can be reported back to the
+   * provider, which is the only thing that can act on it. Looked up here
+   * rather than per frame: `get` throws for a reaped session, and doing that
+   * inside a send would turn a dead session into an exception in the middle of
+   * the stream.
+   */
+  let runtime: ReturnType<typeof webMcpSessions.get> | undefined;
+  try {
+    runtime = webMcpSessions.get(sessionId);
+  } catch {
+    // Already gone; `subscribe` below reports it to the client properly.
+  }
+
   let unsubscribe: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
   /** Set by `start`, called by `pull`. See `pendingFrame`. */
@@ -817,6 +848,17 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
         if (isFrame) {
           const room = controller.desiredSize;
           if (room !== null && room <= 0) {
+            // Replacing a held frame means a second one arrived before this
+            // consumer read the first: the same "could not take it" signal the
+            // socket's pacer reports, through the same funnel. The first hold
+            // is not a drop — that is the mechanism working.
+            if (pendingFrame !== undefined) {
+              try {
+                runtime?.noteFramePressure();
+              } catch {
+                /* a diagnostic must never break the stream */
+              }
+            }
             pendingFrame = chunk;
             return;
           }
@@ -994,11 +1036,19 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           ok: true,
           cancelled: runtime.cancel(command.invokeId),
         });
-      case "capture_screenshot":
+      case "capture_screenshot": {
+        const screenshotBase64 = await runtime.screenshotNow();
         return c.json({
           ok: true,
-          screenshotBase64: await runtime.screenshotNow(),
+          screenshotBase64,
+          // Stamped where a streamed frame is stamped — the moment the server
+          // had the picture — so the poll's capture-to-paint figure is the
+          // SAME quantity as the socket's rather than a different one sharing
+          // a table with it. Only when there is a picture: a timestamp on an
+          // empty answer would date a paint that never happened.
+          ...(screenshotBase64 === undefined ? {} : { capturedAt: Date.now() }),
         });
+      }
       case "set_screencast":
         // `streaming` is the load-bearing half of this answer. A browser that
         // refuses `Page.startScreencast`, or a provider with no screencast at

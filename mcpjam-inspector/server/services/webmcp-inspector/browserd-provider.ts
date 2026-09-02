@@ -124,6 +124,13 @@ const POLL_FAST_WINDOW_MS = 60_000;
 const TOOL_POLL_IDLE_MS = 10_000;
 
 /**
+ * How long a lease refusal quiets the poll. Long enough that a person working
+ * in the browser is not probed at the poll cadence, short enough that the tool
+ * list is current again soon after they hand control back.
+ */
+const LEASE_BLOCKED_BACKOFF_MS = 15_000;
+
+/**
  * Ceiling for one hosted `webmcp_invoke` round trip.
  *
  * Comfortably above the 60s the runtime gives an invocation and the 60s the
@@ -140,8 +147,15 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private lastToolsJson = "";
   private lastCommandAt = 0;
-  /** Set while the daemon reports a person holding the browser (see `run`). */
-  private leaseBlockedUntilCommand = false;
+  /**
+   * When the poll may next probe after a lease refusal.
+   *
+   * A TIMESTAMP rather than a flag, because a flag only a successful command
+   * could clear was a deadlock: the poll skipped itself, so nothing ran, so
+   * nothing cleared it, and the tool list stayed stale for as long as nobody
+   * happened to invoke anything after control came back.
+   */
+  private leaseBlockedUntil = 0;
   /**
    * The in-flight "cancel it once we know its id" chain from an aborted
    * invocation. Held only so tests can await it; production never needs to.
@@ -192,8 +206,10 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     if (!this.hasWatchers()) return;
     // A person is holding the browser. The daemon refuses to observe while
     // they do — deliberately, so a password being typed cannot reach a trace —
-    // so polling can only produce one refusal per tick until they hand back.
-    if (this.leaseBlockedUntilCommand) return;
+    // so a refusal buys a quiet window rather than one refusal per tick. The
+    // window EXPIRES: the lease can be handed back without any command being
+    // sent, and the tool list has to catch up on its own.
+    if (Date.now() < this.leaseBlockedUntil) return;
     await this.refreshTools();
   }
 
@@ -441,15 +457,15 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
       sessionId: this.handle.sessionId,
     });
     if (response.status === "lease_blocked") {
-      // Suspends the poll until real traffic resumes. Without this the tool
-      // poll re-asks every couple of seconds for as long as a person holds the
-      // browser, and is refused every time.
-      this.leaseBlockedUntilCommand = true;
+      // Backs the poll off rather than stopping it: without this it re-asks
+      // every couple of seconds for as long as a person holds the browser and
+      // is refused every time.
+      this.leaseBlockedUntil = Date.now() + LEASE_BLOCKED_BACKOFF_MS;
       throw new WebMcpLeaseBlockedError(
         "a person has taken control of this browser; nothing was run or observed",
       );
     }
-    this.leaseBlockedUntilCommand = false;
+    this.leaseBlockedUntil = 0;
     if (response.status === "expired") {
       // The daemon retained this commandId's result and then evicted it, so
       // the original outcome is neither returnable nor safely repeatable.

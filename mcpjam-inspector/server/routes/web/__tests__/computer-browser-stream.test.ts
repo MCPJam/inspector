@@ -224,28 +224,103 @@ describe("browser stream — the password stays on the server", () => {
   });
 });
 
+describe("browser stream — the browser's own handshake", () => {
+  /** What every RFB client sends back once we offer it version/None/ok. */
+  const CLIENT_HANDSHAKE = [
+    Buffer.from(RFB_PROTOCOL_VERSION_3_8, "ascii"), // 12 bytes
+    Buffer.from([RFB_SECURITY.NONE]), // chosen security type
+    Buffer.from([1]), // ClientInit: shared
+  ];
+  const WATCH = Buffer.concat([Buffer.from([3, 1]), Buffer.alloc(8)]);
+
+  it("consumes the reply instead of reading it as messages", async () => {
+    // The bug this pins: fed to the filter, `R` (0x52) is message type 82,
+    // which is unknown — so the socket closed on the first thing every real
+    // client says, and no test noticed because none drove the client side.
+    const { events, client } = await connected();
+    for (const chunk of CLIENT_HANDSHAKE) {
+      await events().onMessage?.({ data: chunk }, client.ws);
+    }
+    expect(client.closed).toBeNull();
+  });
+
+  it("does not relay the reply upstream", async () => {
+    // Our own handshake with the VNC server is already complete, ClientInit
+    // included; echoing the browser's would be a second one.
+    const { events, client, upstream } = await connected();
+    const before = upstream.sent.length;
+    for (const chunk of CLIENT_HANDSHAKE) {
+      await events().onMessage?.({ data: chunk }, client.ws);
+    }
+    expect(upstream.sent.length).toBe(before);
+  });
+
+  it("forwards the first real message that follows it", async () => {
+    const { events, client, upstream } = await connected();
+    for (const chunk of CLIENT_HANDSHAKE) {
+      await events().onMessage?.({ data: chunk }, client.ws);
+    }
+    const before = upstream.sent.length;
+    await events().onMessage?.({ data: WATCH }, client.ws);
+    expect(upstream.sent.length).toBe(before + 1);
+    expect(upstream.sent.at(-1)).toEqual(WATCH);
+  });
+
+  it("handles a handshake split across frames, with a message trailing it", async () => {
+    // websockify relays TCP: the whole reply plus the first request can
+    // arrive as one chunk, or dribble in a byte at a time.
+    const { events, client, upstream } = await connected();
+    const stream = Buffer.concat([...CLIENT_HANDSHAKE, WATCH]);
+    for (let i = 0; i < stream.length; i += 5) {
+      await events().onMessage?.(
+        { data: stream.subarray(i, i + 5) },
+        client.ws,
+      );
+    }
+    expect(client.closed).toBeNull();
+    expect(upstream.sent.at(-1)).toEqual(WATCH);
+  });
+});
+
 describe("browser stream — the lease is enforced here or nowhere", () => {
   /** A pointer event: the thing a watching viewer must not be able to send. */
   const POINTER = Buffer.concat([Buffer.from([5, 1]), Buffer.alloc(4)]);
   /** A framebuffer request: watching, always fine. */
   const WATCH = Buffer.concat([Buffer.from([3, 1]), Buffer.alloc(8)]);
 
+  /** Every client must clear its handshake before its messages are parsed. */
+  async function past(
+    harness: Awaited<ReturnType<typeof connected>>,
+  ): Promise<void> {
+    for (const chunk of [
+      Buffer.from(RFB_PROTOCOL_VERSION_3_8, "ascii"),
+      Buffer.from([RFB_SECURITY.NONE]),
+      Buffer.from([1]),
+    ]) {
+      await harness.events().onMessage?.({ data: chunk }, harness.client.ws);
+    }
+  }
+
   it("drops input from a viewer who does not hold the lease", async () => {
     // The threat is not a misbehaving UI: it is a raw RFB client pointed at
     // this socket with a valid panel token. `view_only` is a client-side flag
     // and cannot be relied on for anything.
-    const { events, upstream, client } = await connected({
+    const harness = await connected({
       leaseHolder: async () => null,
     });
+    await past(harness);
+    const { events, upstream, client } = harness;
     const before = upstream.sent.length;
     await events().onMessage?.({ data: POINTER }, client.ws);
     expect(upstream.sent.length).toBe(before);
   });
 
   it("passes input once the lease is held by THIS viewer", async () => {
-    const { events, upstream, client } = await connected({
+    const harness = await connected({
       leaseHolder: async () => CLAIMS.userId,
     });
+    await past(harness);
+    const { events, upstream, client } = harness;
     await new Promise((r) => setTimeout(r, 0));
     const before = upstream.sent.length;
     await events().onMessage?.({ data: POINTER }, client.ws);
@@ -254,9 +329,11 @@ describe("browser stream — the lease is enforced here or nowhere", () => {
   });
 
   it("drops input while SOMEONE ELSE holds the lease", async () => {
-    const { events, upstream, client } = await connected({
+    const harness = await connected({
       leaseHolder: async () => "another_user",
     });
+    await past(harness);
+    const { events, upstream, client } = harness;
     await new Promise((r) => setTimeout(r, 0));
     const before = upstream.sent.length;
     await events().onMessage?.({ data: POINTER }, client.ws);
@@ -266,11 +343,13 @@ describe("browser stream — the lease is enforced here or nowhere", () => {
   it("fails closed when the lease cannot be read at all", async () => {
     // Not knowing who holds the browser is not a reason to let someone type
     // on it.
-    const { events, upstream, client } = await connected({
+    const harness = await connected({
       leaseHolder: async () => {
         throw new Error("daemon unreachable");
       },
     });
+    await past(harness);
+    const { events, upstream, client } = harness;
     await new Promise((r) => setTimeout(r, 0));
     const before = upstream.sent.length;
     await events().onMessage?.({ data: POINTER }, client.ws);
@@ -278,14 +357,18 @@ describe("browser stream — the lease is enforced here or nowhere", () => {
   });
 
   it("always forwards watching messages, lease or not", async () => {
-    const { events, upstream, client } = await connected();
+    const harness = await connected();
+    await past(harness);
+    const { events, upstream, client } = harness;
     const before = upstream.sent.length;
     await events().onMessage?.({ data: WATCH }, client.ws);
     expect(upstream.sent.length).toBe(before + 1);
   });
 
   it("closes a stream it cannot parse rather than forwarding blind", async () => {
-    const { events, client } = await connected();
+    const harness = await connected();
+    await past(harness);
+    const { events, client } = harness;
     await events().onMessage?.({ data: Buffer.from([99, 1, 2, 3]) }, client.ws);
     expect(client.closed?.code).toBe(4503);
   });

@@ -37,11 +37,40 @@ function stripBearer(token: string): string {
   return token.replace(/^Bearer\s+/i, "").trim();
 }
 
+/**
+ * A caller's bearer may only travel over an encrypted connection.
+ *
+ * `setAuth` puts the token on every request this client makes, so a
+ * `CONVEX_URL` of `http://` would put a live user credential on the wire in
+ * cleartext. Loopback is the one exception, and a real one: `convex dev` runs
+ * a local backend on `http://127.0.0.1:3210`, and refusing it would break
+ * every local developer to defend a hop that never leaves the machine.
+ */
+function assertSafeTransport(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("CONVEX_URL is not a valid URL");
+  }
+  if (parsed.protocol === "https:") return;
+  const loopback =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "::1" ||
+    parsed.hostname === "[::1]";
+  if (parsed.protocol === "http:" && loopback) return;
+  throw new Error(
+    "CONVEX_URL must use https (or loopback http): refusing to send a user bearer in cleartext",
+  );
+}
+
 function makeClient(bearer: string): ConvexHttpClient {
   const url = process.env.CONVEX_URL;
   if (!url) {
     throw new Error("CONVEX_URL is not configured");
   }
+  assertSafeTransport(url);
   const client = new ConvexHttpClient(url);
   client.setAuth(stripBearer(bearer));
   return client;

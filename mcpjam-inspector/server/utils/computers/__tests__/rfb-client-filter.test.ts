@@ -89,7 +89,13 @@ const MESSAGES: Array<{
   {
     name: "SetDesktopSize",
     type: 251,
-    bytes: Buffer.concat([Buffer.from([251, 0, 0, 0, 0, 0, 0, 0])]),
+    // ONE screen, not zero. With a zero count both the real offset (6) and
+    // the padding beside it (7) measure the same 8 bytes, so a fixture of
+    // zeros cannot tell a correct parser from one reading a byte late.
+    bytes: Buffer.concat([
+      Buffer.from([251, 0, 0, 0, 0, 0, 1, 0]),
+      Buffer.alloc(16),
+    ]),
     input: true,
     everAllowed: false,
   },

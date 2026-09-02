@@ -21,7 +21,7 @@
 import { HostedReserveError } from "./hosted-reserve-error.js";
 
 export interface HostedRefusal {
-  status: 401 | 403 | 409 | 429 | 502 | 503 | 504;
+  status: 401 | 403 | 409 | 429 | 499 | 502 | 503 | 504;
   code: string;
   /** Shown to the person. Says what happened AND what they can do about it. */
   error: string;
@@ -83,6 +83,16 @@ export function classifyHostedReserveError(
         code: "hosted-desktop-deleted",
         error:
           "That computer has been deleted. Open the browser again to get a new one.",
+      };
+    case 499:
+      // The caller went away mid-reserve — we passed them the request's abort
+      // signal, so this is our own code for "they stopped waiting", not a
+      // refusal at all. Mapped so it cannot reach the 500-and-report path;
+      // nobody is left to read the response either way.
+      return {
+        status: 499,
+        code: "hosted-reserve-abandoned",
+        error: "The request was cancelled before the computer was ready.",
       };
     case 0:
       // Not an answer from the control plane at all: this inspector has no

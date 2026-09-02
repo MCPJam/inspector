@@ -31,6 +31,10 @@ interface BrowserStreamProps {
 
 /** Close codes the server sends. 4401 is recoverable — mint a new token. */
 const CLOSE_UNAUTHORIZED = 4401;
+const CLOSE_GONE = 4404;
+/** Bounded, so a token rejected for any OTHER reason cannot spin forever. */
+const MAX_RECONNECTS = 5;
+const RECONNECT_DELAY_MS = 500;
 
 export function BrowserStream({
   mintToken,
@@ -51,6 +55,7 @@ export function BrowserStream({
     if (!container) return;
     let disposed = false;
     let rfb: RFB | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
 
     void (async () => {
       let token: string;
@@ -70,13 +75,40 @@ export function BrowserStream({
       );
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 
+      // The socket is built HERE and handed to noVNC, rather than letting it
+      // build one from a URL, because the close CODE is the only thing that
+      // distinguishes an expired token from a browser that is gone — and
+      // noVNC's own `disconnect` event reports `{clean}` and nothing else.
+      //
       // The token rides the subprotocol, exactly as the terminal's does: a
       // browser cannot set a header on a WS handshake, and a query string
-      // would land in access logs — which is the failure this whole component
+      // would land in access logs, which is the failure this whole component
       // exists to undo.
-      rfb = new RFB(container, url.toString(), {
-        wsProtocols: [token],
+      const socket = new WebSocket(url.toString(), [token]);
+      socket.binaryType = "arraybuffer";
+      socket.addEventListener("close", (event) => {
+        if (disposed) return;
+        if (event.code === CLOSE_UNAUTHORIZED && attempt < MAX_RECONNECTS) {
+          // The 60s token expired, which is how a long view normally ends.
+          // Reconnecting mints a fresh one; nothing about the session changed.
+          // Capped and delayed, so a token that is being rejected for some
+          // other reason cannot spin.
+          setStatus("connecting");
+          retry = setTimeout(
+            () => setAttempt((n) => n + 1),
+            RECONNECT_DELAY_MS,
+          );
+          return;
+        }
+        setStatus("lost");
+        setDetail(
+          event.code === CLOSE_GONE
+            ? "The browser on this computer is no longer running."
+            : "The connection to the browser dropped.",
+        );
       });
+
+      rfb = new RFB(container, socket);
       rfbRef.current = rfb;
       rfb.viewOnly = viewOnly;
       rfb.scaleViewport = true;
@@ -87,27 +119,19 @@ export function BrowserStream({
         setStatus("live");
         setDetail(null);
       });
-      rfb.addEventListener("disconnect", (event: Event) => {
-        if (disposed) return;
-        const code = (event as CustomEvent<{ code?: number }>).detail?.code;
-        if (code === CLOSE_UNAUTHORIZED) {
-          // The 60s token expired, which is the expected way a long view ends.
-          // Reconnecting mints a fresh one; nothing about the session changed.
-          setStatus("connecting");
-          setAttempt((n) => n + 1);
-          return;
-        }
+      // noVNC's own disconnect carries only `{clean}`, so it cannot say WHY.
+      // The socket's close event above owns that; this just covers a failure
+      // that never reached a close at all.
+      rfb.addEventListener("disconnect", () => {
+        if (disposed || socket.readyState === WebSocket.CLOSED) return;
         setStatus("lost");
-        setDetail(
-          code === 4404
-            ? "The browser on this computer is no longer running."
-            : "The connection to the browser dropped.",
-        );
+        setDetail("The connection to the browser dropped.");
       });
     })();
 
     return () => {
       disposed = true;
+      if (retry) clearTimeout(retry);
       try {
         rfb?.disconnect();
       } catch {

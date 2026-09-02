@@ -27,6 +27,9 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // project/user data), read by the first-party UI to show a harness host's
   // native tools. Safe for guests (local mode + share-link previews); GET-only.
   { pattern: /^\/harness\/[^/]+\/builtin-tools$/, methods: ["GET"] },
+  // Same shape and same reasoning as the catalog above: static registry
+  // metadata about what a harness can do, with no project scope behind it.
+  { pattern: /^\/harness\/[^/]+\/capabilities$/, methods: ["GET"] },
   // Host-compat catalog: static public host metadata (no project/user data).
   // Mounted before the auth middleware (fully public), so this rule is
   // defense-in-depth for guests if the mount order ever changes; GET-only.
@@ -122,7 +125,7 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
 
 export function isGuestAllowedV1Request(
   method: string,
-  fullPath: string
+  fullPath: string,
 ): boolean {
   // `c.req.path` is the full request path; strip the mount prefix so the
   // patterns above stay readable and relative.
@@ -131,6 +134,6 @@ export function isGuestAllowedV1Request(
   return GUEST_ALLOWED_V1_RULES.some(
     (rule) =>
       rule.pattern.test(relative) &&
-      (!rule.methods || rule.methods.includes(upper))
+      (!rule.methods || rule.methods.includes(upper)),
   );
 }

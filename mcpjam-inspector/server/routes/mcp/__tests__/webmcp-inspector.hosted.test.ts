@@ -256,6 +256,9 @@ describe("hosted WebMCP inspector — control-plane refusals are answers, not cr
     [503, "hosted-at-capacity"],
     [504, "hosted-reserve-timeout"],
     [502, "hosted-provision-failed"],
+    // The one remap: the control plane says 410, the caller hears 409, so a
+    // regression here is invisible unless it is pinned.
+    [410, "hosted-desktop-deleted"],
     [0, "hosted-unconfigured"],
   ] as const) {
     it(`maps a ${status} from the control plane to ${code}`, async () => {
@@ -271,6 +274,16 @@ describe("hosted WebMCP inspector — control-plane refusals are answers, not cr
       expect(res.body.code).toBe(code);
     });
   }
+
+  it("keeps the 500 path for a reserve STATUS it has no mapping for", async () => {
+    hostedState.failWith = new HostedReserveError("teapot", 418);
+    const { status } = await post(
+      appWith(VERIFIED),
+      "/api/web/webmcp/sessions",
+      START,
+    );
+    expect(status).toBe(500);
+  });
 
   it("keeps the 500-and-report path for a failure it does not recognize", async () => {
     hostedState.failWith = new Error("something genuinely broke");
