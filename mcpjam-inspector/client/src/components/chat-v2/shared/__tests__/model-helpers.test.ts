@@ -160,9 +160,10 @@ describe("org model helpers", () => {
 
   it("getProviderDisplayName title-cases unknown catalog providers", () => {
     expect(getProviderDisplayName("sakana")).toBe("Sakana");
-    expect(getProviderDisplayName("thinking-machines")).toBe(
-      "Thinking Machines"
-    );
+    // No hyphen in the catalog slug (`thinkingmachines/inkling`), and
+    // `titleCaseProviderKey` splits only on [-_] — so this is the real output.
+    // The hyphenated spelling pinned a name the product never generates.
+    expect(getProviderDisplayName("thinkingmachines")).toBe("Thinkingmachines");
     // Known providers keep their curated names.
     expect(getProviderDisplayName("anthropic")).toBe("Anthropic");
     expect(getProviderDisplayName("nvidia")).toBe("NVIDIA");

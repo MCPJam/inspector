@@ -144,8 +144,6 @@ export type CanonicalModelCandidate = { id: string | Model; provider: string };
 // the prefix. Everything else uses the prefix verbatim.
 const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
   "x-ai": "xai",
-  // The catalog serves the newer Grok models under `spacexai/*` — same vendor
-  // as `x-ai/*`, so it must collapse to the same provider key (and logo).
   spacexai: "xai",
   "meta-llama": "meta",
   mistralai: "mistral",

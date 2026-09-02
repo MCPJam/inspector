@@ -35,7 +35,7 @@ import qwenLogo from "/qwen_logo.png";
 import nvidiaLogo from "/nvidia_logo.svg";
 import amazonLogo from "/amazon_logo.svg";
 import kwaipilotLogo from "/kwaipilot_logo.svg";
-import tencentLogo from "/tencent_logo.svg";
+import hunyuanLogo from "/hunyuan_logo.svg";
 import bytedanceLogo from "/bytedance_logo.svg";
 import inceptionLightLogo from "/inception_light.svg";
 import inceptionDarkLogo from "/inception_dark.svg";
@@ -164,10 +164,13 @@ const PROVIDER_REGISTRY: Record<string, ProviderBrand> = {
     color: "text-sky-600 dark:text-sky-400",
   },
   tencent: {
-    // The catalog's `tencent/*` models are all Hunyuan, so the Hunyuan mark
-    // reads truer at 12px than the Tencent corporate logo.
+    // The catalog files Hunyuan under `tencent/*` (`tencent/hy-mt2-lite`,
+    // `tencent/hy-mt2-plus`), so the Hunyuan mark reads truer at 12px than the
+    // Tencent corporate logo. The asset is named for what it depicts — it
+    // carries `<title>Hunyuan</title>` — so nobody "fixes" it by dropping the
+    // corporate logo in under a filename that asked for one.
     displayName: "Tencent Hunyuan",
-    logoLight: tencentLogo,
+    logoLight: hunyuanLogo,
     color: "text-blue-600 dark:text-blue-400",
   },
   bytedance: {

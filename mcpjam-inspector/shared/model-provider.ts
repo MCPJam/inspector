@@ -41,6 +41,12 @@ export const MODEL_ID_PREFIX_ALIASES: Record<string, ModelProvider> = {
   // the catalog files under `mistral/...`. Before this map it matched no
   // prefix and fell through to the bare-id Ollama catch-all.
   mistralai: "mistral",
+  // The catalog serves the newer Grok models under `spacexai/*`, the same
+  // vendor it files older ones under `x-ai/*`. Missing here it fell through to
+  // the bare-id Ollama catch-all at the bottom of `classifyModelIdProvider`,
+  // so a Grok model classified as Ollama BYOK for provider dispatch and eval
+  // model resolution — the `mistralai` failure above, repeated.
+  spacexai: "xai",
   "x-ai": "xai",
 };
 
