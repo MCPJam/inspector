@@ -16,7 +16,7 @@ const SOURCE = "client/src/components/swarms/SwarmsTab.tsx";
 
 /** Verbatim from the component. */
 const CLS = {
-  aside: "flex w-80 shrink-0 flex-col border-r",
+  aside: "flex shrink-0 flex-col border-r",
   scroller: "flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto",
   row: "group flex w-full items-center border-b",
   button:
@@ -53,9 +53,9 @@ function attr(value: string): string {
 }
 
 /** Compiled once: neither the CSS nor the drift check varies per test. */
-let fixtureCss: Promise<string> | null = null;
+let fixture: Promise<{ css: string; width: number }> | null = null;
 
-function buildCss(): Promise<string> {
+function buildFixture(): Promise<{ css: string; width: number }> {
   const source = readFileSync(`${packageRoot}${SOURCE}`, "utf8");
   const missing = Object.entries(CLS).filter(([, v]) => !source.includes(v));
   expect(
@@ -63,22 +63,35 @@ function buildCss(): Promise<string> {
     `${SOURCE} no longer contains these class strings — the fixture has drifted from the component and would be measuring a layout nobody ships`,
   ).toEqual([]);
 
+  // The sidebar is resizable, so its width is an inline style rather than a
+  // `w-*` class. Read the component's own default instead of hardcoding a
+  // number here: every wrapping assertion below is a claim about the width
+  // users actually get on open, and a silent change to that default has to
+  // re-measure those, not slip past a stale literal.
+  const declared = /PERSONA_SIDEBAR_DEFAULT_WIDTH\s*=\s*(\d+)/.exec(source);
+  expect(
+    declared,
+    `${SOURCE} no longer declares PERSONA_SIDEBAR_DEFAULT_WIDTH — the fixture cannot size the column the way the component does`,
+  ).not.toBeNull();
+  const width = Number(declared![1]);
+
   return compile(`@import "tailwindcss";\n@theme { --spacing: 0.25rem; }`, {
     base: packageRoot,
     onDependency() {},
-  }).then((compiler) =>
-    compiler.build([
+  }).then((compiler) => ({
+    css: compiler.build([
       ...new Set(Object.values(CLS).flatMap((s) => s.split(/\s+/))),
       "mr-2",
       "size-8",
       "shrink-0",
     ]),
-  );
+    width,
+  }));
 }
 
 async function renderSidebar(page: Page): Promise<void> {
-  fixtureCss ??= buildCss();
-  const css = await fixtureCss;
+  fixture ??= buildFixture();
+  const { css, width } = await fixture;
 
   const rows = PERSONAS.map(
     ([name, role], i) => `
@@ -97,7 +110,7 @@ async function renderSidebar(page: Page): Promise<void> {
   await page.setContent(`<!doctype html><meta charset="utf-8">
     <style>${css} html,body{margin:0;font-family:system-ui,sans-serif}</style>
     <div class="flex min-h-0" style="height:420px">
-      <aside class="${CLS.aside}" data-aside>
+      <aside class="${CLS.aside}" style="width:${width}px" data-aside>
         <div class="${CLS.scroller}" data-scroll>${rows}</div>
       </aside>
       <main class="min-w-0 flex-1"></main>
@@ -121,9 +134,15 @@ test.describe("personas sidebar column", () => {
     expect(overflow.by).toBe(0);
   });
 
-  test("is 320px wide", async ({ page }) => {
+  test("holds the component's default width against a greedy main", async ({
+    page,
+  }) => {
+    // `shrink-0` is the load-bearing class: without it the flex row would pull
+    // the column narrower than the width the component set, and every wrapping
+    // assertion below would be measuring a layout nobody sees.
+    const { width } = await fixture!;
     const box = await page.locator("[data-aside]").boundingBox();
-    expect(box?.width).toBe(320);
+    expect(box?.width).toBe(width);
   });
 
   test("wraps a long name onto a second line", async ({ page }) => {
