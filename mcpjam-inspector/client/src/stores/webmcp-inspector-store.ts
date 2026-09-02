@@ -240,10 +240,18 @@ interface WebMcpInspectorState {
   frameTransport: WebMcpFrameTransport;
   lastScreenshot: string | undefined;
   /**
-   * When the SERVER had the picture in `lastScreenshot`.
+   * When the server captured the picture in `lastScreenshot`, IF the poll took
+   * it.
    *
-   * Written in the same `set` as the picture itself, so the two cannot drift.
-   * Its only reader is the frame-stats measurement, which needs the same
+   * Written in the same `set` as the picture itself, so the two cannot drift,
+   * and deliberately `undefined` for a manual capture. Its only reader is the
+   * frame-stats measurement, and what that records is a TRANSPORT: a person
+   * pressing the Screenshot button is not the pane polling, and filing it
+   * under `poll` would invent that transport for a session streaming happily —
+   * or for a headless one, where the button is the only way to see the page
+   * and nothing polls at all.
+   *
+   * The timestamp is the server's own, because the measurement needs the same
    * definition of "captured" that a streamed frame's `ts` carries — otherwise
    * the poll's percentile is a different quantity sharing a table with the
    * socket's, which is the one thing that module exists to avoid.
@@ -1181,7 +1189,11 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           if (applies(result?.screenshotBase64)) {
             set({
               lastScreenshot: result?.screenshotBase64,
-              lastScreenshotAt: result?.capturedAt,
+              // Cleared, not carried: this picture is new, and pairing it with
+              // the previous POLL's timestamp would measure a paint that
+              // happened seconds ago. See the field — a manual capture is not
+              // a transport sample.
+              lastScreenshotAt: undefined,
             });
           }
           return;

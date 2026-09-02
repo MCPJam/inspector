@@ -988,6 +988,36 @@ describe("webmcp inspector store", () => {
     expect(state.lastScreenshotAt).toBe(1_234);
   });
 
+  it("dates the poll's picture and not the button's", async () => {
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            screenshotBase64: "shot",
+            capturedAt: 1_234,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBe(1_234);
+
+    // Somebody presses the Screenshot button. The picture changes; the poll
+    // timestamp must not survive it, and the manual capture must not acquire
+    // one — what the measurement records is a TRANSPORT, and a person pressing
+    // a button is not the pane polling. Left dated, a session that never
+    // polled would grow a `byTransport.poll` bucket, and a headless one —
+    // where the button is the only way to see the page — would report every
+    // capture as polling.
+    await useWebmcpInspectorStore.getState().captureScreenshot();
+
+    expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("shot");
+    expect(useWebmcpInspectorStore.getState().lastScreenshotAt).toBeUndefined();
+  });
+
   it("keeps the picture when a poll answers without one", async () => {
     await openSession();
     const releases: Array<(response: Response) => void> = [];
