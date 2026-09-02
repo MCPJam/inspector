@@ -11,18 +11,37 @@
  * A real child on purpose: signal delivery, reaping, and EPIPE on a closed pipe
  * are exactly the behaviours a mock would define away.
  */
-import { describe, expect, it } from "vitest";
-import { spawnAppServerClient } from "../bridge/app-server-client.js";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  spawnAppServerClient,
+  type AppServerClient,
+} from "../bridge/app-server-client.js";
+
+/*
+ * Every client this file spawns, reaped after the case that made it.
+ *
+ * Not decoration: two of these children are deliberately hard to kill (one
+ * ignores SIGTERM, one runs `setInterval` forever), so a failed assertion
+ * before the case's own `kill()` would leak exactly the process this file
+ * exists to prove gets cleaned up. `kill()` is idempotent once the child is
+ * gone, so reaping a client a passing case already killed costs nothing.
+ */
+const spawned: AppServerClient[] = [];
+afterEach(async () => {
+  await Promise.all(spawned.splice(0).map((client) => client.kill()));
+});
 
 /** Spawn `node -e <script>` through the client under test. */
 function spawnScript(script: string, onStderrLine?: (line: string) => void) {
-  return spawnAppServerClient({
+  const client = spawnAppServerClient({
     command: process.execPath,
     args: ["-e", script],
     cwd: process.cwd(),
     env: { ...process.env },
     onStderrLine,
   });
+  spawned.push(client);
+  return client;
 }
 
 /** True while the OS still knows about `pid`. Signal 0 only probes. */

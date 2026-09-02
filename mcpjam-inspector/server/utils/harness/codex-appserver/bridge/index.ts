@@ -214,6 +214,33 @@ async function main(): Promise<void> {
       env: { ...process.env, CODEX_HOME: codexHome },
     });
 
+    /*
+     * A DEAD CLIENT MUST NOT BE REUSED.
+     *
+     * `AppServerClient` rejects every request once its child is gone, but
+     * nothing here noticed: `ensureRuntime` returns early on `if (client)`, so
+     * after Codex crashed, every later turn with the same fingerprint failed
+     * instantly on `thread/start` — permanently, since nothing ever rebuilt it.
+     * The turn that witnessed the crash reports it (see the `exited` race in
+     * `onStart`); this is about every turn after.
+     *
+     * Guarded on identity because `ensureRuntime`'s own teardown also resolves
+     * `exited`: by then it has already installed a replacement, and clearing
+     * `client` there would drop the runtime that was just built.
+     */
+    const spawned = client;
+    void spawned.exited.then(() => {
+      if (client !== spawned) return;
+      client = undefined;
+      // The parked thread lived in the process that just died.
+      threadId = undefined;
+      // The relay was reachable only by that Codex, and its credential was
+      // rendered into that CODEX_HOME. Nothing can call it now.
+      const orphaned = relay;
+      relay = undefined;
+      void orphaned?.close();
+    });
+
     await client.request("initialize", {
       clientInfo: {
         name: "mcpjam-inspector",
@@ -338,17 +365,32 @@ async function main(): Promise<void> {
       if (turn.abortSignal.aborted) onAbort();
       else turn.abortSignal.addEventListener("abort", onAbort, { once: true });
 
-      // Whichever comes first. A child that dies mid-turn must settle the turn
-      // rather than leave `onStart` pending until the teardown grace expires.
+      /*
+       * Whichever comes first. A child that dies mid-turn must settle the turn
+       * rather than leave `onStart` pending until the teardown grace expires.
+       *
+       * `settled` is what keeps the LOSER quiet. `Promise.race` does not cancel
+       * anything, so the `exited` handler outlives the turn that installed it
+       * — and it fires on the next runtime exit whenever that happens: a crash
+       * during somebody else's turn, or the ordinary `client.kill()` at
+       * teardown. Both emitted an error on this turn's handle long after it
+       * finished, which the host reads as a frame belonging to whatever turn is
+       * open now. Found by killing Codex between two live turns; the second
+       * turn inherited the first one's failure.
+       */
+      let settled = false;
       await Promise.race([
-        translator.waitForTurn(),
+        translator.waitForTurn().then(() => {
+          settled = true;
+        }),
         runtime.exited.then((error) => {
-          if (error) {
-            turn.emitError({ error });
-            translator.finishTurn({ status: "failed" });
-          }
+          if (settled || !error) return;
+          settled = true;
+          turn.emitError({ error });
+          translator.finishTurn({ status: "failed" });
         }),
       ]);
+      settled = true;
       activeTurn = undefined;
     },
   });

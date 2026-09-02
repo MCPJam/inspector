@@ -131,6 +131,27 @@ describe("host tool naming", () => {
     }
   });
 
+  it("keeps an object constraint that is the schema's ONLY keyword", () => {
+    // `{minProperties: 1}` says "an object with at least one member" and
+    // nothing else. Falling back to the permissive stub silently drops the
+    // constraint, and Codex then lets through a call the host will reject —
+    // the failure lands at execution time with no hint of where it came from.
+    for (const inputSchema of [
+      { minProperties: 1 },
+      { maxProperties: 4 },
+      { propertyNames: { pattern: "^x-" } },
+      { dependentRequired: { a: ["b"] } },
+    ]) {
+      const catalog = buildHostToolCatalog([
+        { name: "constrained", inputSchema },
+      ]);
+      expect(catalog.descriptors[0]?.inputSchema).toEqual({
+        ...inputSchema,
+        type: "object",
+      });
+    }
+  });
+
   it("passes an explicit object schema through untouched", () => {
     const inputSchema = {
       type: "object",

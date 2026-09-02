@@ -80,13 +80,19 @@ export function createHostToolMcpServer(options: {
       //     response, which a strict peer treats as a protocol violation;
       //   - an explicit `id: null` fell through as if it were correlatable, and
       //     a response carrying `id: null` cannot be matched to anything.
-      // JSON-RPC 2.0 says only an ABSENT id makes a notification; `null` is a
-      // malformed request, so it is refused rather than answered on a guess.
+      // Only an ABSENT id makes a notification. `null` is refused because MCP
+      // forbids it outright ("the request ID MUST NOT be null") — NOT because
+      // of JSON-RPC 2.0, which permits a null id and merely discourages it.
+      // The distinction matters to anyone porting this handler to a plain
+      // JSON-RPC peer, where rejecting null would be wrong.
       if (id === undefined) return undefined;
       if (id === null) {
         return {
           id: null,
-          error: { code: -32600, message: "Invalid Request: id must not be null" },
+          error: {
+            code: -32600,
+            message: "Invalid Request: id must not be null",
+          },
         };
       }
 

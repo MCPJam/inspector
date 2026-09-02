@@ -111,9 +111,12 @@ export function spawnAppServer({
   child.on("error", (error) => {
     die(new Error(`codex app-server failed to start: ${String(error)}`));
   });
-  child.stdin.on("error", () => {
-    // A closed pipe must not become an uncaught exception; `exit`/`error`
-    // above are what report the failure.
+  // A closed pipe must not become an uncaught exception — and must not be
+  // swallowed either. Codex can close stdin while staying alive, and neither
+  // `exit` nor `error` fires for that: every pending request would wait
+  // forever, hanging the gate runner before it reached cleanup.
+  child.stdin.on("error", (error) => {
+    die(new Error(`codex app-server stdin failed: ${String(error)}`));
   });
 
   return {
@@ -140,7 +143,11 @@ export function spawnAppServer({
       try {
         await new Promise((resolve) => {
           if (child.exitCode !== null) resolve();
-          else child.once("exit", resolve);
+          // `close`, NOT `exit`: a binary that could not be spawned emits
+          // `error` and `close` and never `exit` (verified against node), so
+          // waiting on `exit` left cleanup pending on exactly the failure the
+          // gate runner is most likely to hit — a wrong `--codex` path.
+          else child.once("close", resolve);
         });
       } finally {
         clearTimeout(force);

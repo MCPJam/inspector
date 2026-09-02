@@ -30,12 +30,14 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  readdirSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 const LIVE = process.env.MCPJAM_CODEX_APPSERVER_LIVE === "true";
@@ -78,9 +80,8 @@ spawn(${JSON.stringify(codexBin)}, process.argv.slice(2), { stdio: "inherit" })
   // produced by `pretest`, while `describe.skipIf` runs only AFTER module
   // evaluation — so a static import would fail collection on a direct vitest
   // run even though this suite is meant to skip.
-  const { CODEX_APPSERVER_BRIDGE_SOURCE } = await import(
-    "../../bootstrap/generated/codex-appserver-bridge.bundled.js"
-  );
+  const { CODEX_APPSERVER_BRIDGE_SOURCE } =
+    await import("../../bootstrap/generated/codex-appserver-bridge.bundled.js");
   writeFileSync(join(dir, "bridge.mjs"), CODEX_APPSERVER_BRIDGE_SOURCE);
   return dir;
 }
@@ -106,19 +107,46 @@ type LiveTurn = {
   cleanup(): Promise<void>;
 };
 
-/** Run one scripted turn through the real bridge and collect every host frame. */
-async function runLiveTurn(options: {
-  script: unknown[];
+type TurnOptions = {
+  script?: unknown[];
   prompt: string;
   approve: boolean;
   permissionMode: string;
-}): Promise<LiveTurn> {
-  const fake = await startFakeModel(options.script);
+};
+
+type LiveSession = {
+  workdir: string;
+  bridgePid: number;
+  /** Drive one turn and resolve with every frame the host saw for it. */
+  runTurn(options: TurnOptions): Promise<Frame[]>;
+  cleanup(): Promise<void>;
+};
+
+/** Every descendant pid of `pid`, read straight from procfs. */
+function childrenOf(pid: number): number[] {
+  const out: number[] = [];
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+      // Field 4 is the ppid, but field 2 (comm) may contain spaces or
+      // parentheses — so split after the LAST ')'.
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      if (Number(fields[1]) === pid) out.push(Number(entry));
+    } catch {
+      /* the process exited while we were reading it */
+    }
+  }
+  return out;
+}
+
+/** Bring up the real bridge and hold the socket open across turns. */
+async function startLiveSession(script: unknown[]): Promise<LiveSession> {
+  const fake = await startFakeModel(script);
   const baseUrl = await fake.listen();
   const bootstrapDir = await prepareBootstrap(CODEX_BIN!);
   const workdir = mkdtempSync(join(tmpdir(), "mcpjam-codex-live-work-"));
   const token = "live-test-token";
-  const frames: Frame[] = [];
   let bridge: ChildProcess | undefined;
   let socket: WebSocket | undefined;
 
@@ -184,35 +212,65 @@ async function runLiveTurn(options: {
       socket!.once("error", reject);
     });
 
-    const finished = new Promise<void>((resolve) => {
-      socket!.on("message", (raw) => {
-        const frame = JSON.parse(String(raw)) as Frame;
-        frames.push(frame);
-        if (frame.type === "tool-approval-request") {
-          socket!.send(
-            JSON.stringify({
-              type: "tool-approval-response",
-              approvalId: frame.approvalId,
-              approved: options.approve,
-            }),
-          );
-        }
-        if (frame.type === "finish") resolve();
-      });
-    });
-
-    socket.send(
-      JSON.stringify({
-        type: "start",
-        prompt: options.prompt,
-        tools: [],
-        permissionMode: options.permissionMode,
-      }),
-    );
-    await finished;
-    return { frames, workdir, cleanup };
+    return {
+      workdir,
+      bridgePid: bridge!.pid!,
+      cleanup,
+      runTurn(options: TurnOptions) {
+        const frames: Frame[] = [];
+        const settled = new Promise<Frame[]>((resolve) => {
+          const onMessage = (raw: unknown) => {
+            const frame = JSON.parse(String(raw)) as Frame;
+            frames.push(frame);
+            if (frame.type === "tool-approval-request") {
+              socket!.send(
+                JSON.stringify({
+                  type: "tool-approval-response",
+                  approvalId: frame.approvalId,
+                  approved: options.approve,
+                }),
+              );
+            }
+            // `error` as a terminator too: a turn that fails before it starts
+            // never reaches `finish`, and a test asserting recovery has to see
+            // that rather than time out on it.
+            if (frame.type === "finish" || frame.type === "error") {
+              socket!.off("message", onMessage);
+              resolve(frames);
+            }
+          };
+          socket!.on("message", onMessage);
+        });
+        socket!.send(
+          JSON.stringify({
+            type: "start",
+            prompt: options.prompt,
+            tools: [],
+            permissionMode: options.permissionMode,
+          }),
+        );
+        return settled;
+      },
+    };
   } catch (error) {
     await cleanup();
+    throw error;
+  }
+}
+
+/** Run one scripted turn through the real bridge and collect every host frame. */
+async function runLiveTurn(options: {
+  script: unknown[];
+  prompt: string;
+  approve: boolean;
+  permissionMode: string;
+}): Promise<LiveTurn> {
+  const session = await startLiveSession(options.script);
+  try {
+    const frames = await session.runTurn(options);
+    return { frames, workdir: session.workdir, cleanup: session.cleanup };
+  } catch (error) {
+    await session.cleanup();
     throw error;
   }
 }
@@ -308,6 +366,59 @@ describe.skipIf(!LIVE || !CODEX_BIN)("codex app-server, end to end", () => {
       expect(turn.frames.map((frame) => frame.type)).toContain("finish");
     } finally {
       await turn.cleanup();
+    }
+  }, 180_000);
+
+  it("rebuilds the runtime after Codex dies, instead of reusing a dead client", async () => {
+    /*
+     * THE REGRESSION. `ensureRuntime` returned early on `if (client)`, and
+     * nothing invalidated that client when its process died — so one Codex
+     * crash poisoned the session: every later turn with the same configuration
+     * rejected instantly on `thread/start`, forever, with no way back short of
+     * destroying the session.
+     *
+     * Only reproducible through the real assembly, because the bug lives in
+     * the seam between a client that knows it is dead and a bridge that never
+     * asked.
+     */
+    const session = await startLiveSession([
+      { text: "First." },
+      { text: "Second." },
+    ]);
+    try {
+      const first = await session.runTurn({
+        prompt: "Say something.",
+        approve: true,
+        permissionMode: "allow-all",
+      });
+      expect(first.map((frame) => frame.type)).toContain("finish");
+
+      // Kill Codex out from under the bridge. The bridge's own child is the
+      // `codex.js` launcher; killing it is what the adapter sees as an exit.
+      const children = childrenOf(session.bridgePid);
+      expect(children.length).toBeGreaterThan(0);
+      for (const pid of children) process.kill(pid, "SIGKILL");
+      await vi.waitFor(
+        () => {
+          expect(childrenOf(session.bridgePid)).toHaveLength(0);
+        },
+        { timeout: 15_000 },
+      );
+
+      // Same configuration, so the fingerprint matches and the old code would
+      // have reused the corpse.
+      const second = await session.runTurn({
+        prompt: "Say something else.",
+        approve: true,
+        permissionMode: "allow-all",
+      });
+      const types = second.map((frame) => frame.type);
+      expect(types).not.toContain("error");
+      expect(types).toContain("finish");
+      // ...and it really is a NEW process, not a resurrected handle.
+      expect(childrenOf(session.bridgePid).length).toBeGreaterThan(0);
+    } finally {
+      await session.cleanup();
     }
   }, 180_000);
 });

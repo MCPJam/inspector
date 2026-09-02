@@ -104,20 +104,43 @@ describe("turnConfigurationFingerprintInput", () => {
     expect(a).toBe(b);
   });
 
-  it("distinguishes an absent description from an empty one, and handles no tools", () => {
+  it("normalizes absent, empty and null optional fields to one value", () => {
+    /*
+     * The deliberate COLLAPSE, asserted rather than assumed. `?? ""` and
+     * `?? null` mean a tool that omits its description fingerprints the same
+     * as one that sends `""`, and the same for a missing schema and an
+     * explicit `null`. That has to be pinned in the direction it actually
+     * runs: upstream sources differ on how they spell "nothing here", and if
+     * these ever diverged, a turn that changed nothing would restart the
+     * thread and lose the conversation inside Codex.
+     */
+    const omitted = turnConfigurationFingerprintInput({
+      instructions: undefined,
+      tools: [{ name: "bare" }],
+    });
+    const explicit = turnConfigurationFingerprintInput({
+      instructions: "",
+      tools: [{ name: "bare", description: "", inputSchema: null }],
+    });
+    expect(omitted).toBe(explicit);
+
+    // ...and the collapse is not a blanket one: a real description still moves
+    // the fingerprint, so this normalization cannot hide a genuine change.
+    expect(
+      turnConfigurationFingerprintInput({
+        instructions: undefined,
+        tools: [{ name: "bare", description: "now documented" }],
+      }),
+    ).not.toBe(omitted);
+  });
+
+  it("handles a turn with no tools at all", () => {
     expect(
       turnConfigurationFingerprintInput({
         instructions: undefined,
         tools: [],
       }),
     ).toBe(turnConfigurationFingerprintInput({ instructions: "", tools: [] }));
-    // A tool with no schema at all is representable and must not throw.
-    expect(() =>
-      turnConfigurationFingerprintInput({
-        instructions: undefined,
-        tools: [{ name: "bare" }],
-      }),
-    ).not.toThrow();
   });
 });
 

@@ -69,14 +69,37 @@ const USED = (() => {
     // significant rather than silently narrowing the check.
     return { has: () => true };
   }
+  // Named individually, NOT matched as a family. A guard on the total count
+  // is no guard at all: if one export changed shape the regex would skip it,
+  // the other two would still make the set non-empty, and every removal from
+  // the unparsed category would be waved through as insignificant — silently,
+  // which is the one outcome this file exists to prevent.
+  const EXPECTED = [
+    "USED_CLIENT_METHODS",
+    "USED_SERVER_REQUESTS",
+    "USED_NOTIFICATIONS",
+  ];
   const names = new Set();
-  for (const block of source.matchAll(
-    /export const USED_[A-Z_]+ = \[([\s\S]*?)\] as const;/g
-  )) {
-    for (const quoted of block[1].matchAll(/"([^"]+)"/g)) names.add(quoted[1]);
+  const missed = [];
+  for (const exported of EXPECTED) {
+    const block = source.match(
+      new RegExp(`export const ${exported} = \\[([\\s\\S]*?)\\] as const;`)
+    );
+    const quoted = block ? [...block[1].matchAll(/"([^"]+)"/g)] : [];
+    if (!quoted.length) {
+      missed.push(exported);
+      continue;
+    }
+    for (const match of quoted) names.add(match[1]);
   }
-  // An empty parse means the shape changed; fail loud rather than pass silently.
-  return names.size ? names : { has: () => true };
+  if (missed.length) {
+    process.stderr.write(
+      `warning: could not read ${missed.join(", ")} from app-server-protocol.ts; ` +
+        "treating every removal as significant\n"
+    );
+    return { has: () => true };
+  }
+  return names;
 })();
 
 for (const file of [

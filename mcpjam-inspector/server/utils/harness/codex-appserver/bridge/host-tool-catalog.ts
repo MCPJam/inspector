@@ -42,14 +42,26 @@ const PERMISSIVE_SCHEMA: Record<string, unknown> = {
 };
 
 /**
- * Keywords that only ever appear on an object schema, so their presence says
- * "object" as loudly as `type` would.
+ * Every JSON Schema keyword whose target is an object instance, so its presence
+ * says "object" as loudly as `type` would.
+ *
+ * The whole set, not the obvious four: a schema constrained only by
+ * `minProperties` or `propertyNames` is as much an object schema as one with
+ * `properties`, and dropping it to the permissive stub throws the constraint
+ * away — Codex then lets through a call the host will reject.
+ * (draft 2020-12 §10.3.2 and §6.5.)
  */
 const OBJECT_ONLY_KEYWORDS = [
   "properties",
-  "required",
-  "additionalProperties",
   "patternProperties",
+  "additionalProperties",
+  "unevaluatedProperties",
+  "propertyNames",
+  "required",
+  "dependentRequired",
+  "dependentSchemas",
+  "minProperties",
+  "maxProperties",
 ] as const;
 
 function asObjectSchema(schema: unknown): Record<string, unknown> {
