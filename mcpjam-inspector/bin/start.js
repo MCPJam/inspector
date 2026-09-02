@@ -2,7 +2,7 @@
 
 import { resolve, dirname } from "path";
 import { spawn } from "child_process";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { createServer, createConnection } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
@@ -450,9 +450,22 @@ async function runHarnessSubcommand(args) {
     );
     return 1;
   }
-  const mod = await import(`file://${cliEntry.replace(/\\/g, "/")}`).catch(
-    () => null,
-  );
+  // `pathToFileURL`, not a hand-built `file://` — a Windows path is
+  // `C:\\…`, and `file://C:/…` parses `C` as the URL's HOST.
+  let mod;
+  try {
+    mod = await import(pathToFileURL(cliEntry).href);
+  } catch (error) {
+    // The import FAILED; that is a different thing from a build that loaded
+    // and lacks the export, and reporting it as the latter sends the reader
+    // looking for the wrong problem.
+    logError(
+      `could not load the local harness runtime installer: ${
+        error?.message ?? error
+      }`,
+    );
+    return 1;
+  }
   const install = mod?.harnessInstall;
   const status = mod?.harnessStatus;
   if (typeof install !== "function" || typeof status !== "function") {
@@ -1096,7 +1109,18 @@ async function main() {
 }
 
 main()
-  .then((_) => process.exit(0))
+  .then((code) => {
+    // A subcommand's exit code is its ANSWER: `harness status` returns 1 when
+    // no pack is installed, and a script that branches on it was reading 0.
+    // Set rather than exited on, so the JSON it just printed finishes draining
+    // — `process.exit` truncates a pending write to a pipe. Nothing is left
+    // holding the loop open on that path, so the process still ends here.
+    if (typeof code === "number") {
+      process.exitCode = code;
+      return;
+    }
+    process.exit(0);
+  })
   .catch((e) => {
     logError("Fatal error occurred");
     logError(e.stack || e.message);

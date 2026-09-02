@@ -94,7 +94,10 @@ if (entries.length === 0) fail("--digests named no targets");
 entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
 const treeDigests = entries
-  .map(([target, digest]) => `    ${JSON.stringify(target)}: ${JSON.stringify(digest)},`)
+  .map(
+    ([target, digest]) =>
+      `    ${JSON.stringify(target)}: ${JSON.stringify(digest)},`,
+  )
   .join("\n");
 const records = entries
   .map(
