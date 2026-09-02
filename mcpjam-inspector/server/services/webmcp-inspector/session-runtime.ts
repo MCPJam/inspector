@@ -152,6 +152,11 @@ export class WebMcpSessionRuntime {
   private readonly invokeTimeoutMs: number;
   private readonly queueLimit: number;
   private readonly onActivity: () => void;
+  /**
+   * The quality the provider's stream is encoding at, when it has an adaptive
+   * one. Reported, never decided here: the provider owns the ladder.
+   */
+  private streamQuality: number | undefined;
   /** Set by the registry; the runtime reports it but does not own it. */
   expiresAt = 0;
   hardExpiresAt = 0;
@@ -201,6 +206,22 @@ export class WebMcpSessionRuntime {
         }),
       onActivityObserved: () => this.onActivity(),
       onFrame: (frame) => this.publishFrame(frame),
+      onStreamQualityChanged: (quality) => {
+        // Republished only on a real change: the provider may re-report the
+        // same rung after a restart, and a session event per frame-rate wobble
+        // would be chatter on a stream the timeline shares.
+        if (this.streamQuality === quality) return;
+        this.streamQuality = quality;
+        // NOT before `attach`, and the ordering is real: an embedded session
+        // starts its screencast inside the provider's own `start()`, which
+        // runs before this runtime has a browser or the registry has adopted
+        // it. Publishing there would put a session event in the replay ring
+        // advertising `native-window` and an expiry at the epoch — the same
+        // reason `attach` sets its status without publishing. The quality is
+        // remembered either way, and rides the first session event the
+        // registry does publish.
+        if (this.session) this.publishSession();
+      },
       onCrashed: (message) => {
         this.setStatus("error", message);
         this.pushActivity({ kind: "session_error", message });
@@ -237,6 +258,11 @@ export class WebMcpSessionRuntime {
       viewportTransport: this.session?.viewportTransport() ?? {
         kind: "native-window",
       },
+      // Spread rather than sent as undefined, so a provider with no adaptive
+      // stream reports a session shaped exactly as it always has been.
+      ...(this.streamQuality !== undefined
+        ? { streamQuality: this.streamQuality }
+        : {}),
       protocolVersion: WEBMCP_INSPECTOR_PROTOCOL_VERSION,
       ...(this.statusDetail ? { detail: this.statusDetail } : {}),
     };
@@ -589,6 +615,26 @@ export class WebMcpSessionRuntime {
       seq: this.nextSeq(),
       session: this.toPublic(),
     });
+  }
+
+  /**
+   * A viewer's transport could not take a frame and dropped one.
+   *
+   * Forwarded straight to the provider, which owns the quality ladder, and
+   * NOT treated as activity: a struggling link is not somebody using the
+   * session, and ticking the idle clock from it would keep an abandoned tab
+   * alive for as long as its network stayed bad.
+   *
+   * Every viewer of a session reports into the same funnel, so the WORST
+   * transport governs the quality for all of them. That is the right default
+   * for the case this exists for — one person, one pane, on a link that cannot
+   * keep up — and the wrong one for a session watched from two places at once,
+   * where a slow viewer lowers the picture for a fast one. Accepted: the
+   * alternative is per-subscriber encoding, which is a second encoder per
+   * viewer.
+   */
+  noteFramePressure(): void {
+    this.session?.noteFramePressure?.();
   }
 
   /** Re-publish the session (used when the registry moves its clocks). */

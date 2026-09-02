@@ -573,6 +573,102 @@ describe("viewport frames", () => {
     const runtime = new WebMcpSessionRuntime("https://example.test/");
     await expect(runtime.setScreencast(true)).rejects.toThrow(/not ready/i);
   });
+
+  it("forwards a transport's dropped frame to the browser", () => {
+    const { runtime, session, onActivity } = makeRuntime();
+    runtime.noteFramePressure();
+    runtime.noteFramePressure();
+
+    // The provider owns the quality ladder; the transports are the only thing
+    // that can see a frame fail to land. This is the whole funnel.
+    expect(session.pressureEvents).toBe(2);
+    // NOT activity: a struggling link is not somebody using the session, and
+    // ticking the idle clock from it would hold an abandoned tab open for as
+    // long as its network stayed bad.
+    expect(onActivity).not.toHaveBeenCalled();
+  });
+
+  it("says nothing to a browser that is not there, or cannot listen", () => {
+    // Between `reserve` and `attach`, and for every provider that has no
+    // adaptive stream to steer. A hot-path diagnostic must never be the thing
+    // that throws.
+    const runtime = new WebMcpSessionRuntime("https://example.test/");
+    expect(() => runtime.noteFramePressure()).not.toThrow();
+
+    const { runtime: attached, session } = makeRuntime();
+    (session as { noteFramePressure?: () => void }).noteFramePressure =
+      undefined;
+    expect(() => attached.noteFramePressure()).not.toThrow();
+  });
+
+  it("republishes the session when the stream's quality changes", () => {
+    const { session, events } = makeRuntime();
+    session.emitStreamQuality(60);
+
+    const published = events.filter(
+      (e): e is Extract<WebMcpEvent, { type: "session" }> =>
+        e.type === "session",
+    );
+    // The picture getting worse is a FACT the UI can show; without it, "the
+    // link is struggling" and "the page is broken" look identical.
+    expect(published.at(-1)?.session.streamQuality).toBe(60);
+
+    // Re-reporting the same rung — which a restart does — is not news.
+    const before = published.length;
+    session.emitStreamQuality(60);
+    expect(events.filter((e) => e.type === "session").length - before).toBe(0);
+
+    session.emitStreamQuality(45);
+    expect(
+      events
+        .filter(
+          (e): e is Extract<WebMcpEvent, { type: "session" }> =>
+            e.type === "session",
+        )
+        .at(-1)?.session.streamQuality,
+    ).toBe(45);
+  });
+
+  it("does not publish a quality change before a browser is attached", () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/", {
+      sessionId: "session-1",
+    });
+    const events: WebMcpEvent[] = [];
+    runtime.hub.subscribe((event) => events.push(event), 0);
+
+    // An embedded session starts its screencast inside the provider's own
+    // `start()` — before this runtime has a browser and before the registry
+    // has adopted it. A session event published here would sit in the replay
+    // ring advertising `native-window` and an expiry at the epoch.
+    runtime.callbacks().onStreamQualityChanged?.(60);
+    expect(events.filter((event) => event.type === "session")).toHaveLength(0);
+
+    // Remembered all the same, so it rides the first session event that IS
+    // published rather than waiting for the next rung change.
+    const session = new FakeBrowserSession(runtime.callbacks());
+    runtime.attach(session);
+    expect(runtime.toPublic().streamQuality).toBe(60);
+
+    // And it really does ride one. `toPublic()` alone would prove only that
+    // the value was retained — a quality that never reaches the wire leaves
+    // every client believing the stream is still at its baseline.
+    runtime.publishSession();
+    expect(
+      events
+        .filter(
+          (event): event is Extract<WebMcpEvent, { type: "session" }> =>
+            event.type === "session",
+        )
+        .at(-1)?.session.streamQuality,
+    ).toBe(60);
+  });
+
+  it("omits the quality entirely for a provider that never reports one", () => {
+    const { runtime } = makeRuntime();
+    // Every provider but the local one: an absent field, not a guess at what
+    // their stream might be doing.
+    expect(runtime.toPublic()).not.toHaveProperty("streamQuality");
+  });
 });
 
 describe("input forwarding", () => {

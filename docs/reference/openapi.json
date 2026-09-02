@@ -243,7 +243,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["claude-code"]
+              "enum": ["claude-code", "codex", "cursor"]
             },
             "description": "The harness id."
           }
@@ -10678,7 +10678,7 @@
         "operationId": "sendChatMessage",
         "tags": ["Chat sessions"],
         "summary": "Send one agent Playground message",
-        "description": "Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.\n\n**Spends model credits per call.** `idempotencyKey` is required and must be STABLE for the triggering intent — a fresh key per HTTP attempt deduplicates nothing, so a timeout-and-retry would run and bill the turn twice. With a stable key, a retry replays the completed turn.\n\nOmit `sessionId` to start a session; pass the one this returns to continue it. Configuration (`modelId`, target, `systemPrompt`, `toolMode`) pins on the FIRST turn — a continuation that resends any of it is refused with `details.reason: \"CONFIG_ON_CONTINUATION\"`.\n\nOnly sessions created through this endpoint may be continued through it (`CONTINUATION_NOT_ALLOWED`): appending to a human's live Playground session would interleave two writers on one transcript.\n\n`toolMode` defaults to `read_only`, which advertises only tools the server annotated `readOnlyHint: true`. That hint is server-asserted, so `read_only` is a policy this host applies, not a guarantee it can verify. `auto` advertises everything and **may cause real external side effects** through arbitrary third-party tools.",
+        "description": "Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.\n\n**Spends model credits per call.** `idempotencyKey` is required and must be STABLE for the triggering intent — a fresh key per HTTP attempt deduplicates nothing, so a timeout-and-retry would run and bill the turn twice. With a stable key, a retry replays the completed turn.\n\nOmit `sessionId` to start a session; pass the one this returns to continue it. Configuration (`modelId`, target, `systemPrompt`, `toolMode`) pins on the FIRST turn — a continuation that resends any of it is refused with `details.reason: \"CONFIG_ON_CONTINUATION\"`.\n\nOnly sessions created through this endpoint may be continued through it (`CONTINUATION_NOT_ALLOWED`): appending to a human's live Playground session would interleave two writers on one transcript.\n\n`toolMode` defaults to `read_only`, which advertises only tools the server annotated `readOnlyHint: true`. That hint is server-asserted, so `read_only` is a policy this host applies, not a guarantee it can verify. `auto` advertises everything and **may cause real external side effects** through arbitrary third-party tools.\n\nPass `hostId` — or target an `environmentId`, which pins its own host — to run the turn AS a saved host. That is what selects the ENGINE: a host declaring an agent harness runs the real runtime, and one that cannot run here is refused BEFORE it spends (422, `details.reason: \"HARNESS_UNAVAILABLE\"`, with `details.kind` naming the rule that refused) rather than quietly downgraded to the emulated engine. Every response names what actually ran in `engine`. `hostId` is per-turn and cannot be pinned, so a continuation of a session that named ONLY a host must re-send it — omitting it is a 400 with `details.reason: \"HOST_TARGET_REQUIRED\"`, never a quiet fall back to the emulated engine.",
         "requestBody": {
           "required": true,
           "content": {
@@ -19389,6 +19389,10 @@
           "skillVersionPins": {
             "type": "boolean",
             "description": "`skillSelection.versionPins` and `serverSkillSelection.versionPins` are accepted, and a pinned revision survives into run snapshots. Absent or false on older backends, which reject the unknown field outright — probe this before offering a version picker."
+          },
+          "secretGrants": {
+            "type": "boolean",
+            "description": "`secretSelection` is accepted on environment create, update and ensure-adhoc, so an environment can carry a credential grant. Absent or false on older backends, which reject the unknown field with a validator error naming nothing — probe this before sending a grant."
           }
         }
       },
@@ -23014,6 +23018,10 @@
             "type": "string",
             "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
           },
+          "hostId": {
+            "type": "string",
+            "description": "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the real runtime; without one the turn runs MCPJam's emulated engine. The server re-fetches that host's own runtime config, so `harness` and `computer` are NEVER read from the request body — a body carrying either is a 400. PER-TURN, not pinned to the session: re-send it on every turn, and read `engine` on the response to confirm what ran. A continuation of a session that named ONLY a host must re-send it — omitting it is refused with `details.reason: \"HOST_TARGET_REQUIRED\"` rather than run on the emulated engine. Alongside `environmentId` it is an assertion only — a host contradicting the environment's own is rejected with `details.reason: \"HOST_TARGET_CONFLICT\"`. Alone, the turn connects the host's own selected servers. A harness turn additionally requires `toolMode: \"auto\"` with no `allowedTools`/`maxToolCalls`: a harness builds its own tool set inside its sandbox, so the narrowing could not be applied, and the combination is refused rather than run with it silently dropped. It also cannot be combined with `serverIds`, because `hostId` cannot be pinned beside them and a later turn that omitted it would run the emulated engine on a session established on the harness (422, `details.kind: \"surface-unpinnable-host\"`) — target an `environmentId`, or send `hostId` alone and narrow per turn with `allowedServerIds`."
+          },
           "environmentId": {
             "type": "string",
             "description": "Target this environment's servers. Mutually exclusive with `serverIds`. First turn only."
@@ -23178,6 +23186,14 @@
           "toolMode": {
             "type": "string",
             "enum": ["read_only", "auto"]
+          },
+          "engine": {
+            "type": "string",
+            "description": "WHICH ENGINE RAN: `emulated`, or `harness:<id>` such as `harness:claude-code`. Present on every turn. Read it rather than infer it from `model`. `hostId` is per-turn: a continuation of a host-only session is refused without it, and one that pinned its own `serverIds` runs the emulated engine — this is the field that says which."
+          },
+          "hostId": {
+            "type": "string",
+            "description": "The saved host this turn executed as — the pointer the caller sent, or the host the targeted environment pins. Absent when the turn named no host."
           },
           "advertisedToolCount": {
             "type": "integer",

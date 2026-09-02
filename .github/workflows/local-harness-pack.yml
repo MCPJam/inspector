@@ -1,0 +1,299 @@
+# Builds the local-harness runtime pack — the per-platform tree the supervised
+# native Claude Code host launches from.
+#
+# The pack cannot ship inside the npm package or the DMG (~515 MB on disk, and
+# coupling Electron notarization to a third-party binary of that size is its own
+# problem), so it is built here, signed, attached to the release, and downloaded
+# on first use. That means this workflow is the ONLY place a digest comes from:
+# `pack-digests.generated.ts` is written from its output, and an Inspector build
+# refuses any pack that does not hash to what it carries.
+name: Local harness runtime pack
+
+on:
+  workflow_call:
+    inputs:
+      pack_version:
+        description: Version to stamp the pack and its assets with.
+        required: true
+        type: string
+      enforce_committed_digests:
+        description: >-
+          Fail if `pack-digests.generated.ts` does not already carry the
+          digests this build produced. True for a release, false for the
+          dispatch that produces the digests in the first place.
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      digests:
+        description: JSON map of platform key to {packVersion, treeDigest}.
+        value: ${{ jobs.collect.outputs.digests }}
+      flat:
+        description: >-
+          JSON map of platform key to tree digest — the shape
+          `scripts/write-pack-digests.mjs --digests` takes. `digests` is the
+          nested form and is NOT interchangeable with it.
+        value: ${{ jobs.collect.outputs.flat }}
+  workflow_dispatch:
+    inputs:
+      pack_version:
+        description: Version to stamp the pack and its assets with.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # Pinned deliberately. The pack's `bin/node` is what interprets the bridge on
+  # every user's machine, and it is inside the digest — so bumping it is a
+  # reviewed change that produces a new pack, not something a runner picks.
+  BUNDLED_NODE_VERSION: "24.20.0"
+
+jobs:
+  build:
+    name: ${{ matrix.platform_key }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: darwin-arm64
+            runner: macos-latest
+            node_dist: darwin-arm64
+          # macos-15-intel, not macos-13: GitHub retired the latter, and
+          # `collect` needs every matrix leg, so one unschedulable job blocks
+          # the digest map and the release with it.
+          - platform_key: darwin-x64
+            runner: macos-15-intel
+            node_dist: darwin-x64
+          - platform_key: linux-x64
+            runner: ubuntu-latest
+            node_dist: linux-x64
+          - platform_key: linux-arm64
+            runner: ubuntu-24.04-arm
+            node_dist: linux-arm64
+          # Built so the artifact and the digest exist, and so a regression in
+          # the pack build is caught on Windows too. The PLATFORM stays refused
+          # regardless: `nativePlatforms` does not list win32 until the
+          # conformance suite passes on `windows-latest`.
+          - platform_key: win32-x64
+            runner: windows-latest
+            node_dist: win-x64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
+      # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
+      # SDK's extract script to run. pnpm 9 reads the same file and fails with
+      # "packages field missing or empty".
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # Only the adapter package is needed: the pack build reads its bridge
+      # recipe and installs that recipe's own frozen graph inside the pack.
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        shell: bash
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+
+      # The pack ships an official nodejs.org build, not the runner's Node:
+      # the runner's is not signed the way a binary we ask users to execute
+      # needs to be, and it is not reproducible across runner images.
+      - name: Download the bundled Node runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          # nodejs.org publishes Windows builds as .zip and everything else as
+          # .tar.gz. The extension is part of the checksum line, so it has to be
+          # right in both places or the verification silently matches nothing.
+          case "${{ matrix.node_dist }}" in
+            win-*) ext="zip" ;;
+            *) ext="tar.gz" ;;
+          esac
+          archive="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.${ext}"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" \
+            -o "$RUNNER_TEMP/node-runtime.${ext}"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" \
+            -o "$RUNNER_TEMP/SHASUMS256.txt"
+          expected="$(grep " ${archive}\$" "$RUNNER_TEMP/SHASUMS256.txt" | cut -d' ' -f1)"
+          actual="$(sha256sum "$RUNNER_TEMP/node-runtime.${ext}" | cut -d' ' -f1)"
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "nodejs.org archive checksum mismatch for ${archive}" >&2
+            exit 1
+          fi
+          echo "NODE_ARCHIVE=$RUNNER_TEMP/node-runtime.${ext}" >> "$GITHUB_ENV"
+
+      # Windows has no process group, so whole-tree cleanup comes from a Job
+      # Object — and the helper that creates one has to live INSIDE the pack,
+      # covered by its tree digest. Built here rather than checked in, so the
+      # binary that ships is the one this commit's source produces.
+      - name: Build the Job Object launcher
+        if: startsWith(matrix.platform_key, 'win32')
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        # `shell: bash` on every step below, Windows included: the runner's
+        # default there is PowerShell, and one workflow with two shell dialects
+        # is a workflow whose Windows leg breaks on a change nobody tested on
+        # Windows. Git Bash ships on the windows runner image.
+        shell: bash
+        run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+
+      # A release that publishes unsigned packs publishes packs no Inspector
+      # will install: `verifyPackManifestSignature` refuses a network-sourced
+      # pack with no signature, so the artifacts would exist and be inert. The
+      # build itself only warns, because a local build without the key is the
+      # normal development case — this is the release saying it is not.
+      - name: A release must have the pack signing key
+        if: ${{ inputs.enforce_committed_digests }}
+        shell: bash
+        env:
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+        run: |
+          if [ -z "${LOCAL_HARNESS_PACK_SIGNING_KEY:-}" ]; then
+            echo "LOCAL_HARNESS_PACK_SIGNING_KEY is not set; a release cannot" >&2
+            echo "publish packs that no Inspector build will accept." >&2
+            exit 1
+          fi
+
+      - name: Build the pack
+        working-directory: mcpjam-inspector
+        shell: bash
+        env:
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+          # Through the ENVIRONMENT, never interpolated into the shell source.
+          # `pack_version` is a `workflow_dispatch` input — a string a person
+          # types — and `${{ }}` substitutes before bash parses, so a quote in
+          # it would run commands in a job that holds the pack signing key.
+          PACK_VERSION: ${{ inputs.pack_version }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+        run: |
+          set -euo pipefail
+          # Validated as well as quoted: it also becomes an asset name and a
+          # directory, so a version with a slash in it is refused rather than
+          # written somewhere surprising.
+          case "$PACK_VERSION" in
+            *[!A-Za-z0-9._-]* | "")
+              echo "pack_version must be a release version" >&2; exit 1;;
+          esac
+          node scripts/build-local-harness-pack.mjs \
+            --platform "$PLATFORM_KEY" \
+            --pack-version "$PACK_VERSION" \
+            --node-tarball "$NODE_ARCHIVE" \
+            ${{ startsWith(matrix.platform_key, 'win32') && format('--job-launcher "{0}/mcpjam-job-launcher.exe"', runner.temp) || '' }} \
+            --out "$RUNNER_TEMP/pack-out" \
+            | tee "$RUNNER_TEMP/pack-build.log"
+
+      - name: Record the digest
+        id: digest
+        shell: bash
+        env:
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+        run: |
+          set -euo pipefail
+          line="$(grep '^::pack-digest::' "$RUNNER_TEMP/pack-build.log" | tail -1)"
+          digest="$(echo "$line" | awk '{print $3}')"
+          if [ -z "$digest" ]; then
+            echo "the pack build printed no digest line" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          jq -nc --arg k "$PLATFORM_KEY" --arg d "$digest" '{($k): $d}' \
+            > "$RUNNER_TEMP/pack-out/digest.json"
+
+      # Proves the pack the installer would download actually verifies, before
+      # it is published. A pack that fails here never reaches a release.
+      - name: Verify the pack installs from its own archive
+        working-directory: mcpjam-inspector
+        env:
+          MCPJAM_RUNTIME_ROOT: ${{ runner.temp }}/verify-root
+          MCPJAM_LOCAL_HARNESS_PACK_SOURCE: ${{ runner.temp }}/pack-out/local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}.tar.gz
+        shell: bash
+        run: >
+          npx tsx scripts/verify-local-harness-pack.ts
+          "${{ steps.digest.outputs.digest }}"
+          "${{ inputs.pack_version }}"
+
+      - name: Upload the pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}
+          path: ${{ runner.temp }}/pack-out/local-harness-pack-*
+          if-no-files-found: error
+          retention-days: 14
+
+  collect:
+    name: Collect digests
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      digests: ${{ steps.merge.outputs.digests }}
+      # The FLAT map too. `docs/local-harness.md` tells an operator to paste
+      # this into `write-pack-digests.mjs`, and it was a step output only — so
+      # a `workflow_dispatch` run, which is how the digests are produced in the
+      # first place, exposed no way to read it.
+      flat: ${{ steps.merge.outputs.flat }}
+    steps:
+      - name: Download every pack
+        uses: actions/download-artifact@v4
+        with:
+          pattern: local-harness-pack-*
+          path: packs
+          merge-multiple: true
+
+      # One JSON map for the manifest generator, so `pack-digests.generated.ts`
+      # is written from the artifacts that were actually built rather than from
+      # a value typed by hand.
+      - name: Merge the manifests into a digest map
+        id: merge
+        run: |
+          set -euo pipefail
+          map="$(jq -sc 'map({(.platform): {packVersion: .packVersion, treeDigest: .treeDigest}}) | add' packs/*.manifest.json)"
+          echo "digests=$map" >> "$GITHUB_OUTPUT"
+          flat="$(jq -sc 'map({(.platform): .treeDigest}) | add' packs/*.manifest.json)"
+          echo "flat=$flat" >> "$GITHUB_OUTPUT"
+          # Printed, because this is the string a human copies into
+          # `write-pack-digests.mjs --digests`. A value that exists only in an
+          # output variable is not reachable from a dispatch run's log.
+          echo "digest map for scripts/write-pack-digests.mjs --digests:"
+          echo "$flat"
+          echo "$map"
+
+      - name: Check out the Inspector sources
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The gate that makes the checked-in digest table load-bearing.
+      #
+      # Deliberately a CHECK and not a write. `pack-digests.generated.ts` is
+      # committed so the digest a release trusts is reviewed in a diff; a
+      # release that injected digests into the build would publish packs
+      # nobody had looked at, which is the property the whole design rests on.
+      # So the packs a release builds must already match what is committed,
+      # and the release fails here if they do not — with the command that
+      # regenerates the table.
+      - name: The committed digest table matches the packs this build produced
+        if: ${{ inputs.enforce_committed_digests }}
+        working-directory: mcpjam-inspector
+        env:
+          PACK_VERSION: ${{ inputs.pack_version }}
+          DIGESTS: ${{ steps.merge.outputs.flat }}
+        run: |
+          set -euo pipefail
+          node scripts/write-pack-digests.mjs \
+            --check --version "$PACK_VERSION" --digests "$DIGESTS"
