@@ -57,7 +57,11 @@ export type AppServerClient = {
    * failure of that request rather than of the connection.
    */
   onServerRequest(handler: (request: JsonRpcRequest) => Promise<unknown>): void;
-  /** Resolves when the child has exited. */
+  /**
+   * Resolves when the CLIENT is finished — the child exited, or a stream
+   * failure made it unusable. Not a statement that the process is gone; that
+   * is what `kill()` waits for.
+   */
   readonly exited: Promise<AppServerExitedError | undefined>;
   kill(): Promise<void>;
 };
@@ -176,7 +180,32 @@ export function spawnAppServerClient(options: {
     settleExit = resolve;
   });
 
+  /*
+   * TWO events, which this module used to treat as one.
+   *
+   * `exited` is about the CLIENT. The bridge races it against the turn so a
+   * broken connection fails the turn at once; a stream error has to settle it
+   * immediately, because waiting for the child to actually fall over would
+   * hang the turn for as long as that takes.
+   *
+   * `exitSeen`/`processExit` are about the PROCESS, and settle only when the
+   * OS reports the child gone. `kill()` waits on THIS one: its callers
+   * (`ensureRuntime`, `onDestroy`) tear a runtime down in order to build the
+   * next one, so returning while codex is still running leaves two of them
+   * sharing a CODEX_HOME and a relay port.
+   */
+  let exitSeen = false;
+  let settleProcessExit: () => void = () => {};
+  const processExit = new Promise<void>((resolve) => {
+    settleProcessExit = resolve;
+  });
+  const onProcessGone = () => {
+    exitSeen = true;
+    settleProcessExit();
+  };
+
   const onGone = (code: number | null, signal: NodeJS.Signals | null) => {
+    onProcessGone();
     if (dead) return;
     dead = new AppServerExitedError(code, signal, stderrTail.join("\n"));
     for (const entry of pending.values()) entry.reject(dead);
@@ -207,6 +236,12 @@ export function spawnAppServerClient(options: {
     failClient(`app-server stdin failed: ${String(error)}`);
   });
   child.on("error", (error) => {
+    // A SPAWN failure is the one `error` with no process behind it, so nothing
+    // will ever emit `exit` and `processExit` has to settle here or `kill()`
+    // would wait out its whole bound on a child that never existed. Any other
+    // `error` (a kill that failed, say) leaves a live child, and `onGone`
+    // remains the only authority on when it is gone.
+    if (child.pid === undefined) onProcessGone();
     if (dead) return;
     dead = new AppServerExitedError(null, null, String(error));
     for (const entry of pending.values()) entry.reject(dead);
@@ -237,16 +272,31 @@ export function spawnAppServerClient(options: {
     },
     exited,
     async kill() {
-      if (dead) return;
+      // Gated on the PROCESS, not on `dead`. A client can be dead while its
+      // child is still running — a stdin error latches `dead` and fires
+      // SIGKILL, but signalling is asynchronous — and returning early there is
+      // what let a torn-down runtime outlive the one built to replace it.
+      if (exitSeen) return;
       child.stdin.end();
       child.kill("SIGTERM");
       // SIGTERM is a request. A child that ignores it would hold the sandbox
       // open for the life of the box, so escalate rather than wait forever.
-      const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      const escalate = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      // SIGKILL is not refusable, but a process wedged in an uninterruptible
+      // wait is never reaped at all. Teardown gets an outer bound so it cannot
+      // hang the bridge's own shutdown behind one that will not die.
+      let giveUp: ReturnType<typeof setTimeout> | undefined;
       try {
-        await exited;
+        await Promise.race([
+          processExit,
+          new Promise<void>((resolve) => {
+            giveUp = setTimeout(resolve, 10_000);
+            giveUp.unref?.();
+          }),
+        ]);
       } finally {
-        clearTimeout(timer);
+        clearTimeout(escalate);
+        if (giveUp) clearTimeout(giveUp);
       }
     },
   };

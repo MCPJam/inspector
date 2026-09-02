@@ -7,7 +7,10 @@
  * rest of the session.
  */
 import { describe, expect, it } from "vitest";
-import { turnConfigurationFingerprintInput } from "../shared/turn-fingerprint.js";
+import {
+  runtimeConfigFingerprint,
+  turnConfigurationFingerprintInput,
+} from "../shared/turn-fingerprint.js";
 
 const tool = (over: Record<string, unknown> = {}) => ({
   name: "mcp__weather__get_forecast",
@@ -107,9 +110,7 @@ describe("turnConfigurationFingerprintInput", () => {
         instructions: undefined,
         tools: [],
       }),
-    ).toBe(
-      turnConfigurationFingerprintInput({ instructions: "", tools: [] }),
-    );
+    ).toBe(turnConfigurationFingerprintInput({ instructions: "", tools: [] }));
     // A tool with no schema at all is representable and must not throw.
     expect(() =>
       turnConfigurationFingerprintInput({
@@ -117,5 +118,92 @@ describe("turnConfigurationFingerprintInput", () => {
         tools: [{ name: "bare" }],
       }),
     ).not.toThrow();
+  });
+});
+
+/*
+ * The COARSER fingerprint, and the one that has to be right for a changed
+ * server selection to take effect at all.
+ *
+ * A restarted thread is not enough here. `thread/start` does not re-read the
+ * MCP server's tools — the PROCESS does, once, at spawn — so if this string
+ * fails to move, `ensureRuntime` reuses a Codex that booted with the old
+ * catalog and the newly selected server is simply uncallable, with no error
+ * anywhere to say so.
+ */
+describe("runtimeConfigFingerprint", () => {
+  it("moves when the tool SET changes between turns", () => {
+    const turnOne = runtimeConfigFingerprint({ tools: [tool()] });
+    const turnTwo = runtimeConfigFingerprint({
+      tools: [tool(), tool({ name: "mcp__docs__search" })],
+    });
+    expect(turnOne).not.toBe(turnTwo);
+    // ...and removing one moves it back, so a de-selected server rebuilds too.
+    expect(runtimeConfigFingerprint({ tools: [tool()] })).toBe(turnOne);
+  });
+
+  it("moves when a tool keeps its NAME but changes its contract", () => {
+    // The case a name-keyed fingerprint missed: same server, same tool, edited
+    // schema. The process must be rebuilt, not just the thread.
+    const before = runtimeConfigFingerprint({ tools: [tool()] });
+    const afterSchema = runtimeConfigFingerprint({
+      tools: [
+        tool({
+          inputSchema: {
+            type: "object",
+            properties: { zip: { type: "string" } },
+          },
+        }),
+      ],
+    });
+    const afterDescription = runtimeConfigFingerprint({
+      tools: [tool({ description: "Forecast, now with humidity" })],
+    });
+    expect(afterSchema).not.toBe(before);
+    expect(afterDescription).not.toBe(before);
+  });
+
+  it("moves when web search is toggled", () => {
+    // Rendered into the `config.toml` the process reads at startup, so it is a
+    // runtime property rather than a thread one.
+    expect(runtimeConfigFingerprint({ webSearch: true, tools: [] })).not.toBe(
+      runtimeConfigFingerprint({ webSearch: false, tools: [] }),
+    );
+    // Absent means off, so an unset flag must not force a rebuild.
+    expect(runtimeConfigFingerprint({ tools: [] })).toBe(
+      runtimeConfigFingerprint({ webSearch: false, tools: [] }),
+    );
+  });
+
+  it("holds still across turns that changed nothing", () => {
+    // The other half of the contract: a spurious rebuild kills the parked
+    // thread and loses the conversation inside Codex.
+    const start = { webSearch: true, tools: [tool(), tool({ name: "a__b" })] };
+    expect(runtimeConfigFingerprint(start)).toBe(
+      runtimeConfigFingerprint({
+        webSearch: true,
+        // Same set, different order and different key order within a schema.
+        tools: [tool({ name: "a__b" }), tool()],
+      }),
+    );
+  });
+
+  it("is unaffected by instructions, which a thread restart CAN absorb", () => {
+    // Deliberate asymmetry: `instructions` is a `thread/start` parameter, so
+    // rebuilding the process for it would throw away a live thread for nothing.
+    expect(
+      turnConfigurationFingerprintInput({
+        instructions: "be brief",
+        tools: [tool()],
+      }),
+    ).not.toBe(
+      turnConfigurationFingerprintInput({
+        instructions: "be thorough",
+        tools: [tool()],
+      }),
+    );
+    expect(runtimeConfigFingerprint({ tools: [tool()] })).toBe(
+      runtimeConfigFingerprint({ tools: [tool()] }),
+    );
   });
 });

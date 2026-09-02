@@ -20,7 +20,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
-import { turnConfigurationFingerprintInput } from "../shared/turn-fingerprint.js";
+import {
+  runtimeConfigFingerprint,
+  turnConfigurationFingerprintInput,
+} from "../shared/turn-fingerprint.js";
 import type { StartMessage } from "../codex-appserver-bridge-protocol.js";
 import {
   spawnAppServerClient,
@@ -122,15 +125,21 @@ async function main(): Promise<void> {
    * The config that is baked into `CODEX_HOME` when the runtime starts, and
    * therefore CANNOT be changed on a running one.
    *
-   * `web_search` is written by `prepareCodexHome()` and is not a `thread/start`
-   * parameter, so reusing the process across a change would silently run the
-   * new turn under the FIRST turn's setting. The turn fingerprint already
-   * forces a new thread; this forces a new runtime, which is a strictly bigger
-   * hammer and only reached when one of these actually changes.
+   * Two things live here, and both are invisible to a restarted THREAD:
+   *
+   *  - `web_search`, written by `prepareCodexHome()` and not a `thread/start`
+   *    parameter, so a reused process runs the new turn under the FIRST turn's
+   *    setting.
+   *  - the HOST-TOOL CATALOG. Codex reads its MCP server's tool list once, when
+   *    the process starts, and this adapter wires no `tools/list_changed`. A
+   *    reused process therefore keeps the tool set it booted with: a newly
+   *    selected server is uncallable, and a removed one stays callable. The
+   *    turn fingerprint restarts the thread on the same change, which is not
+   *    enough — the thread is not what holds the catalog.
    */
   let runtimeConfig: string | undefined;
   const runtimeConfigOf = (start: StartMessage): string =>
-    JSON.stringify({ webSearch: start.webSearch ?? false });
+    runtimeConfigFingerprint(start);
 
   const ensureRuntime = async (start: StartMessage): Promise<void> => {
     const wanted = runtimeConfigOf(start);
@@ -282,7 +291,9 @@ async function main(): Promise<void> {
       // above, but the host's `resumeThreadId` (sent on every rerun start)
       // would otherwise resume the very thread we just decided to abandon,
       // carrying the stale tools, instructions and permissions with it.
-      const resumeId = mustRestart ? undefined : (threadId ?? start.resumeThreadId);
+      const resumeId = mustRestart
+        ? undefined
+        : (threadId ?? start.resumeThreadId);
       const thread = resumeId
         ? await runtime.request<ThreadStartResult>("thread/resume", {
             ...threadParams,

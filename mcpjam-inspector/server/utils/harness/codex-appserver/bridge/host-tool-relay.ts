@@ -142,7 +142,11 @@ export async function startHostToolRelay(
       if (bodyBytes + chunkBytes > MAX_CALL_BODY_BYTES) {
         aborted = true;
         reply(413, { error: "request body too large" });
-        req.destroy();
+        // Destroy AFTER the response is flushed. Tearing the socket down
+        // immediately can abort it before the 413 reaches the caller, which
+        // turns a documented refusal into an opaque connection reset — and the
+        // point of answering 413 is that the caller learns why.
+        res.once("finish", () => req.destroy());
         return;
       }
       bodyBytes += chunkBytes;

@@ -56,6 +56,7 @@ import {
 } from "@ai-sdk/harness/utils";
 import { createHash } from "node:crypto";
 import { WebSocket } from "ws";
+import { logger } from "../../logger.js";
 import { CODEX_APPSERVER_BUILTIN_TOOLS } from "./codex-appserver-builtin-tools.js";
 import {
   CODEX_APPSERVER_BOOTSTRAP_DIR,
@@ -178,7 +179,9 @@ function openWebSocket(
       reject(
         opts.abortSignal?.reason instanceof Error
           ? opts.abortSignal.reason
-          : new Error("Aborted while opening the codex app-server bridge socket."),
+          : new Error(
+              "Aborted while opening the codex app-server bridge socket.",
+            ),
       );
     };
     const timer = setTimeout(() => {
@@ -195,7 +198,10 @@ function openWebSocket(
     timer.unref?.();
     socket.once("open", onOpen);
     socket.once("error", onError);
-    opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
+    // `addEventListener` never fires for a signal that is ALREADY aborted, so
+    // registering alone would let a cancelled start open a socket anyway.
+    if (opts.abortSignal?.aborted) onAbort();
+    else opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -271,8 +277,8 @@ export function createCodexAppServer(
       const parsed: CodexAppServerResumeState =
         lifecycle?.data == null
           ? {}
-          : codexAppServerResumeStateSchema.safeParse(lifecycle.data).data ??
-            {};
+          : (codexAppServerResumeStateSchema.safeParse(lifecycle.data).data ??
+            {});
       const coords = parsed.bridge;
 
       const report = startOpts.observability?.report;
@@ -306,6 +312,10 @@ export function createCodexAppServer(
           const attachChannel: Channel = new SandboxChannel({
             connect: () =>
               openWebSocket(endpoint, {
+                // The configured bound, not the default: a deployment that
+                // shortens startup expects a stale bridge to be given up on and
+                // respawned just as quickly.
+                timeoutMs,
                 ...(startOpts.abortSignal
                   ? { abortSignal: startOpts.abortSignal }
                   : {}),
@@ -965,23 +975,31 @@ function createCodexAppServerSession(input: {
       // close finalises instead of looking like a drop worth reconnecting to.
       channel.beginClose();
       /*
-       * A closed channel has nobody to acknowledge `stop`. Synthesizing an
-       * empty payload loses `threadId` — the next turn starts a fresh Codex
-       * thread on the preserved workdir rather than resuming the conversation
-       * inside Codex — but being able to continue at all beats throwing here.
+       * NEVER throws out of the stop reply, on any of the three ways the
+       * handshake can fail to happen: a channel already closed, a `stop` that
+       * goes unanswered, and a send that fails outright.
+       *
+       * `stopped` was latched above, so `doDestroy` returns early and cannot
+       * recover the process or the socket — a rejection here would leave both
+       * alive on a box the detach path deliberately keeps running, with no
+       * second handle to clean up with. A lossy payload beats that. The loss is
+       * the bridge's own state; `threadId` comes from `lifecycleData` and
+       * survives either way.
+       *
+       * But NOT THROWING IS NOT THE SAME AS SUCCEEDING, and the payload cannot
+       * carry the difference — every arm produces the same shape. So record
+       * which arm ran and log it: without that, a session whose bridge never
+       * acknowledged the stop is indistinguishable from a clean one, right up
+       * until someone wonders why the next turn started a fresh thread.
        */
-      // NEVER throws out of the stop reply. `stopped` was latched above, so
-      // `doDestroy` returns early and cannot recover the process or the socket
-      // — a rejection here would leave both alive on a box the detach path
-      // deliberately keeps running, and the caller has no second handle to
-      // clean up with. The closed-channel arm one line up already prefers a
-      // lossy payload to a throw; a timeout and a failed send are the same
-      // situation, so they settle the same way. `threadId` survives either way
-      // (it comes from `lifecycleData`); only the bridge's own data is lost.
+      let handshake:
+        "acknowledged" | "channel-closed" | "timed-out" | "send-failed" =
+        "acknowledged";
       const data: unknown = channel.isClosed()
-        ? {}
+        ? ((handshake = "channel-closed"), {})
         : await new Promise<unknown>((resolve) => {
             const timer = setTimeout(() => {
+              handshake = "timed-out";
               unsubscribe();
               resolve({});
             }, 5_000);
@@ -994,11 +1012,18 @@ function createCodexAppServerSession(input: {
             try {
               channel.send({ type: "stop" } as InboundMessage);
             } catch {
+              handshake = "send-failed";
               clearTimeout(timer);
               unsubscribe();
               resolve({});
             }
           });
+      if (handshake !== "acknowledged") {
+        logger.warn(
+          "[codex-appserver] stop handshake did not complete; bridge state lost",
+          { sessionId, reason: handshake },
+        );
+      }
       await settleProcess();
       channel.close();
       const merged =

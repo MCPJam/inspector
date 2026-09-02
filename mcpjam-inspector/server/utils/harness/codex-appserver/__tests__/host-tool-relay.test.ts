@@ -79,6 +79,67 @@ describe("host tool naming", () => {
       expect(descriptor.inputSchema).toMatchObject({ type: "object" });
     }
   });
+
+  it("keeps the arguments of an object schema that never said `type`", () => {
+    // `{properties, required}` with no `type` is valid JSON Schema and common
+    // in the wild. Replacing it with the permissive stub dropped every argument
+    // the tool declares, so the model saw a tool it could not call correctly.
+    const catalog = buildHostToolCatalog([
+      {
+        name: "untyped",
+        inputSchema: {
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      },
+    ]);
+    expect(catalog.descriptors[0]?.inputSchema).toEqual({
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+    });
+  });
+
+  it("does NOT stamp `type: object` onto a schema that describes something else", () => {
+    /*
+     * The narrowing that keeps the fix above from becoming its own bug.
+     * `{enum}`, `{const}` and `{anyOf}` are not object schemas; stamping the
+     * type onto them produces a schema asserting the argument is an object AND
+     * one of those, which nothing satisfies — a tool that validates against
+     * NOTHING is worse than one with a permissive schema, because the failure
+     * surfaces as an unexplained rejected call rather than as a loose contract.
+     */
+    const catalog = buildHostToolCatalog([
+      { name: "enumish", inputSchema: { enum: ["a", "b"] } },
+      { name: "constish", inputSchema: { const: 7 } },
+      { name: "unionish", inputSchema: { anyOf: [{ type: "object" }] } },
+      { name: "arrayish", inputSchema: { type: "array", items: {} } },
+      { name: "listish", inputSchema: [1, 2, 3] },
+      // Declares a non-object type AND carries an object-only keyword. The
+      // keyword must not be allowed to overrule the type the schema states.
+      {
+        name: "typed_with_object_keyword",
+        inputSchema: { type: "array", additionalProperties: false },
+      },
+    ]);
+    for (const descriptor of catalog.descriptors) {
+      expect(descriptor.inputSchema).toEqual({
+        type: "object",
+        properties: {},
+        additionalProperties: true,
+      });
+    }
+  });
+
+  it("passes an explicit object schema through untouched", () => {
+    const inputSchema = {
+      type: "object",
+      properties: { a: { type: "number" } },
+      additionalProperties: false,
+    };
+    const catalog = buildHostToolCatalog([{ name: "typed", inputSchema }]);
+    expect(catalog.descriptors[0]?.inputSchema).toEqual(inputSchema);
+  });
 });
 
 describe("host tool alias collisions", () => {

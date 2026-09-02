@@ -20,7 +20,8 @@
  *  tool and restart the thread on every turn, which is worse than the bug this
  *  file fixes: it would break multi-turn resume outright. */
 function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (value === null || typeof value !== "object")
+    return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableStringify(item)).join(",")}]`;
   }
@@ -39,6 +40,54 @@ export type TurnFingerprintTool = {
   inputSchema?: unknown;
 };
 
+/**
+ * A stable string for the host-tool catalog alone.
+ *
+ * Separate from the turn fingerprint because the two force different things. A
+ * changed tool set cannot be absorbed by a restarted THREAD: Codex reads its
+ * MCP server's tool list once, when the PROCESS starts, and this adapter wires
+ * no `tools/list_changed`. So the catalog is what decides whether the runtime
+ * itself has to be rebuilt, while instructions (a `thread/start` parameter) only
+ * need a new thread.
+ */
+export function toolCatalogFingerprint(
+  tools: readonly TurnFingerprintTool[],
+): string {
+  return stableStringify(
+    [...tools]
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description ?? "",
+        inputSchema: tool.inputSchema ?? null,
+      }))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+  );
+}
+
+/**
+ * A stable string for everything baked into a Codex PROCESS when it spawns.
+ *
+ * The coarser of the two: a change here rebuilds the RUNTIME, not just the
+ * thread. Both members earn that. `webSearch` is rendered into the
+ * `config.toml` the process reads at startup, and the tool catalog is read from
+ * the MCP server once at the same moment — so a new thread against a reused
+ * process would keep the tools it booted with, leaving a newly-selected server
+ * uncallable and a removed one still callable.
+ *
+ * Lives beside the turn fingerprint rather than in the bridge because the two
+ * decide overlapping things, and the next field added has to be put in the
+ * right one of them. Reading them apart is how that goes wrong.
+ */
+export function runtimeConfigFingerprint(input: {
+  webSearch?: boolean | undefined;
+  tools?: readonly TurnFingerprintTool[] | undefined;
+}): string {
+  return stableStringify({
+    webSearch: input.webSearch ?? false,
+    tools: toolCatalogFingerprint(input.tools ?? []),
+  });
+}
+
 /** A stable string for the turn configuration a live Codex thread is pinned to. */
 export function turnConfigurationFingerprintInput(input: {
   instructions: string | undefined;
@@ -46,12 +95,6 @@ export function turnConfigurationFingerprintInput(input: {
 }): string {
   return stableStringify({
     instructions: input.instructions ?? "",
-    tools: [...input.tools]
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description ?? "",
-        inputSchema: tool.inputSchema ?? null,
-      }))
-      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+    tools: toolCatalogFingerprint(input.tools),
   });
 }
