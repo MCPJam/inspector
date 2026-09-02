@@ -66,6 +66,18 @@ const FN = {
    * comment on `markSecretsDelivered`.
    */
   markDelivered: "projectSecretsNode:markSecretsDelivered",
+  /**
+   * DELIVERY METADATA for every secret in a project the caller can see — names
+   * and binding shape, never a value (the backend view type has no `value`
+   * field at all).
+   *
+   * Read by the harness turn to answer ONE question a value-returning call
+   * cannot: does a BROKERED secret exist for the credential an
+   * external-account harness needs? Brokered values never enter this process,
+   * so the only way to distinguish "the project brokers this credential" from
+   * "the project has not configured it at all" is to ask about the row.
+   */
+  listMetadata: "projectSecrets:listSecrets",
 } as const;
 
 function stripBearer(token: string): string {
@@ -120,4 +132,46 @@ export async function convexMarkSecretsDelivered(
   args: { projectId: string; environmentId: string },
 ): Promise<{ marked: number }> {
   return await makeClient(bearer).action(FN.markDelivered as any, args);
+}
+
+/**
+ * One project secret's DELIVERY METADATA. A hand-mirrored subset of the
+ * backend's `projectSecrets:toSecretView`, carrying only what a delivery
+ * decision needs.
+ *
+ * There is deliberately no `value` here, and there is nothing to add one from:
+ * `listSecrets` is a metadata query whose return type has never had one.
+ */
+export interface ProjectSecretBinding {
+  /** The env-var name. This IS the secret's identity. */
+  name: string;
+  delivery: "brokered" | "materialized";
+  /** Brokered rows only — the hosts the egress proxy injects the header on. */
+  brokerHosts?: string[];
+  /** Brokered rows only — lowercased at write time by the backend. */
+  brokerHeader?: string;
+  /** Brokered rows only — `{}` is where the plaintext is substituted. */
+  brokerTemplate?: string;
+}
+
+/**
+ * List the project's secret bindings (metadata only).
+ *
+ * Throws on any failure, like its sibling above; the caller decides what a
+ * failure means. For the harness credential path it means "we could not
+ * establish that this credential is brokered", which is refused rather than
+ * assumed either way.
+ *
+ * PROJECT-SCOPED, not environment-scoped, because that is the only shape the
+ * backend exposes today. See `external-account-credentials.ts` for what that
+ * costs and why it is still the fail-closed direction.
+ */
+export async function convexListProjectSecretBindings(
+  bearer: string,
+  args: { projectId: string },
+): Promise<ProjectSecretBinding[]> {
+  const rows = (await makeClient(bearer).query(FN.listMetadata as any, {
+    projectId: args.projectId,
+  })) as ProjectSecretBinding[] | null;
+  return rows ?? [];
 }

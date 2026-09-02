@@ -75,7 +75,85 @@ Claude Code hosts are unaffected by all of the above — they use the runtime's 
 - For **Codex**: an MCPJam-provided OpenAI gpt-5 family model selected on the host.
 - A **signed-in project member** — guest sessions cannot run harness hosts.
 
-No credential configuration is needed. Broker delivery is on by default and the model proxy is always-on.
+No credential configuration is needed **for Claude Code and Codex**. Broker delivery is on by default and the model proxy is always-on.
+
+## Harness credentials on your own vendor account
+
+Not every harness runs on MCPJam's model access. A harness that authenticates
+against the **customer's own account with the runtime vendor** — the Cursor CLI
+host, which signs in with a `CURSOR_API_KEY` and bills every generation to that
+Cursor account — takes no MCPJam model lease at all. Its credential comes from a
+**project secret**, and the delivery you choose decides which surfaces can run it.
+
+| Delivery | Where the value lives | Works in chat | Works in hosted evals and swarms |
+|---|---|---|---|
+| **Brokered** (recommended) | Never leaves MCPJam's backend. The egress proxy injects it as a header on the way out of the sandbox; the sandbox holds a non-secret placeholder. | Ephemeral (scenario/eval/swarm) boxes only | **Yes** |
+| **Materialized** | Resolved by MCPJam's server and exported as an environment variable inside the sandbox. | Yes | **No** |
+
+Hosted eval and swarm launches **refuse** an environment that selects a
+materialized secret. That is deliberate: only the chat path resolves and injects
+materialized values, so on a runner-claimed attempt the credential would simply
+be missing and the run would report a healthy connector as broken. A brokered
+secret has no such problem — the backend composes it into the box's network
+policy and the runner does not participate.
+
+So for a Cursor CLI host that you intend to run in an eval suite or a swarm,
+**create the secret as brokered**, under **Project Settings → Secrets**, bound to:
+
+| Field | Value |
+|---|---|
+| Name | `CURSOR_API_KEY` |
+| Delivery | Brokered |
+| Hosts | `api2.cursor.sh` |
+| Header | `Authorization` |
+| Template | `Bearer {}` |
+
+Then select it into the environment the host runs in. A turn that finds neither a
+brokered nor a materialized credential is refused before the sandbox is touched,
+with a message naming the variable and both deliveries; a brokered secret bound to
+the wrong host is refused too, naming the host it found.
+
+<Note>
+  A **persistent project Computer** (the ordinary playground chat box) does not
+  receive brokered secrets today — they are composed onto the disposable boxes
+  that scenario, eval and swarm runs provision. Chat on a project Computer
+  therefore needs a **materialized** `CURSOR_API_KEY`. It is fine for one
+  environment to hold both.
+</Note>
+
+### Project secrets require KMS envelope encryption
+
+Storing **any** project secret requires the deployment to have envelope
+encryption turned on. Without it MCPJam refuses the write outright, with:
+
+> This deployment cannot store project secrets yet: envelope encryption
+> (SECRETS_KMS_WRITE) is not enabled.
+
+This is a deployment prerequisite, not a toggle: without envelope writes the
+stored value is not cryptographically bound to its project and its owner, and a
+credential store whose isolation rests on row checks alone is not the design.
+
+MCPJam Cloud has this configured. A **self-hosted or local development**
+deployment must set, on the Convex backend:
+
+| Variable | Purpose |
+|---|---|
+| `SECRETS_KMS_WRITE=1` | Turns envelope writes on. Nothing stores a project secret without it. |
+| `GCP_KMS_SA_EMAIL` | Service account that can use the key. |
+| `GCP_KMS_SA_PRIVATE_KEY` | That account's PKCS#8 PEM private key. |
+| `GCP_KMS_KEY_RESOURCE` | Full crypto key resource name (`projects/*/locations/*/keyRings/*/cryptoKeys/*`). |
+| `KMS_AAD_ENVIRONMENT` | The environment label bound into the additional authenticated data. |
+
+Set the four key variables **before** turning `SECRETS_KMS_WRITE` on, and prove
+the key actually works first — four correctly spelled variables are not the same
+as a usable key, and every way that can fail (missing IAM permission, wrong
+region, a private key truncated by a dashboard field) looks like success until
+the first real write. Reads are unaffected: a deployment holding older secrets
+keeps opening them.
+
+Until KMS is configured, a self-hosted deployment cannot store a
+`CURSOR_API_KEY` in either delivery, and so cannot run the Cursor CLI host.
+
 
 ## Billing
 
