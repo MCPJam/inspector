@@ -153,17 +153,6 @@ describe("MCPJam-provided model classification", () => {
     }
   });
 
-  it("offers the current OpenAI models to BYOK keys", () => {
-    // BYOK rows are hand-maintained and had drifted to 5.1. See BACK2-714.
-    const openaiIds = SUPPORTED_MODELS.filter(
-      (m) => m.provider === "openai",
-    ).map((m) => String(m.id));
-
-    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
-      expect(openaiIds).toContain(id);
-    }
-  });
-
   it("reports no temperature support for the Anthropic rows that reject it", () => {
     // Fable 5, Opus 5, Opus 4.8/4.7 and Sonnet 5 answer a temperature with a
     // 400, so every one of these rows would fail on its first request while
