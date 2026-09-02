@@ -305,6 +305,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",
+  // Local-harness control routes. These are `requireVerifiedAuth()`-gated and
+  // one of them (consent grant) forwards the bearer to Convex to register this
+  // installation's instance key — so without this entry a signed-in user gets a
+  // 401 on every one of them, which is the exact bug PR #4515 shipped once.
+  "/api/mcp/local-harness",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
