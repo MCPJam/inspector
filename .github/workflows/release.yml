@@ -45,6 +45,7 @@ jobs:
       publish_cli: ${{ steps.plan.outputs.publish_cli }}
       publish_inspector: ${{ steps.plan.outputs.publish_inspector }}
       build_inspector_artifacts: ${{ steps.plan.outputs.build_inspector_artifacts }}
+      build_harness_pack: ${{ steps.plan.outputs.build_harness_pack }}
       inspector_version: ${{ steps.plan.outputs.inspector_version }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       scope: ${{ steps.plan.outputs.scope }}
@@ -233,6 +234,36 @@ jobs:
             );
           }
 
+          // Whether this release builds and publishes local-harness runtime
+          // packs, read from the digest table the Inspector build itself
+          // carries rather than from a dispatch input.
+          //
+          // `pack-digests.generated.ts` is written from a dispatched pack build
+          // and committed (docs/local-harness.md). Until that happens
+          // EXPECTED_PACK_VERSION is "", every `expectedPackFor` answers null,
+          // and the local harness is inert in the shipped build — so packs
+          // would be assets nothing can ask for, on a job whose enforcement
+          // step ("the committed digest table matches the packs this build
+          // produced") must fail by construction.
+          //
+          // Deriving it from the table means committing the digests IS the
+          // reintroduction: there is no second switch to remember, and no way
+          // to ship a build naming digests without building the packs they
+          // name — the failure direction this whole gate exists to prevent.
+          const packDigestsPath =
+            "mcpjam-inspector/server/utils/harness/local/pack-digests.generated.ts";
+          const packVersionMatch = fs
+            .readFileSync(packDigestsPath, "utf8")
+            .match(/EXPECTED_PACK_VERSION\s*=\s*"([^"]*)"/);
+          // A shape change there must update this script, not silently stop
+          // building the packs — a release that quietly skips them is exactly
+          // the state this file cannot detect on its own.
+          if (!packVersionMatch) {
+            throw new Error(
+              `Could not read EXPECTED_PACK_VERSION from ${packDigestsPath}.`
+            );
+          }
+
           const inspectorVersion =
             releases.get("@mcpjam/inspector")?.newVersion ?? "";
           const outputs = {
@@ -242,6 +273,9 @@ jobs:
             publish_cli: String(selected.cli),
             publish_inspector: String(selected.inspector),
             build_inspector_artifacts: String(selected.inspector),
+            build_harness_pack: String(
+              selected.inspector && packVersionMatch[1] !== ""
+            ),
             inspector_version: inspectorVersion,
             release_tag: inspectorVersion ? `v${inspectorVersion}` : "",
           };
@@ -288,11 +322,34 @@ jobs:
       apply_release_patch: true
     secrets: inherit
 
+  # The local-harness runtime pack. Not a desktop artifact — it is downloaded
+  # on demand by both distributions — but it is published on the same release,
+  # so it is built alongside them.
+  #
+  # Gated more narrowly than they are, though: on `build_harness_pack` rather
+  # than `build_inspector_artifacts`, because a release whose Inspector carries
+  # no pack digests has no pack to publish. See preflight for why that is read
+  # from the committed table.
+  build-local-harness-pack:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
+    uses: ./.github/workflows/local-harness-pack.yml
+    with:
+      pack_version: ${{ needs.preflight.outputs.inspector_version }}
+      # A release must publish packs the committed digest table already names.
+      # Otherwise the desktop artifacts — built in parallel from the checked-in
+      # table — would ship digests that match nothing, `expectedPackFor` would
+      # answer `null`, and every published pack would be rejected as
+      # unsupported: artifacts that exist and cannot be installed.
+      enforce_committed_digests: true
+    secrets: inherit
+
   artifact-gate:
     needs:
       - preflight
       - build-mac
       - build-windows
+      - build-local-harness-pack
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -314,6 +371,20 @@ jobs:
 
           if [ "${{ needs.build-windows.result }}" != "success" ]; then
             echo "Windows artifact build failed." >&2
+            exit 1
+          fi
+
+          # A release whose packs did not build would ship an Inspector whose
+          # manifest names digests for assets that are not there, and every
+          # install would fail verification with nothing to point at.
+          #
+          # `skipped` is a legitimate result here — the pack job runs only when
+          # the committed digest table names a pack — so this asks preflight
+          # what it decided rather than reading the raw job result, which would
+          # read a deliberate skip as a failure.
+          if [ "${{ needs.preflight.outputs.build_harness_pack }}" = "true" ] \
+            && [ "${{ needs.build-local-harness-pack.result }}" != "success" ]; then
+            echo "Local harness runtime pack build failed." >&2
             exit 1
           fi
 
@@ -365,6 +436,28 @@ jobs:
       - name: Build Inspector package
         if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/inspector
+        env:
+          # This tarball is the bundle every `npx @mcpjam/inspector` user runs,
+          # and it reports to Sentry under the app version like every other
+          # build. It had no token here, so `sentryVitePlugin` injected debug
+          # ids and uploaded nothing, and those events symbolicated against
+          # whatever artifacts another build had published for the same
+          # release. (The globs were broken too — see client/vite.config.ts —
+          # so a token alone would not have been enough.) The upload itself is
+          # best-effort: the plugin reports upload failures without failing the
+          # build, and Sentry being down must not fail a release. The assert
+          # below is what is allowed to.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          MCPJAM_BUILD_SURFACE: npm
+
+      # The plugin above treats a sourcemap glob that matched nothing as a
+      # warning, which is how 2.47.0 published with its maps still in the
+      # tarball and its Sentry frames pointing at another build. Fail here
+      # instead. This asserts the maps were PROCESSED, not that Sentry stored
+      # them — see the script.
+      - name: Assert client source maps were processed
+        if: fromJSON(needs.preflight.outputs.publish_inspector)
+        run: node .github/scripts/assert-client-sourcemaps-processed.mjs
 
       - name: Smoke packed npm packages
         run: node .github/scripts/smoke-packed-npm-packages.mjs
@@ -752,6 +845,16 @@ jobs:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/windows
 
+      # Every platform's pack, its signed manifest, its signature and its
+      # sha256 — this is where the installer downloads from.
+      - name: Download local harness runtime packs
+        if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: local-harness-pack-*
+          path: .release-assets/runtime
+          merge-multiple: true
+
       - name: Create GitHub release
         if: needs.preflight.outputs.release_tag != ''
         uses: softprops/action-gh-release@v2
@@ -764,3 +867,4 @@ jobs:
           files: |
             .release-assets/macos/**
             .release-assets/windows/**
+            .release-assets/runtime/**

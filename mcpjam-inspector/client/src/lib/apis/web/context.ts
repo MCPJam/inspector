@@ -48,6 +48,8 @@ export interface ApiContext {
    */
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
@@ -80,7 +82,12 @@ const EMPTY_CONTEXT: ApiContext = {
 };
 
 let apiContext: ApiContext = EMPTY_CONTEXT;
-let cachedBearerToken: { token: string; expiresAt: number } | null = null;
+type BearerCacheKind = "guest" | "session";
+let cachedBearerToken: {
+  token: string;
+  expiresAt: number;
+  kind: BearerCacheKind;
+} | null = null;
 let apiContextRevision = 0;
 const apiContextListeners = new Set<() => void>();
 
@@ -444,6 +451,8 @@ function conformanceWireFields(apiContext: ApiContext): {
   mirrorToolParamHeaders?: false;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
 } {
   return {
     ...(apiContext.mirrorToolParamHeaders === false
@@ -451,6 +460,12 @@ function conformanceWireFields(apiContext: ApiContext): {
       : {}),
     ...(apiContext.firstPageOnly === true
       ? { firstPageOnly: true as const }
+      : {}),
+    ...(apiContext.suppressListenChannel === true
+      ? { suppressListenChannel: true as const }
+      : {}),
+    ...(apiContext.dropToolListChanged === true
+      ? { dropToolListChanged: true as const }
       : {}),
     ...(apiContext.supportsMrtr === false
       ? { supportsMrtr: false as const }
@@ -522,6 +537,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -599,6 +616,8 @@ export function buildResolvedServerBatchRequest(input: {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -644,6 +663,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -726,13 +747,46 @@ async function pollForSessionBearerToken(): Promise<string | null> {
   return null;
 }
 
-export async function getApiAuthorizationHeader(): Promise<string | null> {
+export async function getApiAuthorizationHeader(
+  /** Guards the re-resolution below from looping on a flapping actor. */
+  retriesLeft = 1
+): Promise<string | null> {
+  // The actor can change while a token lookup is in flight (sign-in,
+  // sign-out, or one signed-in user swapped for another). Every cache write
+  // and return below happens after an await, so each one re-checks the actor
+  // it resolved under and re-resolves rather than handing back — or caching —
+  // the previous actor's token.
+  //
+  // The guest-mode flag alone cannot see a user→user swap: both actors are
+  // non-guest, so it never flips. `apiContextRevision` does, because
+  // `setApiContext` bumps it (and clears the cache) on every actor change —
+  // and a write landing here after that reset is exactly the stale token this
+  // guard exists to catch.
+  const contextRevisionAtStart = apiContextRevision;
+  const guestModeAtStart = shouldPreferGuestBearer();
+  const authChanged = () =>
+    apiContextRevision !== contextRevisionAtStart ||
+    shouldPreferGuestBearer() !== guestModeAtStart;
+  const reresolve = () =>
+    retriesLeft > 0 ? getApiAuthorizationHeader(retriesLeft - 1) : null;
+
   // Single bearer-resolution path for hosted and local. authFetch decides
   // whether to attach the result based on the request's loopback/origin and
   // whether a token is available; this function never short-circuits on mode.
   const now = Date.now();
   if (cachedBearerToken && cachedBearerToken.expiresAt > now) {
-    return `Bearer ${cachedBearerToken.token}`;
+    // A guest bearer minted before sign-in can stay cached for up to 30s.
+    // Never reuse it once the actor has a WorkOS session — Convex rejects
+    // MCPJam-model generation for guest JWTs even when the sidebar shows the
+    // signed-in user.
+    if (
+      cachedBearerToken.kind === "guest" &&
+      !shouldPreferGuestBearer()
+    ) {
+      cachedBearerToken = null;
+    } else {
+      return `Bearer ${cachedBearerToken.token}`;
+    }
   }
 
   // In guest mode, bypass WorkOS token bootstrap entirely and use a guest
@@ -740,10 +794,12 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   // masking valid guest sessions.
   if (shouldPreferGuestBearer()) {
     const guestToken = await getGuestBearerToken();
+    if (authChanged()) return reresolve();
     if (guestToken) {
       cachedBearerToken = {
         token: guestToken,
         expiresAt: now + TOKEN_CACHE_TTL_MS,
+        kind: "guest",
       };
       return `Bearer ${guestToken}`;
     }
@@ -754,8 +810,13 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   if (getAccessToken) {
     try {
       const token = await getAccessToken();
+      if (authChanged()) return reresolve();
       if (token) {
-        cachedBearerToken = { token, expiresAt: now + TOKEN_CACHE_TTL_MS };
+        cachedBearerToken = {
+          token,
+          expiresAt: now + TOKEN_CACHE_TTL_MS,
+          kind: "session",
+        };
         return `Bearer ${token}`;
       }
     } catch {
@@ -772,10 +833,12 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
     // `shouldRetryApiAuth401` deliberately refuses to swap a resolving session
     // for a guest bearer. Wait for the token rather than firing and failing.
     const sessionToken = await awaitSessionBearerToken();
+    if (authChanged()) return reresolve();
     if (sessionToken) {
       cachedBearerToken = {
         token: sessionToken,
         expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+        kind: "session",
       };
       return `Bearer ${sessionToken}`;
     }
@@ -784,10 +847,12 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
 
   // Fall back to guest token for explicit guest-capable surfaces only.
   const guestToken = await getGuestBearerToken();
+  if (authChanged()) return reresolve();
   if (guestToken) {
     cachedBearerToken = {
       token: guestToken,
       expiresAt: now + TOKEN_CACHE_TTL_MS,
+      kind: "guest",
     };
     return `Bearer ${guestToken}`;
   }

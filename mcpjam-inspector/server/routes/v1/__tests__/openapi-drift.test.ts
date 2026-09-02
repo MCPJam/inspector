@@ -91,12 +91,35 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
+  // The harness capability probe. Served unconditionally, but everything it
+  // reports that a caller could not already infer is a property of a transport
+  // that is still enforced per organization — so publishing its shape would
+  // publish the gated feature, which `docs/README.md` forbids ("a feature that
+  // is enforced per organization must not be documented until the flag comes
+  // off", and its routes are "kept out of reference/openapi.json and listed in
+  // the Inspector's KNOWN_UNDOCUMENTED baseline"). Document it there when the
+  // flag comes off.
+  "get /harness/{harnessId}/capabilities",
   // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
   "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link",
   "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members",
   "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}",
+  // The DEPRECATED `/hosts` aliases of the `/clients` surface. Every one is
+  // the same handler as its documented `/clients` twin with the pre-rename DTO
+  // and the pre-rename (tokenless) write contract, and every response carries
+  // `Deprecation: true`. Not documented on purpose: the spec is what a NEW
+  // integration reads, and publishing both spellings would present a choice
+  // where there is none. Existing callers keep working; the tag's description
+  // says so in prose, which is where a compatibility note belongs.
+  "get /projects/{projectId}/hosts",
+  "post /projects/{projectId}/hosts",
+  "get /projects/{projectId}/hosts/{hostId}",
+  "patch /projects/{projectId}/hosts/{hostId}",
+  "delete /projects/{projectId}/hosts/{hostId}",
+  "post /projects/{projectId}/hosts/{hostId}/servers",
+  "post /projects/{projectId}/hosts/{hostId}/duplicate",
 ]);
 
 /**

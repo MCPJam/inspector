@@ -1087,6 +1087,16 @@ export function useServerState({
         ...server,
         config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
+        // Why the last attempt failed. Convex server rows do not store it, so
+        // omitting it here left a hosted card reading "Failed" with an empty
+        // error area and an empty Overview: the toast was the only copy of the
+        // reason, and it vanished with the toast (BB-48). Sourced from runtime
+        // state ONLY — exactly like `connectionStatus` above — so a reload that
+        // drops the runtime drops the reason with it instead of showing a stale
+        // one next to a "disconnected" status.
+        lastError: runtimeState?.lastError,
+        lastNormalizedError: runtimeState?.lastNormalizedError,
+        lastOAuthTrace: runtimeState?.lastOAuthTrace,
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
         lastConnectionTime:
@@ -1446,6 +1456,14 @@ export function useServerState({
       }
       if (mcpProfile?.mrtrSupport === "none") {
         defaults.supportsMrtr = false;
+      }
+      // Nested record rather than an enum, but the same rule: only an
+      // explicit `false` leaf travels.
+      if (mcpProfile?.toolListChanged?.listens === false) {
+        defaults.suppressListenChannel = true;
+      }
+      if (mcpProfile?.toolListChanged?.refetches === false) {
+        defaults.dropToolListChanged = true;
       }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy

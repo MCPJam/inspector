@@ -80,7 +80,7 @@ export function SkillsPill({
         portalled={!inModal}
       >
         <div className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Skills · shared pins
+          Skills · library pins
         </div>
         <ProjectEnvironmentSkillsPicker
           projectId={projectId}

@@ -64,6 +64,10 @@ const DEFAULT_CANVAS_PALETTE = {
   border: "oklch(0.3618 0.0101 106.8928)",
   card: "oklch(0.2679 0.0036 106.6427)",
   primary: "oklch(0.6724 0.1308 38.7559)",
+  success: "oklch(0.648 0.15 152)",
+  warning: "oklch(0.75 0.183 55)",
+  destructive: "oklch(0.6368 0.2078 25.3313)",
+  info: "oklch(0.623 0.214 259)",
 } as const;
 
 type TopicMapCanvasPalette = {
@@ -73,6 +77,10 @@ type TopicMapCanvasPalette = {
   border: string;
   card: string;
   primary: string;
+  success: string;
+  warning: string;
+  destructive: string;
+  info: string;
 };
 
 function useTopicMapCanvasPalette(containerRef: RefObject<HTMLElement | null>) {
@@ -82,13 +90,22 @@ function useTopicMapCanvasPalette(containerRef: RefObject<HTMLElement | null>) {
     const el = containerRef.current;
     if (!el) return;
     const cs = getComputedStyle(el);
+    const token = (name: keyof typeof DEFAULT_CANVAS_PALETTE) => {
+      const cssName =
+        name === "mutedForeground" ? "--muted-foreground" : `--${name}`;
+      return cs.getPropertyValue(cssName).trim() || DEFAULT_CANVAS_PALETTE[name];
+    };
     setPalette({
-      background: cs.getPropertyValue("--background").trim(),
-      foreground: cs.getPropertyValue("--foreground").trim(),
-      mutedForeground: cs.getPropertyValue("--muted-foreground").trim(),
-      border: cs.getPropertyValue("--border").trim(),
-      card: cs.getPropertyValue("--card").trim(),
-      primary: cs.getPropertyValue("--primary").trim(),
+      background: token("background"),
+      foreground: token("foreground"),
+      mutedForeground: token("mutedForeground"),
+      border: token("border"),
+      card: token("card"),
+      primary: token("primary"),
+      success: token("success"),
+      warning: token("warning"),
+      destructive: token("destructive"),
+      info: token("info"),
     });
   }, [containerRef]);
 
@@ -228,7 +245,7 @@ function formatRunTone(run: ClusterRunState | null): string {
 }
 
 /** Neutral grey for a node with no cluster and for a node with no outcome. */
-export const NO_OUTCOME_COLOR = "#9aa4ba";
+export const NO_OUTCOME_COLOR = DEFAULT_CANVAS_PALETTE.mutedForeground;
 
 function colorForCluster(clusterId: string | undefined, fallbackIndex?: number) {
   if (!clusterId) return NO_OUTCOME_COLOR;
@@ -246,46 +263,76 @@ function colorForCluster(clusterId: string | undefined, fallbackIndex?: number) 
 export type TopicMapColorMode = "theme" | "outcome";
 
 /**
- * Outcome palette. Diverging rather than categorical, because outcome is
- * ordered (completed → errored) and the whole point of the tint is that a bad
- * region of the map is visible at a glance.
- *
- * `unclear` is deliberately the same neutral as "no outcome at all": it is an
- * absence of judgement, and coloring it as a distinct finding would read as one.
+ * Outcome tints come from role tokens, not the categorical cluster palette.
+ * Those two palettes used to share hexes (completed == a theme green, unclear
+ * == "no colour"), so flipping to Outcome left most dots looking uncoded.
  */
-const OUTCOME_COLORS: Record<string, string> = {
-  completed: "#4ade80",
-  partial: "#facc15",
-  unresolved: "#fb7185",
-  errored: "#f43f5e",
-  unclear: NO_OUTCOME_COLOR,
-};
+/**
+ * One mapping per palette object. `colorForNode` runs per node per repaint on
+ * a 10k-session map, so building a fresh record there was pure garbage.
+ */
+const OUTCOME_COLOR_CACHE = new WeakMap<
+  TopicMapCanvasPalette,
+  Record<string, string>
+>();
+
+function outcomeColorsForPalette(
+  palette: TopicMapCanvasPalette,
+): Record<string, string> {
+  const cached = OUTCOME_COLOR_CACHE.get(palette);
+  if (cached) return cached;
+  const built = buildOutcomeColors(palette);
+  OUTCOME_COLOR_CACHE.set(palette, built);
+  return built;
+}
+
+function buildOutcomeColors(
+  palette: TopicMapCanvasPalette,
+): Record<string, string> {
+  return {
+    completed: palette.success,
+    partial: palette.warning,
+    unresolved: palette.primary,
+    errored: palette.destructive,
+    unclear: palette.info,
+  };
+}
 
 /**
  * Node color for the active mode. Tolerates an absent `outcome` — snapshots
  * written before TOPIC_MAP_VERSION 2 carry no outcome on their nodes, and a
- * session whose signals never extracted has none either.
+ * session whose signals never extracted has none either. Absence is muted;
+ * `unclear` is a real verdict and gets its own tint.
  */
 export function colorForNode(
   node: { clusterId?: string; outcome?: string },
   mode: TopicMapColorMode,
   clusterColorIndex?: number,
+  palette: TopicMapCanvasPalette = DEFAULT_CANVAS_PALETTE,
 ): string {
   if (mode === "outcome") {
-    if (!node.outcome) return NO_OUTCOME_COLOR;
-    return OUTCOME_COLORS[node.outcome] ?? NO_OUTCOME_COLOR;
+    if (!node.outcome) return palette.mutedForeground;
+    return (
+      outcomeColorsForPalette(palette)[node.outcome] ?? palette.mutedForeground
+    );
   }
   return colorForCluster(node.clusterId, clusterColorIndex);
 }
 
 /** Legend entries for the outcome mode, in enum order. */
-const OUTCOME_LEGEND: Array<{ key: string; label: string }> = [
-  { key: "completed", label: "Completed" },
-  { key: "partial", label: "Partial" },
-  { key: "unresolved", label: "Unresolved" },
-  { key: "errored", label: "Errored" },
-  { key: "unclear", label: "Unclear / not analyzed" },
-];
+const OUTCOME_LEGEND: Array<{ key: string; label: string; swatchClass: string }> =
+  [
+    { key: "completed", label: "Completed", swatchClass: "bg-success" },
+    { key: "partial", label: "Partial", swatchClass: "bg-warning" },
+    { key: "unresolved", label: "Unresolved", swatchClass: "bg-primary" },
+    { key: "errored", label: "Errored", swatchClass: "bg-destructive" },
+    { key: "unclear", label: "Unclear", swatchClass: "bg-info" },
+    {
+      key: "unlabeled",
+      label: "Not analyzed",
+      swatchClass: "bg-muted-foreground",
+    },
+  ];
 
 /** Snapshot version that first carried `nodes[].outcome`. */
 const OUTCOME_SNAPSHOT_VERSION = 2;
@@ -309,6 +356,13 @@ function hexToRgba(hex: string, alpha: number) {
 function faintLine(color: string, amountPercent: number) {
   const base = color.trim() || DEFAULT_CANVAS_PALETTE.border;
   return `color-mix(in oklch, ${base} ${amountPercent}%, transparent)`;
+}
+
+/** Soft fill for a node glow. Hex stays on the rgba path; role tokens use color-mix. */
+function toCanvasFill(color: string, alpha: number) {
+  const trimmed = color.trim();
+  if (trimmed.startsWith("#")) return hexToRgba(trimmed, alpha);
+  return faintLine(trimmed, Math.round(alpha * 100));
 }
 
 function matchesSearch(
@@ -615,6 +669,10 @@ export function TopicMapPanel({
     if (scopeProp.kind === "swarm") {
       return { kind: "swarm", projectId: scopeProp.projectId };
     }
+    // A benchmark run has no map to render — see `topicMapScopeFromInsights`.
+    // Null lands on the panel's own empty state rather than on a scenario
+    // query with no scenario.
+    if (scopeProp.kind === "benchmark") return null;
     return { kind: "scenario", scenarioId: scopeProp.scenarioId };
   }, [scopeProp]);
 
@@ -755,8 +813,9 @@ export function TopicMapPanel({
         node.clusterId != null
           ? clusterColorIndex.get(node.clusterId)
           : undefined,
+        canvasPalette,
       ),
-    [clusterColorIndex, colorMode],
+    [canvasPalette, clusterColorIndex, colorMode],
   );
 
   const nodeById = useMemo(
@@ -987,16 +1046,16 @@ export function TopicMapPanel({
 
       ctx.beginPath();
       ctx.fillStyle = isSelected
-        ? hexToRgba(color, 0.2)
+        ? toCanvasFill(color, 0.2)
         : isHovered
-          ? hexToRgba(color, 0.14)
+          ? toCanvasFill(color, 0.14)
           : "transparent";
       ctx.arc(node.x, node.y, node.radius + (isSelected ? 6 : isHovered ? 4 : 0), 0, 2 * Math.PI);
       ctx.fill();
 
       if (!dimmed) {
         ctx.beginPath();
-        ctx.fillStyle = hexToRgba(
+        ctx.fillStyle = toCanvasFill(
           color,
           isSelected ? 0.22 : isHovered ? 0.18 : 0.12,
         );
@@ -1170,7 +1229,7 @@ export function TopicMapPanel({
 
       if (touchesSelection) return faintLine(canvasPalette.foreground, 42);
       if (touchesHover && sourceNode)
-        return hexToRgba(nodeColor(sourceNode), 0.34);
+        return toCanvasFill(nodeColor(sourceNode), 0.34);
       if (dimmed) return faintLine(canvasPalette.mutedForeground, 6);
       if (
         sourceNode &&
@@ -1178,7 +1237,7 @@ export function TopicMapPanel({
         sourceNode.clusterId &&
         sourceNode.clusterId === targetNode.clusterId
       ) {
-        return hexToRgba(nodeColor(sourceNode), 0.22);
+        return toCanvasFill(nodeColor(sourceNode), 0.22);
       }
       return faintLine(canvasPalette.border, 28);
     },
@@ -1247,18 +1306,19 @@ export function TopicMapPanel({
           continue;
         }
         clusters.set(clusterKey, {
-          // Halos denote the CLUSTER, so they always take the theme colour —
-          // never the node's own paint colour, which in outcome mode is the
-          // first-iterated node's outcome. A mixed-outcome cluster would
-          // otherwise get an order-dependent halo asserting one outcome for
-          // the whole goal, which is exactly the overclaim the outcome tint
-          // exists to avoid.
-          color: colorForCluster(
-            node.clusterId,
-            node.clusterId != null
-              ? clusterColorIndex.get(node.clusterId)
-              : undefined,
-          ),
+          // Theme mode: halo = cluster colour. Outcome mode: a faint neutral
+          // ring so grouping stays visible without fighting the outcome tint
+          // on the dots — a mixed-outcome cluster must not pick one member's
+          // colour and assert it for the whole goal.
+          color:
+            colorMode === "outcome"
+              ? canvasPalette.mutedForeground
+              : colorForCluster(
+                  node.clusterId,
+                  node.clusterId != null
+                    ? clusterColorIndex.get(node.clusterId)
+                    : undefined,
+                ),
           nodes: [node],
           sumX: node.x ?? node.seedX,
           sumY: node.y ?? node.seedY,
@@ -1292,11 +1352,11 @@ export function TopicMapPanel({
         );
         gradient.addColorStop(
           0,
-          hexToRgba(cluster.color, cluster.nodes.length > 1 ? 0.16 : 0.08),
+          toCanvasFill(cluster.color, cluster.nodes.length > 1 ? 0.16 : 0.08),
         );
         gradient.addColorStop(
           0.52,
-          hexToRgba(cluster.color, cluster.nodes.length > 1 ? 0.08 : 0.04),
+          toCanvasFill(cluster.color, cluster.nodes.length > 1 ? 0.08 : 0.04),
         );
         gradient.addColorStop(1, "rgba(0,0,0,0)");
 
@@ -1309,7 +1369,7 @@ export function TopicMapPanel({
 
         if (cluster.nodes.length > 1) {
           ctx.beginPath();
-          ctx.strokeStyle = hexToRgba(cluster.color, 0.18);
+          ctx.strokeStyle = toCanvasFill(cluster.color, 0.18);
           ctx.lineWidth = 1.1;
           ctx.arc(centerX, centerY, radius * 0.72, 0, 2 * Math.PI);
           ctx.stroke();
@@ -1317,7 +1377,7 @@ export function TopicMapPanel({
         ctx.restore();
       }
     },
-    [clusterColorIndex, graphData],
+    [canvasPalette.mutedForeground, clusterColorIndex, colorMode, graphData],
   );
 
   if (
@@ -1500,8 +1560,7 @@ export function TopicMapPanel({
                 {OUTCOME_LEGEND.map((entry) => (
                   <div key={entry.key} className="flex items-center gap-1.5">
                     <span
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: OUTCOME_COLORS[entry.key] }}
+                      className={cn("h-2 w-2 rounded-full", entry.swatchClass)}
                     />
                     <span className="text-muted-foreground">{entry.label}</span>
                   </div>

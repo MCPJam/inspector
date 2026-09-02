@@ -1,4 +1,5 @@
 import { Button } from "@mcpjam/design-system/button";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,7 @@ import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 import { track } from "@/lib/analytics";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 // BB-133 guest credit-wall A/B. PostHog multivariate flag: the "treatment"
 // variant renders the benefit-led modal (create-account primary + see-plans
@@ -114,7 +116,10 @@ function GuestCreditWall() {
   };
 
   const handleSignIn = () => {
-    signIn();
+    // Remember where they were, so WorkOS returns them here rather than the
+    // app's front door.
+    captureAppSignInReturnPath();
+    signIn(permalinkSignInOptions());
     track("plan_limit_sign_in_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "guest_credits",
@@ -126,9 +131,11 @@ function GuestCreditWall() {
   };
 
   // Treatment primary CTA: start the WorkOS create-account flow rather than
-  // plain sign-in, matching the Figma "Create free account" button.
+  // plain sign-in, matching the Figma "Create free account" button. Capture the
+  // return path so a new account lands back on the wall's surface, not the root.
   const handleCreateAccount = () => {
-    signUp();
+    captureAppSignInReturnPath();
+    signUp(permalinkSignInOptions());
     track("plan_limit_create_account_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "guest_credits",

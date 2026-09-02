@@ -31,7 +31,9 @@ export * from "./useToolInputStreaming";
 // Double-iframe sandbox component (relocated from the inspector, 3d-ii-c).
 export {
   SandboxedIframe,
+  resolveSandboxProxyUrl,
   type SandboxedIframeHandle,
+  type SandboxProxyLocation,
 } from "./sandboxed-iframe";
 // Interactive MCP-Apps / OpenAI-Apps widget renderer + its surfaces (3d-ii-c).
 export {

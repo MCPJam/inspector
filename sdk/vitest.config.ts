@@ -17,7 +17,11 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
-    include: ["tests/**/*.test.ts"],
+    // `src/**/__tests__` as well as `tests/`: contract-shaped suites that
+    // must live beside the module they pin (the permalink route registry, the
+    // tool-policy table) were invisible to the runner while only `tests/` was
+    // included — they compiled, and never ran.
+    include: ["tests/**/*.test.ts", "src/**/__tests__/**/*.test.ts"],
     setupFiles: ["./tests/vitest.setup.ts"],
     coverage: {
       provider: "v8",

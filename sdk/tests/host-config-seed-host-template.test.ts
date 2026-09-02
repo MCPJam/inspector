@@ -18,6 +18,7 @@ const ALL_IDS: HostTemplateId[] = [
   "goose",
   "slack",
   "cursor",
+  "cursor-cli",
   "codex",
   "copilot",
   "vscode",
@@ -207,17 +208,23 @@ describe("seedHostTemplate", () => {
     // declared wss endpoint connected while an undeclared one took a real
     // violation, so the declared list is honored for fetch and XHR too.
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
     const effective = canonicalizeHostConfigV2(config);
     expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
-    // Unknown, not false — the probe's declared resource origin is also in
-    // ChatGPT's own baseline allowlist, so it separates nothing.
-    expect(
-      config.mcpProfile?.apps?.mcpAppsOverrides
-    ).not.toHaveProperty("cspResourceDomains");
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
     expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
       "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
       "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
@@ -246,9 +253,15 @@ describe("seedHostTemplate", () => {
     const config = seedHostTemplate("copilot", { theme: "dark" });
     const profile = config.mcpProfile;
 
+    // Probed 2026-08-26: the real handshake sends `mcs` 1.0.0 plus Copilot's
+    // routing fields. hostInfo below stays at the vendor-doc profile — no
+    // ui/initialize was ever observed, so nothing measured contradicts it.
     expect(profile?.initialize?.clientInfo).toEqual({
-      name: "ms-copilot",
-      version: "1.0.1",
+      name: "mcs",
+      version: "1.0.0",
+      channelId: "pva-studio",
+      lcat: "M365_COPILOT_USER",
+      agentAuthenticationMode: "Integrated",
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
       name: "Copilot",
@@ -311,6 +324,9 @@ describe("seedHostTemplate", () => {
 
     expect(config.clientCapabilities).toEqual({
       extensions: {
+        "io.slack/block-kit": {
+          mimeTypes: ["application/vnd.slack.blocks+json"],
+        },
         "io.modelcontextprotocol/ui": {
           mimeTypes: ["text/html;profile=mcp-app"],
         },
@@ -321,6 +337,7 @@ describe("seedHostTemplate", () => {
       serverTools: {},
       serverResources: {},
       logging: {},
+      message: { text: {} },
     });
     expect((config.hostContext as any).theme).toBe("dark");
     expect((config.hostContext as any).containerDimensions).toEqual({
@@ -349,12 +366,12 @@ describe("seedHostTemplate", () => {
       serverResources: true,
       logging: true,
       updateModelContext: false,
-      message: false,
+      message: true,
       sandboxPermissions: false,
     });
   });
 
-  it("keeps VS Code 1.130 handshake facts and deliberate emulator defaults", () => {
+  it("keeps VS Code 1.134 handshake facts and deliberate emulator defaults", () => {
     const config = seedHostTemplate("vscode", { theme: "dark" });
     const profile = config.mcpProfile;
     const hostContext = config.hostContext as {
@@ -405,11 +422,11 @@ describe("seedHostTemplate", () => {
     ).toBe("#ffffff");
     expect(profile?.initialize).toEqual({
       supportedProtocolVersions: ["2025-11-25"],
-      clientInfo: { name: "Visual Studio Code", version: "1.130.0" },
+      clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
       name: "Visual Studio Code",
-      version: "1.130.0",
+      version: "1.134.0",
     });
     expect(profile?.apps?.compatRuntime).toEqual({ openaiApps: false });
     expect(profile?.apps?.mcpAppsOverrides).toMatchObject({

@@ -183,6 +183,32 @@ export const ANALYTICS_EVENTS = {
   local_computer_consent_granted: { source: "client" },
   local_computer_consent_reauthorized: { source: "client" },
   local_terminal_unavailable: { source: "client" },
+  // --- Local harness target ("Native on this machine") ---
+  // The Claude Code agent running as a supervised process on the user's own
+  // machine rather than in a cloud computer. Content-free by the same rule as
+  // the local computer above, and then some: NEVER a workspace path (not even
+  // tilde-shortened), a machine id, a runtime digest, a lease, or a key.
+  // Enums, booleans and counts only.
+  // local_harness_target_selected: the user moved the Hosted⇄Native selector
+  //   {target}.
+  // local_harness_consent_gate_shown: the consent sheet rendered.
+  // local_harness_consent_granted / _denied: Allow / "Run hosted instead" —
+  //   the two affordances on the sheet.
+  // local_harness_consent_reauthorized: "Forget & re-authorize".
+  // local_harness_runtime_install_started / _completed / _failed: the explicit
+  //   runtime-pack install step {outcome} — an enum, never an installer
+  //   message, which can carry a path.
+  // local_harness_unavailable: the native target could not be offered
+  //   {reason} — the availability gate's own status enum.
+  local_harness_target_selected: { source: "client" },
+  local_harness_consent_denied: { source: "client" },
+  local_harness_consent_gate_shown: { source: "client" },
+  local_harness_consent_granted: { source: "client" },
+  local_harness_consent_reauthorized: { source: "client" },
+  local_harness_runtime_install_started: { source: "client" },
+  local_harness_runtime_install_completed: { source: "client" },
+  local_harness_runtime_install_failed: { source: "client" },
+  local_harness_unavailable: { source: "client" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
@@ -418,6 +444,29 @@ export const ANALYTICS_EVENTS = {
   home_shared_slack_invite_opened: { source: "client" },
   home_shared_slack_retry_clicked: { source: "client" },
   home_shared_slack_channel_opened: { source: "client" },
+
+  // --- Canonical project-scoped URLs (`/p/<projectId>/...`) ---
+  // Every prop here is LOW CARDINALITY on purpose: a project id would make
+  // these unusable as aggregates and would put customer identifiers on a
+  // navigation event. Ids never ride these — only what happened.
+  //
+  // `project_route_legacy_normalized`  props: source (unscoped | query),
+  //   resolved (true | false). One old link rewritten onto its canonical path.
+  //   Its volume is what says whether legacy compatibility can be retired.
+  // `project_route_resolved`           props: outcome (ready), duration_bucket
+  //   (instant | fast | slow) — how long a scoped URL took to become the
+  //   active project.
+  // `project_route_inaccessible`       props: reason (malformed | not-a-member
+  //   | timed-out). Never says whether the project exists.
+  // `project_route_scope_mismatch`     props: guard (redirect-loop |
+  //   repeated-switch). Redirect-loop protection tripped.
+  // `app_signin_return_restored`       props: outcome (restored | absent |
+  //   superseded).
+  project_route_legacy_normalized: { source: "client" },
+  project_route_resolved: { source: "client" },
+  project_route_inaccessible: { source: "client" },
+  project_route_scope_mismatch: { source: "client" },
+  app_signin_return_restored: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

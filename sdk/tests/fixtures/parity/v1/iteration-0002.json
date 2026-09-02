@@ -1,6 +1,6 @@
 {
   "id": "hosted-0002",
-  "note": "predicate failed — the judge can never reach this row",
+  "note": "predicate failed \u2014 the judge can never reach this row",
   "origin": "synthetic",
   "authored": {
     "mode": "model_driven",
@@ -108,6 +108,6 @@
     ],
     "firstFailedStage": "userValue",
     "failureCategory": "userValue",
-    "stageAnalyzerVersion": 4
+    "stageAnalyzerVersion": 8
   }
 }

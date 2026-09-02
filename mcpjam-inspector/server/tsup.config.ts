@@ -15,7 +15,10 @@ const packageVersion = JSON.parse(
 ).version as string;
 
 export default defineConfig({
-  entry: ["server/index.ts"],
+  // Two entries: the server, and the `harness install` subcommand's installer.
+  // The subcommand cannot import the server entry — that module starts a
+  // listening server as a side effect of being imported.
+  entry: ["server/index.ts", "server/harness-install-cli.ts"],
   define: {
     "process.env.MCPJAM_INSPECTOR_VERSION": JSON.stringify(packageVersion),
   },
@@ -79,6 +82,14 @@ export default defineConfig({
     // fails on the optional `chromium-bidi` dependency.
     "playwright",
     "playwright-core",
+    // Reached only from `webmcp-inspector/electron-webview-provider.ts`, and
+    // only through a runtime `await import("electron")` gated on ELECTRON_APP.
+    // Inside the desktop app the server runs in the Electron main process, so
+    // the import resolves; this bundle is the STANDALONE server, where it never
+    // runs — but esbuild would still try to follow the specifier and fail the
+    // build outright. External keeps the specifier intact for the one runtime
+    // that can satisfy it.
+    "electron",
   ],
   noExternal: [
     // Force bundling of problematic packages
@@ -97,6 +108,7 @@ export default defineConfig({
     "@mcpjam/sdk/host-compat",
     "@mcpjam/sdk/plugin-bundle",
     "@mcpjam/sdk/oauth/node",
+    "@mcpjam/sdk/widget-runtime",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -142,6 +154,10 @@ export default defineConfig({
       "@mcpjam/sdk/plugin-bundle": join(
         rootDir,
         "../sdk/dist/plugin-bundle/index.js",
+      ),
+      "@mcpjam/sdk/widget-runtime": join(
+        rootDir,
+        "../sdk/dist/widget-runtime/index.js",
       ),
     };
   },

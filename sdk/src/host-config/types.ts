@@ -61,15 +61,16 @@ export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
  * Adding a runtime is a one-line addition here + a registry adapter + tests —
  * never a schema migration (absent ⇒ emulated still hashes byte-identically).
  */
-export const HARNESS_IDS = ["claude-code", "codex"] as const;
+export const HARNESS_IDS = ["claude-code", "codex", "cursor"] as const;
 
 /**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
  * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
- * OpenAI Codex. Extensible to additional runtimes (e.g. `"pi"`) later without a
- * schema migration.
+ * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP.
+ * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
+ * migration.
  */
 export type Harness = (typeof HARNESS_IDS)[number];
 
@@ -285,6 +286,27 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
+  // How the client handles `notifications/tools/list_changed` (probe-measured;
+  // MCP spec "List Changed Notification" under server/tools, every revision
+  // since 2024-11-05). Two independently-measured facts, not one flag:
+  //
+  //   listens   — the client opens the server->client notification channel at
+  //               all (legacy: the standalone GET SSE stream; 2026-07-28:
+  //               `subscriptions/listen`).
+  //   refetches — after receiving the notification, the client re-issues
+  //               `tools/list`.
+  //
+  // The two are independent. `refetches` was originally documented as only
+  // measurable when `listens` is true; the 2026-08-26 Copilot capture
+  // disproved that — a server can publish the notification on an open
+  // `tools/call` response stream, reaching a client that never opened the
+  // standalone channel, so `listens: false, refetches: true` is real.
+  //
+  // Absent -> spec-conforming (listens and refetches), like every knob above.
+  toolListChanged?: {
+    listens?: boolean;
+    refetches?: boolean;
+  };
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -313,6 +335,26 @@ export type HostConfigMcpProfileV1 = {
         mode?: "resource-declared" | "deny-all" | "custom";
         allow?: Record<string, boolean>;
         extensions?: Record<string, unknown>;
+      };
+      // Whether the browser storage APIs work inside the widget iframe
+      // (probe-measured).
+      //
+      // NOT AN MCP CONCEPT. The MCP Apps spec (2026-01-26) says nothing about
+      // storage — its `sandbox` object defines only `permissions` and `csp`.
+      // This is an observed consequence of the sandboxed iframe the spec does
+      // mandate ("MCP App HTML runs in a sandboxed iframe with no same-origin
+      // server"), recorded because widgets that persist state break silently
+      // on a host that blocks it. Named `browserStorage`, with the literal
+      // browser API identifiers as keys, so nobody reads it as a capability
+      // MCP negotiates.
+      //
+      // Each API is measured separately because a host can block one and not
+      // the others (Safari private mode exposes `localStorage` and throws only
+      // on write). Absent -> available.
+      browserStorage?: {
+        localStorage?: boolean;
+        sessionStorage?: boolean;
+        indexedDB?: boolean;
       };
       // Extra outer/inner iframe `sandbox=` tokens unioned with the
       // mandatory `allow-scripts allow-same-origin`. Inspector-only.
@@ -403,6 +445,33 @@ export type McpAppsCapabilities = {
     media?: boolean;
   };
   resourceCacheTtl?: boolean;
+  // Whether the host forwards the `structuredContent` half of a tool result
+  // to the widget when the widget itself calls a tool (probe-measured; MCP
+  // spec "Tool Result" -> "Structured Content" under server/tools). A tool
+  // result has two halves - `content` blocks and `structuredContent` - and
+  // some hosts strip the JSON half on the way back (Cursor 3.4 does), so a
+  // widget reading it silently breaks. Absent -> forwarded (spec-conforming).
+  toolResult?: {
+    structuredContent?: boolean;
+    // Which `ContentBlock` kinds survive the host->widget relay, per the MCP
+    // spec "Tool Result" section under server/tools. Each kind names the
+    // revision it arrived in: `text`/`image`/`resource` since 2024-11-05,
+    // `audio` since 2025-03-26, `resource_link` since 2025-06-18.
+    //
+    // THIRD AXIS - do not merge with the two that already exist:
+    //   `modelVisibleMcpToolResults`   - what the MODEL sees
+    //   `mcpToolResultImageRendering`  - what mcpjam's own chat UI renders
+    //   this field                     - what a WIDGET receives when it calls
+    //                                    a tool itself
+    // Absent -> relayed (spec-conforming).
+    content?: {
+      text?: boolean;
+      image?: boolean;
+      audio?: boolean;
+      resource?: boolean;
+      resourceLink?: boolean;
+    };
+  };
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
