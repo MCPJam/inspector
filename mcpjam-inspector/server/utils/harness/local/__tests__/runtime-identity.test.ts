@@ -147,6 +147,45 @@ describe("managed bundles", () => {
     expect(result.runtime.digest).toBe(digest);
   });
 
+  it("looks for `bin/node.exe` on win32, which is what the pack actually ships", async () => {
+    // The manifest names one relative path; the platform supplies the
+    // extension, exactly as `build-local-harness-pack.mjs` writes it. They
+    // disagreed: every Windows conformance run verified the tree and then
+    // refused it as `bundle-corrupt` for a Node binary that was sitting right
+    // there under its real name.
+    const root = await writeBundle("win-node", {
+      "bridge.mjs": "x",
+      "bin/node.exe": "#!windows",
+    });
+    const digest = await computeTreeDigest(root);
+    const result = await resolveManagedBundle({
+      manifest: manifestFor("win-node", digest),
+      runtimeRoot,
+      platform: "win32",
+      arch: "x64",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.runtime.nodePath).toBe(join(root, "bin", "node.exe"));
+  });
+
+  it("refuses a win32 bundle that ships only the extensionless `bin/node`", async () => {
+    // The other half of the same claim: the platform's extension is required,
+    // not merely preferred, so a tree carrying the POSIX name cannot satisfy a
+    // Windows resolution by accident.
+    const root = await writeBundle("win-node-missing", {
+      "bridge.mjs": "x",
+      "bin/node": "#!not-an-exe",
+    });
+    const result = await resolveManagedBundle({
+      manifest: manifestFor("win-node-missing", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "win32",
+      arch: "x64",
+    });
+    expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
+  });
+
   it("binds the runtime id to the digest, so a changed bundle is a new runtime", async () => {
     const root = await writeBundle("rebind", { "bridge.mjs": "a" });
     const first = await resolveManagedBundle({

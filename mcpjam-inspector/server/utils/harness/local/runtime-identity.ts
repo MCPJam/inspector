@@ -558,7 +558,18 @@ export async function resolveManagedBundle(args: {
     try {
       const info = await stat(full);
       if (!info.isFile()) throw new Error("not a file");
-      if (requireExecutable && (info.mode & 0o111) === 0) {
+      // The POSIX execute bits, where they mean something. On Windows they do
+      // not: NTFS has no exec bit, node reports 0o666 for an ordinary writable
+      // file, and `0o666 & 0o111` is 0 — so this check refused every pack on
+      // that platform, `node.exe` included. Executability there is a matter of
+      // extension and ACL, neither of which this stat can see, and asserting on
+      // a field the OS does not populate is not a weaker check, it is a
+      // meaningless one.
+      if (
+        requireExecutable &&
+        platform !== "win32" &&
+        (info.mode & 0o111) === 0
+      ) {
         throw new Error("not executable");
       }
     } catch {
@@ -585,8 +596,17 @@ export async function resolveManagedBundle(args: {
   // The pack's own Node. Both distributions use it — Electron's `RunAsNode`
   // fuse is off, and the npx server's own `process.execPath` is outside the
   // tree the digest covers — so a pack without one cannot launch a bridge.
+  // `.exe` on Windows, exactly as `build-local-harness-pack.mjs` writes it
+  // (`platformKey.startsWith("win32") ? "node.exe" : "node"`). The manifest
+  // names one relative path and the platform supplies the extension, so the
+  // builder and the resolver cannot disagree about what the file is called —
+  // they did, and every Windows conformance run got as far as verifying the
+  // tree and then refused it as `bundle-corrupt` for a binary that was there
+  // under its real name.
   const bundledNode = await insideBundle(
-    policy.nodeLauncherRelativePath,
+    platform === "win32"
+      ? `${policy.nodeLauncherRelativePath}.exe`
+      : policy.nodeLauncherRelativePath,
     "Node binary",
     true,
   );
