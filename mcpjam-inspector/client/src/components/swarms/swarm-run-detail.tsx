@@ -362,17 +362,19 @@ export function SwarmRunDetail({
       // be stopped". Read off the structured `code`, not the message: for an
       // application error Convex redacts `err.message` to a Request-ID string,
       // which is also why the toast below goes through `convexErrMessage`.
-      const settled = rejections.filter((reason) => isRunAlreadySettled(reason));
       const refused = rejections.filter(
         (reason) => !isRunAlreadySettled(reason),
       );
       const canceled = results.length - rejections.length;
 
-      if (refused.length === results.length) {
+      // A real refusal outranks the already-settled case. With nothing stopped
+      // and one goal genuinely refused, ordering these the other way reported
+      // "already finished" and buried the failure the viewer has to act on.
+      if (canceled === 0 && refused.length > 0) {
         toast.error(convexErrMessage(refused[0], "Could not stop the run"));
         return;
       }
-      if (canceled === 0 && settled.length > 0) {
+      if (canceled === 0) {
         // Every goal had already finished on its own. Nothing is running, but
         // this viewer did not stop it — claiming otherwise would be wrong for a
         // goal that COMPLETED, and would leave the strip reading "Stopped" over

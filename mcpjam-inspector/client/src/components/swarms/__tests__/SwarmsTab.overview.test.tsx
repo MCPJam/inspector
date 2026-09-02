@@ -1258,6 +1258,41 @@ describe("Swarm run state and navigation", () => {
     expect(state.getAttribute("data-run-state")).not.toBe("stopped");
   });
 
+  it("reports a refusal even when another goal settled on its own", async () => {
+    overviewData = runningOverview();
+    // A mixed wave: one goal finished between the click and the call, the
+    // other genuinely refused. Reading the settled case first turned that
+    // refusal into "Run had already finished".
+    mutationResult = (name, args) => {
+      if (name !== "journeyRuns:cancelJourneyRun") return {};
+      const { journeyRunId } = args as { journeyRunId: string };
+      if (journeyRunId === "run-2") {
+        throw Object.assign(new Error("[Request ID: abc123] Server Error"), {
+          data: {
+            code: "CONFLICT",
+            message: "Run already completed; only a running run can be canceled.",
+          },
+        });
+      }
+      throw Object.assign(new Error("[Request ID: def456] Server Error"), {
+        data: { code: "FORBIDDEN", message: "Not a member of this project." },
+      });
+    };
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Not a member of this project.")
+    );
+    // The goal that had already finished is not a goal that "could not be
+    // stopped", but it must not swallow the one that really refused.
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it("does not carry one wave's stop onto the next wave", async () => {
     overviewData = runningOverview();
     const { rerender } = renderTab("run-2b");
