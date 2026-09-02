@@ -545,15 +545,27 @@ describe("enumerating group members for a later stop", () => {
   it.skipIf(!supportsOwnershipProof(process.platform))(
     "lists live members with an identity each, excluding the leader",
     async () => {
-      // This process leads its own group in the test runner, so it is the one
-      // group we can enumerate without spawning a tree.
-      const members = await listGroupMembers(process.pid);
-      expect(members).not.toBeNull();
-      for (const member of members ?? []) {
-        expect(member.pid).not.toBe(process.pid);
-        expect(typeof member.identity).toBe("string");
-        expect(member.identity.length).toBeGreaterThan(0);
-      }
+      // A real group with a real member, not the runner's own.
+      //
+      // This used to enumerate `process.pid`'s group on the theory that the
+      // test runner leads it. Under vitest it does not — tests run in a
+      // worker, which is not a group leader — so `listGroupMembers` returned
+      // an empty array, every assertion lived inside a loop over it, and the
+      // test passed having verified nothing. `withDetachedTree` gives a
+      // leader that provably has one live grandchild, which is also the exact
+      // shape the supervisor snapshots at a root's exit.
+      await withDetachedTree(LEADER_WITH_SURVIVOR, async (pid, survivor) => {
+        const members = await listGroupMembers(pid);
+        expect(members).not.toBeNull();
+        expect(members!.map((member) => member.pid)).toContain(survivor);
+        // The leader is excluded: the caller signals the group, and listing
+        // the root as one of its own members would double-count it.
+        expect(members!.map((member) => member.pid)).not.toContain(pid);
+        for (const member of members!) {
+          expect(typeof member.identity).toBe("string");
+          expect(member.identity.length).toBeGreaterThan(0);
+        }
+      });
     },
   );
 

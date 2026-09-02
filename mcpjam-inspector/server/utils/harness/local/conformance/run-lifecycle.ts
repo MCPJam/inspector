@@ -54,6 +54,12 @@ const WORKSPACE = join(ROOT, "workspace");
 const SCRIPT_DIR = new URL(".", import.meta.url).pathname;
 const CAPABILITY = `cap_${randomBytes(24).toString("base64url")}`;
 const POP_SECRET = randomBytes(32).toString("hex");
+/**
+ * The credential the gateway forwards upstream. Named once so the mock can be
+ * told to REQUIRE it: a mock that accepts any key cannot tell a gateway that
+ * forwards the credential from one that drops it.
+ */
+const UPSTREAM_KEY = `upstream-${randomBytes(8).toString("hex")}`;
 const ORPHAN_FILE = join(ROOT, "orphan.json");
 const log = (...a: unknown[]) => console.log("[lifecycle]", ...a);
 /** Fail the RUN, not just the log: CI reads the exit code. */
@@ -102,11 +108,68 @@ async function descendants(pid: number): Promise<number[]> {
   await walk(pid); return out;
 }
 async function psLine(pid: number) { try { return (await execFileP("ps", ["-o", "pid=,ppid=,pgid=,rss=,command=", "-p", String(pid)])).stdout.trim(); } catch { return ""; } }
+/**
+ * Every helper process this run started, so a FAILURE can take them down too.
+ *
+ * The gateway and the mock are servers bound to loopback ports. They used to
+ * be killed only after the report printed, so any throw between spawning them
+ * and that line left two servers running, holding their ports, for the rest of
+ * the CI job — and left the granted consent in place. The next scenario then
+ * failed for a reason that had nothing to do with it.
+ */
+const helpers: Array<{ kill: (signal?: NodeJS.Signals) => boolean }> = [];
+
+/**
+ * The supervised tree this run owns, so a FAILURE can stop it.
+ *
+ * Set as soon as a supervisor and a session id exist. Without this, a throw
+ * anywhere after `createSession` left a real vendor agent running on the
+ * machine while the runner exited reporting a failure — the one outcome a
+ * suite about lifecycle guarantees must not produce.
+ */
+let owned: { supervisor: LocalHarnessSupervisor; sessionId: string } | null =
+  null;
+
+async function stopOwnedTree(): Promise<void> {
+  const current = owned;
+  owned = null;
+  if (current === null) return;
+  try {
+    await current.supervisor.stopSession(current.sessionId);
+  } catch {
+    /* best effort: the report below says the run failed either way */
+  }
+}
+
+function stopHelpers(): void {
+  for (const child of helpers.splice(0)) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 async function startChild(script: string, env: Record<string, string>) {
   const child = spawn(process.execPath, [join(SCRIPT_DIR, script)], { env: { PATH: process.env.PATH ?? "", ...env }, stdio: ["ignore", "pipe", "pipe"], detached: true });
   child.stderr!.on("data", () => {});
   const port = await new Promise<number>((resolve, reject) => {
-    let buf = ""; child.stdout!.on("data", (c) => { buf += String(c); const line = buf.split("\n")[0]; if (line?.includes("port")) resolve(JSON.parse(line).port); });
+    // On a COMPLETE line only: a chunk boundary can land mid-JSON, and
+    // `JSON.parse` on the partial then threw inside a `data` handler and
+    // killed the runner with an error about the wrong thing entirely.
+    let buf = "";
+    child.stdout!.on("data", (c) => {
+      buf += String(c);
+      const newline = buf.indexOf("\n");
+      if (newline < 0) return;
+      const line = buf.slice(0, newline);
+      try {
+        resolve(JSON.parse(line).port);
+      } catch (error) {
+        reject(new Error(`${script} printed ${JSON.stringify(line)}: ${error}`));
+      }
+    });
     child.on("exit", (code) => reject(new Error(`${script} exited ${code}`)));
   });
   child.unref();
@@ -115,8 +178,8 @@ async function startChild(script: string, env: Record<string, string>) {
 const freePort = () => new Promise<number>((resolve) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = (s.address() as net.AddressInfo).port; s.close(() => resolve(p)); }); });
 
 async function setup() {
-  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET });
-  const gw = await startChild("local-gateway.mjs", { GW_UPSTREAM: `http://127.0.0.1:${mock.port}`, GW_SESSION_CAPABILITY: CAPABILITY, GW_UPSTREAM_KEY: "upstream-key", GW_POP_SECRET: POP_SECRET });
+  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY });
+  const gw = await startChild("local-gateway.mjs", { GW_UPSTREAM: `http://127.0.0.1:${mock.port}`, GW_SESSION_CAPABILITY: CAPABILITY, GW_UPSTREAM_KEY: UPSTREAM_KEY, GW_POP_SECRET: POP_SECRET });
   await mkdir(WORKSPACE, { recursive: true });
   await writeFile(join(WORKSPACE, "hello.txt"), "hello\n");
   const ws = await registerWorkspaceGrant(WORKSPACE); if (!ws.ok) throw new Error(ws.message);
@@ -147,6 +210,7 @@ async function setup() {
   const launcher = resolveNodeLauncher({ bundledNodePath: plan.runtime.nodePath! });
   const bridgePort = await freePort();
   const sessionId = `life-${MODE}-${Date.now()}`;
+  owned = { supervisor, sessionId };
   const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);
   let bridgePid = -1;
   const provider = createSupervisedLocalHarnessProvider({ harnessId: "claude-code", manifest: plan.manifest, runtime: plan.runtime, supervisor, launcher, workspacePath: plan.workspacePath, workspaceGrantId: target.workspaceGrantId, sessionStateDir, targetKind: "local-native", bridgePort, bridgeReadinessTimeoutMs: 30_000, onBridgeStarted: async ({ pid }) => { bridgePid = pid; } });
@@ -220,4 +284,16 @@ async function main() {
   assert(!stateDirExists, "abort left the session state directory behind");
   assert(recordsLeft === 0, `abort left ${recordsLeft} registry record(s) behind`);
 }
-main().catch((e) => { console.error("[lifecycle] FAILED", e?.stack ?? e); process.exit(1); });
+main().catch(async (e) => {
+  // Cleanup FIRST, for the same reason as the native-turn runner: these
+  // helpers are detached, and the supervised tree is a real agent. Both would
+  // otherwise outlive a failed scenario and break the next one.
+  //
+  // The `orphan-a` scenario is the deliberate exception and never reaches
+  // here: it exits SUCCESSFULLY without stopping its session, which is the
+  // crash it exists to simulate.
+  await stopOwnedTree();
+  stopHelpers();
+  console.error("[lifecycle] FAILED", e?.stack ?? e);
+  process.exit(1);
+});

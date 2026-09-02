@@ -289,8 +289,14 @@ describe("the pinned command grammar", () => {
       },
       ctx({ bridgeLauncherPath: `${BUNDLE}/launcher.mjs` }),
     );
-    expect(result).toMatchObject({
+    // `toEqual`, and asserting the executable: the thing this test exists to
+    // lock down is that the launcher runs THROUGH the pack's verified node.
+    // Matching only `args` would have passed a regression that spawned
+    // `launcher.mjs` directly, which is the case it is named for.
+    expect(result).toEqual({
       kind: "exec",
+      executable: "/usr/local/bin/node",
+      workingDirectory: SESSION,
       args: [`${BUNDLE}/launcher.mjs`, "--workdir", `${SESSION}/w`, "--bridge-state-dir", `${SESSION}/b`],
     });
   });

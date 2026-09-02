@@ -81,19 +81,73 @@ const note = (s: string) => {
   console.log(`[finding] ${s}`);
 };
 
+/**
+ * Every helper process this run started, so a FAILURE can take them down too.
+ *
+ * The gateway and the mock are servers bound to loopback ports. They used to
+ * be killed only after the report printed, so any throw between spawning them
+ * and that line left two servers running, holding their ports, for the rest of
+ * the CI job — and left the granted consent in place. The next scenario then
+ * failed for a reason that had nothing to do with it.
+ */
+const helpers: Array<{ kill: (signal?: NodeJS.Signals) => boolean }> = [];
+
+/**
+ * The supervised tree this run owns, so a FAILURE can stop it.
+ *
+ * Set as soon as a supervisor and a session id exist. Without this, a throw
+ * anywhere after `createSession` left a real vendor agent running on the
+ * machine while the runner exited reporting a failure — the one outcome a
+ * suite about lifecycle guarantees must not produce.
+ */
+let owned: { supervisor: LocalHarnessSupervisor; sessionId: string } | null =
+  null;
+
+async function stopOwnedTree(): Promise<void> {
+  const current = owned;
+  owned = null;
+  if (current === null) return;
+  try {
+    await current.supervisor.stopSession(current.sessionId);
+  } catch {
+    /* best effort: the report below says the run failed either way */
+  }
+}
+
+function stopHelpers(): void {
+  for (const child of helpers.splice(0)) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 async function startChild(script: string, env: Record<string, string>) {
   const child = spawn(process.execPath, [join(SCRIPT_DIR, script)], {
     env: { PATH: process.env.PATH ?? "", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  helpers.push(child);
   const stderr: string[] = [];
   child.stderr!.on("data", (c) => stderr.push(...String(c).split("\n").filter(Boolean)));
   const port = await new Promise<number>((resolve, reject) => {
     let buf = "";
     child.stdout!.on("data", (c) => {
       buf += String(c);
-      const line = buf.split("\n")[0];
-      if (line?.includes("port")) resolve(JSON.parse(line).port);
+      // On a COMPLETE line only. A chunk boundary can land mid-JSON — the
+      // partial `{"port":54` already contains "port" — and `JSON.parse` then
+      // threw inside a `data` handler, killing the runner with an error about
+      // the wrong thing entirely.
+      const newline = buf.indexOf("\n");
+      if (newline < 0) return;
+      const line = buf.slice(0, newline);
+      try {
+        resolve(JSON.parse(line).port);
+      } catch (error) {
+        reject(new Error(`${script} printed ${JSON.stringify(line)}: ${error}`));
+      }
     });
     child.on("exit", (code) => reject(new Error(`${script} exited ${code}`)));
   });
@@ -224,7 +278,7 @@ async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt
 
 async function main() {
   mark("start");
-  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET });
+  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY_CANARY });
   const gw = await startChild("local-gateway.mjs", {
     GW_UPSTREAM: `http://127.0.0.1:${mock.port}`, GW_SESSION_CAPABILITY: CAPABILITY,
     GW_UPSTREAM_KEY: UPSTREAM_KEY_CANARY, GW_POP_SECRET: POP_SECRET,
@@ -293,6 +347,7 @@ async function main() {
   const launcher = resolveNodeLauncher({ bundledNodePath: plan.runtime.nodePath! });
   const bridgePort = await freePort();
   const sessionId = `conformance-${Date.now()}`;
+  owned = { supervisor, sessionId };
   const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);
   let bridgePid = -1;
   const provider = createSupervisedLocalHarnessProvider({
@@ -454,6 +509,12 @@ async function main() {
 }
 
 main().catch(async (e) => {
+  // Cleanup FIRST: a failed run must not leave a gateway, a mock, a supervised
+  // bridge tree or a live consent grant behind. The report below is what a
+  // human reads; this is what the next scenario depends on.
+  await stopOwnedTree();
+  stopHelpers();
+  await revokeLocalHarnessGrants().catch(() => {});
   console.error("[conformance] FAILED:", e?.stack ?? e);
   console.error("[conformance] marks:", JSON.stringify(marks));
   console.error("[conformance] findings:", JSON.stringify(findings, null, 1));

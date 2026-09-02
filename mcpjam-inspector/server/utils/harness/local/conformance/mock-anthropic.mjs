@@ -12,6 +12,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const port = Number(process.env.MOCK_PORT ?? 0);
 const popSecret = process.env.MOCK_POP_SECRET ?? "";
+/** The credential the gateway is expected to present upstream, if the run set one. */
+const expectedUpstreamKey = process.env.MOCK_UPSTREAM_KEY ?? "";
 const seenNonces = new Set();
 const log = (...a) => console.error("[mock]", ...a);
 let requestCount = 0;
@@ -66,7 +68,13 @@ function verifyPop(req) {
   if (typeof h !== "string") return { ok: false, why: "missing x-mcpjam-pop" };
   const [ts, nonce, mac] = h.split(".");
   if (!ts || !nonce || !mac) return { ok: false, why: "malformed" };
-  if (Math.abs(Date.now() - Number(ts)) > 60_000) return { ok: false, why: "clock skew" };
+  // Explicitly numeric first. `Number("later")` is NaN and `Math.abs(NaN) >
+  // 60_000` is FALSE, so a malformed timestamp skipped the freshness window
+  // instead of failing it — in the component that is the oracle for the
+  // gateway's proof-of-possession header.
+  const tsMs = Number(ts);
+  if (!Number.isFinite(tsMs)) return { ok: false, why: "non-numeric ts" };
+  if (Math.abs(Date.now() - tsMs) > 60_000) return { ok: false, why: "clock skew" };
   if (seenNonces.has(nonce)) return { ok: false, why: "replay" };
   const expected = createHmac("sha256", popSecret).update(`${req.method}\n${req.url}\n${ts}\n${nonce}`).digest("hex");
   const a = Buffer.from(mac, "hex"); const b = Buffer.from(expected, "hex");
@@ -81,10 +89,32 @@ const server = http.createServer((req, res) => {
   req.on("end", () => {
     const pop = verifyPop(req);
     if (!pop.ok) { log("POP REJECT", pop.why, req.method, req.url); res.writeHead(401); res.end(JSON.stringify({ error: pop.why })); return; }
+    // The upstream credential, when the run configured one. Without this the
+    // suite could not tell a gateway that forwards the key from one that drops
+    // or substitutes it — which is one of the things a local turn is supposed
+    // to get right.
+    if (expectedUpstreamKey) {
+      const presented = req.headers["x-api-key"];
+      if (presented !== expectedUpstreamKey) {
+        log("KEY REJECT", presented === undefined ? "absent" : "mismatch", req.method, req.url);
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "upstream key rejected" }));
+        return;
+      }
+    }
     if (req.method === "POST" && req.url?.startsWith("/v1/messages")) {
       if (req.url.includes("count_tokens")) { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ input_tokens: 42 })); return; }
-      let body = {};
-      try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {}
+      let body;
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        // A 200 with a plausible SSE echo would let a run pass while the
+        // vendor sent Anthropic something Anthropic would have rejected.
+        log("BAD JSON", req.method, req.url);
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "malformed JSON body" }));
+        return;
+      }
       const messages = Array.isArray(body.messages) ? body.messages : [];
       const userTurns = messages.filter((m) => m.role === "user" && (typeof m.content === "string" || (Array.isArray(m.content) && m.content.some((b) => b.type === "text")))).length;
       const id = `msg_${requestCount}`;

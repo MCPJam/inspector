@@ -22,24 +22,46 @@ isolated `HOME`, not a test runner's shared one.
 | `run-lifecycle.ts` | `orphan-a` / `orphan-b` | a tree orphaned by a crashed Inspector is reclaimed by the janitor on the next start |
 | `timing-decomp.mts` | — | cost decomposition: bare bridge spawn, digest, session ready |
 | `probe-timing.mts` | — | the exposure probe stays inside its budget on a machine with link-local addresses |
-| `group-settle.mts` | — | the group-member snapshot settles a tree whose root exited first |
+| `group-settle.mts` | — | the group-member snapshot settles a tree whose root exited first (takes an optional node path; defaults to the running one) |
 
 ## Running them
 
 ```bash
 # from mcpjam-inspector/ — the worktree root breaks the @/shared alias
 S=/tmp/local-harness-conformance
-node scripts/build-local-harness-pack.mjs \
-  --adapter-bridge node_modules/@ai-sdk/harness-claude-code/dist/bridge \
-  --out "$S/runtime" --node-binary "$S/node/bin/node"
+mkdir -p "$S/home" "$S/workspace" "$S/runtime"
 
-HOME="$S/home" CONFORMANCE_ROOT="$S" npx tsx \
-  server/utils/harness/local/conformance/run-native-turn.ts full
-HOME="$S/home" CONFORMANCE_ROOT="$S" npx tsx \
-  server/utils/harness/local/conformance/run-native-turn.ts no-launcher
-HOME="$S/home" CONFORMANCE_ROOT="$S" npx tsx \
-  server/utils/harness/local/conformance/run-lifecycle.ts abort
+# A real pack, not a fixture: these scenarios exist to prove the thing a user
+# would install actually runs. `--node-tarball` takes an official nodejs.org
+# archive, or a bare node binary for a local run.
+node scripts/build-local-harness-pack.mjs \
+  --platform "$(node -p 'process.platform + "-" + process.arch')" \
+  --pack-version conformance \
+  --node-tarball "$(command -v node)" \
+  --out "$S/runtime-src" --skip-archive
+cp -R "$S/runtime-src/claude-code" "$S/runtime/claude-code"
+
+for scenario in \
+  "run-native-turn.ts full" \
+  "run-native-turn.ts no-launcher" \
+  "run-lifecycle.ts abort" \
+  "run-lifecycle.ts orphan-a" \
+  "run-lifecycle.ts orphan-b" \
+  "probe-timing.mts" \
+  "timing-decomp.mts" \
+  "group-settle.mts"
+do
+  HOME="$S/home" CONFORMANCE_ROOT="$S" npx tsx \
+    "server/utils/harness/local/conformance/$scenario" || echo "FAILED: $scenario"
+done
 ```
+
+Every scenario ASSERTS and exits non-zero on failure. That is the whole
+contract: a run that prints a leaked credential, a surviving process or a
+dirtied workspace and exits 0 would make a green conformance job evidence of
+nothing. `orphan-a` is the one deliberate exception — it exits successfully
+WITHOUT stopping its session, because the crash it simulates is the input to
+`orphan-b`.
 
 `MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION` stamps the manifest these scripts
 build; CI sets it to the job's own identifier so a recorded conformance version

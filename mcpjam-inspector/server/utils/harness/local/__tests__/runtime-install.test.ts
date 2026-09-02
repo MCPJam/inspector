@@ -131,7 +131,17 @@ async function buildFixturePack(
   return { archive, digest };
 }
 
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
+let savedRuntimeRoot: string | undefined;
+let savedPackSource: string | undefined;
+
 beforeAll(async () => {
+  savedRuntimeRoot = process.env.MCPJAM_RUNTIME_ROOT;
+  savedPackSource = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-install-")));
   installRoot = join(base, "runtime");
   packSource = join(base, "source");
@@ -152,8 +162,11 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  delete process.env.MCPJAM_RUNTIME_ROOT;
-  delete process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
+  // Restored, not deleted: these are real overrides a developer may have set
+  // in their shell, and a suite that silently unsets them changes the machine
+  // it ran on.
+  restoreEnv("MCPJAM_RUNTIME_ROOT", savedRuntimeRoot);
+  restoreEnv("MCPJAM_LOCAL_HARNESS_PACK_SOURCE", savedPackSource);
   vi.restoreAllMocks();
   await rm(base, { recursive: true, force: true });
 });
@@ -229,7 +242,10 @@ describe("installing a pack", () => {
       installRuntimePack({ harnessId: "claude-code" }),
       installRuntimePack({ harnessId: "claude-code" }),
     ]);
-    expect(a).toEqual(b);
+    // `toBe`, not `toEqual`: two separate extractions would produce two
+    // structurally equal results and pass, which is the exact failure this
+    // test exists to detect. One object means one install.
+    expect(a).toBe(b);
     expect(a.state).toBe("ready");
   });
 
@@ -258,10 +274,20 @@ describe("installing a pack", () => {
     }
   });
 
-  it("refuses an archive carrying a symlink", async () => {
-    // Extraction is where a link would do its damage, so it is filtered out
-    // there rather than written and then caught by the digest. The install
-    // still fails, because the tree that lands no longer hashes correctly.
+  it("strips a symlink during extraction and still installs", async () => {
+    // Named for what actually happens. Extraction is where a link would do
+    // its damage, so it is filtered out THERE rather than written and then
+    // caught by the digest — and because the fixture adds the link after
+    // taking its digest, the tree that lands still hashes correctly and the
+    // install completes without it.
+    //
+    // There is deliberately no sibling test for a link present BEFORE the
+    // digest: `computeTreeDigest` refuses to hash a tree containing one at
+    // all (asserted in `runtime-identity.test.ts`), so such a pack cannot be
+    // built, and an archive carrying one still cannot produce a matching tree
+    // because the extractor drops it — which the digest-mismatch test above
+    // already covers. Two independent refusals, neither of which this fixture
+    // can express.
     const linkDir = join(base, "linked");
     const linked = await buildFixturePack(linkDir, { withSymlink: true });
     const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;

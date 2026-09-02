@@ -272,14 +272,21 @@ describe("a fully authorized turn", () => {
       join(runtimeRoot, "claude-code", "bridge.mjs"),
       "console.log(2)",
     );
-    const result = await query({ grantToken: token });
-    expect(result.available).toBe(false);
-    expect(result).toMatchObject({ status: "runtime-unavailable" });
-    await writeFile(
-      join(runtimeRoot, "claude-code", "bridge.mjs"),
-      "console.log(1)",
-    );
-    clearRuntimeVerificationCache();
+    try {
+      const result = await query({ grantToken: token });
+      expect(result.available).toBe(false);
+      expect(result).toMatchObject({ status: "runtime-unavailable" });
+    } finally {
+      // In a `finally`, because this test TAMPERS with a bundle every later
+      // test in the file resolves against. A failed assertion used to leave
+      // `bridge.mjs` rewritten and the process-global cache primed, so the
+      // rest of the suite failed for a reason that had nothing to do with it.
+      await writeFile(
+        join(runtimeRoot, "claude-code", "bridge.mjs"),
+        "console.log(1)",
+      );
+      clearRuntimeVerificationCache();
+    }
   });
 
   it("catches a bundle that changes AFTER this process verified it", async () => {

@@ -181,11 +181,25 @@ jobs:
       # thing it exists to demonstrate, whatever its scenarios printed.
       - name: No supervised process survived the run
         if: always()
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
         run: |
           set -euo pipefail
-          survivors="$(pgrep -f 'launcher.mjs|bridge.mjs' || true)"
+          # Matched on the PACK PATH, not on `launcher.mjs|bridge.mjs`.
+          # `pgrep -f` matches the full command line, so a bare script name
+          # also matches the shell running this very check — a red job with no
+          # survivor, which is the worst kind of failing check because nobody
+          # can reproduce it. Only a real supervised process has the pack root
+          # as its argv[0], and this shell is excluded explicitly on top.
+          survivors=""
+          for pid in $(pgrep -f "$CONFORMANCE_ROOT/runtime/claude-code/" || true); do
+            case "$pid" in "$$" | "$PPID") continue ;; esac
+            cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+            case "$cmd" in "" | *pgrep*) continue ;; esac
+            survivors="$survivors $pid"
+          done
           if [ -n "$survivors" ]; then
-            echo "supervised processes survived the conformance run: $survivors" >&2
+            echo "supervised processes survived the conformance run:$survivors" >&2
             ps -o pid=,command= -p $survivors || true
             exit 1
           fi
