@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { attributeToServer } from "../server-error-copy";
+import {
+  attributeToServer,
+  splitServerAttribution,
+} from "../server-error-copy";
 
 const PIN_FAILURE =
   'MCP server "champions" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.';
@@ -41,5 +44,46 @@ describe("attributeToServer", () => {
     expect(attributeToServer("alpha", "  Connection refused  ")).toBe(
       "alpha: Connection refused",
     );
+  });
+});
+
+describe("splitServerAttribution", () => {
+  it("gives the toast a title and a description instead of a colon splice", () => {
+    // "champions: Connection refused" put the server and the failure in one
+    // run-on line, with the error icon aligned against the middle of it.
+    expect(splitServerAttribution("champions", "Connection refused")).toEqual({
+      title: "champions",
+      description: "Connection refused",
+    });
+  });
+
+  it("leaves a message that already names the server on one line", () => {
+    // Splitting here would print the name twice: once as the title, once
+    // inside the sentence.
+    expect(splitServerAttribution("champions", PIN_FAILURE)).toEqual({
+      title: PIN_FAILURE,
+    });
+  });
+
+  it("degrades quietly with no server name", () => {
+    expect(splitServerAttribution("", "Connection refused")).toEqual({
+      title: "Connection refused",
+    });
+  });
+
+  it("trims both halves", () => {
+    expect(splitServerAttribution("alpha", "  Connection refused  ")).toEqual({
+      title: "alpha",
+      description: "Connection refused",
+    });
+  });
+
+  it("splits exactly what attributeToServer joins", () => {
+    // The toast shows the split form; Copy writes the joined one. They must
+    // describe the same failure.
+    const split = splitServerAttribution("alpha", "Connection refused");
+    expect(
+      split.description ? `${split.title}: ${split.description}` : split.title,
+    ).toBe(attributeToServer("alpha", "Connection refused"));
   });
 });

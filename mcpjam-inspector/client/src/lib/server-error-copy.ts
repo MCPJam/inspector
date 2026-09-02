@@ -12,15 +12,28 @@
  * does not already carry the name. Callers that build their own sentence
  * around the server ("Failed to connect to X: …") do not need this.
  */
-export function attributeToServer(
+export function attributeToServer(serverName: string, message: string): string {
+  const { title, description } = splitServerAttribution(serverName, message);
+  return description ? `${title}: ${description}` : title;
+}
+
+/**
+ * The same attribution, as the two fields a toast renders: the server name as
+ * the title, the failure as the description. Sonner aligns its icon to the
+ * title and mutes the description, which one colon-spliced line cannot do.
+ *
+ * Returns a title alone whenever prefixing would stutter, so the caller shows
+ * the message as it stands.
+ */
+export function splitServerAttribution(
   serverName: string,
   message: string,
-): string {
+): { title: string; description?: string } {
   const trimmed = message.trim();
-  if (!serverName) return trimmed;
+  if (!serverName) return { title: trimmed };
   // Substring, not an exact quoted form: the SDK quotes it
   // (`MCP server "champions"`) while other messages may not, and either way
   // the name is already on screen.
-  if (trimmed.includes(serverName)) return trimmed;
-  return `${serverName}: ${trimmed}`;
+  if (trimmed.includes(serverName)) return { title: trimmed };
+  return { title: serverName, description: trimmed };
 }

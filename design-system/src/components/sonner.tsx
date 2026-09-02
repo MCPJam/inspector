@@ -27,7 +27,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
   const theme = useSyncExternalStore(
     subscribeToDocumentTheme,
     getDocumentTheme,
-    () => "light" as const
+    () => "light" as const,
   );
 
   return (
@@ -49,23 +49,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
           // `flex-wrap` so an action can take a line of its own instead of
           // squeezing the message into a narrow column beside it.
           toast: "group/toast flex-wrap",
-          content: "max-h-[50vh] overflow-y-auto",
-          // Error actions sit BELOW the text. Sonner's default puts the button
-          // in the same row, which works for a short confirmation but not
-          // here: an error toast's message is a sentence or two, and the row
-          // layout squeezes it while leaving the one actionable control
-          // competing with the close button in the corner. `basis-full` forces
-          // its own line (the container wraps, above).
-          //
-          // Scoped to `data-type="error"` through the toast's own
-          // `group/toast`, so short action toasts elsewhere keep the compact
-          // inline button they were designed around.
-          actionButton: [
-            "group-data-[type=error]/toast:mt-2",
-            "group-data-[type=error]/toast:ml-0",
-            "group-data-[type=error]/toast:basis-full",
-            "group-data-[type=error]/toast:justify-center",
-          ].join(" "),
+          // `grow` pushes the action to the trailing edge of the row. Together
+          // with wrapping and sonner's own `flex-shrink: 0` on the button, the
+          // label decides the layout: a short one ("Copy") rides the title
+          // row, and a sentence-long CTA ("Change protocol version") no longer
+          // fits beside the message and drops to its own line on its own.
+          content: "max-h-[50vh] overflow-y-auto grow",
           ...props.toastOptions?.classNames,
         },
       }}
