@@ -37,6 +37,7 @@ so results respect the caller's project access.
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
 | `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
 | `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
+| `cancel_project_server_connection` | Cancel a pending connection request, releasing the concurrent-connection slot it holds. | — |
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
@@ -78,6 +79,8 @@ so results respect the caller's project access.
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
+| `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
+| `list_eval_suite_stage_analytics` | List a suite's chain funnels newest-first, one document per run — a trend series, never an aggregate. Partition on the parity fields before claiming a trend; runs that do not share them are separate observations. | — |
 | `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
 | `get_eval_gate_waiver` | Read the audited override in force over an eval run's release gate — who granted it, why, and until when — or null. Available to anyone who can view the run. | — |
 | `list_eval_run_iterations` | List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. | ✅ |
@@ -110,6 +113,9 @@ so results respect the caller's project access.
 | `create_persona` | Create a reusable synthetic character for Swarms to run as. | — |
 | `update_persona` | Edit a persona's name, role or notes. Finished runs keep the persona they ran as. | — |
 | `delete_persona` | Remove a persona from the roster. Soft: history keeps resolving it. | — |
+| `list_secrets` | List the project's credentials as metadata only — name, delivery mode, host binding, sharing. No value is ever returned. | — |
+| `get_secret` | One secret's metadata: how it is delivered, where it is bound, when it was last handed to a run. Never its value. | — |
+| `delete_secret` | Delete a stored credential. Hard: the row and the encrypted value both go, and delivery stops. Does not revoke the key at its provider. | — |
 | `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; spends. | — |
 | `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
 | `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |

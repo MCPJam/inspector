@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkHarnessRuntimeAvailable,
+  harnessModelEligibleForRuntime,
   harnessToolApprovalRefusalReason,
 } from "../harness-availability";
+import { registeredHarnessIds } from "../registry";
 import { getHarnessAdapter, type HarnessId } from "../registry";
 
 // The capability-driven preflight that lets the chat-v2 routes fail closed with a
@@ -40,7 +42,7 @@ function setFullyAvailable() {
 
 /** Default args: a fully-runnable harness host (no approval, no servers, eligible). */
 function args(
-  overrides: Partial<Parameters<typeof checkHarnessRuntimeAvailable>[0]> = {}
+  overrides: Partial<Parameters<typeof checkHarnessRuntimeAvailable>[0]> = {},
 ) {
   return {
     harnessId: "claude-code" as HarnessId,
@@ -64,10 +66,10 @@ describe("checkHarnessRuntimeAvailable", () => {
       setFullyAvailable();
       expect(
         checkHarnessRuntimeAvailable(
-          args({ harnessId, model: { id: modelId } })
-        )
+          args({ harnessId, model: { id: modelId } }),
+        ),
       ).toEqual({ ok: true });
-    }
+    },
   );
 
   // The harness reaches MCP servers through the signed-proxy route, whose
@@ -99,7 +101,7 @@ describe("checkHarnessRuntimeAvailable", () => {
     setFullyAvailable();
     // MCPJam-provided but not Codex-mappable ⇒ rejected, not silently defaulted.
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", model: { id: "anthropic/claude-haiku-4.5" } })
+      args({ harnessId: "codex", model: { id: "anthropic/claude-haiku-4.5" } }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/can't run this host's model/);
@@ -123,26 +125,27 @@ describe("checkHarnessRuntimeAvailable", () => {
   // it declares no MCP-tool approval. `kind` is asserted alongside the copy on
   // purpose: eval admission branches on the kind, so a copy edit must not be
   // what decides whether this stays a refusal.
-  it("still blocks an approval host WITH selected MCP servers (no MCP approval knob)", () => {
+  // Was a refusal: Claude Code was believed unable to pause on MCP-server
+  // tools. The adapter bridge's `canUseTool` gates them under "allow-reads",
+  // so the whole combination is admissible now. The gate that would still
+  // refuse a native harness without that capability is covered in
+  // `harnessToolApprovalRefusalReason` below.
+  it("admits an approval host WITH selected MCP servers on Claude Code", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
       args({
         harnessId: "claude-code",
         requireToolApproval: true,
         hasSelectedMcpServers: true,
-      })
+      }),
     );
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.kind).toBe("tool-approval");
-      expect(r.reason).toMatch(/MCP-server tools/);
-    }
+    expect(r.ok).toBe(true);
   });
 
   it("still blocks an approval host on Codex (no native approval)", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", requireToolApproval: true })
+      args({ harnessId: "codex", requireToolApproval: true }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/tool approval/);
@@ -168,8 +171,8 @@ describe("checkHarnessRuntimeAvailable", () => {
           harnessId: "codex",
           hasSelectedMcpServers: true,
           model: { id: "openai/gpt-5-nano", provider: "openai" },
-        })
-      )
+        }),
+      ),
     ).toEqual({ ok: true });
   });
 
@@ -184,7 +187,7 @@ describe("checkHarnessRuntimeAvailable", () => {
         hasSelectedMcpServers: true,
         requireToolApproval: true,
         model: { id: "openai/gpt-5-nano", provider: "openai" },
-      })
+      }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.kind).toBe("tool-approval");
@@ -194,15 +197,15 @@ describe("checkHarnessRuntimeAvailable", () => {
     setFullyAvailable();
     expect(
       checkHarnessRuntimeAvailable(
-        args({ harnessId: "claude-code", hasSelectedMcpServers: true })
-      )
+        args({ harnessId: "claude-code", hasSelectedMcpServers: true }),
+      ),
     ).toEqual({ ok: true });
   });
 
   it("fails closed when the model isn't harness-eligible (no silent emulated)", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ model: { id: "acme/private-llm", provider: "custom" } })
+      args({ model: { id: "acme/private-llm", provider: "custom" } }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/MCPJam-provided models/);
@@ -220,8 +223,8 @@ describe("checkHarnessRuntimeAvailable", () => {
         args({
           harnessId: "codex",
           model: { id: "gpt-5-nano", provider: "openai" },
-        })
-      )
+        }),
+      ),
     ).toEqual({ ok: true });
   });
 
@@ -243,8 +246,168 @@ describe("checkHarnessRuntimeAvailable", () => {
       if (mode === "unset") delete process.env.MCPJAM_HARNESS_BROKER_DELIVERY;
       else process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "true";
       expect(checkHarnessRuntimeAvailable(args())).toEqual({ ok: true });
-    }
+    },
   );
+
+  describe("external-account harnesses skip the model + broker gates", () => {
+    // Three checks below are about a credential MCPJam supplies and a model
+    // MCPJam hosts. An external-account runtime has neither: Cursor
+    // authenticates on the customer's own Cursor account and its adapter
+    // passes NO model, so Cursor Auto picks one. Applying the brokered rules
+    // would refuse every Cursor host — its own seeded model is the
+    // deliberately-not-hosted `cursor/auto` sentinel.
+    const cursorArgs = () =>
+      args({
+        harnessId: "cursor" as HarnessId,
+        model: { id: "cursor/auto", provider: "cursor" },
+      });
+
+    it("is available on a model MCPJam does not host", () => {
+      setFullyAvailable();
+      expect(checkHarnessRuntimeAvailable(cursorArgs())).toEqual({ ok: true });
+    });
+
+    it("stays available with broker delivery killed (it has no broker)", () => {
+      setFullyAvailable();
+      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      expect(checkHarnessRuntimeAvailable(cursorArgs())).toEqual({ ok: true });
+      // …while the brokered harness beside it is still refused, so this is a
+      // targeted exemption and not a hole in the kill switch.
+      const brokered = checkHarnessRuntimeAvailable(args());
+      expect(brokered.ok).toBe(false);
+    });
+
+    it("still enforces the gates that DO apply to it", () => {
+      setFullyAvailable();
+      // Data plane: the CLI runs inside a computer, so this one is real.
+      delete process.env.E2B_API_KEY;
+      const noDataPlane = checkHarnessRuntimeAvailable(cursorArgs());
+      expect(noDataPlane.ok).toBe(false);
+      if (!noDataPlane.ok)
+        expect(noDataPlane.kind).toBe("computers-unconfigured");
+
+      setFullyAvailable();
+      // Approval: `supportsMcpToolApproval` is false pending a live check, so
+      // an approval host WITH servers is refused rather than run with some MCP
+      // calls unapproved.
+      const approvalWithServers = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "cursor" as HarnessId,
+          model: { id: "cursor/auto", provider: "cursor" },
+          requireToolApproval: true,
+          hasSelectedMcpServers: true,
+        }),
+      );
+      expect(approvalWithServers.ok).toBe(false);
+      if (!approvalWithServers.ok)
+        expect(approvalWithServers.kind).toBe("tool-approval");
+
+      // …but approval WITHOUT servers is fine: the native surface does pause.
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "cursor" as HarnessId,
+            model: { id: "cursor/auto", provider: "cursor" },
+            requireToolApproval: true,
+            hasSelectedMcpServers: false,
+          }),
+        ),
+      ).toEqual({ ok: true });
+    });
+
+    it("does not exempt a BROKERED harness from the model gate", () => {
+      // The exemption is keyed on `modelAccess`, not on "harness runs a CLI".
+      setFullyAvailable();
+      const r = checkHarnessRuntimeAvailable(
+        args({ model: { id: "cursor/auto", provider: "cursor" } }),
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.kind).toBe("model-not-hosted");
+    });
+  });
+});
+
+/**
+ * The DISPATCH gate, which decides whether a turn runs on the real runtime or
+ * silently falls back to the emulated engine.
+ *
+ * This must agree with the pre-flight above for every adapter. When they
+ * disagree the product does not error — it approves the turn, runs a different
+ * engine, and reports the harness's name over it. A wrong answer attributed to
+ * the wrong runtime is worse than a failure, which is why this is asserted
+ * against the pre-flight rather than on its own.
+ */
+describe("harnessModelEligibleForRuntime", () => {
+  it("agrees with the pre-flight for every registered adapter", () => {
+    setFullyAvailable();
+    const cases: Array<{ modelId: string; provider: string }> = [
+      { modelId: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+      { modelId: "openai/gpt-5-nano", provider: "openai" },
+      // The external-account sentinel: deliberately NOT an MCPJam-hosted model.
+      { modelId: "cursor/auto", provider: "cursor" },
+      // Hosted, but not every runtime can run it.
+      { modelId: "anthropic/claude-sonnet-4.5", provider: "anthropic" },
+    ];
+    for (const id of registeredHarnessIds()) {
+      const adapter = getHarnessAdapter(id);
+      for (const model of cases) {
+        const eligible = harnessModelEligibleForRuntime({
+          adapter,
+          modelId: model.modelId,
+          provider: model.provider,
+        });
+        const preflight = checkHarnessRuntimeAvailable(
+          args({
+            harnessId: id,
+            model: { id: model.modelId, provider: model.provider },
+          }),
+        );
+        // The pre-flight can refuse for reasons this helper does not model
+        // (approval, data plane); restrict the comparison to the MODEL kinds.
+        const preflightModelRefusal =
+          !preflight.ok &&
+          (preflight.kind === "model-not-hosted" ||
+            preflight.kind === "model-unsupported");
+        expect(eligible, `${id} / ${model.modelId}`).toBe(
+          !preflightModelRefusal,
+        );
+      }
+    }
+  });
+
+  it("lets an external-account harness run its non-hosted sentinel model", () => {
+    // The regression that made the whole feature inert: `cursor/auto` fails the
+    // hosted-model check, so the dispatch ran the emulated engine and called it
+    // Cursor.
+    expect(
+      harnessModelEligibleForRuntime({
+        adapter: getHarnessAdapter("cursor"),
+        modelId: "cursor/auto",
+        provider: "cursor",
+      }),
+    ).toBe(true);
+  });
+
+  it("still refuses a non-hosted model for a BROKERED harness", () => {
+    // The exemption is keyed on `modelAccess`, not on "harness".
+    expect(
+      harnessModelEligibleForRuntime({
+        adapter: getHarnessAdapter("claude-code"),
+        modelId: "cursor/auto",
+        provider: "cursor",
+      }),
+    ).toBe(false);
+  });
+
+  it("still refuses a hosted model the runtime cannot run", () => {
+    expect(
+      harnessModelEligibleForRuntime({
+        adapter: getHarnessAdapter("codex"),
+        modelId: "anthropic/claude-haiku-4.5",
+        provider: "anthropic",
+      }),
+    ).toBe(false);
+  });
 });
 
 /**
@@ -270,9 +433,9 @@ describe("harnessToolApprovalRefusalReason", () => {
           adapter: getHarnessAdapter(harnessId),
           requireToolApproval: false,
           hasSelectedMcpServers,
-        })
+        }),
       ).toBeUndefined();
-    }
+    },
   );
 
   // The gap this closes: Codex's NATIVE tools can't pause either, and its
@@ -285,7 +448,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         adapter: codex,
         requireToolApproval: true,
         hasSelectedMcpServers: false,
-      })
+      }),
     ).toMatch(/doesn't support interactive tool approval/);
   });
 
@@ -295,37 +458,65 @@ describe("harnessToolApprovalRefusalReason", () => {
         adapter: codex,
         requireToolApproval: true,
         hasSelectedMcpServers: true,
-      })
+      }),
     ).toBeDefined();
   });
 
   // Claude Code pauses on its own native tools (WS3), so approval alone is
-  // fine — but it declares no MCP-tool approval, so attaching a server makes
-  // the combination unsound. This is the NATIVE arm of the delivery split.
+  // fine.
   it("allows Claude Code under approval with no servers", () => {
     expect(
       harnessToolApprovalRefusalReason({
         adapter: claudeCode,
         requireToolApproval: true,
         hasSelectedMcpServers: false,
-      })
+      }),
     ).toBeUndefined();
   });
 
-  it("refuses Claude Code under approval once a server is attached", () => {
+  // It now pauses on its MCP tools too (the bridge's `canUseTool` under
+  // "allow-reads"), so attaching a server no longer makes the combination
+  // unsound. This used to be the refusal case.
+  it("allows Claude Code under approval once a server is attached", () => {
     expect(claudeCode.mcpDelivery).toBe("native");
+    expect(claudeCode.supportsMcpToolApproval).toBe(true);
     expect(
       harnessToolApprovalRefusalReason({
         adapter: claudeCode,
         requireToolApproval: true,
         hasSelectedMcpServers: true,
-      })
+      }),
+    ).toBeUndefined();
+  });
+
+  // The gate itself must still bite. Claude Code satisfying it is a fact about
+  // the adapter, not a reason to stop checking: a NATIVE-delivery harness that
+  // cannot pause on MCP tools is still refused the moment a server is attached.
+  it("still refuses a native harness that can't approve its MCP tools", () => {
+    const noMcpApproval = {
+      ...claudeCode,
+      supportsMcpToolApproval: false,
+    } as typeof claudeCode;
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: noMcpApproval,
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      }),
     ).toMatch(/MCP-server tools/);
+    // …and only once a server is actually attached.
+    expect(
+      harnessToolApprovalRefusalReason({
+        adapter: noMcpApproval,
+        requireToolApproval: true,
+        hasSelectedMcpServers: false,
+      }),
+    ).toBeUndefined();
   });
 
   // The bypass the delivery split exists to prevent: Codex's MCP tools are
-  // host-executed, so reading `supportsMcpToolApproval` (false for BOTH
-  // adapters, and irrelevant here) would have looked like the right check.
+  // host-executed, so reading `supportsMcpToolApproval` (irrelevant here, and
+  // now TRUE on the other adapter) would have looked like the right check.
   it("reads the capability for the surface each adapter's MCP tools run on", () => {
     expect(codex.mcpDelivery).toBe("host-executed");
     expect(codex.supportsHostExecutedToolApproval).toBe(false);
@@ -342,7 +533,7 @@ describe("harnessToolApprovalRefusalReason", () => {
         adapter: stillApproves,
         requireToolApproval: true,
         hasSelectedMcpServers: true,
-      })
+      }),
     ).toBeUndefined();
   });
 });

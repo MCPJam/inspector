@@ -13,6 +13,20 @@
  */
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
+import type { HarnessId } from "./registry.js";
+/**
+ * Every registered harness id — reserve/renew/release are taken by EVERY
+ * harness, brokered or not: an external-account harness still runs its CLI in
+ * the customer's box, so it claims that box for the span of a turn's
+ * preparation exactly like a brokered one does.
+ *
+ * `startHarnessModelBroker` is typed the same but must never be REACHED for an
+ * external-account harness. Three things stop it, and none of them is this
+ * type: `runHarnessTurn` branches on the adapter's `modelAccess` and skips the
+ * start entirely, `buildBrokerDummyAuth` throws if anything asks it for
+ * credentials that do not exist, and the backend's `/model-broker/start`
+ * refuses the request outright.
+ */
 
 export type HarnessBrokerStartResult =
   | {
@@ -88,7 +102,7 @@ function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
 
 export async function startHarnessModelBroker(args: {
   box: HarnessBrokerBox;
-  harnessId: "claude-code" | "codex";
+  harnessId: HarnessId;
   modelId: string;
   runId?: string;
   maxOutputTokens?: number;
@@ -254,7 +268,7 @@ export type HarnessBoxReservationResult =
  */
 export async function reserveHarnessBox(args: {
   box: HarnessBrokerBox;
-  harnessId: "claude-code" | "codex";
+  harnessId: HarnessId;
   modelId: string;
   runId: string;
   bearer: string;
@@ -325,7 +339,7 @@ export async function reserveHarnessBox(args: {
 /** Renew the preparation claim before its crash-recovery TTL elapses. */
 export async function renewHarnessBoxReservation(args: {
   box: HarnessBrokerBox;
-  harnessId: "claude-code" | "codex";
+  harnessId: HarnessId;
   modelId: string;
   runId: string;
   bearer: string;
@@ -384,7 +398,7 @@ export async function renewHarnessBoxReservation(args: {
  */
 export async function releaseHarnessBoxReservation(args: {
   box: HarnessBrokerBox;
-  harnessId: "claude-code" | "codex";
+  harnessId: HarnessId;
   modelId: string;
   runId: string;
   bearer: string;
