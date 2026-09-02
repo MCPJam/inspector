@@ -208,6 +208,50 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Suite is scoped to the organization (no project) | Pre-flight error — the harness provisions and bills the computer against a project; move the suite into a project and retry. |
 | A case pins a short model id (e.g. `claude-sonnet-4-6` instead of `anthropic/claude-sonnet-4-6`) | Pre-flight error naming both spellings — re-save the case with the full canonical id. |
 
+## Driving a harness from the API or CLI
+
+Harness hosts can be driven programmatically — not just from the Playground — using `POST /v1/chat-sessions/messages` or `mcpjam cloud sessions send --client <hostId>`.
+
+Pass the client's ID as `hostId` in the API body or `--client` on the CLI. The server re-fetches the client's config and selects the engine from it; `harness` and `computer` are never read from the request. Every response includes an `engine` field (`emulated` or `harness:<id>`) naming what actually ran.
+
+**Key differences from the Playground:**
+
+- `hostId` / `--client` is **per-turn**, not pinned to the session. Re-send it on every turn. A session started with `--client` alone refuses a continuation that omits it (`HOST_TARGET_REQUIRED`) rather than falling back to the emulated engine.
+- Targeting an **environment** that pins a harness client is the durable alternative: `environmentId` is a resume pin, so the environment re-resolves its client on every turn including continuations.
+- A harness turn requires `toolMode: "auto"` with no `allowedTools` or `maxToolCalls`. The harness builds its own tool set inside the sandbox, so per-turn tool narrowing cannot be applied.
+- Tool approval (`requireToolApproval`) is not supported on this surface — a synchronous API turn has no approval channel. A client with `requireToolApproval: true` is refused before the turn starts.
+- An unavailable harness runtime is refused **before any spend** with `422 HARNESS_UNAVAILABLE` and a machine-readable `details.kind` naming the rule that refused.
+
+```bash
+# Start a session on a Claude Code client
+mcpjam cloud sessions send \
+  --project my-project \
+  --model anthropic/claude-sonnet-5 \
+  --client host_claude_code_id \
+  --tool-mode auto \
+  --idempotency-key k1 \
+  --message "Write a hello-world script"
+
+# Continue it — re-send --client on every turn
+mcpjam cloud sessions send \
+  --session cs_abc123 \
+  --client host_claude_code_id \
+  --idempotency-key k2 \
+  --message "Now add error handling"
+```
+
+Or target an environment that pins the harness client — no `--client` needed on continuations:
+
+```bash
+mcpjam cloud sessions send \
+  --project my-project \
+  --model anthropic/claude-sonnet-5 \
+  --environment env_staging \
+  --tool-mode auto \
+  --idempotency-key k1 \
+  --message "Write a hello-world script"
+```
+
 ## Related
 
 - [Computer](/inspector/computer) — Manage your project's Computer, sandbox images, and lifecycle.
