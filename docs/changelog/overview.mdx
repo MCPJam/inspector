@@ -15,6 +15,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 - **GPT-5.6 models available with your own OpenAI key** — `gpt-5.6-luna`, `gpt-5.6-sol`, and `gpt-5.6-terra` are now selectable in the model picker under **Your providers → OpenAI** when you have an OpenAI API key configured. Each model has a 1,050,000-token context window. These models were already available in the free hosted catalog; this change makes them reachable for BYOK users as well.
 
+- **Swarms Findings tab** — The Findings tab is now the default landing tab when you open a swarm run. It leads with a persona-journey narrative so the most actionable signal is visible first. The live session-count strip no longer contradicts itself mid-run, and a running swarm keeps its thread open rather than closing it.
+
+- **Local Claude Code** — The Claude Code harness host can now run the real agent natively on your own machine in the desktop app and `npx @mcpjam/inspector`. The agent works on your actual checkout with your own files. See [Harness hosts: Claude Code, Codex, and Cursor](/inspector/claude-code-host) for setup details.
+
+- **Codex over app-server** — The Codex harness now routes through a transport that supports pausing a run, enabling tool-approval flows and cleaner mid-run cancellation.
+
+- **WebMCP viewport** — The WebMCP widget viewport renders sharply at rest, reports honest geometry to widgets, and handles slow-link streams without stalling.
+
+- **Model brand logos** — Brand logos for 11 catalog providers are now shown in the model picker and host-compat surfaces. The `spacexai` provider entry is wired to xAI.
+
 ### 2026-08-31
 
 #### Changed
