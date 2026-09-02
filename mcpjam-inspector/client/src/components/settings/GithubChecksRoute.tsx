@@ -754,8 +754,7 @@ export function GithubChecksRoute({
         Connect a repository to run an eval suite as a GitHub check on every
         pull request. The check runs the suite you pick here against the PR's
         preview server. Conformance is a second, opt-in check on the same build
-        — existing repositories stay eval-only until you turn it on. head commit
-        and reports back as a status check.
+        — existing repositories stay eval-only until you turn it on.
       </p>
 
       <SettingsSection title="GitHub accounts">
@@ -898,7 +897,8 @@ export function GithubChecksRoute({
                     className="text-xs text-muted-foreground"
                   >
                     MCPJam posts one comment per pull request and updates it in
-                    place. Turning this off leaves only the check run.
+                    place. Turning this off stops the comments and changes
+                    nothing else.
                   </span>
                   {row.outagePolicy === undefined ? (
                     /* Not the same statement as "fail open": the backend does

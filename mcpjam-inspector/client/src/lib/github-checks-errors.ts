@@ -147,9 +147,14 @@ export const GITHUB_BINDING_FAILED_MESSAGE =
  * BOTH DIRECTIONS SAY WHAT SURVIVES. Turning comments off is the one setting on
  * this page an admin is most likely to reach for while worried about what
  * MCPJam is writing on other people's pull requests, and the useful half of the
- * answer is the half about the check: it keeps running and keeps reporting.
- * Saying only "comments off" leaves somebody to guess whether they have just
- * silenced the check itself.
+ * answer is the half about the check. Saying only "comments off" leaves
+ * somebody to guess whether they have just silenced the check itself.
+ *
+ * Phrased as what the SETTING does rather than as what the check is doing,
+ * deliberately. This toggle is independent of the per-repository enable
+ * switch, so the toast is reachable on a repository whose checks are paused —
+ * and "the check still runs" would then be a confident, false statement about
+ * a different control.
  *
  * No merge promise, in either sentence. MCPJam decides what a check CONCLUDES;
  * whether a conclusion stops a merge is branch protection's answer, in a
@@ -157,7 +162,7 @@ export const GITHUB_BINDING_FAILED_MESSAGE =
  */
 export const GITHUB_FEEDBACK_COMMENTS_COPY = {
   on: "MCPJam will comment on pull requests in this repository.",
-  off: "MCPJam will stop commenting on pull requests in this repository. The check still runs and still reports.",
+  off: "MCPJam will stop commenting on pull requests in this repository. This setting does not change whether the check itself runs.",
 } as const satisfies Record<GithubCheckFeedbackComments, string>;
 
 /**

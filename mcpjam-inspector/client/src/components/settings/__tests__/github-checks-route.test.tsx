@@ -851,12 +851,16 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     expect(
       screen.getByText(
-        /MCPJam posts one comment per pull request and updates it in place\. Turning this off leaves only the check run\./
+        /MCPJam posts one comment per pull request and updates it in place\. Turning this off stops the comments and changes nothing else\./
       )
     ).toBeInTheDocument();
   });
 
-  it("announces what changed, naming the check as unaffected", async () => {
+  it("announces what changed, without claiming the check is running", async () => {
+    // This toggle is independent of the per-repository enable switch, so the
+    // toast is reachable on a repository whose checks are paused. Copy that
+    // said "the check still runs" would then be a confident, false statement
+    // about a control this one does not touch.
     mockRepos.value = [ROW];
     renderRoute();
 
@@ -864,7 +868,7 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
-        "MCPJam will stop commenting on pull requests in this repository. The check still runs and still reports."
+        "MCPJam will stop commenting on pull requests in this repository. This setting does not change whether the check itself runs."
       )
     );
   });
