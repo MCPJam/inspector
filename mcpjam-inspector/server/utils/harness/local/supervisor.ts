@@ -31,8 +31,13 @@ import { isAbsolute } from "node:path";
 import { logger } from "../../logger.js";
 import { assertArgvAllowed } from "./argv-policy.js";
 import {
+  listGroupMembers,
+  probeProcess,
+  probeProcessGroup,
+  readProcessGroupId,
   readProcessBirthIdentity,
   supportsOwnershipProof,
+  terminateOwnedProcess,
   terminateOwnedProcessGroup,
   type ProcessBirthIdentity,
 } from "./process-identity.js";
@@ -95,6 +100,16 @@ export interface SupervisedProcessHandle {
 
 export class SupervisorError extends Error {}
 
+/**
+ * How long a stop waits for an already-dead root's `exit` event.
+ *
+ * Node delivers it on the next turns of the loop, so this is generous for what
+ * it covers and short enough to be invisible: it only ever elapses in full
+ * when the event is never coming, and the stop then proceeds exactly as it did
+ * before this existed.
+ */
+const EXIT_SNAPSHOT_GRACE_MS = 250;
+
 interface LiveProcess {
   child: ChildProcess;
   pid: number;
@@ -107,6 +122,17 @@ interface LiveProcess {
    * `stopSession` proves the whole group empty.
    */
   exited: boolean;
+  /**
+   * Members of the root's process group, enumerated with their birth
+   * identities at the instant the root exited — the one moment the group id
+   * provably still belongs to this tree. A later stop verifies and signals
+   * each of them individually, so a bridge that exits on its own no longer
+   * strands the vendor CLI it spawned.
+   */
+  orphanSnapshot: Promise<Array<{
+    pid: number;
+    identity: ProcessBirthIdentity;
+  }> | null> | null;
 }
 
 function bufferedStream(maxBytes: number): {
@@ -410,6 +436,20 @@ export class LocalHarnessSupervisor {
       });
       recordExit(-1);
     });
+    child.on("exit", () => {
+      // The group id is only provably ours while the root still owns it. The
+      // instant the root leaves, that anchor is gone — so the snapshot is
+      // taken here, synchronously with the exit, and not a moment later.
+      if (
+        request.role === "root" &&
+        entry !== undefined &&
+        entry.orphanSnapshot === null
+      ) {
+        entry.orphanSnapshot = listGroupMembers(entry.pid, this.platform).catch(
+          () => null,
+        );
+      }
+    });
     child.on("close", (code, signal) => {
       // A signalled exit reports 124 — the conventional timeout code — so a
       // caller reading only the exit code still sees a failure, not a clean 0.
@@ -433,6 +473,7 @@ export class LocalHarnessSupervisor {
       role: request.role,
       killed: false,
       exited: exitResult !== null,
+      orphanSnapshot: null,
     };
     bucket.add(entry);
     // Registered: it is counted by `bucket.size` from here, so the pending
@@ -634,6 +675,49 @@ export class LocalHarnessSupervisor {
    * the lifecycle contract's terminal paths all converge here so none of them
    * can forget a helper.
    */
+  /**
+   * Give an already-dead root's `exit` handler the moment it needs to run.
+   *
+   * Node delivers `exit` asynchronously. A stop that arrives between the
+   * kernel reaping the root and that delivery sees `orphanSnapshot === null`
+   * and no live root, so the group is unanchored and correctly refuses to be
+   * signalled — leaving descendants running and the session reported
+   * `unknown`. Safe, but the tree survives, which is what the snapshot exists
+   * to prevent.
+   *
+   * Bounded and best-effort: if the root is genuinely still alive, there is
+   * nothing to wait for and this returns at once; if the event never arrives,
+   * the stop proceeds exactly as it did before.
+   */
+  private async awaitPendingExitSnapshots(
+    bucket: Iterable<LiveProcess>,
+  ): Promise<void> {
+    const pending = [...bucket].filter(
+      (entry) =>
+        entry.role === "root" &&
+        entry.orphanSnapshot === null &&
+        entry.child.exitCode === null &&
+        entry.child.signalCode === null,
+    );
+    if (pending.length === 0) return;
+    const deadline = Date.now() + EXIT_SNAPSHOT_GRACE_MS;
+    while (Date.now() < deadline) {
+      const states = await Promise.all(
+        pending.map(async (entry) =>
+          entry.orphanSnapshot !== null
+            ? "settled"
+            : (await probeProcess(entry.pid, this.platform)).state,
+        ),
+      );
+      // Waiting only on a root the kernel says is GONE while its snapshot is
+      // still absent — that is the whole window. A root still running has an
+      // anchor and needs no snapshot; one that could not be probed is not
+      // going to be helped by waiting.
+      if (!states.includes("gone")) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   async stopSession(
     sessionId: string,
   ): Promise<{ stopped: boolean; escaped: number }> {
@@ -651,6 +735,15 @@ export class LocalHarnessSupervisor {
       // In parallel: each termination waits out its own grace period, and a
       // session with a root plus helpers should be bounded by ONE grace
       // period, not by one per process.
+      // Before signalling anything: a root that exited MOMENTS ago has not
+      // necessarily had its `exit` event delivered yet, and the snapshot is
+      // taken in that handler. Stopping into that window found no snapshot,
+      // could not anchor the group, and left the vendor CLI running — the
+      // exact defect the snapshot exists to close, just through a narrower
+      // door. Waiting for the event that is already on its way is enough; the
+      // snapshot must still be taken WHILE the root owns the group, so this
+      // does not take one here.
+      await this.awaitPendingExitSnapshots(bucket);
       const outcomes = await Promise.all(
         [...bucket].map(async (entry) => {
           if (entry.birthIdentity === null) {
@@ -686,7 +779,42 @@ export class LocalHarnessSupervisor {
       // `unknown`, `escaped`, and `not-owned` all retain their entry so an
       // operator or a later retry still has the handle; none authorizes a
       // successful stop.
-      for (const { entry, result } of outcomes) {
+      for (const { entry, result: initialResult } of outcomes) {
+        let result = initialResult;
+        // A group whose root has exited is UNANCHORED: its group id no longer
+        // belongs to a process whose identity we can check, so the group-wide
+        // terminate correctly refuses to signal it. That refusal used to end
+        // the story, and a 357 MB vendor CLI kept running after every abort.
+        //
+        // The snapshot taken at the root's exit is the missing anchor. Each
+        // member is re-verified against the birth identity recorded then, and
+        // signalled individually — so pid reuse in the meantime means a member
+        // is skipped, never that somebody else's process is killed.
+        if (result.outcome === "unknown" && entry.orphanSnapshot !== null) {
+          const members = (await entry.orphanSnapshot) ?? [];
+          const settled: Array<{ pid: number; outcome: string }> = [];
+          for (const member of members) {
+            settled.push({
+              pid: member.pid,
+              outcome: await terminateOwnedProcess({
+                pid: member.pid,
+                identity: member.identity,
+                graceMs: this.limits.terminationGraceMs,
+                platform: this.platform,
+              }),
+            });
+          }
+          const after = await probeProcessGroup(entry.pid, this.platform);
+          logger.debug("[local-harness] settled an unanchored process group", {
+            sessionId,
+            members: settled.length,
+            outcomes: settled.map((s) => s.outcome),
+            groupAfter: after,
+          });
+          // Only an EMPTY group counts. Anything else keeps the entry, and the
+          // session keeps reporting that it did not fully stop.
+          if (after === "empty") result = { outcome: "forced" };
+        }
         if (
           result.outcome === "already-gone" ||
           result.outcome === "graceful" ||
@@ -717,4 +845,47 @@ export class LocalHarnessSupervisor {
     if (!bucket) return 0;
     return [...bucket].filter((entry) => !entry.exited).length;
   }
+
+  /**
+   * Is `pid` a process this session started, or a descendant of one?
+   *
+   * The loopback model gateway asks this before serving a connection, so a
+   * process that learned the session capability — it reaches the child in its
+   * environment and is written to the bridge's start config — still cannot use
+   * it unless it is part of this tree.
+   *
+   * Descendants count, and are matched by process GROUP rather than by walking
+   * a parent chain: the vendor CLI is spawned by the bridge, not by us, so it
+   * is never in `live`, but the supervisor puts every root in its own group and
+   * the CLI inherits it. A platform that cannot report a group id answers
+   * `false` for the descendant half and the direct check still holds.
+   */
+  async ownsPid(sessionId: string, pid: number): Promise<boolean> {
+    const bucket = this.live.get(sessionId);
+    if (!bucket) return false;
+    const roots: number[] = [];
+    for (const entry of bucket) {
+      if (entry.exited) continue;
+      if (entry.pid === pid) return true;
+      if (entry.role === "root") roots.push(entry.pid);
+    }
+    if (roots.length === 0) return false;
+
+    const cached = this.pidGroups.get(pid);
+    if (cached !== undefined) return roots.includes(cached);
+    const pgid = await readProcessGroupId(pid, this.platform);
+    if (pgid === null) return false;
+    this.pidGroups.set(pid, pgid);
+    return roots.includes(pgid);
+  }
+
+  /**
+   * Process-group cache for `ownsPid`.
+   *
+   * A group id does not change for the life of a process, and the gateway asks
+   * this on the model hot path — so the probe runs once per pid rather than
+   * once per request. Bounded by pruning entries for pids the session no longer
+   * has, on stop.
+   */
+  private readonly pidGroups = new Map<number, number>();
 }

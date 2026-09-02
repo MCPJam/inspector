@@ -82,10 +82,15 @@ COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 # here by hand. `bundle:plugin-shim` emits the in-VM plugin shim as a TS const
 # that `services/plugins/computer-stdio.ts` imports at top level: without it the
 # server bundle does not resolve and the image fails to build.
+# `bundle:codex-appserver-bridge` is the same story for the Codex app-server
+# transport: its bridge and the MCP server Codex spawns are uploaded into a
+# sandbox and executed there, so nothing in the import graph reaches them and
+# `codex-appserver-bootstrap.ts` imports the generated const at top level.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
-    npm run bundle:plugin-shim -w @mcpjam/inspector
+    npm run bundle:plugin-shim -w @mcpjam/inspector && \
+    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the

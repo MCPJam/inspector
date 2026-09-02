@@ -19,9 +19,13 @@ import { WebSocket } from "ws";
 import {
   decodeWebMcpBinaryFrame,
   WEBMCP_FRAME_BOOST_INTERVAL_MS,
+  WEBMCP_FRAME_MAX_BYTES,
   WEBMCP_FRAME_MIN_INTERVAL_MS,
+  WEBMCP_SETTLE_QUIET_MS,
+  WEBMCP_STREAM_QUALITY_LADDER,
   type WebMcpBinaryFrame,
 } from "../shared/webmcp-inspector-protocol";
+import { readJpegDimensions } from "../shared/jpeg-dimensions";
 import { startWebMcpFixturePage } from "./fixtures/webmcp-frame-page";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:6274";
@@ -149,6 +153,136 @@ async function readSse(
     controller.abort();
   }
   return text;
+}
+
+/**
+ * Parse an SSE body into the events it carried.
+ *
+ * `readSse` hands back raw text because most assertions here are about what a
+ * stream does or does not contain. The governor's are about a VALUE that
+ * changes over time, and "the newest session event" is not something a
+ * substring can answer.
+ */
+function parseSseEvents(text: string): Array<Record<string, unknown>> {
+  const events: Array<Record<string, unknown>> = [];
+  for (const block of text.split("\n\n")) {
+    for (const line of block.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const parsed = JSON.parse(line.slice(6));
+        if (parsed && typeof parsed === "object") {
+          events.push(parsed as Record<string, unknown>);
+        }
+      } catch {
+        // A half-written chunk at the end of the read window.
+      }
+    }
+  }
+  return events;
+}
+
+/** The quality the newest session event reports, if any. */
+function latestStreamQuality(text: string): number | undefined {
+  const sessions = parseSseEvents(text).filter(
+    (event) => event.type === "session",
+  );
+  const newest = sessions.at(-1)?.session as
+    { streamQuality?: number } | undefined;
+  return newest?.streamQuality;
+}
+
+/**
+ * Invoke a page tool by NAME and hand back what it returned.
+ *
+ * The tool key is `${origin}::${name}`, but it is read off the session's own
+ * `tools` event rather than constructed here: the key is the runtime's to
+ * assign, and a test that rebuilt it would pass while the two disagreed.
+ */
+async function invokePageTool(
+  token: string,
+  sessionId: string,
+  name: string,
+): Promise<unknown> {
+  const tools = parseSseEvents(
+    await readSse(token, sessionId, "replay=200&frames=off", 1_500),
+  ).filter((event) => event.type === "tools");
+  const descriptors = (tools.at(-1)?.tools ?? []) as Array<{
+    toolKey: string;
+    name: string;
+  }>;
+  const tool = descriptors.find((entry) => entry.name === name);
+  expect(
+    tool,
+    `the fixture should register ${name}; saw ${descriptors
+      .map((entry) => entry.name)
+      .join(", ")}`,
+  ).toBeDefined();
+
+  await command(token, sessionId, {
+    type: "invoke_tool",
+    toolKey: tool!.toolKey,
+    input: {},
+    source: "manual",
+  });
+
+  // The result arrives on the TIMELINE rather than in the command's response:
+  // an invocation is asynchronous, and the settle entry is where it lands.
+  let output: unknown;
+  await expect
+    .poll(
+      async () => {
+        const settled = parseSseEvents(
+          await readSse(token, sessionId, "replay=200&frames=off", 1_000),
+        )
+          .filter((event) => event.type === "activity")
+          .map((event) => event.entry as { kind?: string; output?: unknown })
+          .filter((entry) => entry?.kind === "invocation_settled");
+        output = settled.at(-1)?.output;
+        return output !== undefined;
+      },
+      { message: `${name} should settle`, timeout: 20_000 },
+    )
+    .toBe(true);
+  return output;
+}
+
+/** The JSON a fixture tool put in its first text block. */
+function toolJson(output: unknown): Record<string, number> {
+  const text = (output as { content?: Array<{ text?: string }> })?.content?.[0]
+    ?.text;
+  expect(
+    text,
+    `tool output should carry a text block: ${JSON.stringify(output)}`,
+  ).toBeTruthy();
+  return JSON.parse(text!) as Record<string, number>;
+}
+
+/** Open a session, failing loudly with the server's own words if it refuses. */
+async function openSession(
+  token: string,
+  body: Record<string, unknown>,
+): Promise<{
+  sessionId: string;
+  viewportTransport?: { kind?: string; width?: number; height?: number };
+}> {
+  const created = await fetch(`${BASE}/api/mcp/webmcp/sessions`, {
+    method: "POST",
+    headers: authed(token, { "content-type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  const session = (await created.json()) as {
+    sessionId?: string;
+    viewportTransport?: { kind?: string; width?: number; height?: number };
+    error?: string;
+  };
+  expect(
+    created.status,
+    `session start failed: ${JSON.stringify(session)}`,
+  ).toBe(201);
+  return {
+    sessionId: session.sessionId!,
+    viewportTransport: session.viewportTransport,
+  };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -386,6 +520,262 @@ test.describe("WebMCP viewport frame stream", () => {
       expect(settledGap).toBeGreaterThan(WEBMCP_FRAME_MIN_INTERVAL_MS * 0.7);
       expect(settledGap).toBeGreaterThan(drivenGap * 1.5);
     } finally {
+      socket?.close();
+      if (sessionId) {
+        await fetch(`${BASE}/api/mcp/webmcp/sessions/${sessionId}`, {
+          method: "DELETE",
+          headers: authed(token),
+        }).catch(() => {});
+      }
+      await page.close();
+    }
+  });
+
+  test("sharpens the picture once the page stops painting", async () => {
+    // The whole chain for the settle still: a real screencast, a page that
+    // stops, a capture the server takes on its own, and the pane's transport
+    // carrying it. What the unit suites cannot show is that the still SURVIVES
+    // the round trip — Chromium answers every capture with a repaint of the
+    // same picture, and publishing that would undo the sharpening a tenth of a
+    // second later.
+    const page = await startWebMcpFixturePage({ variant: "static" });
+    const token = await sessionToken();
+    let sessionId: string | undefined;
+    let socket: ReturnType<typeof openFrameSocket> | undefined;
+
+    try {
+      const session = await openSession(token, {
+        url: page.url,
+        display: "in-app",
+      });
+      sessionId = session.sessionId;
+      socket = openFrameSocket(token, sessionId);
+      await socket.opened;
+      await command(token, sessionId, {
+        type: "set_screencast",
+        enabled: true,
+      });
+
+      await expect
+        .poll(() => socket!.frames.length, { timeout: 20_000 })
+        .toBeGreaterThan(0);
+      // Let the page finish loading and settle once, so what follows is not
+      // measuring the difference between a half-painted page and a whole one.
+      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+
+      // Scroll, which is the gesture this whole trade is about: motion the
+      // stream carries at its own quality, and then a page at rest showing
+      // text somebody is going to read.
+      await command(token, sessionId, {
+        type: "input",
+        events: [{ kind: "wheel", x: 400, y: 300, deltaX: 0, deltaY: 400 }],
+      });
+      await expect
+        .poll(() => socket!.frames.length, { timeout: 10_000 })
+        .toBeGreaterThan(0);
+      await sleep(500);
+      const streamedCount = socket.frames.length;
+      const streamed = socket.frames.at(-1)!;
+
+      // The fixture never repaints on its own, so anything arriving now is the
+      // still — or the repaint Chromium produces to satisfy the capture, which
+      // is dropped as redundant before it reaches this socket.
+      await sleep(WEBMCP_SETTLE_QUIET_MS + 2_500);
+      expect(
+        socket.frames.length,
+        "a still after the page settled",
+      ).toBeGreaterThan(streamedCount);
+
+      // The same scrolled page, in more bytes. Taken as the largest frame that
+      // arrived after it settled rather than as the last one, so a build that
+      // answers a capture with one extra repaint does not turn this into a
+      // flake — what must hold is that the sharp still got through.
+      const settled = socket.frames.slice(streamedCount);
+      const sharpest = Math.max(...settled.map((f) => f.jpeg.byteLength));
+      expect(sharpest).toBeGreaterThan(streamed.jpeg.byteLength);
+      expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
+
+      // And the stream then goes quiet. A still induces a repaint, and a
+      // repaint counted as activity would take another still, and another —
+      // so this is the assertion that pins the loop shut. One stray frame is
+      // tolerated; a loop delivers one per second.
+      const after = socket.frames.length;
+      await sleep(3_000);
+      expect(socket.frames.length - after, "no capture loop").toBeLessThan(2);
+    } finally {
+      socket?.close();
+      if (sessionId) {
+        await fetch(`${BASE}/api/mcp/webmcp/sessions/${sessionId}`, {
+          method: "DELETE",
+          headers: authed(token),
+        }).catch(() => {});
+      }
+      await page.close();
+    }
+  });
+
+  test("captures at the client's device pixel ratio", async () => {
+    const page = await startWebMcpFixturePage();
+    const token = await sessionToken();
+    let sessionId: string | undefined;
+    let socket: ReturnType<typeof openFrameSocket> | undefined;
+
+    try {
+      const session = await openSession(token, {
+        url: page.url,
+        display: "in-app",
+        devicePixelRatio: 2,
+      });
+      sessionId = session.sessionId;
+      socket = openFrameSocket(token, sessionId);
+      await socket.opened;
+      await command(token, sessionId, {
+        type: "set_screencast",
+        enabled: true,
+      });
+      await expect
+        .poll(() => socket!.frames.length, { timeout: 20_000 })
+        .toBeGreaterThan(1);
+
+      const cssWidth = session.viewportTransport!.width!;
+
+      // THE assertion that only holds if the ratio actually took effect. Every
+      // geometry check below is self-consistent at any ratio — Chromium clamps
+      // the screencast to the CSS surface size, so a server that silently
+      // dropped the field would produce identical frames — and the only place
+      // the ratio IS visible is inside the page that was rendered with it.
+      const reported = toolJson(
+        await invokePageTool(token, sessionId, "viewport_report"),
+      );
+      expect(reported.devicePixelRatio).toBe(2);
+      // …and the page's own CSS size is unchanged by it, which is what makes
+      // the coordinates the client sends back still mean what the page thinks.
+      expect(reported.innerWidth).toBe(cssWidth);
+
+      for (const frame of socket.frames) {
+        expect([frame.jpeg[0], frame.jpeg[1]]).toEqual([0xff, 0xd8]);
+        expect(frame.jpeg.byteLength).toBeLessThanOrEqual(
+          WEBMCP_FRAME_MAX_BYTES,
+        );
+        // NOT a pixel count. Chromium clamps a screencast to the CSS size of
+        // the surface — `maxWidth` can only scale a capture DOWN — so a 2x
+        // session streams supersampled 1280x800 rather than 2560x1600, and a
+        // test that demanded the latter would be asserting a wish.
+        //
+        // What must hold on any build and at any ratio is that a frame's
+        // reported geometry matches the picture inside it and its scale is the
+        // ratio to the page's own coordinate space: that is what every click
+        // is divided by, and the difference between a sharper pane and clicks
+        // landing at double their coordinates.
+        const sof = readJpegDimensions(frame.jpeg);
+        expect(sof, "every frame is a decodable JPEG").toBeDefined();
+        expect(frame.deviceWidth).toBe(sof!.width);
+        expect(frame.deviceHeight).toBe(sof!.height);
+        expect(frame.scale ?? 1).toBeCloseTo(sof!.width / cssWidth, 2);
+      }
+      // Through Playwright's own reporting rather than `console.log`: this is
+      // what a build actually handed over, and it belongs in the report beside
+      // the result rather than in the job's stdout.
+      test.info().annotations.push({
+        type: "frame-geometry",
+        description:
+          `dpr 2: ${socket.frames[0]!.deviceWidth}x` +
+          `${socket.frames[0]!.deviceHeight} at scale ${socket.frames[0]!.scale}`,
+      });
+    } finally {
+      socket?.close();
+      if (sessionId) {
+        await fetch(`${BASE}/api/mcp/webmcp/sessions/${sessionId}`, {
+          method: "DELETE",
+          headers: authed(token),
+        }).catch(() => {});
+      }
+      await page.close();
+    }
+  });
+
+  test("steps quality down on a slow consumer, and back up after", async () => {
+    test.slow();
+    // The `busy` fixture repaints an incompressible mosaic, so frames are
+    // large but still under the cap: the pressure this measures comes from a
+    // socket that stopped draining, not from frames the provider had to drop
+    // for being oversized.
+    const page = await startWebMcpFixturePage({ variant: "busy" });
+    const token = await sessionToken();
+    let sessionId: string | undefined;
+    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    let paused = false;
+
+    try {
+      const session = await openSession(token, {
+        url: page.url,
+        display: "in-app",
+      });
+      sessionId = session.sessionId;
+      socket = openFrameSocket(token, sessionId);
+      await socket.opened;
+      await command(token, sessionId, {
+        type: "set_screencast",
+        enabled: true,
+      });
+      await expect
+        .poll(() => socket!.frames.length, { timeout: 20_000 })
+        .toBeGreaterThan(2);
+      for (const frame of socket.frames) {
+        expect(frame.jpeg.byteLength).toBeLessThanOrEqual(
+          WEBMCP_FRAME_MAX_BYTES,
+        );
+      }
+
+      // Stop reading. Writes keep succeeding until the kernel buffers fill,
+      // which is exactly the shape of a viewer on a tunnel or a remote dev box
+      // — the case this whole mechanism exists for.
+      (socket.ws as unknown as { _socket: { pause(): void } })._socket.pause();
+      paused = true;
+      await expect
+        .poll(
+          async () =>
+            latestStreamQuality(
+              await readSse(token, sessionId!, "replay=200&frames=off", 800),
+            ) ?? WEBMCP_STREAM_QUALITY_LADDER[0],
+          {
+            message: "the stream should step down for a consumer that stalled",
+            timeout: 45_000,
+          },
+        )
+        .toBeLessThan(WEBMCP_STREAM_QUALITY_LADDER[0]);
+
+      // Read again, and the picture comes back. Asserted as a floor rather
+      // than an exact rung: the governor keeps stepping while the socket is
+      // paused, so how far down it got is a property of the machine.
+      (
+        socket.ws as unknown as { _socket: { resume(): void } }
+      )._socket.resume();
+      paused = false;
+      const beforeResume = socket.frames.length;
+      await expect
+        .poll(() => socket!.frames.length, { timeout: 20_000 })
+        .toBeGreaterThan(beforeResume + 2);
+      await expect
+        .poll(
+          async () =>
+            latestStreamQuality(
+              await readSse(token, sessionId!, "replay=200&frames=off", 800),
+            ) ?? 0,
+          {
+            message: "the stream should climb back once the link recovers",
+            timeout: 45_000,
+          },
+        )
+        .toBe(WEBMCP_STREAM_QUALITY_LADDER[0]);
+    } finally {
+      if (paused && socket) {
+        // Before the close, or the teardown blocks on a socket nobody is
+        // reading and the DELETE below never goes out.
+        (
+          socket.ws as unknown as { _socket: { resume(): void } }
+        )._socket.resume();
+      }
       socket?.close();
       if (sessionId) {
         await fetch(`${BASE}/api/mcp/webmcp/sessions/${sessionId}`, {

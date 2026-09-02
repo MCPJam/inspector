@@ -275,6 +275,12 @@ export interface WebChatTurnPersistContext {
    * it needs to do that.
    *
    * Absent ⇒ this turn has no grant, which is a normal state, not a failure.
+   *
+   * ALSO the direct-chat resume pin: written into
+   * `resumeConfig.environmentId` so a reopened Playground conversation can be
+   * restored onto the target it actually ran on rather than the viewer's
+   * current selection. See the persist site below for why sending it on every
+   * turn is safe.
    */
   environmentId?: string;
   /**
@@ -1055,6 +1061,38 @@ export async function streamWebChatTurn(
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
                 selectedServers: resumableServers(persist),
+                // WHAT THIS CONVERSATION RAN ON — the missing half of resume.
+                //
+                // Every other field here restores how the turn was configured;
+                // none of them said WHERE it executed. So a browser Playground
+                // conversation reopened later had no recorded execution target
+                // at all, and the client fell back to whatever the VIEWER had
+                // selected in localStorage — a conversation that ran on a
+                // Cursor harness in a Project Environment reopened showing an
+                // unrelated host and model, and a follow-up typed there ran on
+                // that unrelated target without ever saying so.
+                //
+                // Only `origin: "api"` sessions wrote this before (see
+                // `routes/v1/chat-session-turn.ts`), which is why the browser
+                // half was blind.
+                //
+                // Sent on EVERY turn, not just the first, and that is correct:
+                // `preserveAgentResumePins` makes the four
+                // `AGENT_RESUME_PIN_KEYS` — this among them — first-write-wins
+                // at the ingest boundary, so a continuation cannot repin a
+                // conversation onto a different environment, while a session
+                // that started before this field existed still gets filled in
+                // on its next turn instead of staying unpinned forever.
+                //
+                // Absent ⇒ this turn had no environment (a plain host-mode or
+                // untargeted turn). Nothing is written rather than a
+                // placeholder: an empty pin would read as "recorded, and it
+                // was nothing", which is exactly the false certainty the
+                // client's "as-run configuration unavailable" disclosure
+                // exists to avoid.
+                ...(persist.environmentId
+                  ? { environmentId: persist.environmentId }
+                  : {}),
               },
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
