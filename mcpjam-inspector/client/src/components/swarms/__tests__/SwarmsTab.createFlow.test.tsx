@@ -1374,6 +1374,23 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(new Set(launchKeys).size).toBe(2);
   });
 
+  it("stamps the swarm with the same wave id its runs carry", async () => {
+    // How the Overview names a wave: it looks the swarm up BY this id rather
+    // than through a journey, whose authoring swarm is someone else's as soon
+    // as the launch reuses it.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    const waveId = (launchJourneyRunMock.mock.calls[0]![0] as any)
+      .swarmRunGroupId;
+    expect(waveId).toBeTruthy();
+    expect(createSwarmMock.mock.calls[0]![0].swarmRunGroupId).toBe(waveId);
+  });
+
   it("reuses the wave id when a failed launch is retried", async () => {
     // A partial-failure retry replays the already-launched journeys' keys and
     // gets back their ORIGINAL runs; minting a fresh wave would split one
