@@ -1,13 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
+  listGroupMembers,
   parseDarwinPsLine,
   parseLinuxProcStat,
-  readProcessBirthIdentity,
   parseProcStatGroup,
   probeProcess,
   probeProcessGroup,
+  readProcessBirthIdentity,
+  sameBirthIdentity,
   supportsOwnershipProof,
+  terminateOwnedProcess,
   terminateOwnedProcessGroup,
 } from "../process-identity.js";
 
@@ -475,5 +478,109 @@ describe("probing a process GROUP", () => {
       parseProcStatGroup("77 (my proc) S 4 99 99 0 -1 4194304 100"),
     ).toEqual({ state: "S", pgrp: 99 });
     expect(parseProcStatGroup("garbage")).toBeNull();
+  });
+});
+
+describe("identity comparison across a process's exit", () => {
+  // On macOS a process that is exiting — argv memory already torn down, not
+  // yet a zombie — is reported by `ps` with its command as `(comm)`. The
+  // recorded identity carries the full argv, so a byte compare answered
+  // "not-owned" for our own bridge the moment the adapter told it to exit, the
+  // supervisor refused to signal it, and every clean stop was recorded as an
+  // escape.
+  const LSTART = "Mon Sep  1 09:14:22 2026";
+
+  it("accepts the parenthesised command a darwin exit reports", () => {
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs --workdir /w`,
+        `darwin:${LSTART}|(node)`,
+      ),
+    ).toBe(true);
+  });
+
+  it("still refuses a different start time, which is what pid reuse changes", () => {
+    // The start time is the half that actually defeats pid reuse: a reused pid
+    // gets a new one. Tolerating the command is only safe because this is not.
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs`,
+        "darwin:Mon Sep  1 09:14:23 2026|(node)",
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a command that differs in any other way", () => {
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs`,
+        `darwin:${LSTART}|node /somewhere/else.mjs`,
+      ),
+    ).toBe(false);
+    // Not the parenthesised form: nested parens are not what `ps` produces.
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs`,
+        `darwin:${LSTART}|(no(de))`,
+      ),
+    ).toBe(false);
+  });
+
+  it("is exact on platforms that do not have the darwin quirk", () => {
+    expect(
+      sameBirthIdentity("linux:12345|67890", "linux:12345|67890"),
+    ).toBe(true);
+    expect(sameBirthIdentity("linux:12345|67890", "linux:12346|67890")).toBe(
+      false,
+    );
+    // A linux identity is never read through the darwin tolerance.
+    expect(sameBirthIdentity("linux:12345|67890", "linux:12345|(node)")).toBe(
+      false,
+    );
+  });
+});
+
+describe("enumerating group members for a later stop", () => {
+  it.skipIf(!supportsOwnershipProof(process.platform))(
+    "lists live members with an identity each, excluding the leader",
+    async () => {
+      // This process leads its own group in the test runner, so it is the one
+      // group we can enumerate without spawning a tree.
+      const members = await listGroupMembers(process.pid);
+      expect(members).not.toBeNull();
+      for (const member of members ?? []) {
+        expect(member.pid).not.toBe(process.pid);
+        expect(typeof member.identity).toBe("string");
+        expect(member.identity.length).toBeGreaterThan(0);
+      }
+    },
+  );
+
+  it("answers null on a platform it cannot ask, rather than an empty list", async () => {
+    // The difference matters: an empty list means "asked, nothing there" and
+    // authorizes reporting a tree settled. `null` never does.
+    await expect(listGroupMembers(1, "win32")).resolves.toBeNull();
+  });
+});
+
+describe("terminating one member of a snapshot", () => {
+  it("refuses a pid whose identity no longer matches", async () => {
+    await expect(
+      terminateOwnedProcess({
+        pid: process.pid,
+        identity: "definitely-not-this-process",
+        graceMs: 20,
+      }),
+    ).resolves.toBe("not-owned");
+  });
+
+  it("reports a pid that is already gone without signalling anything", async () => {
+    await expect(
+      terminateOwnedProcess({
+        pid: 2_147_479_100,
+        identity: "whatever",
+        graceMs: 20,
+      }),
+    ).resolves.toBe("already-gone");
   });
 });

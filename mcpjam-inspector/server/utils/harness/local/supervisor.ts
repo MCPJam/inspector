@@ -31,8 +31,11 @@ import { isAbsolute } from "node:path";
 import { logger } from "../../logger.js";
 import { assertArgvAllowed } from "./argv-policy.js";
 import {
+  listGroupMembers,
+  probeProcessGroup,
   readProcessBirthIdentity,
   supportsOwnershipProof,
+  terminateOwnedProcess,
   terminateOwnedProcessGroup,
   type ProcessBirthIdentity,
 } from "./process-identity.js";
@@ -107,6 +110,17 @@ interface LiveProcess {
    * `stopSession` proves the whole group empty.
    */
   exited: boolean;
+  /**
+   * Members of the root's process group, enumerated with their birth
+   * identities at the instant the root exited — the one moment the group id
+   * provably still belongs to this tree. A later stop verifies and signals
+   * each of them individually, so a bridge that exits on its own no longer
+   * strands the vendor CLI it spawned.
+   */
+  orphanSnapshot: Promise<Array<{
+    pid: number;
+    identity: ProcessBirthIdentity;
+  }> | null> | null;
 }
 
 function bufferedStream(maxBytes: number): {
@@ -410,6 +424,20 @@ export class LocalHarnessSupervisor {
       });
       recordExit(-1);
     });
+    child.on("exit", () => {
+      // The group id is only provably ours while the root still owns it. The
+      // instant the root leaves, that anchor is gone — so the snapshot is
+      // taken here, synchronously with the exit, and not a moment later.
+      if (
+        request.role === "root" &&
+        entry !== undefined &&
+        entry.orphanSnapshot === null
+      ) {
+        entry.orphanSnapshot = listGroupMembers(entry.pid, this.platform).catch(
+          () => null,
+        );
+      }
+    });
     child.on("close", (code, signal) => {
       // A signalled exit reports 124 — the conventional timeout code — so a
       // caller reading only the exit code still sees a failure, not a clean 0.
@@ -433,6 +461,7 @@ export class LocalHarnessSupervisor {
       role: request.role,
       killed: false,
       exited: exitResult !== null,
+      orphanSnapshot: null,
     };
     bucket.add(entry);
     // Registered: it is counted by `bucket.size` from here, so the pending
@@ -686,7 +715,42 @@ export class LocalHarnessSupervisor {
       // `unknown`, `escaped`, and `not-owned` all retain their entry so an
       // operator or a later retry still has the handle; none authorizes a
       // successful stop.
-      for (const { entry, result } of outcomes) {
+      for (const { entry, result: initialResult } of outcomes) {
+        let result = initialResult;
+        // A group whose root has exited is UNANCHORED: its group id no longer
+        // belongs to a process whose identity we can check, so the group-wide
+        // terminate correctly refuses to signal it. That refusal used to end
+        // the story, and a 357 MB vendor CLI kept running after every abort.
+        //
+        // The snapshot taken at the root's exit is the missing anchor. Each
+        // member is re-verified against the birth identity recorded then, and
+        // signalled individually — so pid reuse in the meantime means a member
+        // is skipped, never that somebody else's process is killed.
+        if (result.outcome === "unknown" && entry.orphanSnapshot !== null) {
+          const members = (await entry.orphanSnapshot) ?? [];
+          const settled: Array<{ pid: number; outcome: string }> = [];
+          for (const member of members) {
+            settled.push({
+              pid: member.pid,
+              outcome: await terminateOwnedProcess({
+                pid: member.pid,
+                identity: member.identity,
+                graceMs: this.limits.terminationGraceMs,
+                platform: this.platform,
+              }),
+            });
+          }
+          const after = await probeProcessGroup(entry.pid, this.platform);
+          logger.debug("[local-harness] settled an unanchored process group", {
+            sessionId,
+            members: settled.length,
+            outcomes: settled.map((s) => s.outcome),
+            groupAfter: after,
+          });
+          // Only an EMPTY group counts. Anything else keeps the entry, and the
+          // session keeps reporting that it did not fully stop.
+          if (after === "empty") result = { outcome: "forced" };
+        }
         if (
           result.outcome === "already-gone" ||
           result.outcome === "graceful" ||

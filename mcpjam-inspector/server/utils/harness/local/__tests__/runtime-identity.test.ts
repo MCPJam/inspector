@@ -2,8 +2,12 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
+  rm,
+  stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,23 +18,42 @@ import {
   type LocalHarnessCompatibility,
 } from "../compatibility.js";
 import {
+  clearRuntimeVerificationCache,
   computeTreeDigest,
   resolveManagedBundle,
   resolveSystemInstall,
   revalidateRuntime,
   systemInstallSearchPaths,
+  verifyRuntime,
 } from "../runtime-identity.js";
 
 let base: string;
 let runtimeRoot: string;
 
-async function writeBundle(name: string, files: Record<string, string>) {
+/**
+ * A pack always carries a launcher and its own `bin/node`; both are required
+ * for a bundle to resolve, so the fixtures add them unless a test is
+ * specifically about their absence.
+ */
+async function writeBundle(
+  name: string,
+  files: Record<string, string>,
+  opts: { omitLauncher?: boolean; omitNode?: boolean } = {},
+) {
   const root = join(runtimeRoot, name);
-  for (const [rel, content] of Object.entries(files)) {
+  const all: Record<string, string> = { ...files };
+  if (!opts.omitLauncher && all["launcher.mjs"] === undefined) {
+    all["launcher.mjs"] = 'await import("./bridge.mjs");';
+  }
+  if (!opts.omitNode && all["bin/node"] === undefined) {
+    all["bin/node"] = "#!/bin/sh\nexit 0\n";
+  }
+  for (const [rel, content] of Object.entries(all)) {
     const full = join(root, rel);
     await mkdir(join(full, ".."), { recursive: true });
     await writeFile(full, content);
   }
+  if (!opts.omitNode) await chmod(join(root, "bin/node"), 0o755);
   return root;
 }
 
@@ -43,8 +66,11 @@ function manifestFor(
     runtime: {
       source: "managed-bundle",
       bundleName,
-      bundleDigest: digest,
-      launcherRelativePath: "bridge.mjs",
+      // Per platform, because a pack is: it carries a platform-specific Node
+      // and a platform-specific vendor binary.
+      bundleDigest: { linux: digest, darwin: digest },
+      launcherRelativePath: "launcher.mjs",
+      nodeLauncherRelativePath: "bin/node",
       vendorPackages: { "@anthropic-ai/claude-code": "1.2.3" },
     },
   };
@@ -107,7 +133,8 @@ describe("managed bundles", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.runtime.runtimeId).toMatch(/^rt_/);
-    expect(result.runtime.launcherPath).toBe(join(root, "bridge.mjs"));
+    expect(result.runtime.launcherPath).toBe(join(root, "launcher.mjs"));
+    expect(result.runtime.nodePath).toBe(join(root, "bin", "node"));
     expect(result.runtime.digest).toBe(digest);
   });
 
@@ -156,19 +183,19 @@ describe("managed bundles", () => {
     });
   });
 
-  it("rejects the all-zero placeholder digest the repo ships", async () => {
-    // The shipped manifest cannot enable a runtime by accident, even if a
-    // bundle directory somehow exists.
+  it("cannot resolve a platform the shipped manifest has no pack digest for", async () => {
+    // The shipped manifest carries no digests until the pack build runs, so it
+    // cannot enable a runtime by accident even if a bundle directory exists.
     await writeBundle("claude-code", { "bridge.mjs": "x" });
     const result = await resolveManagedBundle({
       manifest: LOCAL_HARNESS_MANIFEST["claude-code"],
       runtimeRoot,
       platform: "linux",
     });
-    expect(result).toMatchObject({
-      ok: false,
-      status: "bundle-digest-mismatch",
-    });
+    expect(result).toMatchObject({ ok: false, status: "bundle-absent" });
+    expect((result as { message: string }).message).toMatch(
+      /no digest to verify one against/,
+    );
   });
 
   it("refuses a launcher path that climbs out of the digested tree", async () => {
@@ -192,13 +219,153 @@ describe("managed bundles", () => {
   });
 
   it("reports a bundle with no launcher as corrupt", async () => {
-    const root = await writeBundle("nolauncher", { "lib/x.js": "x" });
+    const root = await writeBundle(
+      "nolauncher",
+      { "lib/x.js": "x" },
+      { omitLauncher: true },
+    );
     const result = await resolveManagedBundle({
       manifest: manifestFor("nolauncher", await computeTreeDigest(root)),
       runtimeRoot,
       platform: "linux",
     });
     expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
+  });
+
+  it("refuses a pack with no Node binary of its own", async () => {
+    // Both distributions launch the bridge with the pack's `bin/node`: the
+    // Electron `RunAsNode` fuse is off, and the npx server's own execPath is
+    // outside the tree the digest covers.
+    const root = await writeBundle(
+      "nonode",
+      { "bridge.mjs": "x" },
+      { omitNode: true },
+    );
+    const result = await resolveManagedBundle({
+      manifest: manifestFor("nonode", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "linux",
+    });
+    expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
+    expect((result as { message: string }).message).toMatch(/Node binary/);
+  });
+
+  it("refuses a Node binary that is not executable", async () => {
+    const root = await writeBundle("dudnode", { "bridge.mjs": "x" });
+    await chmod(join(root, "bin/node"), 0o644);
+    const result = await resolveManagedBundle({
+      manifest: manifestFor("dudnode", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "linux",
+    });
+    expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
+  });
+});
+
+describe("verification cost", () => {
+  it("digests a pack once per process and answers from cache after that", async () => {
+    // The measured defect: five full digests of a 515 MB tree per session
+    // start, 0.6-1.5 s each, for a tree the session cannot write to.
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("cached", { "bridge.mjs": "x" });
+    const digest = await computeTreeDigest(root);
+
+    const first = await verifyRuntime(root, digest);
+    expect(first).toMatchObject({ ok: true, cached: false });
+    const second = await verifyRuntime(root, digest);
+    expect(second).toMatchObject({ ok: true, cached: true });
+  });
+
+  it("keys the cache on the expected digest, so an upgrade re-verifies", async () => {
+    // A pack activated into the same path with a new expected digest is a
+    // different runtime. A cache keyed on the path alone would answer for it.
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("rekey", { "bridge.mjs": "v1" });
+    await verifyRuntime(root, await computeTreeDigest(root));
+    await writeFile(join(root, "bridge.mjs"), "v2");
+    const upgraded = await verifyRuntime(root, await computeTreeDigest(root));
+    expect(upgraded).toMatchObject({ ok: true, cached: false });
+  });
+
+  it("never caches a tree that failed to match", async () => {
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("nocache", { "bridge.mjs": "x" });
+    const wrong = `sha256:${"1".repeat(64)}`;
+    expect(await verifyRuntime(root, wrong)).toMatchObject({
+      ok: false,
+      reason: "digest-mismatch",
+    });
+    expect(await verifyRuntime(root, wrong)).toMatchObject({
+      ok: false,
+      reason: "digest-mismatch",
+    });
+  });
+
+  it("re-verifies from the stat snapshot, and notices an added file", async () => {
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("added", { "bridge.mjs": "x" });
+    const resolved = await resolveManagedBundle({
+      manifest: manifestFor("added", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "linux",
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    await expect(revalidateRuntime(resolved.runtime)).resolves.toEqual({
+      ok: true,
+    });
+
+    await writeFile(join(root, "extra.js"), "surprise");
+    const result = await revalidateRuntime(resolved.runtime);
+    expect(result.ok).toBe(false);
+    expect((result as { message: string }).message).toMatch(
+      /unexpected file appeared/,
+    );
+  });
+
+  it("notices a file that went missing", async () => {
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("missingfile", {
+      "bridge.mjs": "x",
+      "lib/keep.js": "y",
+    });
+    const resolved = await resolveManagedBundle({
+      manifest: manifestFor("missingfile", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "linux",
+    });
+    if (!resolved.ok) throw new Error("fixture did not resolve");
+    await rm(join(root, "lib/keep.js"));
+    const result = await revalidateRuntime(resolved.runtime);
+    expect(result.ok).toBe(false);
+    expect((result as { message: string }).message).toMatch(/went missing/);
+  });
+
+  it("re-hashes the files that execute, catching a same-shape rewrite", async () => {
+    // The one case a stat compare is weakest against: a rewrite that restores
+    // size, mtime and inode. There are only four such files, so they are
+    // re-hashed outright on every pre-spawn re-verify.
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("rewrite", { "bridge.mjs": "x" });
+    const resolved = await resolveManagedBundle({
+      manifest: manifestFor("rewrite", await computeTreeDigest(root)),
+      runtimeRoot,
+      platform: "linux",
+    });
+    if (!resolved.ok) throw new Error("fixture did not resolve");
+
+    const launcher = join(root, "launcher.mjs");
+    const before = await stat(launcher);
+    const original = await readFile(launcher);
+    await writeFile(launcher, Buffer.alloc(original.length, 0x7a));
+    // Restore both halves of the cheap identity so only the hash can tell.
+    await utimes(launcher, before.atime, before.mtime);
+
+    const result = await revalidateRuntime(resolved.runtime);
+    expect(result.ok).toBe(false);
+    expect((result as { message: string }).message).toMatch(
+      /rewritten in place|was modified/,
+    );
   });
 });
 

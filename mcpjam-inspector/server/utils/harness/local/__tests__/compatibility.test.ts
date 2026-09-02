@@ -52,18 +52,21 @@ describe("the shipped manifest", () => {
     }
   });
 
-  it("ships placeholder digests that cannot match a real tree", () => {
-    // A real bundle can never hash to all zeroes, so an install that somehow
-    // shipped without the CI-recorded digest fails verification instead of
-    // launching an unverified runtime.
+  it("ships no pack digest, so no runtime can resolve before a pack is built", () => {
+    // Pack digests are per platform and written by the pack build. Until that
+    // has run there is no entry for any platform, and `resolveManagedBundle`
+    // answers `bundle-absent` — the same honest answer a missing directory
+    // gets — instead of launching an unverified runtime.
     for (const manifest of Object.values(LOCAL_HARNESS_MANIFEST)) {
       expect(manifest.bridgeBundleDigest).toBe(`sha256:${"0".repeat(64)}`);
-      // The one `resolveManagedBundle` actually compares a real tree against,
-      // so it is the one that keeps an unverified runtime from launching.
-      expect(manifest.runtime).toMatchObject({
-        source: "managed-bundle",
-        bundleDigest: `sha256:${"0".repeat(64)}`,
-      });
+      expect(manifest.runtime).toMatchObject({ source: "managed-bundle" });
+      if (manifest.runtime.source !== "managed-bundle") continue;
+      expect(Object.keys(manifest.runtime.bundleDigest)).toEqual([]);
+      // The launcher is the pack's loopback wrapper, never the bridge itself:
+      // the bridge stays byte-identical to the pinned adapter's copy so the
+      // recipe compare can hold.
+      expect(manifest.runtime.launcherRelativePath).toBe("launcher.mjs");
+      expect(manifest.runtime.nodeLauncherRelativePath).toBe("bin/node");
     }
   });
 

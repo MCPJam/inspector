@@ -87,6 +87,7 @@ describe("the child environment is an allowlist", () => {
     expect(Object.keys(env).sort()).toEqual(
       [
         "CI",
+        "CLAUDE_CODE_TMPDIR",
         "HOME",
         "LANG",
         "NO_COLOR",

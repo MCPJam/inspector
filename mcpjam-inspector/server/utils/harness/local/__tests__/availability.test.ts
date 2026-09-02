@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -12,7 +12,10 @@ import {
   revokeLocalHarnessGrants,
   type HarnessGrantBinding,
 } from "../grants.js";
-import { computeTreeDigest } from "../runtime-identity.js";
+import {
+  clearRuntimeVerificationCache,
+  computeTreeDigest,
+} from "../runtime-identity.js";
 import {
   isActorEligibleForLocalHarness,
   resolveLocalHarnessAvailability,
@@ -98,8 +101,11 @@ beforeAll(async () => {
   runtimeRoot = join(base, "runtimes");
   await mkdir(workspace, { recursive: true });
   const bundleRoot = join(runtimeRoot, "claude-code");
-  await mkdir(bundleRoot, { recursive: true });
+  await mkdir(join(bundleRoot, "bin"), { recursive: true });
   await writeFile(join(bundleRoot, "bridge.mjs"), "console.log(1)");
+  await writeFile(join(bundleRoot, "launcher.mjs"), 'await import("./bridge.mjs");');
+  await writeFile(join(bundleRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
+  await chmod(join(bundleRoot, "bin", "node"), 0o755);
 
   const grant = await registerWorkspaceGrant(workspace);
   if (!grant.ok) throw new Error(grant.message);
@@ -112,7 +118,7 @@ beforeAll(async () => {
       lifecycleConformanceVersion: "conformance-test",
       runtime: {
         ...LOCAL_HARNESS_MANIFEST["claude-code"].runtime,
-        bundleDigest: digest,
+        bundleDigest: { linux: digest, darwin: digest },
       },
     } as LocalHarnessCompatibility,
   };
@@ -246,6 +252,11 @@ describe("a fully authorized turn", () => {
   });
 
   it("stops honoring a capability once the bundle changes underneath it", async () => {
+    // A cold process: nothing has been verified yet, so the full digest runs
+    // and reports the bundle failing verification. The digest check fires
+    // before the identity comparison, which is why this is not a runtime-id
+    // mismatch.
+    clearRuntimeVerificationCache();
     const t = target();
     const { token } = await grantLocalHarnessConsent(binding(t));
     await writeFile(
@@ -254,13 +265,41 @@ describe("a fully authorized turn", () => {
     );
     const result = await query({ grantToken: token });
     expect(result.available).toBe(false);
-    // The digest check fires before the identity comparison, so this reports
-    // the bundle failing verification rather than a mismatched runtime id.
     expect(result).toMatchObject({ status: "runtime-unavailable" });
     await writeFile(
       join(runtimeRoot, "claude-code", "bridge.mjs"),
       "console.log(1)",
     );
+    clearRuntimeVerificationCache();
+  });
+
+  it("catches a bundle that changes AFTER this process verified it", async () => {
+    // The other half of the same guarantee, and the one the digest cache has
+    // to keep honest: once a pack has been verified in this process, resolving
+    // it again is answered from cache — so the pre-spawn re-verify is what
+    // notices a tree that changed since. It refuses by a different name
+    // (`runtime-changed`, not `runtime-unavailable`) because that is exactly
+    // what happened: the runtime consent named is no longer what is on disk.
+    clearRuntimeVerificationCache();
+    const t = target();
+    const { token } = await grantLocalHarnessConsent(binding(t));
+    await expect(query({ grantToken: token })).resolves.toMatchObject({
+      available: true,
+    });
+
+    await writeFile(
+      join(runtimeRoot, "claude-code", "bridge.mjs"),
+      "console.log(3)",
+    );
+    const result = await query({ grantToken: token });
+    expect(result.available).toBe(false);
+    expect(result).toMatchObject({ status: "runtime-changed" });
+
+    await writeFile(
+      join(runtimeRoot, "claude-code", "bridge.mjs"),
+      "console.log(1)",
+    );
+    clearRuntimeVerificationCache();
   });
 });
 

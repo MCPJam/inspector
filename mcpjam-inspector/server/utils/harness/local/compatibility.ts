@@ -32,6 +32,7 @@ import type {
   LocalPlatform,
   SupportedLocalHarnessId,
 } from "./targets.js";
+import { PACK_TREE_DIGESTS } from "./pack-digests.generated.js";
 
 /** How the vendor runtime is obtained. */
 export type LocalHarnessRuntimePolicy =
@@ -39,10 +40,31 @@ export type LocalHarnessRuntimePolicy =
       source: "managed-bundle";
       /** Directory name of the bundle inside the Inspector runtime root. */
       bundleName: string;
-      /** SHA-256 of the bundle's canonical tree digest, recorded in CI. */
-      bundleDigest: string;
-      /** Launcher path relative to the bundle root. */
+      /**
+       * SHA-256 canonical tree digest of the pack, PER PLATFORM, recorded by
+       * the pack build in CI.
+       *
+       * Per platform because the pack is: it carries a platform-specific Node
+       * binary and a platform-specific vendor CLI, so one digest could only
+       * ever be right for one of them. A platform with no entry has no pack
+       * built for it and resolves `bundle-absent`, which is the same answer a
+       * missing directory gives and the correct one.
+       */
+      bundleDigest: Readonly<Partial<Record<LocalPlatform, string>>>;
+      /** Launcher path relative to the bundle root.
+       *
+       *  The pack ships `launcher.mjs`, an Inspector-owned wrapper that forces
+       *  every listener the bridge opens onto loopback and then imports the
+       *  adapter's verbatim `bridge.mjs`. The bridge file itself stays
+       *  byte-identical to the adapter's copy — the provider compares it — so
+       *  the loopback constraint cannot be applied by patching it. */
       launcherRelativePath: string;
+      /** The pack's own Node binary, relative to the bundle root.
+       *
+       *  Required for BOTH distributions: Electron's `RunAsNode` fuse is off,
+       *  and the npx server's `process.execPath` is a Node outside the tree
+       *  the digest covers. */
+      nodeLauncherRelativePath: string;
       /** Exact vendor packages the bundle is built from, for the audit record
        *  and for the version the UI shows before start. */
       vendorPackages: Readonly<Record<string, string>>;
@@ -157,8 +179,9 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
       // can never match a real tree, so every session fails closed at
       // verification with an actionable status rather than launching an
       // unverified runtime.
-      bundleDigest: `sha256:${"0".repeat(64)}`,
-      launcherRelativePath: "bridge.mjs",
+      bundleDigest: PACK_TREE_DIGESTS["claude-code"],
+      launcherRelativePath: "launcher.mjs",
+      nodeLauncherRelativePath: "bin/node",
       vendorPackages: {
         "@anthropic-ai/claude-code": "pinned-by-adapter-bridge-lockfile",
       },
@@ -196,8 +219,9 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     runtime: {
       source: "managed-bundle",
       bundleName: "codex",
-      bundleDigest: `sha256:${"0".repeat(64)}`,
-      launcherRelativePath: "bridge.mjs",
+      bundleDigest: PACK_TREE_DIGESTS.codex,
+      launcherRelativePath: "launcher.mjs",
+      nodeLauncherRelativePath: "bin/node",
       vendorPackages: {
         "@openai/codex-sdk": "pinned-by-adapter-bridge-lockfile",
       },

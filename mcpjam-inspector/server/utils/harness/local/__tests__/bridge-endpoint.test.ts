@@ -2,9 +2,11 @@ import { createServer, type Server } from "node:net";
 import { describe, expect, it } from "vitest";
 import {
   BridgeExposureError,
+  assertBridgeBindingIsLoopback,
   assertBridgeIsLoopbackOnly,
   assertBridgeLoopbackOnly,
   assertBridgePortUnclaimed,
+  isLoopbackBoundAddress,
   localBridgeUrl,
   nonLoopbackLocalAddresses,
   waitForLoopbackListener,
@@ -87,19 +89,48 @@ describe("the loopback-only probe", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("stops at the first exposed address rather than probing them all", async () => {
-    const probed: string[] = [];
+  it("probes every address concurrently rather than one at a time", async () => {
+    // Sequentially this cost 11 s on a laptop with ten link-local addresses,
+    // inside a 1.5 s session-start budget. The addresses are independent, so
+    // the only thing serializing them was the shape of the loop.
+    let inFlight = 0;
+    let peak = 0;
+    await assertBridgeIsLoopbackOnly({
+      port: 1234,
+      addresses: ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
+      connect: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        return false;
+      },
+    });
+    expect(peak).toBe(4);
+  });
+
+  it("still fails closed when any address answers", async () => {
     await expect(
       assertBridgeIsLoopbackOnly({
         port: 1234,
         addresses: ["10.0.0.1", "10.0.0.2"],
-        connect: async (host) => {
-          probed.push(host);
-          return true;
-        },
+        connect: async (host) => host === "10.0.0.2",
       }),
     ).rejects.toThrow(BridgeExposureError);
-    expect(probed).toEqual(["10.0.0.1"]);
+  });
+
+  it("caps the per-address timeout at the whole-probe budget", async () => {
+    const timeouts: number[] = [];
+    await assertBridgeIsLoopbackOnly({
+      port: 1234,
+      addresses: ["10.0.0.1"],
+      timeoutMs: 30_000,
+      connect: async (_host, _port, timeoutMs) => {
+        timeouts.push(timeoutMs);
+        return false;
+      },
+    });
+    expect(timeouts).toEqual([1_000]);
   });
 
   it("ignores internal interfaces when enumerating", () => {
@@ -109,6 +140,83 @@ describe("the loopback-only probe", () => {
         eth0: [{ address: "10.1.2.3", internal: false, family: "IPv4" }],
       }),
     ).toEqual(["10.1.2.3"]);
+  });
+
+  it("scopes link-local addresses, which are unconnectable without one", () => {
+    // An unscoped fe80:: address cannot be connected at all — the kernel has
+    // no interface to pick — so each one used to sit out the full timeout and
+    // answer "not reachable" for a reason unrelated to the bridge's binding.
+    expect(
+      nonLoopbackLocalAddresses({
+        en0: [
+          { address: "fe80::1", internal: false, family: "IPv6" },
+          { address: "192.168.1.5", internal: false, family: "IPv4" },
+        ],
+        awdl0: [{ address: "fe80::abcd", internal: false, family: "IPv6" }],
+      }),
+    ).toEqual(["fe80::1%en0", "192.168.1.5", "fe80::abcd%awdl0"]);
+  });
+
+  it("keeps a scope that is already present", () => {
+    expect(
+      nonLoopbackLocalAddresses({
+        en0: [{ address: "fe80::1%en0", internal: false, family: "IPv6" }],
+      }),
+    ).toEqual(["fe80::1%en0"]);
+  });
+});
+
+describe("the OS-level binding check", () => {
+  it("accepts every spelling of a loopback binding", () => {
+    for (const address of [
+      "127.0.0.1",
+      "127.53.1.9",
+      "::1",
+      "0:0:0:0:0:0:0:1",
+      "::ffff:127.0.0.1",
+      "::ffff:7f00:1",
+      "[::1]",
+    ]) {
+      expect(isLoopbackBoundAddress(address)).toBe(true);
+    }
+  });
+
+  it("treats a wildcard binding as off-box, because it is", () => {
+    for (const address of ["0.0.0.0", "::", "*", "192.168.1.5", ""]) {
+      expect(isLoopbackBoundAddress(address)).toBe(false);
+    }
+  });
+
+  it("fails a bridge the kernel reports bound to a LAN address", async () => {
+    await expect(
+      assertBridgeBindingIsLoopback({
+        pid: 4242,
+        platform: "linux",
+        read: async () => ["127.0.0.1", "192.168.1.5"],
+      }),
+    ).rejects.toThrow(BridgeExposureError);
+  });
+
+  it("passes a bridge bound only to loopback", async () => {
+    await expect(
+      assertBridgeBindingIsLoopback({
+        pid: 4242,
+        platform: "linux",
+        read: async () => ["127.0.0.1", "::1"],
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("stays silent when the platform cannot be asked", async () => {
+    // The connect probe is the enforcing check. Refusing a session because
+    // `lsof` is missing would trade a real capability for no extra safety.
+    await expect(
+      assertBridgeBindingIsLoopback({
+        pid: 4242,
+        platform: "win32",
+        read: async () => null,
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

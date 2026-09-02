@@ -48,6 +48,14 @@ export interface ResolvedRuntime {
   rootPath: string;
   /** Absolute path of the launcher the supervisor spawns. */
   launcherPath: string;
+  /**
+   * Absolute path of the Node binary inside the verified pack, which is the
+   * ONLY interpreter a bridge is launched with.
+   *
+   * Absent for a system install, which is launched directly rather than
+   * interpreted.
+   */
+  nodePath?: string;
   /** Tree digest (managed) or file digest (system). */
   digest: string;
   /** Vendor package versions, for display and audit. */
@@ -84,7 +92,59 @@ export type RuntimeResolution =
  * outside it.
  */
 export async function computeTreeDigest(root: string): Promise<string> {
+  return (await digestTreeWithSnapshot(root)).digest;
+}
+
+/**
+ * One entry of a tree's stat snapshot: everything a cheap re-check can compare
+ * without reading a byte of content.
+ *
+ * `ino` is in here because size and mtime alone are forgeable by anything that
+ * can write the file; a replacement that preserves both still lands on a new
+ * inode unless it was written in place, and a write in place changes mtime. It
+ * is not a substitute for hashing — the files that actually execute are still
+ * re-hashed — it is what makes re-hashing only those files defensible.
+ */
+export interface RuntimeTreeEntrySnapshot {
+  /** Path relative to the tree root, POSIX separators. */
+  path: string;
+  size: number;
+  mtimeMs: number;
+  ino: number;
+  mode: number;
+}
+
+export interface RuntimeTreeSnapshot {
+  root: string;
+  digest: string;
+  entries: readonly RuntimeTreeEntrySnapshot[];
+  /**
+   * Content digests of the files that actually execute, captured during the
+   * full digest walk, keyed by relative path.
+   *
+   * Captured HERE rather than on first re-verify on purpose: a baseline taken
+   * later would be taken from whatever the file contains at that point, so the
+   * very first re-verify could not detect a rewrite that had already happened.
+   * These come from the same read the tree digest hashed, so they describe the
+   * bytes the digest admitted.
+   */
+  executableDigests: Readonly<Record<string, string>>;
+}
+
+/**
+ * Walk the tree once, producing both the digest and the stat snapshot.
+ *
+ * The snapshot is a by-product of a walk that already stats every file, so it
+ * costs nothing beyond the array. That is the whole point of D8: the expensive
+ * part is reading 515 MB of content, and it now happens once per process per
+ * pack instead of five times per session start.
+ */
+async function digestTreeWithSnapshot(
+  root: string,
+): Promise<RuntimeTreeSnapshot> {
   const hash = createHash("sha256");
+  const entriesSnapshot: RuntimeTreeEntrySnapshot[] = [];
+  const executableDigests: Record<string, string> = {};
   let files = 0;
   let bytes = 0;
 
@@ -122,13 +182,121 @@ export async function computeTreeDigest(root: string): Promise<string> {
       }
       const content = await readFile(full);
       const executable = (info.mode & 0o111) !== 0 ? "1" : "0";
+      const contentDigest = createHash("sha256").update(content).digest();
       hash.update(`f\0${rel}\0${executable}\0${info.size}\0`);
-      hash.update(createHash("sha256").update(content).digest());
+      hash.update(contentDigest);
+      entriesSnapshot.push({
+        path: rel,
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+        ino: Number(info.ino),
+        mode: info.mode,
+      });
+      if (isAlwaysRehashed(rel)) {
+        executableDigests[rel] = contentDigest.toString("hex");
+      }
     }
   };
 
   await walk(root);
-  return `sha256:${hash.digest("hex")}`;
+  return {
+    root,
+    digest: `sha256:${hash.digest("hex")}`,
+    entries: entriesSnapshot,
+    executableDigests,
+  };
+}
+
+/**
+ * Files that are re-hashed on every pre-spawn re-verify, whatever the snapshot
+ * says.
+ *
+ * These are the bytes that actually execute: the Node binary that interprets
+ * everything, the loopback launcher that constrains the bridge's listener, and
+ * the bridge itself. The vendor CLI binary is matched by prefix because its
+ * name is platform-suffixed inside the vendor's own platform package. Anything
+ * else in the tree — 5,000 files of JavaScript the bridge may or may not
+ * import — is covered by the snapshot compare, which is what makes the
+ * re-verify a stat walk instead of a 515 MB read.
+ */
+const ALWAYS_REHASHED_RELATIVE_PATHS: readonly string[] = [
+  "bin/node",
+  "launcher.mjs",
+  "bridge.mjs",
+];
+const ALWAYS_REHASHED_PATH_PATTERNS: readonly RegExp[] = [
+  /(^|\/)claude-agent-sdk-[a-z0-9-]+\/(claude|claude\.exe)$/,
+  /(^|\/)claude-code-[a-z0-9-]+\/(claude|claude\.exe)$/,
+];
+
+function isAlwaysRehashed(relativePath: string): boolean {
+  return (
+    ALWAYS_REHASHED_RELATIVE_PATHS.includes(relativePath) ||
+    ALWAYS_REHASHED_PATH_PATTERNS.some((pattern) => pattern.test(relativePath))
+  );
+}
+
+/**
+ * Process-local verification cache, keyed by canonical root AND the digest the
+ * manifest expects.
+ *
+ * Keying on both matters: a cache keyed on the path alone would answer for a
+ * root whose expected digest changed under it (a pack upgrade activating a new
+ * version into the same path), which is precisely the case that must re-verify.
+ * Entries are never invalidated by time — a stale entry cannot approve a
+ * changed tree, because `revalidateRuntime` still stats every file and
+ * re-hashes the executable ones before a spawn.
+ */
+const verifiedRuntimeCache = new Map<string, RuntimeTreeSnapshot>();
+
+function verificationCacheKey(root: string, expectedDigest: string): string {
+  return `${root}\u0000${expectedDigest}`;
+}
+
+/** Test seam and pack-activation hook: drop everything the cache remembers. */
+export function clearRuntimeVerificationCache(): void {
+  verifiedRuntimeCache.clear();
+}
+
+export type RuntimeVerification =
+  | { ok: true; digest: string; snapshot: RuntimeTreeSnapshot; cached: boolean }
+  | { ok: false; reason: "digest-mismatch"; digest: string }
+  | { ok: false; reason: "unreadable"; message: string };
+
+/**
+ * Verify a runtime tree against the digest the manifest names, at most once per
+ * process per (root, digest) pair.
+ *
+ * The full digest is what proves the tree is the artifact CI built. Doing it
+ * five times per session start — which is what the foundation did between
+ * consent, availability and pre-spawn — cost 3–7 s of a 1.5 s budget for no
+ * additional guarantee, because nothing between those calls could have written
+ * to a root the session does not own.
+ */
+export async function verifyRuntime(
+  root: string,
+  expectedDigest: string,
+): Promise<RuntimeVerification> {
+  const key = verificationCacheKey(root, expectedDigest);
+  const cached = verifiedRuntimeCache.get(key);
+  if (cached !== undefined) {
+    return { ok: true, digest: cached.digest, snapshot: cached, cached: true };
+  }
+  let snapshot: RuntimeTreeSnapshot;
+  try {
+    snapshot = await digestTreeWithSnapshot(root);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "unreadable",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (snapshot.digest !== expectedDigest) {
+    return { ok: false, reason: "digest-mismatch", digest: snapshot.digest };
+  }
+  verifiedRuntimeCache.set(key, snapshot);
+  return { ok: true, digest: snapshot.digest, snapshot, cached: false };
 }
 
 function runtimeIdOf(parts: readonly string[]): string {
@@ -178,57 +346,96 @@ export async function resolveManagedBundle(args: {
     };
   }
 
-  let digest: string;
-  try {
-    digest = await computeTreeDigest(canonicalRoot);
-  } catch (error) {
+  const expectedDigest = policy.bundleDigest[platform];
+  if (expectedDigest === undefined) {
+    return {
+      ok: false,
+      status: "bundle-absent",
+      message:
+        `no ${manifest.harnessId} runtime pack has been built for ` +
+        `${platform}, so there is no digest to verify one against`,
+    };
+  }
+
+  const verification = await verifyRuntime(canonicalRoot, expectedDigest);
+  if (!verification.ok && verification.reason === "unreadable") {
     return {
       ok: false,
       status: "bundle-corrupt",
       message:
         `the ${manifest.harnessId} runtime bundle could not be digested: ` +
-        `${error instanceof Error ? error.message : String(error)}`,
+        `${verification.message}`,
     };
   }
-
-  if (digest !== policy.bundleDigest) {
+  if (!verification.ok) {
     return {
       ok: false,
       status: "bundle-digest-mismatch",
       message:
         `the ${manifest.harnessId} runtime bundle does not match the digest ` +
-        `this Inspector was built with. Expected ${policy.bundleDigest}, ` +
-        `found ${digest}. The bundle is not user- or session-writable by ` +
-        `design, so a mismatch means it was replaced — local execution stays ` +
-        `disabled until it is reinstalled.`,
+        `this Inspector was built with. Expected ${expectedDigest}, ` +
+        `found ${verification.digest}. The bundle is not user- or ` +
+        `session-writable by design, so a mismatch means it was replaced — ` +
+        `local execution stays disabled until it is reinstalled.`,
     };
   }
+  const digest = verification.digest;
 
-  const launcherPath = join(canonicalRoot, policy.launcherRelativePath);
-  // The digest covers the TREE; the launcher must be a file inside it. A
-  // `..` in the manifest's relative path would otherwise resolve to a file
-  // outside the bytes consent verified, and the supervisor would launch it.
-  const normalizedLauncher = normalize(launcherPath);
-  if (!normalizedLauncher.startsWith(canonicalRoot + sep)) {
-    return {
-      ok: false,
-      status: "bundle-corrupt",
-      message:
-        `the ${manifest.harnessId} manifest points its launcher outside the ` +
-        `bundle whose digest was verified`,
-    };
+  // The digest covers the TREE; both the launcher and the Node binary that
+  // interprets it must be files inside it. A `..` in either manifest-relative
+  // path would otherwise resolve outside the bytes consent verified, and the
+  // supervisor would launch that.
+  const insideBundle = async (
+    relativePath: string,
+    label: string,
+    requireExecutable: boolean,
+  ): Promise<{ ok: true; path: string } | { ok: false; message: string }> => {
+    const full = join(canonicalRoot, relativePath);
+    if (!normalize(full).startsWith(canonicalRoot + sep)) {
+      return {
+        ok: false,
+        message:
+          `the ${manifest.harnessId} manifest points its ${label} outside ` +
+          `the bundle whose digest was verified`,
+      };
+    }
+    try {
+      const info = await stat(full);
+      if (!info.isFile()) throw new Error("not a file");
+      if (requireExecutable && (info.mode & 0o111) === 0) {
+        throw new Error("not executable");
+      }
+    } catch {
+      return {
+        ok: false,
+        message:
+          `the ${manifest.harnessId} runtime bundle has no usable ${label} ` +
+          `at ${relativePath}`,
+      };
+    }
+    return { ok: true, path: full };
+  };
+
+  const launcher = await insideBundle(
+    policy.launcherRelativePath,
+    "launcher",
+    false,
+  );
+  if (!launcher.ok) {
+    return { ok: false, status: "bundle-corrupt", message: launcher.message };
   }
-  try {
-    const info = await stat(launcherPath);
-    if (!info.isFile()) throw new Error("not a file");
-  } catch {
-    return {
-      ok: false,
-      status: "bundle-corrupt",
-      message:
-        `the ${manifest.harnessId} runtime bundle has no launcher at ` +
-        `${policy.launcherRelativePath}`,
-    };
+  const launcherPath = launcher.path;
+
+  // The pack's own Node. Both distributions use it — Electron's `RunAsNode`
+  // fuse is off, and the npx server's own `process.execPath` is outside the
+  // tree the digest covers — so a pack without one cannot launch a bridge.
+  const bundledNode = await insideBundle(
+    policy.nodeLauncherRelativePath,
+    "Node binary",
+    true,
+  );
+  if (!bundledNode.ok) {
+    return { ok: false, status: "bundle-corrupt", message: bundledNode.message };
   }
 
   return {
@@ -247,6 +454,7 @@ export async function resolveManagedBundle(args: {
       adapterVersion: manifest.adapterVersion,
       rootPath: canonicalRoot,
       launcherPath,
+      nodePath: bundledNode.path,
       digest,
       vendorPackages: policy.vendorPackages,
     },
@@ -690,28 +898,143 @@ export async function resolveSystemInstall(
 }
 
 /**
+ * Compare a tree against the snapshot taken during its full digest.
+ *
+ * Returns a short human-readable reason on the FIRST difference, or `null` if
+ * the tree still matches. The reason names the relative path only — never an
+ * absolute one — because it travels into a user-facing refusal message.
+ *
+ * Two halves, both required:
+ *
+ *  - every recorded file must still be there with the same size, mtime, inode
+ *    and mode, and no extra file may have appeared (checked by counting the
+ *    walk, which is why the walk runs even though the snapshot has the list);
+ *  - the files that execute are re-hashed outright, because an in-place
+ *    rewrite that restored size and mtime is exactly the attack a stat compare
+ *    is weakest against, and there are only four of them.
+ */
+async function detectSnapshotDrift(
+  snapshot: RuntimeTreeSnapshot,
+): Promise<string | null> {
+  const recorded = new Map(snapshot.entries.map((e) => [e.path, e]));
+  let seen = 0;
+
+  const walk = async (dir: string): Promise<string | null> => {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      const rel = relative(snapshot.root, full).split(sep).join("/");
+      if (entry.isSymbolicLink()) return `a symlink appeared at ${rel}`;
+      if (entry.isDirectory()) {
+        const nested = await walk(full);
+        if (nested !== null) return nested;
+        continue;
+      }
+      if (!entry.isFile()) return `a non-regular file appeared at ${rel}`;
+      const expected = recorded.get(rel);
+      if (expected === undefined) return `an unexpected file appeared at ${rel}`;
+      seen += 1;
+      const info = await stat(full);
+      if (
+        info.size !== expected.size ||
+        info.mtimeMs !== expected.mtimeMs ||
+        Number(info.ino) !== expected.ino ||
+        info.mode !== expected.mode
+      ) {
+        return `${rel} was modified`;
+      }
+      if (isAlwaysRehashed(rel)) {
+        const content = await readFile(full);
+        const fileDigest = createHash("sha256").update(content).digest("hex");
+        if (fileDigest !== snapshot.executableDigests[rel]) {
+          return `${rel} was rewritten in place`;
+        }
+      }
+    }
+    return null;
+  };
+
+  const reason = await walk(snapshot.root);
+  if (reason !== null) return reason;
+  if (seen !== snapshot.entries.length) {
+    return `${snapshot.entries.length - seen} file(s) went missing`;
+  }
+  return null;
+}
+
+/**
  * Re-verify a runtime immediately before spawn.
  *
- * Consent was granted against a `runtimeId`; this proves the thing on disk
- * still hashes to it. A managed bundle is fully re-digested. A system
- * executable is re-read and re-hashed — cheap, and the only way to notice a
- * replacement that happened after the user clicked Allow.
+ * Consent was granted against a `runtimeId`; this proves the thing on disk is
+ * still that runtime.
+ *
+ * For a managed bundle the full digest ran once, in `verifyRuntime`, and left
+ * a stat snapshot behind. This re-check compares that snapshot entry for entry
+ * — a missing file, an added file, a changed size, mtime, inode or mode — and
+ * re-hashes the handful of files that actually execute.
+ *
+ * The snapshot is an OPTIMIZATION, never the authority: anything it flags
+ * falls through to the same full digest that admitted the tree in the first
+ * place. That matters in both directions. A tampered tree cannot pass, because
+ * the digest still has to match. And reinstalling the same pack version — new
+ * mtimes and inodes, identical bytes — is admitted rather than refused, which
+ * a snapshot treated as authoritative would have got wrong.
+ *
+ * With no snapshot (a fresh process that resolved its runtime from a cache
+ * that has since been cleared) it falls back to the full digest rather than
+ * trusting a tree it never measured.
  */
 export async function revalidateRuntime(
   runtime: ResolvedRuntime,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     if (runtime.source === "managed-bundle") {
-      const digest = await computeTreeDigest(runtime.rootPath);
-      if (digest !== runtime.digest) {
-        return {
-          ok: false,
-          message:
-            `the ${runtime.harnessId} runtime bundle changed after consent was ` +
-            `granted (expected ${runtime.digest}, found ${digest})`,
-        };
+      const snapshot = verifiedRuntimeCache.get(
+        verificationCacheKey(runtime.rootPath, runtime.digest),
+      );
+      if (snapshot === undefined) {
+        const verification = await verifyRuntime(
+          runtime.rootPath,
+          runtime.digest,
+        );
+        if (!verification.ok) {
+          return {
+            ok: false,
+            message:
+              verification.reason === "digest-mismatch"
+                ? `the ${runtime.harnessId} runtime bundle changed after ` +
+                  `consent was granted (expected ${runtime.digest}, found ` +
+                  `${verification.digest})`
+                : `the ${runtime.harnessId} runtime could not be re-verified: ` +
+                  `${verification.message}`,
+          };
+        }
+        return { ok: true };
       }
-      return { ok: true };
+      const drift = await detectSnapshotDrift(snapshot);
+      if (drift === null) return { ok: true };
+
+      // Drift is a signal to look properly, not a verdict. Reinstalling the
+      // SAME pack version rewrites every file with new mtimes and inodes while
+      // the content — and therefore the digest consent named — is unchanged;
+      // refusing that would break reinstall for no security gain. So the full
+      // digest decides, exactly as it does on first admission, and the cheap
+      // check only ever buys skipping it.
+      verifiedRuntimeCache.delete(
+        verificationCacheKey(runtime.rootPath, runtime.digest),
+      );
+      const reverified = await verifyRuntime(runtime.rootPath, runtime.digest);
+      if (reverified.ok) return { ok: true };
+      return {
+        ok: false,
+        message:
+          reverified.reason === "digest-mismatch"
+            ? `the ${runtime.harnessId} runtime bundle changed after consent ` +
+              `was granted (${drift}; expected ${runtime.digest}, found ` +
+              `${reverified.digest})`
+            : `the ${runtime.harnessId} runtime could not be re-verified: ` +
+              `${reverified.message}`,
+      };
     }
     const content = await readFile(runtime.launcherPath);
     const digest = `sha256:${createHash("sha256")
