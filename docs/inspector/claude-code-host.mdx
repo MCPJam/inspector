@@ -195,6 +195,7 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Require tool approval on a Codex host | Pre-flight error — the Codex runtime doesn't pause for tool approval, so the turn is refused rather than run unapproved, whether or not any MCP server is selected. The toggle is disabled on Codex hosts, so a host that carried approval in from another harness keeps the stored value: clear `requireToolApproval` through the API or CLI, or switch the host off Codex to reach the toggle again. |
 | Computer data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not supported by the selected harness | Pre-flight error asking you to pick an eligible model. |
+| Cursor CLI host configured with an ordinary model id (e.g. `anthropic/claude-sonnet-4.5`) | Pre-flight error naming the id it found — the Cursor runtime ignores any pinned model and picks its own, so the host must carry `cursor/auto`. Reset the host's model field. |
 | Computer at daily start cap | Start-limit dialog with upgrade option. |
 | Org out of compute allowance and credits | Computer pauses with a billing notice. |
 | Org spending limit reached | Clean rejection before any model call. |
