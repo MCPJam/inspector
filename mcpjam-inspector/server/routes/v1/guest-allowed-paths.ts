@@ -93,6 +93,16 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
+  // The canonical run verdict Evaluate (New) renders in Run History. A guest
+  // can already GET the run and its iterations — the two reads this route
+  // composes — so denying the summary left the verdict cell as LOAD FAILED
+  // while RATE still rendered from the local Convex rows. GET-only: there is
+  // no write at this path, and a method-less entry would hand a guest any
+  // future mutation for free.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/decision-summary$/,
+    methods: ["GET"],
+  },
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
   },

@@ -79,6 +79,44 @@ vi.mock("../suite-hero-stats", () => ({
   SuiteHeroStats: () => <div data-testid="suite-hero-stats" />,
 }));
 
+vi.mock("../suite-dashboard", () => ({
+  SuiteDashboard: ({
+    onTestCaseClick,
+    onOpenLastRun,
+    selectedRunId,
+  }: {
+    onTestCaseClick: (testCaseId: string) => void;
+    onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
+    selectedRunId?: string | null;
+  }) => (
+    <div data-testid="suite-dashboard">
+      All runs latest + trends per client
+      {selectedRunId ? null : (
+        <>
+          <button
+            type="button"
+            data-testid="test-cases-overview"
+            onClick={() => onTestCaseClick("case-1")}
+          >
+            Click on a case to view its run history and performance.
+          </button>
+          <button
+            type="button"
+            data-testid="test-cases-open-last-run"
+            onClick={() => onOpenLastRun?.("case-1", "iter-1")}
+          >
+            Open last run
+          </button>
+        </>
+      )}
+    </div>
+  ),
+}));
+
+vi.mock("../run-detail-view", () => ({
+  RunDetailView: () => <div data-testid="run-detail-view" />,
+}));
+
 vi.mock("../test-cases-overview", () => ({
   TestCasesOverview: ({
     onTestCaseClick,
@@ -581,5 +619,60 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     expect(mocks.suiteHeader).toHaveBeenCalledWith(
       expect.objectContaining({ isEditMode: true }),
     );
+  });
+
+  const detailRun = {
+    _id: "run-1",
+    suiteId: "suite-1",
+    createdBy: "u",
+    runNumber: 1,
+    configRevision: "r",
+    configSnapshot: { tests: [], environment: { servers: [] } },
+    status: "completed" as const,
+    result: "failed" as const,
+    createdAt: 2,
+    completedAt: 3,
+    source: "ui" as const,
+  };
+
+  const otherRun = {
+    ...detailRun,
+    _id: "run-0",
+    createdAt: 1,
+    completedAt: 2,
+  };
+
+  it("opens Evaluate (New) run page instead of the unified split", () => {
+    renderOverview({
+      suiteDetailOverview: true,
+      runs: [detailRun, otherRun],
+      route: {
+        type: "run-detail",
+        suiteId: "suite-1",
+        runId: "run-1",
+      },
+    });
+
+    expect(screen.getByTestId("evaluate-run-page")).toBeInTheDocument();
+    expect(screen.getByTestId("run-detail-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("suite-dashboard")).toBeNull();
+    expect(screen.queryByText(/All runs/i)).toBeNull();
+    expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it("keeps the unified split on run-detail when the opt-in is off", () => {
+    renderOverview({
+      hideRunActions: true,
+      runs: [detailRun, otherRun],
+      route: {
+        type: "run-detail",
+        suiteId: "suite-1",
+        runId: "run-1",
+      },
+    });
+
+    expect(screen.getByTestId("suite-dashboard")).toBeInTheDocument();
+    expect(screen.getByText(/All runs/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("evaluate-run-page")).toBeNull();
   });
 });

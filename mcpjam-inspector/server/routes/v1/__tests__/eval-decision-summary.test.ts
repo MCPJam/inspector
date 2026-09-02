@@ -198,6 +198,38 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
     });
   }
 
+  it("admits a guest the way the run and its iterations already do", async () => {
+    // Guests can GET `/eval-runs/:id` and `/iterations`. This route composes
+    // those two reads; omitting it from the allowlist 401s the Evaluate
+    // verdict cell as LOAD FAILED while RATE still renders. GET-only so a
+    // later write at the same URL stays default-denied.
+    const { isGuestAllowedV1Request } = await import(
+      "../guest-allowed-paths.js"
+    );
+    const path = `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${
+      corpus.cases[0]!.input.run.id
+    }/decision-summary`;
+    expect(isGuestAllowedV1Request("GET", path)).toBe(true);
+    expect(isGuestAllowedV1Request("POST", path)).toBe(false);
+
+    stubCorpusRow(corpus.cases[0]!);
+    validateGuestTokenMock.mockResolvedValue({
+      valid: true,
+      guestId: "guest_abc",
+    });
+    const res = await makeApp().request(
+      `/api/v1/projects/${corpus.cases[0]!.input.projectId}/eval-runs/${
+        corpus.cases[0]!.input.run.id
+      }/decision-summary`,
+      {
+        method: "GET",
+        headers: { Authorization: "Bearer guest_bearer" },
+      }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(corpus.cases[0]!.expected);
+  });
+
   it("refuses a run from another project as NOT_FOUND", async () => {
     stubCorpusRow(corpus.cases[0]!);
     const res = await request(

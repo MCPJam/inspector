@@ -51,6 +51,7 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
+import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
@@ -347,7 +348,9 @@ export function SuiteIterationsView({
   omitSuiteHeader?: boolean;
   /**
    * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
-   * history, cases — instead of the unified dashboard on suite overview.
+   * history, cases — instead of the unified dashboard on suite overview, and
+   * {@link EvaluateRunPage} instead of the SuiteResultsSplit rail on run
+   * detail.
    *
    * OFF by default on purpose. This is a shared component: the shipped
    * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
@@ -901,7 +904,8 @@ export function SuiteIterationsView({
   ]);
 
   // Evaluate (New) suite overview uses the checkout-flow identity + run
-  // history + cases layout. Run detail still folds into SuiteDashboard.
+  // history + cases layout. Run detail uses EvaluateRunPage (this run +
+  // Compare), not the SuiteResultsSplit rail.
   //
   // `viewMode` falls through to "overview" for the suite-edit route, so edit
   // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
@@ -914,15 +918,27 @@ export function SuiteIterationsView({
     !isEditMode &&
     viewMode === "overview";
 
+  const showEvaluateRunPage =
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "run-detail" &&
+    Boolean(selectedRunDetails) &&
+    !selectedCompareBaseRunId &&
+    !selectedRunTestCaseId;
+
   const showSuiteHeader =
     !showEvaluateSuiteDetail &&
+    !showEvaluateRunPage &&
     (!omitSuiteHeader || viewMode !== "run-detail" || isEditMode);
 
   // The unified results split (run-group rail + scoped right pane) is the
   // default suite surface; the single-run detail folds into its right pane
   // wherever the dashboard renders (same guard as the overview SuiteDashboard
   // branch so the two surfaces switch together).
-  const foldRunDetail = hideRunActions && !caseListInSidebar;
+  const foldRunDetail =
+    hideRunActions && !caseListInSidebar && !suiteDetailOverview;
 
   // Keep suite chrome (name, Run all, Generate) visible in run detail — run
   // identity belongs in the body. CI opts out via omitSuiteHeader.
@@ -1066,7 +1082,7 @@ export function SuiteIterationsView({
           : "body"
       }
       hideReplayLineage
-      hideRecentRuns={foldRunDetail}
+      hideRecentRuns={foldRunDetail || showEvaluateRunPage}
       hideKpiStrip={foldRunDetail}
       hideAccuracyHero={foldRunDetail}
       caseTableSlot={runMatrixPane}
@@ -1285,6 +1301,38 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showEvaluateRunPage && selectedRunDetails ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <EvaluateRunPage
+                  run={selectedRunDetails}
+                  hostNamesById={hostNamesById}
+                  otherRuns={runs.filter(
+                    (candidate) =>
+                      candidate._id !== selectedRunDetails._id &&
+                      candidate.result !== "inconclusive",
+                  )}
+                  defaultCompareRunId={
+                    previousCompletedRunForSelectedRun?._id ?? null
+                  }
+                  onCompareWithRun={(baseRunId) =>
+                    handleCompareRuns(baseRunId, selectedRunDetails._id)
+                  }
+                  onExport={
+                    projectId ? () => setTracesExportOpen(true) : undefined
+                  }
+                >
+                  {runDetailView}
+                </EvaluateRunPage>
+              </motion.div>
             ) : showEvaluateSuiteDetail ? (
               <motion.div
                 key={contentKey}

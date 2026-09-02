@@ -31,7 +31,6 @@ import {
 import { getEffectiveSuiteServers } from "../evals/helpers";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
-  buildSuiteRunHistoryAggregates,
   buildSuiteRunHistoryRows,
   buildSuiteTestCaseRows,
   filterSuiteRunHistoryRows,
@@ -49,6 +48,7 @@ import {
 } from "../evals/run-decision-summary-card";
 import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
 import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
+import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -200,10 +200,6 @@ export function SuiteDetailOverview({
     : filteredRows.slice(0, SUITE_RUN_HISTORY_PAGE_SIZE);
   const hiddenRunCount = filteredRows.length - visibleRows.length;
 
-  const aggregates = useMemo(
-    () => buildSuiteRunHistoryAggregates(runs, allIterations),
-    [runs, allIterations],
-  );
   const testCaseRows = useMemo(() => buildSuiteTestCaseRows(cases), [cases]);
 
   const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
@@ -367,34 +363,7 @@ export function SuiteDetailOverview({
           ) : null}
         </div>
 
-        {runs.length > 0 ? (
-          <div
-            className="grid grid-cols-2 gap-x-6 gap-y-4 border-b border-border/30 px-5 py-4 sm:grid-cols-3 lg:grid-cols-6"
-            data-testid="suite-detail-run-aggregates"
-          >
-            <AggregateStat label="runs" value={String(aggregates.runCount)} />
-            <AggregateStat
-              label="tokens"
-              value={formatRunHistoryMetric(aggregates.totalTokens, "number")}
-            />
-            <AggregateStat
-              label="P50 latency"
-              value={formatRunHistoryMetric(aggregates.latencyP50, "duration")}
-            />
-            <AggregateStat
-              label="P95 latency"
-              value={formatRunHistoryMetric(aggregates.latencyP95, "duration")}
-            />
-            <AggregateStat
-              label="tokens per run"
-              value={formatRunHistoryMetric(aggregates.tokensPerRun, "number")}
-            />
-            <AggregateStat
-              label="tool calls per run"
-              value={formatRunHistoryMetric(aggregates.toolCallsPerRun, "number")}
-            />
-          </div>
-        ) : null}
+        <SuiteRunHistorySnapshot runs={runs} allIterations={allIterations} />
 
         {filteredRows.length === 0 ? (
           <div className="bg-card px-5 py-10 text-center text-sm text-muted-foreground">
@@ -409,9 +378,6 @@ export function SuiteDetailOverview({
                   <TableHead className={runHistoryHeadClass}>Verdict</TableHead>
                   <TableHead className={cn(runHistoryHeadClass, "text-right")}>
                     Rate
-                  </TableHead>
-                  <TableHead className={runHistoryHeadClass}>
-                    Top failure signature
                   </TableHead>
                   <TableHead className={runHistoryHeadClass}>Platform</TableHead>
                   <TableHead className={cn(runHistoryHeadClass, "text-right")}>
@@ -471,9 +437,6 @@ export function SuiteDetailOverview({
                     */}
                     <TableCell className="text-right text-xs tabular-nums text-foreground">
                       {row.passRate != null ? `${row.passRate}%` : "—"}
-                    </TableCell>
-                    <TableCell className="max-w-[16rem] truncate text-xs text-muted-foreground">
-                      {row.topFailureSignature ?? "—"}
                     </TableCell>
                     <TableCell
                       className={cn(
@@ -890,15 +853,3 @@ function FilterSelect({
   );
 }
 
-function AggregateStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[17px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
-        {value}
-      </div>
-      <div className="mt-1.5 text-[11px] leading-none text-muted-foreground">
-        {label}
-      </div>
-    </div>
-  );
-}
