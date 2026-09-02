@@ -285,7 +285,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       )
       .option(
         "--file <path>",
-        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
+        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/secretSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
       )
       .option("--json <json>", "Inline environment JSON (or @file, or -)").action(
     async (
@@ -457,7 +457,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       environments
       .command("update")
       .description(
-        "Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, pluginVersionIds, or sandboxImageId"
+        "Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId"
       )
       .requiredOption("--environment <id-or-name>", "Environment name or ID")
       .requiredOption(
