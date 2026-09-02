@@ -483,6 +483,34 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
   });
 
+  it("starts a fresh flow from 'Create new swarm' even when a previous launch left a draft", () => {
+    // Leaving the Running step via the sidebar (not Leave) keeps the flow's
+    // sessionStorage draft, so `/swarms/new` would resume the old swarm.
+    sessionStorage.setItem(
+      "mcp-new-swarm-flow-draft",
+      JSON.stringify({
+        version: 1,
+        projectId: "proj-1",
+        savedAt: Date.now(),
+        draft: { step: "running", launchedRuns: [] },
+      }),
+    );
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(
+      within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
+        "button",
+        { name: /^create new swarm$/i },
+      ),
+    );
+    expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
+    expect(sessionStorage.getItem("mcp-new-swarm-flow-draft")).toBeNull();
+
+    cleanup();
+    openDescribe();
+    expect(screen.getByTestId("new-swarm-create-flow")).toBeInTheDocument();
+    expect(screen.queryByText(/swarming/i)).not.toBeInTheDocument();
+  });
+
   it("keeps the action disabled until there is something to act on, and says why", () => {
     openDescribe();
     const submit = screen.getByTestId("new-swarm-continue");
