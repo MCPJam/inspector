@@ -5,8 +5,8 @@
  * a session chip must open the shared SwarmLiveStreamPane on the right with
  * that session's selection — not leave the wizard.
  *
- * The finding rail is the other half: "Look now" has to hand the caller the
- * SESSION that produced the finding, not the generic leave callback.
+ * Findings is the other half: "Open findings" is always available, and
+ * "Look now" on the first-finding ping leaves for Findings — not the session.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -119,7 +119,12 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-import { NewSwarmRunningStep } from "../new-swarm-running-step";
+import {
+  NewSwarmRunningStep,
+  swarmCellHeadline,
+  swarmRunGoalLabel,
+  swarmRunningTitle,
+} from "../new-swarm-running-step";
 
 describe("NewSwarmRunningStep — session stream pane", () => {
   beforeEach(() => {
@@ -132,6 +137,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     streamState.error = null;
     streamState.runComplete = false;
     sessionsFixture = [];
+    runFixture.status = "running";
+    runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
   });
 
   it("shows an empty stream pane until a session is clicked", async () => {
@@ -146,7 +153,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               personaId: "p-1",
               personaName: "Async Documentation Writer",
               personaRole: "Writer",
-              label: "run",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
             },
           ]}
           fallbackColumns={[
@@ -168,11 +176,31 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     );
 
     await screen.findByTestId("new-swarm-running-step");
+    expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
+      "Swarm running 0 of 2 sessions"
+    );
+    expect(
+      screen.getByTestId("new-swarm-running-open-findings")
+    ).toHaveTextContent("Open findings");
+    expect(screen.queryByTestId("new-swarm-running-done")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-running-progress")).toHaveAttribute(
+      "aria-valuenow",
+      "0"
+    );
+    expect(screen.getByText("0%")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/select multiple environments/i)
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-running-stream")).toBeInTheDocument();
     expect(screen.getByTestId("swarm-live-pane-empty")).toBeInTheDocument();
+    expect(screen.getByTestId("swarm-running-hero")).toBeInTheDocument();
     expect(
-      await screen.findAllByTestId("new-swarm-running-session")
-    ).toHaveLength(2);
+      screen.getByTestId("swarm-running-hero").querySelectorAll("img"),
+    ).toHaveLength(3);
+    const chips = await screen.findAllByTestId("new-swarm-running-session");
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveTextContent("Running: Refund a charge");
   });
 
   it("opens the live stream pane when a session chip is clicked", async () => {
@@ -187,7 +215,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               personaId: "p-1",
               personaName: "Async Documentation Writer",
               personaRole: "Writer",
-              label: "run",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
             },
           ]}
           fallbackColumns={[
@@ -215,18 +244,19 @@ describe("NewSwarmRunningStep — session stream pane", () => {
       expect(screen.getByTestId("swarm-live-pane")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("swarm-live-pane-empty")).not.toBeInTheDocument();
-    expect(screen.getByText(/Session #1/i)).toBeInTheDocument();
+    const pane = screen.getByTestId("swarm-live-pane");
+    expect(pane).toHaveTextContent(/Session #1/i);
+    expect(pane).not.toHaveTextContent(/synth_/);
+    expect(pane).not.toHaveTextContent(/Readiness:/i);
     expect(chips[0]).toHaveAttribute("aria-pressed", "true");
   });
 
   /**
-   * The bug this guards: "Look now" was wired to `onLeave`, so a finding
-   * dumped the viewer on Overview with nothing identifying the session that
-   * produced it. A finding you cannot trace back to a session is a claim, so the
-   * assertion is on the session ID reaching the caller — not on navigation,
-   * which the caller owns.
+   * The ping is a notification, not the only door. "Look now" leaves for
+   * Findings — the claim — not the session. Session evidence stays on the
+   * swarm page. "Open findings" is already on the frame before any ping.
    */
-  it("'Look now' opens the session that produced the finding, not a generic leave", async () => {
+  it("'Look now' and 'Open findings' leave for Findings, not the session", async () => {
     sessionsFixture = [failedSessionFixture];
     const onLeave = vi.fn();
     const onOpenSession = vi.fn();
@@ -242,7 +272,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               personaId: "p-1",
               personaName: "Async Documentation Writer",
               personaRole: "Writer",
-              label: "run",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
             },
           ]}
           fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
@@ -263,6 +294,17 @@ describe("NewSwarmRunningStep — session stream pane", () => {
 
     const finding = await screen.findByTestId("new-swarm-running-finding");
     expect(finding.textContent).toMatch(/never called the refund tool/);
+    // Ping sits with the title, not under the matrix.
+    expect(
+      screen.getByTestId("new-swarm-running-title").compareDocumentPosition(
+        finding
+      ) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      finding.compareDocumentPosition(
+        screen.getAllByTestId("new-swarm-running-session")[0]!
+      ) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("new-swarm-running-finding-open"));
     // The criterion rides along with the session (BB-74): the wizard's line
@@ -270,5 +312,112 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     // repeat it rather than presenting an unexplained transcript.
     expect(onOpenSession).toHaveBeenCalledWith("thread-fail", "crit-refund");
     expect(onLeave).not.toHaveBeenCalled();
+
+    // The button beside it is the one that goes to Findings, and it is a
+    // DIFFERENT destination — that separation is the point of the pair.
+    fireEvent.click(screen.getByTestId("new-swarm-running-open-findings"));
+    expect(onLeave).toHaveBeenCalledTimes(1);
+    expect(onOpenSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Done next to Open findings when the wave has finished", async () => {
+    runFixture.status = "completed";
+    runFixture.summary = { total: 2, succeeded: 2, failed: 0, rateLimited: 0 };
+    const onLeave = vi.fn();
+
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[
+            {
+              environmentId: "env-1",
+              projectId: "proj-1",
+              name: "Prod-like",
+              hostId: "host-1",
+              revision: 1,
+            },
+          ]}
+          onLeave={onLeave}
+          onOpenSession={vi.fn()}
+        />
+      </div>
+    );
+
+    await screen.findByTestId("new-swarm-running-done");
+    expect(screen.getByTestId("new-swarm-running-open-findings")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("new-swarm-running-done"));
+    expect(onLeave).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("NewSwarmRunningStep — frame copy", () => {
+  it("titles the wave the way the running and finished frames do", () => {
+    expect(
+      swarmRunningTitle({
+        allTerminal: false,
+        succeeded: 0,
+        rateLimited: 0,
+        done: 0,
+        total: 30,
+      })
+    ).toBe("Swarm running 0 of 30 sessions");
+    expect(
+      swarmRunningTitle({
+        allTerminal: true,
+        succeeded: 30,
+        rateLimited: 0,
+        done: 30,
+        total: 30,
+      })
+    ).toBe("Swarm finished 30 of 30 sessions");
+    expect(
+      swarmRunningTitle({
+        allTerminal: true,
+        succeeded: 0,
+        rateLimited: 0,
+        done: 15,
+        total: 15,
+      })
+    ).toBe("Swarm failed 0 of 15 sessions");
+  });
+
+  it("leads each cell with the goal, not a score chip", () => {
+    expect(swarmRunGoalLabel({ label: "Ada · Refund a charge" })).toBe(
+      "Refund a charge"
+    );
+    expect(
+      swarmCellHeadline({
+        outcome: "running",
+        primary: "running",
+        goal: "Refund a charge",
+      })
+    ).toBe("Running: Refund a charge");
+    expect(
+      swarmCellHeadline({
+        outcome: "succeeded",
+        primary: "3/3 pass",
+        goal: "Refund a charge",
+      })
+    ).toBe("Run completed: All checks passed");
+    expect(
+      swarmCellHeadline({
+        outcome: "rate_limited",
+        primary: "2/3 pass",
+        goal: "Refund a charge",
+      })
+    ).toBe("Run completed: Goal completion had mixed results");
   });
 });

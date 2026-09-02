@@ -321,6 +321,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import { resetTokenCache } from "./lib/apis/web/context";
 import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
   ConnectServerInspectorCommand,
@@ -2783,6 +2784,21 @@ export default function App() {
       cancelled = true;
     };
   }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
+
+  // Retire any in-memory guest bearer the moment WorkOS auth lands. Without
+  // this, a guest token minted before sign-in (or during a brief apiContext
+  // teardown) can stay in the 30s bearer cache and ride the next /api/web/*
+  // call — Convex then rejects MCPJam-model generation as a guest even though
+  // the sidebar already shows the signed-in user.
+  const previousWorkOsUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const workOsUserId = workOsUser?.id ?? null;
+    if (workOsUserId && previousWorkOsUserIdRef.current !== workOsUserId) {
+      clearGuestSession();
+      resetTokenCache();
+    }
+    previousWorkOsUserIdRef.current = workOsUserId;
+  }, [workOsUser?.id]);
 
   usePostHogIdentify();
   // Stops replay while on `/results/<token>` — the init-time

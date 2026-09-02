@@ -1,17 +1,23 @@
 /**
  * Running step of the New swarm create flow.
  *
- * Persona × client matrix while the just-launched runs fan out. Columns are
- * the execution targets (environments / hosts). Cell state prefers the live
- * SSE stream so the grid updates before Convex session rows land.
+ * One row per launched goal, one column per client. Each cell is the persona
+ * avatar plus a status line (`Running: {goal}` / `Run completed: …`). Cell
+ * state prefers the live SSE stream so the grid updates before Convex session
+ * rows land.
  *
  * Click a session chip to watch its live stream in the right pane
  * (`SwarmLiveStreamPane` — same Trace / Chat / Raw surface as Personas).
+ *
+ * Open findings / Done / Leave all leave this watch surface for the swarm's
+ * Findings page. The run keeps going. A first-finding ping at the top is a
+ * notification, not the only door.
  */
 import { useEffect, useMemo, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import { SwarmRunningHero } from "@/components/swarms/swarm-running-hero";
 import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
 import {
   resolveSwarmCellOutcome,
@@ -54,6 +60,8 @@ export type SwarmLaunchedRun = {
   avatarShape?: number;
   avatarPalette?: number;
   label: string;
+  /** Goal name shown on each cell (`Running: {goal}`). Falls back to `label`. */
+  goalLabel?: string;
 };
 
 export type SwarmRunningColumn = {
@@ -87,23 +95,17 @@ type RunningSelection = SwarmMatrixSelection & {
   personaId: string;
 };
 
-type PersonaRow = {
-  personaId: string;
-  name: string;
-  role: string;
-  avatarShape?: number;
-  avatarPalette?: number;
-  runIds: string[];
-};
-
 type CellView = {
   outcome: SwarmMatrixCellOutcome | "queued";
-  primary: string;
-  secondary: string | null;
+  headline: string;
 };
 
 type SessionSlot = {
   runId: string;
+  personaId: string;
+  personaName: string;
+  avatarShape?: number;
+  avatarPalette?: number;
   targetKey: string;
   hostId: string;
   sessionIndex: number;
@@ -111,14 +113,80 @@ type SessionSlot = {
   view: CellView;
 };
 
+/** Goal text for a cell. `label` is "Persona · Goal" at launch; prefer the
+ * dedicated field when present so a name that itself contains " · " stays intact. */
+export function swarmRunGoalLabel(run: Pick<SwarmLaunchedRun, "label" | "goalLabel">): string {
+  const dedicated = run.goalLabel?.trim();
+  if (dedicated) return dedicated;
+  const sep = " · ";
+  const index = run.label.indexOf(sep);
+  if (index >= 0) {
+    const rest = run.label.slice(index + sep.length).trim();
+    if (rest) return rest;
+  }
+  return run.label.trim() || "session";
+}
+
+export function swarmRunningTitle(args: {
+  allTerminal: boolean;
+  succeeded: number;
+  rateLimited: number;
+  done: number;
+  total: number;
+}): string {
+  // Progress count while anything ran; succeeded-count when the wave produced
+  // no session — "failed 15 of 15" would count refusals as sessions.
+  const shown =
+    !args.allTerminal || args.succeeded > 0 ? args.done : args.succeeded;
+  const count = args.total > 0 ? ` ${shown} of ${args.total} sessions` : "";
+  if (!args.allTerminal) return `Swarm running${count}`;
+  if (args.succeeded > 0) return `Swarm finished${count}`;
+  if (args.rateLimited > 0) return `Swarm could not run${count}`;
+  return `Swarm failed${count}`;
+}
+
+export function swarmCellHeadline(args: {
+  outcome: CellView["outcome"];
+  primary: string;
+  goal: string;
+}): string {
+  const goal = args.goal.trim() || "session";
+  if (
+    args.outcome === "running" ||
+    args.outcome === "queued" ||
+    args.outcome === "pending"
+  ) {
+    return `Running: ${goal}`;
+  }
+  if (args.outcome === "succeeded") {
+    return "Run completed: All checks passed";
+  }
+  if (args.outcome === "rate_limited") {
+    return /\d+\/\d+ pass/.test(args.primary)
+      ? "Run completed: Goal completion had mixed results"
+      : "Run limited: not run";
+  }
+  if (args.outcome === "failed") {
+    return `Run failed: ${goal}`;
+  }
+  return goal;
+}
+
+function avatarState(
+  outcome: CellView["outcome"]
+): "idle" | "running" | "error" {
+  if (outcome === "running" || outcome === "queued") return "running";
+  if (outcome === "failed") return "error";
+  return "idle";
+}
+
 type FirstFinding = {
   text: string;
   /**
-   * The session that produced it — `chatSessions._id`, the SAME id the Insights
-   * workbench and the Overview findings list already open sessions with
-   * (`buildSwarmPath({ tab: "sessions", session })`). A finding nobody can
-   * trace back to a session is a claim, so a row without one is skipped rather
-   * than surfaced as an unfollowable line.
+   * The session that produced it. Kept so we only ping a finding that can
+   * still be traced on the swarm page — a row without a session id is a
+   * claim, so it is skipped. The ping opens THIS session on the swarm's own
+   * page; "Open findings" beside it is the route to Findings.
    */
   sessionId: string;
   /**
@@ -130,12 +198,6 @@ type FirstFinding = {
    */
   criterionId?: string;
 };
-
-function shortRole(role: string): string {
-  const trimmed = role.trim();
-  if (trimmed.length <= 28) return trimmed;
-  return `${trimmed.slice(0, 27)}…`;
-}
 
 function columnsFromRun(
   run: JourneyRun,
@@ -311,17 +373,17 @@ function RunLiveBridge({
 function cellTone(outcome: CellView["outcome"]): string {
   switch (outcome) {
     case "succeeded":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300";
+      return "border-emerald-500/30 bg-emerald-500/10";
     case "failed":
-      return "border-destructive/40 bg-destructive/10 text-destructive";
+      return "border-destructive/40 bg-destructive/10";
     case "rate_limited":
-      return "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300";
+      return "border-amber-500/40 bg-amber-500/10";
     case "running":
-      return "border-primary/25 bg-primary/5 text-foreground";
+      return "border-primary/40 bg-primary/5";
     case "queued":
-      return "border-dashed border-border/70 bg-muted/20 text-muted-foreground";
+      return "border-primary/40 bg-primary/5";
     default:
-      return "border-border/50 bg-muted/15 text-muted-foreground";
+      return "border-border/50 bg-muted/15";
   }
 }
 
@@ -330,9 +392,9 @@ function slotView(args: {
   session: JourneySessionRow | null;
   attempt?: SwarmAttemptOutcome | null;
   runStatus: string;
-  turns?: number | null;
+  goal: string;
 }): CellView {
-  const { liveStatus, session, attempt, runStatus, turns } = args;
+  const { liveStatus, session, attempt, runStatus, goal } = args;
   const outcome = resolveSwarmCellOutcome({
     liveStatus,
     session,
@@ -343,16 +405,32 @@ function slotView(args: {
   if (outcome === "running") {
     return {
       outcome: "running",
-      primary: "running",
-      secondary:
-        typeof turns === "number" && turns > 0 ? `turn ${turns}` : null,
+      headline: swarmCellHeadline({
+        outcome: "running",
+        primary: "running",
+        goal,
+      }),
     };
   }
   if (outcome === "pending" && runStatus === "running") {
-    return { outcome: "queued", primary: "queued", secondary: null };
+    return {
+      outcome: "queued",
+      headline: swarmCellHeadline({
+        outcome: "queued",
+        primary: "queued",
+        goal,
+      }),
+    };
   }
   if (outcome === "pending") {
-    return { outcome: "pending", primary: "…", secondary: null };
+    return {
+      outcome: "pending",
+      headline: swarmCellHeadline({
+        outcome: "pending",
+        primary: "…",
+        goal,
+      }),
+    };
   }
 
   // A non-success terminal is reported BEFORE the rubric, and never dressed up
@@ -363,46 +441,61 @@ function slotView(args: {
   if (outcome === "rate_limited") {
     return {
       outcome: "rate_limited",
-      primary: "limited",
-      secondary:
-        attempt?.errorCode === "spend_cap_exceeded" ? "spend cap" : "not run",
+      headline: swarmCellHeadline({
+        outcome: "rate_limited",
+        primary: "limited",
+        goal,
+      }),
     };
   }
   if (outcome === "failed" && (session?.messageCount ?? 0) === 0) {
-    return { outcome: "failed", primary: "failed", secondary: "no activity" };
+    return {
+      outcome: "failed",
+      headline: swarmCellHeadline({
+        outcome: "failed",
+        primary: "failed",
+        goal,
+      }),
+    };
   }
 
   const criteria = session?.criteria;
   if (criteria?.status === "completed" && criteria.results?.length) {
     const checks = criteria.results.length;
     const passed = criteria.results.filter((result) => result.passed).length;
-    return {
-      outcome:
-        passed === checks
-          ? "succeeded"
-          : passed === 0
+    const scored: CellView["outcome"] =
+      passed === checks
+        ? "succeeded"
+        : passed === 0
           ? "failed"
-          : "rate_limited",
-      primary: `${passed}/${checks} pass`,
-      secondary:
-        outcome === "failed"
-          ? "gave up"
-          : (session?.messageCount ?? 0) > 0
-          ? `${session!.messageCount} turns`
-          : null,
+          : "rate_limited";
+    return {
+      outcome: scored,
+      headline: swarmCellHeadline({
+        outcome: scored,
+        primary: `${passed}/${checks} pass`,
+        goal,
+      }),
     };
   }
 
   if (outcome === "failed") {
-    return { outcome: "failed", primary: "failed", secondary: "gave up" };
+    return {
+      outcome: "failed",
+      headline: swarmCellHeadline({
+        outcome: "failed",
+        primary: "failed",
+        goal,
+      }),
+    };
   }
   return {
     outcome: "succeeded",
-    primary: "done",
-    secondary:
-      (session?.messageCount ?? 0) > 0
-        ? `${session!.messageCount} turns`
-        : null,
+    headline: swarmCellHeadline({
+      outcome: "succeeded",
+      primary: "done",
+      goal,
+    }),
   };
 }
 
@@ -413,77 +506,76 @@ function slotView(args: {
  */
 function collectSessionSlots(args: {
   columnKey: string;
-  runEntries: Array<{ runId: string; snap: RunLiveSnapshot }>;
+  run: SwarmLaunchedRun;
+  snap: RunLiveSnapshot;
 }): SessionSlot[] {
-  const { columnKey, runEntries } = args;
+  const { columnKey, run, snap } = args;
+  const target = snap.targets.find((entry) => entry.key === columnKey);
+  if (!target) return [];
+
+  const goal = swarmRunGoalLabel(run);
   const slots: SessionSlot[] = [];
 
-  for (const { runId, snap } of runEntries) {
-    const target = snap.targets.find((entry) => entry.key === columnKey);
-    if (!target) continue;
-
-    // Attempts are claimed with the SAME id the client mints below, so the
-    // chatSessionId join is exact. `(hostId, sessionIdx)` is the fallback for
-    // an attempt that failed before it could claim one.
-    const attemptByChatSessionId = new Map<string, JourneyRunAttempt>();
-    const attemptByHostSlot = new Map<string, JourneyRunAttempt>();
-    for (const attempt of snap.attempts) {
-      if (attempt.chatSessionId) {
-        attemptByChatSessionId.set(attempt.chatSessionId, attempt);
-      }
-      attemptByHostSlot.set(`${attempt.hostId}#${attempt.sessionIdx}`, attempt);
+  // Attempts are claimed with the SAME id the client mints below, so the
+  // chatSessionId join is exact. `(hostId, sessionIdx)` is the fallback for
+  // an attempt that failed before it could claim one.
+  const attemptByChatSessionId = new Map<string, JourneyRunAttempt>();
+  const attemptByHostSlot = new Map<string, JourneyRunAttempt>();
+  for (const attempt of snap.attempts) {
+    if (attempt.chatSessionId) {
+      attemptByChatSessionId.set(attempt.chatSessionId, attempt);
     }
+    attemptByHostSlot.set(`${attempt.hostId}#${attempt.sessionIdx}`, attempt);
+  }
 
-    for (let index = 0; index < snap.sessionsPerTarget; index++) {
-      const chatSessionId = swarmAttemptChatSessionId(
-        runId,
-        target.identity,
-        index
-      );
-      const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
-        | SwarmCellLiveStatus
-        | undefined;
-      const fromEnvelope = Object.values(snap.stream.sessions).find(
-        (entry) =>
-          entry.envelope.sessionIndex === index &&
-          streamMatchesColumn(entry.envelope, columnKey)
-      );
-      const live = direct ?? fromEnvelope?.attemptStatus;
-      const session =
-        snap.sessions.find(
-          (row) =>
-            row.chatSessionId === chatSessionId ||
-            row.chatSessionId === fromEnvelope?.envelope.chatSessionId
-        ) ?? null;
-      const turns =
-        fromEnvelope?.stream.actualToolCalls.length ||
-        (session?.status === "active" || session?.status === "running"
-          ? session.messageCount
-          : null);
+  for (let index = 0; index < snap.sessionsPerTarget; index++) {
+    const chatSessionId = swarmAttemptChatSessionId(
+      run.runId,
+      target.identity,
+      index
+    );
+    const direct = snap.stream.cellStatus[swarmCellKey(columnKey, index)] as
+      | SwarmCellLiveStatus
+      | undefined;
+    const fromEnvelope = Object.values(snap.stream.sessions).find(
+      (entry) =>
+        entry.envelope.sessionIndex === index &&
+        streamMatchesColumn(entry.envelope, columnKey)
+    );
+    const live = direct ?? fromEnvelope?.attemptStatus;
+    const session =
+      snap.sessions.find(
+        (row) =>
+          row.chatSessionId === chatSessionId ||
+          row.chatSessionId === fromEnvelope?.envelope.chatSessionId
+      ) ?? null;
 
-      const attempt =
-        attemptByChatSessionId.get(chatSessionId) ??
-        (fromEnvelope?.envelope.chatSessionId
-          ? attemptByChatSessionId.get(fromEnvelope.envelope.chatSessionId)
-          : undefined) ??
-        attemptByHostSlot.get(`${target.hostId}#${index}`) ??
-        null;
+    const attempt =
+      attemptByChatSessionId.get(chatSessionId) ??
+      (fromEnvelope?.envelope.chatSessionId
+        ? attemptByChatSessionId.get(fromEnvelope.envelope.chatSessionId)
+        : undefined) ??
+      attemptByHostSlot.get(`${target.hostId}#${index}`) ??
+      null;
 
-      slots.push({
-        runId,
-        targetKey: columnKey,
-        hostId: target.hostId,
-        sessionIndex: index,
-        chatSessionId: fromEnvelope?.envelope.chatSessionId ?? chatSessionId,
+    slots.push({
+      runId: run.runId,
+      personaId: run.personaId,
+      personaName: run.personaName,
+      avatarShape: run.avatarShape,
+      avatarPalette: run.avatarPalette,
+      targetKey: columnKey,
+      hostId: target.hostId,
+      sessionIndex: index,
+      chatSessionId: fromEnvelope?.envelope.chatSessionId ?? chatSessionId,
         view: slotView({
           liveStatus: live,
           session,
           attempt,
           runStatus: snap.status,
-          turns: typeof turns === "number" ? turns : null,
+          goal,
         }),
-      });
-    }
+    });
   }
 
   return slots;
@@ -538,6 +630,34 @@ function findFirstFinding(
   return null;
 }
 
+function FirstFindingPing({
+  finding,
+  onOpen,
+}: {
+  finding: FirstFinding;
+  onOpen: () => void;
+}) {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2.5"
+      data-testid="new-swarm-running-finding"
+    >
+      <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">
+        {finding.text}
+      </p>
+      <button
+        type="button"
+        className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
+        data-testid="new-swarm-running-finding-open"
+        aria-label="Open the session behind this finding"
+        onClick={onOpen}
+      >
+        Look now
+      </button>
+    </div>
+  );
+}
+
 export function NewSwarmRunningStep({
   projectId,
   runs,
@@ -552,12 +672,14 @@ export function NewSwarmRunningStep({
   fallbackColumns: SwarmRunningColumn[];
   /** Used to label columns by client (host) instead of env nickname. */
   environments?: ProjectEnvironmentView[];
+  /**
+   * Leave the watch surface for the swarm's Findings page. Does not cancel
+   * the run — "Stop" used to imply that and was a lie.
+   */
   onLeave: () => void;
   /**
-   * Follow one session's evidence out of the wizard. The caller lands on this
-   * swarm's OWN page, deep-linked to that session — both where the transcript
-   * is and the run's durable home, so following a finding stays reversible
-   * while the run keeps going.
+   * Follow one session's transcript out of the wizard (the live pane's
+   * completed-session control). Findings is a different exit — `onLeave`.
    */
   onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
@@ -642,28 +764,6 @@ export function NewSwarmRunningStep({
     },
     []
   );
-
-  const personaRows = useMemo((): PersonaRow[] => {
-    const order: string[] = [];
-    const byId = new Map<string, PersonaRow>();
-    for (const run of runs) {
-      const existing = byId.get(run.personaId);
-      if (existing) {
-        existing.runIds.push(run.runId);
-        continue;
-      }
-      order.push(run.personaId);
-      byId.set(run.personaId, {
-        personaId: run.personaId,
-        name: run.personaName,
-        role: run.personaRole,
-        avatarShape: run.avatarShape,
-        avatarPalette: run.avatarPalette,
-        runIds: [run.runId],
-      });
-    }
-    return order.map((id) => byId.get(id)!);
-  }, [runs]);
 
   // Once any run snapshot has landed, columns come ONLY from those snapshots
   // (what the runner actually fans out). Fallback env columns are a pre-load
@@ -803,52 +903,60 @@ export function NewSwarmRunningStep({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8">
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1 space-y-2">
-            <h2 className="text-xl font-semibold tracking-[-0.02em] text-foreground">
-              {/* "finished" only when something actually finished. A run whose
-                  every attempt was refused used to read "Swarm finished — 20 of
-                  20 sessions", which is true only if you count a refusal as a
-                  session. Lead with what succeeded instead. */}
-              {!allTerminal
-                ? "Swarming"
-                : succeeded > 0
-                ? "Swarm finished"
-                : rateLimited > 0
-                ? "Swarm could not run"
-                : "Swarm failed"}
-              {total > 0 ? (
-                <span className="font-normal text-muted-foreground">
-                  {" "}
-                  —{" "}
-                  {allTerminal
-                    ? `${succeeded} of ${total} sessions ran`
-                    : `${done} of ${total} sessions`}
-                </span>
-              ) : null}
-            </h2>
-            {allTerminal && rateLimited + failed > 0 ? (
-              <p
-                className="text-sm text-muted-foreground"
-                data-testid="new-swarm-running-outcome-breakdown"
+            <div className="flex items-start gap-2">
+              <h2
+                className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
+                data-testid="new-swarm-running-title"
               >
-                {[
-                  succeeded > 0 ? `${succeeded} ran` : null,
-                  rateLimited > 0 ? `${rateLimited} rate-limited` : null,
-                  failed > 0 ? `${failed} failed` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {swarmRunningTitle({
+                  allTerminal,
+                  succeeded,
+                  rateLimited,
+                  done,
+                  total,
+                })}
+              </h2>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0"
+                  data-testid="new-swarm-running-open-findings"
+                  onClick={onLeave}
+                >
+                  Open findings
+                </Button>
+                {allTerminal ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    data-testid="new-swarm-running-done"
+                    onClick={onLeave}
+                  >
+                    Done
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+            {columns.length > 0 ? (
+              <p className="text-sm text-foreground">
+                Clients:{" "}
+                {columns.map((column) => column.label).join(" · ")}
               </p>
             ) : null}
-            {columns.length > 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Clients:{" "}
-                <span className="font-medium text-foreground">
-                  {columns.map((column) => column.label).join(" · ")}
-                </span>
-                {columns.length === 1
-                  ? " — select multiple environments on Describe to compare clients side by side."
-                  : null}
-              </p>
+            {finding ? (
+              <FirstFindingPing
+                finding={finding}
+                // The session that produced the finding, with the criterion
+                // riding along so that page can NAME what was found instead of
+                // opening an unexplained transcript. "Open findings" beside it
+                // is the route to Findings; this one is not a duplicate of it.
+                onOpen={() =>
+                  onOpenSession(finding.sessionId, finding.criterionId)
+                }
+              />
             ) : null}
             {missingPlannedClients.length > 0 ? (
               <p
@@ -897,6 +1005,9 @@ export function NewSwarmRunningStep({
                 ) : null}
               </div>
             ) : null}
+            <SwarmRunningHero
+              className={allTerminal ? "justify-end" : "justify-start"}
+            />
             <div className="flex items-center gap-3">
               <div
                 className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
@@ -911,25 +1022,11 @@ export function NewSwarmRunningStep({
                   style={{ width: `${Math.round(progress * 100)}%` }}
                 />
               </div>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {allTerminal
-                  ? "done"
-                  : total > 0
-                  ? `${Math.round(progress * 100)}%`
-                  : "starting…"}
+              <span className="shrink-0 text-xs text-foreground">
+                {`${Math.round(progress * 100)}%`}
               </span>
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            data-testid="new-swarm-running-stop"
-            onClick={onLeave}
-          >
-            {allTerminal ? "Done" : "Stop"}
-          </Button>
         </div>
 
         {columns.length === 0 ? (
@@ -941,9 +1038,6 @@ export function NewSwarmRunningStep({
             <table className="w-full min-w-[28rem] border-collapse text-left">
               <thead>
                 <tr className="border-b border-border/40">
-                  <th className="sticky left-0 z-10 w-[12rem] max-w-[12rem] bg-background px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Persona · rubric score
-                  </th>
                   {columns.map((column) => (
                     <th
                       key={column.key}
@@ -958,50 +1052,24 @@ export function NewSwarmRunningStep({
                 </tr>
               </thead>
               <tbody>
-                {personaRows.map((persona) => {
-                  const runEntries = persona.runIds
-                    .map((runId) => {
-                      const snap = snapshots[runId];
-                      return snap ? { runId, snap } : null;
-                    })
-                    .filter(Boolean) as Array<{
-                    runId: string;
-                    snap: RunLiveSnapshot;
-                  }>;
+                {runs.map((run) => {
+                  const snap = snapshots[run.runId];
+                  const goal = swarmRunGoalLabel(run);
 
                   return (
                     <tr
-                      key={persona.personaId}
+                      key={run.runId}
                       className="border-b border-border/30 last:border-0"
                       data-testid="new-swarm-running-persona-row"
                     >
-                      <td className="sticky left-0 z-10 max-w-[12rem] bg-background px-3 py-3 align-middle">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <PersonaPixelAvatar
-                            seed={persona.personaId}
-                            shapeIndex={persona.avatarShape}
-                            paletteIndex={persona.avatarPalette}
-                            size="sm"
-                          />
-                          <p className="min-w-0 truncate text-sm font-medium text-foreground">
-                            {persona.name}
-                            {persona.role ? (
-                              <span className="font-normal text-muted-foreground">
-                                {" "}
-                                — {shortRole(persona.role)}
-                              </span>
-                            ) : null}
-                          </p>
-                        </div>
-                      </td>
                       {columns.map((column) => {
-                        const slots =
-                          runEntries.length === 0
-                            ? []
-                            : collectSessionSlots({
-                                columnKey: column.key,
-                                runEntries,
-                              });
+                        const slots = snap
+                          ? collectSessionSlots({
+                              columnKey: column.key,
+                              run,
+                              snap,
+                            })
+                          : [];
 
                         return (
                           <td
@@ -1012,13 +1080,25 @@ export function NewSwarmRunningStep({
                             {slots.length === 0 ? (
                               <div
                                 data-outcome="queued"
+                                aria-label={`Watch ${run.personaName} on ${column.label} session 1`}
                                 className={cn(
-                                  "rounded-lg border px-2.5 py-2 text-center",
+                                  "flex items-center gap-1 rounded-lg border px-2.5 py-2",
                                   cellTone("queued")
                                 )}
                               >
-                                <p className="text-xs font-semibold leading-tight">
-                                  queued
+                                <PersonaPixelAvatar
+                                  seed={run.personaId}
+                                  shapeIndex={run.avatarShape}
+                                  paletteIndex={run.avatarPalette}
+                                  size="sm"
+                                  state="running"
+                                />
+                                <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
+                                  {swarmCellHeadline({
+                                    outcome: "queued",
+                                    primary: "queued",
+                                    goal,
+                                  })}
                                 </p>
                               </div>
                             ) : (
@@ -1027,7 +1107,6 @@ export function NewSwarmRunningStep({
                                   const selected =
                                     selection?.chatSessionId ===
                                     slot.chatSessionId;
-                                  const showIndex = slots.length > 1;
                                   return (
                                     <button
                                       key={slot.chatSessionId}
@@ -1035,13 +1114,13 @@ export function NewSwarmRunningStep({
                                       data-testid="new-swarm-running-session"
                                       data-outcome={slot.view.outcome}
                                       aria-pressed={selected}
-                                      aria-label={`Watch ${persona.name} on ${
+                                      aria-label={`Watch ${run.personaName} on ${
                                         column.label
                                       } session ${slot.sessionIndex + 1}`}
                                       onClick={() =>
                                         setSelection({
                                           runId: slot.runId,
-                                          personaId: persona.personaId,
+                                          personaId: run.personaId,
                                           targetKey: slot.targetKey,
                                           hostId: slot.hostId,
                                           sessionIndex: slot.sessionIndex,
@@ -1049,25 +1128,23 @@ export function NewSwarmRunningStep({
                                         })
                                       }
                                       className={cn(
-                                        "rounded-lg border px-2.5 py-2 text-center transition-colors",
+                                        "flex items-center gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
                                         "hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                         cellTone(slot.view.outcome),
                                         selected &&
                                           "ring-2 ring-primary ring-offset-1 ring-offset-background"
                                       )}
                                     >
-                                      <p className="text-xs font-semibold leading-tight">
-                                        {showIndex
-                                          ? `#${slot.sessionIndex + 1} · ${
-                                              slot.view.primary
-                                            }`
-                                          : slot.view.primary}
+                                      <PersonaPixelAvatar
+                                        seed={slot.personaId}
+                                        shapeIndex={slot.avatarShape}
+                                        paletteIndex={slot.avatarPalette}
+                                        size="sm"
+                                        state={avatarState(slot.view.outcome)}
+                                      />
+                                      <p className="min-w-0 flex-1 text-xs font-semibold leading-tight text-foreground">
+                                        {slot.view.headline}
                                       </p>
-                                      {slot.view.secondary ? (
-                                        <p className="mt-0.5 text-[11px] opacity-80">
-                                          {slot.view.secondary}
-                                        </p>
-                                      ) : null}
                                     </button>
                                   );
                                 })}
@@ -1084,34 +1161,10 @@ export function NewSwarmRunningStep({
           </div>
         )}
 
-        {finding ? (
-          <div
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2.5"
-            data-testid="new-swarm-running-finding"
-          >
-            <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">
-              {finding.text}
-            </p>
-            <button
-              type="button"
-              className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
-              data-testid="new-swarm-running-finding-open"
-              aria-label="Open the session behind this finding"
-              onClick={() =>
-                onOpenSession(finding.sessionId, finding.criterionId)
-              }
-            >
-              Look now
-            </button>
-          </div>
-        ) : null}
-
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-2.5 text-sm leading-relaxed text-muted-foreground">
-          Click a session to watch it stream on the right. Leaving goes back to
-          Overview — the run keeps going and finishes on its own. A finding
-          opens this swarm's own page on the session that produced it, and the
-          run is still there when you come back.
-        </div>
+        {/* main reworded the "Click a session…" hint and added a finding
+            banner here; this branch removed both from the footer — the banner
+            moved to the top as `FirstFindingPing` (same test ids, so keeping
+            main's copy would render it twice). */}
       </div>
 
       <aside
