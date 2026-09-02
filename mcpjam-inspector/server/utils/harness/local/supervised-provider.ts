@@ -34,7 +34,17 @@
  * survive into product copy.
  */
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, realpath, rename, rm, stat, symlink } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+} from "node:fs/promises";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
@@ -403,6 +413,21 @@ export function createSupervisedLocalHarnessProvider(
       const existing = await lstat(workspaceLink);
       if (!existing.isSymbolicLink()) {
         throw new Error(`${workspaceLink} exists and is not the workspace link`);
+      }
+      // WHERE it points, not just that it is a link. This is the path the
+      // agent's cwd resolves to, and consent binds to a workspace grant — so a
+      // state directory reused under a different grant would have run the
+      // agent against the previous checkout, which is the one thing the grant
+      // exists to prevent. Repointed rather than refused: `opts.workspacePath`
+      // came through the availability gate and IS the authority, so making the
+      // link agree with it keeps the invariant true by construction.
+      const current = await readlink(workspaceLink);
+      if (current !== opts.workspacePath) {
+        logger.warn("[local-harness] repointing a stale workspace link", {
+          sessionStateDir: opts.sessionStateDir,
+        });
+        await rm(workspaceLink, { force: true });
+        await symlink(opts.workspacePath, workspaceLink);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

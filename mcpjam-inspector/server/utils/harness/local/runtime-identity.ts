@@ -323,6 +323,19 @@ function isRehashedOnRevalidate(relativePath: string): boolean {
  */
 const verifiedRuntimeCache = new Map<string, RuntimeTreeSnapshot>();
 
+/**
+ * Verifications that have STARTED but not finished, keyed the same way.
+ *
+ * The completed-results cache alone leaves the one path that still breaks the
+ * "one full digest per process per pack" rule: two session starts that both
+ * begin before the first digest returns miss the cache and both read 515 MB.
+ * A promise is cached instead, so the second waits on the first.
+ *
+ * Removed when it settles, so a failure is never remembered — a digest that
+ * could not be read must be retried, not answered from a cache of "no".
+ */
+const inFlightVerifications = new Map<string, Promise<RuntimeVerification>>();
+
 function verificationCacheKey(root: string, expectedDigest: string): string {
   return `${root}\u0000${expectedDigest}`;
 }
@@ -330,6 +343,10 @@ function verificationCacheKey(root: string, expectedDigest: string): string {
 /** Test seam and pack-activation hook: drop everything the cache remembers. */
 export function clearRuntimeVerificationCache(): void {
   verifiedRuntimeCache.clear();
+  // In-flight work as well: a pack activation replaces the tree under a
+  // verification that is already reading it, and letting that one resolve into
+  // a later caller would answer for bytes that are no longer there.
+  inFlightVerifications.clear();
 }
 
 export type RuntimeVerification =
@@ -356,6 +373,22 @@ export async function verifyRuntime(
   if (cached !== undefined) {
     return { ok: true, digest: cached.digest, snapshot: cached, cached: true };
   }
+  const running = inFlightVerifications.get(key);
+  if (running !== undefined) return running;
+  const started = digestOnce(root, expectedDigest, key);
+  inFlightVerifications.set(key, started);
+  try {
+    return await started;
+  } finally {
+    inFlightVerifications.delete(key);
+  }
+}
+
+async function digestOnce(
+  root: string,
+  expectedDigest: string,
+  key: string,
+): Promise<RuntimeVerification> {
   let snapshot: RuntimeTreeSnapshot;
   try {
     snapshot = await digestTreeWithSnapshot(root);

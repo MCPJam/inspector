@@ -557,10 +557,25 @@ async function sweepOtherVersions(
   }
   for (const entry of entries) {
     if (entry === keepVersion) continue;
-    if (!entry.startsWith(".mcpjam-tmp-") && !/^[\w.-]+$/.test(entry)) continue;
-    await rm(join(installRoot, entry), { recursive: true, force: true }).catch(
-      () => {},
+    const path = join(installRoot, entry);
+    // Only directories this installer created. `MCPJAM_RUNTIME_ROOT` is an
+    // override — an operator, or a future Electron change, could point it at a
+    // directory holding other application state, and a name-shaped filter
+    // ("looks like a version") would then delete it. A staging directory
+    // carries our prefix; an activated version carries the marker the install
+    // wrote after verifying. Anything else is not ours to remove, whatever it
+    // is called.
+    if (entry.startsWith(".mcpjam-tmp-")) {
+      await rm(path, { recursive: true, force: true }).catch(() => {});
+      continue;
+    }
+    if (!/^[\w.-]+$/.test(entry)) continue;
+    const owned = await readFile(join(path, INSTALL_MARKER), "utf8").then(
+      () => true,
+      () => false,
     );
+    if (!owned) continue;
+    await rm(path, { recursive: true, force: true }).catch(() => {});
   }
 }
 

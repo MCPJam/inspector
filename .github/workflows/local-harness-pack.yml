@@ -144,6 +144,23 @@ jobs:
         shell: bash
         run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
+      # A release that publishes unsigned packs publishes packs no Inspector
+      # will install: `verifyPackManifestSignature` refuses a network-sourced
+      # pack with no signature, so the artifacts would exist and be inert. The
+      # build itself only warns, because a local build without the key is the
+      # normal development case — this is the release saying it is not.
+      - name: A release must have the pack signing key
+        if: ${{ inputs.enforce_committed_digests }}
+        shell: bash
+        env:
+          LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
+        run: |
+          if [ -z "${LOCAL_HARNESS_PACK_SIGNING_KEY:-}" ]; then
+            echo "LOCAL_HARNESS_PACK_SIGNING_KEY is not set; a release cannot" >&2
+            echo "publish packs that no Inspector build will accept." >&2
+            exit 1
+          fi
+
       - name: Build the pack
         working-directory: mcpjam-inspector
         shell: bash

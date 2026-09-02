@@ -285,6 +285,41 @@ describe("verification cost", () => {
     expect(second).toMatchObject({ ok: true, cached: true });
   });
 
+  it("digests once when two callers race, not twice", async () => {
+    // The path the completed-results cache alone does not cover: both callers
+    // start before the first digest returns, so both miss it and both read the
+    // whole tree. On a 494 MB pack that is 3 s each.
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("concurrent", { "bridge.mjs": "x" });
+    const digest = await computeTreeDigest(root);
+    clearRuntimeVerificationCache();
+
+    const [first, second] = await Promise.all([
+      verifyRuntime(root, digest),
+      verifyRuntime(root, digest),
+    ]);
+    // The SAME result object: one verification, awaited twice.
+    expect(first).toBe(second);
+    expect(first).toMatchObject({ ok: true, cached: false });
+  });
+
+  it("never remembers a verification that failed, even a concurrent one", async () => {
+    // A promise cache that kept failures would answer "no" forever for a tree
+    // that was merely unreadable for a moment.
+    clearRuntimeVerificationCache();
+    const root = await writeBundle("concurrent-bad", { "bridge.mjs": "x" });
+    const wrong = `sha256:${"2".repeat(64)}`;
+    await Promise.all([
+      verifyRuntime(root, wrong),
+      verifyRuntime(root, wrong),
+    ]);
+    // Now with the digest it really has: a fresh verification, not a cached
+    // refusal.
+    await expect(
+      verifyRuntime(root, await computeTreeDigest(root)),
+    ).resolves.toMatchObject({ ok: true, cached: false });
+  });
+
   it("keys the cache on the expected digest, so an upgrade re-verifies", async () => {
     // A pack activated into the same path with a new expected digest is a
     // different runtime. A cache keyed on the path alone would answer for it.
