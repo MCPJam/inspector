@@ -1346,6 +1346,9 @@ export function SuiteIterationsView({
                           iteration: iterationId,
                         })
                       }
+                      {...(onEditTestCase
+                        ? { onEditCase: onEditTestCase }
+                        : {})}
                       fallbackBody={runDetailView}
                     />
                   ) : (

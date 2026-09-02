@@ -8,7 +8,7 @@
  * the thing the reader came to check.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import {
   evalRunDecisionDiagnosticSchema,
   evalRunDecisionSummaryStructuralSchema,
@@ -153,9 +153,12 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
       "Draw and share a diagram broke at Selection: an expected tool call was never made.",
     );
-    // The expected/observed pair is the thing the old page never showed.
-    expect(screen.getByText("export_to_excalidraw")).toBeInTheDocument();
-    expect(screen.getByText("create_view")).toBeInTheDocument();
+    // The expected/observed pair is the thing the old page never showed. Scoped
+    // to the hero: the open case row repeats both names in its own evidence
+    // block, which is intended, so a document-wide query would be ambiguous.
+    const hero = screen.getByTestId("run-verdict-hero");
+    expect(within(hero).getByText("export_to_excalidraw")).toBeInTheDocument();
+    expect(within(hero).getByText("create_view")).toBeInTheDocument();
   });
 
   it("folds the counting caveats instead of leading with them", () => {

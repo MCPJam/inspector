@@ -38,6 +38,7 @@ import {
   buildEvaluateCaseRows,
   defaultOpenCaseRow,
 } from "./evaluate-case-row-model";
+import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
 import { RunVerdictCaveats } from "./run-verdict-caveats";
 import {
@@ -54,6 +55,7 @@ export function EvaluateRunContent({
   iterations,
   decisionSummaryEnabled,
   onOpenIteration,
+  onEditCase,
   fallbackBody,
 }: {
   projectId: string | null | undefined;
@@ -65,6 +67,7 @@ export function EvaluateRunContent({
     testCaseId: string;
     iterationId: string;
   }) => void;
+  onEditCase?: (testCaseId: string) => void;
   fallbackBody?: ReactNode;
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
@@ -241,7 +244,14 @@ export function EvaluateRunContent({
         <RunCaseRows
           rows={caseRows}
           defaultOpenKey={openRowKey}
-          {...(onOpenIteration ? { onOpenIteration } : {})}
+          renderBody={(row) => (
+            <RunCaseRowBody
+              row={row}
+              iterations={iterations}
+              {...(onOpenIteration ? { onOpenIteration } : {})}
+              {...(onEditCase ? { onEditCase } : {})}
+            />
+          )}
         />
       </div>
 

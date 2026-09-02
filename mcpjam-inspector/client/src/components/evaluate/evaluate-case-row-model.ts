@@ -84,6 +84,23 @@ export type CaseRowIterationCell = {
   stage: UserValueStage | null;
 };
 
+/**
+ * Failing iterations of one case, grouped by what the chain says happened.
+ *
+ * Grouped rather than listed because the REASON is what a fix keys on: ten
+ * iterations that all missed the same call are one piece of work and one
+ * recommendation, while ten iterations failing for three different reasons are
+ * three. Listing them per iteration would make the second look like the first.
+ */
+export type CaseFailureGroup = {
+  key: string;
+  stage: UserValueStage | null;
+  reason: StageReason | null;
+  iterationIds: string[];
+  /** One iteration to show evidence from; the others share its shape. */
+  representative: EvalRunDecisionDiagnostic | null;
+};
+
 export type EvaluateCaseRow = {
   key: string;
   title: string;
@@ -100,6 +117,7 @@ export type EvaluateCaseRow = {
   /** The iteration a reader should be taken to, and the one that opens. */
   opensIterationId: string | null;
   diagnostic: EvalRunDecisionDiagnostic | null;
+  failureGroups: CaseFailureGroup[];
 };
 
 export type BuildCaseRowsInput = {
@@ -304,6 +322,37 @@ export function buildEvaluateCaseRows(
       ? chainFor(opensId, diagnosticsByIteration, input.chains)
       : null;
 
+    // Group the failing iterations by (stage, reason). A group with neither is
+    // still a group — "failed with no chain loaded" is a real and common shape.
+    const groupsByKey = new Map<string, CaseFailureGroup>();
+    for (const iteration of group.iterations) {
+      if (outcomeOf(iteration) !== "failed") continue;
+      const chain = chainFor(
+        iteration._id,
+        diagnosticsByIteration,
+        input.chains,
+      );
+      const shape = breakFromChain(chain);
+      const stage = shape.kind === "brokeAt" ? shape.stage : null;
+      const reason =
+        shape.kind === "brokeAt" || shape.kind === "noFailedStage"
+          ? shape.reason
+          : null;
+      const key = `${stage ?? "none"}::${reason ?? shape.kind}`;
+      const existing = groupsByKey.get(key);
+      if (existing) {
+        existing.iterationIds.push(iteration._id);
+        continue;
+      }
+      groupsByKey.set(key, {
+        key,
+        stage,
+        reason,
+        iterationIds: [iteration._id],
+        representative: diagnosticsByIteration.get(iteration._id) ?? null,
+      });
+    }
+
     const note =
       loaded < group.iterations.length
         ? `chains loaded for ${loaded} of ${group.iterations.length} iterations`
@@ -330,6 +379,11 @@ export function buildEvaluateCaseRows(
       diagnostic: opensId
         ? (diagnosticsByIteration.get(opensId) ?? null)
         : null,
+      // Largest group first: the shape that broke most iterations is the one
+      // worth reading first.
+      failureGroups: [...groupsByKey.values()].sort(
+        (a, b) => b.iterationIds.length - a.iterationIds.length,
+      ),
     };
   });
 
