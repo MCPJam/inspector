@@ -519,3 +519,127 @@ describe("v1 capture boundary — a backend's structured refusal", () => {
     expect(captureException).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * WHERE the generic structured branch sits, and what it refuses to admit.
+ *
+ * Two separate hazards, both of them about `error.message`. For a
+ * `ConvexError` that message is Convex's framing wrapped around the JSON of
+ * `data` — the backend's own customer sentence INCLUDED — so the prose
+ * fallbacks are, on this class of error, sniffing the very copy the backend
+ * wrote. A refusal whose remedy says "not found" was therefore answered as a
+ * 404 with the route's generic noun, losing both the message and
+ * `details.code`. Ordering the coded-but-unknown branch ahead of the prose
+ * block is what stops that; the coded branches stay ahead of BOTH, so a
+ * billing cap is still a 429 and a precondition failure still a 409.
+ *
+ * The second hazard is the gate itself: `code` and `message` present but
+ * BLANK would answer 400 with an empty sentence and silence the log that says
+ * nobody understood the failure.
+ */
+describe("translateConvexWriteError — the generic structured branch", () => {
+  /**
+   * A `ConvexError` as a deployment WITHOUT the production error mask
+   * delivers it: the message is the framing plus the JSON of `data`, which is
+   * exactly why the prose patterns can see the backend's own copy.
+   */
+  function devConvexError(data: { code?: string; message?: string }) {
+    return Object.assign(
+      new Error(`Uncaught ConvexError: ${JSON.stringify(data)}`),
+      { data }
+    );
+  }
+
+  it.each([
+    ["not found", "Secret sec_1 is not found in this project."],
+    ["already exists", "An environment with that stack already exists."],
+    ["timed out", "The provisioning step timed out; retry the launch."],
+  ])(
+    "keeps its 400 and its code when the backend's copy says %s",
+    (_pattern, message) => {
+      vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+      const result = translateConvexWriteError(
+        devConvexError({ code: "ENV_SOMETHING_NEW", message }),
+        { resource: "Environment" }
+      );
+
+      expect(result.status).toBe(400);
+      expect(result.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(result.message).toBe(message);
+      expect(result.details).toMatchObject({ code: "ENV_SOMETHING_NEW" });
+    }
+  );
+
+  it("still lets the coded branches win ahead of it", () => {
+    // The reorder moved the generic branch above the PROSE block, not above
+    // the coded ones. A code the table knows keeps its canonical status.
+    const conflict = translateConvexWriteError(
+      devConvexError({ code: "CONFLICT", message: "Someone else edited it." }),
+      { resource: "Host" }
+    );
+    expect(conflict.status).toBe(409);
+
+    const capped = translateConvexWriteError(
+      devConvexError({
+        code: "billing_limit_reached",
+        message: "Plan limit reached.",
+      }),
+      { resource: "Host" }
+    );
+    expect(capped.status).toBe(429);
+  });
+
+  it("leaves an UNCODED ConvexError to the prose fallbacks", () => {
+    // Nothing that reached the prose block without `{ code, message }` moves.
+    const result = translateConvexWriteError(
+      Object.assign(new Error("Uncaught ConvexError: host not found"), {
+        data: { message: "host not found" },
+      }),
+      { resource: "Host" }
+    );
+
+    expect(result.status).toBe(404);
+  });
+
+  it("logs the unclassified code, so it is still discoverable", () => {
+    // Answering 400 takes the refusal out of every 5xx monitor, which is where
+    // a never-before-seen code used to surface. `logger.warn` is Axiom-only —
+    // a queryable record, not a Sentry page for a request we answered right.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    translateConvexWriteError(
+      devConvexError({ code: "ENV_SOMETHING_NEW", message: "Fix the thing." }),
+      { resource: "Environment" }
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [, context] = warn.mock.calls[0] as [string, Record<string, unknown>];
+    expect(context.code).toBe("ENV_SOMETHING_NEW");
+    // `message` would be overwritten by `ingestToAxiom`; the diagnosis rides
+    // on `detail`, the same convention the terminal 500 uses.
+    expect(context.message).toBeUndefined();
+  });
+
+  it.each([
+    ["a blank message", { code: "ENV_SOMETHING_NEW", message: "   " }],
+    ["a blank code", { code: "  ", message: "Fix the thing." }],
+    ["both blank", { code: "", message: "" }],
+  ])("refuses %s and keeps the logged 500", (_label, data) => {
+    // A blank field is not a refusal anybody wrote: 400 with an empty sentence
+    // tells the caller nothing AND suppresses the log that says we did not
+    // understand the failure. The same gate `translateStructuredConvexRefusal`
+    // applies at the boundary, so both entry points agree on this payload.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const result = translateConvexWriteError(
+      Object.assign(new Error("[Request ID: 9f2] Server Error"), { data }),
+      { resource: "Environment" }
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("unrecognized");
+  });
+});

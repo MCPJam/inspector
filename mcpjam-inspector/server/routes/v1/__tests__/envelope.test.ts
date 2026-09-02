@@ -418,4 +418,61 @@ describe("mapErrorToV1 — structured Convex refusals", () => {
 
     expect(result.code).not.toBe("VALIDATION_ERROR");
   });
+
+  it("keeps a `data: null` payload out of the branch", () => {
+    // The eligibility read is `error.data`, and `null` is what an ordinary
+    // `throw new Error()` decorated by nothing at all looks like on that
+    // property. It has no code, so there is no evidence anybody chose to say
+    // this to a caller.
+    const result = mapErrorToV1(convexError(null), {
+      boundary: "mcpjam_internal",
+    });
+
+    expect(result.code).toBe("INTERNAL_ERROR");
+    expect(result.details?.code).toBeUndefined();
+  });
+
+  it.each([
+    ["an empty code", { code: "", message: "Fix the thing." }],
+    ["a blank code", { code: "   ", message: "Fix the thing." }],
+    ["an empty message", { code: "ENV_SOMETHING_NEW", message: "" }],
+    ["a blank message", { code: "ENV_SOMETHING_NEW", message: "   " }],
+    ["both blank", { code: "  ", message: "\t\n " }],
+  ])("keeps %s an opaque 500", (_label, data) => {
+    // PRESENT is not the gate; NON-BLANK is. A whitespace `message` would
+    // answer 400 with an empty sentence — worse than the 500 it replaced,
+    // because the caller gets nothing AND the failure stops being logged as
+    // one we did not understand.
+    const result = mapErrorToV1(convexError(data), {
+      boundary: "mcpjam_internal",
+    });
+
+    expect(result.code).toBe("INTERNAL_ERROR");
+    expect(V1_ERROR_STATUS[result.code]).toBe(500);
+    expect(result.details?.code).toBeUndefined();
+    expect(result.message).not.toContain("Fix the thing");
+  });
+
+  it("is not misread by its own copy on a deployment with no error mask", () => {
+    // The production mask reduces `error.message` to "[Request ID: …] Server
+    // Error", but a deployment without it delivers Convex's framing wrapped
+    // around the JSON of `data` — the backend's own sentence INCLUDED. The
+    // write translator's prose fallbacks read that message, so a refusal whose
+    // remedy happens to say "not found" was answered as a 404 carrying neither
+    // the message nor the code. The coded-but-unknown branch runs ahead of
+    // those patterns now, and behind every canonical code branch.
+    const message = "Secret sec_1 is not found in this project.";
+    const data = { code: "ENV_SECRET_MISSING", message };
+
+    const result = mapErrorToV1(
+      convexError(data, `Uncaught ConvexError: ${JSON.stringify(data)}`),
+      { boundary: "mcpjam_internal" },
+    );
+
+    expect(result.code).toBe("VALIDATION_ERROR");
+    expect(V1_ERROR_STATUS[result.code]).toBe(400);
+    expect(result.message).toBe(message);
+    expect(result.details).toMatchObject({ code: "ENV_SECRET_MISSING" });
+  });
+
 });

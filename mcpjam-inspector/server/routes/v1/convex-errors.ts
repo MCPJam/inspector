@@ -30,9 +30,15 @@
  *     outage is not reported as a validation error.
  *   - **A structured code with no branch of its own still answers 400**, with
  *     the backend's own message and its code in `details`. A `ConvexError`
- *     carrying `{ code, message }` is a refusal somebody wrote down; the
+ *     carrying `{ code, message }` is a refusal somebody wrote down; the coded
  *     branches above give the ones we know a better status, and this keeps the
- *     rest actionable instead of collapsing them into the 500 below. See
+ *     rest actionable instead of collapsing them into the 500 below. It sits
+ *     BEHIND every coded branch and AHEAD of the prose sniffing, because those
+ *     patterns read `error.message` — Convex's framing wrapped around the JSON
+ *     of the payload, the backend's own sentence included — so a refusal whose
+ *     copy says "not found" would otherwise be answered as one. It is logged,
+ *     to Axiom only, so a code that deserves its own branch is still
+ *     discoverable once it stops reaching the 500. See
  *     `translateStructuredConvexRefusal` at the foot of this file for the v1
  *     error BOUNDARY's use of the same rule.
  *   - **An unrecognized failure is a 500, and it is logged.** Everything above
@@ -545,6 +551,86 @@ export function translateConvexWriteError(
     return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
   }
 
+  // ── A structured code with no branch of its own. ─────────────────────────
+  //
+  // The backend raised `ConvexError({ code, message })` DELIBERATELY: it chose
+  // a machine code and wrote a sentence for the caller. Every branch above
+  // claims a code it knows; what reaches here is a refusal shipped by the
+  // backend that nobody has taught this table about yet — and until this
+  // branch existed, that meant the terminal 500 below, which drops the message
+  // on purpose and pages the on-call. Production hit exactly that with
+  // `ENV_MATERIALIZED_SECRETS_UNSUPPORTED` (mcpjam-backend
+  // `convex/journeyRuns.ts`): a launch refusal naming the remedy, delivered to
+  // the customer as `INTERNAL_ERROR: Server Error` and discoverable only by
+  // tailing `convex logs --prod`.
+  //
+  // 400, because the caller has something to change: a refusal that carries
+  // customer-facing prose is by construction about the request, and a code
+  // that deserves a different status (a 409 conflict, a 429 cap) earns an
+  // explicit branch above — that is what the branches are for. The generic
+  // answer only has to be honest and actionable, not perfectly specific.
+  //
+  // BOTH fields are required, and both must be non-blank once trimmed. `code`
+  // is what marks the throw as deliberate; `message` is the only prose allowed
+  // out, because a ConvexError's `error.message` is the JSON of its data
+  // wrapped in Convex's own framing — request ids, function names,
+  // argument-validator output with the arguments in it. Nothing here reads
+  // `error.message`, so an unstructured throw cannot reach a caller through
+  // this branch: it falls to the 500 below, exactly as before. A blank
+  // `message` would answer 400 with an empty sentence and swallow the log
+  // that says nobody understood the failure, so it is not eligible either —
+  // the same gate `translateStructuredConvexRefusal` applies at the boundary,
+  // which is what keeps the two entry points from disagreeing about the same
+  // payload.
+  //
+  // ── ORDERING: ahead of the prose fallbacks, behind every coded branch. ───
+  //
+  // Behind the coded branches because those are canonical: a billing cap is a
+  // 429 and a precondition failure is a 409, and a generic 400 in front of
+  // them would flatten both.
+  //
+  // AHEAD of the prose fallbacks because those sniff `error.message`, which
+  // for a `ConvexError` is Convex's framing wrapped around the JSON of its
+  // data — the backend's own `message` INCLUDED. So a deliberate refusal that
+  // happens to say "not found", "already exists" or "timed out" in its
+  // customer copy matched a prose pattern on the strength of its own prose,
+  // and answered 404/409/503 with the route's generic noun, dropping both the
+  // message and `details.code`. The same hazard is why `FEATURE_UNAVAILABLE`,
+  // the gate-waiver codes and `IMPORT_INELIGIBLE` are all handled above the
+  // prose block rather than left to fall into it; this is that rule applied
+  // to the codes we have not enumerated yet, which is exactly the population
+  // that cannot get an explicit branch in advance.
+  //
+  // Nothing that reached the prose block WITHOUT `{ code, message }` moves:
+  // an uncoded ConvexError, a string-data refusal, a dead socket and a
+  // validator rejection all still fall through to the same branches in the
+  // same order.
+  if (code?.trim() && structuredMessage?.trim()) {
+    // The unclassified refusal stays VISIBLE. The terminal 500 below used to
+    // be where a never-before-seen code showed up, and its log is how we
+    // would learn a code deserves a branch of its own; answering 400 takes it
+    // out of the 5xx monitors, so the discovery signal has to be replaced
+    // rather than dropped. `logger.warn` is Axiom-only — it deliberately does
+    // NOT capture to Sentry — so this is a queryable record, not a page, which
+    // is the right weight for a refusal that IS being answered correctly.
+    logger.warn(`[v1.convexWrite] unclassified ${resource} structured refusal`, {
+      resource,
+      code: code.trim(),
+      detail: redactForLog(error),
+    });
+    // `code` travels in `details` rather than as the public error code: the v1
+    // union is CLOSED (see `contract.ts`), so a backend code that is not in
+    // `INTERNAL_TO_V1_CODE` has no public member to become. `details.code` is
+    // the same channel `translateResolveError` (environments.ts) and the
+    // registry install family already publish theirs on.
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      structuredMessage.trim(),
+      { code: code.trim() },
+    );
+  }
+
   // ── Mixed-version fallbacks: a deployment that still throws prose. ────────
   const raw = error instanceof Error ? error.message : String(error);
   if (/already exists|name conflict|duplicate/i.test(raw)) {
@@ -593,46 +679,6 @@ export function translateConvexWriteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       proseData.trim()
-    );
-  }
-
-  // ── A structured code with no branch of its own. ─────────────────────────
-  //
-  // The backend raised `ConvexError({ code, message })` DELIBERATELY: it chose
-  // a machine code and wrote a sentence for the caller. Every branch above
-  // claims a code it knows; what reaches here is a refusal shipped by the
-  // backend that nobody has taught this table about yet — and until this
-  // branch existed, that meant the terminal 500 below, which drops the message
-  // on purpose and pages the on-call. Production hit exactly that with
-  // `ENV_MATERIALIZED_SECRETS_UNSUPPORTED` (mcpjam-backend
-  // `convex/journeyRuns.ts`): a launch refusal naming the remedy, delivered to
-  // the customer as `INTERNAL_ERROR: Server Error` and discoverable only by
-  // tailing `convex logs --prod`.
-  //
-  // 400, because the caller has something to change: a refusal that carries
-  // customer-facing prose is by construction about the request, and a code
-  // that deserves a different status (a 409 conflict, a 429 cap) earns an
-  // explicit branch above — that is what the branches are for. The generic
-  // answer only has to be honest and actionable, not perfectly specific.
-  //
-  // BOTH fields are required. `code` alone is what marks the throw as
-  // deliberate; `message` is the only prose allowed out, because a
-  // ConvexError's `error.message` is the JSON of its data wrapped in Convex's
-  // own framing — request ids, function names, argument-validator output with
-  // the arguments in it. Nothing here reads `error.message`, so an
-  // unstructured throw cannot reach a caller through this branch: it falls to
-  // the 500 below, exactly as before.
-  if (code && structuredMessage) {
-    // `code` travels in `details` rather than as the public error code: the v1
-    // union is CLOSED (see `contract.ts`), so a backend code that is not in
-    // `INTERNAL_TO_V1_CODE` has no public member to become. `details.code` is
-    // the same channel `translateResolveError` (environments.ts) and the
-    // registry install family already publish theirs on.
-    return new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      structuredMessage,
-      { code },
     );
   }
 
