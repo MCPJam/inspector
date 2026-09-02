@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderSettingsSheet } from "./settings-sheet-harness";
+import { GLOBAL_GATE_CATALOG } from "@/shared/predicate-kinds";
 
 /**
  * The settings sheet as a DRAFT (S1).
@@ -115,14 +116,33 @@ describe("nothing is written until the person says so", () => {
     editName("Renamed");
     fireEvent.change(
       screen.getByLabelText("Minimum iterations per case for every run"),
-      { target: { value: "5" } }
+      { target: { value: "5" } },
     );
 
     // Two settings, four interactions. The old sheet would have written four
     // times and toasted four times.
     expect(
-      screen.getByTestId("suite-settings-commit-bar").textContent
+      screen.getByTestId("suite-settings-commit-bar").textContent,
     ).toContain("2 unsaved changes");
+  });
+});
+
+describe("adding a check does not break the sheet", () => {
+  it("Add check appends a check and the sheet keeps rendering", async () => {
+    renderSettingsSheet();
+
+    // The regression this covers: the menu passes an UPDATER, and a setter
+    // that stored it verbatim put a function where a list belongs. Everything
+    // that iterates `defaultPredicates` then threw, taking the sheet down.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add whole-run check" }),
+    );
+    const menuItem = await screen.findByText(GLOBAL_GATE_CATALOG[0].label);
+    fireEvent.click(menuItem);
+
+    // Still standing, and the edit registered as one drafted change.
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
+    expect(screen.getByLabelText("Suite name")).toBeTruthy();
   });
 });
 
@@ -132,13 +152,15 @@ describe("saving sends exactly what changed", () => {
     editName("Renamed");
     fireEvent.change(
       screen.getByLabelText("Minimum iterations per case for every run"),
-      { target: { value: "5" } }
+      { target: { value: "5" } },
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
-    await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mocks.applySuiteSettings).toHaveBeenCalledTimes(1),
+    );
     const args = mocks.applySuiteSettings.mock.calls[0][0] as Record<
       string,
       unknown
@@ -179,10 +201,9 @@ describe("saving sends exactly what changed", () => {
     renderSettingsSheet();
     editName("Renamed");
     fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
-    fireEvent.change(
-      screen.getByLabelText("Why you are making this change"),
-      { target: { value: "Tightening the gate before launch" } }
-    );
+    fireEvent.change(screen.getByLabelText("Why you are making this change"), {
+      target: { value: "Tightening the gate before launch" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalled());
@@ -195,10 +216,55 @@ describe("saving sends exactly what changed", () => {
   });
 });
 
+describe("a note belongs to one change", () => {
+  it("does not carry the previous save's reason into the next one", async () => {
+    renderSettingsSheet();
+    editName("First");
+    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    fireEvent.change(screen.getByLabelText("Why you are making this change"), {
+      target: { value: "First reason" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalled());
+
+    // Second change, no note typed. The dialog is mounted unconditionally by
+    // the sheet, so without a reset the first reason would be filed against
+    // this revision — the opposite of what the note is for.
+    editName("Second");
+    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    expect(
+      (
+        screen.getByLabelText(
+          "Why you are making this change",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("a saved draft stops reporting unsaved changes immediately", async () => {
+    renderSettingsSheet();
+    editName("Renamed");
+    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    // The Convex subscription has not delivered the new document yet.
+    // Rebasing onto the stale one flashed the old values back and re-armed
+    // the unsaved-changes guard for edits that were already written.
+    await waitFor(() =>
+      expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull(),
+    );
+    expect(
+      (screen.getByLabelText("Suite name") as HTMLInputElement).value,
+    ).toBe("Renamed");
+  });
+});
+
 describe("degrading and refusing", () => {
   it("falls back to the old mutation when the composite is not deployed", async () => {
     mocks.applySuiteSettings.mockRejectedValueOnce(
-      new Error("Could not find public function for 'testSuites:applySuiteSettings'")
+      new Error(
+        "Could not find public function for 'testSuites:applySuiteSettings'",
+      ),
     );
     renderSettingsSheet();
     editName("Renamed");
@@ -227,7 +293,7 @@ describe("degrading and refusing", () => {
     // refusal.
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
     expect(
-      (screen.getByLabelText("Suite name") as HTMLInputElement).value
+      (screen.getByLabelText("Suite name") as HTMLInputElement).value,
     ).toBe("Renamed");
     expect(mocks.updateTestSuite).not.toHaveBeenCalled();
   });

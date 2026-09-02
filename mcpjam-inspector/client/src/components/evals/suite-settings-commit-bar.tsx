@@ -32,14 +32,21 @@ export function SuiteSettingsCommitBar({
   return (
     <div
       data-testid="suite-settings-commit-bar"
+      // The bar appears and its count changes with no other cue, so a
+      // screen-reader user would otherwise learn about pending edits only by
+      // reaching the buttons.
+      role="status"
+      aria-live="polite"
       className="sticky bottom-0 z-10 -mx-4 mt-4 flex items-center justify-between gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur"
     >
       <div className="min-w-0">
         <p className="text-xs font-medium text-foreground">
-          {changeCount === 1 ? "1 unsaved change" : `${changeCount} unsaved changes`}
+          {changeCount === 1
+            ? "1 unsaved change"
+            : `${changeCount} unsaved changes`}
         </p>
         {conflictCount > 0 ? (
-          <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-500">
+          <p className="mt-0.5 text-[11px] text-warning-foreground">
             {conflictCount === 1
               ? "1 setting changed elsewhere while you were editing"
               : `${conflictCount} settings changed elsewhere while you were editing`}
@@ -55,7 +62,11 @@ export function SuiteSettingsCommitBar({
         >
           Discard
         </Button>
-        <Button size="sm" onClick={onReview} disabled={!canCommit || isCommitting}>
+        <Button
+          size="sm"
+          onClick={onReview}
+          disabled={!canCommit || isCommitting}
+        >
           Review and save
         </Button>
       </div>

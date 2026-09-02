@@ -79,6 +79,15 @@ export type SuiteSettingsDraft = {
 };
 
 export type SuiteSettingsAction =
+  /**
+   * `value` may be the new value OR an updater over the current one.
+   *
+   * The updater form exists for the same reason `useState` has one, and it
+   * matters more here: a control that appends (Add check) computed its next
+   * value from whatever the last render closed over, so two clicks in one tick
+   * would make the second overwrite the first. Resolving inside the reducer
+   * reads the authoritative state instead.
+   */
   | { type: "edit"; key: SuiteSettingsKey; value: unknown }
   | { type: "discard" }
   | { type: "rebase"; live: SuiteSettingsValues }
@@ -121,20 +130,28 @@ export function readSuiteSettingsValues(suite: {
 }
 
 export function initSuiteSettingsDraft(
-  values: SuiteSettingsValues
+  values: SuiteSettingsValues,
 ): SuiteSettingsDraft {
   return { base: values, current: values, conflicts: [] };
 }
 
 export function suiteSettingsReducer(
   state: SuiteSettingsDraft,
-  action: SuiteSettingsAction
+  action: SuiteSettingsAction,
 ): SuiteSettingsDraft {
   switch (action.type) {
     case "edit": {
+      // No draft key holds a function, so a callable `value` is unambiguously
+      // the updater form rather than something to store.
+      const resolved =
+        typeof action.value === "function"
+          ? (action.value as (previous: unknown) => unknown)(
+              state.current[action.key],
+            )
+          : action.value;
       const current = {
         ...state.current,
-        [action.key]: action.value,
+        [action.key]: resolved,
       } as SuiteSettingsValues;
       return {
         ...state,
@@ -177,7 +194,7 @@ export function suiteSettingsReducer(
 /** The keys whose value differs from the last saved one. */
 export function dirtyKeys(draft: SuiteSettingsDraft): SuiteSettingsKey[] {
   return SUITE_SETTINGS_KEYS.filter(
-    (key) => !sameValue(draft.current[key], draft.base[key])
+    (key) => !sameValue(draft.current[key], draft.base[key]),
   );
 }
 
@@ -190,7 +207,7 @@ export function dirtyKeys(draft: SuiteSettingsDraft): SuiteSettingsKey[] {
  */
 export function canCommit(
   draft: SuiteSettingsDraft,
-  areChecksValid: (list: Predicate[]) => boolean
+  areChecksValid: (list: Predicate[]) => boolean,
 ): boolean {
   if (dirtyKeys(draft).length === 0) return false;
   if (draft.current.name.trim().length === 0) return false;
@@ -213,7 +230,7 @@ export function toUpdateArgs(
   liveEnvironment?: {
     servers?: unknown[];
     serverBindings?: unknown;
-  }
+  },
 ): Record<string, unknown> {
   const args: Record<string, unknown> = { suiteId };
   for (const key of dirtyKeys(draft)) {
@@ -277,7 +294,9 @@ function describeMatchOptions(value: EvalMatchOptions | undefined): string {
   if (value.toolCallOrder)
     parts.push(ORDER_LABEL.get(value.toolCallOrder) ?? value.toolCallOrder);
   if (value.argumentMatching)
-    parts.push(ARGS_LABEL.get(value.argumentMatching) ?? value.argumentMatching);
+    parts.push(
+      ARGS_LABEL.get(value.argumentMatching) ?? value.argumentMatching,
+    );
   if (value.maxExtraToolCalls !== undefined)
     parts.push(`at most ${value.maxExtraToolCalls} extra calls`);
   return parts.length > 0 ? parts.join(", ") : "Inherited";
@@ -322,7 +341,7 @@ function describeJudge(value: EvalJudgeConfig | undefined): string {
 export function describeChange(
   key: SuiteSettingsKey,
   before: SuiteSettingsValues,
-  after: SuiteSettingsValues
+  after: SuiteSettingsValues,
 ): SuiteSettingsChange {
   switch (key) {
     case "name":
@@ -398,9 +417,9 @@ function summarizeRubric(rubric: EvalJudgeRubric | undefined): string {
 
 /** Every change in this draft, in the sheet's own row order. */
 export function describeDraft(
-  draft: SuiteSettingsDraft
+  draft: SuiteSettingsDraft,
 ): SuiteSettingsChange[] {
   return dirtyKeys(draft).map((key) =>
-    describeChange(key, draft.base, draft.current)
+    describeChange(key, draft.base, draft.current),
   );
 }

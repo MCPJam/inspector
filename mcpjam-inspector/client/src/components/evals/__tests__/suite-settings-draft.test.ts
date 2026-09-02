@@ -46,7 +46,7 @@ const draftOf = (values: Partial<SuiteSettingsValues> = {}) =>
 const edit = (
   draft: SuiteSettingsDraft,
   key: keyof SuiteSettingsValues,
-  value: unknown
+  value: unknown,
 ) => suiteSettingsReducer(draft, { type: "edit", key, value });
 
 const alwaysValid = () => true;
@@ -82,6 +82,40 @@ describe("only what changed is sent", () => {
     expect(dirtyKeys(draft)).toEqual([]);
   });
 
+  test("an updater is resolved against the authoritative draft", () => {
+    // The form `AddCheckMenu` uses. Before this, the setter stored the
+    // FUNCTION as the value: `describePredicates` and the checks list both
+    // iterate it, and `for...of` over a function throws — "Add check" broke
+    // the sheet at runtime, with nothing in the type system to stop it
+    // (the client has no typecheck in CI).
+    let draft = draftOf();
+    draft = suiteSettingsReducer(draft, {
+      type: "edit",
+      key: "defaultPredicates",
+      value: (previous: unknown) => [
+        ...(previous as unknown[]),
+        { type: "noToolErrors" },
+      ],
+    });
+    expect(Array.isArray(draft.current.defaultPredicates)).toBe(true);
+    expect(draft.current.defaultPredicates).toHaveLength(1);
+  });
+
+  test("two updaters in a row both land", () => {
+    // The reason resolution belongs in the reducer rather than the call site:
+    // a caller computing from its own last render would have the second click
+    // overwrite the first.
+    let draft = draftOf();
+    const append = (type: string) => ({
+      type: "edit" as const,
+      key: "defaultPredicates" as const,
+      value: (previous: unknown) => [...(previous as unknown[]), { type }],
+    });
+    draft = suiteSettingsReducer(draft, append("noToolErrors"));
+    draft = suiteSettingsReducer(draft, append("responseContains"));
+    expect(draft.current.defaultPredicates).toHaveLength(2);
+  });
+
   test("discard returns to the last saved state", () => {
     let draft = draftOf();
     draft = edit(draft, "name", "Renamed");
@@ -106,7 +140,7 @@ describe("clearing a setting is not the same as omitting it", () => {
     const draft = edit(
       draftOf({ defaultPredicates: [{ type: "noToolErrors" } as never] }),
       "defaultPredicates",
-      []
+      [],
     );
     expect(toUpdateArgs(draft, "s").defaultPredicates).toBeNull();
   });
@@ -115,7 +149,7 @@ describe("clearing a setting is not the same as omitting it", () => {
     const draft = edit(
       draftOf({ defaultMatchOptions: { argumentMatching: "exact" } }),
       "defaultMatchOptions",
-      undefined
+      undefined,
     );
     expect(toUpdateArgs(draft, "s").defaultMatchOptions).toBeNull();
   });
@@ -124,7 +158,7 @@ describe("clearing a setting is not the same as omitting it", () => {
     const draft = edit(
       draftOf({ judgeConfig: { goalCompletion: { enabled: true } } }),
       "judgeConfig",
-      undefined
+      undefined,
     );
     expect(toUpdateArgs(draft, "s").judgeConfig).toBeNull();
   });
@@ -148,7 +182,7 @@ describe("clearing a setting is not the same as omitting it", () => {
     const draft = edit(
       draftOf({ computerEnvironmentId: "env_1" }),
       "computerEnvironmentId",
-      undefined
+      undefined,
     );
     const args = toUpdateArgs(draft, "s", { servers: ["alpha"] }) as {
       environment: Record<string, unknown>;
@@ -296,7 +330,7 @@ describe("reading a suite into the draft", () => {
     // unsaved change the person never made.
     expect(readSuiteSettingsValues({}).defaultPredicates).toEqual([]);
     const draft = initSuiteSettingsDraft(
-      readSuiteSettingsValues({ defaultPredicates: [] })
+      readSuiteSettingsValues({ defaultPredicates: [] }),
     );
     expect(dirtyKeys(draft)).toEqual([]);
   });

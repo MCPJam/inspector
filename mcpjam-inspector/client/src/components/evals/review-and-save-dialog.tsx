@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -45,6 +45,14 @@ export function ReviewAndSaveDialog({
 }) {
   const [note, setNote] = useState("");
 
+  // A reason belongs to one change. The dialog is mounted unconditionally by
+  // the sheet, so closing it — including the parent's own `setReviewOpen(false)`
+  // after a successful commit — leaves the text behind, and the next save would
+  // file the previous change's explanation against it.
+  useEffect(() => {
+    if (!open) setNote("");
+  }, [open]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
@@ -59,7 +67,7 @@ export function ReviewAndSaveDialog({
 
         {conflicts.length > 0 ? (
           <p
-            className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400"
+            className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground"
             data-testid="review-conflict-notice"
           >
             Someone else changed this suite while you were editing. Saving keeps
@@ -67,7 +75,10 @@ export function ReviewAndSaveDialog({
           </p>
         ) : null}
 
-        <ul className="max-h-64 space-y-2 overflow-y-auto" data-testid="review-change-list">
+        <ul
+          className="max-h-64 space-y-2 overflow-y-auto"
+          data-testid="review-change-list"
+        >
           {changes.map((change) => (
             <li
               key={change.key}
