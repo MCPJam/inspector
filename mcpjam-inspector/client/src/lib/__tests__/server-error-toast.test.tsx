@@ -49,36 +49,24 @@ describe("toastServerConnectionFailure", () => {
     expect(await screen.findByText(message)).toBeInTheDocument();
   });
 
-  it("copies the whole failure, server name included", async () => {
-    // The toast is gone in seconds; the developer wants it in their agent.
+  it("copies the description, not just the server name", async () => {
+    // The copy button lives on the title row. Split across two fields, a
+    // button that copies only what it sits beside hands over a name.
     render(<Toaster />);
 
     toastServerConnectionFailure("Excalidraw (App)", "Request failed (500)");
-    fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Copy error message" }),
+    );
 
     await waitFor(() =>
       expect(copyMock).toHaveBeenCalledWith(
         "Excalidraw (App): Request failed (500)",
       ),
     );
-    expect(await screen.findByText("Error copied")).toBeInTheDocument();
   });
 
-  it("says so when the clipboard refuses", async () => {
-    copyMock.mockResolvedValue(false);
-    render(<Toaster />);
-
-    toastServerConnectionFailure("Excalidraw (App)", "Request failed (500)");
-    fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
-
-    expect(
-      await screen.findByText("Could not copy the error"),
-    ).toBeInTheDocument();
-  });
-
-  it("carries a caller's own action instead of Copy", async () => {
-    // Sonner allows one action. A toast that can fix the failure — "Change
-    // protocol version" — outranks copying it.
+  it("carries an action that fixes the failure", async () => {
     const onClick = vi.fn();
     render(<Toaster />);
 
@@ -90,8 +78,5 @@ describe("toastServerConnectionFailure", () => {
       await screen.findByRole("button", { name: "Change protocol version" }),
     );
     expect(onClick).toHaveBeenCalledTimes(1);
-    expect(
-      screen.queryByRole("button", { name: "Copy" }),
-    ).not.toBeInTheDocument();
   });
 });

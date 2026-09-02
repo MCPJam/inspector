@@ -1,20 +1,15 @@
-import { toast } from "sonner";
-import { copyToClipboard } from "@/lib/clipboard";
-import {
-  attributeToServer,
-  splitServerAttribution,
-} from "@/lib/server-error-copy";
+import { toast } from "@/lib/toast";
+import { splitServerAttribution } from "@/lib/server-error-copy";
 
 type ToastAction = { label: string; onClick: () => void };
 
 /**
- * Raise a connect/reconnect failure as a toast the developer can act on.
+ * The one way a connect/reconnect failure reaches the user.
  *
- * Defaults to a Copy action because the toast is the only place the failure
- * appears for servers that never reached a card, and it is gone in seconds —
- * long before anyone retypes it into an agent. A caller with an action that
- * FIXES the failure passes its own: sonner renders one, and fixing beats
- * copying.
+ * Three call sites used to build their own sentence around the same failure
+ * ("Failed to connect to X: …"), which is why one server refusing produced two
+ * differently-worded toasts. Copying is not handled here: `@/lib/toast` puts a
+ * copy button on every error toast and it reads the description too.
  */
 export function toastServerConnectionFailure(
   serverName: string,
@@ -22,18 +17,5 @@ export function toastServerConnectionFailure(
   options?: { action?: ToastAction },
 ): void {
   const { title, description } = splitServerAttribution(serverName, message);
-  toast.error(title, {
-    description,
-    action: options?.action ?? {
-      label: "Copy",
-      onClick: () => {
-        void copyToClipboard(attributeToServer(serverName, message)).then(
-          (copied) => {
-            if (copied) toast.success("Error copied");
-            else toast.error("Could not copy the error");
-          },
-        );
-      },
-    },
-  });
+  toast.error(title, { description, action: options?.action });
 }

@@ -46,15 +46,20 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         ...props.toastOptions,
         classNames: {
-          // `flex-wrap` so an action can take a line of its own instead of
-          // squeezing the message into a narrow column beside it.
-          toast: "group/toast flex-wrap",
-          // `grow` pushes the action to the trailing edge of the row. Together
-          // with wrapping and sonner's own `flex-shrink: 0` on the button, the
-          // label decides the layout: a short one ("Copy") rides the title
-          // row, and a sentence-long CTA ("Change protocol version") no longer
-          // fits beside the message and drops to its own line on its own.
-          content: "max-h-[50vh] overflow-y-auto grow",
+          // `items-start` because a multi-line error is the common case here:
+          // sonner centres its row, which floats the icon and the action
+          // against the middle of a paragraph instead of its first line.
+          // `flex-wrap` lets an action take a line of its own.
+          toast: "group/toast flex-wrap items-start",
+          // `basis-0 grow` so the message never forces its own line: at its
+          // natural width a paragraph does not fit beside the icon, and the
+          // row wraps leaving the icon stranded alone above it. `min-w-40`
+          // then decides the action's placement — with sonner's own
+          // `flex-shrink: 0` on the button, a short label ("Copy") rides the
+          // title row at the trailing edge, and a sentence-long CTA ("Change
+          // protocol version") no longer fits beside a 10rem message and drops
+          // to its own line.
+          content: "max-h-[50vh] min-w-40 grow basis-0 overflow-y-auto",
           ...props.toastOptions?.classNames,
         },
       }}

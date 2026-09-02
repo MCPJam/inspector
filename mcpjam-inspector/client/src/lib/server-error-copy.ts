@@ -8,22 +8,11 @@
  * itself it repeated the name. But a generic failure — "Connection refused" —
  * then says nothing about WHICH server, and several can fail at once.
  *
- * So attribution moves to the copy layer, and applies only when the message
- * does not already carry the name. Callers that build their own sentence
- * around the server ("Failed to connect to X: …") do not need this.
- */
-export function attributeToServer(serverName: string, message: string): string {
-  const { title, description } = splitServerAttribution(serverName, message);
-  return description ? `${title}: ${description}` : title;
-}
-
-/**
- * The same attribution, as the two fields a toast renders: the server name as
- * the title, the failure as the description. Sonner aligns its icon to the
- * title and mutes the description, which one colon-spliced line cannot do.
- *
- * Returns a title alone whenever prefixing would stutter, so the caller shows
- * the message as it stands.
+ * So attribution moves to the copy layer, split across the two fields a toast
+ * renders: the server name as the title, the failure as the description. It
+ * applies only when the message does not already carry the name — otherwise
+ * the title repeats what the sentence below it already says, and the caller
+ * shows the message as it stands.
  */
 export function splitServerAttribution(
   serverName: string,
