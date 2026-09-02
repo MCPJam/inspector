@@ -448,10 +448,26 @@ export function resolveHostTools(
       continue;
     }
     if (id === BROWSER_BUILT_IN_TOOL_ID) {
-      // Dark switch: the runtime ships behind an env flag so staging can drive
-      // it before the durable backend exposure gate opens (W7). Absent ⇒ the
-      // capability simply is not advertised.
-      if (!hostedBrowserEnabled()) {
+      // WHERE this browser runs, resolved exactly as bash's engine is and at
+      // the same chokepoint: whatever the route asked for, `local` survives
+      // only for a signed-in member's own direct turn — a guest, a scenario, a
+      // journey or a swarm re-resolves to the cloud family here.
+      const requestedEngine =
+        ctx.computerEngine ??
+        resolvePersonalComputerEngine({ localConsentValid: false });
+      const resolvedEngine = coercePersonalEngineForActor(requestedEngine, {
+        isGuest: Boolean(ctx.isGuest),
+        isScenarioSession: Boolean(ctx.isScenarioSession),
+        isJourneySession: Boolean(ctx.isJourneySession),
+        executionScopeKind: ctx.executionScope?.kind,
+      });
+      const isLocalBrowser = resolvedEngine === "local";
+
+      // The three HOSTED gates. A local browser is not a hosted resource: it
+      // boots no desktop, reserves nothing, and costs no credits, so gating it
+      // on the hosted rollout's env flag and the backend's desktop-template
+      // readiness would refuse a capability neither of them describes.
+      if (!isLocalBrowser && !hostedBrowserEnabled()) {
         logger.debug(
           "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
           { projectId: ctx.projectId },
@@ -464,7 +480,7 @@ export function resolveHostTools(
       // every hosted browser hour at the terminal rate. Silence (an older
       // backend, or bootstrap not yet run) is not a refusal — the env flag
       // above is already dark by default and is what staging drives with.
-      if (isHostedBrowserExposable() === false) {
+      if (!isLocalBrowser && isHostedBrowserExposable() === false) {
         logger.warn(
           "[built-in-tools] browser suppressed: the backend reports it is not exposable",
           { projectId: ctx.projectId },
@@ -480,7 +496,20 @@ export function resolveHostTools(
       // Co-tenancy: a shell and a driven browser on ONE box, as one uid. Keep
       // `bash` (behavior-preserving for hosts that already have it) and drop
       // `browser`, unless this deployment accepted the boundary.
-      if (ids.includes(BASH_TOOL_NAME) && !ctx.allowComputerToolCoTenancy) {
+      //
+      // NOT applied locally. The stated risk is that a shell on the box reads
+      // the browser's cookies and its daemon token out of the process
+      // environment — but on the user's own machine the shell is already
+      // running as them, with access to every credential store on it, and the
+      // local daemon's token never enters an environment at all (the client
+      // calls its handler in-process). The boundary here is device consent
+      // plus per-action approval, and refusing the pair would only mean a user
+      // who attached both gets neither of the two things they asked for.
+      if (
+        !isLocalBrowser &&
+        ids.includes(BASH_TOOL_NAME) &&
+        !ctx.allowComputerToolCoTenancy
+      ) {
         const reason =
           "browser is not advertised alongside bash: both drive the same computer as " +
           "the same user, so a shell can read the browser's cookies and its daemon " +
@@ -516,9 +545,22 @@ export function resolveHostTools(
         );
         continue;
       }
+      if (resolvedEngine !== requestedEngine) {
+        logger.warn(
+          "[built-in-tools] local browser engine downgraded for an ineligible actor",
+          {
+            projectId: ctx.projectId,
+            requestedEngine,
+            engine: resolvedEngine,
+            isGuest: Boolean(ctx.isGuest),
+            isScenarioSession: Boolean(ctx.isScenarioSession),
+          },
+        );
+      }
       const browser = buildBrowserTools({
         authHeader,
         projectId: ctx.projectId,
+        engine: isLocalBrowser ? "local" : "hosted",
         ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
         // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
         // every surface which threads no approval safe without editing it.

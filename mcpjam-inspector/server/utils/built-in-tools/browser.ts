@@ -58,7 +58,9 @@ import {
   type ObservationStateToken,
 } from "../../services/browserd/protocol.js";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
+import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
+import { ensureLocalBrowserSession } from "../../services/browserd/local/local-browser-session.js";
 
 export const BROWSER_BUILT_IN_TOOL_ID = "browser";
 
@@ -89,20 +91,36 @@ export type BrowserApprovalDelivery =
 export interface BrowserToolsOptions {
   /** Bearer authorization forwarded to the control plane. */
   authHeader: string;
-  /** Project whose desktop computer this turn drives. */
+  /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
+  /**
+   * WHERE the browser runs. Resolved by the registry exactly as bash's engine
+   * is, and consumed here as the choice of ensure function — the one seam
+   * between the three engines. Everything else in this file is engine-blind.
+   */
+  engine?: BrowserEngine;
   /** ABSENT ⇒ nothing is built. See the fail-closed note above. */
   approvalDelivery?: BrowserApprovalDelivery;
-  /** Injectable for tests; defaults to the live E2B/Convex session path. */
+  /**
+   * Ephemeral for unattended runs, persistent for interactive ones. Threaded
+   * from `approvalDelivery` rather than configured, because the two must never
+   * disagree: a run with nobody watching that inherits a signed-in profile is
+   * a run whose verdict was decided by the previous one.
+   */
   ensureSession?: (args: {
     bearer: string;
     projectId: string;
+    contextMode: BrowserContextMode;
+    ownerKey?: string;
     signal?: AbortSignal;
   }) => Promise<BrowserSessionHandle>;
   /** Surfaced to the run when a tool is deliberately not advertised. */
   onToolSuppressed?: (info: { id: string; reason: string }) => void;
 }
+
+/** Which engine drives this turn's browser. */
+export type BrowserEngine = "hosted" | "local";
 
 export interface BrowserToolsResult {
   tools: ToolSet;
@@ -236,6 +254,8 @@ class BrowserTurnState {
   constructor(
     private readonly opts: BrowserToolsOptions,
     private readonly ensure: NonNullable<BrowserToolsOptions["ensureSession"]>,
+    private readonly contextMode: BrowserContextMode,
+    private readonly ownerKey: string | undefined,
   ) {}
 
   /** Ensure lazily: a turn that never calls a browser tool boots nothing. */
@@ -243,6 +263,8 @@ class BrowserTurnState {
     this.session ??= this.ensure({
       bearer: this.opts.authHeader,
       projectId: this.opts.projectId,
+      contextMode: this.contextMode,
+      ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),
       ...(signal ? { signal } : {}),
     });
     return this.session;
@@ -336,7 +358,23 @@ export function buildBrowserTools(
 
   const unattended = delivery.kind === "unattended" ? delivery.policy : null;
   const readOnly = unattended?.mode === "read_only";
-  const state = new BrowserTurnState(opts, opts.ensureSession ?? ensureLiveBrowserSession);
+  const engine: BrowserEngine = opts.engine ?? "hosted";
+  // DERIVED, never configured. A surface that can ask a person is interactive
+  // and keeps its logins; one that cannot is unattended and must start blank.
+  // Letting these be set independently is how an eval ends up running against
+  // whatever profile the last playground session left signed in.
+  const contextMode: BrowserContextMode = unattended ? "ephemeral" : "persistent";
+  const state = new BrowserTurnState(
+    opts,
+    opts.ensureSession ?? defaultEnsureSession(engine),
+    contextMode,
+    // Ephemeral browsers are keyed per run so two unattended runs on one
+    // project cannot share cookies. A swarm names itself; anything else falls
+    // back to the project, which is still correct because the profile is
+    // thrown away either way — the key only decides how much is SHARED within
+    // one run.
+    unattended ? unattendedOwnerKey(opts) : undefined,
+  );
 
   // An unattended `allowlist` policy may name the exact tools this run may
   // use; anything else gets every tool, with approval as the gate.
@@ -361,12 +399,23 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  const needsApproval = delivery.kind === "attested";
+  // Local is forced to ask, exactly as `bash` is (bash.ts:131). The browser is
+  // driving a real, signed-in Chromium on someone's own machine, where the
+  // blast radius of an unreviewed click is their accounts rather than a
+  // disposable box.
+  const needsApproval = delivery.kind === "attested" || engine === "local";
   const send = async (
     action: BrowserAction,
-    args: { tabId?: string; signal?: AbortSignal; expectedState?: boolean },
+    args: {
+      tabId?: string;
+      signal?: AbortSignal;
+      expectedState?: boolean;
+      /** Set on the one navigation issued to LEAVE a disallowed origin. */
+      recovering?: boolean;
+    },
   ): Promise<CommandOutcome & { tabId: string }> => {
     const handle = await state.handle(args.signal);
+    const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
     const pinned = args.expectedState ? state.tokenFor(args.tabId) : undefined;
     const command: BrowserCommand = {
@@ -382,7 +431,7 @@ export function buildBrowserTools(
       command,
       handle.bootId,
     );
-    const outcome = unwrapCommand(response);
+    let outcome = unwrapCommand(response);
     // W4/L6 — a handoff invalidates everything this turn cached. Two signals
     // reach us: a refusal while the person still holds the browser, and the
     // note the daemon attaches to the first result after they hand it back.
@@ -390,6 +439,22 @@ export function buildBrowserTools(
     // post-handoff observation survives and the turn is immediately caught up.
     if (response.status === "lease_blocked" || carriesHandoffNote(outcome.output)) {
       state.forgetTokens();
+    }
+    // ORIGIN, ENFORCED ON THE RESULT (not just on the request).
+    //
+    // Checking the URL a model ASKS for stops it navigating somewhere the
+    // policy never named. It does not stop the page taking it there: a
+    // redirect, a meta refresh, a link the model clicked, an OAuth bounce.
+    // Until now the observation of that page came back in full, which made the
+    // allowlist a suggestion to the model rather than a boundary on the run.
+    if (unattended?.originAllowlist?.length) {
+      outcome = await enforceResultOrigin(outcome, {
+        allowlist: unattended.originAllowlist,
+        tabId: args.tabId,
+        recover: recovering
+          ? undefined
+          : (action) => send(action, { ...args, recovering: true }),
+      });
     }
     state.rememberToken(args.tabId, outcome.stateToken);
     return { ...outcome, tabId };
@@ -411,7 +476,7 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        "Open a URL in the cloud browser (or go back / reload). Returns what the page " +
+        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns what the page ` +
         "looks like after it settles, so you do not need to observe separately.",
       inputSchema: z.object({
         url: z.string().optional().describe("URL to open. Omit when using back or reload."),
@@ -644,6 +709,90 @@ export function buildBrowserTools(
     tools,
     approvals: classifyBrowserToolApprovals(built, { readOnly }),
   };
+}
+
+/**
+ * What the model should call this browser.
+ *
+ * Not decoration: a model that believes it is driving a disposable cloud box
+ * reasons differently about signing in and about side effects than one that
+ * knows the browser is the user's own.
+ */
+function engineLabel(engine: BrowserEngine): string {
+  return engine === "local"
+    ? "the browser on this machine (the user's own, with their logins)"
+    : "the cloud browser";
+}
+
+/** What an unattended run calls itself, for keying its throwaway browser. */
+function unattendedOwnerKey(opts: BrowserToolsOptions): string {
+  const scope = opts.executionScope;
+  return scope?.kind === "swarm" ? `swarm:${scope.swarmId}` : opts.projectId;
+}
+
+/** The session path for an engine — the ONE seam between the two. */
+function defaultEnsureSession(
+  engine: BrowserEngine,
+): NonNullable<BrowserToolsOptions["ensureSession"]> {
+  if (engine === "local") {
+    return async ({ projectId, contextMode, ownerKey }) =>
+      ensureLocalBrowserSession({
+        projectId,
+        contextMode,
+        ...(ownerKey ? { ownerKey } : {}),
+      });
+  }
+  return ensureLiveBrowserSession;
+}
+
+/**
+ * Strip an observation that landed off-allowlist, and get off the page.
+ *
+ * Two halves, and both matter. The strip is the boundary: a screenshot of a
+ * page the run was never permitted to visit is exactly the leak the allowlist
+ * exists to prevent, and it is already in this process by the time we look.
+ * The recovery navigation is what stops the run WEDGING there — every
+ * subsequent observation would otherwise be refused for the same reason, with
+ * the model unable to act because acting is also refused.
+ *
+ * The recovery is issued once (`recovering`), never in a loop: if going back
+ * lands somewhere equally disallowed, the model is told and left to decide,
+ * rather than the run walking history until it runs out.
+ */
+async function enforceResultOrigin(
+  outcome: CommandOutcome,
+  args: {
+    allowlist: readonly string[];
+    tabId?: string;
+    recover?: (action: BrowserAction) => Promise<unknown>;
+  },
+): Promise<CommandOutcome> {
+  const url = resultUrl(outcome.output);
+  if (!url || isOriginAllowed(url, args.allowlist)) return outcome;
+
+  await args.recover?.({ kind: "back" });
+  return {
+    ok: false,
+    error:
+      `origin_not_allowed: the page moved to ${url}, which this run's ` +
+      "toolPolicy does not permit — the page was NOT read, and the browser " +
+      "has been sent back. Allowed origins: " +
+      `${args.allowlist.join(", ")}`,
+    ...(outcome.stateToken ? { stateToken: outcome.stateToken } : {}),
+  };
+}
+
+/** The URL a result describes, from wherever this shape carries one. */
+function resultUrl(output: unknown): string | undefined {
+  if (typeof output !== "object" || output === null) return undefined;
+  const top = (output as { url?: unknown }).url;
+  if (typeof top === "string") return top;
+  const page = (output as { page?: unknown }).page;
+  if (typeof page === "object" && page !== null) {
+    const nested = (page as { url?: unknown }).url;
+    if (typeof nested === "string") return nested;
+  }
+  return undefined;
 }
 
 function isObservational(name: string): boolean {

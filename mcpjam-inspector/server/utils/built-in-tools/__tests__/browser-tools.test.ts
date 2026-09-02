@@ -33,6 +33,7 @@ function fakeSession(send: (command: any) => Promise<SendResult>) {
   const ensureSession = vi.fn(
     async (): Promise<BrowserSessionHandle> =>
       ({
+        engine: "hosted" as const,
         sessionId: "session-1",
         computerId: "computer-1",
         bootId: "boot-1",
@@ -55,6 +56,26 @@ const OK: SendResult = {
     settled: true,
   },
 };
+
+/**
+ * A daemon that lands where it was sent — which is what a real one does, and
+ * what the result-side origin check reads. A fixture answering one fixed URL
+ * whatever it was asked to open cannot exercise that check at all.
+ */
+function okAt(url: string): SendResult {
+  return {
+    ...OK,
+    result: { ...OK.result!, output: { url, screenshot: "PNG" } },
+  };
+}
+
+function echoingDaemon(): (command: any) => Promise<SendResult> {
+  let url = "https://example.com";
+  return async (command: any) => {
+    if (command.action?.kind === "navigate") url = command.action.url;
+    return okAt(url);
+  };
+}
 
 function build(
   over: Partial<Parameters<typeof buildBrowserTools>[0]> = {},
@@ -178,12 +199,18 @@ describe("buildBrowserTools — unattended policy", () => {
   });
 
   it("refuses an origin the policy never named, BEFORE the command leaves", async () => {
-    const { result, sendCommand } = build({
-      approvalDelivery: {
-        kind: "unattended",
-        policy: { mode: "allowlist", originAllowlist: ["https://allowed.test"] },
+    const { result, sendCommand } = build(
+      {
+        approvalDelivery: {
+          kind: "unattended",
+          policy: {
+            mode: "allowlist",
+            originAllowlist: ["https://allowed.test"],
+          },
+        },
       },
-    });
+      echoingDaemon(),
+    );
     const denied = await run(result!.tools, "browser_navigate", {
       url: "https://evil.test/steal",
     });
@@ -590,5 +617,158 @@ describe("browser_observe carries the omission marker's retrieval verb", () => {
     const { result, sendCommand } = build();
     await run(result!.tools as any, "browser_observe", { mode: "a11y" });
     expect(sendCommand.mock.calls[0][0].action).not.toHaveProperty("rootSelector");
+  });
+});
+
+describe("buildBrowserTools — the origin allowlist binds the RESULT", () => {
+  const policy = {
+    kind: "unattended" as const,
+    policy: {
+      mode: "allowlist" as const,
+      originAllowlist: ["https://allowed.test"],
+    },
+  };
+
+  it("strips a page the run was redirected to, and leaves the page", async () => {
+    // Checking only the requested URL made the allowlist a suggestion to the
+    // model rather than a boundary on the run: a redirect, a meta refresh or
+    // an OAuth bounce landed anywhere, and the screenshot came back in full.
+    const commands: any[] = [];
+    const { result } = build({ approvalDelivery: policy }, async (command) => {
+      commands.push(command);
+      return {
+        status: "ok",
+        result: {
+          ok: true,
+          output: {
+            url: "https://tracker.evil/landing",
+            screenshot: "SECRET",
+            dom: "<html>",
+          },
+          stateToken: {
+            tabId: "@session",
+            navCounter: 2,
+            urlHash: "u",
+            domHash: "d",
+          },
+        },
+      };
+    });
+
+    const out = await run(result!.tools, "browser_navigate", {
+      url: "https://allowed.test/start",
+    });
+
+    expect(out.error).toContain("origin_not_allowed");
+    expect(out.error).toContain("https://tracker.evil/landing");
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+    // And the run is not left parked on the page it may not read: one `back`,
+    // issued once.
+    expect(commands.map((c) => c.action.kind)).toEqual(["navigate", "back"]);
+  });
+
+  it("does not walk history when the recovery lands somewhere also disallowed", async () => {
+    const commands: any[] = [];
+    const { result } = build({ approvalDelivery: policy }, async (command) => {
+      commands.push(command);
+      return {
+        status: "ok",
+        result: { ok: true, output: { url: "https://also-bad.test/x" } },
+      };
+    });
+
+    await run(result!.tools, "browser_navigate", {
+      url: "https://allowed.test/start",
+    });
+    expect(commands).toHaveLength(2);
+  });
+
+  it("says nothing about origins when the policy names none", async () => {
+    const { result } = build(
+      {
+        approvalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+      },
+      echoingDaemon(),
+    );
+    const out = await run(result!.tools, "browser_navigate", {
+      url: "https://anywhere.test/",
+    });
+    expect(out.error).toBeUndefined();
+  });
+
+  it("leaves interactive runs alone — a person is the gate there", async () => {
+    const { result } = build({ approvalDelivery: { kind: "attested" } });
+    const out = await run(result!.tools, "browser_navigate", {
+      url: "https://anywhere.test/",
+    });
+    expect(out.error).toBeUndefined();
+  });
+});
+
+describe("buildBrowserTools — engines and profile mode", () => {
+  it("gives an unattended run a FRESH profile, and an interactive one its logins", async () => {
+    // The bug this fixes: nothing threaded contextMode, so every engine
+    // defaulted to the persistent profile — an eval could run against whatever
+    // the last playground session left signed in.
+    const seen: Array<Record<string, unknown>> = [];
+    const ensureSession = vi.fn(async (args: any) => {
+      seen.push(args);
+      return {
+        engine: "hosted" as const,
+        sessionId: "s",
+        computerId: "c",
+        bootId: "b",
+        client: { sendCommand: async () => OK } as never,
+        streamUrl: "u",
+        streamPassword: "p",
+        contextMode: args.contextMode,
+        reused: false,
+      };
+    });
+
+    const unattended = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      approvalDelivery: {
+        kind: "unattended",
+        policy: { mode: "allow_all" },
+      },
+      ensureSession: ensureSession as never,
+    });
+    await run(unattended!.tools, "browser_observe", {});
+    expect(seen[0]).toMatchObject({ contextMode: "ephemeral" });
+
+    const interactive = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession: ensureSession as never,
+    });
+    await run(interactive!.tools, "browser_observe", {});
+    expect(seen[1]).toMatchObject({ contextMode: "persistent" });
+  });
+
+  it("always asks before acting on the user's own machine", async () => {
+    const { result } = build({ engine: "local" });
+    for (const name of Object.keys(result!.tools)) {
+      expect(
+        (result!.tools as any)[name].needsApproval,
+        `${name} must ask on the local engine`,
+      ).toBe(true);
+    }
+  });
+
+  it("tells the model whose browser it is driving", async () => {
+    const local = build({ engine: "local" }).result!;
+    const hosted = build({ engine: "hosted" }).result!;
+    expect((local.tools as any).browser_navigate.description).toContain(
+      "this machine",
+    );
+    expect((hosted.tools as any).browser_navigate.description).toContain(
+      "cloud browser",
+    );
   });
 });
