@@ -230,7 +230,7 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.control.outputs.ok == 'true' && env.MCP_TARGET_URL != ''
         with:
           node-version: "22"
