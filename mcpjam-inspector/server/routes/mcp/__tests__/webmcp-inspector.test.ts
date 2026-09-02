@@ -208,6 +208,31 @@ describe("webmcp-inspector routes", () => {
     expect(body.invokeId).toBeTruthy();
   });
 
+  it("dates a screenshot, and only when there is one", async () => {
+    const started = await openSession(provider);
+
+    const shot = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "capture_screenshot" }),
+    );
+    // The client measures capture-to-paint against this. Without it the poll
+    // could only time from its own arrival, which excludes the capture and
+    // the round trip — a different quantity from the one a streamed frame's
+    // `ts` produces, sharing a percentile table with it.
+    expect(shot.body.screenshotBase64).toBeTruthy();
+    expect(typeof shot.body.capturedAt).toBe("number");
+
+    // A capture that produced nothing is not dated: a timestamp on an empty
+    // answer would date a paint that never happened.
+    provider.sessions[0].captureScreenshot = async () => undefined;
+    const empty = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "capture_screenshot" }),
+    );
+    expect(empty.body.screenshotBase64).toBeUndefined();
+    expect(empty.body.capturedAt).toBeUndefined();
+  });
+
   it("409s navigation while a tool is running", async () => {
     const started = await openSession(provider);
     const session = provider.sessions[0];

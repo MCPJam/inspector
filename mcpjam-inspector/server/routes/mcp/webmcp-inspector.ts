@@ -651,11 +651,21 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
           ok: true,
           cancelled: runtime.cancel(command.invokeId),
         });
-      case "capture_screenshot":
+      case "capture_screenshot": {
+        const screenshotBase64 = await runtime.screenshotNow();
         return c.json({
           ok: true,
-          screenshotBase64: await runtime.screenshotNow(),
+          screenshotBase64,
+          // Stamped where a streamed frame is stamped — the moment the server
+          // had the picture — so the poll's capture-to-paint figure is the
+          // SAME quantity as the socket's rather than a different one sharing
+          // a table with it. Only when there is a picture: a timestamp on an
+          // empty answer would date a paint that never happened.
+          ...(screenshotBase64 === undefined
+            ? {}
+            : { capturedAt: Date.now() }),
         });
+      }
       case "set_screencast":
         // `streaming` is the load-bearing half of this answer. A browser that
         // refuses `Page.startScreencast`, or a provider with no screencast at

@@ -74,6 +74,28 @@ describe("frame stats", () => {
     expect(report.byTransport.poll).toBeUndefined();
   });
 
+  it("measures a polled screenshot, which carries no seq", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("poll");
+    noteInputSent(0);
+    // No `seq`: a screenshot is not part of the frame sequence. It still
+    // closes a capture-to-paint measurement, which is a property of the
+    // picture — and this is the rung somebody opening the report is most
+    // likely to be investigating, since it is the slowest.
+    notePainted({ ts: 999_500, rung: "poll" });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.poll).toMatchObject({ n: 1, p50: 500 });
+    // And it settles no input echo. At a fixed once-a-second cadence, "time
+    // from gesture to next paint" measures the POLL INTERVAL rather than the
+    // input path — a number that would sit in the same percentile as socket
+    // echoes while describing something else entirely.
+    expect(report.inputToPaint.n).toBe(0);
+  });
+
   it("files a frame under the transport it ARRIVED on", () => {
     localStorage.setItem(FLAG, "1");
     resetFrameStatsFlagForTests();

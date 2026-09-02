@@ -240,6 +240,16 @@ interface WebMcpInspectorState {
   frameTransport: WebMcpFrameTransport;
   lastScreenshot: string | undefined;
   /**
+   * When the SERVER had the picture in `lastScreenshot`.
+   *
+   * Written in the same `set` as the picture itself, so the two cannot drift.
+   * Its only reader is the frame-stats measurement, which needs the same
+   * definition of "captured" that a streamed frame's `ts` carries — otherwise
+   * the poll's percentile is a different quantity sharing a table with the
+   * socket's, which is the one thing that module exists to avoid.
+   */
+  lastScreenshotAt: number | undefined;
+  /**
    * Whether chat turns may use this page's tools. Off by default and reset when
    * a session closes: a chat should never silently acquire tools because a
    * browser was left open somewhere else in the app.
@@ -715,6 +725,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               // moment we stop being told it is current.
               liveFrame: undefined,
               lastScreenshot: undefined,
+              lastScreenshotAt: undefined,
             });
             failOutstandingWaiters(
               "The browser session went away before this tool finished.",
@@ -924,6 +935,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       liveFrame: undefined,
       frameTransport: { rung: "none", attempts: 0, latched: false },
       lastScreenshot: undefined,
+      lastScreenshotAt: undefined,
       chatEnabled: false,
 
       noteScreenshotPolling(active) {
@@ -965,6 +977,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           // first frame arrives, so keeping it would present the previous
           // site's picture as this session's live view.
           lastScreenshot: undefined,
+          lastScreenshotAt: undefined,
         });
         const result = await request<WebMcpSessionPublic>("/sessions", {
           method: "POST",
@@ -1022,6 +1035,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           chatEnabled: false,
           liveFrame: undefined,
           lastScreenshot: undefined,
+          lastScreenshotAt: undefined,
         });
         if (sessionId) {
           const result = await request(`/sessions/${sessionId}`, {
@@ -1161,9 +1175,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         if (!options?.silent) {
           const result = (await get().sendCommand({
             type: "capture_screenshot",
-          })) as { screenshotBase64?: string } | undefined;
+          })) as
+            | { screenshotBase64?: string; capturedAt?: number }
+            | undefined;
           if (applies(result?.screenshotBase64)) {
-            set({ lastScreenshot: result?.screenshotBase64 });
+            set({
+              lastScreenshot: result?.screenshotBase64,
+              lastScreenshotAt: result?.capturedAt,
+            });
           }
           return;
         }
@@ -1173,7 +1192,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // within a second of it appearing — usually before anyone read it.
         const sessionId = get().session?.sessionId;
         if (!sessionId) return;
-        const result = await request<{ screenshotBase64?: string }>(
+        const result = await request<{
+          screenshotBase64?: string;
+          capturedAt?: number;
+        }>(
           `/sessions/${sessionId}/command`,
           {
             method: "POST",
@@ -1185,7 +1207,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         // in the new session's pane, where nothing would ever correct it.
         if (get().session?.sessionId !== sessionId) return;
         if (result.ok && applies(result.data.screenshotBase64)) {
-          set({ lastScreenshot: result.data.screenshotBase64 });
+          set({
+            lastScreenshot: result.data.screenshotBase64,
+            lastScreenshotAt: result.data.capturedAt,
+          });
         }
       },
 

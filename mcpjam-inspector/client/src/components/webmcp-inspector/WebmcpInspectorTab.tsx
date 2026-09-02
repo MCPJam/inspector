@@ -82,6 +82,7 @@ export function WebmcpInspectorTab() {
     starting,
     error,
     lastScreenshot,
+    lastScreenshotAt,
     liveFrame,
     frameTransport,
     noteScreenshotPolling,
@@ -787,6 +788,7 @@ export function WebmcpInspectorTab() {
             <ViewportPane
               frame={liveFrame}
               fallbackScreenshot={lastScreenshot}
+              fallbackScreenshotAt={lastScreenshotAt}
               streaming={streaming}
               transport={session?.viewportTransport}
               behaviour={behaviour}
@@ -873,6 +875,7 @@ export function WebmcpInspectorTab() {
 function ViewportPane({
   frame,
   fallbackScreenshot,
+  fallbackScreenshotAt,
   streaming,
   transport,
   behaviour,
@@ -880,6 +883,8 @@ function ViewportPane({
 }: {
   frame: WebMcpLiveFrame | undefined;
   fallbackScreenshot: string | undefined;
+  /** When the server had `fallbackScreenshot`; see the store's field. */
+  fallbackScreenshotAt: number | undefined;
   streaming: boolean;
   transport: WebMcpViewportTransport | undefined;
   behaviour: ViewportBehaviour;
@@ -1139,15 +1144,29 @@ function ViewportPane({
             // was.
             onLoad={(event) => {
               const image = event.currentTarget;
-              if (!frame || image.currentSrc !== frame.src) return;
-              const painted = frame;
+              // What this load represents. A polled screenshot is a paint too,
+              // and the one the report is usually opened to look at: the poll
+              // is the slowest rung, so a `byTransport` that could never fill
+              // its bucket would be silent exactly where somebody is
+              // investigating. It carries no `seq` — see `notePainted` for why
+              // the input echo is not a number this transport can honestly
+              // produce.
+              const sample = frame
+                ? image.currentSrc === frame.src
+                  ? frame
+                  : undefined
+                : fallbackScreenshotAt === undefined
+                  ? undefined
+                  : { ts: fallbackScreenshotAt, rung: "poll" as const };
+              if (!sample) return;
+              const shown = image.currentSrc;
               requestAnimationFrame(() => {
                 // `isConnected` as well as the src: the pane can unmount
                 // between the decode and this frame, and a detached element
                 // was never shown — recording it would put a paint that never
                 // happened into the percentiles.
-                if (image.isConnected && image.currentSrc === painted.src) {
-                  notePainted(painted);
+                if (image.isConnected && image.currentSrc === shown) {
+                  notePainted(sample);
                 }
               });
             }}

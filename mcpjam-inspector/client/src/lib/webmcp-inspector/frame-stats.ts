@@ -13,6 +13,9 @@
  *                      first frame whose `seq` is newer than the one on
  *                      screen when it went. The repeatable wheel/keystroke
  *                      echo number, and what the rate and batching work moves.
+ *                      NOT recorded on the screenshot poll, which has no
+ *                      sequence and whose fixed cadence would make this a
+ *                      measurement of the poll interval instead.
  *
  * Enabled by `localStorage["webmcp:frame-stats"]`, read once. Off, every
  * function here is an immediate return — this sits in the paint path, so it
@@ -98,7 +101,17 @@ export function noteInputSent(afterSeq: number): void {
  */
 export function notePainted(frame: {
   ts: number;
-  seq: number;
+  /**
+   * Absent for a polled screenshot, which has no sequence to be newer THAN.
+   *
+   * Only the input echo needs it, and that number is one the poll cannot
+   * honestly produce: at a fixed once-a-second cadence, "time from gesture to
+   * the next paint" measures the poll interval rather than the input path, and
+   * would sit in the same percentile as socket echoes describing something
+   * else entirely. Capture-to-paint is unaffected — it is a property of the
+   * picture, not of the sequence.
+   */
+  seq?: number;
   rung?: FrameTransportRung;
 }): void {
   if (!frameStatsEnabled()) return;
@@ -111,9 +124,14 @@ export function notePainted(frame: {
   awaitingPaint = awaitingPaint.filter(
     (entry) => now - entry.sentAt < INPUT_TIMEOUT_MS,
   );
-  const settled = awaitingPaint.filter((entry) => frame.seq > entry.afterSeq);
+  // Expiry above runs for a polled paint too — it is the only thing that ever
+  // clears a gesture followed by silence, and a poll is exactly the transport
+  // on which silence is common.
+  const seq = frame.seq;
+  if (seq === undefined) return;
+  const settled = awaitingPaint.filter((entry) => seq > entry.afterSeq);
   if (settled.length === 0) return;
-  awaitingPaint = awaitingPaint.filter((entry) => frame.seq <= entry.afterSeq);
+  awaitingPaint = awaitingPaint.filter((entry) => seq <= entry.afterSeq);
   for (const entry of settled) push(inputToPaint, now - entry.sentAt);
 }
 

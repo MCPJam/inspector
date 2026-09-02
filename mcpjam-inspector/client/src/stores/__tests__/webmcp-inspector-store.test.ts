@@ -967,6 +967,27 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().lastScreenshot).toBe("older");
   });
 
+  it("carries the server's capture time beside the picture", async () => {
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({ screenshotBase64: "shot", capturedAt: 1_234 }),
+          { status: 200 },
+        ),
+    );
+
+    await useWebmcpInspectorStore.getState().captureScreenshot({ silent: true });
+
+    // The measurement needs the same definition of "captured" a streamed
+    // frame's `ts` carries. Timed from arrival here instead, the poll's
+    // percentile would exclude the capture and the round trip — a different
+    // quantity sharing a table with the socket's.
+    const state = useWebmcpInspectorStore.getState();
+    expect(state.lastScreenshot).toBe("shot");
+    expect(state.lastScreenshotAt).toBe(1_234);
+  });
+
   it("keeps the picture when a poll answers without one", async () => {
     await openSession();
     const releases: Array<(response: Response) => void> = [];
