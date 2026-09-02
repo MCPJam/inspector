@@ -13,6 +13,8 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Added
 
+- **`eval_iteration` is now a permalink resource type (`@mcpjam/sdk` patch)** — `buildAppPermalink({ type: "eval_iteration", … })` mints a direct link to the run detail page with the iteration pre-selected (`/evals/suite/<suiteId>/runs/<runId>?iteration=<iterationId>&project=<projectId>`, labelled **View iteration**). `isPlatformResourceType("eval_iteration")` now returns `true`. Use the new `evalIterationRef(iterationId, runId, suiteId, projectId?)` helper exported from `@mcpjam/sdk/platform` to build the ref. Because an iteration nests two levels deep (under a run, which nests under a suite), `PlatformResourceRef.parent` now accepts a recursive `PlatformResourceParentRef` that can carry its own `parent`; existing single-parent refs are unchanged. Note: `get_eval_iteration_trace` still declares no permalink — the trace response does not include a suite ID, so the full chain cannot be derived from it yet.
+
 - **GPT-5.6 models available with your own OpenAI key** — `gpt-5.6-luna`, `gpt-5.6-sol`, and `gpt-5.6-terra` are now selectable in the model picker under **Your providers → OpenAI** when you have an OpenAI API key configured. Each model has a 1,050,000-token context window. These models were already available in the free hosted catalog; this change makes them reachable for BYOK users as well.
 
 ### 2026-08-31
