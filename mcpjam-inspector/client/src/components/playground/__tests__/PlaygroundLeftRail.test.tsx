@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { track } from "@/lib/analytics";
 import type { ServerFormData } from "@/shared/types";
 import { PlaygroundLeftRail } from "../PlaygroundLeftRail";
 
@@ -111,6 +112,7 @@ vi.mock("@/components/connection/AddServerModal", () => ({
 describe("PlaygroundLeftRail — zero-server Tools body", () => {
   beforeEach(() => {
     playgroundState.onConnect = undefined;
+    vi.mocked(track).mockClear();
   });
 
   it("connects from the empty state without leaving the Playground", () => {
@@ -127,10 +129,16 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     fireEvent.click(screen.getByRole("button", { name: /save server/i }));
 
     expect(onConnect).toHaveBeenCalledWith({ name: "local" });
+    expect(track).toHaveBeenCalledWith("connecting_server", {
+      location: "playground_tools_rail",
+    });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("leaves the button on its Servers fallback when nothing can connect", () => {
+  // Names the handler, not the fallback: the mock button is disabled purely
+  // because it received no `onAddServerRequested`. That the real button then
+  // routes to /servers is ToolList's test, not this one.
+  it("hands PlaygroundLeft no connect handler when the state has none", () => {
     render(<PlaygroundLeftRail />);
 
     expect(

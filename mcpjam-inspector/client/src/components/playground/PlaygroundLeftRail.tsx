@@ -236,6 +236,9 @@ function ZeroServerToolsBody({
           isOpen={isAddServerOpen}
           onClose={() => setIsAddServerOpen(false)}
           onSubmit={(formData) => {
+            track("connecting_server", {
+              location: "playground_tools_rail",
+            });
             onConnect(formData);
             setIsAddServerOpen(false);
           }}
