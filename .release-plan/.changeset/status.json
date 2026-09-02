@@ -7,180 +7,36 @@
           "type": "patch"
         }
       ],
-      "summary": "Connector Bench: the conformance and auth-probe children\n\nThe bench worker gains the two children that cost no model credits, and runs both **before** the eval matrix — a cancellation or an exhausted budget should never be what throws away the cheapest, most reusable evidence.\n\n**The auth probe is an observation, not a receipt.** v1's auth evidence was `client_reported`: a number the submitter computed about their own server, which nobody outside MCPJam has any reason to believe. The probe child makes one bounded, unauthenticated request from our own infrastructure through the same `probeThroughEgressGuard` wiring the connection preflight uses — DNS-pinned, redirect-revalidating, refusal-ordered — and files what a stranger sees. A probe that could not run reports `failed` or `refused` with a reason and **no checks**, so the backend records the roster row unavailable rather than stamping it verified: a completed probe with nothing in it reads, downstream, as a server that had nothing wrong with it. `nonCompliantChallengeStatus` is recorded as the number it was, because a 403, a 200 and a 500 in place of the 401 the spec requires have three different remediations.\n\n**OAuth runs as a pinned headless exam instead of being excluded.** `executePersistedConformanceRun` accepts a `source: 'benchmark'` origin and an `oauth` config, and the definition pins — by id — exactly which OAuth checks the headless exam grades. A check that **applies but cannot run headlessly is recorded `could-not-run`, never `not-applicable`**: `not-applicable` means the requirement cannot apply to this server and a score drops it from the denominator entirely, so collapsing the two is precisely how a run that reached a third of the suite comes to print full marks. The one signal allowed to mean \"the target genuinely does not advertise this\" is the suite's own unauthenticated pre-flight — a server that serves without challenging has no authorization obligations, because authorization is OPTIONAL in every MCP revision. Checks outside the pinned scope keep their verdicts verbatim and are marked `pending`: reported, not graded. Interactive-flow support is a future track and is not faked.\n\n**Redaction happens before the write, not at projection time.** A completed OAuth run carries a live access token, a refresh token, the client secret and the `Authorization` header of every request it made. `redactConformanceReportForSharing` now runs inside the executor, before `upsertReportAction` persists any OAuth report — redacting when the report is later projected into benchmark evidence would mean the credentials were already at rest in `conformanceRuns`, readable by every surface that reads a run and un-recallable once written.\n\nAlso: a requested OAuth suite with no auth strategy is now recorded as an explicit incomplete suite rather than being allowed to refuse the whole run, which used to take the protocol/apps/tasks reports down with it.",
-      "id": "connector-bench-conformance-and-probe"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Connector Bench: a third insights scope, and a flow diagram that waits to be asked\n\n`InsightsScope` gains a `benchmark` variant keyed on the run, because a benchmark's cohort is exactly the traces one exam produced. The dispatch is a `switch` over the union rather than the two-way ternaries it replaces: with three scopes, `kind === \"swarm\" ? … : …` silently sends a benchmark scope down the **scenario** arm and queries with `scenarioId: undefined`, answering about a cohort nobody asked for. Downstream components are untouched — same substrate, scope-blind.\n\nThe benchmark scope is deliberately narrower than the other two, and each gap is a decision rather than an omission. It has **no thread list** (there is no benchmark Sessions browser). It has **no topic map** — a neighbour graph over one exam's repetitions draws \"these two runs of the same case are similar\" and nothing else, so the backend builds none and the client must not ask. And it has **no drill-down**: a benchmark node click is inert rather than pointed at the swarm query, which narrows a *project's* sessions and would present them as this run's traces. A query that was never issued also no longer reports as \"still loading\".\n\nIts rebuild is an **action, not a mutation** — the paid analyzer pass. A cached reading comes back as already-running rather than as a fresh queue, and a refusal throws instead of being dressed up as \"rebuild queued\", which is how a caller ends up waiting for a pass that was never started.\n\n**On a run detail, the free half and the paid half are offered differently.** The user-value-chain funnel is a rollup of verdicts the stage worker already derived, so it renders unasked. The flow diagram beside it is a model's reading of the same traces, bought per pass, and it issues **no query at all** until somebody clicks — not on mount, not on scroll. An insights panel that quietly queues an analysis the first time a tab is opened is how a bill arrives for something nobody asked for, and the fix is an affirmative click, not a cheaper model. Nothing the pass produces feeds a score.\n\nBenchmark-owned suites and runs are also dropped client-side before the Evaluate lists render them. The filtering is server-side and this is not a second implementation of it — it is the client refusing to put those rows back through one of the joins each list is assembled from. It matters because Evaluate's affordances (Edit, Re-run, Delete) are meaningless against an immutable exam whose runs are evidence for a published score. The check is structural rather than typed against `EvalSuite[\"source\"]`: those unions describe what an Evaluate list may *contain*, and after this filter `\"benchmark\"` is not one of those things — widening them would push a dead `benchmark` case into every badge map downstream.",
-      "id": "connector-bench-insights-scope"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Connector Bench: the relay in front of the backend's benchmark routes\n\nA new `/api/web/bench/*` router fronts `/internal/v1/bench/*` for the chrome-less score site. It is the edge and nothing else — the run worker, the UI and write enforcement are separate lanes, and none of them are in this change.\n\n**Two tokens on every call.** The service token says \"this is the inspector\"; the caller's own bearer says \"on behalf of this user or guest\". The backend derives the acting identity from the bearer and never from the body, so the relay sends no user id — the same contract `hostedTasksRoutes` already uses. The attested per-IP guest spend key rides along, hashed here so the raw address never reaches Convex.\n\n**A 404 is a deployment state, not a failure.** The backend halves sit behind `BENCHMARK_RUNS_ENABLED` and land later, so a 404 with no envelope of ours in it — a bare routing 404, a flag that is off — degrades to a clean \"benchmark runs are not enabled\" (503 `FEATURE_NOT_SUPPORTED`) instead of a 500. That is what lets this merge before the flag flips. An entity 404 (`{ ok: false, error: … }`) still reads as a genuinely missing run or result link, so a bad result URL says so rather than blaming the deployment.\n\n**Starting work is budgeted; continuing it is not.** `/preflight` and `/runs` dial a caller-named third party and commission paid work, so they carry a per-IP ceiling on top of the per-guest one. Polling and cancelling a run are deliberately exempt: charging them would let a start spend the last slot and then lock the caller out of the run they just paid for.\n\nOnly an address the deployment can **vouch for** gets a budget of its own — `cf-connecting-ip` on the hosted edge, or whatever header an operator names in the new `MCPJAM_TRUSTED_CLIENT_IP_HEADER`. Everything else shares one pooled bucket at a looser ceiling. A key minted from a header the caller writes is a key the caller can rotate, and keying per value would let one actor fill the window table and then refuse every genuinely new caller until the entries expired.\n\n`POST /preflight` is the one route that does more than relay. It asks the backend whether benchmark runs exist at all **before** it opens anyone's server — until the flag flips, a preflight costs the target nothing, and a target that happens to be down can no longer mask the real answer with its own connection failure. It then resolves a **saved** `projectId + serverId` — never a URL, never caller-supplied auth headers — dials it through the ordinary hosted authorize-and-connect path, captures the full live tool surface, and asks the backend to upsert the stable target and return a classification receipt plus the runnable categories, tracks and per-actor prefill. The snapshot is bounded in UTF-8 bytes (the target chooses how many tools it lists, not us) and drops server-controlled `_meta`, which classification does not read and which would otherwise become durable backend state. `preferences` is bounded too — key count, key length, nesting depth and serialized bytes — because it is forwarded verbatim into state the backend may persist and price from.\n\n`GET /results/:secret` takes no bearer at all, on the same reasoning as `/score`: a result link has to open in an incognito window, the secret in the URL is the whole credential, and repeat reads are served from a short-lived cache so a shared link cannot be turned into an amplifier aimed at our own backend. The service token is refused over cleartext and redirects are never followed, so neither credential can be replayed to a host we did not vet.\n\nShips `client/src/lib/apis/bench-api.ts` alongside it, shaped like `score-api.ts` — `authFetch` for the authed calls, a plain `fetch` for the result read, because a result page visitor may have no session to mint one from.",
-      "id": "connector-bench-relay"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Connector Bench: the score-site screens, driven entirely by the server's run row\n\nThe chrome-less score surface gains the benchmark flow — classify, price, consent, run, read — at `/embed/bench` (`/embed/bench/:runId` to resume) with its own public result link at `/bench/results/:secret`.\n\n**The state machine is the backend's, and that is the whole design.** The conformance runner next door executes its suites in the browser, which is why it carries a `run-complete` phase to dodge a React commit race between `runAll` resolving and its results landing in state. None of that is carried over, because none of it applies: a benchmark runs on our infrastructure, every phase is a function of one `GET /runs/:runId` response, and the run id lives in the URL. Refresh, a second tab, and coming back tomorrow are all the same operation — read the run, render its status. Polling stops the moment the run is terminal, because a settled row cannot move.\n\n**A failed classifier is never a gate.** The category selector renders the receipt's ranking with its confidence and rationale, pre-filled from what this actor chose last time — and when the classifier produced nothing, it offers the full runnable list and says so. Unrunnable categories stay visible with their reason: a target that advertises nothing must not look identical to one whose category we do not offer yet.\n\n**The quote screen says the expensive things out loud.** The exam's identity and version, the estimate as a *ceiling* against what is available, the size of the matrix and the wall clock — and, when the exam writes, a preview of every write with an explicit tick that gates the start. A guest is told before the button, not after a cancel, that today's contribution is spent at admission and is not refundable. A `409 DEFINITION_CHANGED` refuses to start and offers a re-quote rather than silently re-pricing: the visitor consented to a specific manifest, and a new one is a new decision. (The relay now forwards the backend's own conflict code as `details`, since `CONFLICT` alone cannot tell \"the exam moved\" from \"this run already finished\".)\n\n**The report distinguishes claims from the absence of them.** Sections render when the read carries them and the v1 three-number view renders when it does not — `sections` being absent is the only honest signal, because `core` and `composite` are populated for v1 rows too. `partial` keeps its real section scores and withholds only the Overall; it is not a failure. A slice with `score: null` says \"not measured\", never `0` — \"scores 0 for support agents\" is a claim about the connector and \"no case in this exam represents one\" is not. Coverage travels with every section so `not_applicable` and `insufficient_evidence` stay apart. A deprecated or deleted result still resolves and is labelled, because a link somebody shared should explain itself rather than 404. A user-chosen category is badged **User-selected · not registry verified**. And the two reruns read differently: the same definition hash is another point on one comparison series, a new hash is a new exam and a new series.\n\nCleanup status is reported either way — a visitor who let us write into their tenant is owed the answer even when the run failed.",
-      "id": "connector-bench-score-site"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Connector Bench: the run worker, and the eval children it launches\n\nA new `bench-worker.ts` claims hosted benchmark jobs from `/internal/v1/bench/jobs/claim` and drives the existing `prepareEvalRun()` → `execute()` pipeline once per matrix cell. Same pull/claim architecture as the scheduled-evals and GitHub-checks workers — the backend never calls the Inspector — gated on `BENCH_WORKER_ENABLED`, and a 404 with no envelope of ours in it still means \"not enabled here\" rather than \"broken\", so this can ship before the backend flag flips.\n\n**Two workers must never drive one job.** The lease is refreshed every 20s and `assertLeaseHeld()` runs between every step. A `leaseOk: false` heartbeat — and a 409 `lease_lost` from any write route — is definitive rather than transient: the worker stops and writes nothing further, no completion and no abort, because filing either would hand back a lease it no longer holds. A worker that keeps launching children after losing its lease charges the run twice for the same evidence.\n\n**A redelivered claim must not re-run anything.** Every child's idempotency key is `benchmarkRunId + evidenceKey`, both pure functions of the run and the pinned definition, so a resumed job joins the child it already started instead of paying for a second intrusive run against someone else's server. Rostered evidence that already reached a terminal status is not launched at all, and a child that does come back is adopted rather than driven — a non-terminal one included. `shouldSkipExecution` alone would drive that case, which is right for ordinary evals (a replayed non-terminal run is usually a crashed process worth resuming) and wrong here: a lease expires on a network partition as readily as on a dead worker, so driving it can mean two workers running the same exam against somebody else's server and billing the budget for both. A genuinely abandoned child degrades to a coverage gap instead, which is the cheaper mistake.\n\n**A child that ran is never traded for a tidy exit.** The execution phase is reported only once every child has been bound to its evidence row. A transient attach failure is retried; if it still will not land, the job is handed back for another attempt rather than reported complete — because `execution-complete` hands finalization to the backend and a scorecard is inserted once and never patched, so a child that ran but was never pointed at would be dropped from the result for good, showing as a coverage gap that never existed. The re-attempt adopts the same children rather than re-running them.\n\nEach cell runs at the repetition count its matrix pins, not the suite's `runs` default. `minimumRepetitionsPerRequiredCell` is a publication floor, so a cell declared at three that runs once cannot clear it — every hosted run of that definition would come out provisional.\n\n**The pins are checked before anything runs.** A job whose definition hash no longer matches the one the claim resolved is refused non-retryably: the quote, the consent and the roster all describe a different exam than the one that would run, and publishing a scorecard the payer never agreed to is worse than not running it.\n\nConcurrency is about the target's experience, not this process's capacity: at most two read-only cells in flight, write cells strictly one at a time and only after the read-only ones have settled. A cell whose side effects the claim does not declare is treated as a write cell — losing parallelism costs wall clock, guessing \"read-only\" costs someone else's data.\n\nEval runs gain a `benchmark` source and a run-level `extraHeaders` channel, threaded from the run options through the iteration params and the step handlers to the per-step Convex request. That is how `x-mcpjam-benchmark-grant` reaches `/stream`, which is what tells the backend to bill the run's budget rather than the caller's own wallet. The header object travels by reference the whole way, so a grant the heartbeat reissues reaches the steps of a run that is already in flight.\n\nEval children only. The conformance and auth-probe children, and the write-manifest enforcement a write cell needs, are separate changes.",
-      "id": "connector-bench-worker"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Connector Bench: write-manifest enforcement, the artifact ledger, and cleanup\n\nA benchmark write case creates things on a server somebody else operates. The tool-policy gate could say which tools may be called; it could not say what they may be called **with**, and \"may call `create_page`\" is not a bound on anything — the same permission covers creating a page named for this run and overwriting the operator's homepage.\n\n**The gate now wraps allowed tools too**, with a per-call argument inspector driven by the pinned `caseMetadata` side-effect manifest. The manifest is resolved by `suiteHash + caseId` and verified against the definition's `caseMetadataHash` **before** anything launches: a manifest that cannot be tied to the generation the job was admitted under is not one we may enforce, because the write rules the payer consented to would not be the rules that ran. Three rules follow from it:\n\n- **Prefix.** The value at `artifactNamePath` must start with `mcpjam-benchmark-<runId>-<iteration>`. Per-iteration, so a list-style case cannot observe its own sibling iterations' artifacts and grade a leak that is ours.\n- **Created-id harvesting.** Ids at `createdIdResultPaths` land in the run's artifact ledger as they are created.\n- **Mutation targets.** Every id at `mutationTargetPaths` must be one this run created. An update or a delete aimed at anything else is somebody else's data.\n\nViolations are blocked **before** the MCP call, through the existing `recordBlock` + `TOOL_POLICY_BLOCK_MARKER` path, so both gate invariants hold unchanged: a block emits no tool span, and `isToolPolicyBlockResult` still recognizes it. A check after the fact would be a report about damage rather than a bound on it. The manifest's reason vocabulary is deliberately separate from the SDK's `ToolPolicyDecisionReason`: those reasons travel to the out-of-process harness proxy, which decides by tool name and never sees arguments.\n\n**A run tidies up after itself, whatever else happened.** Cleanup replays the ledger in a `finally`, after every cell has disconnected, over its own connection, with **no model call anywhere on the path** — a run that exhausted its budget still has to remove what it left behind, so the one thing cleanup must not depend on is the thing that ran out. It is idempotent and retried; an artifact that survives every attempt is counted as residue and reported for the scorecard rather than swallowed. Cleanup dials the target rather than the backend, which is why it also runs after a lost lease: the ids are in this worker's ledger and no other worker can see them.\n\nThe terminal sequence is now fixed and explicit: children → cleanup → execution-complete (carrying the cleanup status) → finalize → flow analyzer → job complete **last**. The analyzer produces an inferred artifact and can never delay or change a scorecard, and the job's lease deliberately outlives finalization so a worker lost mid-assembly is swept rather than leaving a run parked in `awaiting_evidence` with a complete roster.",
-      "id": "connector-bench-write-enforcement"
+      "summary": "The suite page stops opening with an aggregate\n\nThe first thing labelled \"user value chain\" on the suite page was a funnel — a population statistic, sitting above the run history. It was the wrong introduction to the idea. The chain a reader arrives asking about is one request's journey, and the aggregate answers a different, later question.\n\nIt also read badly on real runs. On a three-trial suite it showed six green stages over \"2 of 3 trials\", the excluded one being precisely the trial that broke; on a ten-trial suite it showed `call` and `response` as `applicable=0`, which looks like a gap and only means those cases assert nothing there. The page's most prominent claim was its least reliable.\n\nThe per-trial chain now answers \"why did this not deliver value\", on the run page, the trace pane and the case table. The run-level document still renders on the run page behind its existing flag, where it reads as the follow-up it is.\n\nRemoved with the mount: `StageAnalyticsPanel`, `useEvalSuiteStageAnalytics`, `fetchEvalSuiteStageAnalytics` and the panel-state model — the suite-scoped reader had exactly one consumer, and dead code with passing tests is what drifts. `RunDocument`, `RateCell` and `useStageFindings` all stay; the run page uses them.\n\n**Two test files were re-aimed rather than deleted.** The findings tests ran through the panel, and the API tests covered only the suite listing — but their claims were never about which resource was fetched. The findings ones now assert against `RunDocument` + `StageFindingsCard`, the composition the run page actually builds; the API ones now cover `fetchEvalRunStageAnalytics`, which had no wrapper-level coverage at all (its hook test mocks the wrapper). Deleting them would have quietly dropped the guarantees they exist for: auth has one owner, the payload is validated not trusted, identity is bound, and the four failure kinds stay four.",
+      "id": "drop-suite-stage-funnel"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/sdk",
           "type": "patch"
-        }
-      ],
-      "summary": "`server doctor` no longer blames the server when MCPJam is the reason skills went uninspected\n\nThe skills check reports `skipped` when Skills over MCP is not active on a connection, which is right — most servers serve no skills and calling that a failure would make the doctor cry wolf on almost every run. But `active` is the AND of two independent declarations, and the check read only that boolean, so one message covered both sides: \"the server must declare the extension and the client must advertise it.\"\n\nThat sentence is true and useless in the case that matters. `runServerDoctor` advertises the extension itself, so the only way to reach \"server declared, client did not\" is a caller who pinned an exact client-capability set — `--host cursor` and friends. That caller is asking \"what would this host see\", and the honest answer is that the host is the reason there is nothing to see. A server author running the doctor behind a host pin, against a server whose skills serving works perfectly, previously read \"not active on this connection\" as their own bug.\n\nThe two cases now say which side withheld the declaration, and the whole-run status stays `skipped` in both: a host pin is a legitimate way to run the doctor, not a defect in the server being examined. This also settles an internal disagreement — the CLI's `skills` verbs already refuse this exact case by name, so the doctor was contradicting them on the same connection.\n\nThe ok line also names its own sampling cap. The check verifies at most five skills, so a 200-skill server used to be summarized as \"200 skills discovered. 5 verified against their manifests\", which reads as \"only 5 of them check out\" — a much worse claim about the server than the true one. It now reads \"5 of 200 sampled and verified\" when the cap bit, and is unchanged when the whole catalog was verified.",
-      "id": "doctor-skills-attribution"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        }
-      ],
-      "summary": "Preserve eval case intent labels when syncing suite files to the platform and\nwhen exporting platform cases back to suite files.",
-      "id": "evals-b5c-cli"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Carry eval case intent through the Inspector API and persist stage measurements\nwhile evaluation traces are still in memory.",
-      "id": "evals-b5c-inspector"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Wire eval case intent labels and per-stage measurements through SDK reporting and\nsuite-file contracts. Deploy the backend storage/ingest support before enabling\nthese reporters against a production endpoint.",
-      "id": "evals-b5c-sdk"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix the Claude Code harness bootstrap on pnpm 11.\n\nThe previous fix wrote only `.npmrc`, verified against pnpm 10 — but pnpm 11\nreads none of its settings from `.npmrc`, so every harness bootstrap failed\nwith `ERR_PNPM_IGNORED_BUILDS` once the changed recipe hash stopped snapshots\nfrom hiding it. Both spellings are now written, plus a second layer that keeps\na skipped build non-fatal so the adapter's own `install.cjs` step can repair\nthe install if the allow-list setting is ever renamed again.",
-      "id": "harness-pnpm-allow-builds-pnpm11"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "A session permalink opens the session instead of bouncing to Connect\n\n`https://app.mcpjam.com/sessions?session=<id>&project=<id>` — the link every `/v1/sessions` item carries, and the only URL that opens one conversation — landed a viewer on `/p/<projectId>/servers` with the session id dropped and nothing to say why.\n\nNeither the permalink builder nor the legacy `?project=` normalizer was at fault: the normalizer rewrote the URL correctly to `/p/<projectId>/sessions?session=<id>`, and `SessionsRoute` then threw it away, because the viewer's account resolved `unified-sessions-enabled` to `false`. The route guard bounced the whole visit to Connect.\n\nThat flag is a ROLLOUT control over who DISCOVERS the feed — the sidebar item, a bare `/sessions` visit — not an authorization boundary. Row-level visibility is entirely server-side (`canViewSessionInProject`), so honouring a link somebody was handed exposes nothing the flag was protecting, and the route's dark-ship `ErrorBoundary` already covers a deployment whose `sessionsFeed:*` queries are not live yet. The guard now skips the redirect when the URL names a session, and is otherwise unchanged: `/sessions` with no id still bounces for a flagged-out viewer, and the pre-hydration `undefined` window still redirects nobody.",
-      "id": "session-permalink-outruns-rollout-flag"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Directly loading a server-served skill no longer breaks the rest of the conversation\n\nAttaching a skill from the picker injects a synthetic `loadSkill` tool call into the transcript, and that call's id is replayed to the provider on every later turn. The id was built as `skill-load-${skill.name}-${generateId()}`.\n\nA server-served skill (SEP-2640) is addressed by a namespaced `<server>/<skill>` ref, so the id carried a `/`. Anthropic validates `tool_use.id` against `^[a-zA-Z0-9_-]+$` and rejects the whole request otherwise — so the next message failed with `messages.5.content.1.tool_use.id: String should match pattern '^[a-zA-Z0-9_-]+$'` and the conversation could not be continued at all. The load itself had already succeeded; it was the turn after it that died.\n\nCloud and local skills are plain slugs, which is why the id survived unsanitized until server skills put a separator in the name.\n\nThe name is in the id for debuggability only — `generateId()` supplies the uniqueness — so the offending characters are replaced rather than dropped, keeping the id readable. Sanitizing happens at the one place ids are minted, not by narrowing refs upstream: the ref's shape is the namespacing contract the picker and `loadSkill` both compute, and bending it to one provider's id rules would make two unrelated concerns share a format.",
-      "id": "skill-toolcall-id-charset"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Hosted skills routes connect before asking whether the extension is active\n\nEvery hosted `/server-skills` request answered \"this connection does not speak skills\" — for every server, including ones that plainly do — and the Skills tab showed nothing.\n\n`getSkillsSupport` is a synchronous read of what a LIVE connection negotiated. A hosted manager is ephemeral: nothing has connected when the handler starts, so the read answered `active: false` before the extension had any chance to be declared. The route then returned its empty listing and the wrapper's `finally` tore the manager down — aborting the negotiation that was still in flight. The telemetry is unambiguous once you look for it:\n\n```\n[event] mcp.connection.negotiated { serverId: 'mn7…', configuredMode: 'auto',\n  outcome: 'failed', failureClass: 'AbortError' }\n--> POST /api/web/server-skills/list 200 516ms\n```\n\nA `200` with no skills, an aborted connection, and a server that answers `skills/list` perfectly when asked directly. Every other route to that same server negotiated `connected` in the same log, because they all reach the wire through methods that `await ensureConnected` first — `listTools`, `readResource`, and the rest. Skills had no such method, so the route read the answer before there was one.\n\n`MCPClientManager.ensureSkillsSupport()` is that method: it awaits the connection, then answers `getSkillsSupport`. The shared route core (`/api/web/server-skills` and its `/api/v1` mirror) now uses it in all three handlers.\n\nLocal mode was never affected and is unchanged — its manager is long-lived and already connected by the time anything asks, which is exactly why this survived local testing.",
-      "id": "skills-connect-before-support"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "A server-origin skill load follows the host's approval policy, as SEP-2640 asks\n\nLoading a skill served over MCP forced its own approval prompt regardless of the host's policy. That was MCPJam policy, not conformance — and it made the feature unusable on every surface that is not one long-lived process.\n\n**Why it was broken.** The gate recorded the approved digest set in a `Map` inside the closure `withServerSkills` creates. `prepareChatV2` — and therefore that closure — is rebuilt per request. So the gate wrote its binding into one request's Map and `execute`, running after the approval round trip in the *next* request, looked in an empty one and refused with `manifest_unbound`. Local mode kept a single closure alive across the round trip and never saw it. In the hosted Playground the user was never even prompted, so the gate failed in both directions at once: it did not ask, and it did not load.\n\n**Why deferring is correct.** SEP-2640 does not require approval to read a skill's text. Its consent obligations are narrower: host-side code execution (#2), `allowed-tools` (#5 — ignored outright here), activating a nested skill (#6 — never done here), and cross-origin reads (#3 — impossible, since the manifest is an allowlist confined to the skill's own directory). What the spec asks for a plain load is **origin tagging** — mark the content as untrusted third-party input — which is the banner, and it stays unconditional.\n\nSo the load now follows the host's policy like any other tool on the turn. Where a prompt does fire and the closure survives (local mode), the digest-set binding is still recorded and still compared, so the content-binding rule (#7) holds for the persistent-approval case it actually governs. `UNRESOLVED` — the gate ran and no manifest stood behind the prompt — still fails closed.\n\nUnchanged on every surface: size and digest verification, frontmatter drift, URI/name identity, the manifest as a read allowlist, and the origin banner.\n\nVerified against live staging with no approval flow at all: the skill loads, the banner is present, an unlisted file is refused, and a file belonging to a *different* skill on the same server is refused.",
-      "id": "skills-consent-follows-spec"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Skills come from one catalog now, not four disconnected ones\n\nA chat turn used to resolve its skills through an exclusive chain — project skills, or nothing, or the local filesystem — and which arm you got was decided by DEPLOYMENT rather than by what you had. That is why you could author a project skill in the Skills tab on desktop and then have no way to use it: authoring wrote to Convex, and the desktop turn only ever read the local filesystem.\n\nWhere a skill comes from is a property of the skill, not a mode the app switches between. A turn now merges every origin available to it into one ref-addressed catalog:\n\n| Origin | Reference |\n|---|---|\n| Your project | `code-review` |\n| A local file | `local/code-review` |\n| A connected MCP server | `<server>/code-review` |\n| A plugin | `<plugin>/code-review` |\n\nSo a desktop turn signed into a project offers your local files **and** your project skills, and a skill you author is usable in the very next message. Signed out, it offers local files exactly as before.\n\nTwo skills sharing a name are no longer a conflict to resolve by luck. Both appear, both load by their own reference, and a bare name that more than one origin answers to is refused with the alternatives named rather than silently resolved to whichever was indexed first.\n\n**The v1 agent turn — and `send_chat_message` with it — sees project skills for the first time.** It could already read a connected server's skills; its own project's pool was invisible, so an agent driving MCPJam could read somebody else's skills but not yours.\n\nTwo things worth knowing:\n\nThe Skills tab's Local/Cloud switch now only changes what you are **browsing**; it does not decide what a turn can use. It is also gated on the Skills flag rather than `computers-enabled`, which was a leftover from when cloud skills lived on a Computer's filesystem — wrong in both directions, since it could offer a store the backend would refuse to write, or withhold one you had.\n\nProject skills stay lazily fetched: a turn costs one catalog query, and a skill's body is fetched only when the model actually loads it. A 200-skill project does not pay 200 fetches to build a listing.",
-      "id": "skills-one-source-every-surface"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
         },
         {
           "name": "@mcpjam/cli",
-          "type": "minor"
+          "type": "patch"
+        }
+      ],
+      "summary": "An environment's secret grant is reachable from the SDK, CLI and MCP again\n\n`secretSelection` is how a project secret is granted to the runs an environment launches. The API takes it on create and on update, the `/api/v1` route takes it on both, and `PlatformEnvironmentCreateBody` / `PlatformEnvironmentUpdateBody` have always declared it — but the two operation schemas in `platform/operations.ts` never did, so the only surfaces an agent or a script can use dropped it on the floor.\n\nBoth halves were silent in the way that costs the most time:\n\n- **Create** parses through a `z.object`, which STRIPS what it does not declare. A create carrying a grant returned 201 with `secretSelection: null` and no error anywhere — the environment simply had no credentials, and the failure surfaced much later as a run refusing to start for want of a secret that had apparently been attached.\n- **Update** validated fine, but the at-least-one-field `.refine` did not list the field, so a PATCH changing ONLY the grant was rejected client-side with a message that enumerated eight other fields and not the one the caller had passed.\n\nTogether those meant a secret could be attached by neither path: not on create, and not afterwards. The route's own comment says as much about what unclearable would cost — \"an environment's credential grant can only ever grow, and revoking it would require deleting the environment\" — and that was the state the SDK was in.\n\nThe field now rides a single shared `secretSelectionInput` used by both operations, matching how `skillSelection` and `pluginVersionIds` are already shared, with the same tri-state on update: omit to leave unchanged, `null` to REVOKE, a value to replace. `secretIds: []` is rejected rather than read as \"remove every credential\" — that is what `null` is for.\n\nThe CLI's `--file`/`--json` help on `environments create` and `environments update` listed every other body field but this one; it lists it now.\n\nNot changed: `ensure_adhoc_environment` and the run operations' `compose` still have no secrets axis, though the route accepts one. A composed stack cannot carry a grant, so a run that needs a credential still needs a named environment.",
+      "id": "environment-secret-selection-sdk"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
         },
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Skills over MCP is inspectable from every agent surface, not just the Skills tab\n\nMCPJam has sat on both sides of SEP-2640 for a while — the host consumes and verifies, the hosted worker and the CLI serve their own skills — but the only place anyone could *see* what a connected server serves was the Skills tab. `mcpjam --help` had no `skills` command, none of the hosted platform tools could list a server's skills even though `list_server_tools` / `list_server_resources` / `list_server_prompts` all existed, and the CLI's own MCP server exposed `list_resources` with no skills equivalent. Skills was the one primitive-shaped surface in MCPJam with no agent-reachable inspection path.\n\nThe closest a developer could get was `mcpjam resources list`, which shows `skill://` URIs as ordinary resources. That proves the wire and shows nothing that makes a skill a skill: no manifest, no digest or size verification, no identity check, and no refusal reasons.\n\n**The refusals are the product.** A server author asking \"why won't this skill load\" needs to know *which* digest, *which* field, *which* URI — so every new surface answers with either verified content or a refusal naming the check that failed, as a result rather than an error. `mcpjam skills read` on an unlisted URI exits 0 with `unlisted_resource`; refusing to load an unverifiable skill is the tool working.\n\nWhat ships:\n\n- `mcpjam skills list | get | read` — connects directly, so it needs no project and no API key.\n- `list_server_skills` / `get_server_skill` / `read_server_skill_file` on the platform catalog, which places them on the hosted MCP worker, `/api/v1`, and the in-app assistant at once.\n- `POST /v1/projects/{p}/servers/{s}/skills{,/get,/read-file}`, documented in `openapi.json`.\n- `list_skills` / `get_skill` / `read_skill_file` on `mcpjam mcp`, which already *served* skills and could not read them.\n- A `skills` check in `server doctor` that verifies rather than counts — a listing looks identical whether or not the bytes behind it match their digests.\n\nThe verified read path itself moved into `@mcpjam/sdk`. Its docblock always claimed to be the one module between every MCPJam surface and a `skills/*` call, naming the CLI as a consumer; living in the inspector, that was aspiration, and any skills surface the CLI or worker grew would have had to re-decide which server behaviours are refusals. It is now importable, and the inspector keeps its old import path.\n\nTwo behaviours worth knowing:\n\n`mcpjam skills list --host cursor` **refuses** rather than advertising the extension anyway. Pinning a host persona means \"advertise exactly what that host advertises\", so quietly adding skills would answer \"what can MCPJam see\" while you asked \"what would Cursor see\". The refusal is the honest answer: that host would see nothing.\n\nThe doctor's skills check samples at most 5 skills, because verification costs a `resources/read` each and a 200-skill server should not turn a doctor run into a bulk download. A manifest that disagrees with its bytes is almost never wrong for one skill alone.",
-      "id": "skills-over-mcp-inspection"
+      "summary": "A passing trial can have its chain read too\n\nD9's decision summary carries a per-trial user-value chain, and the browser already fetches it — for **non-passing trials only**. That filter lives in the contract assembler and is deliberate: diagnostics are evidence beneath a verdict, and a trial that passed is not evidence of anything going wrong. The consequence is that a reader who opens a trial that succeeded has nothing to read, and \"how far did value travel here\" is exactly as good a question about a passing trial as a failing one.\n\nThe iterations resource projects the same stage columns over every row of a run, passing included — verified against production, where all ten trials of a run came back carrying six rows each. This adds the client read for it.\n\n**One chain type, one validator.** The rows go through the contract's own chain assembler, now exported as `assembleEvalRunDecisionChain`, which is the same function D9's summary is built from. So the result is `EvalRunDecisionChain` — the type the decision card and the trial cards already render, with no adapter and no second shape — and the **whole derivation** is validated rather than the rows one at a time. Row-level validation accepts five rows, or six in the wrong order, and a renderer that numbers cards `01`–`06` by position would then publish a different claim about which stages were blocked, because `notReached` is derived from position. A test feeds it both shapes and pins that they come back `unverified`.\n\n**Three absences stay three facts.** A bare 404 from a router that never had the path is a deployment that does not serve iterations; an enveloped `NOT_FOUND` is a run that is not there; a row with no derivation is `absent`. Reading the first as the third would report every trial on an undeployed build as having no chain.\n\n**Keyed on the run's revision, not just terminal status.** A terminal run is not frozen — a judge landing minutes later rewrites `judgePending` into `judgeObserved`, which is a different chain for the same trial. The read keys its cache on the same revision marker the decision-summary store uses, so the two refresh together and one trial can never show two chains at once.\n\n**Silent unless asked.** Off without the caller's switch, a project id, and a finished run; with any missing it issues no request at all.\n\nThe route needed an entry in `authFetch`'s bearer allowlist, and the existing eval-chain test already pinned it in the negative list — so this is a **move**, not an addition, and the test now pins that the trace and per-iteration paths beneath it are still *not* granted. Without the entry the read ships no `Authorization` and the 401 surfaces as \"could not be loaded\", which reads as a backend outage while the API is fine. That has happened three times before on this surface.",
+      "id": "uvc-iteration-chain-read"
     },
     {
       "releases": [
@@ -189,8 +45,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Server-served skills re-list when the connection re-negotiates, and each row names the server it came from\n\n**The listing could answer for a handshake that had already changed.** `support.active` is `client advertised ∧ server declared`, and the client half comes from the hosted api-context, which hydrates from a Convex query. A listing issued on mount could go out before the host config landed — advertising the SDK defaults, which deliberately omit `io.modelcontextprotocol/skills` — and come back `active: false` for a reason that stopped being true a moment later. Nothing re-ran it, because the refetch key was the connected-server set, and a capability change is not a connection change to that key. The symptom was a row that appeared while loading and vanished when the answer arrived, with no way back: the only refresh button lived inside the row it had just hidden.\n\nThe section now folds the api-context revision into that key, the same `useSyncExternalStore` subscription `useAggregatedTools` uses, for the same reason — a catalog is a fact about a *negotiated connection*, not about a server id.\n\n**Provenance moved onto the row.** The \"From MCP servers\" heading and the per-server group headers are gone; each skill row carries a server icon and its origin server's label instead. A skill's provenance is the reason its content is untrusted third-party input, and that stays true wherever the row is read — a heading only says it while you are underneath it. Refusals, rejected entries, duplicate URIs and the load-by-URI input keep their per-server wording inline.\n\nWith the group headers went their refresh buttons, so the tab's single refresh control now re-reads both halves — and it stays visible when `skills-enabled` hides the project store, since the server skills are exactly what is on screen in that case.",
-      "id": "skills-rows-carry-their-origin"
+      "summary": "Every failing trial now shows its own user-value chain, as cards\n\nThe run-level funnel answers \"how much of this run was measured, and where did it stop\". The question a reader actually arrives with is narrower: **this** trial did not deliver value — how far did it get, and why. That answer already existed and was rendered as six lines of flat text inside a collapsed diagnostic row: `Connection: passed`, `Response: failed — the server reported a tool error`.\n\nIt is now the same six numbered cards the suite page uses, reading left to right, with a \"what happened\" card underneath the one a reader selects. The chain opens on the stage the contract named as the first failure, so a reader lands on the break rather than hunting for it.\n\n**A trial is not a population, and the card row says so.** The aggregate chip counts (`failed in 2 of 3 measured`); a trial's chip states (`failed`). There are no rates on a trial's card — \"100% (1/1)\" over a single observation is a statistic manufactured from one trial — and no latency, which is deliberately not a field on a stage row. What a trial's card carries instead is what a trial actually has: one state, one reason, and that row's own evidence.\n\n**The reason stays off the chip and on the detail card.** Some reason labels are whole sentences, six cards at their minimum width would wrap into unreadable columns, and — the part that matters — keeping the chip to the state word keeps the \"never says passed when nothing was decided\" invariant total over the five states rather than dependent on the twenty-nine-member reason vocabulary. Two reason labels contain the word \"made\", which that invariant's own regex matches.\n\n**Which card opens is a UI choice; where the chain stopped is the contract's.** The default selection is `firstFailedStage`, read from the chain and never re-derived by scanning rows — the day a second derivation disagreed, the UI would be the one that was wrong while looking authoritative. When the contract established no failed stage at all, the card that opens is the first non-passing row carrying a reason: that is the setup-abort and policy-block shape, where every stage reads `not measured` and the single sentence explaining the trial would otherwise sit behind a click nobody knows to make.\n\nA withheld (`unverified`) or absent chain renders its existing notice and no cards. An empty six-card row would read as measured, which is exactly what those two states exist to prevent.",
+      "id": "uvc-per-trial-stage-cards"
     },
     {
       "releases": [
@@ -199,8 +55,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Skills tab: the header count tells the truth, and a row only says what makes it different\n\n**\"Skills 0\" over a list of skills.** The header badge counted the project store alone. That was unambiguous while server-served skills sat under a heading of their own, and became a plain falsehood the moment both halves became one flat list — a signed-out user with a connected server saw `0` above a panel of visible rows. A badge next to a list is read as the length of that list, so it now counts both halves. The two really are different namespaces (a name here, a URI there); that distinction lives on the rows, which name their origin server, not in a number nobody reads that way.\n\n**A green shield with a bare number on every row.** The number was the file count of the skill's advertised manifest, and the shield meant the skill was digest-verified — which every listed skill is, because verification is mandatory rather than something a skill can win. So the badge distinguished nothing and the number had no reading. Both moved into the row's tooltip, next to the skill URI. What stays on the row is the amber `unverifiable — declined` badge: the one row that behaves differently is the one worth marking.\n\n**A block of dead space above the rows.** The project store's \"No skills available / Upload your first skill\" call to action rendered on the project store's own count, so it appeared — a centred hundred-odd pixels of it — between the header and server rows that were right there. Both placeholders now speak for the whole list: they render only when the whole list is empty, and below the rows rather than above them. The server section reports whether a listing is still outstanding, so an unanswered fetch no longer reads as an empty store and then flashes away when the rows land.\n\n**The per-server \"load by URI\" input is gone.** `skills/get` still answers for a URI a listing never mentioned — that capability has not moved, and the tab still uses it to open a row — but a text box under every server was a debugging tool priced as permanent furniture in a panel whose job is to show what a server serves. It is available on `mcpjam skills get` and on the `/v1/…/skills/get` REST endpoint.",
-      "id": "skills-rows-say-only-what-distinguishes-them"
+      "summary": "The trace pane opens with the chain, not just the transcript\n\n\"View trace\" lands a reader on one trial's transcript — the place they arrive when they want to know why that trial did not deliver value. The answer was not on that screen. It was back on the run page, inside a diagnostic row they had already navigated away from, and for a trial that PASSED it did not exist anywhere.\n\nThe chain now sits above the transcript: six cards, opened on the break, with the \"what happened\" card under whichever one the reader selects. A passing trial reads as the delivery story end to end — Session connected → Tools and resources discovered → … → Request satisfied — which is the first time that story has been visible for a trial that worked.\n\n**`IterationDetails` does not fetch it.** It has five hosts and knows only its iteration: not the run, not the project, not whether the Evaluate opt-in is on — and the chain read needs all three. So it takes a slot, and the one host that can answer those questions builds the node. The other four pass nothing and issue no request, which keeps a shared component free of a read four of its callers never asked for.\n\n**The hooks sit above the early return, and that placement is load-bearing.** The editor returns a loading state before its test case resolves, so a hook called below it runs on some renders and not others — React reports that as \"rendered more hooks than during the previous render\". A test caught exactly that, on the first draft.\n\nSelection uses the same `undefined`-is-not-`null` rule as the run page: `undefined` means \"not chosen yet\" and derives the default at render time, `null` means the reader closed the card. The distinction is what makes the trace pane work at all — the chain arrives *after* mount there, so a state initialized once from an empty chain would compute `null` and never auto-open the break.\n\nAn absent map key means \"not loaded\", never \"no chain\": a trial the page walk has not reached renders nothing rather than a false absence.",
+      "id": "uvc-trial-chain-on-trace-pane"
     },
     {
       "releases": [
@@ -209,57 +65,42 @@
           "type": "patch"
         }
       ],
-      "summary": "The Skills tab's \"From MCP servers\" section works in hosted mode, and Skills over MCP releases on its own schedule\n\nTwo changes to the same page, one of which the other depends on.\n\n**\"From MCP servers\" was empty on every hosted project.** `server-skills-api.ts` hand-assembled its hosted request body as `{ serverId, projectId }` instead of going through `buildServerRequest`, the builder every other per-server hosted route uses. Two of the fields it skipped were load-bearing:\n\n- **`clientCapabilities`.** Without it the ephemeral connection falls back to the SDK defaults, which deliberately omit `io.modelcontextprotocol/skills` (SEP-2133 makes extension support opt-in, and the bare SDK ships no fulfiller). So the connection never advertised the extension, `support.active` was false for every server, and the section — which renders nothing rather than an empty catalog, because \"this host never asked\" and \"this server has no skills\" are different facts — showed a header with nothing under it.\n- **The resolved server id.** `serverId` travels to Convex `authorizeBatch`, which needs the `servers` table id. The display name fails argument validation there, before any MCP frame is sent, surfacing as `projectId or serverIds are invalid`.\n\nBoth are now supplied by the builder, along with the host's `clientInfo`, protocol pins and enterprise-auth policy — so a skills listing initializes on the same wire as every other hosted read of that connection, which is the point of a debugger.\n\n**`skills-enabled` gated the whole tab; it now gates only the Cloud half.** Cloud Skills are an MCPJam feature whose authoring the backend gates separately, still rolling out. Skills over MCP is a different thing that shares the page: a protocol capability served by whatever the user connected, gated by mutual declaration, whose `/api/web/server-skills/*` routes carry no product flag. Redirecting `/skills` away on the Cloud flag held the protocol half hostage to an unrelated rollout. The flag is now passed down as `cloudSkillsEnabled`: with it off the tab renders, shows \"From MCP servers\", and hides the project store's tree, count, upload and refresh — and never calls the project-store API, which the backend would gate anyway.\n\nPre-hydration (`undefined`) is treated as off, so the page paints its protocol half immediately and the Cloud store appears when PostHog resolves. Local mode reads a real filesystem and carries no such gate, so `cloudSkillsEnabled` defaults to true and nothing there changes.",
-      "id": "skills-tab-releases-mcp-half"
+      "summary": "A run's case table says where each trial stopped\n\nThe run-scoped case view lists every trial of one case and told you, per row, whether it passed. \"Failed\" is the least useful true thing you can say about a trial: the reader's next question is always *where*, and answering it meant opening rows one at a time.\n\nEach row now carries a one-line summary of its chain — `broke at Tool response`, `Request satisfied`, `chain withheld` — from the same read the trace pane uses, so the whole table costs one request rather than one per row.\n\n**The table takes a lookup, not a run.** The chain is scoped by run, and only the run-scoped host of this table knows which run its rows belong to; the cross-run case view passes nothing and issues no read, because filling that column there would mean one request per run.\n\nThree shades of nothing stay distinct, which is the whole reason this is a function of the chain rather than of the row's result:\n\n- a row whose chain has not loaded renders **no chip** — an absent map key means \"not loaded\", never \"no chain\";\n- a chain the server withheld says `chain withheld`, not silence, because the rows exist and did not validate;\n- a trial with no failed stage says `Request satisfied` **only when user value actually passed**. A policy-blocked trial has no failed stage either, and calling that satisfied would claim an outcome from an absence of evidence; it reads `not measured` instead.",
+      "id": "uvc-trial-chain-table-chip"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "3.2.0",
+      "type": "patch",
+      "oldVersion": "3.3.3",
       "changesets": [
-        "connector-bench-conformance-and-probe",
-        "connector-bench-insights-scope",
-        "connector-bench-relay",
-        "connector-bench-score-site",
-        "connector-bench-worker",
-        "connector-bench-write-enforcement",
-        "evals-b5c-inspector",
-        "harness-pnpm-allow-builds-pnpm11",
-        "session-permalink-outruns-rollout-flag",
-        "skill-toolcall-id-charset",
-        "skills-connect-before-support",
-        "skills-consent-follows-spec",
-        "skills-one-source-every-surface",
-        "skills-over-mcp-inspection",
-        "skills-rows-carry-their-origin",
-        "skills-rows-say-only-what-distinguishes-them",
-        "skills-tab-releases-mcp-half"
+        "drop-suite-stage-funnel",
+        "uvc-iteration-chain-read",
+        "uvc-per-trial-stage-cards",
+        "uvc-trial-chain-on-trace-pane",
+        "uvc-trial-chain-table-chip"
       ],
-      "newVersion": "3.3.0"
+      "newVersion": "3.3.4"
     },
     {
       "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.2.0",
+      "type": "patch",
+      "oldVersion": "8.5.0",
       "changesets": [
-        "doctor-skills-attribution",
-        "evals-b5c-sdk",
-        "skills-connect-before-support",
-        "skills-over-mcp-inspection"
+        "environment-secret-selection-sdk",
+        "uvc-iteration-chain-read"
       ],
-      "newVersion": "8.3.0"
+      "newVersion": "8.5.1"
     },
     {
       "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "5.2.0",
+      "type": "patch",
+      "oldVersion": "5.5.0",
       "changesets": [
-        "evals-b5c-cli",
-        "skills-over-mcp-inspection"
+        "environment-secret-selection-sdk"
       ],
-      "newVersion": "5.3.0"
+      "newVersion": "5.5.1"
     },
     {
       "name": "@mcpjam/mcp",
@@ -267,6 +108,13 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
+    },
+    {
+      "name": "@mcpjam/slack-app",
+      "type": "none",
+      "oldVersion": "0.1.0",
+      "changesets": [],
+      "newVersion": "0.1.0"
     }
   ]
 }

@@ -72,10 +72,13 @@ import {
 import { opaqueIdSchema } from "./identity.js";
 import {
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
 } from "./decision-labels.js";
 import {
   STAGE_ANALYZER_VERSION,
+  STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE,
   stageDerivationSchema,
   stageResultRowSchema,
   type StageResultRow,
@@ -826,8 +829,92 @@ function assembleDiagnostic(
     evidence: assembleEvidence(input, iteration, chain),
     nextAction: category
       ? NEXT_ACTION_BY_FAILURE_CATEGORY[category]
-      : DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+      : uncategorisedNextAction(chain, iteration.result),
   };
+}
+
+/**
+ * What to tell a reader when the chain established no failure category.
+ *
+ * Two of these runs are not the same thing, and the old single line described
+ * both as an absence of information:
+ *
+ *   - The chain measured everything it could and found nothing wrong, while
+ *     the recorded verdict says failed. That is not missing information — it
+ *     is two things we hold disagreeing, which is a different investigation.
+ *   - Anything else (an unverified chain, a stage that never measured, a run
+ *     that did not fail): no category and nothing more to say.
+ *
+ * The disagreement is asserted only when all four halves of it are
+ * STRUCTURALLY established: the chain validated, at least one stage actually
+ * passed, every applicable stage passed, and the verdict is `failed`. Nothing
+ * here guesses at a cause — the chain cannot see one from here, and a guess
+ * dressed as a finding is what this vocabulary exists to prevent.
+ */
+function uncategorisedNextAction(
+  chain: EvalRunDecisionChain,
+  result: EvalRunDecisionIterationInput["result"]
+): string {
+  if (chain.status !== "verified" || result !== "failed") {
+    return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
+  }
+  // A disagreement needs the chain to be COMPLETE and clean, not merely
+  // un-failed. Every stage must have `passed`, except the ones the case does
+  // not exercise at all.
+  //
+  // "Something passed and nothing failed" is too weak, and its gap is the same
+  // mistake in slower motion: a chain with connection and discovery passed and
+  // selection `notMeasured / noEvidenceCaptured` has nothing failed and
+  // something measured, but the verdict may be failing on exactly the stage
+  // the chain could not read. That is a measurement GAP, and telling someone
+  // two things they hold are in conflict sends them looking for a
+  // contradiction that is not there.
+  //
+  // `notApplicable` is the one state that does not block the claim: a stage
+  // the case never exercises is not missing evidence, it is out of scope, and
+  // requiring it to pass would make the claim unreachable for every case that
+  // does not use all six stages.
+  const measuredSomething = chain.stages.some((row) => row.state === "passed");
+  const everyApplicableStagePassed = chain.stages.every(
+    (row) => row.state === "passed" || row.state === "notApplicable"
+  );
+  if (!measuredSomething || !everyApplicableStagePassed) {
+    return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
+  }
+
+  // A pre-7 chain gets a different INSTRUCTION, not a different diagnosis.
+  //
+  // The version establishes that this analyzer measured strictly less than the
+  // current one — before 7 an errored tool call on a case with no authored
+  // tool expectation had no stage able to report it — so re-deriving may
+  // attribute what this row could not. It does NOT establish that such a call
+  // occurred, which is why the wording names the analyzer and not a cause.
+  return chain.analyzerVersion !== undefined &&
+    chain.analyzerVersion < STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE
+    ? DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION
+    : DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION;
+}
+
+/**
+ * One iteration's stage rows, as the chain a reader may believe.
+ *
+ * EXPORTED because a second surface needs the SAME answer. D9's diagnostics
+ * cover non-passing trials only — the filter is deliberate and lives in
+ * `assembleDiagnostics` — so a reader that wants a PASSING trial's chain has
+ * to go to the iterations resource, and it must arrive at `verified` /
+ * `unverified` / `absent` by exactly this route.
+ *
+ * The whole DERIVATION is parsed, never the rows one at a time. Row-level
+ * validation accepts five rows, or six in the wrong order, and a renderer that
+ * numbers cards by position would then publish a different claim about which
+ * stages were blocked — `notReached` is derived from POSITION. The
+ * six-rows-in-order refinement lives in `stageDerivationSchema`, and this is
+ * the only client-reachable way to apply it.
+ */
+export function assembleEvalRunDecisionChain(
+  iteration: EvalRunDecisionIterationInput
+): EvalRunDecisionChain {
+  return assembleChain(iteration);
 }
 
 function assembleChain(

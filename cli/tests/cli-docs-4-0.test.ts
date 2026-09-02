@@ -272,3 +272,59 @@ test("CLI test runner discovers every tests/**/*.test.ts file", () => {
   assert.doesNotMatch(pkg.scripts?.test ?? "", /\*\*/);
   assert.doesNotMatch(pkg.scripts?.["test:fast"] ?? "", /\*\*/);
 });
+
+/**
+ * The reference QUOTES the version-skew refusal, so the quote has to be real.
+ *
+ * It went in paraphrased as one slash-joined sentence — "does not support
+ * environment model overrides / secret grants" — which nothing emits, so a
+ * reader who pasted it into a search found nothing. There are four distinct
+ * messages (two axes × the environment-write and composed-launch surfaces),
+ * and only their FIRST sentence is common; the second names the flag to drop
+ * and differs per surface.
+ *
+ * So the docs quote the first sentences and say the tail varies, and this
+ * pins both halves: every quoted sentence must open a message the code
+ * actually raises, and every such message must have its sentence quoted.
+ * Derived from the source, not from a second copy of the list, because a
+ * hand-maintained expectation is the thing that drifted in the first place.
+ */
+test("CLI reference quotes the deployment-skew refusals verbatim", () => {
+  const REFUSAL_PREFIX = "This MCPJam deployment does not support";
+  const sources = [
+    path.join(CLI_ROOT, "src/commands/environments.ts"),
+    path.join(REPO_ROOT, "sdk/src/platform/operations.ts"),
+  ];
+
+  // The first sentence of every refusal the code raises, deduplicated: that is
+  // the part a reader can match, and the part the docs promise.
+  const emitted = new Set(
+    sources
+      .flatMap((filePath) => [
+        ...readFileSync(filePath, "utf8").matchAll(
+          new RegExp(`${REFUSAL_PREFIX}[^."]*\\.`, "g")
+        ),
+      ])
+      .map((match) => match[0])
+  );
+  assert.ok(
+    emitted.size > 0,
+    "no deployment-skew refusal found in the CLI or SDK — did the message change?"
+  );
+
+  const reference = readFileSync(
+    path.join(CLI_DOCS_DIR, "reference.mdx"),
+    "utf8"
+  );
+  const quoted = new Set(
+    [...reference.matchAll(new RegExp(`${REFUSAL_PREFIX}[^*\\n]*\\.`, "g"))].map(
+      (match) => match[0]
+    )
+  );
+
+  assert.deepEqual(
+    [...quoted].sort(),
+    [...emitted].sort(),
+    "docs/cli/reference.mdx must quote exactly the refusal sentences the CLI and SDK raise"
+  );
+});

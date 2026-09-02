@@ -14,6 +14,7 @@ import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -276,6 +277,7 @@ import {
 } from "@mcpjam/sdk/host-config/templates";
 import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -319,6 +321,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import { resetTokenCache } from "./lib/apis/web/context";
 import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
   ConnectServerInspectorCommand,
@@ -1012,6 +1015,7 @@ function useTemplateVerifyDeepLink({
   const { createHost } = useHostMutations();
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
+  const cursorCliEnabled = useCursorHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1081,6 +1085,7 @@ function useTemplateVerifyDeepLink({
     const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1131,6 +1136,7 @@ function useTemplateVerifyDeepLink({
     requestedFocusTab,
     claudeCodeEnabled,
     codexEnabled,
+    cursorCliEnabled,
     flagWaitExpired,
     themeMode,
     createHost,
@@ -2778,6 +2784,21 @@ export default function App() {
       cancelled = true;
     };
   }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
+
+  // Retire any in-memory guest bearer the moment WorkOS auth lands. Without
+  // this, a guest token minted before sign-in (or during a brief apiContext
+  // teardown) can stay in the 30s bearer cache and ride the next /api/web/*
+  // call — Convex then rejects MCPJam-model generation as a guest even though
+  // the sidebar already shows the signed-in user.
+  const previousWorkOsUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const workOsUserId = workOsUser?.id ?? null;
+    if (workOsUserId && previousWorkOsUserIdRef.current !== workOsUserId) {
+      clearGuestSession();
+      resetTokenCache();
+    }
+    previousWorkOsUserIdRef.current = workOsUserId;
+  }, [workOsUser?.id]);
 
   usePostHogIdentify();
   // Stops replay while on `/results/<token>` — the init-time
@@ -5068,6 +5089,7 @@ export default function App() {
             <Toaster />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
+            <SessionRefreshBanner />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}

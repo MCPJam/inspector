@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { formatDistanceToNow } from "date-fns";
-import { Copy, FlaskConical, Loader2, MessageSquare } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -31,34 +30,40 @@ import {
   useSessionBrowserArtifacts,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
-import { SessionInsightBar } from "@/components/scenarios/session-readiness";
-import { SessionUserValueChain } from "@/components/shared/user-value-chain/SessionUserValueChain";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
-import {
-  feedbackHeadline,
-  formatThumbCounts,
-} from "@/components/connection/share-usage/feedback-headline";
+import { SessionFeedbackMark } from "@/components/connection/share-usage/session-feedback-mark";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
-import { SessionChecksSection } from "./SessionChecksSection";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
 
 /**
- * Goal-completion judge section for SWARM sessions — rendered under the
- * readiness insight bar so the verdict is visible on every tab. States:
- * absent → explicit first-run affordance; completed → shared JudgeVerdictCard
- * + a Re-judge affordance; failed → "Judge unavailable" + Retry (a failed
- * judgment must be recoverable, not hidden); running → judging placeholder.
- * All controls call the backend `requestSwarmSessionJudge` (sessionId only —
- * goal/run/project are server-derived) and rely on the reactive thread
- * subscription to refresh.
+ * Goal-completion judge section for SWARM sessions — auto-runs on open when
+ * no verdict exists yet. States: pending/running → judging placeholder;
+ * completed → shared JudgeVerdictCard + Re-judge; failed → "Judge unavailable"
+ * + Retry. A session that is not yet gradeable (no succeeded attempt) is a
+ * skip, not a failure: no toast, no stuck spinner. Calls
+ * `requestSwarmSessionJudge` (sessionId only) and refreshes via the reactive
+ * thread subscription.
  */
+export function isNotGradeableSwarmSessionError(err: unknown): boolean {
+  const data =
+    err && typeof err === "object" && "data" in err
+      ? (err as { data?: unknown }).data
+      : undefined;
+  const fromData = typeof data === "string" ? data : "";
+  const fromMessage = err instanceof Error ? err.message : "";
+  return (
+    fromData.includes("not a gradeable swarm session") ||
+    fromMessage.includes("not a gradeable swarm session")
+  );
+}
+
 export function SwarmJudgeSection({
   threadId,
   goalScore,
@@ -70,19 +75,68 @@ export function SwarmJudgeSection({
     "swarmJudge:requestSwarmSessionJudge" as never
   ) as unknown as (args: { sessionId: string }) => Promise<unknown>;
   const [requesting, setRequesting] = useState(false);
+  const [notGradeable, setNotGradeable] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const autoAttemptedRef = useRef(false);
+  // The session the UI is currently showing. A judge request that resolves
+  // after the reader moved on must not write over the new session's state.
+  const activeThreadRef = useRef(threadId);
+  activeThreadRef.current = threadId;
+  // Matching on the session id alone is not enough. A reader who leaves this
+  // session and comes back starts a SECOND request for the same id, and the
+  // first one — still in flight — would pass an id-only staleness check and
+  // overwrite the newer request's state. Each request also carries a serial,
+  // so only the most recent one may write.
+  const requestSerialRef = useRef(0);
 
-  const rerun = async () => {
-    setRequesting(true);
-    try {
-      await requestJudge({ sessionId: threadId });
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to run the judge"
-      );
-    } finally {
-      setRequesting(false);
-    }
-  };
+  const rerun = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      const requestedFor = threadId;
+      const serial = ++requestSerialRef.current;
+      const isStale = () =>
+        activeThreadRef.current !== requestedFor ||
+        requestSerialRef.current !== serial;
+      setRequesting(true);
+      setRequestError(null);
+      try {
+        const result = await requestJudge({ sessionId: requestedFor });
+        if (isStale()) return;
+        // Current backend returns null for an honest skip. Older deploys
+        // still throw; both mean the same thing.
+        setNotGradeable(result == null);
+      } catch (err) {
+        if (isStale()) return;
+        if (isNotGradeableSwarmSessionError(err)) {
+          setNotGradeable(true);
+          return;
+        }
+        setNotGradeable(false);
+        const message =
+          err instanceof Error ? err.message : "Failed to run the judge";
+        setRequestError(message);
+        if (!silent) {
+          toast.error(message);
+        }
+      } finally {
+        if (!isStale()) setRequesting(false);
+      }
+    },
+    [requestJudge, threadId]
+  );
+
+  useEffect(() => {
+    autoAttemptedRef.current = false;
+    setNotGradeable(false);
+    setRequestError(null);
+    // A request for the previous session is abandoned, not awaited.
+    setRequesting(false);
+  }, [threadId]);
+
+  useEffect(() => {
+    if (goalScore || autoAttemptedRef.current) return;
+    autoAttemptedRef.current = true;
+    void rerun({ silent: true });
+  }, [goalScore, rerun]);
 
   const judging = requesting || goalScore?.status === "running";
 
@@ -93,14 +147,34 @@ export function SwarmJudgeSection({
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
           Judging against the journey goal…
         </div>
-      ) : !goalScore ? (
+      ) : !goalScore && notGradeable ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
+          <Gavel className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1">
+            Not ready to judge — this session has no succeeded attempt yet.
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+          >
+            <RotateCcw className="mr-1.5 size-3.5" />
+            Retry
+          </Button>
+        </div>
+      ) : !goalScore && requestError ? (
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
           <Gavel
             className="size-3.5 shrink-0 text-muted-foreground"
             aria-hidden
           />
-          <span className="text-muted-foreground">
-            Check this session against the journey goal.
+          <span className="font-medium uppercase tracking-wide text-muted-foreground">
+            Judge unavailable
+          </span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+            {requestError}
           </span>
           <Button
             type="button"
@@ -109,11 +183,12 @@ export function SwarmJudgeSection({
             className="ml-auto shrink-0 rounded-xl"
             onClick={() => void rerun()}
           >
-            <Gavel className="mr-1.5 size-3.5" />
-            Run judge
+            <RotateCcw className="mr-1.5 size-3.5" />
+            Retry
           </Button>
         </div>
-      ) : goalScore.status === "completed" &&
+      ) : goalScore &&
+        goalScore.status === "completed" &&
         typeof goalScore.score === "number" &&
         Number.isFinite(goalScore.score) &&
         typeof goalScore.passed === "boolean" ? (
@@ -140,7 +215,7 @@ export function SwarmJudgeSection({
             <RotateCcw className="size-3.5" />
           </Button>
         </div>
-      ) : goalScore.status === "failed" ? (
+      ) : goalScore?.status === "failed" ? (
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
           <Gavel
             className="size-3.5 shrink-0 text-muted-foreground"
@@ -481,19 +556,7 @@ export function ShareUsageThreadDetail({
     if (thread.sourceType === "swarm") {
       return (
         <div className="flex h-full flex-col">
-          {thread.readiness ? (
-            <SessionInsightBar readiness={thread.readiness} />
-          ) : null}
-          {/* Same reasoning as the main body: a transcript-less attempt is
-              exactly where an unmeasured chain is the honest answer. */}
-          <SessionUserValueChain
-            derivation={thread.stageDerivation}
-            className="mx-3 mb-3"
-          />
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
-          {/* A transcript-less attempt is exactly where a runner failure
-              shows up, so the checks block belongs on this shell too. */}
-          <SessionChecksSection chatSessionId={thread._id} />
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm text-muted-foreground">
               No messages in this session
@@ -509,167 +572,51 @@ export function ShareUsageThreadDetail({
     );
   }
 
-  const duration =
-    thread.lastActivityAt && thread.startedAt
-      ? thread.lastActivityAt - thread.startedAt
-      : 0;
-  const durationStr =
-    duration > 0
-      ? duration < 60000
-        ? `${Math.round(duration / 1000)}s`
-        : `${Math.round(duration / 60000)}m`
-      : null;
   const isScenarioThread = thread.sourceType === "scenario";
   const reasoningDisplayMode = isScenarioThread ? "collapsible" : "collapsed";
 
-  const feedbackSummary = thread.feedback ?? null;
-  const feedbackHeadlineValue = feedbackSummary
-    ? feedbackHeadline(feedbackSummary)
-    : null;
-  const hasFeedback =
-    feedbackSummary != null ||
-    thread.feedbackRating != null ||
-    (thread.feedbackComment && thread.feedbackComment.trim().length > 0);
-
   return (
     <div className="flex h-full flex-col">
-      {/* Thread header — min-h keeps the border-b aligned with the
-          sessions-list toolbar on the other side of the resize handle. */}
-      <div className="flex min-h-[60px] shrink-0 flex-col justify-center border-b px-4 py-3">
-        {hasFeedback ? (
-          <div className="mb-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Feedback
-            </p>
-            {feedbackSummary && feedbackHeadlineValue ? (
-              <p className="mt-1 text-sm font-medium">
-                {feedbackHeadlineValue.kind === "thumbs"
-                  ? formatThumbCounts(
-                      feedbackHeadlineValue.up,
-                      feedbackHeadlineValue.down
-                    )
-                  : feedbackHeadlineValue.kind === "mixed"
-                  ? `${feedbackHeadlineValue.avg.toFixed(
-                      1
-                    )}/5 · ${formatThumbCounts(
-                      feedbackHeadlineValue.up,
-                      feedbackHeadlineValue.down
-                    )}`
-                  : `${feedbackHeadlineValue.avg.toFixed(1)}/5`}
-                <span className="ml-1 font-normal text-muted-foreground">
-                  across {feedbackSummary.count}{" "}
-                  {feedbackSummary.count === 1 ? "rating" : "ratings"}
-                  {/* The worst turn is what the filters and the list row's
-                      amber tint key on, so name it here rather than leaving
-                      the average to imply a uniformly mediocre session.
-                      Suppressed for a thumbs-only session: "worst 1/5" would
-                      restate the 👎 tally on a scale nobody was shown. */}
-                  {feedbackSummary.count > 1 &&
-                  feedbackHeadlineValue.kind !== "thumbs"
-                    ? ` · worst ${feedbackSummary.min}/5`
-                    : ""}
-                </span>
-              </p>
-            ) : thread.feedbackRating != null ? (
-              <p className="mt-1 text-sm font-medium">
-                {thread.feedbackRating}/5
-              </p>
-            ) : null}
-            {/* Per-turn comments render inline on the Chat tab, next to the
-                response they are about. This card keeps the worst one so the
-                header still says something when the transcript is scrolled
-                away. */}
-            {feedbackSummary?.worstComment ?? thread.feedbackComment ? (
-              <p className="mt-1 text-sm text-muted-foreground">
-                &ldquo;
-                {feedbackSummary?.worstComment ?? thread.feedbackComment}
-                &rdquo;
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium truncate">
-              {thread.visitorDisplayName}
-            </p>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{thread.modelId}</span>
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <MessageSquare className="h-3 w-3" />
-                {thread.messageCount} messages
-              </span>
-              {durationStr && (
-                <>
-                  <span>·</span>
-                  <span>{durationStr}</span>
-                </>
-              )}
-              <span>·</span>
-              <span>
-                {formatDistanceToNow(new Date(thread.startedAt), {
-                  addSuffix: true,
-                })}
-              </span>
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {canPromoteThread ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-xl"
-                data-testid="share-usage-promote-to-test-case"
-                onClick={() => setPromoteOpen(true)}
-              >
-                <FlaskConical className="mr-1.5 size-3.5" />
-                Promote to test case
-              </Button>
-            ) : null}
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <p className="truncate text-sm font-semibold text-card-foreground">
+            {thread.visitorDisplayName}
+          </p>
+          <SessionFeedbackMark thread={thread} variant="header" />
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {canPromoteThread ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="rounded-xl"
-              onClick={() => void handleCopySessionRef()}
+              className="h-8 rounded-lg px-2.5 text-xs"
+              data-testid="share-usage-promote-to-test-case"
+              onClick={() => setPromoteOpen(true)}
             >
-              <Copy className="mr-1.5 size-3.5" />
-              {sessionLink ? "Copy session link" : "Copy session ID"}
+              Promote to test case
             </Button>
-          </div>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 rounded-lg px-0"
+            aria-label={
+              sessionLink ? "Copy session link" : "Copy session ID"
+            }
+            onClick={() => void handleCopySessionRef()}
+          >
+            <Copy className="size-3.5" />
+          </Button>
         </div>
       </div>
-
-      {/* Gated on the verdict existing, not on the session being synthetic:
-          readiness is computed for real User Testing sessions too, and a
-          surface that has the data should show it. */}
-      {thread.readiness ? (
-        <SessionInsightBar readiness={thread.readiness} />
-      ) : null}
-
-      {/* D8: the chain EXPLAINS the outcome the surfaces above decided; it
-          never replaces one. Rendered unconditionally so a session with no
-          chain says "not measured" rather than vanishing — a panel that hides
-          itself when there is nothing reads as "nothing to report". */}
-      <SessionUserValueChain
-        derivation={thread.stageDerivation}
-        className="mx-3 mb-3"
-      />
 
       {/* Swarm-only: render before the first score exists so deployments with
           automatic judging disabled still expose the on-demand entry point. */}
       {thread.sourceType === "swarm" ? (
         <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
       ) : null}
-
-      {/* Deterministic checks, in their own block below the judge rather than
-          merged into it: one is a rule that held or did not, the other an
-          LLM's opinion, and a reader must not weigh them as the same kind of
-          fact. Not swarm-gated — User Testing sessions get graded too — and
-          self-hiding when the session carries no check rows. */}
-      <SessionChecksSection chatSessionId={thread._id} />
 
       {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
           session carries browser-rendered MCP App artifacts (synthetic runs);

@@ -215,28 +215,14 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("offers an initial judge action for an ungraded swarm session", async () => {
+  it("auto-runs the judge for an ungraded swarm session", async () => {
     mockThreadState.sourceType = "swarm";
-    const user = userEvent.setup();
 
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /run judge/i }));
-    expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
-  });
-
-  it("keys the Checks panel on the thread's own doc id, not the threadId prop", async () => {
-    // `threadId` and `thread._id` happen to coincide in production today, so
-    // substituting one for the other would keep every other test green while
-    // querying the wrong session the moment they diverge.
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-
-    await waitFor(() =>
-      expect(mockUseQuery).toHaveBeenCalledWith(
-        "chatSessionChecks:getCheckRunsForSession",
-        { chatSessionId: "session-doc-1" }
-      )
-    );
+    await waitFor(() => {
+      expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
+    });
   });
 
   it("hides the Replay tab when the session has no browser artifacts", async () => {
@@ -292,27 +278,6 @@ describe("ShareUsageThreadDetail", () => {
     ).toBeInTheDocument();
     expect(screen.getByTestId("render-observation-card")).toBeInTheDocument();
     expect(screen.queryByText("Computer Use timeline")).toBeNull();
-  });
-
-  it("shows readiness findings for synthetic sessions", async () => {
-    mockThreadState.synthetic = true;
-    mockThreadState.readiness = {
-      status: "completed",
-      verdict: "needs_attention",
-      issueCount: 1,
-      coverageRatio: 0.2,
-      advertisedToolCount: 5,
-      usedToolCount: 1,
-      toolCallCount: 0,
-      toolErrorCount: 0,
-      issues: [],
-    };
-
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-
-    expect(
-      await screen.findByText(/Only 20% of advertised tools were used/i)
-    ).toBeInTheDocument();
   });
 
   it("falls back to Chat when the active browser view loses its artifacts (session switch)", async () => {
@@ -521,57 +486,6 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
   });
 });
 
-describe("ShareUsageThreadDetail — readiness gating", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockThreadState.sourceType = "scenario";
-    mockThreadState.goalScore = undefined;
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => [{ role: "assistant", content: [] }],
-    } as Response);
-    mockAdaptTraceToUiMessages.mockReturnValue({
-      messages: [{ id: "assistant-1", role: "assistant", parts: [] }],
-      toolRenderOverrides: {},
-    });
-  });
-
-  it("shows readiness for a REAL session that carries a verdict", async () => {
-    // The whole point of the backend flip: real tester sessions now get
-    // graded, and the UI must follow the data rather than the population.
-    mockThreadState.synthetic = false;
-    // A verdict with something to say — the bar deliberately renders nothing
-    // for a clean `ready` session, so a "ready" fixture would pass vacuously.
-    mockThreadState.readiness = {
-      status: "completed",
-      verdict: "needs_attention",
-      issues: [
-        {
-          code: "tool_errors",
-          severity: "warning",
-          message: "1 of 3 tool calls failed.",
-        },
-      ],
-      toolCallCount: 3,
-      toolErrorCount: 1,
-      turnCount: 1,
-    };
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-    await waitFor(() =>
-      expect(screen.getByTestId("session-insight-bar")).toBeInTheDocument()
-    );
-  });
-
-  it("shows nothing when the session has no verdict yet", async () => {
-    mockThreadState.synthetic = false;
-    mockThreadState.readiness = undefined;
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
-    );
-    expect(screen.queryByTestId("session-insight-bar")).not.toBeInTheDocument();
-  });
-});
 
 /**
  * BB-153 span anchoring, at the level where the DECISION is made.

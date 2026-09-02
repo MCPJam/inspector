@@ -59,11 +59,9 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
-import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
-import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
@@ -118,10 +116,6 @@ interface SuiteHeaderProps {
    * Playground: block suite-level Run all while a single case quick-run is in flight.
    */
   runningTestCaseId?: string | null;
-  /** Persists the suite's host attachments (multi-host fan-out target list). */
-  onSuiteHostAttachmentsUpdate?: (
-    attachments: HostAttachmentDraft[]
-  ) => Promise<void>;
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -175,7 +169,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
-    onSuiteHostAttachmentsUpdate,
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
   } = props;
@@ -232,32 +225,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       setEditedName(suite.name);
     }
   }, [editedName, suite.name, suite._id, updateSuite]);
-
-  const handleServerAttachmentUpdate = useCallback(
-    async (serverAttachmentId: string) => {
-      // Picker calls this synchronously inside onClick — don't rethrow,
-      // or the unawaited promise becomes an unhandled rejection. The
-      // toast is the user-facing signal; the suite row will reconcile
-      // from the live Convex subscription on retry.
-      try {
-        await updateSuite({
-          suiteId: suite._id,
-          serverAttachmentId,
-        });
-        track("eval_suite_server_changed", {
-          location: "suite_header",
-          suite_id: suite._id,
-          server_attachment_id: serverAttachmentId,
-        });
-        toast.success("Server group updated");
-      } catch (error) {
-        toast.error(
-          getBillingErrorMessage(error, "Failed to update server group")
-        );
-      }
-    },
-    [suite._id, updateSuite]
-  );
 
   const handleNameKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -442,22 +409,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   if (viewMode === "test-detail" || viewMode === "test-edit") {
     return null;
   }
-
-  // Rendered whenever the suite overview is visible, regardless of whether any
-  // cases exist yet — the empty "pick a client" affordance is the whole point of
-  // surfacing the axis up front. The model-axis bar was removed: a host's
-  // `modelId` is the source of truth for what each run runs against, so a
-  // separate suite-wide model selector is just noise.
-  const suiteOverviewHostBar = (
-    <SuiteEnvironmentComposerBar
-      containerVariant="inline"
-      className="py-1.5 md:py-2"
-      suite={suite}
-      readOnly={readOnlyConfig}
-      onUpdate={onSuiteHostAttachmentsUpdate}
-      onUpdateServerAttachment={handleServerAttachmentUpdate}
-    />
-  );
 
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
@@ -749,7 +700,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           sideOffset={6}
           className="px-2 py-1 text-[11px]"
         >
-          Suite settings — description, validators, judges
+          Suite settings — where it runs, validators, judges
         </TooltipContent>
       </Tooltip>
     ) : null;
@@ -981,7 +932,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ) : null}
           </div>
         </div>
-        <div className="min-w-0 shrink">{suiteOverviewHostBar}</div>
         {overviewSettingsButton}
         {overviewSuiteNavButtons}
       </div>

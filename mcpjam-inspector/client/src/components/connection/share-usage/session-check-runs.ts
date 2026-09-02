@@ -148,7 +148,7 @@ export function checkRunOriginLabel(run: SessionCheckRun): string {
  * longer appears in the snapshot is still a real verdict with a real reason,
  * and inventing a friendly name for it would be a guess. `formatCriterion` has
  * no id to fall back to, so the escape hatch lives here — the same split the
- * run scorecard and the Insights scorecard use.
+ * run scorecard and the Insights findings use.
  */
 function criterionName(
   criterionId: string,
