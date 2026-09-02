@@ -168,6 +168,73 @@ describe("hydrateTurnTraceSpans", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("leaves already session-anchored blobs where they are", async () => {
+    // Eval blobs are measured from the RUN start, and their rows carry a
+    // persist-time `startedAt`. Rebasing them displaces every span by the
+    // persist round-trip, which is a skew on a path that was correct before.
+    mockBlobs({
+      "blob-a": [
+        { id: "a", name: "a", category: "step", startMs: 0, endMs: 100 },
+      ],
+      "blob-b": [
+        { id: "b", name: "b", category: "step", startMs: 900, endMs: 1000 },
+      ],
+    });
+
+    const spans = await hydrateTurnTraceSpans(
+      [
+        { startedAt: 5_000, spansBlobUrl: "blob-a" },
+        { startedAt: 5_412, spansBlobUrl: "blob-b" },
+      ],
+      { sessionAnchored: true }
+    );
+
+    expect(spans.map((s) => [s.startMs, s.endMs])).toEqual([
+      [0, 100],
+      [900, 1000],
+    ]);
+  });
+
+  it("still rebases when the caller does not claim session anchoring", async () => {
+    mockBlobs({
+      "blob-a": [
+        { id: "a", name: "a", category: "step", startMs: 0, endMs: 100 },
+      ],
+      "blob-b": [
+        { id: "b", name: "b", category: "step", startMs: 0, endMs: 100 },
+      ],
+    });
+
+    const spans = await hydrateTurnTraceSpans([
+      { startedAt: 5_000, spansBlobUrl: "blob-a" },
+      { startedAt: 5_400, spansBlobUrl: "blob-b" },
+    ]);
+
+    expect(spans.map((s) => s.startMs)).toEqual([0, 400]);
+  });
+
+  it("drops a span with a non-finite number instead of the whole timeline", async () => {
+    // `trace-timeline` folds endMs with Math.max, and Math.max(x, NaN) is NaN
+    // — one bad row in one blob took out the axis for every turn.
+    mockBlobs({
+      "blob-a": [
+        { id: "ok", name: "ok", category: "step", startMs: 0, endMs: 100 },
+        { id: "nan", name: "nan", category: "step", startMs: 0, endMs: NaN },
+        { id: "inf", name: "inf", category: "step", startMs: 0, endMs: Infinity },
+        { id: "bad-shape", name: "bad", category: "not-a-category", startMs: 0, endMs: 5 },
+        { id: "missing" },
+        null,
+      ],
+    });
+
+    const spans = await hydrateTurnTraceSpans([
+      { startedAt: 5_000, spansBlobUrl: "blob-a" },
+    ]);
+
+    expect(spans.map((s) => s.id)).toEqual(["ok"]);
+    expect(spans.every((s) => Number.isFinite(s.endMs))).toBe(true);
+  });
+
   it("falls back to offset 0 for a turn with an unusable startedAt", async () => {
     mockBlobs({
       "blob://t1": turnBlob(1_000),

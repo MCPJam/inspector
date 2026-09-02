@@ -148,11 +148,35 @@ export function usePersistedSessionTrace(threadId: string | null): {
 
     let active = true;
     setLoadingSpans(true);
-    void hydrateTurnTraceSpans(turnTraces).then((hydrated) => {
-      if (!active) return;
-      setSpans(hydrated);
-      setLoadingSpans(false);
-    });
+    // `hydrateTurnTraceSpans` swallows every per-blob failure and returns [],
+    // so a total load failure was indistinguishable from a session that never
+    // recorded spans — and that is not a blank timeline: `getRecordedSpans`
+    // reads [] as `undefined`, so the viewer silently falls back to the
+    // SYNTHESIZED `estimatedDurationMs` trace. A confident, entirely estimated
+    // timeline is the BB-153 failure mode over again.
+    //
+    // `spanCount` is the row's own record of what should be there, so
+    // "expected some, got none" is precisely a total load failure.
+    const expectedSpans = turnTraces.reduce(
+      (total, trace) => total + (trace.spanCount ?? 0),
+      0,
+    );
+    void hydrateTurnTraceSpans(turnTraces)
+      .then((hydrated) => {
+        if (!active) return;
+        setSpans(hydrated);
+        if (expectedSpans > 0 && hydrated.length === 0) {
+          setError("Could not load the recorded trace for this session");
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setSpans([]);
+        setError("Could not load the recorded trace for this session");
+      })
+      .finally(() => {
+        if (active) setLoadingSpans(false);
+      });
     return () => {
       active = false;
     };
