@@ -247,11 +247,27 @@ export function formatSwarmId(swarmId: string): string {
 }
 
 /**
- * ID-first title, matching evals (`Run n57bwtsk`): `Swarm` + short route id.
- * Scope (goals / personas) lives in the subtitle, not the title.
+ * The name the swarm was created with, when any run in the wave carries one
+ * (runs share it via their journeys' `swarmRefId`). Reused journeys may
+ * carry a DIFFERENT swarm's name, so the newest run wins.
+ */
+export function swarmWaveName(wave: SwarmWave): string | null {
+  for (const run of wave.runs) {
+    const name = run.swarmName?.trim();
+    if (name) return name;
+  }
+  return null;
+}
+
+/**
+ * The user-given swarm name when known; otherwise ID-first, matching evals
+ * (`Run n57bwtsk`): `Swarm` + short route id. Scope (goals / personas)
+ * lives in the subtitle, not the title.
  */
 export function swarmWaveTitle(wave: SwarmWave): string {
-  return `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
+  return (
+    swarmWaveName(wave) ?? `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`
+  );
 }
 
 /**

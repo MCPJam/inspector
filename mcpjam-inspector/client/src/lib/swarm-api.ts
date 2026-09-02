@@ -352,6 +352,12 @@ export interface SwarmOverviewRun {
   runId: string;
   journeyRefId: string;
   journeyName: string;
+  /**
+   * Name of the swarm the journey was authored in. Optional: absent on older
+   * backends, for journeys created outside a swarm, and when the swarm row
+   * is gone — the Overview title falls back to the short wave id.
+   */
+  swarmName?: string;
   /** Relaunching an archived journey throws server-side — disable Run again. */
   journeyArchived: boolean;
   personaName: string;

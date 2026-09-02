@@ -15,6 +15,7 @@ import {
   SWARM_COLUMN_HEADER,
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
+  swarmWaveTitle,
   waveLiveProgress,
 } from "../swarm-overview-panel";
 
@@ -63,6 +64,7 @@ const overview: SwarmOverview = {
       runId: "run-2b",
       journeyRefId: "journey-2",
       journeyName: "Invoice lookup",
+      swarmName: "Billing sweep",
       journeyArchived: false,
       personaName: "Persona Two",
       createdAt: NOW - 55_000,
@@ -88,6 +90,7 @@ const overview: SwarmOverview = {
       runId: "run-2",
       journeyRefId: "journey-1",
       journeyName: "Refund flow",
+      swarmName: "Billing sweep",
       journeyArchived: false,
       personaName: "Persona One",
       createdAt: NOW - 60_000,
@@ -412,6 +415,29 @@ describe("waveLiveProgress", () => {
   });
 });
 
+describe("swarmWaveTitle", () => {
+  it("prefers the newest run's swarm name and falls back to the short route id", () => {
+    const [named, unnamed] = groupRunsIntoSwarmWaves(overview.runs);
+    expect(swarmWaveTitle(named!)).toBe("Billing sweep");
+    expect(swarmWaveTitle(unnamed!)).toBe("Swarm run-1");
+
+    const blank = {
+      ...named!,
+      runs: named!.runs.map((r) => ({ ...r, swarmName: "   " })),
+    };
+    expect(swarmWaveTitle(blank)).toBe("Swarm run-2b");
+
+    const reused = {
+      ...named!,
+      runs: [
+        { ...named!.runs[0]!, swarmName: "Second swarm" },
+        { ...named!.runs[1]!, swarmName: "First swarm" },
+      ],
+    };
+    expect(swarmWaveTitle(reused)).toBe("Second swarm");
+  });
+});
+
 describe("groupRunsIntoSwarmWaves", () => {
   // Legacy rows carry no wave id, so the time heuristic still has to work.
   it("clusters co-launched journey-runs and keeps distant ones separate", () => {
@@ -484,7 +510,7 @@ describe("groupRunsIntoSwarmWaves", () => {
 });
 
 describe("Overview — swarm runs (waves), not bare journeys", () => {
-  it("lists co-launched journeys as ONE Swarm Run titled by short id", async () => {
+  it("lists co-launched journeys as ONE Swarm Run titled by swarm name, else short id", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
 
@@ -496,10 +522,12 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
     const rows = screen.getAllByTestId("swarm-overview-run");
     expect(rows).toHaveLength(3);
 
-    // Newest wave: two personas, ID-first title (evals-style), scope in subtitle.
+    // Newest wave: two personas, titled by the name given at creation, scope
+    // in subtitle.
     expect(rows[0]!.getAttribute("data-wave-id")).toBe("run-2b");
     expect(rows[0]!.getAttribute("data-journey-count")).toBe("2");
-    expect(within(rows[0]!).getByText("Swarm run-2b")).toBeTruthy();
+    expect(within(rows[0]!).getByText("Billing sweep")).toBeTruthy();
+    expect(within(rows[0]!).queryByText("Swarm run-2b")).toBeNull();
     expect(within(rows[0]!).getByText(/2 goals · 2 personas/)).toBeTruthy();
     // Env is its own flag-gated column; Client is host names only.
     expect(
@@ -513,7 +541,8 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
       within(rows[0]!).getByTestId("swarm-overview-run-model").textContent
     ).toBe("claude-haiku-4.5 +1");
 
-    // Solo older waves also use short route ids, not journey · persona titles.
+    // Waves without a swarm name (journeys authored outside a swarm, older
+    // backends) fall back to short route ids, not journey · persona titles.
     expect(within(rows[1]!).getByText("Swarm run-1")).toBeTruthy();
     expect(
       within(rows[1]!).getByTestId("swarm-overview-run-env").textContent
@@ -671,7 +700,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     renderTab("run-2b");
     expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
     expect(screen.getByTestId("swarm-run-detail-title").textContent).toBe(
-      "Swarm run-2b"
+      "Billing sweep"
     );
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
