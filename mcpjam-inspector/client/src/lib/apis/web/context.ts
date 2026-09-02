@@ -752,11 +752,21 @@ export async function getApiAuthorizationHeader(
   retriesLeft = 1
 ): Promise<string | null> {
   // The actor can change while a token lookup is in flight (sign-in,
-  // sign-out). Every cache write and return below happens after an await, so
-  // each one re-checks the mode it resolved under and re-resolves rather than
-  // handing back — or caching — the previous actor's token.
+  // sign-out, or one signed-in user swapped for another). Every cache write
+  // and return below happens after an await, so each one re-checks the actor
+  // it resolved under and re-resolves rather than handing back — or caching —
+  // the previous actor's token.
+  //
+  // The guest-mode flag alone cannot see a user→user swap: both actors are
+  // non-guest, so it never flips. `apiContextRevision` does, because
+  // `setApiContext` bumps it (and clears the cache) on every actor change —
+  // and a write landing here after that reset is exactly the stale token this
+  // guard exists to catch.
+  const contextRevisionAtStart = apiContextRevision;
   const guestModeAtStart = shouldPreferGuestBearer();
-  const authChanged = () => shouldPreferGuestBearer() !== guestModeAtStart;
+  const authChanged = () =>
+    apiContextRevision !== contextRevisionAtStart ||
+    shouldPreferGuestBearer() !== guestModeAtStart;
   const reresolve = () =>
     retriesLeft > 0 ? getApiAuthorizationHeader(retriesLeft - 1) : null;
 

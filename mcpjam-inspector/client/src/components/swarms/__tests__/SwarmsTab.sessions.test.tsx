@@ -96,6 +96,9 @@ const paginatedCalls: Array<{ name: string; args: unknown }> = [];
 let projectSessionsStatus: "CanLoadMore" | "LoadingMore" | "Exhausted" =
   "Exhausted";
 const projectSessionsLoadMore = vi.fn();
+let personaSessionsStatus: "CanLoadMore" | "LoadingMore" | "Exhausted" =
+  "Exhausted";
+const personaSessionsLoadMore = vi.fn();
 
 vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
@@ -173,8 +176,8 @@ vi.mock("convex/react", () => ({
     if (name === "journeyRuns:listSessionsByPersona") {
       return {
         results: [session],
-        status: "Exhausted",
-        loadMore: vi.fn(),
+        status: personaSessionsStatus,
+        loadMore: personaSessionsLoadMore,
         isLoading: false,
       };
     }
@@ -232,6 +235,8 @@ beforeEach(() => {
   paginatedCalls.length = 0;
   projectSessionsStatus = "Exhausted";
   projectSessionsLoadMore.mockReset();
+  personaSessionsStatus = "Exhausted";
+  personaSessionsLoadMore.mockReset();
 });
 
 afterEach(() => {
@@ -445,9 +450,38 @@ describe("SwarmsTab — top-level Journeys view", () => {
     // Auto-paging stopped on its own — the button only exists once it has.
     const autoCalls = projectSessionsLoadMore.mock.calls.length;
     fireEvent.click(loadMore);
-    expect(projectSessionsLoadMore.mock.calls.length).toBeGreaterThan(
-      autoCalls
-    );
+    // Exactly one page per click. The click must not re-arm auto-paging and
+    // drain the rest of the history the reader just took control of.
+    expect(projectSessionsLoadMore.mock.calls.length).toBe(autoCalls + 1);
+    await waitFor(() => {
+      expect(
+        within(panel).getByTestId("swarms-sessions-load-more")
+      ).toBeInTheDocument();
+    });
+    expect(projectSessionsLoadMore.mock.calls.length).toBe(autoCalls + 1);
+  });
+
+  it("re-arms the auto-page budget when the persona filter swaps the feed", async () => {
+    // The budget is per-feed. Spending it on the project feed must not strand
+    // the persona feed — a different query, whose results start over — on its
+    // first page.
+    projectSessionsStatus = "CanLoadMore";
+    personaSessionsStatus = "CanLoadMore";
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openPersonasTab();
+    openSessionsTab();
+
+    const panel = await screen.findByTestId("swarms-sessions-panel");
+    // Drain the project feed's budget until it hands over the button.
+    await within(panel).findByTestId("swarms-sessions-load-more");
+    expect(personaSessionsLoadMore).not.toHaveBeenCalled();
+
+    await selectPersonaFilter("Persona One");
+
+    // The fresh feed pages on its own rather than waiting on a click.
+    await waitFor(() => {
+      expect(personaSessionsLoadMore).toHaveBeenCalled();
+    });
   });
 
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {

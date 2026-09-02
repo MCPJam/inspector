@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { usePersistedBoolean } from "@/hooks/use-persisted-boolean";
 
@@ -6,6 +7,10 @@ const KEY = "test.persisted-boolean";
 
 afterEach(() => {
   window.localStorage.removeItem(KEY);
+  // Teardown has to run even when an assertion throws first. A storage spy
+  // left installed by a failing test would silently mock storage for every
+  // test after it, turning one real failure into a cascade of fake ones.
+  vi.restoreAllMocks();
 });
 
 describe("usePersistedBoolean", () => {
@@ -52,6 +57,34 @@ describe("usePersistedBoolean", () => {
     });
     expect(result.current[0]).toBe(false);
     expect(writes).toEqual([[KEY, "false"]]);
+
+    setItem.mockRestore();
+  });
+
+  it("writes nothing on a StrictMode mount", () => {
+    // The app mounts under `<StrictMode>`, which runs each effect, tears it
+    // down, and runs it again on the same mount. The replay must not persist
+    // the value that was just read out of storage — otherwise merely opening
+    // a screen stamps a preference the reader never chose.
+    window.localStorage.setItem(KEY, "false");
+    const writes: Array<[string, string]> = [];
+    const setItem = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation((key, value) => {
+        writes.push([String(key), String(value)]);
+      });
+
+    const { result } = renderHook(() => usePersistedBoolean(KEY, true), {
+      wrapper: StrictMode,
+    });
+    expect(result.current[0]).toBe(false);
+    expect(writes).toHaveLength(0);
+
+    // A real change still lands.
+    act(() => {
+      result.current[1](true);
+    });
+    expect(writes).toEqual([[KEY, "true"]]);
 
     setItem.mockRestore();
   });

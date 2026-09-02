@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -204,6 +204,49 @@ describe("SwarmJudgeSection", () => {
       ).not.toBeInTheDocument();
     });
     expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("ignores a superseded request for the session the reader came back to", async () => {
+    // Leaving session-1 and returning starts a SECOND request for the SAME id.
+    // Matching on the session id alone cannot tell the two apart, so the
+    // abandoned first request would land on the second one's state.
+    let resolveFirst: ((value: unknown) => void) | undefined;
+    requestJudgeMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+    const { rerender } = render(<SwarmJudgeSection threadId="session-1" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+    });
+
+    // Away…
+    requestJudgeMock.mockResolvedValueOnce(null);
+    rerender(<SwarmJudgeSection threadId="session-2" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-2" });
+    });
+
+    // …and back. This request never settles, so the section stays judging.
+    requestJudgeMock.mockImplementationOnce(() => new Promise(() => {}));
+    rerender(<SwarmJudgeSection threadId="session-1" />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Judging against the journey goal/)
+      ).toBeInTheDocument();
+    });
+
+    // The abandoned first request reports "not gradeable" — it must not
+    // replace the live request's placeholder.
+    await act(async () => {
+      resolveFirst?.(null);
+    });
+    expect(screen.queryByText(/Not ready to judge/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Judging against the journey goal/)
+    ).toBeInTheDocument();
   });
 
   it("isNotGradeableSwarmSessionError matches the Convex payload and the message", () => {

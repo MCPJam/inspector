@@ -470,7 +470,10 @@ export function NewSwarmCreateFlow({
    * Required, and prefilled — see {@link suggestSwarmName}. Computed once via
    * the lazy initializer so it does not change under the user on re-render.
    */
-  const [swarmName, setSwarmName] = useState(
+  // Read-only: this flow prefills the name and no longer offers a field to
+  // edit it, so there is no setter to keep. `nameEdited` below is fixed the
+  // same way.
+  const [swarmName] = useState(
     // `||`, not `??`: a draft written before this field existed carries an
     // empty string, which should still fall back to the suggestion.
     () => restoredDraft?.name || suggestSwarmName(new Date()),

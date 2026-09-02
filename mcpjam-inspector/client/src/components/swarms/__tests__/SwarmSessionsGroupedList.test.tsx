@@ -156,14 +156,25 @@ describe("SwarmSessionsGroupedList", () => {
       groupUnit: "goal" as const,
     };
 
+    // goal-b must already be MOUNTED and closed, so that opening it can only
+    // come from the effect that watches for the selection arriving. Mounting
+    // it fresh with the row already inside would open it through the
+    // `useState(defaultOpen || holdsSelection)` initializer instead, and the
+    // effect this test names would never run.
     const { rerender } = render(
       <SwarmSessionsGroupedList
-        groups={[group("goal-a", "Goal A", ["s1"])]}
+        groups={[
+          group("goal-a", "Goal A", ["s1"]),
+          group("goal-b", "Goal B", []),
+        ]}
         {...props}
       />,
     );
-    expect(screen.queryByTestId("swarm-goal-group-goal-b-content")).toBeNull();
+    expect(
+      screen.getByTestId("swarm-goal-group-goal-b-content"),
+    ).toHaveAttribute("data-state", "closed");
 
+    // The selected row lands in the already-mounted group on a later page.
     rerender(
       <SwarmSessionsGroupedList
         groups={[

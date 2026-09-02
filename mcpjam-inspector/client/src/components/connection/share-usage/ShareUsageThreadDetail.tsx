@@ -81,11 +81,20 @@ export function SwarmJudgeSection({
   // after the reader moved on must not write over the new session's state.
   const activeThreadRef = useRef(threadId);
   activeThreadRef.current = threadId;
+  // Matching on the session id alone is not enough. A reader who leaves this
+  // session and comes back starts a SECOND request for the same id, and the
+  // first one — still in flight — would pass an id-only staleness check and
+  // overwrite the newer request's state. Each request also carries a serial,
+  // so only the most recent one may write.
+  const requestSerialRef = useRef(0);
 
   const rerun = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       const requestedFor = threadId;
-      const isStale = () => activeThreadRef.current !== requestedFor;
+      const serial = ++requestSerialRef.current;
+      const isStale = () =>
+        activeThreadRef.current !== requestedFor ||
+        requestSerialRef.current !== serial;
       setRequesting(true);
       setRequestError(null);
       try {

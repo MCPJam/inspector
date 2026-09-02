@@ -181,6 +181,16 @@ export function SwarmsSessionsPanel({
   // The plain feed gets a few pages, then hands the reader a Load more button.
   const AUTO_PAGE_LIMIT = 4;
   const [autoPagesLoaded, setAutoPagesLoaded] = useState(0);
+  // The budget belongs to ONE feed. Switching persona (or project) swaps the
+  // paginated query underneath us and Convex starts its results over, so a
+  // budget left at the cap would leave the fresh feed stranded on page one
+  // with no auto-paging. Re-key it to the new feed instead.
+  const feedKey = filtered ? `persona:${personaRefId}` : `project:${projectId}`;
+  const [autoPagesFeedKey, setAutoPagesFeedKey] = useState(feedKey);
+  if (autoPagesFeedKey !== feedKey) {
+    setAutoPagesFeedKey(feedKey);
+    setAutoPagesLoaded(0);
+  }
   const pendingDeepLink = Boolean(initialThreadId) && !appliedInitialRef.current;
   const autoPagingAllowed =
     pendingDeepLink || Boolean(runIdSet) || autoPagesLoaded < AUTO_PAGE_LIMIT;
@@ -359,10 +369,11 @@ export function SwarmsSessionsPanel({
                     size="sm"
                     className="ml-auto h-7 shrink-0 text-xs"
                     data-testid="swarms-sessions-load-more"
-                    onClick={() => {
-                      setAutoPagesLoaded(0);
-                      loadMore(DEFAULT_PAGE_SIZE);
-                    }}
+                    // One click, one page. Resetting the budget here would
+                    // re-arm auto-paging and drain several more pages on top
+                    // of this click — the opposite of handing the reader the
+                    // pace.
+                    onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
                   >
                     Load more
                   </Button>

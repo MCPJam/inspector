@@ -165,6 +165,41 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     vi.useRealTimers();
   });
 
+  it("re-resolves when one signed-in user replaces another mid-flight", async () => {
+    // Both actors are signed in, so the guest-mode flag reads the same for
+    // each and never flips. Only the context revision separates them — without
+    // it, user A's in-flight token is returned for, and cached against, user B.
+    let releaseA: ((token: string) => void) | undefined;
+    const getAccessTokenA = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          releaseA = resolve;
+        })
+    );
+    const getAccessTokenB = vi.fn().mockResolvedValue("token-user-b");
+
+    setApiContext({
+      projectId: "ws-user-a",
+      serverIdsByName: {},
+      getAccessToken: getAccessTokenA,
+      isAuthenticated: true,
+    });
+
+    const pending = getApiAuthorizationHeader();
+
+    // User B signs in while A's token is still resolving.
+    setApiContext({
+      projectId: "ws-user-b",
+      serverIdsByName: {},
+      getAccessToken: getAccessTokenB,
+      isAuthenticated: true,
+    });
+
+    releaseA?.("token-user-a");
+
+    expect(await pending).toBe("Bearer token-user-b");
+  });
+
   it("prefers guest token for guest-owned projects (unauthed + projectId, no share/scenario)", async () => {
     // Pre-"guests are users" this case returned null because a set projectId
     // was treated as proof of an authed session. Guests can now own projects,
