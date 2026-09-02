@@ -129,6 +129,23 @@ describe("describeConversationTargetDisclosure", () => {
     });
   });
 
+  it("reports a mismatch when a recorded host is opened with no host selected", () => {
+    // `hostId: null` is the composer's shape when the host picker is empty —
+    // on a cold load, or after the previewed host was deleted. "Nothing
+    // selected" is not the recorded host, so this is a mismatch, not `none`:
+    // treating it as agreement would silently drop the gate exactly where the
+    // composer says the least about where a reply would run.
+    expect(
+      describeConversationTargetDisclosure({
+        recorded: { kind: "host", hostId: "cursor-host" },
+        composer: { kind: "host", hostId: null },
+      }),
+    ).toEqual({
+      kind: "mismatch",
+      recorded: { kind: "host", hostId: "cursor-host" },
+    });
+  });
+
   it("reports a mismatch when the previewed host is not the recorded one", () => {
     expect(
       describeConversationTargetDisclosure({

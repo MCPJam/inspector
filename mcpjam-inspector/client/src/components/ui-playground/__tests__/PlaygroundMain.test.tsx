@@ -14,6 +14,7 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
+import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -3138,11 +3139,15 @@ describe("PlaygroundMain", () => {
 
     beforeEach(() => {
       invalidateChatHistoryPrefetch();
+      // The bridge is a module-level store; a request left pending by one test
+      // would fire on the next one's first render.
+      useAgentToolPromptBridge.setState({ pending: null });
     });
 
     afterEach(() => {
       window.history.replaceState({}, "", "/");
       invalidateChatHistoryPrefetch();
+      useAgentToolPromptBridge.setState({ pending: null });
     });
 
     it("says nothing about a live chat the user started here", () => {
@@ -3217,6 +3222,99 @@ describe("PlaygroundMain", () => {
       });
 
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    // Every remaining way to start a turn. A gate that only covers the
+    // composer is theatre: each of these reaches `sendMessage`,
+    // `queueBroadcastRequest` or `rewindToMessage` without the composer's
+    // Send button ever being pressed.
+    it("holds a starter chip to the same gate, and keeps its prompt as a draft", async () => {
+      // A chip is a one-click SEND from the empty state — the shortest path of
+      // all to running a reopened conversation on the wrong target.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      await act(async () => {});
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      // Refused, not discarded: the text is waiting in the composer.
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Starter chip prompt",
+      );
+    });
+
+    it("lets the starter chip through once the target is accepted", async () => {
+      // The other half of the gate: it has to open, or the disclosure is a
+      // dead end rather than a decision.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge"),
+      );
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("conversation-target-notice"),
+        ).not.toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Starter chip prompt" }),
+        );
+      });
+    });
+
+    it("holds an 'Ask agent to run' prompt to the same gate, and keeps it as a draft", async () => {
+      // The Tools rail requests this send from a sibling subtree through the
+      // bridge store, so a disabled Send button is no protection at all.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      await act(async () => {
+        useAgentToolPromptBridge
+          .getState()
+          .requestRun("Run read_file on /etc/hosts");
+      });
+      await act(async () => {});
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Run read_file on /etc/hosts",
+      );
+    });
+
+    it("will not rewind a reopened conversation, and shows the edit action as unavailable", async () => {
+      // A rewind is a send AND a fork: it would run the edited turn on the
+      // ambient target and mint a branch recording that it did.
+      mockConvexAuthState.isAuthenticated = true;
+      const { rerender } = await openRestoredConversation({
+        selectedServers: ["deepwiki"],
+      });
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any;
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+      await screen.findByTestId("conversation-target-notice");
+
+      // Disabled, not merely inert: the affordance says so before it is used.
+      expect(screen.getByTestId("edit-first-message")).toBeDisabled();
+
+      // And the handler refuses even when invoked directly, which is what the
+      // real `UserMessageRow` does fire-and-forget from its editor.
+      const onEditUserMessage =
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage;
+      expect(onEditUserMessage).toBeDefined();
+      await act(async () => {
+        await onEditUserMessage(mockUseChatSession.messages[0], "edited");
+      });
+
+      expect(mockUseChatSession.rewindToMessage).not.toHaveBeenCalled();
     });
 
     it("names the environment a conversation pinned when the composer points elsewhere", async () => {

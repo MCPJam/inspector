@@ -4002,6 +4002,12 @@ export function PlaygroundMain({
   const handleEditUserMessage = useCallback(
     async (message: UIMessage, text: string) => {
       if (sendBlocked) return false;
+      // A rewind IS a send, and a costlier one: it mints a branch and runs the
+      // edited turn on the CURRENT target, so on a reopened conversation it
+      // would both execute somewhere the transcript never ran AND fork the
+      // thread to record it. `editDisabled` below carries the same condition
+      // so the affordance reads as unavailable rather than failing on click.
+      if (needsConversationTargetAckRef.current) return false;
       // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
       // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
       // try/FINALLY with no catch, so a rejected connect propagates straight
@@ -4161,7 +4167,16 @@ export function PlaygroundMain({
         prompt,
         location: isCompareMode ? "playground_compare" : "playground_single",
       });
-      if (composerDisabled || sendBlocked) {
+      // Same gate as the composer. A starter chip is a one-click SEND, so
+      // without this it is the shortest path to running a reopened
+      // conversation on a target its transcript never used. Preserved as a
+      // draft rather than dropped: the chip's text is the user's input, and
+      // it is waiting for them the moment they accept the target.
+      if (
+        composerDisabled ||
+        sendBlocked ||
+        needsConversationTargetAckRef.current
+      ) {
         composer.setInput(prompt);
         return;
       }
@@ -4222,7 +4237,16 @@ export function PlaygroundMain({
   // composer as a draft). No bespoke execution path — it's a normal turn.
   const submitAgentToolPrompt = useCallback(
     async (text: string) => {
-      if (composerDisabled || sendBlocked) {
+      // Same gate as the composer, and this path is the one the user never
+      // typed into: the rail requests the send from a sibling subtree, so a
+      // disabled Send button is no protection at all. Left in the composer as
+      // a draft, which is exactly what this handler already does for every
+      // other not-ready state.
+      if (
+        composerDisabled ||
+        sendBlocked ||
+        needsConversationTargetAckRef.current
+      ) {
         composer.setInput(text);
         return;
       }
@@ -4646,7 +4670,7 @@ export function PlaygroundMain({
                     ? undefined
                     : handleEditUserMessage
                 }
-                editDisabled={sendBlocked}
+                editDisabled={sendBlocked || needsConversationTargetAck}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
@@ -4719,7 +4743,13 @@ export function PlaygroundMain({
           onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={composerDisabled}
-          canSend={!sendBlocked && composerHasContent}
+          // The overlay has no room for the notice, so the honest thing it can
+          // do is show Send as unavailable — `performComposerSubmit` refuses
+          // this state anyway, and a live-looking button that does nothing is
+          // worse than a disabled one.
+          canSend={
+            !sendBlocked && composerHasContent && !needsConversationTargetAck
+          }
           isThinking={isStreamingActive}
           onStop={stopActiveChat}
           // Same submit path as the docked composer. Its own copy dropped
