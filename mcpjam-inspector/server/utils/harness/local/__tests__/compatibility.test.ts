@@ -391,6 +391,17 @@ describe("localPermissionModeFor", () => {
     ).toBeNull();
   });
 
+  it("returns null for inherited Object keys rather than throwing", () => {
+    // `toString`, `constructor` and `__proto__` are not `undefined` on a plain
+    // object literal, so a bare index would pass a presence check and then
+    // throw on `.permissionProfileMapping`. "not-a-harness" above cannot catch
+    // that — it is not on the prototype — which is why the first version of
+    // this test passed over the hole.
+    for (const id of ["toString", "constructor", "__proto__", "valueOf"]) {
+      expect(localPermissionModeFor(id, "read-only", "local-native")).toBeNull();
+    }
+  });
+
   it("never answers `allow-all` for any profile a native target can consent to", () => {
     // The property that matters, independent of the table's current contents:
     // nothing a user can agree to natively may resolve to the widest mode.

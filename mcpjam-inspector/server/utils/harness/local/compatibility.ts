@@ -332,12 +332,19 @@ export function localPermissionModeFor(
   permissionProfile: LocalPermissionProfile,
   targetKind: "local-native" | "local-isolated",
 ): "allow-reads" | "allow-edits" | "allow-all" | null {
-  const manifest = (
-    LOCAL_HARNESS_MANIFEST as Record<
-      string,
-      LocalHarnessCompatibility | undefined
-    >
-  )[harnessId];
+  // OWN properties only, for the same reason `resolveLocalCompatibility` does
+  // it below: `toString`, `constructor` or `__proto__` resolve to an inherited
+  // Object property, which is not `undefined`, so it would sail past the
+  // presence check and throw on `.permissionProfileMapping` — an unhandled
+  // TypeError in the path that decides what a local agent is allowed to do,
+  // instead of the documented `null`.
+  const manifests = LOCAL_HARNESS_MANIFEST as Record<
+    string,
+    LocalHarnessCompatibility | undefined
+  >;
+  const manifest = Object.prototype.hasOwnProperty.call(manifests, harnessId)
+    ? manifests[harnessId]
+    : undefined;
   if (manifest === undefined) return null;
   // Mirrors the refusal in `resolveLocalCompatibility`: `unrestricted` never
   // runs natively whatever a manifest says, so it can never resolve to a mode
