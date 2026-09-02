@@ -315,6 +315,32 @@ describe("checkHarnessRuntimeAvailable", () => {
       ).toEqual({ ok: true });
     });
 
+    it("refuses an external-account host that pins an ORDINARY model id", () => {
+      // The exemption is not "no model rule applies", it is "a different one
+      // does": the host must carry the runtime's sentinel. Cursor ignores
+      // whatever id the host holds and picks its own model, so a host pinned to
+      // `anthropic/claude-sonnet-4.5` would run Cursor Auto while the session
+      // row, the trace and the eval metadata all named Sonnet as the model that
+      // ran — the exact mis-attribution this whole change exists to stop, just
+      // arriving from the host side instead of the browser's.
+      setFullyAvailable();
+      const r = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "cursor" as HarnessId,
+          model: {
+            id: "anthropic/claude-sonnet-4.5",
+            provider: "anthropic",
+          },
+        }),
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.kind).toBe("model-unsupported");
+        // Names the id it found, so the owner can see what to reset.
+        expect(r.reason).toContain("anthropic/claude-sonnet-4.5");
+      }
+    });
+
     it("does not exempt a BROKERED harness from the model gate", () => {
       // The exemption is keyed on `modelAccess`, not on "harness runs a CLI".
       setFullyAvailable();
@@ -386,6 +412,19 @@ describe("harnessModelEligibleForRuntime", () => {
         provider: "cursor",
       }),
     ).toBe(true);
+  });
+
+  it("refuses an ordinary model id on an EXTERNAL-ACCOUNT harness", () => {
+    // The dispatch half of the rule above. Left `true`, this is what let a
+    // mis-configured Cursor host run the real runtime and report an unrelated
+    // model id as the one that ran.
+    expect(
+      harnessModelEligibleForRuntime({
+        adapter: getHarnessAdapter("cursor"),
+        modelId: "anthropic/claude-sonnet-4.5",
+        provider: "anthropic",
+      }),
+    ).toBe(false);
   });
 
   it("still refuses a non-hosted model for a BROKERED harness", () => {

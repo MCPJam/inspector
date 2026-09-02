@@ -875,7 +875,8 @@ export function matchOrgProviderForModelId(
  * id, that provider wins; catalog/shape inference is the fallback.
  *
  * `custom:`-prefixed and Bedrock-shaped ids skip the config fetch — their
- * shape is exact, and this path sits on a live chat turn.
+ * shape is exact, and this path sits on a live chat turn. So does a
+ * runtime-chosen sentinel, which no org provider can list.
  */
 export async function resolveHostModelDefinition(args: {
   modelId: string;
@@ -886,7 +887,15 @@ export async function resolveHostModelDefinition(args: {
 
   const shapeIsExact =
     modelId.startsWith("custom:") || isBedrockModelId(modelId);
-  if (!shapeIsExact && projectId) {
+  // A RUNTIME-CHOSEN SENTINEL skips the fetch for a different reason than the
+  // exact shapes above: not "we already know which provider serves it" but "no
+  // provider serves it at all". `matchOrgProviderForModelId` can only ever miss
+  // on `cursor/auto`, so the round-trip is pure cost — and not a cheap one on a
+  // live turn: `resolveOrgModelConfig` carries a 15 s timeout, and this call
+  // sits between the request and the first token of an external-account harness
+  // turn that needs nothing from the org's model config.
+  const skipOrgConfig = shapeIsExact || isRuntimeChosenModelSentinel(modelId);
+  if (!skipOrgConfig && projectId) {
     try {
       const config = await resolveOrgModelConfig({ projectId }, auth);
       const fromConfig = matchOrgProviderForModelId(config, modelId);

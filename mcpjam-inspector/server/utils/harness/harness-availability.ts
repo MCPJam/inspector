@@ -18,6 +18,7 @@
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
 import { getCanonicalModelId } from "@/shared/types";
+import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -52,6 +53,12 @@ import {
  *  - "the runtime can run this model" — guards the silent substitution where a
  *    runtime falls back to its own default. An external-account adapter passes
  *    NO model at all, so there is nothing to substitute and nothing to check.
+ *
+ * What replaces them is ONE condition of its own: the host's model must BE the
+ * sentinel. An external-account host carrying an ordinary id is not a leniency
+ * case, it is the same wrong answer from the other direction — the runtime
+ * ignores the id and picks its own model while the session, the trace and the
+ * eval metadata all record the id as the model that ran.
  */
 export function harnessModelEligibleForRuntime(args: {
   adapter: HarnessRuntimeAdapter;
@@ -60,7 +67,9 @@ export function harnessModelEligibleForRuntime(args: {
   /** REQUIRED for a bare id to canonicalize; see the note on the preflight. */
   provider?: string;
 }): boolean {
-  if (args.adapter.modelAccess === "external-account") return true;
+  if (args.adapter.modelAccess === "external-account") {
+    return isRuntimeChosenModelSentinel(args.modelId);
+  }
   if (!isHostedCatalogModel(args.modelId, args.provider)) return false;
   return args.adapter.supportsModel(
     getCanonicalModelId(args.modelId, args.provider),
@@ -259,11 +268,35 @@ export function checkHarnessRuntimeAvailable(args: {
   // account, so "is this an MCPJam-hosted model?" and "can the runtime run it?"
   // are questions about a value nothing consumes. Answering them would refuse
   // every Cursor host — its own catalog model is the `cursor/auto` sentinel,
-  // which is deliberately not an MCPJam-hosted model.
+  // which is deliberately not an MCPJam-hosted model. They are replaced by one
+  // rule of their own, immediately below, rather than by nothing.
   const canonicalModelId = getCanonicalModelId(
     args.model.id,
     args.model.provider,
   );
+
+  // …and here is that replacement for an external-account host: its model must
+  // be the runtime's own sentinel. This is the same rule as the two below —
+  // "never report one runtime's answer under another model's name" — applied to
+  // the arm where the runtime, not MCPJam, picks. Cursor ignores whatever id the
+  // host carries, so a host holding `anthropic/claude-sonnet-4.5` would run
+  // Cursor Auto and then persist that id as the model that ran, into the
+  // session row, the trace and eval metadata alike. Refused rather than
+  // silently rewritten: the host configuration is wrong and only its owner can
+  // say what they meant by it.
+  if (!brokered && !isRuntimeChosenModelSentinel(args.model.id)) {
+    return {
+      ok: false,
+      kind: "model-unsupported",
+      reason:
+        `the ${name} harness chooses its own model on your own account, so ` +
+        `this host cannot pin one — it carries "${args.model.id}", which the ` +
+        "runtime would ignore while the session recorded it as the model " +
+        `that ran. Reset this host's model, or pick a harness that runs the ` +
+        "model you chose",
+    };
+  }
+
   if (brokered && !isHostedCatalogModel(args.model.id, args.model.provider)) {
     return {
       ok: false,

@@ -4,6 +4,7 @@ import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
   isUnsafeHostedOutboundUrl,
+  resolveHostModelDefinition,
   resolveOrgModelConfig,
   resolveSyntheticModelSource,
 } from "../org-model-config";
@@ -238,5 +239,63 @@ describe("runtime-chosen sentinel (cursor/auto) vs org provider resolution", () 
     expect(definition.id).toBe("cursor/auto");
     expect(definition.name).toBe("Cursor Auto");
     expect(definition.provider).toBe("cursor");
+  });
+
+  it("lifts the host's sentinel WITHOUT the org-model-config round-trip", async () => {
+    // `resolveHostModelDefinition` sits between the request and the first token
+    // of a live turn, and its org lookup carries a 15 s timeout. Only an
+    // enabled org provider that LISTS the id can win there, and none can list
+    // `cursor/auto` — so on an external-account harness turn the call was pure
+    // latency plus a failure mode, on a turn that needs nothing from the org's
+    // model config.
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const definition = await resolveHostModelDefinition({
+      modelId: "cursor/auto",
+      // A project id is what ARMS the lookup — without one it is skipped for
+      // every id, so the assertion below would prove nothing.
+      projectId: "proj_1",
+      auth: { bearerToken: "user-a" },
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(definition).toMatchObject({
+      id: "cursor/auto",
+      name: "Cursor Auto",
+      provider: "cursor",
+    });
+  });
+
+  it("still asks the org config for an ordinary host model id", async () => {
+    // The bypass is the sentinel's, not every harness host's: a vendor-prefixed
+    // id really can belong to an org's OpenRouter selection, and that is the
+    // ambiguity the lookup exists to settle.
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        ok: true,
+        providers: [
+          {
+            providerKey: "openrouter",
+            enabled: true,
+            hasSecret: true,
+            secret: "sk-or",
+            selectedModels: ["anthropic/claude-sonnet-4.5"],
+          },
+        ],
+      }),
+    );
+
+    const definition = await resolveHostModelDefinition({
+      modelId: "anthropic/claude-sonnet-4.5",
+      projectId: "proj_sentinel_bypass_control",
+      auth: { bearerToken: "user-a" },
+    });
+
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(definition.provider).toBe("openrouter");
   });
 });

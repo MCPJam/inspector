@@ -1457,12 +1457,71 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(persisted.modelId).toBe("anthropic/claude-haiku-4.5");
     });
 
-    it("refuses a body whose model carries no id, rather than persisting a blank one", async () => {
-      // The harness rail is the one live path with no downstream model-id
-      // check (it skips both `deriveOrgProviderKey` and the harness model
-      // gates), so an id-less body used to run a whole turn and write
-      // `String(undefined)` / `""` into the session row.
-      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+    // Every shape a browser can actually put in `model.id`. `model` arrives
+    // through an unvalidated body cast (`hostedChatSchema` does not describe
+    // it), so `ModelDefinition.id` being REQUIRED in TypeScript says nothing
+    // about what was posted — and the harness rail is the one live path with no
+    // downstream model-id check (it skips both `deriveOrgProviderKey` and the
+    // harness model gates), so an unusable id used to run a whole turn and
+    // write `String(undefined)` / `""` into the session row.
+    //
+    // The assertion that matters is not the 400 but WHEN: before the engine and
+    // before any persist, so a rejected turn leaves no trace of a session that
+    // ran on nothing.
+    it.each([
+      ["missing", { provider: "anthropic", name: "Haiku" }],
+      ["null", { id: null, provider: "anthropic", name: "Haiku" }],
+      ["empty", { id: "", provider: "anthropic", name: "Haiku" }],
+      ["whitespace-only", { id: "   ", provider: "anthropic", name: "Haiku" }],
+    ])(
+      "refuses a body whose model id is %s, before running or persisting anything",
+      async (label, model) => {
+        fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+        const { app, token } = createWebTestApp();
+
+        const response = await postJson(
+          app,
+          "/api/web/chat-v2",
+          {
+            projectId: "project-1",
+            selectedServerIds: ["server-1"],
+            hostId: "host-cursor",
+            chatSessionId: `chat-cursor-invalid-${label}`,
+            messages: [{ role: "user", content: "preview request" }],
+            model,
+          },
+          token
+        );
+
+        expect(response.status).toBe(400);
+        expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+        expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it("does not promote a host model that is NOT the sentinel", async () => {
+      // The host-wins exception is justified by one fact — the host's id is the
+      // only honest description of a Cursor turn — and that fact holds only for
+      // the sentinel. A Cursor host pinned to an ordinary id describes nothing
+      // that runs either (the adapter passes no model regardless), so promoting
+      // it would swap one wrong model id for another and call it a fix.
+      //
+      // Such a host is a broken configuration, and the SHARED harness preflight
+      // refuses it outright — that refusal is asserted directly, against the
+      // real gate, in `harness/__tests__/harness-availability.test.ts`
+      // ("refuses an external-account host that pins an ORDINARY model id");
+      // the preflight is stubbed here so this test can see the gate underneath
+      // it. What this asserts is that the gate hands the preflight the id it
+      // was actually given, rather than laundering the host's wrong one in
+      // first.
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          selectedServerIds: ["server-1"],
+          modelId: "anthropic/claude-sonnet-4.5",
+          harness: "cursor",
+        },
+      });
       const { app, token } = createWebTestApp();
 
       const response = await postJson(
@@ -1471,17 +1530,26 @@ describe("web routes — chat-v2 hosted mode", () => {
         {
           projectId: "project-1",
           selectedServerIds: ["server-1"],
-          hostId: "host-cursor",
-          chatSessionId: "chat-cursor-3",
+          hostId: "host-cursor-misconfigured",
+          chatSessionId: "chat-cursor-4",
           messages: [{ role: "user", content: "preview request" }],
-          model: { provider: "anthropic", name: "Haiku" },
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
         },
         token
       );
 
-      expect(response.status).toBe(400);
-      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-      expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(checkHarnessRuntimeAvailableMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          model: expect.objectContaining({ id: "anthropic/claude-haiku-4.5" }),
+        })
+      );
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      expect(persisted.modelId).toBe("anthropic/claude-haiku-4.5");
     });
   });
 });

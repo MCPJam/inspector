@@ -25,6 +25,7 @@ import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config"
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -933,10 +934,16 @@ chatV2.post("/", async (c) => {
     // the host's `cursor/auto` sentinel describes the turn; recording the
     // browser's leftover pick would attribute the turn to a model that never
     // ran.
+    //
+    // …and only when the host carries the SENTINEL, matching the web rail: a
+    // Cursor host holding an ordinary id describes nothing that runs either, so
+    // promoting it would swap one wrong id for another. That host is refused by
+    // the harness preflight below.
     if (
       (isScenarioSession ||
         (resolvedExecution.harness &&
-          harnessUsesExternalAccount(resolvedExecution.harness))) &&
+          harnessUsesExternalAccount(resolvedExecution.harness) &&
+          isRuntimeChosenModelSentinel(resolvedExecution.modelId))) &&
       hostRuntimeConfig &&
       model &&
       resolvedExecution.modelId &&
@@ -1038,7 +1045,15 @@ chatV2.post("/", async (c) => {
     // lazily below (resolveMcpJamAuthHeader).
     let mcpJamAuthHeader = requestAuthHeader;
     const resolveMcpJamAuthHeader = async () => {
-      if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;
+      // Keyed on the FREE-PATH predicate, not on "MCPJam provides this model".
+      // An external-account harness turn takes the same branch below and needs
+      // the same bearer for everything that branch does with it — persisting
+      // the session, reserving the box, fetching runtime config. Gating the
+      // mint on `isMcpJamProvidedModel` left an anonymous Cursor turn holding
+      // `undefined` and 503-ing on "Unable to authenticate with MCPJam
+      // servers" before the harness ever started, on a host the preflight had
+      // just called ready.
+      if (mcpJamAuthHeader || !usesMcpjamFreePath) return mcpJamAuthHeader;
       try {
         mcpJamAuthHeader = (await getProductionGuestAuthHeader()) ?? undefined;
       } catch {
@@ -1051,7 +1066,7 @@ chatV2.post("/", async (c) => {
     // it before tool prep too, otherwise host-enabled built-ins are omitted
     // even though the later MCPJam model path can authenticate the turn.
     if (
-      isMcpJamProvidedModel &&
+      usesMcpjamFreePath &&
       !mcpJamAuthHeader &&
       process.env.CONVEX_HTTP_URL
     ) {
