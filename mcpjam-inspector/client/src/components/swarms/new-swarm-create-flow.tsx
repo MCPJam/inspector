@@ -18,7 +18,10 @@ import { Textarea } from "@mcpjam/design-system/textarea";
 import { ChevronLeft, Loader2, X } from "lucide-react";
 import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
-import { RequiredMark } from "@/components/shared/required-mark";
+import {
+  RequiredLegend,
+  RequiredMark,
+} from "@/components/shared/required-mark";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
@@ -1798,6 +1801,7 @@ export function NewSwarmCreateFlow({
               <p className="text-sm font-medium leading-relaxed text-foreground">
                 Set up your environment and then describe your users.
               </p>
+              <RequiredLegend />
             </div>
 
             <div className="space-y-2">
