@@ -19,7 +19,8 @@ import {
 } from "./convex-environment-client.js";
 
 export type FetchEnvironmentContextResult =
-  { ok: true; context: EnvironmentRuntimeContext | null } | { ok: false };
+  | { ok: true; context: EnvironmentRuntimeContext | null }
+  | { ok: false };
 
 export async function fetchEnvironmentContext(
   bearer: string,

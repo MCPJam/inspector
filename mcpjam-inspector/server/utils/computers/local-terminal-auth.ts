@@ -66,16 +66,14 @@ function pruneExpired(now: number): void {
  */
 export function issueLocalTerminalNonce(
   projectId: string,
-  consentFingerprint: string,
+  consentFingerprint: string
 ): {
   nonce: string;
   expiresAtMs: number;
 } {
   const validated = validateLocalProjectKey(projectId);
   if (!consentFingerprint) {
-    throw new Error(
-      "A consent capability is required to mint a terminal nonce.",
-    );
+    throw new Error("A consent capability is required to mint a terminal nonce.");
   }
   const now = Date.now();
   pruneExpired(now);
@@ -103,7 +101,7 @@ export function issueLocalTerminalNonce(
  * so a caller learns nothing from how long a rejection took.
  */
 export function consumeLocalTerminalNonce(
-  presented: string | null | undefined,
+  presented: string | null | undefined
 ): { projectId: string; consentFingerprint: string } | null {
   const now = Date.now();
   pruneExpired(now);

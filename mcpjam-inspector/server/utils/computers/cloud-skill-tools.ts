@@ -98,7 +98,7 @@ function sortByName<T extends { name: string }>(items: T[]): T[] {
 
 function budgetedCatalogBody(
   entries: Array<{ name: string; description: string }>,
-  modelContextTokens?: number,
+  modelContextTokens?: number
 ): { body: string; omittedRefs: string[] } {
   const budgetChars = skillMetadataBudgetChars(modelContextTokens);
   const { lines, omittedRefs } = renderBudgetedSkillCatalog(
@@ -106,7 +106,7 @@ function budgetedCatalogBody(
       ref: entry.name,
       description: entry.description,
     })),
-    budgetChars,
+    budgetChars
   );
   return { body: formatSkillCatalogBody(lines, omittedRefs), omittedRefs };
 }
@@ -200,9 +200,7 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
         name: z.string().describe("The skill name."),
         path: z
           .string()
-          .describe(
-            "Relative path within the skill (e.g., 'scripts/fill.py').",
-          ),
+          .describe("Relative path within the skill (e.g., 'scripts/fill.py')."),
       }),
       execute: async ({ name, path }) => {
         if (!NAME_RE.test(name)) {
@@ -246,9 +244,10 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 export function skillsFailureFrom(
   err: unknown,
-  latencyMs: number,
+  latencyMs: number
 ): SkillsFetchFailure {
-  const errorClass = err instanceof Error ? err.constructor.name : typeof err;
+  const errorClass =
+    err instanceof Error ? err.constructor.name : typeof err;
   const status = err instanceof CloudSkillsError ? err.status : undefined;
   return {
     errorClass,
@@ -282,11 +281,11 @@ export type CloudSkillToolsAndPrompt = {
  * `skillsFetchFailed`, and callers of this function do the same.
  */
 export async function listCloudRuntimeSkills(
-  ctx: CloudSkillsContext,
+  ctx: CloudSkillsContext
 ): Promise<RuntimeStandaloneSkill[]> {
   const skills = await raceWithTimeout(
     listCloudSkills(ctx),
-    CLOUD_SKILLS_FETCH_TIMEOUT_MS,
+    CLOUD_SKILLS_FETCH_TIMEOUT_MS
   );
   return skills.map((skill) => ({
     skillId: skill.skillId,
@@ -321,7 +320,7 @@ export async function listCloudRuntimeSkills(
           const content = await readCloudSkillFile(
             ctx,
             skill.skillId,
-            file.path,
+            file.path
           );
           // Text and binary arrive on different fields; the caller re-applies
           // its own mime/size policy to whatever bytes come back, so both are
@@ -348,13 +347,13 @@ export async function listCloudRuntimeSkills(
  */
 export async function getCloudSkillToolsAndPrompt(
   ctx: CloudSkillsContext,
-  options?: { modelContextTokens?: number },
+  options?: { modelContextTokens?: number }
 ): Promise<CloudSkillToolsAndPrompt> {
   const started = Date.now();
   try {
     const skills = await raceWithTimeout(
       listCloudSkills(ctx),
-      CLOUD_SKILLS_FETCH_TIMEOUT_MS,
+      CLOUD_SKILLS_FETCH_TIMEOUT_MS
     );
     const latencyMs = Date.now() - started;
     logger.info("[cloud-skills] catalog fetch", {
@@ -367,12 +366,12 @@ export async function getCloudSkillToolsAndPrompt(
     }
     const { body, omittedRefs } = budgetedCatalogBody(
       skills,
-      options?.modelContextTokens,
+      options?.modelContextTokens
     );
     if (omittedRefs.length > 0) {
       logger.warn(
         "[cloud-skills] skill metadata budget exceeded; skills omitted from prompt catalog",
-        { omitted: omittedRefs, total: skills.length },
+        { omitted: omittedRefs, total: skills.length }
       );
     }
     return {
@@ -392,7 +391,7 @@ export async function getCloudSkillToolsAndPrompt(
         latencyMs: skillsFetchFailed.latencyMs,
         projectId: ctx.projectId,
         message: skillsFetchFailed.message,
-      },
+      }
     );
     return {
       tools: {},
@@ -455,7 +454,7 @@ export type PinnedSkillToolSet = Partial<PinnedSkillTools>;
  */
 export function getPinnedSkillToolsAndPrompt(
   skills: PinnableSkill[],
-  options?: { modelContextTokens?: number },
+  options?: { modelContextTokens?: number }
 ): {
   tools: PinnedSkillToolSet;
   systemPromptSection: string;
@@ -465,12 +464,12 @@ export function getPinnedSkillToolsAndPrompt(
   }
   const { body, omittedRefs } = budgetedCatalogBody(
     skills,
-    options?.modelContextTokens,
+    options?.modelContextTokens
   );
   if (omittedRefs.length > 0) {
     logger.warn(
       "[pinned-skills] skill metadata budget exceeded; skills omitted from prompt catalog",
-      { omitted: omittedRefs, total: skills.length },
+      { omitted: omittedRefs, total: skills.length }
     );
   }
   return {

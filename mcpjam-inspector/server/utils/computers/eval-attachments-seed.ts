@@ -72,7 +72,7 @@ export async function seedAttachmentsIntoSandbox(args: {
   if (attachments.length === 0) return;
   if (attachments.length > EVAL_ATTACHMENTS_MAX_COUNT) {
     throw new Error(
-      `This eval case has ${attachments.length} attachments, over the limit of ${EVAL_ATTACHMENTS_MAX_COUNT}.`,
+      `This eval case has ${attachments.length} attachments, over the limit of ${EVAL_ATTACHMENTS_MAX_COUNT}.`
     );
   }
   const fetchImpl = args.fetchImpl ?? fetch;
@@ -85,15 +85,15 @@ export async function seedAttachmentsIntoSandbox(args: {
       // The pinned blob is gone (deleted / snapshot missing). Fail rather than
       // run the case without a file it was authored to rely on.
       throw new Error(
-        `Attachment "${att.name}" is no longer available (its pinned content could not be resolved) — failing the iteration instead of running without it.`,
+        `Attachment "${att.name}" is no longer available (its pinned content could not be resolved) — failing the iteration instead of running without it.`
       );
     }
     totalBytes += att.size;
     if (totalBytes > EVAL_ATTACHMENTS_MAX_TOTAL_BYTES) {
       throw new Error(
         `This eval case's attachments exceed the ${Math.round(
-          EVAL_ATTACHMENTS_MAX_TOTAL_BYTES / (1024 * 1024),
-        )} MB per-case limit.`,
+          EVAL_ATTACHMENTS_MAX_TOTAL_BYTES / (1024 * 1024)
+        )} MB per-case limit.`
       );
     }
     let response: Response;
@@ -105,7 +105,7 @@ export async function seedAttachmentsIntoSandbox(args: {
     }
     if (!response.ok) {
       throw new Error(
-        `Failed to download attachment "${att.name}" (${response.status}).`,
+        `Failed to download attachment "${att.name}" (${response.status}).`
       );
     }
     files.push({
@@ -123,12 +123,12 @@ export async function seedAttachmentsIntoSandbox(args: {
  * announce.
  */
 export function buildAttachmentsNote(
-  attachments: ResolvedEvalAttachment[],
+  attachments: ResolvedEvalAttachment[]
 ): string | null {
   if (attachments.length === 0) return null;
   const lines = attachments.map((att) => `- ${att.name}: ${att.path}`);
   return `[Attachments uploaded to the computer — use the bash tool to read them]\n${lines.join(
-    "\n",
+    "\n"
   )}`;
 }
 
@@ -158,7 +158,7 @@ export async function seedEvalCaseAttachments(args: {
   });
   if (!resolved.ok) {
     throw new Error(
-      `Could not resolve this eval's attachments: ${resolved.error}`,
+      `Could not resolve this eval's attachments: ${resolved.error}`
     );
   }
 
@@ -173,11 +173,11 @@ export async function seedEvalCaseAttachments(args: {
   // no case to match and seeds nothing.
   if (!args.testCaseId) return { note: null };
   const match = resolved.value.cases.find(
-    (c) => c.testCaseId === args.testCaseId,
+    (c) => c.testCaseId === args.testCaseId
   );
   if (!match) {
     throw new Error(
-      `Could not find case "${args.testCaseId}" in this run's attachments snapshot — refusing to run it without checking for files it may rely on.`,
+      `Could not find case "${args.testCaseId}" in this run's attachments snapshot — refusing to run it without checking for files it may rely on.`
     );
   }
   const attachments = match.attachments;

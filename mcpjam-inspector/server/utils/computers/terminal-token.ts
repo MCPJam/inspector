@@ -59,10 +59,8 @@ type TerminalKeySet = ReturnType<typeof createLocalJWKSet>;
  *  a cold cache under a burst of handshakes triggers ONE network call, not
  *  one per handshake (and a broken endpoint one per cooldown window, not one
  *  per handshake). Reset to null once it settles into `cachedJwks`. */
-let inFlightJwks: {
-  url: string;
-  promise: Promise<TerminalKeySet | null>;
-} | null = null;
+let inFlightJwks: { url: string; promise: Promise<TerminalKeySet | null> } | null =
+  null;
 
 export function resetComputerTerminalJwksCacheForTests(): void {
   cachedJwks = null;
@@ -82,7 +80,7 @@ async function fetchTerminalJwks(url: string): Promise<TerminalKeySet | null> {
       }
     } else {
       logger.warn(
-        `[computers] terminal JWKS fetch failed (status ${response.status})`,
+        `[computers] terminal JWKS fetch failed (status ${response.status})`
       );
     }
   } catch (error) {
@@ -124,7 +122,7 @@ async function getTerminalJwks(): Promise<TerminalKeySet | null> {
 
 /** Shape-checks the shared claim contract and narrows to our claims type. */
 function toTerminalClaims(
-  payload: Record<string, unknown>,
+  payload: Record<string, unknown>
 ): ComputerTerminalClaims | null {
   if (payload.purpose !== PURPOSE) return null;
   if (typeof payload.sub !== "string" || payload.sub.length === 0) return null;
@@ -145,7 +143,7 @@ function toTerminalClaims(
 }
 
 async function verifyRs256TerminalToken(
-  token: string,
+  token: string
 ): Promise<ComputerTerminalClaims | null> {
   const jwks = await getTerminalJwks();
   if (!jwks) return null;
@@ -171,7 +169,7 @@ async function verifyRs256TerminalToken(
  * throws on malformed input.
  */
 export async function verifyComputerTerminalToken(
-  token: string,
+  token: string
 ): Promise<ComputerTerminalClaims | null> {
   let alg: unknown;
   try {

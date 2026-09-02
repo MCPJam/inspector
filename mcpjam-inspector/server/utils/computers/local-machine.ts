@@ -82,7 +82,7 @@ export const LOCAL_COMMAND_ENV_ALLOWLIST: readonly string[] = [
 ];
 
 export function buildLocalCommandEnv(
-  base: NodeJS.ProcessEnv = process.env,
+  base: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const name of LOCAL_COMMAND_ENV_ALLOWLIST) {
@@ -96,7 +96,7 @@ let cachedBashPath: string | null | undefined;
 
 /** Absolute path to a usable `bash`, or null (honest Windows/odd-PATH degrade). */
 export function resolveLocalBashPath(
-  base: NodeJS.ProcessEnv = process.env,
+  base: NodeJS.ProcessEnv = process.env
 ): string | null {
   if (cachedBashPath !== undefined) return cachedBashPath;
   const names = process.platform === "win32" ? ["bash.exe"] : ["bash"];
@@ -120,7 +120,8 @@ export function resetLocalBashPathCacheForTests(): void {
 }
 
 export function isLocalComputerEngineAvailable():
-  { available: true } | { available: false; reason: string } {
+  | { available: true }
+  | { available: false; reason: string } {
   if (HOSTED_MODE) {
     return { available: false, reason: "hosted servers never execute locally" };
   }
@@ -159,7 +160,7 @@ export function getLocalComputerWorkspaceRoot(): string {
 
 /** Resolve (and lazily create, 0700) the per-project workspace directory. */
 export async function getLocalComputerWorkspaceDir(
-  projectId: string,
+  projectId: string
 ): Promise<string> {
   const root = getLocalComputerWorkspaceRoot();
   const dir = resolve(root, validateLocalProjectKey(projectId));
@@ -206,7 +207,7 @@ export async function appendLocalCommandLog(entry: {
     const file = join(dir, "commands.jsonl");
     const size = await stat(file).then(
       (s) => s.size,
-      () => 0,
+      () => 0
     );
     if (size > LOG_ROTATE_BYTES) {
       await rename(file, `${file}.1`).catch(() => {});
@@ -303,8 +304,8 @@ export const localBashRunner: BashRunner = async ({
           // A signal exit (timeout/abort kill) reports 124, the conventional
           // timeout exit code, so the model sees a non-zero shell outcome.
           exitCode: code ?? (sig ? 124 : 1),
-        }),
-      ),
+        })
+      )
     );
   });
 };
@@ -326,7 +327,7 @@ export interface RunLocalComputerCommandArgs {
  */
 export async function runLocalComputerCommand(
   args: RunLocalComputerCommandArgs,
-  runner: BashRunner = localBashRunner,
+  runner: BashRunner = localBashRunner
 ): Promise<RunComputerCommandResult> {
   const availability = isLocalComputerEngineAvailable();
   if (!availability.available) {
@@ -345,7 +346,7 @@ export async function runLocalComputerCommand(
   }
   const timeoutSeconds = Math.min(
     Math.max(args.timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
-    MAX_COMMAND_TIMEOUT_S,
+    MAX_COMMAND_TIMEOUT_S
   );
   let result: { stdout: string; stderr: string; exitCode: number };
   try {
@@ -371,7 +372,10 @@ export async function runLocalComputerCommand(
     source: "chat",
     command: args.command,
     exitCode: result.exitCode,
-    outputPreview: truncate(`${result.stdout}\n${result.stderr}`.trim(), 2_000),
+    outputPreview: truncate(
+      `${result.stdout}\n${result.stderr}`.trim(),
+      2_000
+    ),
   });
 
   const authUrls = detectAuthUrls(`${result.stdout}\n${result.stderr}`);

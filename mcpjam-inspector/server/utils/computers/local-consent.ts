@@ -51,7 +51,7 @@ function withConsentMutationLock<T>(op: () => Promise<T>): Promise<T> {
   const run = mutationChain.then(op, op);
   mutationChain = run.then(
     () => undefined,
-    () => undefined,
+    () => undefined
   );
   return run;
 }
@@ -114,7 +114,7 @@ export function grantLocalComputerConsent(): Promise<{
  * Same single-read property, same lock-free behavior.
  */
 export async function verifyLocalComputerConsent(
-  token: string | null | undefined,
+  token: string | null | undefined
 ): Promise<boolean> {
   return (await verifyAndFingerprintLocalConsent(token)) !== null;
 }
@@ -150,7 +150,7 @@ export async function getLocalConsentFingerprint(): Promise<string | null> {
  * fingerprint against the live capability.
  */
 export async function verifyAndFingerprintLocalConsent(
-  token: string | null | undefined,
+  token: string | null | undefined
 ): Promise<string | null> {
   if (!token || token.length < 16 || token.length > 256) return null;
   const persisted = await readPersistedConsent();
@@ -171,7 +171,7 @@ export async function verifyAndFingerprintLocalConsent(
  * unconditionally.
  */
 export function revokeLocalComputerConsent(
-  token?: string | null,
+  token?: string | null
 ): Promise<void> {
   // The verify and the unlink must be one atomic step (the mutation lock):
   // otherwise a grant landing between them rotates the capability and this

@@ -97,9 +97,7 @@ function normalizeDataPlaneUrl(raw: string | null | undefined): string | null {
  *  (e.g. a typo) is treated the same as unset — it does not suppress
  *  discovery, since it isn't actually overriding anything. */
 function getExplicitRemoteDataPlaneUrl(): string | null {
-  return normalizeDataPlaneUrl(
-    process.env.COMPUTERS_REMOTE_DATA_PLANE_URL?.trim(),
-  );
+  return normalizeDataPlaneUrl(process.env.COMPUTERS_REMOTE_DATA_PLANE_URL?.trim());
 }
 
 /** Populated once by `initComputersRemoteDataPlaneDiscovery`; null until then
@@ -146,12 +144,12 @@ export function initComputersRemoteDataPlaneDiscovery(): Promise<void> {
     try {
       const response = await fetch(
         new URL("/computers/data-plane-url", base).toString(),
-        { signal: AbortSignal.timeout(5000) },
+        { signal: AbortSignal.timeout(5000) }
       );
       if (!response.ok) return;
       const payload = (await response.json()) as { url?: unknown };
       discoveredRemoteUrl = normalizeDataPlaneUrl(
-        typeof payload.url === "string" ? payload.url : null,
+        typeof payload.url === "string" ? payload.url : null
       );
     } catch (error) {
       logger.error("[computers] data-plane auto-discovery failed", error);
@@ -167,9 +165,7 @@ export function initComputersRemoteDataPlaneDiscovery(): Promise<void> {
  * (`GET /api/web/computers/config`) — that response must never be a false
  * "unconfigured" raced against startup discovery still in flight.
  */
-export async function resolveComputersRemoteDataPlaneUrl(): Promise<
-  string | null
-> {
+export async function resolveComputersRemoteDataPlaneUrl(): Promise<string | null> {
   await initComputersRemoteDataPlaneDiscovery();
   return getComputersRemoteDataPlaneUrl();
 }

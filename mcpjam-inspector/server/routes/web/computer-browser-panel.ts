@@ -64,7 +64,7 @@ const LEASE_TTL_MS = 2 * 60_000;
 type Claims = { userId: string; computerId: string; projectId: string };
 
 type AuthFailure = { status: 401 | 503; error: string };
-type AuthResult = { ok: true; claims: Claims } | ({ ok: false } & AuthFailure);
+type AuthResult = { ok: true; claims: Claims } | { ok: false } & AuthFailure;
 
 /** Deps seam so the route is testable without E2B or a live Convex. */
 export interface BrowserPanelDeps {
