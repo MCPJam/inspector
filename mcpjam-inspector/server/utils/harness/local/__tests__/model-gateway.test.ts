@@ -199,6 +199,103 @@ describe("what the gateway refuses", () => {
     }
   });
 
+  it("cannot be walked out of its upstream prefix with dot segments", async () => {
+    // `isAllowedPath` is a prefix test, and `new URL()` normalizes. Between the
+    // two, `/v1/messages/../../…` passes the allowlist as a string and then
+    // resolves to somewhere else entirely on the upstream origin — with the
+    // real lease attached and a proof of possession signed over the path it
+    // walked to. `fetch` normalizes client-side, so this speaks HTTP directly.
+    let forwardedTo: string | null = null;
+    const g = await gateway({
+      fetchImpl: async (input) => {
+        forwardedTo = String(input);
+        return new Response("{}", { status: 200 });
+      },
+    });
+    for (const path of [
+      "/v1/messages/../../../../v1/admin",
+      "/v1/messages/..%2f..%2fadmin",
+      "/v1/messages/./../../keys",
+      "/v1/messages/count_tokens/../../../../org",
+    ]) {
+      const { status } = await rawRequest(g.port, {
+        method: "POST",
+        path,
+        headers: { "x-api-key": g.sessionCapability },
+        body: "{}",
+      });
+      expect({ path, status }).toEqual({ path, status: 404 });
+    }
+    expect(forwardedTo).toBeNull();
+  });
+
+  it("keeps forwarding the ordinary paths the CLI actually sends", async () => {
+    // The other half of the rule above: refusing dot segments must not refuse
+    // the request shapes that exist. `/v1/messages?beta=…` and the
+    // count_tokens sibling are what the adapter emits.
+    const forwarded: string[] = [];
+    const g = await gateway({
+      fetchImpl: async (input) => {
+        forwarded.push(String(input));
+        return new Response("{}", { status: 200 });
+      },
+    });
+    for (const path of [
+      "/v1/messages",
+      "/v1/messages?beta=true",
+      "/v1/messages/count_tokens",
+    ]) {
+      const { status } = await rawRequest(g.port, {
+        method: "POST",
+        path,
+        headers: { "x-api-key": g.sessionCapability },
+        body: "{}",
+      });
+      expect({ path, status }).toEqual({ path, status: 200 });
+    }
+    expect(forwarded).toEqual([
+      "https://api.example.test/web/harness/model-proxy/anthropic/v1/messages",
+      "https://api.example.test/web/harness/model-proxy/anthropic/v1/messages?beta=true",
+      "https://api.example.test/web/harness/model-proxy/anthropic/v1/messages/count_tokens",
+    ]);
+  });
+
+  it("never follows a redirect, because two of the three lease headers survive one", async () => {
+    // The fetch spec strips `Authorization` on a cross-origin redirect. It does
+    // not strip `x-mcpjam-harness-lease`, which carries the same secret, nor
+    // the proof of possession. So the redirect is refused rather than followed.
+    let redirectMode: RequestRedirect | undefined;
+    const g = await gateway({
+      fetchImpl: async (_input, init) => {
+        redirectMode = init?.redirect;
+        return new Response("{}", { status: 200 });
+      },
+    });
+    await fetch(`${g.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": g.sessionCapability },
+      body: "{}",
+    });
+    expect(redirectMode).toBe("error");
+  });
+
+  it("refuses an upstream that is neither https nor loopback", async () => {
+    // The lease travels as a bearer token on every forwarded request. A
+    // plaintext upstream that is not on this machine puts it on the wire.
+    await expect(
+      startLocalModelGateway({
+        lease: fakeLease("jti_plain"),
+        upstreamBaseUrl: "http://api.example.test/proxy",
+      }),
+    ).rejects.toThrow(/https/i);
+    // Loopback stays allowed: the conformance harness's mock upstream is
+    // plain http on 127.0.0.1, and nothing leaves the machine.
+    const local = await gateway({
+      upstreamBaseUrl: "http://127.0.0.1:9/proxy",
+    });
+    expect(local.port).toBeGreaterThan(0);
+  });
+
   it("refuses everything once revoked", async () => {
     const g = await gateway();
     g.revoke();
@@ -283,6 +380,102 @@ describe("what the gateway refuses", () => {
   });
 });
 
+describe("what the gateway does while a generation is streaming", () => {
+  /** A response body that emits on demand and reports being cancelled. */
+  function countedStream(chunk: Buffer, chunks: number, perChunkMs = 0) {
+    const state = { pulled: 0, cancelled: false };
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (state.pulled >= chunks) {
+          controller.close();
+          return;
+        }
+        state.pulled += 1;
+        // A generation arrives over time. `perChunkMs` is what makes that true
+        // here, so a test about an ABANDONED stream cannot accidentally race a
+        // stream that already finished.
+        if (perChunkMs > 0) {
+          await new Promise((r) => setTimeout(r, perChunkMs));
+        }
+        controller.enqueue(new Uint8Array(chunk));
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    });
+    return { state, body };
+  }
+
+  /** Sends a request and deliberately never reads the response. */
+  function requestWithoutReading(
+    port: number,
+    capability: string,
+  ): Promise<import("node:net").Socket> {
+    return new Promise((resolvePromise) => {
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(
+          [
+            "POST /v1/messages HTTP/1.1",
+            `host: 127.0.0.1:${port}`,
+            `x-api-key: ${capability}`,
+            "content-length: 2",
+            "",
+            "{}",
+          ].join("\r\n"),
+        );
+        resolvePromise(socket);
+      });
+      // No `data` handler and no resume: the socket stays paused, the receive
+      // window closes, and the gateway's writes stop being drained — which is
+      // exactly the slow reader this is about.
+      socket.on("error", () => {});
+    });
+  }
+
+  it("stops pulling from upstream when the client stops reading", async () => {
+    // Without backpressure the whole generation is pulled at memory speed and
+    // buffered in this process — 64 MB here, an unbounded transcript in
+    // production — while the CLI is still working through the first chunk.
+    const { state, body } = countedStream(Buffer.alloc(512 * 1024, 0x61), 128);
+    const g = await gateway({
+      fetchImpl: async () =>
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    const socket = await requestWithoutReading(g.port, g.sessionCapability);
+    await new Promise((r) => setTimeout(r, 750));
+    const pulled = state.pulled;
+    socket.destroy();
+    expect(pulled).toBeLessThan(64);
+  });
+
+  it("cancels the upstream generation when the client goes away", async () => {
+    // A cancelled turn must stop costing tokens. If nothing cancels the reader,
+    // the upstream keeps generating — and keeps metering — against a response
+    // nobody will ever read.
+    // 20 ms a chunk for 5 000 chunks: a hundred seconds of generation, so the
+    // only way this stream ends inside the test is by being cancelled.
+    const { state, body } = countedStream(Buffer.alloc(64, 0x61), 5_000, 20);
+    const g = await gateway({
+      fetchImpl: async () =>
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    const socket = await requestWithoutReading(g.port, g.sessionCapability);
+    await new Promise((r) => setTimeout(r, 100));
+    socket.destroy();
+    const deadline = Date.now() + 2_000;
+    while (!state.cancelled && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(state.cancelled).toBe(true);
+  });
+});
+
 /**
  * A request built by hand on a socket.
  *
@@ -359,6 +552,21 @@ describe("the host and path rules on their own", () => {
     ["POST", "/v1/messagesX", false],
     ["GET", "/v1/messages", false],
     ["POST", "/v1/models", false],
+    // Anything that changes meaning when the URL is resolved. The prefix test
+    // alone would pass all of these.
+    ["POST", "/v1/messages/../admin", false],
+    ["POST", "/v1/messages/./../../admin", false],
+    ["POST", "/v1/messages/%2e%2e/admin", false],
+    ["POST", "/v1/messages/..%2fadmin", false],
+    ["POST", "/v1/messages/sub/../ok", false],
+    ["POST", "/v1/messages\\..\\admin", false],
+    ["POST", "/v1/messages/%zz", false],
+    ["POST", "/v1/messages/../admin?ok=1", false],
+    // …and the shapes that are merely unusual, which stay allowed: a dot is
+    // only a dot when it is the WHOLE segment.
+    ["POST", "/v1/messages/..beta", true],
+    ["POST", "/v1/messages/a..b", true],
+    ["POST", "/v1/messages/count_tokens?beta=x", true],
   ])("isAllowedPath(%s %s)", (method, path, expected) => {
     expect(isAllowedPath(method, path)).toBe(expected);
   });

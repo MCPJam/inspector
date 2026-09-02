@@ -82,6 +82,21 @@ What the design *does* guarantee:
   the server process, and every request it forwards carries a signature from the
   machine's registered key — so a leaked lease is not enough, and a captured
   signature is bound to one method, path, timestamp and nonce.
+- **The gateway forwards to one place, and only downwards.** A path that passes
+  the allowlist is checked AGAIN after the upstream URL is resolved: the
+  allowlist compares strings and `new URL` normalizes, so `/v1/messages/../../…`
+  would otherwise pass as text and land in the backend's own route namespace
+  with the real lease attached. The resolved URL must still sit under the
+  proxy's own path or the request is a 404. Redirects are refused rather than
+  followed (the fetch spec strips `Authorization` across origins and strips
+  neither of our two lease headers), and the upstream must be https unless it is
+  on loopback, because the lease travels as a bearer token on every request.
+  A self-hosted backend reached over plain http on a LAN address is refused by
+  that last rule — deliberately; put it behind TLS or on loopback.
+- **An abandoned turn stops costing money.** The gateway streams the upstream
+  response with backpressure and cancels the upstream read when the client goes
+  away, so a cancelled generation stops being metered instead of running to
+  completion into a socket nobody is holding.
 - **No renderer names a path.** The Electron picker runs in the main process; the
   npx route accepts a path only same-origin, and canonicalizes it.
 

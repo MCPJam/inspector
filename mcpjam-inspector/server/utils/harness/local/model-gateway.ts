@@ -23,7 +23,14 @@
  *   - `Host` must be loopback, so a DNS-rebound page cannot reach it;
  *   - ANY `Origin` header is rejected — nothing in a browser should ever be
  *     talking to this, so the presence of the header is itself the signal;
- *   - only `POST /v1/messages*` and `count_tokens` are forwarded;
+ *   - only `POST /v1/messages*` and `count_tokens` are forwarded, and the
+ *     resolved upstream URL is re-checked to still sit under the proxy's own
+ *     path — a prefix test plus URL normalization would otherwise let
+ *     `/v1/messages/../../…` walk out of it;
+ *   - the upstream must be https, or loopback, because the lease travels on
+ *     every forwarded request as a bearer token;
+ *   - redirects are refused rather than followed, because the fetch spec
+ *     strips `Authorization` across origins and not our two lease headers;
  *   - `HEAD /api/hello` answers 200 WITHOUT a capability, because the CLI
  *     probes it before its first request and a 401 there is noise that its
  *     "API reachable" heuristics may read;
@@ -125,6 +132,17 @@ export async function startLocalModelGateway(
   }
   const jti: string = parsedJti;
   const upstream = new URL(options.upstreamBaseUrl);
+  // The lease is a bearer token on every forwarded request. Plaintext is only
+  // ever acceptable when the bytes do not leave the machine, which is what the
+  // conformance harness's mock upstream is.
+  if (upstream.protocol !== "https:" && !isLoopbackHost(upstream.host)) {
+    throw new Error(
+      "the harness model proxy must be reached over https unless it is on " +
+        "loopback; refusing to put the lease on the wire in the clear",
+    );
+  }
+  /** The proxy's own path. Nothing this gateway forwards may resolve above it. */
+  const upstreamBasePath = upstream.pathname.replace(/\/+$/, "");
   const platform = options.platform ?? process.platform;
   const doFetch = options.fetchImpl ?? fetch;
   const resolvePeer = options.resolvePeerPid ?? resolvePeerPid;
@@ -228,10 +246,21 @@ export async function startLocalModelGateway(
       return;
     }
 
-    const target = new URL(
-      `${upstream.pathname.replace(/\/+$/, "")}${path}`,
-      upstream.origin,
-    );
+    const target = new URL(`${upstreamBasePath}${path}`, upstream.origin);
+    // `isAllowedPath` compares strings; `new URL` normalizes. Between the two,
+    // a path that passed the allowlist can still resolve somewhere else on the
+    // upstream origin — `/v1/messages/../../…` lands in the backend's own
+    // route namespace, with the real lease attached and a proof of possession
+    // signed over wherever it walked to. So the RESOLVED url is checked, and
+    // that check is the guarantee; the segment rule in `isAllowedPath` is just
+    // the readable half of it.
+    if (
+      target.origin !== upstream.origin ||
+      !isUnderBasePath(target.pathname, upstreamBasePath)
+    ) {
+      refuse(res, 404, "endpoint not allowed");
+      return;
+    }
     // The proof of possession is over the path the UPSTREAM sees, because that
     // is the path the backend verifies against.
     const pop = await signProxiedRequest({
@@ -261,6 +290,11 @@ export async function startLocalModelGateway(
             : {}),
         },
         body: body as unknown as BodyInit,
+        // A cross-origin redirect strips `Authorization` per the fetch spec and
+        // strips neither `x-mcpjam-harness-lease` nor the proof of possession,
+        // so following one would hand the lease to whoever the upstream named.
+        // Our upstream has no reason to redirect; if it does, that is a 502.
+        redirect: "error",
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
     } catch (error) {
@@ -296,15 +330,36 @@ export async function startLocalModelGateway(
     // Streamed, so a generation reaches the CLI token by token rather than
     // being buffered here — and so nothing accumulates a transcript in memory.
     const reader = upstreamResponse.body.getReader();
+    // `close` on a ServerResponse fires when the socket goes, whether or not we
+    // finished writing — `writableFinished` is what tells the two apart.
+    let clientGone = false;
+    const noteClose = (): void => {
+      if (!res.writableFinished) clientGone = true;
+    };
+    res.on("close", noteClose);
+    let completed = false;
     try {
-      for (;;) {
+      while (!clientGone) {
         const { done, value } = await reader.read();
-        if (done) break;
-        if (value !== undefined) res.write(Buffer.from(value));
+        if (done) {
+          completed = true;
+          break;
+        }
+        if (value === undefined || clientGone) continue;
+        // A `false` from `write` means the socket's buffer is full. Waiting for
+        // it to drain is what stops a fast generation from being pulled out of
+        // the upstream at memory speed and held HERE while a slow CLI works
+        // through the first chunk. Without it a long turn is buffered whole.
+        if (!res.write(Buffer.from(value))) await drained(res);
       }
     } finally {
-      res.end();
+      res.off("close", noteClose);
+      // An abandoned turn must stop costing tokens: with nothing to cancel the
+      // reader, the upstream keeps generating — and keeps metering — against a
+      // response nobody will ever read.
+      if (!completed) await reader.cancel().catch(() => undefined);
       reader.releaseLock();
+      res.end();
     }
   }
 
@@ -345,6 +400,31 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
+/**
+ * Resolves once the response can take more, or once there is nobody to take it.
+ *
+ * The `close` arm matters as much as the `drain` one: a client that vanished
+ * mid-generation will never drain, and awaiting only `drain` would strand the
+ * handler — holding the upstream connection open — until the fetch timeout.
+ */
+function drained(res: ServerResponse): Promise<void> {
+  return new Promise((resolvePromise) => {
+    const finish = (): void => {
+      res.off("drain", finish);
+      res.off("close", finish);
+      resolvePromise();
+    };
+    res.once("drain", finish);
+    res.once("close", finish);
+  });
+}
+
+/** Whether a resolved pathname is the proxy's own path, or sits beneath it. */
+export function isUnderBasePath(pathname: string, basePath: string): boolean {
+  if (basePath === "") return pathname.startsWith("/");
+  return pathname === basePath || pathname.startsWith(`${basePath}/`);
+}
+
 function stripQuery(path: string): string {
   const index = path.indexOf("?");
   return index === -1 ? path : path.slice(0, index);
@@ -363,8 +443,30 @@ export function isLoopbackHost(host: string | undefined): boolean {
   );
 }
 
+/**
+ * Whether a request path is free of anything that changes meaning when it is
+ * resolved. A dot segment does, and so does an encoded separator that becomes
+ * one; a backslash is a separator to some servers and not others; a control
+ * character has no business in a path at all.
+ */
+function hasPlainSegments(bare: string): boolean {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(bare);
+  } catch {
+    // Malformed percent-encoding: not a path we can reason about, so not one
+    // we forward.
+    return false;
+  }
+  if (/[\\\u0000-\u001f]/.test(decoded)) return false;
+  return decoded
+    .split("/")
+    .every((segment) => segment !== "." && segment !== "..");
+}
+
 export function isAllowedPath(method: string, path: string): boolean {
   const bare = stripQuery(path);
+  if (!hasPlainSegments(bare)) return false;
   return ALLOWED_PATHS.some(
     (entry) =>
       entry.method === method &&

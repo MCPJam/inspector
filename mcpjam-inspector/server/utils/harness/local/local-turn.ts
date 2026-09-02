@@ -47,7 +47,10 @@ import {
   getRegisteredKeyId,
   readLocalInstanceIdentity,
 } from "./instance-key.js";
-import { registerLocalHarnessSession } from "./session-registry.js";
+import {
+  forgetLocalHarnessSession,
+  registerLocalHarnessSession,
+} from "./session-registry.js";
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -315,6 +318,11 @@ export async function prepareLocalHarnessTurn(
       gateway.revoke();
       await gateway.close();
     } finally {
+      // Dropped from the registry here, not only on the stop-all path: a turn
+      // that ends normally leaves a record behind otherwise, and the map is
+      // what `stop-all` and the telemetry count read. Every completed local
+      // turn would add one more dead session to both.
+      forgetLocalHarnessSession(args.sessionId);
       await revokeLease(broker.runId, args.bearer);
     }
   });

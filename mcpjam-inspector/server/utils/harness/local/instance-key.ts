@@ -29,7 +29,7 @@
  * accessor that returns the key itself.
  */
 import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { logger } from "../../logger.js";
 import { getLocalMachineId, localHarnessStateRoot } from "./grants.js";
@@ -50,6 +50,15 @@ export interface InstanceKeyStore {
   encrypt: (plaintext: string) => string;
   decrypt: (ciphertext: string) => string;
 }
+
+/**
+ * The key is intact; the thing that unseals it is not here.
+ *
+ * Distinguished from every other unwrap failure because the two want opposite
+ * answers: a key we can never read again must be replaced, and a key we cannot
+ * read RIGHT NOW must be left exactly where it is.
+ */
+class KeystoreUnavailableError extends Error {}
 
 let keystore: InstanceKeyStore | null = null;
 
@@ -112,15 +121,21 @@ export async function loadLocalInstanceKey(): Promise<LoadedInstanceKey> {
     const machineId = await getLocalMachineId();
     const path = keyFilePath();
     let stored: StoredKey | null = null;
+    let fileExists = true;
     try {
       stored = JSON.parse(await readFile(path, "utf8")) as StoredKey;
-    } catch {
+    } catch (error) {
+      // "There is no key yet" and "there is a key and it is rubbish" are
+      // different situations: the first may be a race with another Inspector
+      // process minting one, and the second is ours to replace.
+      fileExists = (error as NodeJS.ErrnoException)?.code !== "ENOENT";
       stored = null;
     }
 
     if (stored !== null) {
       try {
         const privateKeyPem = unwrapPrivateKey(stored);
+        await repairKeyFileMode(path);
         const loaded: LoadedInstanceKey = {
           machineId,
           publicKey: stored.publicKey,
@@ -129,6 +144,14 @@ export async function loadLocalInstanceKey(): Promise<LoadedInstanceKey> {
         cached = loaded;
         return loaded;
       } catch (error) {
+        if (error instanceof KeystoreUnavailableError) {
+          // The key is fine. Minting over it would destroy a key the backend
+          // has registered, over a condition that clears on its own — an
+          // Electron main process that has not injected the store yet, a
+          // keychain still locked behind a login. Fail the turn instead; the
+          // next start finds the key waiting.
+          throw error;
+        }
         // A key we cannot unwrap is a key we cannot use. Minting a fresh one is
         // correct and safe: registration rotates the backend's record, and the
         // old key is revoked there rather than left usable.
@@ -159,12 +182,34 @@ export async function loadLocalInstanceKey(): Promise<LoadedInstanceKey> {
     }
 
     await mkdir(localHarnessStateRoot(), { recursive: true, mode: 0o700 });
+    const serialized = `${JSON.stringify(next, null, 2)}\n`;
     // 0600, and written before anything registers it: a key the backend knows
     // about but this machine cannot read would leave the installation unable to
     // sign for a lease it can obtain.
-    await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    //
+    // When there was no key at all the write is an ATOMIC CREATE, because the
+    // single-flight above is only single per PROCESS: an npx server and an
+    // Electron app starting together would otherwise each mint a key and race
+    // to write it, and the loser would hold one the backend never registered.
+    // Whoever creates the file wins, and everyone else adopts it.
+    if (!fileExists) {
+      try {
+        await writeFile(path, serialized, { mode: 0o600, flag: "wx" });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+        const adopted = await adoptExistingKey(path, machineId);
+        if (adopted !== null) {
+          cached = adopted;
+          return adopted;
+        }
+        await writeFile(path, serialized, { mode: 0o600 });
+      }
+    } else {
+      await writeFile(path, serialized, { mode: 0o600 });
+    }
+    // `mode` applies at CREATION only, so a rotation into a file whose mode
+    // drifted would inherit the wider one. This is what actually narrows it.
+    await repairKeyFileMode(path, true);
 
     const loaded: LoadedInstanceKey = {
       machineId,
@@ -181,10 +226,54 @@ export async function loadLocalInstanceKey(): Promise<LoadedInstanceKey> {
   }
 }
 
+/**
+ * Adopt the key another process created while we were minting ours.
+ *
+ * `null` means the file that beat us is not usable either, and the caller falls
+ * back to writing its own — which is the same outcome as before this race
+ * existed, not a worse one.
+ */
+async function adoptExistingKey(
+  path: string,
+  machineId: string,
+): Promise<LoadedInstanceKey | null> {
+  try {
+    const stored = JSON.parse(await readFile(path, "utf8")) as StoredKey;
+    return {
+      machineId,
+      publicKey: stored.publicKey,
+      privateKeyPem: unwrapPrivateKey(stored),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Narrow a key file back to owner-only if anything widened it. */
+async function repairKeyFileMode(path: string, quiet = false): Promise<void> {
+  // NTFS has no POSIX mode bits — `stat` reports 0o666 for every file — so the
+  // check would fire on every load and the chmod would mean nothing.
+  if (process.platform === "win32") return;
+  try {
+    const mode = (await stat(path)).mode & 0o777;
+    if ((mode & 0o077) === 0) return;
+    await chmod(path, 0o600);
+    if (!quiet) {
+      logger.warn("[local-harness] instance key file was not owner-only", {
+        // The mode, never the path: the path is a home directory.
+        mode: mode.toString(8),
+      });
+    }
+  } catch {
+    // Best effort. A key we cannot stat or chmod is still a key we can use, and
+    // refusing the turn over it would be worse than the exposure it reports.
+  }
+}
+
 function unwrapPrivateKey(stored: StoredKey): string {
   if (stored.protection === "os-keystore") {
     if (keystore === null || !keystore.isAvailable()) {
-      throw new Error(
+      throw new KeystoreUnavailableError(
         "this instance key is sealed by the OS keystore, which is not available",
       );
     }
