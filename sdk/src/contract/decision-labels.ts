@@ -234,9 +234,9 @@ export const STAGE_REASON_REMEDIES = Object.freeze({
   toolError:
     "read the error the server returned on the tool result: fix the handler if the arguments were valid, or tighten the input schema so the model cannot send what the handler rejects",
   protocolError:
-    "the call never produced a result: check that the server's handler returns within the call timeout and that its transport stays open for the whole call",
+    "the call returned a protocol error instead of a result: read the recorded error code, which says whether the server rejected the call or the connection between the two sides failed",
   renderFailed:
-    "check the resource template the tool result points at and the MIME type it declares; a widget that does not render is usually one of those two",
+    "read the recorded render status: it names which step failed — the tool result not pointing at a UI resource, the widget failing to mount, or the guest never completing its handshake",
   predicateFailed:
     "read the recorded reasons: either this pull request changed the response, or the case asserts something the server no longer promises",
   connectFailed:

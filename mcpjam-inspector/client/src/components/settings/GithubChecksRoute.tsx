@@ -653,14 +653,23 @@ export function GithubChecksRoute({
       row.feedbackComments === "off" ? "on" : "off";
     setPendingFeedback((current) => new Set(current).add(row._id));
     try {
-      await setRepoFeedbackComments({
+      const result = await setRepoFeedbackComments({
         configId: row._id,
         feedbackComments: next,
       });
       // Announced, unlike the policy select: this write changes what MCPJam
       // writes on OTHER PEOPLE'S pull requests, and the switch alone does not
       // say that the check itself is unaffected.
-      toast.success(GITHUB_FEEDBACK_COMMENTS_COPY[next]);
+      //
+      // But ONLY on a real change, which is the policy select's rule and the
+      // reason it announces nothing. `{ changed: false }` is a successful
+      // no-op — the stored value already said this — and it is reachable
+      // whenever the row is stale: another tab, or a write that landed before
+      // this list refetched. Announcing then would tell an admin MCPJam "will
+      // stop commenting" on a repository whose setting nobody moved.
+      if (result?.changed) {
+        toast.success(GITHUB_FEEDBACK_COMMENTS_COPY[next]);
+      }
     } catch (error) {
       toast.error(githubFeedbackCommentsErrorMessage(error));
     } finally {
@@ -745,8 +754,8 @@ export function GithubChecksRoute({
         Connect a repository to run an eval suite as a GitHub check on every
         pull request. The check runs the suite you pick here against the PR's
         preview server. Conformance is a second, opt-in check on the same build
-        — existing repositories stay eval-only until you turn it on.
-        head commit and reports back as a status check.
+        — existing repositories stay eval-only until you turn it on. head commit
+        and reports back as a status check.
       </p>
 
       <SettingsSection title="GitHub accounts">

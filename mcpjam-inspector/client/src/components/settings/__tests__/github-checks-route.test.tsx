@@ -869,6 +869,23 @@ describe("GithubChecksRoute pull-request comments", () => {
     );
   });
 
+  it("announces NOTHING when the write was a successful no-op", async () => {
+    // `{ changed: false }` means the stored value already said this, which is
+    // reachable whenever the row is stale — another tab, or a write that landed
+    // before this list refetched. The toast would otherwise tell an admin
+    // MCPJam "will stop commenting" on a repository whose setting nobody moved.
+    // Same rule the outage-policy select follows.
+    mockRepos.value = [ROW];
+    mockSetRepoFeedbackComments.mockResolvedValueOnce({ changed: false });
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() => expect(mockSetRepoFeedbackComments).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("shows the backend's own refusal when the write is rejected", async () => {
     mockRepos.value = [ROW];
     mockSetRepoFeedbackComments.mockRejectedValueOnce(
