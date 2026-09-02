@@ -146,6 +146,9 @@ describe("CreateSuitePage", () => {
 
     expect(screen.getByTestId("create-suite-page")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("required-legend")).toHaveTextContent(
+      "Required field",
+    );
     expect(
       screen.getByRole("heading", { name: "Create a new eval suite" }),
     ).toBeTruthy();

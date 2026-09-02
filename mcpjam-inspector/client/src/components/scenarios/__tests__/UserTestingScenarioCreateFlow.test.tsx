@@ -223,6 +223,9 @@ describe("UserTestingScenarioCreateFlow", () => {
     // Marked on the label too — an asterisk is what a scanning user reads as
     // "required" before they try Save.
     expect(screen.getAllByText("(required)").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("required-legend")).toHaveTextContent(
+      "Required field",
+    );
 
     fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
       target: { value: "env-1" },

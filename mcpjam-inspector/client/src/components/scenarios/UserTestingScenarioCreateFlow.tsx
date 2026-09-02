@@ -13,7 +13,10 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
-import { RequiredMark } from "@/components/shared/required-mark";
+import {
+  RequiredLegend,
+  RequiredMark,
+} from "@/components/shared/required-mark";
 import {
   emptyComposerState,
   isComposeMode,
@@ -345,6 +348,9 @@ export function UserTestingScenarioCreateFlow({
           Publish one of your environments, hand them to users, then read what
           happened in their sessions.
         </p>
+        <div className="mt-2">
+          <RequiredLegend />
+        </div>
 
         <div className="mt-6 space-y-5">
           <div className="space-y-2">

@@ -469,6 +469,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     openDescribe();
 
     expect(screen.getByTestId("new-swarm-create-flow")).toBeInTheDocument();
+    expect(screen.getByTestId("required-legend")).toHaveTextContent(
+      "Required field",
+    );
     expect(
       screen.getByRole("heading", {
         name: /create an agentic swarm/i,

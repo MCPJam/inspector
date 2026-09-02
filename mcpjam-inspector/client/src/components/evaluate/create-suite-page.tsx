@@ -40,7 +40,10 @@ import { useComposerResolver } from "@/components/environment-composer/use-compo
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { RequiredMark } from "@/components/shared/required-mark";
+import {
+  RequiredLegend,
+  RequiredMark,
+} from "@/components/shared/required-mark";
 import { toast } from "@/lib/toast";
 import type { HostAttachmentDraft } from "../evals/client-attachments-editor";
 import {
@@ -371,6 +374,7 @@ export function CreateSuitePage({
             <p className="text-sm leading-relaxed text-muted-foreground">
               Set up the environment you will be evaluating.
             </p>
+            <RequiredLegend />
           </div>
 
           <div className="space-y-6">
