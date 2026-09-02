@@ -377,11 +377,17 @@ function nodeVersion(target, extractedRoot, platformKey) {
   // downstream could catch that: the digest would be computed over the wrong
   // binary and would verify perfectly on the user's machine, right up to the
   // exec that cannot run it.
+  //
+  // Split into a STATIC regex plus a string comparison, rather than building a
+  // pattern out of `platformKey`. That argument comes from `--platform`, and
+  // interpolating it into a regex is regex injection — CodeQL flagged it as
+  // high severity, correctly: a value containing regex metacharacters would
+  // silently change what "matches this target" means, in the one check that
+  // stands between a pack's label and its actual contents. Plain `===` on the
+  // captured suffix is both safer and a stricter test than any pattern.
   const archiveSuffix = platformKey === "win32-x64" ? "win-x64" : platformKey;
-  const named = new RegExp(`^node-(v\\d+\\.\\d+\\.\\d+)-${archiveSuffix}$`).exec(
-    extractedRoot ?? "",
-  );
-  if (named === null) {
+  const named = /^node-(v\d+\.\d+\.\d+)-(.+)$/.exec(extractedRoot ?? "");
+  if (named === null || named[2] !== archiveSuffix) {
     fail(
       `cross-building ${platformKey} on ${process.platform}-${process.arch}: ` +
         `the bundled Node cannot be run here, so its archive directory has to ` +
