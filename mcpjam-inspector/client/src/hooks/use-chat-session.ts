@@ -70,7 +70,10 @@ import {
 } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
-import { providerForModelId } from "@/shared/model-provider";
+import {
+  providerForModelId,
+  runtimeChosenModelSentinelName,
+} from "@/shared/model-provider";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
@@ -708,6 +711,24 @@ function inferModelProviderFromId(modelId: string): ModelProvider {
 }
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
+  // A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
+  // else this builds, and the copy has to say so. `cursor/auto` is not a model
+  // the picker is hiding behind a sign-in wall — it is the placeholder for a
+  // runtime that chooses its own model on the customer's own account. Showing
+  // the raw id under "Sign in to use MCPJam provided models" gets both halves
+  // wrong: the label names a model nothing ran, and the reason names a wall
+  // signing in would not lift.
+  const sentinelName = runtimeChosenModelSentinelName(modelId);
+  if (sentinelName) {
+    return {
+      id: modelId,
+      name: sentinelName,
+      provider: inferModelProviderFromId(modelId),
+      disabled: true,
+      disabledReason:
+        "This host's runtime chooses its own model on your own account.",
+    };
+  }
   return {
     id: modelId,
     name: modelId,

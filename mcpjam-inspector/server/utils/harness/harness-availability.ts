@@ -18,6 +18,7 @@
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
 import { getCanonicalModelId } from "@/shared/types";
+import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -52,6 +53,22 @@ import {
  *  - "the runtime can run this model" — guards the silent substitution where a
  *    runtime falls back to its own default. An external-account adapter passes
  *    NO model at all, so there is nothing to substitute and nothing to check.
+ *
+ * What replaces them is ONE condition of its own, {@link
+ * externalAccountHostModelRefusalReason}: the host's model must BE the
+ * sentinel. An external-account host carrying an ordinary id is not a leniency
+ * case, it is the same wrong answer from the other direction — the runtime
+ * ignores the id and picks its own model while the session, the trace and the
+ * eval metadata all record the id as the model that ran.
+ *
+ * A `false` here means DIFFERENT things for the two arms, and callers have to
+ * honour the difference. For a brokered harness it means "the emulated engine
+ * can run this instead" — a real fallback, since that engine honours org BYOK.
+ * For an external-account harness there is NO such fallback: the emulated
+ * engine cannot run a sentinel at all, and running the host's ordinary id under
+ * the runtime's name is precisely the mis-attribution this rule exists to stop.
+ * `assistant-turn` therefore THROWS on this arm instead of degrading; see the
+ * note at its dispatch.
  */
 export function harnessModelEligibleForRuntime(args: {
   adapter: HarnessRuntimeAdapter;
@@ -60,10 +77,60 @@ export function harnessModelEligibleForRuntime(args: {
   /** REQUIRED for a bare id to canonicalize; see the note on the preflight. */
   provider?: string;
 }): boolean {
-  if (args.adapter.modelAccess === "external-account") return true;
+  if (args.adapter.modelAccess === "external-account") {
+    return (
+      externalAccountHostModelRefusalReason({
+        harnessId: args.adapter.id,
+        modelId: args.modelId,
+      }) === undefined
+    );
+  }
   if (!isHostedCatalogModel(args.modelId, args.provider)) return false;
   return args.adapter.supportsModel(
     getCanonicalModelId(args.modelId, args.provider),
+  );
+}
+
+/**
+ * The model rule that applies to an EXTERNAL-ACCOUNT harness, as a value the
+ * pre-flight and the dispatch both read — returns the refusal copy, or
+ * `undefined` when the combination is sound.
+ *
+ * The rule: the model must be the runtime's own sentinel. Cursor's adapter
+ * passes NO model (`toNativeModel: () => undefined`) and Cursor Auto picks one
+ * on the customer's account, so a host carrying `anthropic/claude-sonnet-4.5`
+ * would run Cursor Auto while the session row, the trace and the eval metadata
+ * all named Sonnet as the model that ran. Refused rather than silently
+ * rewritten: the host configuration is wrong and only its owner can say what
+ * they meant by it.
+ *
+ * WHICH id to pass is the whole subtlety, and it is a HOST question, not a turn
+ * question — see `hostModelId` on the pre-flight. Nothing consumes the turn's
+ * model on this arm, so validating the model a REQUEST supplied lets a caller
+ * satisfy the rule by sending the sentinel in the body while the host itself
+ * carries an ordinary id.
+ *
+ * Shared rather than spelled out twice because the two readers act on it
+ * differently — one returns a typed refusal, the other throws — and two copies
+ * of a condition drift. Same reasoning as
+ * {@link harnessToolApprovalRefusalReason} below.
+ */
+export function externalAccountHostModelRefusalReason(args: {
+  /** Taken by ID so a caller holding only the host's `harness` can ask too —
+   *  the chat routes decide this BEFORE they have resolved any adapter. */
+  harnessId: HarnessId;
+  /** The model id to hold to the rule. See the note above on which one. */
+  modelId: string;
+}): string | undefined {
+  const adapter = getHarnessAdapter(args.harnessId);
+  if (adapter.modelAccess !== "external-account") return undefined;
+  if (isRuntimeChosenModelSentinel(args.modelId)) return undefined;
+  return (
+    `the ${adapter.displayName} harness chooses its own model on your ` +
+    `own account, so this host cannot pin one — it carries ` +
+    `"${args.modelId}", which the runtime would ignore while the session ` +
+    `recorded it as the model that ran. Reset this host's model, or pick a ` +
+    "harness that runs the model you chose"
   );
 }
 
@@ -164,6 +231,26 @@ export function checkHarnessRuntimeAvailable(args: {
    */
   model: { id: string; provider?: string };
   /**
+   * The host's CONFIGURED model id, before any body or per-case override.
+   *
+   * Read ONLY by the external-account rule, because that rule asks a question
+   * about the HOST rather than about the turn: does this host carry the
+   * runtime's sentinel? Every other rule here is about the model that will
+   * actually run, which is what `model` above is.
+   *
+   * The distinction is load-bearing on the interactive rails, where a request
+   * body supplies its own model. Holding the external-account rule to `model`
+   * let a caller satisfy it by POSTing `cursor/auto` while the host itself
+   * carried an ordinary id — the mis-configured host the rule exists to refuse,
+   * entered from the other side.
+   *
+   * ABSENT ⇒ the host pinned no model and `model.id` is held to the rule
+   * instead. That is the honest fallback, not a bypass: with nothing pinned,
+   * the turn's own model is the only thing this host can be said to run, so a
+   * sentinel body is a true description and an ordinary one is still refused.
+   */
+  hostModelId?: string;
+  /**
    * Whether the host's enterprise-managed authorization policy is on. The
    * harness reaches MCP servers through the signed-proxy route
    * (`routes/web/harness-mcp.ts`), whose Convex-minted token carries only
@@ -259,11 +346,36 @@ export function checkHarnessRuntimeAvailable(args: {
   // account, so "is this an MCPJam-hosted model?" and "can the runtime run it?"
   // are questions about a value nothing consumes. Answering them would refuse
   // every Cursor host — its own catalog model is the `cursor/auto` sentinel,
-  // which is deliberately not an MCPJam-hosted model.
+  // which is deliberately not an MCPJam-hosted model. They are replaced by one
+  // rule of their own, immediately below, rather than by nothing.
   const canonicalModelId = getCanonicalModelId(
     args.model.id,
     args.model.provider,
   );
+
+  // …and here is that replacement for an external-account host: its model must
+  // be the runtime's own sentinel. Same principle as the two rules below —
+  // "never report one runtime's answer under another model's name" — applied to
+  // the arm where the runtime, not MCPJam, does the choosing. The condition
+  // itself lives in `externalAccountHostModelRefusalReason` because the
+  // DISPATCH has to reach the identical verdict, and act on it differently.
+  //
+  // Held to the HOST's configured id, falling back to the turn's model only
+  // when the host pinned none: nothing consumes the turn's model on this arm,
+  // so validating it would let a request satisfy the rule by sending
+  // `cursor/auto` in the body while the host carried an ordinary id.
+  const externalAccountRefusal = externalAccountHostModelRefusalReason({
+    harnessId: args.harnessId,
+    modelId: args.hostModelId ?? args.model.id,
+  });
+  if (externalAccountRefusal) {
+    return {
+      ok: false,
+      kind: "model-unsupported",
+      reason: externalAccountRefusal,
+    };
+  }
+
   if (brokered && !isHostedCatalogModel(args.model.id, args.model.provider)) {
     return {
       ok: false,

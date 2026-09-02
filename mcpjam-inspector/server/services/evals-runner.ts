@@ -156,6 +156,7 @@ import {
 } from "./evals/tool-policy-gate.js";
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
+import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -2238,7 +2239,22 @@ const executeTestCase = async (params: {
     return outcomes;
   }
 
-  const modelDefinition = buildModelDefinition(test);
+  // THE HOST'S MODEL WINS on an external-account harness, exactly as it does on
+  // the chat rails. Resolved here rather than at either iteration runner so
+  // everything downstream of this line agrees on one model: the canonical id
+  // below, the MCPJam-vs-BYOK split, the org-BYOK runtime lookup, the engine's
+  // wire payload and what the iteration reports as the model it ran.
+  //
+  // Without it, admission and execution disagreed. Admission reads the host's
+  // id and accepts a case whose own model is an ordinary one; execution then
+  // carried that case model to `runAssistantTurn`, whose eligibility check saw
+  // a non-sentinel on an external-account harness and refused a run it had
+  // already admitted. A per-case model is normal in evals, so that refusal hit
+  // legitimate Cursor suites.
+  const modelDefinition = resolveEvalCaseModelDefinition({
+    hostConfig: suiteHostConfig,
+    caseModel: buildModelDefinition(test),
+  });
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
     modelDefinition.provider

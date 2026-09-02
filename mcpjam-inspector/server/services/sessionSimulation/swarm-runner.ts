@@ -564,6 +564,11 @@ async function runJourneyFanOut(
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
                 },
+                // The same pinned id under the name the external-account rule
+                // reads. Identical to `model.id` here — a swarm target has no
+                // request body to override it — and passed explicitly so it
+                // STAYS identical if that ever stops being true.
+                hostModelId: modelId,
                 // TRI-STATE, read without throwing, and INVALID counts as ON —
                 // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
                 // (the web route's variant) THROWS a 409 on a malformed profile,
