@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 import type {
+  JourneySessionRow,
   SwarmOverview,
   SwarmOverviewRun,
   SwarmWaveSignals,
@@ -18,7 +19,8 @@ import { SwarmRunDetail } from "../swarm-run-detail";
  *  1. `SwarmFindingsTab` — the failing persona is selected by default with
  *     goals collapsed (expanding one lands on its diagnosis stage), the
  *     empty-stage copy refuses to read as a pass, sentiment is a pill only.
- *     Session click-through is opt-in (`projectId`); these tests omit it.
+ *     Session click-through is opt-in (`onOpenSession`) and scoped to the
+ *     EVIDENCE, so a stage never lists its goal.
  *  2. `SwarmRunDetail` wiring — Findings sits beside Insights | Sessions and
  *     a `?tab=findings` deep link renders it.
  */
@@ -88,17 +90,8 @@ const waveSignals: SwarmWaveSignals = {
   terminal: true,
 };
 
-const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
-  mockUseGoalOutcomeDrilldown: vi.fn(() => ({
-    drilldown: undefined,
-    isLoading: false,
-  })),
-}));
-
-vi.mock("@/hooks/useUsageInsights", () => ({
-  useGoalOutcomeDrilldown: (...args: unknown[]) =>
-    mockUseGoalOutcomeDrilldown(...args),
-}));
+/** Rows `journeyRuns:listSessionsByJourneyRun` hands the evidence list. */
+let runSessions: JourneySessionRow[] = [];
 
 vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
@@ -115,8 +108,8 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
   useConvexAuth: () => ({ isLoading: false, isAuthenticated: true }),
-  usePaginatedQuery: () => ({
-    results: [],
+  usePaginatedQuery: (name: string) => ({
+    results: name === "journeyRuns:listSessionsByJourneyRun" ? runSessions : [],
     status: "Exhausted",
     loadMore: vi.fn(),
     isLoading: false,
@@ -175,14 +168,11 @@ function wave() {
 
 beforeEach(() => {
   window.history.replaceState({}, "", "/swarms/wave-1");
+  runSessions = [];
 });
 
 afterEach(() => {
   vi.clearAllMocks();
-  mockUseGoalOutcomeDrilldown.mockReturnValue({
-    drilldown: undefined,
-    isLoading: false,
-  });
 });
 
 // ── SwarmFindingsTab (pure props) ───────────────────────────────────────────
@@ -341,69 +331,109 @@ describe("SwarmFindingsTab", () => {
     );
   });
 
-  it("opens an exemplar session from an evidence row", () => {
-    const onOpenSession = vi.fn();
+  it("prints the denominator flat with no session affordance when opening is off", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
         waveSignals={waveSignals}
         personas={personas}
-        onOpenSession={onOpenSession}
       />
     );
     fireEvent.click(screen.getByTestId("findings-goal-row"));
-    fireEvent.click(screen.getByTestId("findings-evidence-open-session"));
-    expect(onOpenSession).toHaveBeenCalledWith("sess-1");
     expect(
-      screen.queryByTestId("findings-goal-sessions")
+      screen.queryByTestId("findings-evidence-sessions-toggle")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("findings-evidence-sessions")
     ).not.toBeInTheDocument();
   });
 
-  it("lists this goal's sessions for click-through when a project is in scope", () => {
+  it("lists the sessions the evidence names, and admits a bounded sample", () => {
     const onOpenSession = vi.fn();
-    mockUseGoalOutcomeDrilldown.mockReturnValue({
-      drilldown: {
-        sessions: [
-          {
-            _id: "sess-a",
-            firstMessagePreview: "Pull the proposal-stage prospects",
-            lastActivityAt: NOW,
-          },
-        ],
-        nextBefore: null,
-        total: 4,
-        totalTruncated: false,
+    runSessions = [
+      {
+        id: "sess-1",
+        chatSessionId: "chat-1",
+        projectId: "proj-1",
+        hostId: "host-1",
+        startedAt: NOW,
+        firstMessagePreview: "Pull the proposal-stage prospects",
       },
-      isLoading: false,
-    });
+    ];
     render(
       <SwarmFindingsTab
         wave={wave()}
         waveSignals={waveSignals}
         personas={personas}
         onOpenSession={onOpenSession}
-        projectId="proj-1"
       />
     );
     fireEvent.click(screen.getByTestId("findings-goal-row"));
     const whatHappened = screen.getByTestId("findings-stage-evidence");
-    expect(
-      within(whatHappened).getByTestId("findings-goal-sessions")
-    ).toBeInTheDocument();
+
+    // The detector named 1 of the 2 sessions it affected, so the label says
+    // so rather than putting one row under a claim of two.
     expect(
       within(whatHappened).getByTestId("findings-evidence-sessions-toggle")
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("findings-goal-session"));
-    expect(onOpenSession).toHaveBeenCalledWith("sess-a");
-    expect(mockUseGoalOutcomeDrilldown).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: {
-          kind: "swarm",
-          projectId: "proj-1",
-          journeyRunIds: ["run-1"],
-        },
-      })
+        .textContent
+    ).toContain("2 of 3 sessions · 1 shown");
+
+    const list = within(whatHappened).getByTestId(
+      "findings-evidence-sessions"
     );
+    expect(list.dataset.scope).toBe("ids");
+    const rows = within(list).getAllByTestId("findings-evidence-session");
+    expect(rows.map((r) => r.dataset.sessionId)).toEqual(["sess-1"]);
+    fireEvent.click(rows[0]!);
+    expect(onOpenSession).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("offers no session list on a stage with no finding", () => {
+    render(
+      <SwarmFindingsTab
+        wave={wave()}
+        waveSignals={waveSignals}
+        personas={personas}
+        onOpenSession={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    // The call stage has no evidence in this fixture. A list here would read
+    // as "here is what got through" — the inference the copy refuses.
+    fireEvent.click(screen.getByTestId("findings-stage-call"));
+    expect(screen.getByTestId("findings-empty-stage")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("findings-evidence-sessions")
+    ).not.toBeInTheDocument();
+  });
+
+  it("gives each stage its own session scope, not one goal-wide list", () => {
+    render(
+      <SwarmFindingsTab
+        wave={wave()}
+        waveSignals={waveSignals}
+        personas={personas}
+        onOpenSession={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    // Discovery carries the detector's exemplars; User Value carries the
+    // judge's failed grades. Same goal, different sets.
+    expect(
+      screen.getByTestId("findings-evidence-sessions").dataset.scope
+    ).toBe("ids");
+    fireEvent.click(screen.getByTestId("findings-stage-value"));
+    expect(
+      screen.getByTestId("findings-evidence-sessions").dataset.scope
+    ).toBe("goalScoreFail");
+    // Connection only ever holds launch outcomes, which have no transcript.
+    fireEvent.click(screen.getByTestId("findings-stage-connection"));
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle")
+    ).not.toBeInTheDocument();
   });
 
   it("survives a legacy wave with no signals (no crash)", () => {

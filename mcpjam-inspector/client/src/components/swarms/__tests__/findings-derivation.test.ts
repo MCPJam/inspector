@@ -10,6 +10,7 @@ import {
   CONNECTION_CAVEAT,
   DETECTOR_STAGE_MAP,
   deriveSwarmFindingsModel,
+  evidenceSampleNote,
 } from "../findings/findings-derivation";
 import { JOURNEY_STAGES } from "../findings/journey-stages";
 
@@ -211,15 +212,101 @@ describe("attribution", () => {
     }
   });
 
-  it("carries the exemplar session id for evidence deep links", () => {
+  it("scopes detector evidence to the sessions the miner named, not the goal", () => {
     const model = derive({
       signals: signals({
-        candidates: [candidate({ exemplarSessionIds: ["sess-9"] })],
+        candidates: [
+          candidate({
+            exemplarSessionIds: ["sess-9", "sess-4"],
+            affectedSessions: 2,
+            sliceTotal: 3,
+          }),
+        ],
       }),
     });
     expect(
-      model.personas[0]!.goals[0]!.stages.response.evidence[0]!.sessionId
-    ).toBe("sess-9");
+      model.personas[0]!.goals[0]!.stages.response.evidence[0]!.sessions
+    ).toEqual({ kind: "ids", ids: ["sess-9", "sess-4"], affected: 2 });
+  });
+
+  it("admits the sample when the named ids are fewer than the affected count", () => {
+    const bounded = derive({
+      signals: signals({
+        candidates: [
+          candidate({
+            exemplarSessionIds: ["sess-9"],
+            affectedSessions: 12,
+            sliceTotal: 40,
+          }),
+        ],
+      }),
+    });
+    expect(
+      evidenceSampleNote(
+        bounded.personas[0]!.goals[0]!.stages.response.evidence[0]!.sessions
+      )
+    ).toBe("1 shown");
+
+    // A complete list is not a sample and must carry no note — otherwise
+    // every row grows a suffix that says nothing.
+    const complete = derive({
+      signals: signals({
+        candidates: [
+          candidate({
+            exemplarSessionIds: ["sess-9", "sess-4"],
+            affectedSessions: 2,
+            sliceTotal: 40,
+          }),
+        ],
+      }),
+    });
+    expect(
+      evidenceSampleNote(
+        complete.personas[0]!.goals[0]!.stages.response.evidence[0]!.sessions
+      )
+    ).toBeNull();
+  });
+});
+
+describe("evidence session scope", () => {
+  it("gives launch outcomes nothing to open — a refused launch has no transcript", () => {
+    const model = derive({
+      runs: [
+        run({ summary: { total: 4, succeeded: 1, failed: 2, rateLimited: 1 } }),
+      ],
+    });
+    expect(
+      model.personas[0]!.goals[0]!.stages.connection.evidence[0]!.sessions
+    ).toEqual({ kind: "none" });
+  });
+
+  it("gives a clean launch and a clean judge nothing to open either", () => {
+    const model = derive({
+      runs: [
+        run({
+          summary: { total: 4, succeeded: 4, failed: 0, rateLimited: 0 },
+          goalScoreSummary: { gradedCount: 4, passedCount: 4, avgScore: 1 },
+        }),
+      ],
+    });
+    const goal = model.personas[0]!.goals[0]!;
+    expect(goal.stages.connection.evidence[0]!.sessions).toEqual({
+      kind: "none",
+    });
+    const pass = goal.stages.value.evidence.find((e) => e.tone === "ok")!;
+    expect(pass.sessions).toEqual({ kind: "none" });
+  });
+
+  it("scopes a judge miss to the sessions whose completion grade failed", () => {
+    const model = derive({
+      runs: [
+        run({ goalScoreSummary: { gradedCount: 4, passedCount: 1, avgScore: 0.2 } }),
+      ],
+    });
+    const miss = model.personas[0]!.goals[0]!.stages.value.evidence.find(
+      (e) => e.tone !== "ok"
+    )!;
+    expect(miss.sessions).toEqual({ kind: "goalScoreFail" });
   });
 });
 
@@ -288,10 +375,20 @@ describe("value stage: rubric findings + judge rollup", () => {
     )!;
     expect(blocking.tone).toBe("fail");
     expect(blocking.meta).toBe("3 of 4 sessions");
+    // Each rubric row seeks its OWN criterion — two findings on one stage
+    // must not resolve to the same session list.
+    expect(blocking.sessions).toEqual({
+      kind: "criterion",
+      criterionId: "crit-block",
+    });
     const degraded = value.evidence.find((e) =>
       e.observation.includes("Tone stays helpful")
     )!;
     expect(degraded.tone).toBe("warn");
+    expect(degraded.sessions).toEqual({
+      kind: "criterion",
+      criterionId: "crit-soft",
+    });
   });
 
   it("grades the judge rollup: all passed ok, <50% fail, else warn, 0 graded nothing", () => {

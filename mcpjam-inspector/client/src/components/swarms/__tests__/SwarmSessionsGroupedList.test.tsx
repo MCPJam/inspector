@@ -6,7 +6,17 @@ import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmSessionRunGroup } from "@/lib/swarm-api";
 
 vi.mock("@mcpjam/design-system/scroll-area", () => ({
-  ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ScrollArea: ({
+    className,
+    children,
+  }: {
+    className?: string;
+    children: React.ReactNode;
+  }) => (
+    <div className={className} data-testid="session-list-scroll">
+      {children}
+    </div>
+  ),
 }));
 
 function thread(id: string, label: string): SharedChatThread {
@@ -269,13 +279,39 @@ describe("SwarmSessionsGroupedList", () => {
 
     const openTrigger = screen.getByTestId("swarm-goal-group-goal-a-trigger");
     const closedTrigger = screen.getByTestId("swarm-goal-group-goal-b-trigger");
-    expect(openTrigger).toHaveClass("bg-muted", "py-1.5");
-    expect(closedTrigger).toHaveClass("bg-muted", "py-1.5");
+    expect(openTrigger).toHaveClass("bg-muted", "py-2");
+    expect(closedTrigger).toHaveClass("bg-muted", "py-2");
     expect(openTrigger).toHaveAttribute("data-state", "open");
     expect(closedTrigger).toHaveAttribute("data-state", "closed");
-    // Paper shows through between muted bars so collapsed groups don't fuse.
+    // Inset + gap so muted groups sit on paper instead of fusing into one slab.
     expect(screen.getByTestId("swarm-sessions-grouped-list")).toHaveClass(
-      "gap-1",
+      "gap-2",
+      "p-2",
     );
+    expect(screen.getByTestId("swarm-goal-group-goal-a")).toHaveClass(
+      "rounded-md",
+    );
+  });
+
+  it("sizes rows against the pane so a narrow split truncates, not clips", () => {
+    render(
+      <SwarmSessionsGroupedList
+        groups={[group("goal-a", "Goal A", ["s1"])]}
+        threadsById={new Map([["s1", thread("s1", "Persona A")]])}
+        selectedThreadId={null}
+        onSelectThread={() => {}}
+        groupUnit="goal"
+      />,
+    );
+
+    // Radix wraps viewport children in a shrink-to-fit `display: table` box, so
+    // a nowrap row grows to its own text width and the pane clips the trailing
+    // meta. Block display, plus a container the rows can query, is what keeps
+    // the list honest while the split is dragged.
+    const scroll = screen.getByTestId("session-list-scroll");
+    expect(scroll.className).toContain(
+      "[&_[data-slot=scroll-area-viewport]>div]:block!",
+    );
+    expect(scroll.className).toContain("@container/session-list");
   });
 });

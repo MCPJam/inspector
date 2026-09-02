@@ -657,7 +657,6 @@ export function SwarmRunDetail({
               waveSignals={waveSignals}
               personas={personas}
               onOpenSession={handleOpenSession}
-              projectId={projectId ?? undefined}
             />
           </div>
         ) : null}

@@ -1,9 +1,9 @@
 /**
  * The Findings tab on `/swarms/:swarmId` — the persona-journey narrative over
  * the wave. The model derives from the `wave`, `waveSignals`, and `personas`
- * the detail page already holds (`deriveSwarmFindingsModel`). Expanding a
- * goal optionally pages that run's sessions so they can be opened the same
- * way Insights' GoalOutcomeDrilldown does.
+ * the detail page already holds (`deriveSwarmFindingsModel`). Given
+ * `onOpenSession`, each evidence row lists the sessions IT implicates — the
+ * scope travels on the evidence, never on the goal.
  *
  * Selection state is local and defaults to collapsed goals. User choices are
  * keyed to what they were made on (persona name / run id), so a live wave
@@ -31,13 +31,12 @@ export function SwarmFindingsTab({
   waveSignals,
   personas,
   onOpenSession,
-  projectId,
 }: {
   wave: SwarmWave;
   waveSignals: SwarmWaveSignals | null | undefined;
   personas: ReadonlyArray<FindingsPersonaDoc>;
+  /** When set, evidence rows list the sessions they implicate for click-through. */
   onOpenSession?: (sessionId: string) => void;
-  projectId?: string;
 }) {
   const model = useMemo(
     () =>
@@ -144,7 +143,6 @@ export function SwarmFindingsTab({
             : undefined
         }
         onOpenSession={onOpenSession}
-        projectId={projectId}
       />
     </div>
   );

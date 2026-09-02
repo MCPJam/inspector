@@ -7,6 +7,7 @@ import {
 } from "@mcpjam/design-system/collapsible";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
+  sessionListScrollClass,
   ThreadCard,
 } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { formatJourneyRelativeTime } from "@/components/swarms/journey-run-format";
@@ -85,12 +86,12 @@ function SwarmSessionGroupSection({
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <section
-        className="overflow-hidden"
+        className="overflow-hidden rounded-md"
         data-testid={sectionTestId}
       >
         <CollapsibleTrigger
           className={cn(
-            "group/trigger flex w-full items-center gap-2 border-b border-transparent px-3 py-1.5 text-left transition-colors",
+            "group/trigger flex w-full items-center gap-2 border-b border-transparent px-2.5 py-2 text-left transition-colors",
             "bg-muted hover:bg-accent",
             "data-[state=open]:border-border",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
@@ -104,10 +105,13 @@ function SwarmSessionGroupSection({
           <p className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-5 text-card-foreground">
             {groupLabel(group, runLabels, groupUnit)}
           </p>
-          <p className="shrink-0 text-[10px] leading-none text-muted-foreground">
-            <span>{sessionLabel}</span>
-            <span>
-              {" · "}
+          {/* The goal title is what a reader scans, so the meta yields first:
+              below 300px the session count stays and recency drops rather than
+              both surviving and leaving the title a few characters. */}
+          <p className="flex shrink-0 items-baseline gap-1 text-[10px] leading-none text-muted-foreground">
+            <span className="tabular-nums">{sessionLabel}</span>
+            <span className="hidden @min-[300px]/session-list:inline">
+              {"· "}
               {formatJourneyRelativeTime(group.latestActivityAt)}
             </span>
           </p>
@@ -147,9 +151,9 @@ export function SwarmSessionsGroupedList({
   groupUnit = "run",
 }: SwarmSessionsGroupedListProps) {
   return (
-    <ScrollArea className="h-full">
+    <ScrollArea className={sessionListScrollClass}>
       <div
-        className="flex flex-col gap-1"
+        className="flex flex-col gap-2 p-2"
         data-testid="swarm-sessions-grouped-list"
       >
         {groups.map((group, index) => (

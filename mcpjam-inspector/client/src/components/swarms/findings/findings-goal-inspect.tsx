@@ -1,17 +1,39 @@
 /**
- * The expanded panel under a goal row: the 6-stage user-value chain as
- * buttons and the selected stage's evidence.
+ * The expanded panel under a goal row: the 6-stage user-value chain as a
+ * two-lane swimlane (client / agent, server) and the selected stage's
+ * evidence.
+ *
+ * Layout follows `docs/uvc-client-server-swimlane.md`: time runs top to
+ * bottom so the chain never reads out of order, and each stage sits in the
+ * lane that should look next. Stage fills stay fail / warn / held —
+ * selection is a white ring, and the lanes carry no color of their own.
  *
  * The empty-stage copy is verbatim and load-bearing: a stage with no
- * evidence is UNKNOWN and must not read as a pass.
+ * evidence is UNKNOWN and must not read as a pass. Nothing may sit under it
+ * either — a session list there is read as "here is what got through".
+ *
+ * Where sessions ARE listed, the scope comes off the evidence row
+ * (`EvidenceSessions`), never off the goal: a goal-scoped list shows the same
+ * rows on all six stages and contradicts the denominator beside it.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { JOURNEY_STAGES, type JourneyStageId } from "./journey-stages";
-import type { GoalFindingsModel, StageState } from "./findings-derivation";
-import { FindingsGoalSessions } from "./findings-goal-sessions";
+import {
+  JOURNEY_LANES,
+  JOURNEY_STAGES,
+  journeyLaneLabel,
+  journeyStageCrossesWire,
+  type JourneyLaneId,
+  type JourneyStageId,
+} from "./journey-stages";
+import {
+  evidenceSampleNote,
+  type GoalFindingsModel,
+  type StageState,
+} from "./findings-derivation";
+import { FindingsEvidenceSessions } from "./findings-evidence-sessions";
 
 export const EMPTY_STAGE_COPY =
   "No finding landed on this stage. This is not evidence that the stage passed.";
@@ -30,6 +52,11 @@ const STAGE_DOT_CLASSES: Record<StageState, string> = {
   none: "bg-zinc-500",
 };
 
+const LANE_COLUMN_CLASSES: Record<JourneyLaneId, string> = {
+  client: "sm:col-start-1",
+  server: "sm:col-start-2",
+};
+
 function stageStateLabel(state: StageState): string {
   if (state === "fail") return "failed";
   if (state === "warn") return "warning";
@@ -42,24 +69,28 @@ export function FindingsGoalInspect({
   selectedStage,
   onSelectStage,
   onOpenSession,
-  projectId,
 }: {
   goal: GoalFindingsModel;
   selectedStage: JourneyStageId;
   onSelectStage: (stage: JourneyStageId) => void;
+  /** When set, evidence rows list the sessions they implicate, for click-through. */
   onOpenSession?: (sessionId: string) => void;
-  /** When set, the inspect panel pages this goal's sessions for click-through. */
-  projectId?: string;
 }) {
   const stageMeta = JOURNEY_STAGES.find((s) => s.id === selectedStage)!;
   const stageModel = goal.stages[selectedStage];
   const evidencePanelId = `findings-stage-evidence-${goal.runId}`;
-  const canListSessions = Boolean(projectId && onOpenSession);
-  const [openEvidence, setOpenEvidence] = useState(canListSessions ? 0 : -1);
+  // Open the first row that HAS sessions. A row whose evidence names none
+  // (launch outcomes, a clean pass) is never the one we expand into.
+  const firstListable = stageModel.evidence.findIndex(
+    (evidence) => evidence.sessions.kind !== "none"
+  );
+  const [openEvidence, setOpenEvidence] = useState(
+    onOpenSession ? firstListable : -1
+  );
 
   useEffect(() => {
-    setOpenEvidence(canListSessions ? 0 : -1);
-  }, [selectedStage, goal.runId, canListSessions]);
+    setOpenEvidence(onOpenSession ? firstListable : -1);
+  }, [selectedStage, goal.runId, onOpenSession, firstListable]);
 
   // Roving tabindex: one tab stop for the whole strip, arrows move between
   // stages — same contract as `FindingsPersonaTabs`.
@@ -96,8 +127,8 @@ export function FindingsGoalInspect({
               Follow the user value chain
             </h3>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-400">
-            Each stage answers a different question about whether the experience
-            delivered.
+              Time runs top to bottom. Each stage sits in the lane that should
+              look next.
             </p>
           </div>
           <div className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-[10px] text-zinc-400">
@@ -109,50 +140,108 @@ export function FindingsGoalInspect({
       </header>
 
       <div className="px-5 py-4 sm:px-6">
-        <ol
-          ref={stageListRef}
-          className="grid list-none grid-cols-2 gap-2 p-0 sm:grid-cols-3 lg:grid-cols-6"
-          role="tablist"
-          aria-label="User value chain stages"
-        >
-        {JOURNEY_STAGES.map((stage, stageIndex) => {
-          const state = goal.stages[stage.id].state;
-          const pressed = stage.id === selectedStage;
-          return (
-            <li key={stage.id}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={pressed}
-                aria-controls={evidencePanelId}
-                tabIndex={pressed ? 0 : -1}
-                onClick={() => onSelectStage(stage.id)}
-                onKeyDown={(event) => handleStageKeyDown(event, stageIndex)}
-                className={cn(
-                  "group flex min-h-[6.5rem] w-full flex-col rounded-xl border p-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
-                  STAGE_BUTTON_CLASSES[state],
-                  pressed && "ring-2 ring-white ring-offset-2 ring-offset-zinc-950"
-                )}
-                data-testid={`findings-stage-${stage.id}`}
-                data-state={state}
+        <div className="relative" data-testid="findings-stage-swimlane">
+          {/* The wire. Stages sit either side of it, and the two hand-off
+              rows are the only things that cross it. */}
+          <span
+            className="pointer-events-none absolute inset-y-0 left-1/2 hidden w-0 -translate-x-1/2 border-l-2 border-dotted border-white/25 sm:block"
+            data-testid="findings-lane-boundary"
+            aria-hidden
+          />
+
+          <div
+            className="hidden border-b border-white/10 pb-2 sm:grid sm:grid-cols-2 sm:gap-x-3"
+            aria-hidden
+          >
+            {JOURNEY_LANES.map((lane) => (
+              <p
+                key={lane.id}
+                className="px-1 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-200"
               >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-[9px] tracking-[0.08em] opacity-60">
-                    {stage.num}
-                  </span>
-                  <span className={cn("size-1.5 rounded-full", STAGE_DOT_CLASSES[state])} />
-                </span>
-                <span className="mt-auto text-xs font-bold tracking-[-0.01em]">
-                  {stage.title}
-                </span>
-                <span className="mt-1 font-mono text-[8px] font-bold uppercase tracking-[0.12em] opacity-60">
-                  {stageStateLabel(state)}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-        </ol>
+                {lane.label}
+              </p>
+            ))}
+          </div>
+
+          <ol
+            ref={stageListRef}
+            className="list-none space-y-1.5 p-0 pt-2"
+            role="tablist"
+            aria-label="User value chain stages"
+          >
+            {JOURNEY_STAGES.map((stage, stageIndex) => {
+              const state = goal.stages[stage.id].state;
+              const pressed = stage.id === selectedStage;
+              return (
+                <Fragment key={stage.id}>
+                  {journeyStageCrossesWire(stage.id) ? (
+                    <li
+                      className="flex items-center gap-2 py-1"
+                      role="presentation"
+                      data-testid="findings-lane-crossing"
+                      data-to={stage.lane}
+                      aria-hidden
+                    >
+                      {stage.lane === "client" ? (
+                        <ArrowLeft className="size-3 shrink-0 text-zinc-500" />
+                      ) : null}
+                      <span className="h-px flex-1 bg-white/20" />
+                      {stage.lane === "server" ? (
+                        <ArrowRight className="size-3 shrink-0 text-zinc-500" />
+                      ) : null}
+                    </li>
+                  ) : null}
+                  <li className="grid grid-cols-1 sm:grid-cols-2 sm:gap-x-3">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={pressed}
+                      aria-controls={evidencePanelId}
+                      tabIndex={pressed ? 0 : -1}
+                      onClick={() => onSelectStage(stage.id)}
+                      onKeyDown={(event) =>
+                        handleStageKeyDown(event, stageIndex)
+                      }
+                      className={cn(
+                        "group flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-[background-color,border-color,box-shadow] duration-200 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+                        LANE_COLUMN_CLASSES[stage.lane],
+                        STAGE_BUTTON_CLASSES[state],
+                        pressed &&
+                          "ring-2 ring-white ring-offset-2 ring-offset-zinc-950"
+                      )}
+                      data-testid={`findings-stage-${stage.id}`}
+                      data-state={state}
+                      data-lane={stage.lane}
+                    >
+                      <span className="w-5 shrink-0 font-mono text-[11px] font-semibold tabular-nums tracking-tight text-current">
+                        {stage.num}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-bold tracking-[-0.01em]">
+                          {stage.title}
+                        </span>
+                        <span className="mt-0.5 block font-mono text-[8px] font-bold uppercase tracking-[0.12em] opacity-60">
+                          {stageStateLabel(state)}
+                        </span>
+                      </span>
+                      {/* The lane headers carry this above `sm`; below it the
+                          rows stack into one column and each states its own. */}
+                      <span className="shrink-0 font-mono text-[8px] uppercase tracking-[0.12em] opacity-50 sm:sr-only">
+                        {journeyLaneLabel(stage.lane)}
+                      </span>
+                      <span
+                        className={cn(
+                          "size-1.5 shrink-0 rounded-full",
+                          STAGE_DOT_CLASSES[state]
+                        )}
+                      />
+                    </button>
+                  </li>
+                </Fragment>
+              );
+            })}
+          </ol>
+        </div>
 
         <div className="mt-3">
           <section
@@ -182,6 +271,15 @@ export function FindingsGoalInspect({
               <div className="mt-4 divide-y divide-white/10 border-t border-white/10">
                 {stageModel.evidence.map((evidence, i) => {
                   const expanded = openEvidence === i;
+                  // Only evidence that names sessions gets a disclosure. The
+                  // rest print their denominator flat — there is nothing
+                  // underneath to reveal. Held as the narrowed scope rather
+                  // than a boolean so the child cannot be handed `none`.
+                  const scope =
+                    onOpenSession && evidence.sessions.kind !== "none"
+                      ? evidence.sessions
+                      : null;
+                  const sampleNote = evidenceSampleNote(evidence.sessions);
                   return (
                     <div
                       key={`${evidence.observation}-${i}`}
@@ -191,17 +289,17 @@ export function FindingsGoalInspect({
                       <p className="text-sm font-semibold leading-relaxed text-zinc-50">
                         {evidence.observation}
                       </p>
-                      {canListSessions ? (
+                      {scope ? (
                         <button
                           type="button"
                           className="mt-1.5 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
                           aria-expanded={expanded}
-                          onClick={() =>
-                            setOpenEvidence(expanded ? -1 : i)
-                          }
+                          onClick={() => setOpenEvidence(expanded ? -1 : i)}
                           data-testid="findings-evidence-sessions-toggle"
                         >
-                          {evidence.meta}
+                          {sampleNote
+                            ? `${evidence.meta} · ${sampleNote}`
+                            : evidence.meta}
                           <ChevronDown
                             className={cn(
                               "h-3.5 w-3.5 text-zinc-500 transition-transform",
@@ -215,22 +313,11 @@ export function FindingsGoalInspect({
                           {evidence.meta}
                         </p>
                       )}
-                      {evidence.sessionId && onOpenSession && !canListSessions ? (
-                        <button
-                          type="button"
-                          className="mt-2 text-[11px] font-medium text-orange-300 underline-offset-4 hover:text-orange-200 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
-                          onClick={() => onOpenSession(evidence.sessionId!)}
-                          data-testid="findings-evidence-open-session"
-                        >
-                          Open source session →
-                        </button>
-                      ) : null}
-                      {canListSessions && expanded && projectId && onOpenSession ? (
-                        <FindingsGoalSessions
-                          key={goal.runId}
-                          projectId={projectId}
+                      {scope && expanded && onOpenSession ? (
+                        <FindingsEvidenceSessions
+                          key={`${goal.runId}-${selectedStage}-${i}`}
                           runId={goal.runId}
-                          expectedCount={goal.sessions}
+                          sessions={scope}
                           onOpenSession={onOpenSession}
                         />
                       ) : null}
@@ -239,6 +326,10 @@ export function FindingsGoalInspect({
                 })}
               </div>
             ) : (
+              /* No session list here, deliberately. The stage is UNKNOWN, and
+                 the goal's sessions are not evidence about it — offering them
+                 under this sentence is read as "here is what got through",
+                 which is the one inference the copy exists to refuse. */
               <div className="mt-4 border-t border-white/10 pt-4">
                 <p
                   className="text-xs italic leading-relaxed text-zinc-400"
@@ -246,37 +337,6 @@ export function FindingsGoalInspect({
                 >
                   {EMPTY_STAGE_COPY}
                 </p>
-                {canListSessions && projectId && onOpenSession ? (
-                  <>
-                    <button
-                      type="button"
-                      className="mt-3 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
-                      aria-expanded={openEvidence === 0}
-                      onClick={() =>
-                        setOpenEvidence(openEvidence === 0 ? -1 : 0)
-                      }
-                      data-testid="findings-evidence-sessions-toggle"
-                    >
-                      {goal.sessions} session{goal.sessions === 1 ? "" : "s"}
-                      <ChevronDown
-                        className={cn(
-                          "h-3.5 w-3.5 text-zinc-500 transition-transform",
-                          openEvidence === 0 && "rotate-180"
-                        )}
-                        aria-hidden
-                      />
-                    </button>
-                    {openEvidence === 0 ? (
-                      <FindingsGoalSessions
-                        key={goal.runId}
-                        projectId={projectId}
-                        runId={goal.runId}
-                        expectedCount={goal.sessions}
-                        onOpenSession={onOpenSession}
-                      />
-                    ) : null}
-                  </>
-                ) : null}
               </div>
             )}
           </section>
