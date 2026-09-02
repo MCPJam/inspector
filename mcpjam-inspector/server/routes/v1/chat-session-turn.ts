@@ -425,7 +425,9 @@ interface ResolvedTarget {
    *
    * PRESENCE, not length, is the signal: an environment that resolves zero
    * skills delivers zero, and must never fall through to the project pool.
-   * Absent ⇒ no environment named, and the live fetch is correct.
+   * Absent ⇒ nobody ANSWERED — no environment was named, or the resolver is
+   * old enough not to carry `skills` — and the live fetch is what is correct
+   * for an unknown, since only a real answer may speak for the environment.
    */
   environmentSkills?: RuntimeSkill[];
   /**
@@ -635,10 +637,17 @@ async function resolveTarget(
     environmentId: input.environmentId,
     environmentCapabilities: resolveEffectiveCapabilities(spec, attribution),
     // The same resolution the emulated engine gets, in the shape the HARNESS
-    // engine reads. Always set on this branch — presence is what makes it
-    // authoritative, so an environment resolving no skills delivers none
-    // instead of falling through to the project-wide catalog.
-    environmentSkills: environmentRuntimeSkills(spec),
+    // engine reads. Set only when the resolver actually ANSWERED about skills:
+    // `skills` is one of the additive fields `assertRuntimeInvariants` calls
+    // the deploy-skew surface, so an older backend omits it entirely. Presence
+    // downstream means "the environment resolved these", and `runtimeSkills`
+    // maps an absent array to `[]` — so setting it unconditionally would turn
+    // "we were not told" into an authoritative "this environment has none" and
+    // silently strip a harness turn of every skill it should have had. Absent
+    // stays absent (the live fetch, unchanged); `[]` stays `[]`.
+    ...(Array.isArray(spec.skills)
+      ? { environmentSkills: environmentRuntimeSkills(spec) }
+      : {}),
     // The environment's OWN host, resolved by the backend in the same atomic
     // read as its server set. This is what makes a harness environment run its
     // harness on a CONTINUATION too: `environmentId` is a resume pin, so every
@@ -1021,6 +1030,16 @@ async function handleTurn(c: Context): Promise<Response> {
     // engines together with nothing in it saying where the seam is. The
     // caller re-sends the `hostId` the first turn's response reported, and the
     // host's CURRENT selection is re-resolved from it.
+    //
+    // SCOPE, and why it is complete rather than partial: this cannot recognise
+    // a host-established session that ALSO pinned `serverIds`, because such a
+    // continuation is byte-identical to an ordinary `serverIds` one and nothing
+    // durable distinguishes them. Refusing every bare `serverIds` continuation
+    // to cover it would break the pre-existing shape of this endpoint for
+    // callers who never touched a host. So that combination is refused where it
+    // is CREATED instead — `resolveChatSessionEngine`'s `surface-unpinnable-host`
+    // rule — and a session that reaches this guard therefore either pins a
+    // target the caller chose deliberately, or pins nothing and is refused here.
     if (!pins.environmentId && !pins.serverIds && !body.hostId) {
       return v1Error(
         c,
@@ -1233,6 +1252,10 @@ async function handleTurn(c: Context): Promise<Response> {
           : {}),
       },
       hasSelectedMcpServers: selectedServerIds.length > 0,
+      // What a LATER turn will be able to resolve on its own. A session that
+      // pins `serverIds` can be continued with no pointer at all, so a host
+      // reached by pointer cannot survive on it — see the unpinnable-host rule.
+      sessionPinsOwnServerIds: pins.serverIds !== undefined,
       toolPolicy: {
         toolMode: pins.toolMode,
         ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),

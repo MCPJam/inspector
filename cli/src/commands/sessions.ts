@@ -244,7 +244,7 @@ export function registerSessionsCommands(program: Command): void {
         )
         .option(
           "--client <hostId>",
-          "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Continuing a session you started with --client alone REQUIRES it: without it the turn is refused rather than answered by the emulated engine. Alongside --environment it only asserts which host you expect (a mismatch is refused). A harness turn needs --tool-mode auto with no --max-tool-calls."
+          "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Continuing a session you started with --client alone REQUIRES it: without it the turn is refused rather than answered by the emulated engine. Alongside --environment it only asserts which host you expect (a mismatch is refused). It cannot be combined with --server: --client cannot be pinned beside a pinned server set, so a later turn that omitted it would run the emulated engine on a session established on the harness. Use --environment, or --client alone (which connects the client's own servers). A harness turn needs --tool-mode auto with no --max-tool-calls."
         )
         .option(
           "--environment <environmentId>",

@@ -131,7 +131,11 @@ export function assertHostPointerAgreement(args: {
 export type ChatSessionEngineRefusal = {
   harness: Harness;
   /** `surface-*` kinds are this route's own; the rest come from the shared gate. */
-  kind: HarnessUnavailableKind | "surface-tool-policy" | "surface-approval";
+  kind:
+    | HarnessUnavailableKind
+    | "surface-tool-policy"
+    | "surface-approval"
+    | "surface-unpinnable-host";
   reason: string;
 };
 
@@ -161,6 +165,17 @@ export type ChatSessionEngineResult =
  *     Code) would pause into a stream nothing is reading. The shared gate only
  *     refuses harnesses that cannot pause at all; the ones that can are refused
  *     here.
+ *   - AN UNPINNABLE HOST ON A SESSION THAT PINS A TARGET. `hostId` is per-turn
+ *     and the backend's resume allowlist cannot carry it, so the route's
+ *     continuation guard leans on a session having pinned NO target of its own:
+ *     that absence is what marks it host-established and makes a bare
+ *     continuation refusable. A session that pins its own `serverIds` defeats
+ *     that marker — the continuation looks like an ordinary `serverIds` turn,
+ *     resolves no host and runs the EMULATED engine on a session established on
+ *     a harness. The splice is invisible from the transcript, and turn two is
+ *     too late to notice, so the shape is refused where it would be CREATED.
+ *     The escapes are both lossless: `environmentId` pins a host durably, and
+ *     `hostId` alone plus per-turn `allowedServerIds` narrows the same set.
  */
 export function resolveChatSessionEngine(args: {
   /** Server-fetched host, or absent for a bare `serverIds` turn. */
@@ -175,6 +190,14 @@ export function resolveChatSessionEngine(args: {
     allowedTools?: string[];
     maxToolCalls?: number;
   };
+  /**
+   * Does this SESSION pin a server target of its own (`serverIds` in
+   * `resumeConfig`)?
+   *
+   * Not a property of the turn — a property of what a LATER turn will be able
+   * to resolve without the caller's help. See the unpinnable-host rule above.
+   */
+  sessionPinsOwnServerIds: boolean;
 }): ChatSessionEngineResult {
   const harness = harnessOfRuntimeConfig(args.hostTarget?.runtimeConfig);
   if (!harness || !args.hostTarget)
@@ -239,6 +262,29 @@ export function resolveChatSessionEngine(args: {
         'toolMode: "auto" with no allowedTools/maxToolCalls to run the real ' +
         "runtime, or target a non-harness host. allowedServerIds still " +
         "applies — it narrows the server set the harness is given",
+    };
+  }
+
+  // The engine must survive turn TWO. A host reached by pointer is re-resolved
+  // from the body every turn; a session that pins its own `serverIds` can be
+  // continued without one and would then resolve no host at all — an emulated
+  // turn appended to a harness transcript, which is the failure this whole
+  // module exists to make impossible. Refused here, at the only point where
+  // both facts are known: the continuation cannot tell a harness-established
+  // session from an ordinary `serverIds` one, because nothing durable says so.
+  if (args.hostTarget.source === "host" && args.sessionPinsOwnServerIds) {
+    return {
+      ok: false,
+      harness,
+      kind: "surface-unpinnable-host",
+      reason:
+        `this session pins its own serverIds, and hostId cannot be pinned ` +
+        `alongside them — so a later turn that omitted hostId would run the ` +
+        `emulated engine on a session established on the ${name} harness, and ` +
+        "nothing in the transcript would say where the engine changed. Target " +
+        "an environmentId instead (an environment pins its own host, on every " +
+        "turn including continuations), or send hostId ALONE and narrow the " +
+        "host's servers per turn with allowedServerIds",
     };
   }
 

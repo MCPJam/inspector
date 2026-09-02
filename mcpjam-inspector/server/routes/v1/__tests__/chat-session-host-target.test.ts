@@ -540,6 +540,23 @@ describe("an environment's skills reach the engine that runs", () => {
     expect(args.runtimeSkillsOverride).toEqual([]);
   });
 
+  it("keeps ABSENT distinct from empty when the resolver did not answer", async () => {
+    // `skills` is an additive field — an older backend omits it entirely. An
+    // override built from that says "this environment has none" on the
+    // environment's behalf and strips the harness of every skill it should
+    // have had. Not-told must stay not-told, which is the live fetch.
+    const spec = environmentSpec({ harness: "claude-code" });
+    expect(spec).not.toHaveProperty("skills");
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(spec);
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
+      Record<string, unknown>,
+    ];
+    expect(args).not.toHaveProperty("runtimeSkillsOverride");
+  });
+
   it("leaves a host-only harness turn on the live catalog", async () => {
     // No environment resolved anything, so there is no decision to honour and
     // the legacy project-wide fetch is the correct source. An EMPTY override
@@ -559,6 +576,74 @@ describe("an environment's skills reach the engine that runs", () => {
       Record<string, unknown>,
     ];
     expect(args).not.toHaveProperty("runtimeSkillsOverride");
+  });
+});
+
+describe("a pointer-reached harness must survive the NEXT turn", () => {
+  it("refuses hostId alongside serverIds, where the engine could not survive", async () => {
+    // The shape the continuation guard cannot recognise: `serverIds` pins, so a
+    // bare turn two looks like an ordinary serverIds turn, resolves no host and
+    // runs the EMULATED engine on a session established on the harness. Refused
+    // where it is created, because turn two is too late to tell.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, harness: "claude-code" },
+    });
+
+    const response = await turn(
+      firstTurn({ hostId: HOST, serverIds: ["srv_1"] }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+    expect(body.details.kind).toBe("surface-unpinnable-host");
+    // Both escapes are named, so the refusal is actionable rather than a wall.
+    expect(body.message).toMatch(/environmentId/);
+    expect(body.message).toMatch(/allowedServerIds/);
+    expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves the same combination alone on an EMULATED host", async () => {
+    // Nothing to lose on turn two: both turns run the same engine either way.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST },
+    });
+
+    const response = await turn(
+      firstTurn({ hostId: HOST, serverIds: ["srv_1"] }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).engine).toBe("emulated");
+  });
+
+  it("still runs a harness for hostId ALONE — the guarded shape", async () => {
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        harness: "claude-code",
+        selectedServerIds: ["srv_1", "srv_2"],
+      },
+    });
+
+    // …and `allowedServerIds` is the lossless replacement for the refused
+    // pairing: it narrows the host's own set, per turn, without pinning it.
+    const response = await turn(
+      firstTurn({ hostId: HOST, allowedServerIds: ["srv_2"] }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).engine).toBe("harness:claude-code");
+    expect(createManualHostedConnectionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ serverIds: ["srv_2"] }),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });
 
@@ -748,6 +833,7 @@ describe("resolveChatSessionEngine", () => {
     model: { id: MODEL, provider: "anthropic" },
     hasSelectedMcpServers: true,
     toolPolicy: { toolMode: "auto" as const },
+    sessionPinsOwnServerIds: false,
   };
 
   beforeEach(() => {
@@ -786,6 +872,51 @@ describe("resolveChatSessionEngine", () => {
         }),
       ).toMatchObject({ ok: false, kind: "surface-tool-policy" });
     }
+  });
+
+  it("refuses a POINTER-reached harness on a session that pins its own servers", () => {
+    // The engine has to survive turn two. A pinned `serverIds` session can be
+    // continued with no pointer, and would resolve no host at all.
+    expect(
+      resolveChatSessionEngine({
+        ...base,
+        sessionPinsOwnServerIds: true,
+        hostTarget: hostTarget({ harness: "claude-code" }),
+      }),
+    ).toMatchObject({ ok: false, kind: "surface-unpinnable-host" });
+  });
+
+  it("allows a pinned-servers session whose host came from an ENVIRONMENT", () => {
+    // An environment re-resolves its own host on every turn, so there is no
+    // pointer to forget and nothing for a continuation to lose. (The route
+    // rejects `environmentId` + `serverIds` upstream, so this pairing is
+    // unreachable there — asserted here so the rule keys on the SOURCE rather
+    // than on that upstream refusal happening to exist.)
+    expect(
+      resolveChatSessionEngine({
+        ...base,
+        sessionPinsOwnServerIds: true,
+        hostTarget: {
+          hostId: HOST,
+          runtimeConfig: { harness: "claude-code" },
+          source: "environment" as const,
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      engine: { kind: "harness", harness: "claude-code", hostId: HOST },
+    });
+  });
+
+  it("leaves a pinned-servers session on an EMULATED host alone", () => {
+    // No engine to lose: both turns are emulated either way.
+    expect(
+      resolveChatSessionEngine({
+        ...base,
+        sessionPinsOwnServerIds: true,
+        hostTarget: hostTarget({}),
+      }),
+    ).toEqual({ ok: true, engine: { kind: "emulated" } });
   });
 
   it("ignores an UNREGISTERED harness id rather than trusting it", () => {

@@ -696,9 +696,13 @@ export class PlatformApiClient {
    * were called, with what arguments, what came back, and what it cost.
    *
    * Omit `sessionId` to start a session; pass the one this returns to
-   * continue it. Configuration (model, target, system prompt, tool mode) pins
-   * on the FIRST turn — a continuation that resends any of it is refused
-   * rather than silently repinning.
+   * continue it. The PINNED configuration is `modelId`, `environmentId`,
+   * `serverIds`, `systemPrompt`, `temperature` and `toolMode`: those pin on the
+   * FIRST turn, and a continuation that resends any of them is refused rather
+   * than silently repinning. `hostId` is NOT among them — it is per-turn, and a
+   * continuation is expected to resend it (see below), as are the other
+   * per-turn fields (`allowedTools`, `allowedServerIds`, `maxToolCalls`,
+   * `maxSteps`).
    *
    * `idempotencyKey` is REQUIRED and must be stable for the triggering intent,
    * NOT freshly minted per HTTP attempt. This call spends model credits, and a

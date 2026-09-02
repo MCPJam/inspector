@@ -364,10 +364,11 @@ export interface PlatformChatTurn {
    * WHICH ENGINE RAN: `"emulated"` or `"harness:<id>"` (e.g.
    * `"harness:claude-code"`).
    *
-   * Read it rather than assume, rather than inferring an engine from the model
-   * id. `hostId` is per-turn, not pinned: a continuation of a session that
-   * named only a host is refused without it, and one that pinned `serverIds`
-   * of its own runs the emulated engine — this field is what says which.
+   * Read this field rather than inferring an engine from the model id. It is
+   * the only thing that reports which engine ran, and `hostId` is per-turn
+   * rather than pinned: a continuation that omits it is refused outright when
+   * the session named only a host, and cannot reach a harness at all when the
+   * session pinned a target of its own.
    */
   engine?: string;
   /** The saved host this turn executed as, when it named one. */

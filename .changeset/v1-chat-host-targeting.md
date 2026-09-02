@@ -63,13 +63,26 @@ session it was made for, which a copy of the first turn's set would have hidden.
 Making the engine durable instead is a backend change: `AGENT_RESUME_PIN_KEYS`
 and the ingest projection would both have to carry a host.
 
+The one shape that guard cannot recognise is refused where it would be CREATED.
+A session pinning its own `serverIds` continues as an ordinary `serverIds` turn
+— indistinguishable from one that never named a host — so `hostId` alongside
+`serverIds` on a HARNESS host is refused up front (422,
+`details.kind: "surface-unpinnable-host"`) instead of producing a session whose
+turn two silently changes engine. Both escapes are lossless and named in the
+error: an `environmentId` pins its host durably, and `hostId` alone plus
+per-turn `allowedServerIds` narrows the same set. On an emulated host the
+pairing is untouched — there is no engine to lose.
+
 An environment-backed harness turn now delivers the ENVIRONMENT's resolved
 skills. The emulated engine already honoured them; the harness read
 `runtimeSkillsOverride`, which nothing set here, so it fell back to the live
 project-wide catalog and wrote the whole project's skills into the sandbox — the
 environment's decision honoured on one engine and discarded on the other, from
 two responses that look identical. Presence is authoritative, so an environment
-resolving zero skills delivers zero. Per-skill supporting files and pinned plugin
+resolving zero skills delivers zero — while an environment resolver too old to
+carry `skills` at all (an additive, deploy-skew field) stays ABSENT and keeps
+the live fetch, because "we were not told" must not be published as "this
+environment has none". Per-skill supporting files and pinned plugin
 versions still do not cross (they travel as `effectiveCapabilities`, which the
 `runAssistantTurn` facade does not expose): a harness turn here delivers the
 environment's skill bodies, narrower than the Playground but no longer a
