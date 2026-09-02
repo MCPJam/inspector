@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const {
+  checkHarnessRuntimeAvailableMock,
   prepareChatV2Mock,
   listCloudRuntimeSkillsMock,
   handleMCPJamFreeChatModelMock,
@@ -20,6 +21,7 @@ const {
   buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
+  checkHarnessRuntimeAvailableMock: vi.fn(() => ({ ok: true })),
   prepareChatV2Mock: vi.fn(),
   listCloudRuntimeSkillsMock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
@@ -131,6 +133,21 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
+// Only the PREFLIGHT is stubbed, and only so a harness-typed host can reach the
+// dispatch in a unit test (the real gate needs a computers data plane). Every
+// other export stays real — `harnessModelEligibleForRuntime` in particular,
+// which is the shared eligibility answer the dispatch reads.
+vi.mock("../../../utils/harness/harness-availability.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/harness-availability.js")
+  >("../../../utils/harness/harness-availability.js");
+  return {
+    ...actual,
+    checkHarnessRuntimeAvailable: (...args: unknown[]) =>
+      checkHarnessRuntimeAvailableMock(...(args as [])),
+  };
+});
+
 vi.mock("../../../utils/scenario-runtime-config.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/scenario-runtime-config.js")
@@ -179,6 +196,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
 
+    checkHarnessRuntimeAvailableMock.mockReturnValue({ ok: true });
     prepareChatV2Mock.mockResolvedValue({
       allTools: {},
       enhancedSystemPrompt: "system",
@@ -1311,6 +1329,159 @@ describe("web routes — chat-v2 hosted mode", () => {
       // `{ kind: "none" }` here would take those down with the project's.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
       expect(args.skillsSource).toBeUndefined();
+    });
+  });
+
+  /**
+   * The Cursor CLI host seeds `modelId: "cursor/auto"` — a neutral sentinel.
+   * The adapter passes NO model (`toNativeModel: () => undefined`) and Cursor
+   * Auto picks one on the customer's own account, so the sentinel is the only
+   * honest thing a Cursor turn can record.
+   *
+   * It could not survive the round trip. The Playground picker cannot hold the
+   * sentinel (it is not in `availableModels`), so the browser sent whatever
+   * model was last selected, and the non-scenario host-model override refused
+   * to correct it — leaving the session row naming a model the turn never
+   * touched, or nothing at all.
+   */
+  describe("an external-account harness host records ITS OWN model", () => {
+    const cursorHost = {
+      ok: true,
+      config: {
+        selectedServerIds: ["server-1"],
+        modelId: "cursor/auto",
+        harness: "cursor",
+      },
+    };
+
+    it("persists the host's cursor/auto sentinel, not the browser's leftover pick", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-1",
+          messages: [{ role: "user", content: "preview request" }],
+          // What the picker actually holds on a Cursor host: an unrelated
+          // model, because the sentinel is not a selectable entry.
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      // The sentinel — never blank, and never the Haiku id that nothing ran.
+      expect(persisted.modelId).toBe("cursor/auto");
+      // And not billed to MCPJam: the turn ran on the customer's Cursor account.
+      expect(persisted.modelSource).toBe("external-account");
+      expect(persisted.hostConfig?.modelId).toBe("cursor/auto");
+    });
+
+    it("routes the turn to the harness instead of demanding an org `cursor` provider key", async () => {
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-2",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      // `cursor/auto` is not an MCPJam-hosted model, so without the
+      // external-account exemption this turn takes the org-BYOK branch and
+      // asks Convex for a `cursor` provider key — which answers
+      // `provider_not_configured: cursor`.
+      expect(response.status).toBe(200);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+      const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+      expect(engineArgs.harness).toBe("cursor");
+      expect(engineArgs.modelId).toBe("cursor/auto");
+    });
+
+    it("leaves a NON-harness host's model to the body, as before", async () => {
+      // The exemption is scoped to external-account harnesses. A Playground
+      // preview of an ordinary host must keep letting the owner's in-session
+      // model choice win — that is the whole point of `override-wins`.
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {
+          selectedServerIds: ["server-1"],
+          modelId: "openai/gpt-5-mini",
+        },
+      });
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-plain",
+          chatSessionId: "chat-plain-1",
+          messages: [{ role: "user", content: "preview request" }],
+          model: {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            name: "Haiku",
+          },
+        },
+        token
+      );
+
+      expect(response.status).toBe(200);
+      const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+      expect(persisted.modelId).toBe("anthropic/claude-haiku-4.5");
+    });
+
+    it("refuses a body whose model carries no id, rather than persisting a blank one", async () => {
+      // The harness rail is the one live path with no downstream model-id
+      // check (it skips both `deriveOrgProviderKey` and the harness model
+      // gates), so an id-less body used to run a whole turn and write
+      // `String(undefined)` / `""` into the session row.
+      fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
+      const { app, token } = createWebTestApp();
+
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+          hostId: "host-cursor",
+          chatSessionId: "chat-cursor-3",
+          messages: [{ role: "user", content: "preview request" }],
+          model: { provider: "anthropic", name: "Haiku" },
+        },
+        token
+      );
+
+      expect(response.status).toBe(400);
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+      expect(persistChatSessionToConvexMock).not.toHaveBeenCalled();
     });
   });
 });

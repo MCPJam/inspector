@@ -5,7 +5,11 @@ import {
   isBedrockModelId,
   type ModelDefinition,
 } from "@/shared/types";
-import { classifyModelIdProvider } from "@/shared/model-provider";
+import {
+  classifyModelIdProvider,
+  isRuntimeChosenModelSentinel,
+  runtimeChosenModelSentinelName,
+} from "@/shared/model-provider";
 import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
@@ -274,6 +278,28 @@ export type DeriveOrgProviderKeyResult =
 export function deriveOrgProviderKey(
   modelDefinition: ModelDefinition,
 ): DeriveOrgProviderKeyResult {
+  // A RUNTIME-CHOSEN SENTINEL has no provider key, and inventing one is the
+  // bug: `cursor` is a registered ModelProvider so `cursor/auto` classifies
+  // honestly, but nobody can configure a BYOK `cursor` key — the request goes
+  // to Convex and comes back `provider_not_configured: cursor is not enabled
+  // for this project/workspace organization`, which reads as a setup mistake
+  // the customer could fix. They cannot. Refuse HERE, where the caller still
+  // has the context to say what actually went wrong, rather than asking the
+  // org-provider config a question about a model no provider serves.
+  const sentinelName = runtimeChosenModelSentinelName(
+    String(modelDefinition.id),
+  );
+  if (sentinelName) {
+    return {
+      ok: false,
+      error:
+        `"${String(modelDefinition.id)}" (${sentinelName}) is a placeholder ` +
+        "for a runtime that chooses its own model on your own account — it " +
+        "names no model provider, so there is no key to configure for it. " +
+        "Run this turn on a host whose harness provides that runtime, or " +
+        "pick a real model.",
+    };
+  }
   if (modelDefinition.provider === "custom") {
     if (!modelDefinition.customProviderName) {
       return {
@@ -641,16 +667,29 @@ export async function resolveOrgProviderRuntimeForTarget(
 // makes per session.
 // ---------------------------------------------------------------------------
 
-/** Persisted attribution label on chatSessions / llmUsageRecord rows. */
-export type SyntheticModelSource = "mcpjam" | "byok" | "local_byok";
+/**
+ * Persisted attribution label on chatSessions / llmUsageRecord rows.
+ *
+ * `"external-account"` — the customer's own account with the RUNTIME vendor
+ * (Cursor), where MCPJam holds no model credential at all. Distinct from
+ * `"byok"` on purpose: both mean "MCPJam is not charged", but byok also asserts
+ * a configured model PROVIDER and its key, which an external-account turn does
+ * not have. Mirrors `PersistChatSessionOptions["modelSource"]`.
+ */
+export type SyntheticModelSource =
+  | "mcpjam"
+  | "byok"
+  | "local_byok"
+  | "external-account";
 
 /**
  * Result of {@link resolveSyntheticModelSource}.
  *
- * `orgRuntime` is present when `source !== "mcpjam"` so the synthetic
+ * `orgRuntime` is present when the source is a BYOK one, so the synthetic
  * dispatcher can reuse the resolved runtime (cloud providerKey OR local
  * `OrgProviderResolvedConfig`) for the actual handler call — no
- * duplicate `resolveOrgProviderRuntime` round-trip.
+ * duplicate `resolveOrgProviderRuntime` round-trip. Absent for `"mcpjam"` and
+ * for `"external-account"`, neither of which resolves an org provider.
  */
 export interface SyntheticModelResolution {
   source: SyntheticModelSource;
@@ -689,6 +728,14 @@ export async function resolveSyntheticModelSource(args: {
   const modelIdStr = String(args.modelDefinition.id);
   if (isHostedCatalogModel(modelIdStr)) {
     return { source: "mcpjam" };
+  }
+  // A runtime-chosen sentinel resolves NO org provider — see
+  // `deriveOrgProviderKey`. Answered before the key derivation below so the
+  // resolver returns an attribution ("nobody billed MCPJam, and there is no
+  // configured provider either") instead of throwing on a key it must not ask
+  // for. `orgRuntime` is deliberately absent: there is no runtime to reuse.
+  if (isRuntimeChosenModelSentinel(modelIdStr)) {
+    return { source: "external-account" };
   }
   const keyResult = deriveOrgProviderKey(args.modelDefinition);
   if (!keyResult.ok) {
@@ -762,7 +809,11 @@ export function buildSyntheticModelDefinition(
 
   return {
     id: modelId,
-    name: modelId,
+    // A runtime-chosen sentinel gets its curated label ("Cursor Auto"); every
+    // other unknown id keeps the raw string, which is all there is to show.
+    // The id itself is NEVER rewritten — it is what traces and eval metadata
+    // record, and the whole point of the sentinel is that it names no model.
+    name: runtimeChosenModelSentinelName(modelId) ?? modelId,
     provider: classification.provider,
     ...(classification.customProviderName !== undefined
       ? { customProviderName: classification.customProviderName }

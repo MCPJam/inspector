@@ -57,6 +57,12 @@ const LOCAL_MODEL: ModelDefinition = {
   name: "Llama3 local",
   provider: "ollama",
 };
+/** The Cursor CLI host template's neutral sentinel — no provider serves it. */
+const CURSOR_SENTINEL_MODEL: ModelDefinition = {
+  id: "cursor/auto",
+  name: "Cursor Auto",
+  provider: "cursor",
+};
 
 const baseArgs = (overrides: Record<string, unknown> = {}) => ({
   modelDefinition: MCPJAM_MODEL,
@@ -142,6 +148,50 @@ describe("resolveTurnRuntime — runtime shape", () => {
       extraBodyFields: { foo: "bar" },
       harness: "claude-code",
     });
+  });
+
+  it("external account (cursor/auto sentinel) → hosted /stream carrying only the harness", async () => {
+    // The host's model id names no provider model, so there is no org provider
+    // to resolve and no MCPJam credential to spend. Before this arm the
+    // resolver fell through to cloud BYOK and shipped `providerKey: "cursor"`
+    // to `/stream/org`, which Convex answered with
+    // `provider_not_configured: cursor`.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "external-account",
+    });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL, harness: "cursor" }),
+    );
+
+    expect(rt.modelSource).toBe("external-account");
+    expect(rt.runtime).toEqual({
+      kind: "hosted",
+      endpointPath: "/stream",
+      harness: "cursor",
+    });
+    // No providerKey anywhere in the body — that is the whole point.
+    expect(
+      (rt.runtime as { extraBodyFields?: Record<string, unknown> })
+        .extraBodyFields,
+    ).toBeUndefined();
+    await rt.finalizeUsage(successResult());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("external account without a harness is refused, not routed to a provider", async () => {
+    // A sentinel on a turn with no harness selected cannot run at all. Saying
+    // so here — before the caller marks the turn as possibly-spent — is what
+    // replaces `provider_not_configured: cursor`, which read as "go configure
+    // a key" for a provider that has no keys.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "external-account",
+    });
+
+    await expect(
+      resolveTurnRuntime(baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL })),
+    ).rejects.toThrow(/cursor\/auto/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("cloud BYOK → hosted /stream/org with providerKey + serverIds (byte-parity body)", async () => {

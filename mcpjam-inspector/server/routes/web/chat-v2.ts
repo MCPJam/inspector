@@ -85,6 +85,7 @@ import {
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
@@ -279,7 +280,19 @@ chatV2.post("/", async (c) => {
     }
 
     let modelDefinition = model;
-    if (!modelDefinition) {
+    // The ID, not just the object. `model` arrives through an unvalidated body
+    // cast (`hostedChatSchema` does not describe it), and `ModelDefinition.id`
+    // being REQUIRED in TypeScript says nothing about what a browser posted.
+    //
+    // An id-less body used to reach the persist as `String(undefined)` /
+    // `String("")` — a session row that names a model nothing ran, or names
+    // nothing at all and reads blank in the sessions list. It survived that far
+    // only on the harness rail: every other path eventually derives an org
+    // provider key and 400s, while an external-account harness turn skips both
+    // the provider derivation AND the harness model gates by design. So the one
+    // rail with no downstream id check is exactly the one that persisted a
+    // blank. Check it once, here, for all of them.
+    if (!modelDefinition || !String(modelDefinition.id ?? "").trim()) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
@@ -734,8 +747,28 @@ chatV2.post("/", async (c) => {
     // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
     // selections with vendor-prefixed ids) would otherwise inherit the
     // body's provider and route to the wrong runtime.
+    //
+    // Host-wins for a scenario (a share-link client must not re-route the
+    // session), and ALSO for an EXTERNAL-ACCOUNT harness on any surface —
+    // including a Playground preview, where the body normally wins.
+    //
+    // That exception is not a preference, it is honesty about what ran. The
+    // Cursor adapter passes NO model (`toNativeModel: () => undefined`); the
+    // runtime picks one on the customer's own account. So the body's model is
+    // not an override of anything — nothing consumes it — while the host's
+    // `cursor/auto` sentinel is the one value that describes the turn. The
+    // Playground picker cannot even hold that sentinel (it is not in
+    // `availableModels`, so the host-reseed effect skips it), which left the
+    // browser sending whatever unrelated model was last selected; that id is
+    // what the transcript, the trace and eval metadata then recorded — a model
+    // the turn never touched. Recording the sentinel is the whole reason it
+    // exists.
+    const externalAccountHarnessTurn = Boolean(
+      resolvedExecution.harness &&
+        harnessUsesExternalAccount(resolvedExecution.harness),
+    );
     if (
-      isScenarioSession &&
+      (isScenarioSession || externalAccountHarnessTurn) &&
       hostRuntimeConfig &&
       resolvedExecution.modelId &&
       resolvedExecution.modelId !== modelDefinition.id
@@ -753,6 +786,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
+          externalAccountHarness: externalAccountHarnessTurn,
         },
       );
       modelDefinition = hostModel;

@@ -21,6 +21,9 @@
  *   - local BYOK → direct engine (model built via `buildOrgModelFromResolvedConfig`)
  *     and `finalizeUsage` posts `/stream/org/local-usage` with the identical
  *     body `runLocalOrgChatTurnHeadless`'s `postLocalUsage` emitted.
+ *   - external account → hosted `/stream` shape carrying only the harness. The
+ *     endpoint is never dialed (runHarnessTurn ignores it); this arm exists so a
+ *     runtime-chosen sentinel never asks the org-provider config a question.
  */
 
 import type { ToolSet } from "ai";
@@ -228,6 +231,44 @@ export async function resolveTurnRuntime(
       runtime,
       modelSource: "local_byok",
       finalizeUsage,
+      classifyFailure: classifyTurnFailure,
+    };
+  }
+
+  // --- Runtime-chosen sentinel → the harness, on the customer's own account ---
+  //
+  // The host's model id names no provider model (`cursor/auto`), so there is no
+  // org provider to resolve and no MCPJam credential to spend. The turn is only
+  // runnable at all because a harness was selected: `runAssistantTurn` sees
+  // `harness` on the hosted runtime and dispatches `runHarnessTurn`, which
+  // ignores `endpointPath`/`extraBodyFields` entirely and authenticates the
+  // runtime with the customer's own vendor credential.
+  //
+  // Without a harness the sentinel is unrunnable, and saying so here is the
+  // point: this is BEFORE the caller marks the turn as possibly-spent, so a
+  // v1 session turn that named `cursor/auto` releases its lease and gets a
+  // sentence that explains itself — where it previously reached Convex and came
+  // back `provider_not_configured: cursor`, i.e. "go configure a key" for a
+  // provider that has no keys.
+  if (resolution.source === "external-account") {
+    if (!args.harness) {
+      throw new Error(
+        `"${modelId}" is a placeholder for a runtime that chooses its own ` +
+          "model, not a model MCPJam can run. Send this turn to a host whose " +
+          "harness provides that runtime, or pick a real model.",
+      );
+    }
+    return {
+      runtime: {
+        kind: "hosted",
+        endpointPath: "/stream",
+        ...(args.extraBodyFields
+          ? { extraBodyFields: args.extraBodyFields }
+          : {}),
+        harness: args.harness,
+      },
+      modelSource: "external-account",
+      finalizeUsage: HOSTED_NOOP_FINALIZE,
       classifyFailure: classifyTurnFailure,
     };
   }
