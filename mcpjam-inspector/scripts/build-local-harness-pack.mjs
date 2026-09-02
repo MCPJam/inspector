@@ -65,9 +65,18 @@ const inspectorRoot = resolve(scriptDir, "..");
  * Platforms a pack can be built for, and the vendor platform package whose
  * native binary must be present and checksum-verified for each.
  *
- * Kept as an explicit table rather than derived from `process.platform`: a
- * cross-built pack is a normal thing for CI to produce, and the vendor package
- * name is the only reliable way to find the binary that will actually run.
+ * Kept as an explicit table rather than derived from `process.platform`,
+ * because the vendor package name is the only reliable way to find the binary
+ * that will actually run.
+ *
+ * Cross-building is only PARTLY supported, and it is worth being exact about
+ * where the line is. The bundled Node is fine — its version is read from the
+ * archive name when the binary cannot be run here. The vendor CLI is not: the
+ * SDK resolves its own platform package, so a pack for a foreign platform has
+ * no `claude` to checksum unless that package is forced into the install. The
+ * workflow therefore builds each target on a matching runner, and a
+ * cross-build attempt fails with a message that says exactly this rather than
+ * with `ENOEXEC` from somewhere further down.
  */
 const PLATFORMS = {
   "darwin-arm64": { os: "darwin", vendorSuffix: "darwin-arm64" },
@@ -297,6 +306,8 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
   const binDir = join(packRoot, "bin");
   mkdirSync(binDir, { recursive: true });
   const target = join(binDir, platformKey.startsWith("win32") ? "node.exe" : "node");
+  /** The archive's single top-level directory, e.g. `node-v24.20.0-linux-x64`. */
+  let extractedRoot = null;
 
   if (statSync(nodeTarball).isFile() && /\.(tar\.(gz|xz)|zip)$/.test(nodeTarball)) {
     const staging = mkdtempSync(join(tmpdir(), "mcpjam-node-"));
@@ -323,6 +334,7 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
       if (roots.length !== 1) {
         fail(`expected one directory inside ${nodeTarball}, found ${roots.length}`);
       }
+      extractedRoot = roots[0];
       const extracted = join(
         staging,
         roots[0],
@@ -338,8 +350,41 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
   }
 
   chmodSync(target, 0o755);
-  const version = execFileSync(target, ["--version"], { encoding: "utf8" }).trim();
-  return { version, sha256: sha256File(target) };
+  return { version: nodeVersion(target, extractedRoot, platformKey), sha256: sha256File(target) };
+}
+
+/**
+ * The bundled Node's version, asked of the binary when we can run it.
+ *
+ * A cross-built pack — a darwin-x64 pack from an arm64 Mac, say — contains a
+ * binary this host cannot execute, and `execFileSync` threw ENOEXEC before the
+ * manifest was ever written. The version nodejs.org already encodes in the
+ * archive's directory name is read instead, and that name has to be
+ * well-formed rather than merely present.
+ *
+ * The host case still ASKS THE BINARY, because that is the stronger answer:
+ * it proves the file runs, not merely that it was named plausibly.
+ */
+function nodeVersion(target, extractedRoot, platformKey) {
+  const native = platformKey === `${process.platform}-${process.arch}`;
+  if (native) {
+    return execFileSync(target, ["--version"], { encoding: "utf8" }).trim();
+  }
+  const named = /^node-(v\d+\.\d+\.\d+)-/.exec(extractedRoot ?? "");
+  if (named === null) {
+    fail(
+      `cross-building ${platformKey} on ${process.platform}-${process.arch}: ` +
+        `the bundled Node cannot be run here, and its archive directory ` +
+        `${JSON.stringify(extractedRoot ?? "(a bare binary)")} does not name a ` +
+        `version. Pass an official nodejs.org archive, or build on a ` +
+        `${platformKey} host.`,
+    );
+  }
+  console.log(
+    `[pack] cross-building: bundled Node version ${named[1]} read from the ` +
+      `archive name, not from the binary`,
+  );
+  return named[1];
 }
 
 /**

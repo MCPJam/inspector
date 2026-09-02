@@ -32,6 +32,7 @@ import { logger } from "../../logger.js";
 import { assertArgvAllowed } from "./argv-policy.js";
 import {
   listGroupMembers,
+  probeProcess,
   probeProcessGroup,
   readProcessGroupId,
   readProcessBirthIdentity,
@@ -98,6 +99,16 @@ export interface SupervisedProcessHandle {
 }
 
 export class SupervisorError extends Error {}
+
+/**
+ * How long a stop waits for an already-dead root's `exit` event.
+ *
+ * Node delivers it on the next turns of the loop, so this is generous for what
+ * it covers and short enough to be invisible: it only ever elapses in full
+ * when the event is never coming, and the stop then proceeds exactly as it did
+ * before this existed.
+ */
+const EXIT_SNAPSHOT_GRACE_MS = 250;
 
 interface LiveProcess {
   child: ChildProcess;
@@ -664,6 +675,49 @@ export class LocalHarnessSupervisor {
    * the lifecycle contract's terminal paths all converge here so none of them
    * can forget a helper.
    */
+  /**
+   * Give an already-dead root's `exit` handler the moment it needs to run.
+   *
+   * Node delivers `exit` asynchronously. A stop that arrives between the
+   * kernel reaping the root and that delivery sees `orphanSnapshot === null`
+   * and no live root, so the group is unanchored and correctly refuses to be
+   * signalled — leaving descendants running and the session reported
+   * `unknown`. Safe, but the tree survives, which is what the snapshot exists
+   * to prevent.
+   *
+   * Bounded and best-effort: if the root is genuinely still alive, there is
+   * nothing to wait for and this returns at once; if the event never arrives,
+   * the stop proceeds exactly as it did before.
+   */
+  private async awaitPendingExitSnapshots(
+    bucket: Iterable<LiveProcess>,
+  ): Promise<void> {
+    const pending = [...bucket].filter(
+      (entry) =>
+        entry.role === "root" &&
+        entry.orphanSnapshot === null &&
+        entry.child.exitCode === null &&
+        entry.child.signalCode === null,
+    );
+    if (pending.length === 0) return;
+    const deadline = Date.now() + EXIT_SNAPSHOT_GRACE_MS;
+    while (Date.now() < deadline) {
+      const states = await Promise.all(
+        pending.map(async (entry) =>
+          entry.orphanSnapshot !== null
+            ? "settled"
+            : (await probeProcess(entry.pid, this.platform)).state,
+        ),
+      );
+      // Waiting only on a root the kernel says is GONE while its snapshot is
+      // still absent — that is the whole window. A root still running has an
+      // anchor and needs no snapshot; one that could not be probed is not
+      // going to be helped by waiting.
+      if (!states.includes("gone")) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   async stopSession(
     sessionId: string,
   ): Promise<{ stopped: boolean; escaped: number }> {
@@ -681,6 +735,15 @@ export class LocalHarnessSupervisor {
       // In parallel: each termination waits out its own grace period, and a
       // session with a root plus helpers should be bounded by ONE grace
       // period, not by one per process.
+      // Before signalling anything: a root that exited MOMENTS ago has not
+      // necessarily had its `exit` event delivered yet, and the snapshot is
+      // taken in that handler. Stopping into that window found no snapshot,
+      // could not anchor the group, and left the vendor CLI running — the
+      // exact defect the snapshot exists to close, just through a narrower
+      // door. Waiting for the event that is already on its way is enough; the
+      // snapshot must still be taken WHILE the root owns the group, so this
+      // does not take one here.
+      await this.awaitPendingExitSnapshots(bucket);
       const outcomes = await Promise.all(
         [...bucket].map(async (entry) => {
           if (entry.birthIdentity === null) {
