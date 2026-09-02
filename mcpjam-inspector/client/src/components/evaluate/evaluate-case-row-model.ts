@@ -105,6 +105,8 @@ export type EvaluateCaseRow = {
   key: string;
   title: string;
   testCaseId: string | null;
+  /** The stored key, which is what the run comparison groups by. */
+  caseKey: string | null;
   /** Counted from iteration rows. A population, never a verdict. */
   iterations: { passed: number; total: number };
   verdict: CaseRowVerdict;
@@ -362,6 +364,10 @@ export function buildEvaluateCaseRows(
       key: group.key,
       title: group.title,
       testCaseId: group.testCaseId,
+      caseKey:
+        group.iterations.find(
+          (iteration) => iteration.testCaseSnapshot?.caseKey !== undefined,
+        )?.testCaseSnapshot?.caseKey ?? null,
       iterations: { passed: group.passed, total: group.total },
       verdict,
       mark,

@@ -51,6 +51,17 @@ const stageAnalytics = vi.hoisted(() => ({
   },
 }));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
+const compareState = vi.hoisted(() => ({
+  current: {
+    status: "disabled" as string,
+    dto: null as unknown,
+    errorKind: null as string | null,
+  },
+}));
+
+vi.mock("../use-eval-run-compare", () => ({
+  useEvalRunCompare: () => compareState.current,
+}));
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => flagEnabled.current,
@@ -172,6 +183,7 @@ afterEach(() => {
     error: null,
   };
   flagEnabled.current = false;
+  compareState.current = { status: "disabled", dto: null, errorKind: null };
   detailState.current = {
     ...detailState.current,
     status: "ready",
@@ -328,6 +340,60 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("run-case-rows")).not.toHaveTextContent(
       "Draw a rectangle",
     );
+  });
+
+  it("says what changed since the previous run", () => {
+    compareState.current = {
+      status: "ready",
+      dto: {
+        baseline: { baseRunId: "run_0" },
+        baseRun: { id: "run_0", runNumber: 4 },
+        compareRun: { id: "run_1", runNumber: 5 },
+        cases: [
+          {
+            caseKey: "hash:a",
+            title: "Draw and share a diagram",
+            status: "unchanged_failed",
+            configChanged: false,
+            evaluationConfigChanged: false,
+            base: { outcome: "failed", iterationIds: [] },
+            compare: { outcome: "failed", iterationIds: [] },
+          },
+        ],
+      },
+      errorKind: null,
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent();
+
+    expect(screen.getByTestId("run-change-summary")).toHaveTextContent(
+      "vs run #4: 1 still failing",
+    );
+  });
+
+  it("says nothing about change when the comparison did not happen", () => {
+    // Never "Unchanged": that is a claim about a comparison, and a failed or
+    // absent one supports no claim at all.
+    compareState.current = {
+      status: "error",
+      dto: null,
+      errorKind: "noBaseline",
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent();
+
+    expect(screen.queryByTestId("run-change-summary")).toBeNull();
+    expect(screen.queryByText("Unchanged")).toBeNull();
   });
 
   it("offers no trace button when no diagnostic names a case row", () => {

@@ -41,6 +41,12 @@ import {
   defaultOpenCaseRow,
 } from "./evaluate-case-row-model";
 import { RUN_STAGE_ANALYTICS_FLAG } from "../evals/run-user-value-chain-slot";
+import {
+  describeRunChanges,
+  pillsByRowKey,
+  summarizeRunChanges,
+} from "./evaluate-run-diff-model";
+import { useEvalRunCompare } from "./use-eval-run-compare";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
@@ -59,6 +65,8 @@ export function EvaluateRunContent({
   projectId,
   run,
   iterations,
+  allIterations,
+  previousRunId,
   decisionSummaryEnabled,
   onOpenIteration,
   onEditCase,
@@ -67,6 +75,9 @@ export function EvaluateRunContent({
   projectId: string | null | undefined;
   run: EvalSuiteRun;
   iterations: readonly EvalIteration[];
+  /** Every iteration in the suite, so the previous run's fractions are known. */
+  allIterations?: readonly EvalIteration[];
+  previousRunId?: string | null;
   decisionSummaryEnabled: boolean;
   /** Focus one iteration's evidence through the app's own routing. */
   onOpenIteration?: (target: {
@@ -150,6 +161,56 @@ export function EvaluateRunContent({
         document: stageAnalytics.document,
       }),
     [stageAnalyticsEnabled, stageAnalytics.status, stageAnalytics.document],
+  );
+
+  // What changed since the previous run. One read, no store: the answer is not
+  // shared with another surface and a cache would be more machinery than it is
+  // worth.
+  const compare = useEvalRunCompare({
+    projectId,
+    run,
+    ...(previousRunId ? { baseRunId: previousRunId } : {}),
+    enabled: active,
+  });
+
+  const changeSummary = useMemo(
+    () => (compare.dto ? summarizeRunChanges(compare.dto) : null),
+    [compare.dto],
+  );
+
+  /**
+   * The previous run's own pass fractions, keyed by case.
+   *
+   * Read from the iteration rows this page already holds rather than from the
+   * comparison: the public compare DTO carries each side's OUTCOME but no
+   * per-side counts, so "was 7/10" has to come from somewhere else or not be
+   * shown at all.
+   */
+  const previousFractions = useMemo(() => {
+    const byCaseKey = new Map<string, { passed: number; total: number }>();
+    if (!previousRunId || !allIterations) return byCaseKey;
+    for (const iteration of allIterations) {
+      if (iteration.suiteRunId !== previousRunId) continue;
+      const caseKey = iteration.testCaseSnapshot?.caseKey;
+      if (!caseKey) continue;
+      const entry = byCaseKey.get(caseKey) ?? { passed: 0, total: 0 };
+      entry.total += 1;
+      if (iteration.result === "passed") entry.passed += 1;
+      byCaseKey.set(caseKey, entry);
+    }
+    return byCaseKey;
+  }, [allIterations, previousRunId]);
+
+  const rowPills = useMemo(
+    () =>
+      pillsByRowKey({
+        rows: caseRows,
+        dto: compare.dto,
+        caseKeyOf: (row) => row.caseKey,
+        previousIterationsOf: (caseKey) =>
+          previousFractions.get(caseKey) ?? null,
+      }),
+    [caseRows, compare.dto, previousFractions],
   );
 
   const [stageFilter, setStageFilter] = useState<string | null>(null);
@@ -272,6 +333,17 @@ export function EvaluateRunContent({
         }
       />
 
+      {changeSummary ? (
+        <p
+          className="px-5 pb-3 text-[12.5px] text-muted-foreground"
+          data-testid="run-change-summary"
+        >
+          vs run #{changeSummary.baseRunNumber}:{" "}
+          {describeRunChanges(changeSummary).join(" · ") ||
+            "no case changed state"}
+        </p>
+      ) : null}
+
       <div className="px-5 pb-4">
         <RunVerdictCaveats
           summary={detail.summary}
@@ -294,6 +366,7 @@ export function EvaluateRunContent({
         <RunCaseRows
           rows={visibleRows}
           defaultOpenKey={openRowKey}
+          pills={rowPills}
           renderBody={(row) => (
             <RunCaseRowBody
               row={row}

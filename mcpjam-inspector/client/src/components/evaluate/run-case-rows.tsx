@@ -26,6 +26,36 @@ import {
   type CaseRowIterationCell,
   type EvaluateCaseRow,
 } from "./evaluate-case-row-model";
+import type { RunChangePill } from "./evaluate-run-diff-model";
+
+const PILL_CLASS: Record<RunChangePill["kind"], string> = {
+  regressed: "bg-destructive/15 text-destructive",
+  fixed: "bg-success/15 text-success",
+  stillFailing: "bg-amber-500/15 text-amber-600 dark:text-amber-500",
+  unchanged: "bg-muted text-muted-foreground",
+  added: "bg-muted text-muted-foreground",
+  reconfigured: "bg-muted text-muted-foreground",
+};
+
+function ChangePill({ pill }: { pill: RunChangePill }) {
+  return (
+    <span className="hidden w-32 shrink-0 flex-col items-start gap-0.5 sm:flex">
+      <span
+        className={cn(
+          "rounded-full px-2 py-0.5 text-[11px] font-medium",
+          PILL_CLASS[pill.kind],
+        )}
+      >
+        {pill.label}
+      </span>
+      {pill.detail ? (
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {pill.detail}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 const MARK_CLASS: Record<"passed" | "failed" | "inconclusive", string> = {
   passed: "bg-success/15 text-success",
@@ -179,11 +209,14 @@ function verdictNote(row: EvaluateCaseRow): string | null {
 export function RunCaseRows({
   rows,
   defaultOpenKey,
+  pills,
   onOpenIteration,
   renderBody,
 }: {
   rows: readonly EvaluateCaseRow[];
   defaultOpenKey: string | null;
+  /** Per-row change pills. A row with no entry gets none, never "Unchanged". */
+  pills?: ReadonlyMap<string, RunChangePill>;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -247,6 +280,11 @@ export function RunCaseRows({
                 <IterationStrip row={row} />
               </span>
               <ChainCells row={row} />
+              {pills?.get(row.key) ? (
+                <ChangePill pill={pills.get(row.key) as RunChangePill} />
+              ) : (
+                <span className="hidden w-32 shrink-0 sm:block" />
+              )}
               <span className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block">
                 {formatRunCaseLatencyMs(row.p50Ms)}
               </span>

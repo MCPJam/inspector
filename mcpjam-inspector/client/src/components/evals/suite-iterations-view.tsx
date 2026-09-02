@@ -103,13 +103,13 @@ export interface SuiteNavigation {
       replace?: boolean;
       compareToRunId?: string;
       testCaseId?: string;
-    }
+    },
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { openCompare?: boolean; replace?: boolean; iteration?: string }
+    options?: { openCompare?: boolean; replace?: boolean; iteration?: string },
   ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
@@ -152,7 +152,10 @@ function SettingsSection({
 }) {
   if (layout === "inline") {
     return (
-      <section className="py-5 first:pt-2 last:pb-2" data-setting-key={settingKey}>
+      <section
+        className="py-5 first:pt-2 last:pb-2"
+        data-setting-key={settingKey}
+      >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-1">
@@ -172,7 +175,10 @@ function SettingsSection({
     );
   }
   return (
-    <section className="py-6 first:pt-2 last:pb-2" data-setting-key={settingKey}>
+    <section
+      className="py-6 first:pt-2 last:pb-2"
+      data-setting-key={settingKey}
+    >
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
           {label}
@@ -376,7 +382,7 @@ export function SuiteIterationsView({
   /** Per-case run from the cases overview table (Explore / CI). */
   onRunTestCase?: (
     testCase: EvalCase,
-    opts?: { iterationOverride?: number }
+    opts?: { iterationOverride?: number },
   ) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -385,7 +391,7 @@ export function SuiteIterationsView({
   isDirectGuest?: boolean;
   /** Playground: connect suite MCP servers before compare run (same as per-case run). */
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
 }) {
   const appState = useSharedAppState();
@@ -400,18 +406,18 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-      ? "test-detail"
-      : route.type === "test-edit" && !readOnlyConfig
-      ? "test-edit"
-      : route.type === "test-edit"
-      ? "test-detail"
-      : "overview";
+        ? "test-detail"
+        : route.type === "test-edit" && !readOnlyConfig
+          ? "test-edit"
+          : route.type === "test-edit"
+            ? "test-detail"
+            : "overview";
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
       : route.type === "suite-overview" && route.view === "cross-host"
-      ? "cross-host"
-      : "runs";
+        ? "cross-host"
+        : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -434,7 +440,7 @@ export function SuiteIterationsView({
       opts?: {
         matchOptionsOverride?: EvalMatchOptions;
         iterationOverride?: number;
-      }
+      },
     ) =>
       (
         onRerun as (
@@ -442,10 +448,10 @@ export function SuiteIterationsView({
           opts?: {
             matchOptionsOverride?: EvalMatchOptions;
             iterationOverride?: number;
-          }
+          },
         ) => void
       )(s, opts),
-    [onRerun]
+    [onRerun],
   );
 
   const onRunTestCaseWithOverride = useMemo<
@@ -455,7 +461,7 @@ export function SuiteIterationsView({
       onRunTestCase
         ? (testCase: EvalCase) => onRunTestCase(testCase, { iterationOverride })
         : undefined,
-    [onRunTestCase, iterationOverride]
+    [onRunTestCase, iterationOverride],
   );
   const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
@@ -473,7 +479,7 @@ export function SuiteIterationsView({
     () =>
       splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
         .length,
-    [draftDefaultPredicates]
+    [draftDefaultPredicates],
   );
   // Description editor is hidden in the current pass — handlers and draft
   // state were removed; re-add together when the About section returns.
@@ -494,7 +500,7 @@ export function SuiteIterationsView({
             .filter((it) => it.suiteRunId === selectedRunId && it.chatSessionId)
             .map((it) => it.chatSessionId as string)
         : [],
-    [allIterations, selectedRunId]
+    [allIterations, selectedRunId],
   );
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
@@ -504,7 +510,7 @@ export function SuiteIterationsView({
   const computersEnabled = useComputersEnabled();
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const computerEnvironments = useSandboxImages(
-    computersEnabled && projectId ? projectId : null
+    computersEnabled && projectId ? projectId : null,
   );
   const ephemeralCloudAvailable = useEphemeralCloudAvailable();
   // Cloud-sandbox preflight, derived ONCE here — the parent owns every run
@@ -522,11 +528,11 @@ export function SuiteIterationsView({
   // ids the suite itself lists — a superset cannot make it read true.
   const projectEnvironments = useProjectEnvironments(
     projectEnvironmentsEnabled ? (projectId ?? null) : null,
-    { includeAdhoc: true }
+    { includeAdhoc: true },
   );
   const suitePinsSandboxImage = evalSuitePinsSandboxImage(
     suite,
-    projectEnvironments ?? undefined
+    projectEnvironments ?? undefined,
   );
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
@@ -551,13 +557,13 @@ export function SuiteIterationsView({
     iterations,
     allIterations,
     runs,
-    aggregate
+    aggregate,
   );
 
   const { caseGroupsForSelectedRun } = useRunDetailData(
     selectedRunId,
     allIterations,
-    effectiveRunDetailSortBy
+    effectiveRunDetailSortBy,
   );
 
   // Selected run details
@@ -582,7 +588,7 @@ export function SuiteIterationsView({
   });
 
   const selectedCompareBaseRunId =
-    route.type === "run-detail" ? route.compareToRunId ?? null : null;
+    route.type === "run-detail" ? (route.compareToRunId ?? null) : null;
 
   const previousCompletedRunForSelectedRun = useMemo(() => {
     if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
@@ -593,7 +599,7 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
-          compareRunsBySequence(run, selectedRunDetails) < 0
+          compareRunsBySequence(run, selectedRunDetails) < 0,
       )
       .sort((a, b) => compareRunsBySequence(b, a));
     return earlierCompletedRuns[0] ?? null;
@@ -622,10 +628,10 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? route.iteration ?? null : null;
+    route.type === "run-detail" ? (route.iteration ?? null) : null;
 
   const selectedRunTestCaseId =
-    route.type === "run-detail" ? route.testCaseId ?? null : null;
+    route.type === "run-detail" ? (route.testCaseId ?? null) : null;
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -646,7 +652,7 @@ export function SuiteIterationsView({
   const iterationsForSelectedRunTestCase = useMemo(() => {
     if (!selectedRunId || !selectedRunTestCaseId) return [];
     return caseGroupsForSelectedRun.filter(
-      (iteration) => iteration.testCaseId === selectedRunTestCaseId
+      (iteration) => iteration.testCaseId === selectedRunTestCaseId,
     );
   }, [selectedRunId, selectedRunTestCaseId, caseGroupsForSelectedRun]);
 
@@ -703,11 +709,11 @@ export function SuiteIterationsView({
   // fires exactly one write.
   const persistedDefaultPredicatesKey = useMemo(
     () => JSON.stringify(suite.defaultPredicates ?? []),
-    [suite.defaultPredicates]
+    [suite.defaultPredicates],
   );
   const draftDefaultPredicatesKey = useMemo(
     () => JSON.stringify(draftDefaultPredicates),
-    [draftDefaultPredicates]
+    [draftDefaultPredicates],
   );
   const defaultChecksInFlightRef = useRef<Promise<unknown> | null>(null);
   useEffect(() => {
@@ -767,12 +773,12 @@ export function SuiteIterationsView({
         try {
           localStorage.setItem(
             `suite-${suite._id}-criteria-rate`,
-            String(suite.defaultPassCriteria.minimumPassRate)
+            String(suite.defaultPassCriteria.minimumPassRate),
           );
         } catch (error) {
           console.warn(
             "Failed to sync default pass criteria to localStorage",
-            error
+            error,
           );
         }
       }
@@ -790,7 +796,7 @@ export function SuiteIterationsView({
     attachments: Array<{
       namedHostId: string;
       enabledOptionalServerIds: string[];
-    }>
+    }>,
   ) => {
     try {
       await updateSuite({
@@ -798,7 +804,7 @@ export function SuiteIterationsView({
         hostAttachments: attachments,
       });
       toast.success(
-        attachments.length === 0 ? "Clients cleared" : "Clients updated"
+        attachments.length === 0 ? "Clients cleared" : "Clients updated",
       );
     } catch (error) {
       toast.error(getBillingErrorMessage(error, "Failed to update clients"));
@@ -818,7 +824,7 @@ export function SuiteIterationsView({
       toast.success("Server group updated");
     } catch (error) {
       toast.error(
-        getBillingErrorMessage(error, "Failed to update server group")
+        getBillingErrorMessage(error, "Failed to update server group"),
       );
     }
   };
@@ -835,7 +841,7 @@ export function SuiteIterationsView({
         compareToRunId: baseRunId,
       });
     },
-    [navigation, suite._id]
+    [navigation, suite._id],
   );
 
   const handleBackToOverview = () => {
@@ -870,7 +876,7 @@ export function SuiteIterationsView({
     () =>
       replayingRunId != null &&
       runs.some(
-        (run) => run._id === replayingRunId && run.hasServerReplayConfig
+        (run) => run._id === replayingRunId && run.hasServerReplayConfig,
       ) &&
       runs
         .filter((run) => run.hasServerReplayConfig)
@@ -879,7 +885,7 @@ export function SuiteIterationsView({
           const bTime = b.completedAt ?? b.createdAt ?? 0;
           return bTime - aTime;
         })[0]?._id === replayingRunId,
-    [replayingRunId, runs]
+    [replayingRunId, runs],
   );
 
   const shouldReduceMotion = useReducedMotion();
@@ -964,7 +970,7 @@ export function SuiteIterationsView({
             ? {
                 ...suite,
                 hostAttachments: (suite.hostAttachments ?? []).filter(
-                  (a) => a.namedHostId === selectedRunDetails.namedHostId
+                  (a) => a.namedHostId === selectedRunDetails.namedHostId,
                 ),
               }
             : suite
@@ -983,7 +989,7 @@ export function SuiteIterationsView({
           navigation.toTestEdit(
             suite._id,
             caseId,
-            iteration ? { iteration: iteration._id } : undefined
+            iteration ? { iteration: iteration._id } : undefined,
           );
         }}
         hostNamesById={hostNamesById}
@@ -998,7 +1004,7 @@ export function SuiteIterationsView({
       selectedRunId?: string | null;
       runDetailPane?: React.ReactNode;
       onExitRun?: () => void;
-    } = {}
+    } = {},
   ) => (
     <SuiteDashboard
       suite={suite}
@@ -1030,7 +1036,7 @@ export function SuiteIterationsView({
       quickRunIterationOverride={iterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={Boolean(
-        rerunningSuiteId || replayingRunId || evalRunsDisabledReason
+        rerunningSuiteId || replayingRunId || evalRunsDisabledReason,
       )}
       runTestCaseDisabledReason={evalRunsDisabledReason}
       connectedServerNames={connectedServerNames}
@@ -1240,7 +1246,9 @@ export function SuiteIterationsView({
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
                   openCompareIterationId={
-                    route.type === "test-edit" ? route.iteration ?? null : null
+                    route.type === "test-edit"
+                      ? (route.iteration ?? null)
+                      : null
                   }
                   onContinueInChat={onContinueInChat}
                   onSelectTab={(tab) =>
@@ -1259,12 +1267,12 @@ export function SuiteIterationsView({
             ) : viewMode === "test-detail" && selectedTestId ? (
               (() => {
                 const selectedCase = cases.find(
-                  (c) => c._id === selectedTestId
+                  (c) => c._id === selectedTestId,
                 );
                 if (!selectedCase) return null;
 
                 const caseIterations = allIterations.filter(
-                  (iter) => iter.testCaseId === selectedTestId
+                  (iter) => iter.testCaseId === selectedTestId,
                 );
 
                 return (
@@ -1336,6 +1344,10 @@ export function SuiteIterationsView({
                       projectId={projectId}
                       run={selectedRunDetails}
                       iterations={caseGroupsForSelectedRun}
+                      allIterations={allIterations}
+                      previousRunId={
+                        previousCompletedRunForSelectedRun?._id ?? null
+                      }
                       decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
                       onOpenIteration={({ testCaseId, iterationId }) =>
                         // Same routing rule the decision card follows: an
@@ -1408,7 +1420,7 @@ export function SuiteIterationsView({
                         runDetailPane: runDetailView,
                         onExitRun: handleBackToOverview,
                       }
-                    : {}
+                    : {},
                 )}
               </div>
             ) : viewMode === "overview" ? (
@@ -1560,8 +1572,8 @@ export function SuiteIterationsView({
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
-                          replayingRunId ||
-                          evalRunsDisabledReason
+                        replayingRunId ||
+                        evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
@@ -1598,7 +1610,7 @@ export function SuiteIterationsView({
                         suite._id,
                         selectedRunDetails._id,
                         undefined,
-                        { insightsFocus: true }
+                        { insightsFocus: true },
                       )
                     }
                     onOpenIteration={(runId, iterationId) =>
@@ -1652,7 +1664,7 @@ export function SuiteIterationsView({
                       setDefaultMinimumPassRate(rate);
                       localStorage.setItem(
                         `suite-${suite._id}-criteria-rate`,
-                        String(rate)
+                        String(rate),
                       );
                       try {
                         await updateSuite({
@@ -1664,12 +1676,12 @@ export function SuiteIterationsView({
                         toast.error(
                           getBillingErrorMessage(
                             error,
-                            "Failed to update suite"
-                          )
+                            "Failed to update suite",
+                          ),
                         );
                         console.error("Failed to update suite:", error);
                         setDefaultMinimumPassRate(
-                          suite.defaultPassCriteria?.minimumPassRate ?? 100
+                          suite.defaultPassCriteria?.minimumPassRate ?? 100,
                         );
                       }
                     }}
@@ -1698,18 +1710,18 @@ export function SuiteIterationsView({
                         toast.success(
                           next == null
                             ? "Minimum iterations cleared"
-                            : "Minimum iterations updated"
+                            : "Minimum iterations updated",
                         );
                       } catch (error) {
                         toast.error(
                           getBillingErrorMessage(
                             error,
-                            "Failed to update suite"
-                          )
+                            "Failed to update suite",
+                          ),
                         );
                         console.error(
                           "Failed to update minimum iterations:",
-                          error
+                          error,
                         );
                       }
                     }}
@@ -1763,18 +1775,18 @@ export function SuiteIterationsView({
                           toast.success(
                             next
                               ? "Computer environment set"
-                              : "Computer environment cleared"
+                              : "Computer environment cleared",
                           );
                         } catch (error) {
                           toast.error(
                             getBillingErrorMessage(
                               error,
-                              "Failed to update suite"
-                            )
+                              "Failed to update suite",
+                            ),
                           );
                           console.error(
                             "Failed to update computer environment:",
-                            error
+                            error,
                           );
                         }
                       }}
@@ -1803,7 +1815,8 @@ export function SuiteIterationsView({
                     cloud sandboxes — never on the machine running this
                     inspector.
                   </p>
-                  {suitePinsSandboxImage && ephemeralCloudAvailable === false ? (
+                  {suitePinsSandboxImage &&
+                  ephemeralCloudAvailable === false ? (
                     <div className="mt-2">
                       <CloudUnreachableNotice
                         data-testid="suite-eval-cloud-unreachable"
@@ -1821,10 +1834,7 @@ export function SuiteIterationsView({
                   axis is edited here rather than on the overview. A
                   suite without project environments still gets the
                   legacy clients/servers pills through the same bar. */}
-              <SettingsSection
-                settingKey="environments"
-                label="Environments"
-              >
+              <SettingsSection settingKey="environments" label="Environments">
                 <SuiteEnvironmentComposerBar
                   containerVariant="panel"
                   className="bg-transparent py-0"
@@ -1863,11 +1873,11 @@ export function SuiteIterationsView({
                       toast.success("Default validators updated");
                     } catch (error) {
                       toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite")
+                        getBillingErrorMessage(error, "Failed to update suite"),
                       );
                       console.error(
                         "Failed to update default validators:",
-                        error
+                        error,
                       );
                     }
                   }}
@@ -1967,7 +1977,7 @@ export function SuiteIterationsView({
                       toast.success("Judges updated");
                     } catch (error) {
                       toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite")
+                        getBillingErrorMessage(error, "Failed to update suite"),
                       );
                       console.error("Failed to update judges:", error);
                     }
