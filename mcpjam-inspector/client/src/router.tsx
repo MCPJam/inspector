@@ -2,6 +2,8 @@ import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
   ApiKeysSettingsRoute,
+  BenchResultsRoute,
+  BenchRunnerRoute,
   GithubChecksSettingsRoute,
   GithubInstallCallbackSettingsRoute,
   IntegrationsSettingsRoute,
@@ -41,6 +43,7 @@ import App, {
   TasksRoute,
   ToolsRoute,
   TracingRoute,
+  WebmcpInspectorRoute,
   XAAFlowRoute,
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
@@ -145,9 +148,18 @@ const ROUTE_ELEMENTS: Record<
   // get one 0-100 number on a private shareable link. Chrome-less like the
   // caniuse surface above, and reachable by guests with no sign-in.
   "embed/score": { element: <ScoreRunnerRoute /> },
+  // The benchmark flow on the same chrome-less surface: classify, price,
+  // consent, run on our infrastructure, read the scorecard. Same element for
+  // both paths — the run id is a route param, and it is what makes refresh
+  // and resume free, so re-mounting a different component for the deep link
+  // would throw away the one piece of state worth keeping.
+  "embed/bench": { element: <BenchRunnerRoute /> },
+  "embed/bench/:runId": { element: <BenchRunnerRoute /> },
   // A stored run, addressable only by its secret token. Deliberately
   // readable with no session at all — the link IS the credential.
   "results/:runToken": { element: <ScoreResultsRoute /> },
+  // The benchmark's own result link, on the same terms.
+  "bench/results/:secret": { element: <BenchResultsRoute /> },
   "capabilities/:capabilitySlug": { element: <CaniuseCapabilityRoute /> },
   computer: { element: <ComputerRoute /> },
   hosts: { element: <HostsRoute /> },
@@ -166,6 +178,7 @@ const ROUTE_ELEMENTS: Record<
   "oauth-flow": { element: <OAuthFlowRoute /> },
   "xaa-flow": { element: <XAAFlowRoute /> },
   tracing: { element: <TracingRoute /> },
+  webmcp: { element: <WebmcpInspectorRoute /> },
   chat: { element: <ChatAliasRoute /> },
   // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
   // Playground instead of the router's `*` catch-all (now an explicit

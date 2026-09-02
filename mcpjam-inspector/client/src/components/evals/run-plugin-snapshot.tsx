@@ -37,11 +37,18 @@ export function RunPluginSnapshot({
   const versions = pluginVersions ?? [];
   // Absence is semantic: a run with no pinned plugins should say nothing, not
   // render an empty "Plugins" row that reads like a failure to load one.
-  if (versions.length === 0) return null;
+  //
+  // `skillsExcluded` is NOT covered by that: it is a fact about the run, not
+  // about plugins, and the common "without skills" arm pins no plugins at all —
+  // so returning early on an empty plugin list used to hide the badge in
+  // exactly the case it exists for.
+  if (versions.length === 0 && !skillsExcluded) return null;
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
-      <span className={runDetailMetaLabelClass}>Plugins</span>
+      {versions.length > 0 ? (
+        <span className={runDetailMetaLabelClass}>Plugins</span>
+      ) : null}
       {versions.map((version) => (
         <span
           key={version.pluginVersionId}

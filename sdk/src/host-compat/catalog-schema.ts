@@ -226,7 +226,7 @@ const hostConfigTemplateSchema = z.object({
       workdir: z.string().optional(),
     })
     .optional(),
-  harness: z.enum(["claude-code", "codex"]).optional(),
+  harness: z.enum(["claude-code", "codex", "cursor"]).optional(),
   connectionDefaults: z.object({
     headers: z.record(z.string(), z.string()),
     requestTimeout: z.number(),

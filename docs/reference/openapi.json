@@ -243,7 +243,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["claude-code"]
+              "enum": ["claude-code", "codex", "cursor"]
             },
             "description": "The harness id."
           }
@@ -2319,6 +2319,154 @@
         }
       }
     },
+    "/projects/{projectId}/eval-suites/{suiteId}/stage-analytics": {
+      "get": {
+        "operationId": "listEvalSuiteStageAnalytics",
+        "tags": ["Eval runs"],
+        "summary": "List a suite's per-run stage analytics",
+        "description": "One materialized stage-analytics document per RUN, newest completion first: where trials fell out of the six-stage user-value chain (connection, discovery, selection, tool call, response, user value), overall and sliced marginally by intent, model and host.\n\nEach item is one run's COMPLETE document and stands alone. There is deliberately no cross-run aggregate — two funnels averaged together describe no run — so compare runs by rendering them side by side, never by summing these documents.\n\nCounts are returned; RATES are not. A zero denominator is `notMeasured`, never `0`, and every excluded observation is counted under a named class so a denominator can never shrink silently.\n\nNOT backfilled: a run that completed before this shipped has no document at all, and that absence means UNMEASURED — it is never a funnel of zeros.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive lower bound on the run's completion stamp, in epoch MILLISECONDS (not ISO). Runs that never completed carry no stamp and are excluded by any `from` bound. Must be less than or equal to `to`, or the request is a VALIDATION_ERROR.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive upper bound on the run's completion stamp, in epoch MILLISECONDS (not ISO).",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "runGroupId",
+            "in": "query",
+            "required": false,
+            "description": "Narrow to one comparison group (a matrix leg, a schedule).",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor from a previous page's `nextCursor`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum documents to return, 1–100. Defaults to 25 — these documents are large.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of per-run stage-analytics documents, newest run completion first. An empty `items` means this suite has no materialized documents in the requested window — which is not the same as a run whose stages all measured zero.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalStageAnalyticsPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/stage-analytics": {
+      "get": {
+        "operationId": "getEvalRunStageAnalytics",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one run's stage analytics",
+        "description": "ONE run's materialized stage-analytics document: where its trials fell out of the six-stage user-value chain (connection, discovery, selection, tool call, response, user value), overall and sliced marginally by intent, model and host.\n\nThe same document the suite listing returns, addressed by run. Use this rather than paging `/eval-suites/{suiteId}/stage-analytics` to reach a known run: that listing is newest-first, so walking it costs work proportional to how long ago the run finished and cannot answer once the run falls outside the pages read.\n\nCounts are returned; RATES are not. A zero denominator is `notMeasured`, never `0`, and every excluded observation is counted under a named class so a denominator can never shrink silently.\n\n`404` covers BOTH \"this run has no document\" and \"this run is not visible to you\", and the two are deliberately not distinguished — separating them would confirm that a run exists in a project you cannot see. NOT backfilled either: a run that completed before this shipped has no document, and that absence means UNMEASURED, never a funnel of zeros.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's complete stage-analytics document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalStageAnalytics"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/schedule": {
       "patch": {
         "operationId": "updateEvalSuiteSchedule",
@@ -2814,6 +2962,110 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/server-groups": {
+      "get": {
+        "operationId": "listServerGroups",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "List a project's server groups",
+        "description": "A server group is an immutable snapshot of a set of saved servers. Pinning one on an environment is what keeps a run off its host's live server list, so a composed run keeps testing the servers it was composed against even after the shared host is edited.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project's server groups.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerGroupPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createServerGroup",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Snapshot servers into a server group",
+        "description": "Creates a server group holding exactly the given servers and responds `201` with its detail. Groups are create-only — there is no update route, because an editable group would reintroduce the drift that pinning exists to prevent. Names are unique per project, so a clash responds `409`. Servers must belong to this project and must not be plugin-managed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerGroupCreateRequest"
+              },
+              "example": {
+                "name": "Vercel",
+                "serverIds": [
+                  "p1750000000000000000000000000"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The server group was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -4965,7 +5217,11 @@
         "tags": ["Skills"],
         "summary": "List a project's skills",
         "description": "The Cloud Skills visible to the caller in this project: the project-shared ones plus the caller's own drafts. Each row reports `pinnability`, which is what decides whether its id is usable in an environment's `skillSelection`.",
-        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
         "responses": {
           "200": {
             "description": "The project's skills.",
@@ -5005,12 +5261,16 @@
         "summary": "Get a skill",
         "description": "One skill, including its SKILL.md body. The body is mutable and an edit overwrites the previous one in place, so `aggregateHash` is the only handle on which content this read returned.",
         "parameters": [
-          { "$ref": "#/components/parameters/projectId" },
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
           {
             "name": "skillId",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" },
+            "schema": {
+              "type": "string"
+            },
             "description": "Skill ID."
           }
         ],
@@ -6514,6 +6774,233 @@
           },
           "400": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/secrets": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "listSecrets",
+        "tags": ["Secrets"],
+        "summary": "List secrets",
+        "description": "The project's credentials as METADATA ONLY — no value is returned by this or any other route. Shows the project-shared secrets plus the caller's own personal ones; another member's personal secret does not appear at all, not even its name.",
+        "responses": {
+          "200": {
+            "description": "A page of secrets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSecret",
+        "tags": ["Secrets"],
+        "summary": "Create a secret",
+        "description": "Store a credential so environments can grant it to runs. THE VALUE TRAVELS IN THE REQUEST BODY and becomes visible to whatever makes the call. The response is metadata only. Creating a project-shared secret requires project admin; a personal one does not.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe create key. Replaying the SAME key with the SAME body returns the original resource instead of creating a second one; reusing it with a DIFFERENT body is a 409. Worth passing: a retried create without one fails as a name conflict with the row the first attempt already made.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The secret to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/secrets/{secretId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/secretId"
+        }
+      ],
+      "get": {
+        "operationId": "getSecret",
+        "tags": ["Secrets"],
+        "summary": "Get a secret",
+        "description": "One secret's metadata: delivery mode, host binding, sharing, and when it was last handed to a run. Never its value. A secret from another project — and another member's personal secret — both read as 404.",
+        "responses": {
+          "200": {
+            "description": "The secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateSecret",
+        "tags": ["Secrets"],
+        "summary": "Rotate or re-bind a secret",
+        "description": "Rotate the value and/or change how it is delivered. A rotation reaches NEW RUNS ONLY: a session already running holds the old value — materialized in its box's environment, or inside an egress policy that cannot be read back — and there is no safe way to replace it mid-run.",
+        "requestBody": {
+          "required": true,
+          "description": "The fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSecret",
+        "tags": ["Secrets"],
+        "summary": "Delete a secret",
+        "description": "Delete a stored credential. HARD — the row and the encrypted value both go, and MCPJam stops delivering it. Deliberately NOT blocked when an environment still selects it: refusing would leave a leaked credential undeletable until someone edited every environment naming it, and deletion must never wait on cleanup. Runs already in flight keep the value they were handed, and this does NOT revoke the credential at the provider that issued it.",
+        "responses": {
+          "200": {
+            "description": "The secret was revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretDeleted"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -10191,7 +10678,7 @@
         "operationId": "sendChatMessage",
         "tags": ["Chat sessions"],
         "summary": "Send one agent Playground message",
-        "description": "Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.\n\n**Spends model credits per call.** `idempotencyKey` is required and must be STABLE for the triggering intent — a fresh key per HTTP attempt deduplicates nothing, so a timeout-and-retry would run and bill the turn twice. With a stable key, a retry replays the completed turn.\n\nOmit `sessionId` to start a session; pass the one this returns to continue it. Configuration (`modelId`, target, `systemPrompt`, `toolMode`) pins on the FIRST turn — a continuation that resends any of it is refused with `details.reason: \"CONFIG_ON_CONTINUATION\"`.\n\nOnly sessions created through this endpoint may be continued through it (`CONTINUATION_NOT_ALLOWED`): appending to a human's live Playground session would interleave two writers on one transcript.\n\n`toolMode` defaults to `read_only`, which advertises only tools the server annotated `readOnlyHint: true`. That hint is server-asserted, so `read_only` is a policy this host applies, not a guarantee it can verify. `auto` advertises everything and **may cause real external side effects** through arbitrary third-party tools.",
+        "description": "Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.\n\n**Spends model credits per call.** `idempotencyKey` is required and must be STABLE for the triggering intent — a fresh key per HTTP attempt deduplicates nothing, so a timeout-and-retry would run and bill the turn twice. With a stable key, a retry replays the completed turn.\n\nOmit `sessionId` to start a session; pass the one this returns to continue it. Configuration (`modelId`, target, `systemPrompt`, `toolMode`) pins on the FIRST turn — a continuation that resends any of it is refused with `details.reason: \"CONFIG_ON_CONTINUATION\"`.\n\nOnly sessions created through this endpoint may be continued through it (`CONTINUATION_NOT_ALLOWED`): appending to a human's live Playground session would interleave two writers on one transcript.\n\n`toolMode` defaults to `read_only`, which advertises only tools the server annotated `readOnlyHint: true`. That hint is server-asserted, so `read_only` is a policy this host applies, not a guarantee it can verify. `auto` advertises everything and **may cause real external side effects** through arbitrary third-party tools.\n\nPass `hostId` — or target an `environmentId`, which pins its own host — to run the turn AS a saved host. That is what selects the ENGINE: a host declaring an agent harness runs the real runtime, and one that cannot run here is refused BEFORE it spends (422, `details.reason: \"HARNESS_UNAVAILABLE\"`, with `details.kind` naming the rule that refused) rather than quietly downgraded to the emulated engine. Every response names what actually ran in `engine`. `hostId` is per-turn and cannot be pinned, so a continuation of a session that named ONLY a host must re-send it — omitting it is a 400 with `details.reason: \"HOST_TARGET_REQUIRED\"`, never a quiet fall back to the emulated engine.",
         "requestBody": {
           "required": true,
           "content": {
@@ -11090,6 +11577,15 @@
           "type": "string"
         },
         "description": "Gate waiver ID, as returned when the waiver was granted or read."
+      },
+      "secretId": {
+        "name": "secretId",
+        "in": "path",
+        "required": true,
+        "description": "Secret ID, as returned by the project's secret list.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "requestBodies": {
@@ -11213,6 +11709,13 @@
           },
           "scenario": {
             "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; absent means unlabelled."
           },
           "models": {
             "type": "array",
@@ -11430,6 +11933,13 @@
           },
           "scenario": {
             "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed."
           },
           "models": {
             "type": "array",
@@ -11784,6 +12294,13 @@
           },
           "scenario": {
             "type": "string"
+          },
+          "intent": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; omitted leaves the stored value unchanged and null clears it."
           },
           "models": {
             "type": "array",
@@ -13836,6 +14353,10 @@
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."
           },
+          "iterationId": {
+            "type": "string",
+            "description": "The iteration this case graded. The join key between a judge case and the iterations the run returns; `caseKey` is a storage key and joins to nothing. Absent on judge results written before it was persisted."
+          },
           "score": {
             "type": ["number", "null"]
           },
@@ -13854,6 +14375,10 @@
           "caseKey": {
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."
+          },
+          "iterationId": {
+            "type": "string",
+            "description": "The iteration this case graded. The join key between a judge case and the iterations the run returns; `caseKey` is a storage key and joins to nothing. Absent on judge results written before it was persisted."
           },
           "score": {
             "type": ["number", "null"]
@@ -13886,6 +14411,10 @@
           "caseKey": {
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."
+          },
+          "iterationId": {
+            "type": "string",
+            "description": "The iteration this case graded. The join key between a judge case and the iterations the run returns; `caseKey` is a storage key and joins to nothing. Absent on judge results written before it was persisted."
           },
           "score": {
             "type": ["number", "null"]
@@ -14254,6 +14783,84 @@
           "summary"
         ]
       },
+      "EvalRunCompareSkillsSide": {
+        "type": "object",
+        "properties": {
+          "excluded": {
+            "type": "boolean",
+            "description": "This run deliberately ran with skills disabled — distinct from a run that simply pinned none."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many skills this run pinned."
+          }
+        },
+        "required": ["excluded", "count"]
+      },
+      "EvalRunCompareSkillSide": {
+        "type": "object",
+        "description": "One skill's identity on one side of the comparison.",
+        "properties": {
+          "contentHash": {
+            "type": "string"
+          },
+          "aggregateHash": {
+            "type": "string",
+            "description": "Complete-artifact hash; present only when supporting files diverge it from `contentHash`."
+          },
+          "versionNumber": {
+            "type": "integer",
+            "description": "Authored-skill revision, when the run recorded one."
+          },
+          "serverSkillVersionNumber": {
+            "type": "integer",
+            "description": "MCP-captured revision, when the run recorded one."
+          }
+        },
+        "required": ["contentHash"]
+      },
+      "EvalRunCompareSkillChange": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Stable match key; opaque, safe for list keys and dedupe."
+          },
+          "name": {
+            "type": "string"
+          },
+          "modelRef": {
+            "type": "string",
+            "description": "Namespaced runtime address for a plugin-channel skill."
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["host", "environment", "plugin", "mcp-server"]
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["added", "removed", "changed"]
+          },
+          "renamedFrom": {
+            "type": "string",
+            "description": "Present when the skill was renamed between the runs; it is still matched as ONE skill by its logical id."
+          },
+          "base": {
+            "$ref": "#/components/schemas/EvalRunCompareSkillSide"
+          },
+          "compare": {
+            "$ref": "#/components/schemas/EvalRunCompareSkillSide"
+          },
+          "versionDelta": {
+            "type": "string",
+            "description": "Human-readable revision move (`v3 → v4`), present only when BOTH sides recorded a number. A change with no delta is a real content change whose revisions are unknown, not a smaller change."
+          }
+        },
+        "required": ["key", "name", "channels", "kind"]
+      },
       "EvalRunCompare": {
         "type": "object",
         "properties": {
@@ -14339,6 +14946,30 @@
               }
             },
             "required": ["wallDurationMs", "totalTokens", "estimatedCostUsd"]
+          },
+          "skills": {
+            "type": "object",
+            "nullable": true,
+            "description": "Which skills changed between the two runs — the configuration attribution that usually explains the case-level differences. `null` when NEITHER run recorded pinned skills (an empty section would instead claim no skills were involved). Absent when the deployment predates skill attribution, so clients must tolerate all three states.",
+            "properties": {
+              "base": {
+                "$ref": "#/components/schemas/EvalRunCompareSkillsSide"
+              },
+              "compare": {
+                "$ref": "#/components/schemas/EvalRunCompareSkillsSide"
+              },
+              "changes": {
+                "type": "array",
+                "description": "Added, removed and changed skills only, changed first. Unchanged skills are counted, not listed.",
+                "items": {
+                  "$ref": "#/components/schemas/EvalRunCompareSkillChange"
+                }
+              },
+              "unchangedCount": {
+                "type": "integer"
+              }
+            },
+            "required": ["base", "compare", "changes", "unchangedCount"]
           },
           "scoreContract": {
             "type": "object",
@@ -14506,7 +15137,7 @@
           },
           "stageResults": {
             "type": "array",
-            "description": "Verified D1 user-value chain rows, in chain order.",
+            "description": "The user-value chain rows for this trial, in chain order, from a derivation that validated.",
             "items": {
               "$ref": "#/components/schemas/StageResultRow"
             }
@@ -14520,7 +15151,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Where the chain stopped — A LOCATION, NOT A CAUSE. It names the first link that failed, never why it failed: the why is `reason` on that stage's row (see `StageResultRow.reason`), and neither this nor the `failureCategory` bucket on its own authorizes proposing a change to the server. Absent when nothing failed — and absent on a trial that never reached a stage at all, such as a setup abort or an evaluator error, which still carries a `failureCategory`. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "failureCategory": {
             "type": "string",
@@ -14532,7 +15164,8 @@
               "serverData",
               "userValue",
               "evaluator"
-            ]
+            ],
+            "description": "The bucket this trial is grouped under — A BUCKET, NOT A DIAGNOSIS. Present without `firstFailedStage` for a trial that never reached a stage. `setup` — setup: the harness or environment never got to the test. `metadata` — tool metadata: tool names, descriptions or schemas misled the model. `selection` — tool selection: the model picked the wrong tool, or none. `arguments` — call arguments: the right tool, called wrongly. `serverData` — server data: the server answered, with data the model could not use. `userValue` — user value: everything mechanical worked and the user still was not served. `evaluator` — evaluator: the grader itself failed, so the run says nothing about the server — never folded into the others, because counting a broken judge as a server defect poisons every rate derived from it."
           },
           "stageAnalyzerVersion": {
             "type": "integer",
@@ -14546,7 +15179,7 @@
       },
       "StageResultRow": {
         "type": "object",
-        "description": "One verified D1 user-value stage verdict, in chain order.",
+        "description": "One user-value stage's verdict for one trial, from a derivation that validated. Six of these make a chain, always in chain order, and the order is normative: `notReached` is derived from position, so re-ordering them changes which stages a failure is said to have blocked.",
         "required": ["stage", "state"],
         "properties": {
           "stage": {
@@ -14558,7 +15191,8 @@
               "call",
               "response",
               "userValue"
-            ]
+            ],
+            "description": "Which link of the user-value chain this row is a verdict on. The order is NORMATIVE: a run walks the six in sequence, and `notReached` is derived from position — every stage after the first failed one never ran. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "state": {
             "type": "string",
@@ -14568,7 +15202,8 @@
               "notReached",
               "notMeasured",
               "notApplicable"
-            ]
+            ],
+            "description": "What this stage did. The three non-verdicts stay three different facts on purpose: collapsing them is how \"we never checked\" gets read as \"it passed\". `passed` — measured, and it passed. `failed` — measured, and it failed. `notReached` — it never ran (an earlier stage failed), so there was nothing to decide. `notMeasured` — this run captured nothing that could decide it, so the stage is not measured. `notApplicable` — the stage is not applicable to this case at all."
           },
           "reason": {
             "type": "string",
@@ -14580,6 +15215,7 @@
               "executorEmitsNoSpans",
               "blockedByPolicy",
               "evaluatorError",
+              "providerError",
               "setupAborted",
               "connectFailed",
               "toolsListFailed",
@@ -14595,8 +15231,14 @@
               "renderFailed",
               "predicateFailed",
               "observed",
-              "impliedByLaterEvidence"
-            ]
+              "impliedByLaterEvidence",
+              "judgeObserved",
+              "judgePartial",
+              "judgeFailed",
+              "judgePending",
+              "judgeNotRequested"
+            ],
+            "description": "Why this stage landed where it did. A CLOSED vocabulary — render what arrives, never widen it. Each entry completes \"…because <reason>\". `noSpanChannel` — this run captures no evidence channel for that stage. `noEvidenceCaptured` — nothing eligible for that stage was captured. `matchVerdictUnavailable` — extra tool calls were captured but the run did not report whether its match options tolerate them. `traceAbsent` — the iteration recorded no trace. `executorEmitsNoSpans` — the executor emitted no spans. `blockedByPolicy` — a policy blocked the run before it could be measured. `evaluatorError` — the evaluator itself failed, so the run says nothing about the server. `providerError` — the model provider failed the call, so this stage was never measured. `setupAborted` — the environment was never prepared, so the test never began. `connectFailed` — the configured server was reached and initialize failed there. `toolsListFailed` — initialize succeeded and listing tools failed. `egressUnverified` — the connection failed with no evidence that our own network egress works. `lifecycleStopped` — the run was stopped mid-flight. `notAuthored` — the case asserts nothing this stage could decide. `earlierStageFailed` — an earlier stage failed. `missingToolCall` — an expected tool call was never made. `unexpectedToolCall` — a tool call was made that the case did not expect. `argumentMismatch` — the call arguments did not match what the case expects. `toolError` — the server reported a tool error. `protocolError` — the call never produced a result. `renderFailed` — the widget did not render. `predicateFailed` — a check on the result did not hold. `observed` — the evidence was inspected and the stage held. `impliedByLaterEvidence` — a later stage's success implies it. `judgeObserved` — the LLM judge scored at or above the threshold. `judgePartial` — the LLM judge scored inside the partial band — at or above the floor, below the threshold. `judgeFailed` — the LLM judge scored below the partial floor. `judgePending` — an LLM judge verdict is owed and has not arrived. `judgeNotRequested` — no LLM judge verdict was ever owed."
           },
           "evidence": {
             "type": "object",
@@ -14785,6 +15427,483 @@
             "items": {
               "$ref": "#/components/schemas/ResolvedScoreDefinition"
             }
+          }
+        }
+      },
+      "EvalStageExclusions": {
+        "type": "object",
+        "description": "How many observations each class removed from ONE denominator. A class that excluded nothing is OMITTED rather than written as 0 — absent and 0 mean the same thing here.",
+        "properties": {
+          "lifecycle": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The trial never produced a comparable observation: not terminal, skipped, cancelled, timed out, setup-failed, execution failed, or the evaluator itself errored."
+          },
+          "integrity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "A chain or measurement was missing, unverified or rejected at the write boundary. Never coerced into a passing observation."
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Produced by an analyzer or schema version this reader does not understand. Also never coerced."
+          },
+          "notApplicable": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The stage does not apply to this case at all."
+          },
+          "reachUnknown": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Nothing was captured, so reach could not be decided. Deliberately excluded from the reach denominator."
+          },
+          "notMeasured": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The stage was reached but nothing decided it."
+          }
+        }
+      },
+      "EvalStageCoverageDetail": {
+        "type": "object",
+        "description": "The FINE-GRAINED reason a trial was excluded. Run-level only — the coarse six-class tally repeats on every stage of every slice, but 'we could not read the chain' and 'the chain was there and was refused' are different operator actions and are carried once, here.",
+        "properties": {
+          "notTerminal": { "type": "integer", "minimum": 0 },
+          "skipped": { "type": "integer", "minimum": 0 },
+          "cancelled": { "type": "integer", "minimum": 0 },
+          "setupFailed": { "type": "integer", "minimum": 0 },
+          "timedOut": { "type": "integer", "minimum": 0 },
+          "executionFailed": { "type": "integer", "minimum": 0 },
+          "evaluatorError": { "type": "integer", "minimum": 0 },
+          "chainMissing": { "type": "integer", "minimum": 0 },
+          "chainUnverified": { "type": "integer", "minimum": 0 },
+          "chainVersionAhead": { "type": "integer", "minimum": 0 },
+          "measurementsMissing": { "type": "integer", "minimum": 0 },
+          "measurementsInvalid": { "type": "integer", "minimum": 0 },
+          "measurementsVersionAhead": { "type": "integer", "minimum": 0 },
+          "analyzerMismatch": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The chain's analyzer version and its own measurements' disagree — a payload whose two halves came from different analyzers. Always a bug, never a deploy window."
+          }
+        }
+      },
+      "EvalStageLatencyAggregate": {
+        "type": "object",
+        "description": "Sums, not means. `totalMs` + `sampleCount` is strictly more information than a mean and is MERGEABLE. There is no p99 and no confidence interval on purpose. An aggregate with no samples is OMITTED, never zeroed.",
+        "required": [
+          "unit",
+          "basis",
+          "sampleCount",
+          "totalMs",
+          "minMs",
+          "maxMs"
+        ],
+        "properties": {
+          "unit": {
+            "type": "string",
+            "enum": ["ms"]
+          },
+          "basis": {
+            "type": "string",
+            "enum": ["evidence_span_union"],
+            "description": "How the span was measured. Always display the basis beside the number."
+          },
+          "sampleCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "At least one. Never exceeds the tally's `reached`."
+          },
+          "totalMs": { "type": "number", "minimum": 0 },
+          "minMs": { "type": "number", "minimum": 0 },
+          "maxMs": { "type": "number", "minimum": 0 }
+        }
+      },
+      "EvalSetupLatencyAggregate": {
+        "type": "object",
+        "description": "The same aggregate shape over a setup phase's wall clock. Sampled once per ATTEMPT, never once per copied iteration.",
+        "required": [
+          "unit",
+          "basis",
+          "sampleCount",
+          "totalMs",
+          "minMs",
+          "maxMs"
+        ],
+        "properties": {
+          "unit": {
+            "type": "string",
+            "enum": ["ms"]
+          },
+          "basis": {
+            "type": "string",
+            "enum": ["setup_phase_wall"]
+          },
+          "sampleCount": { "type": "integer", "minimum": 1 },
+          "totalMs": { "type": "number", "minimum": 0 },
+          "minMs": { "type": "number", "minimum": 0 },
+          "maxMs": { "type": "number", "minimum": 0 }
+        }
+      },
+      "EvalStageTally": {
+        "type": "object",
+        "description": "One stage's counts within one slice. Every field is a COUNT of trials, and the arithmetic is enforced: `passed + failed = measured`, `measured + notMeasured = reached`, `reached + notReached + reachUnknown = applicable`.",
+        "required": [
+          "stage",
+          "applicable",
+          "reached",
+          "notReached",
+          "reachUnknown",
+          "measured",
+          "passed",
+          "failed",
+          "notMeasured",
+          "notApplicable",
+          "excluded",
+          "reasons"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "discovery",
+              "selection",
+              "call",
+              "response",
+              "userValue"
+            ],
+            "description": "Which link of the user-value chain these counts are for. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied. Counts are per stage and are never summed across stages: one trial is counted in every stage's tally, so adding the six together counts the same trial six times."
+          },
+          "applicable": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Trials for which this stage applies at all (included minus notApplicable)."
+          },
+          "reached": { "type": "integer", "minimum": 0 },
+          "notReached": { "type": "integer", "minimum": 0 },
+          "reachUnknown": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Reached-ness could not be decided. Excluded from the reach denominator: a trial we captured nothing for is not evidence of a drop-off."
+          },
+          "measured": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Reached AND decided — `passed + failed`."
+          },
+          "passed": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "integer", "minimum": 0 },
+          "notMeasured": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Reached but nothing decided it."
+          },
+          "notApplicable": { "type": "integer", "minimum": 0 },
+          "excluded": {
+            "$ref": "#/components/schemas/EvalStageExclusions"
+          },
+          "reasons": {
+            "type": "array",
+            "description": "Why stages landed where they did, by reason code. A CLOSED vocabulary — render what arrives, never widen it.",
+            "items": {
+              "type": "object",
+              "required": ["reason", "count"],
+              "properties": {
+                "reason": { "type": "string" },
+                "count": { "type": "integer", "minimum": 1 }
+              }
+            }
+          },
+          "latency": {
+            "$ref": "#/components/schemas/EvalStageLatencyAggregate"
+          }
+        }
+      },
+      "EvalStageAnalyticsSlice": {
+        "description": "Which population a slice describes. MARGINAL only — there is deliberately no intent x model x host cross-product, because a funnel computed over two trials is not a comparison.",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["dimension"],
+            "properties": {
+              "dimension": { "type": "string", "enum": ["overall"] }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["dimension", "intent"],
+            "properties": {
+              "dimension": { "type": "string", "enum": ["intent"] },
+              "intent": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "description": "`null` is the UNLABELLED slice and is a real slice, not an omission. Never display the raw null — untagged cases are often the majority, and dropping them would make the intent funnel describe a subset while looking like the whole."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["dimension", "provider", "model"],
+            "properties": {
+              "dimension": { "type": "string", "enum": ["model"] },
+              "provider": { "type": "string", "minLength": 1 },
+              "model": { "type": "string", "minLength": 1 }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["dimension", "hostKey"],
+            "properties": {
+              "dimension": { "type": "string", "enum": ["host"] },
+              "hostKey": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Stable across renames. The join key, not the display name."
+              },
+              "hostName": { "type": "string", "minLength": 1 },
+              "executionEngine": {
+                "type": "string",
+                "minLength": 1,
+                "description": "`emulated` or `harness:<id>`. ABSENT means not recorded — not emulated."
+              }
+            }
+          }
+        ]
+      },
+      "EvalStageAnalyticsSliceRow": {
+        "type": "object",
+        "required": [
+          "slice",
+          "includedTrials",
+          "excludedTrials",
+          "failureCategories",
+          "stages"
+        ],
+        "properties": {
+          "slice": {
+            "$ref": "#/components/schemas/EvalStageAnalyticsSlice"
+          },
+          "includedTrials": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Trials that contributed observations to this slice."
+          },
+          "excludedTrials": {
+            "$ref": "#/components/schemas/EvalStageExclusions"
+          },
+          "failureCategories": {
+            "type": "array",
+            "description": "Failure categories over TRIALS in this slice — one bucket per trial, not per stage. A CLOSED vocabulary.",
+            "items": {
+              "type": "object",
+              "required": ["category", "count"],
+              "properties": {
+                "category": { "type": "string" },
+                "count": { "type": "integer", "minimum": 1 }
+              }
+            }
+          },
+          "stages": {
+            "type": "array",
+            "description": "Exactly six tallies in canonical stage order. Position is meaning — never re-sort them.",
+            "minItems": 6,
+            "maxItems": 6,
+            "items": {
+              "$ref": "#/components/schemas/EvalStageTally"
+            }
+          }
+        }
+      },
+      "EvalSetupTally": {
+        "type": "object",
+        "description": "One setup phase's facts for this run. RUN-LEVEL, not per-slice: an attempt happens once per run+phase and is copied onto every iteration, so attempts are counted once here while `impactedTrials` — which genuinely varies per trial — is counted distinctly and MAY exceed the attempt count.",
+        "required": [
+          "phase",
+          "uniqueAttempts",
+          "failedAttempts",
+          "serverAttributedFailures",
+          "impactedTrials"
+        ],
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": ["connection", "discovery"]
+          },
+          "uniqueAttempts": { "type": "integer", "minimum": 0 },
+          "failedAttempts": { "type": "integer", "minimum": 0 },
+          "serverAttributedFailures": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Failures attributable to the SERVER under a deliberately narrow rule: the signal said `theirs` AND our own egress was positively verified. Anything less is unknown and is not attributed."
+          },
+          "impactedTrials": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "DISTINCT trials this phase's failed attempts blocked. May exceed `uniqueAttempts` — that is the point of counting it separately."
+          },
+          "latency": {
+            "$ref": "#/components/schemas/EvalSetupLatencyAggregate"
+          }
+        }
+      },
+      "EvalStageAnalytics": {
+        "type": "object",
+        "description": "One RUN's materialized stage funnel. Counts are stored; rates are DERIVED by the SDK contract's helpers, so a zero denominator stays `notMeasured` and never renders as `0%`. There is no top-level overall, latency or reasons object: the overall funnel is the `overall` slice (always present, always first), latency lives inside each stage tally and each setup row, and reasons live inside each stage tally.",
+        "required": [
+          "schemaVersion",
+          "measurementUnit",
+          "runId",
+          "suiteId",
+          "sourceIterationCount",
+          "stageAnalyzerVersion",
+          "measurementsSchemaVersion",
+          "materializationState",
+          "createdAt",
+          "updatedAt",
+          "includedTrials",
+          "excludedTrials",
+          "totalTrials",
+          "excludedTrialDetail",
+          "slices",
+          "setup"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "measurementUnit": {
+            "type": "string",
+            "enum": ["trial"],
+            "description": "The literal `trial`, carried rather than assumed. An eval iteration, a user-testing session and a swarm traversal share this stage vocabulary and are NOT the same unit; a consumer merging two documents must check this first."
+          },
+          "runId": { "type": "string", "minLength": 1 },
+          "suiteId": { "type": "string", "minLength": 1 },
+          "runGroupId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Present when the run is grouped for comparison (a matrix, a schedule)."
+          },
+          "configRevision": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The run's authored-configuration revision. One of three identities a parity claim requires; ABSENCE BLOCKS parity rather than being assumed compatible."
+          },
+          "caseSetFingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A digest over the comparable case set this run actually measured. Absence blocks parity, same rule."
+          },
+          "organizationId": { "type": "string", "minLength": 1 },
+          "workspaceId": { "type": "string", "minLength": 1 },
+          "projectId": { "type": "string", "minLength": 1 },
+          "runCompletedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "When the run reached a terminal status, in epoch milliseconds. The field `from`/`to` filter on."
+          },
+          "sourceIterationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many iterations this materialization actually read."
+          },
+          "sourceMaxUpdatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The newest update stamp among those iterations — the staleness handle for a rebuild."
+          },
+          "stageAnalyzerVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The analyzer the source chains were ACTUALLY derived at, not the version the reader understands. When included trials disagree this is the newest present."
+          },
+          "sourceStageAnalyzerVersions": {
+            "type": "array",
+            "minItems": 2,
+            "items": { "type": "integer", "minimum": 1 },
+            "description": "Every DISTINCT analyzer version among included trials, ascending. Present ONLY when more than one contributed — a uniform document omits it. A mixed document is not comparable to anything."
+          },
+          "measurementsSchemaVersion": { "type": "integer", "minimum": 1 },
+          "sourceMeasurementsSchemaVersions": {
+            "type": "array",
+            "minItems": 2,
+            "items": { "type": "integer", "minimum": 1 },
+            "description": "Every distinct measurement schema version among included trials. Same rule as the analyzer versions."
+          },
+          "materializationState": {
+            "type": "string",
+            "enum": ["provisional", "final"],
+            "description": "`provisional` while a judge fanout is still pending — the counts may still move under the reader — and `final` once every applicable fanout has completed. There is no `stale`."
+          },
+          "createdAt": { "type": "integer", "minimum": 0 },
+          "updatedAt": { "type": "integer", "minimum": 0 },
+          "includedTrials": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Trials that contributed observations. Equals the overall slice's own count, and never exceeds `totalTrials`."
+          },
+          "excludedTrials": {
+            "$ref": "#/components/schemas/EvalStageExclusions"
+          },
+          "totalTrials": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Every trial the materializer saw, included or not."
+          },
+          "excludedTrialDetail": {
+            "$ref": "#/components/schemas/EvalStageCoverageDetail"
+          },
+          "slices": {
+            "type": "array",
+            "maxItems": 101,
+            "description": "Marginal slices in canonical order. Exactly one `overall` slice, always present and always first.",
+            "items": {
+              "$ref": "#/components/schemas/EvalStageAnalyticsSliceRow"
+            }
+          },
+          "setup": {
+            "type": "array",
+            "maxItems": 2,
+            "description": "Run-level setup facts, one row per phase that carried a signal. Never two rows for one phase.",
+            "items": {
+              "$ref": "#/components/schemas/EvalSetupTally"
+            }
+          },
+          "sliceTruncation": {
+            "type": "array",
+            "maxItems": 3,
+            "description": "Which dimensions hit a cap, and by how much. Present ONLY when a cap bit — a truncated slice array with no such record would read as 'these are all the models'.",
+            "items": {
+              "type": "object",
+              "required": ["dimension", "distinctValues", "retained"],
+              "properties": {
+                "dimension": {
+                  "type": "string",
+                  "enum": ["intent", "model", "host"]
+                },
+                "distinctValues": { "type": "integer", "minimum": 1 },
+                "retained": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      },
+      "EvalStageAnalyticsPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalStageAnalytics"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque cursor for the next page. Omitted on the last page."
           }
         }
       },
@@ -15042,6 +16161,96 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ProjectServer"
+            }
+          }
+        }
+      },
+      "ServerGroup": {
+        "type": "object",
+        "description": "An immutable snapshot of a set of saved servers. Pin one on an environment so a run uses exactly these servers instead of following its host's live server list.",
+        "required": [
+          "id",
+          "name",
+          "serverIds",
+          "serverNames"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serverIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The snapshotted server ids. Authoritative."
+          },
+          "serverNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Display names resolved at read time; a deleted server is labelled rather than dropped."
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "ServerGroupPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerGroup"
+            }
+          }
+        }
+      },
+      "ServerGroupCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "serverIds"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique among the project's live server groups."
+          },
+          "description": {
+            "type": "string"
+          },
+          "serverIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -16293,7 +17502,7 @@
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", null],
+            "enum": ["claude-code", "codex", "cursor", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
           },
           "computer": {
@@ -16622,7 +17831,43 @@
             "items": {
               "type": "string"
             },
-            "description": "Project-shared skill IDs. Skills carrying supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+            "description": "Project-shared skill IDs. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
+          },
+          "versionPins": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["skillId", "versionId"],
+              "properties": {
+                "skillId": {
+                  "type": "string"
+                },
+                "versionId": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs \"Latest\" — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+          }
+        }
+      },
+      "EnvironmentSecretSelection": {
+        "type": "object",
+        "description": "Which PROJECT SECRETS a run launched from this environment receives — ids only. The environment is the GRANT BOUNDARY: absent means no secrets, and there is no \"all of them\" mode. Cannot be empty; clear the field instead (send `null` on update) to revoke the grant.\n\nMembership is not delivery. A `sharing: user` secret selected here reaches ONLY sessions its owner started; every other member's run of this environment silently does not receive it, and that rule is re-checked live at launch rather than baked into the selection.",
+        "required": ["mode", "secretIds"],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["explicit"]
+          },
+          "secretIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Secret IDs, as returned by the project's secret list."
           }
         }
       },
@@ -16667,6 +17912,9 @@
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
+          },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
           },
           "pluginVersionIds": {
             "type": "array",
@@ -16973,7 +18221,9 @@
       },
       "SkillDetail": {
         "allOf": [
-          { "$ref": "#/components/schemas/Skill" },
+          {
+            "$ref": "#/components/schemas/Skill"
+          },
           {
             "type": "object",
             "required": ["content"],
@@ -17044,6 +18294,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "items": {
@@ -17105,6 +18358,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "minItems": 1,
@@ -17165,6 +18421,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "minItems": 1,
@@ -17223,6 +18482,15 @@
             ],
             "nullable": true,
             "description": "`null` clears the pinned skill selection."
+          },
+          "secretSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentSecretSelection"
+              }
+            ],
+            "nullable": true,
+            "description": "`null` REVOKES the environment's credential grant; a value replaces it; omission leaves it unchanged. `[]` is rejected — an accidental empty array that read as \"remove every credential\" would break a workflow with no error to look at."
           },
           "pluginVersionIds": {
             "type": "array",
@@ -18117,6 +19385,14 @@
           "ephemeralEnvironmentLaunch": {
             "type": "boolean",
             "description": "`startTestSuiteRun` / the v1 group route accept `ephemeralEnvironment` — a project-scoped env may launch without suite membership. Absent or false on older backends."
+          },
+          "skillVersionPins": {
+            "type": "boolean",
+            "description": "`skillSelection.versionPins` and `serverSkillSelection.versionPins` are accepted, and a pinned revision survives into run snapshots. Absent or false on older backends, which reject the unknown field outright — probe this before offering a version picker."
+          },
+          "secretGrants": {
+            "type": "boolean",
+            "description": "`secretSelection` is accepted on environment create, update and ensure-adhoc, so an environment can carry a credential grant. Absent or false on older backends, which reject the unknown field with a validator error naming nothing — probe this before sending a grant."
           }
         }
       },
@@ -18771,6 +20047,213 @@
           },
           "notes": {
             "type": "string"
+          }
+        }
+      },
+      "Secret": {
+        "type": "object",
+        "description": "A project credential — METADATA ONLY, always. There is no `value` field on this schema and no route that returns one: a secret is written and delivered into a run, never read back.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "description",
+          "delivery",
+          "sharing",
+          "lastDeliveredAt",
+          "createdAt",
+          "updatedAt",
+          "createdByUserId",
+          "updatedByUserId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The environment-variable name (`^[A-Z_][A-Z0-9_]*$`). This IS the secret's identity: what a materialized delivery exports, what a workflow references, and what stays stable across a rotation. Immutable."
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "`brokered` — the sandbox's egress proxy injects the value as a request header OUTSIDE the VM, so the box never holds it. Prevents EXTRACTION, not USE: any process in the box can call the bound host while the policy is live, and it works for HTTPS APIs only (domain rules bind on ports 80/443). `materialized` — a real environment variable inside the box, which is the only thing a CLI can read; EXTRACTABLE BY DESIGN."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Brokered only: the exact hostnames the header is injected on."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "description": "Brokered only: the header name."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "description": "Brokered only: the header value, with `{}` where the secret goes."
+          },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "description": "`project` — admin-managed, delivered to every member's sessions. `user` — personal, delivered ONLY in sessions its owner starts and silently absent from anyone else's run of the same environment. Immutable."
+          },
+          "ownerUserId": {
+            "type": "string",
+            "description": "Personal secrets only. Project-shared rows have no owner."
+          },
+          "lastDeliveredAt": {
+            "type": ["integer", "null"],
+            "description": "When this secret was last HANDED TO a run — not when it was last used. Brokered use is unobservable by construction (the proxy injects the header; the request is never seen here), so `used` would be a number nobody can honestly produce. `null` means nothing has been recorded, which is not the same as never delivered."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "createdByUserId": {
+            "type": "string"
+          },
+          "updatedByUserId": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Secret"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists. Opaque — do not parse it."
+          }
+        }
+      },
+      "SecretCreateRequest": {
+        "type": "object",
+        "description": "THE VALUE TRAVELS IN THIS BODY and becomes visible to whatever makes the call — its process, its logs, its shell history. Supply it from a file or an environment variable rather than pasting it into a command.",
+        "required": ["name", "value", "delivery"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Z_][A-Z0-9_]*$",
+            "description": "Environment-variable name. Immutable — renaming is delete-and-recreate."
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "The credential. Stored encrypted; no route ever returns it. NOT trimmed — a trailing newline is meaningful in a PEM block, and rewriting what you sent would present as 'the key is wrong' with nothing to look at."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "Required, with no default: a caller who has not said whether the value ends up inside the sandbox has not made the decision this field exists for. See `Secret.delivery`."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Required for `brokered`, forbidden for `materialized`. Exact hostnames — no scheme, no port, no wildcard: the proxy matches a host, and a URL installs a rule that silently never fires."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required for `brokered`, forbidden for `materialized`. e.g. `Authorization`."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Required for `brokered`, forbidden for `materialized`. The header value with `{}` where the secret goes, e.g. `Bearer {}`. A template without `{}` is rejected: it installs a constant header that never carries the credential."
+          },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "default": "project",
+            "description": "Defaults to `project`. A non-admin asking for it is refused rather than downgraded to personal — a silent downgrade looks like success and then reaches nobody else's sessions."
+          }
+        }
+      },
+      "SecretUpdateRequest": {
+        "type": "object",
+        "description": "At least one field. `name` and `sharing` are absent because both are IMMUTABLE: renaming would break the workflows referencing the environment variable, and re-sharing would change who has already been handed the value. Delete and recreate for either. A rotation reaches NEW RUNS ONLY — a session already running holds the old value and cannot be reached.",
+        "minProperties": 1,
+        "properties": {
+          "value": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "The new credential. Same exposure as on create: it travels in this body."
+          },
+          "description": {
+            "type": ["string", "null"],
+            "maxLength": 500,
+            "description": "`null` clears it; omit to leave it unchanged."
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "Switching to `brokered` requires the host binding in the same call; switching to `materialized` clears it."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Required for `brokered`, forbidden for `materialized`. Exact hostnames — no scheme, no port, no wildcard: the proxy matches a host, and a URL installs a rule that silently never fires."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required for `brokered`, forbidden for `materialized`. e.g. `Authorization`."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Required for `brokered`, forbidden for `materialized`. The header value with `{}` where the secret goes, e.g. `Bearer {}`. A template without `{}` is rejected: it installs a constant header that never carries the credential."
+          }
+        }
+      },
+      "SecretDeleted": {
+        "type": "object",
+        "description": "A HARD delete: the row and the encrypted value both go. This is the revoke button, so it is not soft.",
+        "required": ["id", "projectId", "name", "deleted"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Echoed so a caller logging the revoke needs no prior read."
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [true]
           }
         }
       },
@@ -21535,6 +23018,10 @@
             "type": "string",
             "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
           },
+          "hostId": {
+            "type": "string",
+            "description": "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the real runtime; without one the turn runs MCPJam's emulated engine. The server re-fetches that host's own runtime config, so `harness` and `computer` are NEVER read from the request body — a body carrying either is a 400. PER-TURN, not pinned to the session: re-send it on every turn, and read `engine` on the response to confirm what ran. A continuation of a session that named ONLY a host must re-send it — omitting it is refused with `details.reason: \"HOST_TARGET_REQUIRED\"` rather than run on the emulated engine. Alongside `environmentId` it is an assertion only — a host contradicting the environment's own is rejected with `details.reason: \"HOST_TARGET_CONFLICT\"`. Alone, the turn connects the host's own selected servers. A harness turn additionally requires `toolMode: \"auto\"` with no `allowedTools`/`maxToolCalls`: a harness builds its own tool set inside its sandbox, so the narrowing could not be applied, and the combination is refused rather than run with it silently dropped. It also cannot be combined with `serverIds`, because `hostId` cannot be pinned beside them and a later turn that omitted it would run the emulated engine on a session established on the harness (422, `details.kind: \"surface-unpinnable-host\"`) — target an `environmentId`, or send `hostId` alone and narrow per turn with `allowedServerIds`."
+          },
           "environmentId": {
             "type": "string",
             "description": "Target this environment's servers. Mutually exclusive with `serverIds`. First turn only."
@@ -21699,6 +23186,14 @@
           "toolMode": {
             "type": "string",
             "enum": ["read_only", "auto"]
+          },
+          "engine": {
+            "type": "string",
+            "description": "WHICH ENGINE RAN: `emulated`, or `harness:<id>` such as `harness:claude-code`. Present on every turn. Read it rather than infer it from `model`. `hostId` is per-turn: a continuation of a host-only session is refused without it, and one that pinned its own `serverIds` runs the emulated engine — this is the field that says which."
+          },
+          "hostId": {
+            "type": "string",
+            "description": "The saved host this turn executed as — the pointer the caller sent, or the host the targeted environment pins. Absent when the turn named no host."
           },
           "advertisedToolCount": {
             "type": "integer",
@@ -22265,7 +23760,8 @@
                   "call",
                   "response",
                   "userValue"
-                ]
+                ],
+                "description": "Where the chain stopped — A LOCATION, NOT A CAUSE. It names the first link that failed, never why it failed: the why is `reason` on that stage's row (see `StageResultRow.reason`), and neither this nor the `failureCategory` bucket on its own authorizes proposing a change to the server. Absent when nothing failed — and absent on a trial that never reached a stage at all, such as a setup abort or an evaluator error, which still carries a `failureCategory`. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
               },
               "failureCategory": {
                 "type": "string",
@@ -22278,7 +23774,7 @@
                   "userValue",
                   "evaluator"
                 ],
-                "description": "The bucket this trial is grouped under. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error — both are real answers about a run that never reached a stage."
+                "description": "The bucket this trial is grouped under — A BUCKET, NOT A DIAGNOSIS. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error — both are real answers about a run that never reached a stage. `setup` — setup: the harness or environment never got to the test. `metadata` — tool metadata: tool names, descriptions or schemas misled the model. `selection` — tool selection: the model picked the wrong tool, or none. `arguments` — call arguments: the right tool, called wrongly. `serverData` — server data: the server answered, with data the model could not use. `userValue` — user value: everything mechanical worked and the user still was not served. `evaluator` — evaluator: the grader itself failed, so the run says nothing about the server — never folded into the others, because counting a broken judge as a server defect poisons every rate derived from it."
               },
               "analyzerVersion": {
                 "type": "integer",
@@ -22367,7 +23863,7 @@
               "response",
               "userValue"
             ],
-            "description": "The stage this evidence was read from. Absent when none was established."
+            "description": "The stage this evidence was read from, and the only stage it is evidence ABOUT. Absent when none was established. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
           },
           "spanIds": {
             "type": "array",
@@ -22590,6 +24086,7 @@
       "ServerSkillsSupport": {
         "type": "object",
         "description": "Mutual-declaration state of the skills extension on this connection. `active` false means the extension was never negotiated — a capability state, not a failure.",
+        "required": ["declared", "advertised", "directoryRead", "active"],
         "properties": {
           "declared": {
             "type": "boolean",
@@ -22628,6 +24125,13 @@
       "ServerSkillSummary": {
         "type": "object",
         "description": "One skill as the server advertises it, before any content is fetched.",
+        "required": [
+          "serverId",
+          "skillUri",
+          "name",
+          "description",
+          "resources"
+        ],
         "properties": {
           "serverId": {
             "type": "string"
@@ -22674,6 +24178,13 @@
       "ServerSkillCatalog": {
         "type": "object",
         "description": "The server's skill catalog, drained across every page of `skills/list`.",
+        "required": [
+          "support",
+          "serverId",
+          "skills",
+          "duplicateUris",
+          "rejected"
+        ],
         "properties": {
           "support": {
             "$ref": "#/components/schemas/ServerSkillsSupport"
@@ -22720,6 +24231,15 @@
       "VerifiedServerSkill": {
         "type": "object",
         "description": "A skill whose SKILL.md was fetched and checked against its manifest digest, its advertised frontmatter, and its URI identity before any byte was returned.",
+        "required": [
+          "serverId",
+          "skillUri",
+          "name",
+          "description",
+          "content",
+          "contentSha256",
+          "resources"
+        ],
         "properties": {
           "serverId": {
             "type": "string"
@@ -22752,6 +24272,21 @@
       "ServerSkillResult": {
         "type": "object",
         "description": "Either the verified skill, or the refusal that stopped it. Never both.",
+        "required": ["support"],
+        "oneOf": [
+          {
+            "required": ["skill"],
+            "not": {
+              "required": ["refusal"]
+            }
+          },
+          {
+            "required": ["refusal"],
+            "not": {
+              "required": ["skill"]
+            }
+          }
+        ],
         "properties": {
           "support": {
             "$ref": "#/components/schemas/ServerSkillsSupport"
@@ -22767,6 +24302,21 @@
       "ServerSkillFileResult": {
         "type": "object",
         "description": "Either the verified file contents, or the refusal that stopped it.",
+        "required": ["support"],
+        "oneOf": [
+          {
+            "required": ["file"],
+            "not": {
+              "required": ["refusal"]
+            }
+          },
+          {
+            "required": ["refusal"],
+            "not": {
+              "required": ["file"]
+            }
+          }
+        ],
         "properties": {
           "support": {
             "$ref": "#/components/schemas/ServerSkillsSupport"

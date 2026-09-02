@@ -7,169 +7,11 @@
           "type": "patch"
         }
       ],
-      "summary": "Explain when a one-time server connection link has already been used.",
-      "id": "clear-used-connection-link"
+      "summary": "The suite page stops opening with an aggregate\n\nThe first thing labelled \"user value chain\" on the suite page was a funnel — a population statistic, sitting above the run history. It was the wrong introduction to the idea. The chain a reader arrives asking about is one request's journey, and the aggregate answers a different, later question.\n\nIt also read badly on real runs. On a three-trial suite it showed six green stages over \"2 of 3 trials\", the excluded one being precisely the trial that broke; on a ten-trial suite it showed `call` and `response` as `applicable=0`, which looks like a gap and only means those cases assert nothing there. The page's most prominent claim was its least reliable.\n\nThe per-trial chain now answers \"why did this not deliver value\", on the run page, the trace pane and the case table. The run-level document still renders on the run page behind its existing flag, where it reads as the follow-up it is.\n\nRemoved with the mount: `StageAnalyticsPanel`, `useEvalSuiteStageAnalytics`, `fetchEvalSuiteStageAnalytics` and the panel-state model — the suite-scoped reader had exactly one consumer, and dead code with passing tests is what drifts. `RunDocument`, `RateCell` and `useStageFindings` all stay; the run page uses them.\n\n**Two test files were re-aimed rather than deleted.** The findings tests ran through the panel, and the API tests covered only the suite listing — but their claims were never about which resource was fetched. The findings ones now assert against `RunDocument` + `StageFindingsCard`, the composition the run page actually builds; the API ones now cover `fetchEvalRunStageAnalytics`, which had no wrapper-level coverage at all (its hook test mocks the wrapper). Deleting them would have quietly dropped the guarantees they exist for: auth has one owner, the payload is validated not trusted, identity is bound, and the four failure kinds stay four.",
+      "id": "drop-suite-stage-funnel"
     },
     {
       "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        }
-      ],
-      "summary": "`mcpjam mcp` serves the skills that teach its own surface (SEP-2640)\n\nThe CLI's stdio MCP server exposes `connect_server`, `call_tool`, `server_doctor`, the OAuth walkthrough, and apps conformance — and MCPJam ships a skill, `mcp-inspector`, whose entire subject is how to read that output conservatively. It now serves that skill, plus `mcpjam-eval-import` (which ends in `mcpjam cloud eval validate`, a CLI command), over `io.modelcontextprotocol/skills`. An agent connecting to `mcpjam mcp` gets the interpretation rules in the same connection as the tools, instead of being told to run `npx skills add` first.\n\nThe SDK eval-authoring skills are deliberately absent here: they describe writing `@mcpjam/sdk` tests, which is not what a `mcpjam mcp` client is doing. The hosted worker serves those, beside the eval tools.\n\nThe handler wiring is a second implementation of the worker's, which is a deliberate trade — the worker is a private Cloudflare package with no Node build output, and routing the registrar through `@mcpjam/sdk` would cost a release before the CLI (which depends on the published package) could consume it. What is *not* duplicated is the part that can silently disagree: the bundle generator is shared, so both venues compute digests and sizes with the same code. Two copies of the manifest math would reach a user as a `digest_mismatch` from a server serving the right bytes; two copies of `setRequestHandler` wiring cannot.\n\n`npm run bundle:skills -w @mcpjam/cli` regenerates the committed bundle; the test suite fails if it is stale.\n\nOne consequence worth knowing: `mcpjam-eval-import` is now served by both venues under the identical URI `skill://mcpjam/mcpjam-eval-import/SKILL.md`. MCPJam's own host handles the collision — a duplicated URI is marked ambiguous and the direct-URI path is refused with qualified options — but a user connected to both `mcp.mcpjam.com` and `mcpjam mcp` in one chat must address that skill by server rather than by bare URI, and the two copies drift whenever npm release cadence and worker deploy cadence disagree.\n\nThe listing carries no `ttlMs`. The worker's hour-long TTL rests on its catalog changing only on deploy; here the documented launch command is `npx -y @mcpjam/cli@latest mcp`, so the bytes behind an unchanged stdio command — the natural cache key — change on every release. Issuing a freshness licence we cannot honour would let a host pair an old manifest with new bytes and refuse our own skill as `digest_mismatch`.",
-      "id": "cli-serve-skills"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "D8a: one stage-derivation contract for chat sessions, not a second one\n\n`deriveStageResults` was written for authored eval cases, and every field it\nreads to decide `notApplicable` is an authoring signal. A chat session — a real\nUser Testing transcript, a swarm journey run, a playground conversation —\nauthors nothing, so the analyzer had two ways to be wrong about one:\n`selection` could pass off a bare tool call, and `userValue` could read as\n`notApplicable` on a session where someone plainly asked for something.\n\n`StageAuthoredCase` grows two optional fields, both absent by default so every\nexisting eval caller derives byte-identically (the historical-parity corpus is\nre-pinned for the version bump and otherwise unchanged):\n\n- `hasUserAsk` — a real ask exists. Makes `userValue` applicable with nothing\n  authored to grade it, so an ungraded ask is `notMeasured` (\"we do not know\n  whether they were served\") rather than `notApplicable` (\"there was nothing to\n  serve\"). Those are different claims and the chain now keeps them apart.\n- `toolExpectation: \"required\" | \"not_required\" | \"open\"` — what the ask says\n  about whether a tool should have been called. Under `open`, `call` and\n  `response` become applicable so observed spans can decide them, and\n  `selection` can never reach `passed` without a turn that actually declared\n  expected calls. That a tool ran is not evidence the right tool ran.\n\n`STAGE_ANALYZER_VERSION` moves to 5.\n\nNew: `buildChatSessionStageInput` in `@mcpjam/sdk/contract` — a pure adapter\nthat normalizes one chat session's evidence (readiness, deterministic criteria,\na goal judge, trace spans) into the SAME analyzer input an eval iteration goes\nthrough. It is not a second derivation and does not derive anything itself. Its\nrules are pinned by golden fixtures across all three sources:\n\n- Deterministic criteria (production checks for User Testing, the pinned rubric\n  for swarm) are authoritative; the goal judge fills only their silence, and is\n  never promoted into the silence a BROKEN grader left.\n- A grader that failed is `notMeasured`, never a product failure.\n- No connection failure is manufactured: the adapter emits no setup signals at\n  all, so `connection` is established positively or stays `notMeasured`.\n- Readiness is evidence, not a verdict. `not_ready` is not a failed chain.\n\nIdentical normalized evidence produces identical rows on every surface — the\nsource never reaches the analyzer input.",
-      "id": "d8a-chat-session-stage-adapter"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "D8c: the chat-session chain derivation worker\n\nThe backend can now be asked for a session's user-value chain (D8b), but\nnothing produced one. This is the consumer: an internal service-token doorbell\nat `/api/internal/chat-stage/derivation-requested`, and a pass that claims owed\nwork from the backend's queue, normalizes the session's evidence through the\nshared SDK adapter, derives once through `deriveStageResults`, and applies the\nresult under the backend's generation + source-stamp compare-and-set.\n\nFour rules the pass exists to hold:\n\n- **It spends nothing.** There is no model call anywhere in it. It consumes the\n  deterministic criteria and whatever judge verdict already exists; it never\n  asks for one. A derivation pass that could trigger a judge would turn every\n  re-mark into a bill.\n- **Superseded is success.** A no-op apply means someone asked for better work\n  while this was in flight. It is not retried and not reported as a failure —\n  the newer generation is already pending and will be claimed on its own.\n- **Unreadable evidence fails rather than deriving.** A chain built on a\n  missing envelope is six `notMeasured` rows that look exactly like a session\n  which genuinely captured nothing, and an operator cannot tell those apart.\n  `evidence_unavailable` can be retried; a fabricated blank chain cannot be\n  un-published.\n- **Nothing free-text is stored.** Failures are reported as one of the\n  backend's closed error codes. The one thing an exception message from a\n  transcript walker reliably contains is detail from the transcript.\n\nThe doorbell's body carries no selector at all, deliberately: the pass claims\nfrom the backend's own queue, so what gets derived is decided by the backend's\nlifecycle rather than by whatever rang the bell. A ring is a wake-up, not an\ninstruction.\n\nInert until the backend's producers land and `CHAT_STAGE_DERIVATION_ENABLED` is\non: with the feature off the claim route 404s, which the pass reads as\n`disabled` and returns a benign no-op.",
-      "id": "d8c-chat-session-stage-worker"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "D8e: the user-value chain, where a reader already is\n\nTwo surfaces, one vocabulary, and no arithmetic in React.\n\n**Per session** — `SessionUserValueChain` renders the six stages stored on\n`chatSessions.stageDerivation` beside the surface's own verdict. It explains an\noutcome; it never replaces one. It refuses four things on purpose:\n\n- It does not derive. Every row is read exactly as the backend stored it.\n- It does not collapse the three non-verdicts. \"we did not check\", \"it does not\n  apply\" and \"it never ran\" get three different sentences, because one shared\n  grey dot is how \"we never checked\" gets read as \"it passed\".\n- It never says \"root cause\". A first failed stage is _where_ the chain\n  stopped, not why, and phrasing that suggests otherwise is how an operator\n  ends up fixing the wrong system.\n- It does not hide staleness or absence. A chain whose evidence has moved is\n  still shown, labelled; a session with no chain says \"not measured\" rather\n  than vanishing, because a panel that hides itself reads as \"nothing to\n  report\".\n\n**Per population** — `StageFunnel` renders one backend-computed summary. There\nis no `summaries` prop and no addition anywhere in the file, so a User Testing\nscenario cannot be summed into a swarm run: they answer different questions and\nneither is an eval trial. A swarm wave with several runs gets one funnel per\nrun, side by side. Every funnel always shows the numerator with its eligible\ndenominator (`4/7 eligible`, not just `57%`), renders zero eligible as \"not\nmeasured\" with no bar, names every excluded session (no chain / deriving /\nawaiting a newer chain / derivation failed), and discloses truncation.\n\nAll user-facing words come from the SDK's canonical label maps, which are total\nover their vocabularies — a new stage reason breaks the label file until\nsomebody writes the words a human reads, instead of silently rendering a wire\nenum.\n\nSelf-hiding until the backend queries exist, so this ships dark.",
-      "id": "d8e-cross-surface-chain-ui"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "D8f2: ask before copying a tester's words into a test case\n\nPromoting a real User Testing session copies someone else's transcript into a\ndurable, member-owned test case — outside the surface it was written on. The\npromote dialog now says so and requires an acknowledgement before it will\nsubmit.\n\nIt asks when the **server** says to (`requiresContentTransferAcknowledgement`\non the promote detail), never from a client-side rule about `sourceType`: a\nsynthetic scenario session is a scenario session and any local rule would ask\nabout it, wrongly. Playground and swarm promotion are untouched — a checkbox\npeople click past teaches them to click past the one that matters.\n\nThe checkbox is never pre-ticked, resets when the dialog closes or the session\nchanges, and **blocks** submit rather than warning past it. It is a real\ncontrol with a `<label htmlFor>` bound to its id and `aria-describedby`\npointing at the consequence, so the whole sentence is the hit target and the\ncontrol is reachable and toggleable by keyboard alone.\n\nNothing is sent unless the box was actually shown and ticked. A client that\nsent `true` regardless would stamp an audit record saying a person decided\nsomething they were never shown.\n\nBackend enforcement stays off until an operator enables it; until then this is\na client that asks and a backend that records.",
-      "id": "d8f2-promotion-content-acknowledgement"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "evals UI: an imported case says what it claims, and a run says who approved what\n\nA converted case looked identical to a hand-authored one on every screen, and a\nrun that took an approximation on somebody's say-so said nothing about whose.\n\n**Case badges.** The overview and the case sidebar show one compact badge per\nimported case, from one shared component so all three surfaces say the same\nwords. `exact` renders as **\"claimed exact\"** and is styled NEUTRALLY — a green\ntick beside a claim nobody checked would read as an MCPJam guarantee, and\npeople would stop reading the note that explains what the claim actually rests\non. `approximated` is cautionary, `unsupported` and `unresolved` are blockers\nscoped to the case rather than to the suite, and a native case gets no badge at\nall. Nothing anywhere calls a claim \"verified\" or \"accepted\".\n\n**The mapping note, read-only.** The case editor shows the converter's cited\nrule and source-case key beside the claim, and does not let anyone edit them —\nrewriting the justification for a claim without changing the claim is the one\nedit that makes the record actively misleading.\n\n**Frozen run evidence.** Run detail fetches the canonical single-run projection\nfor the run it is showing, rather than reading the run-list row it is handed\n(which carries no eligibility) or walking the suite's current cases (which get\nedited after runs finish). It renders each approved approximation's frozen\nactor, timestamp, reason and source case — all written by the server at launch,\nnever the current viewer — and describes incomplete evidence as **\"not\ngateable\"** rather than as a failure, because the run has not said the server\nregressed, it has said its own evidence cannot be relied on.\n\nDocs follow the same line: the import skill no longer claims disabled cases go\nunsynced or that the API drops per-case claims, and the CLI reference documents\n`eval validate --project`, the mandatory pre-sync resolution on every file run,\nthe per-run approval flags, and `eval gate`'s exit 3 for incomplete import\nevidence.",
-      "id": "eval-import-claim-badges-and-receipts"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "evals: an imported case carries its converter's claim, and an approximation is approved per run\n\nA suite converted from another eval framework used to arrive at MCPJam with\nits provenance stripped somewhere between the file and the hosted row, and a\nconverted case ran exactly like a hand-authored one. Both are now false.\n\n**The claim travels.** Each case may carry `import: {status, sourceCaseKey?,\nnote?}` with the four statuses the platform already stores, and it now survives\nfile → SDK → REST → hosted case → run snapshot → read. The suite-file schema\ngains the bounds the platform enforces (512-character `sourceCaseKey`,\n2000-character `note`) and the rule that earns an `exact` claim: a non-empty\nnote citing the mapping rule. Both generated JSON-Schema artifacts are\nregenerated from the zod source.\n\n`exact` means CONVERTER-CLAIMED exact throughout — the converter says it\napplied a structural rule, and MCPJam has verified nothing. It is never\n\"verified\" or \"accepted\", in a type, a message, or a screen.\n\n**The public API accepts the claim and only the claim.** Create and batch-create\ntake `import`; PATCH takes `import | null`, where omitted leaves the stored\nclaim and `null` removes it. Reads project the three claim fields by name, so\nthe acceptance bookkeeping stored beside them on the row is never published.\nAn approval or internal key in a case body is a 400, not a silently-stripped\nfield. `INVALID_IMPORT` joins the documented batch failure enum, which the\nruntime has been returning all along.\n\n**A file-owned run resolves its tool names before it writes anything.** One\nshared check backs both `eval validate --project` and every `eval run --file`.\nIt reads `toolCall` steps only — prompt text that mentions a tool is a hint,\nand an assertion about a tool is an expectation that may legitimately fail at\nrun time — and it checks per target rather than over their union, because a\nunion green-lights a case that fails on two targets out of three. A selected\ncase whose reference does not resolve refuses the launch before the suite is\nsynced; an unselected imported one has its claim rewritten to `unresolved`\n(keeping `sourceCaseKey`) and is still persisted, because a disabled row keeps\nits hosted history. A native case never acquires provenance it was not authored\nwith. `eval validate` without `--project` stays exactly as it was: no auth, no\nnetwork, same envelope and same exit codes.\n\n**An approximation is approved for a run, never accepted for a case.**\n`cloud eval run --file` gains repeatable `--allow-approximated <case>` and\n`--approval-reason <text>`, checked against the cases the run will actually\nexecute before anything is billed: a native, exact, unsupported, unresolved,\ndisabled, unselected, unknown or duplicated selector refuses. Approved authored\nids map to hosted ids after sync and travel as `importApprovals` — the caller\nsupplies an id and a reason and nothing else, because the approver and the\ntimestamp are derived server-side and frozen into the run's own snapshot. The\nsame approvals go to every target of a grouped launch. The normalized approval\nset and reason are part of the run's idempotency key, so approving something is\na different run from not approving it while flag order is not. There is no\npersistent acceptance: the next run needs the flags again.\n\n**Incomplete import evidence is not gateable, and not waivable.**\n`PlatformEvalRun` gains `importEligibility`, runtime-validated and projected\nfield by field rather than spread. When it says `incomplete` — or `gateable:\nfalse` under any status — `eval gate` returns exit 3 before any verdict or\nwaiver is considered. That is deliberate: import completeness is evidence\neligibility, not a measurement of the server, so it is never exit 1 and a\nwaiver granted because the evals regressed cannot buy a release out of it.\n`legacy` and `eligible` proceed through the existing verdict logic unchanged,\nand an older server that reports no eligibility at all behaves exactly as\nbefore.",
-      "id": "eval-import-claims-and-per-run-approval"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Freeze the stage-analytics contract: case intent, per-trial stage measurements, and the run-level funnel\n\nContract only. Nothing in the runtime accepts, sends or persists any of these\nfields yet — the suite-file validator, `EvalTest` authoring, the serializers, the\nreporters and the Platform mappings are all unchanged. This lands the vocabulary\nfirst so the backend that stores it can be written against a fixed target, and\nso no released CLI or SDK ever accepts a nonempty `intent` and silently drops it.\nA field that validates and then disappears is worse than a field that does not\nexist, because the author believes it was saved.\n\nThree new modules in `@mcpjam/sdk/contract`:\n\n- **`intent`** — the optional label a case's analytics group under.\n  `caseIntentSchema` is the stored form (trimmed, 1..64 chars);\n  `caseIntentUpdateSchema` is the wire form, the only place `null` is legal.\n  `resolveIntentUpdate` applies the three-way rule that the two spellings of\n  \"nothing\" are opposites: **omitted preserves** (so an older client\n  round-tripping a suite cannot strip labels), **`null` clears**, a string sets.\n  Historical absence stays absent and renders as `UNLABELED_INTENT_LABEL` —\n  nothing manufactures a `general` bucket that would silently absorb every\n  untagged case. Intent participates in authored-config fingerprinting\n  (`intentFingerprintValue`) and is explicitly excluded from import\n  semantic-exactness, so retagging a funnel cannot downgrade a converter's\n  claim that it mapped a suite exactly.\n\n- **`StageMeasurementsV1`** — how long each stage took and whether it was\n  reached, for one trial. Kept OFF `StageResultRow` deliberately: the decision\n  contract is what gates a run, and no verdict may ever be derived from a\n  duration. Latency is the union of the complete intervals of the spans a stage\n  actually cited (`basis: evidence_span_union`), so two concurrent 500ms calls\n  report 500ms rather than 1000ms; missing, non-finite or inverted timestamps\n  yield NO SAMPLE, never a zero. Only `selection`, `call` and `response` carry\n  per-trial latency — `connection`/`discovery` timing is a run-level setup fact\n  measured once per run+phase, and `userValue` has no grader timer yet.\n  `StageSetupPhaseSignal` gains an optional `durationMs` for that phase envelope;\n  `deriveStageResults` does not read it, so timing cannot move a stage's state.\n\n- **`EvalStageAnalyticsV1`** — one run's funnel, plus the reference aggregation\n  and a golden fixture. Counts are stored and rates are derived: a stored rate\n  cannot be re-sliced or told apart from the very different claims `4/5` and\n  `800/1000`. `measurementCoverageRate`, `measuredPassRate` and `reachRate` each\n  return numerator, eligible denominator, exclusions and state, and a zero\n  denominator is `notMeasured` with a `null` value rather than a `0` that reads\n  as \"everything failed\". Slices are marginal — overall, intent, model, host —\n  never an intent×model×host cube. `measurementUnit` is the literal `\"trial\"`,\n  carried rather than assumed, so merging a funnel with a UT or swarm\n  denominator fails loudly.\n\nThe rules the shapes exist to enforce:\n\n- **Unknown is not a drop-off.** A stage that captured nothing is `reachUnknown`\n  and is excluded from the reach denominator by name, never counted as a\n  confirmed fall-out. Broken instrumentation must not read as a broken server.\n- **Nothing unreadable is ever a passing observation.** Missing, unverified and\n  version-ahead chains, invalid measurements and analyzer mismatches are each\n  excluded and counted separately — never coerced, and never partially read.\n  Absent integrity is not verified integrity.\n- **Setup is counted once per run+phase; impact is counted per trial.** The\n  signal is copied onto every iteration, so N copies yield one attempt, one\n  latency sample, and N distinct impacted trials. Server attribution requires\n  `theirs` *and* a positive egress canary, so our own network is never billed to\n  a server.\n- **A cap that bites is recorded.** `sliceTruncation` names any dimension whose\n  values were dropped; a truncated slice array that looked complete would read\n  as \"these are all the models\".\n- **A provisional row says so.** A judge second pass can rewrite stage\n  attribution after a run first goes terminal, so the summary is `provisional`\n  until every applicable fanout completes, and `stageAnalyticsParityBlockers`\n  refuses to call two rows comparable across run-group, analyzer version,\n  measurement version or unit — a comparison against a row still being rebuilt\n  can invert between two page loads.\n\n`aggregateStageAnalytics` is pure and deterministic (all timestamps are passed\nin), and its golden fixture is the conformance target for the backend\nmaterializer, which is hand-written because Convex functions cannot import\n`@mcpjam/sdk`. A second implementation of these semantics is acceptable; a\nsecond, unpinned semantics is not.\n\nNo backfill and no migration: runs from before this ships carry no measurements\nand no summary row, and absence renders as unmeasured rather than as zero.",
-      "id": "eval-stage-analytics-contract"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Evaluate renders the run's own decision instead of re-deriving one\n\nD9 gave every surface one canonical answer about a run — the verdict, the\npopulation its counts are in, the run's authoritative `EvalVerdictDecision`, and\nthe per-trial chain underneath it. The browser was the last reader still\ncomputing its own: the Evaluate suite run history resolved a verdict from\niteration pass rates, the project Runs table derived one from run status, and\nrun detail showed KPIs with no answer to \"what did this run decide\" at all.\n\nBehind `evaluate-enabled`, `/evaluate` now reads\n`GET /v1/projects/{projectId}/eval-runs/{runId}/decision-summary` and renders it:\n\n- **Run detail** gains a decision card — verdict and its source, counts with\n  their measurement unit named, the v2 validity phase and its reasons, and one\n  page of non-passing trials with the first failed stage, the failure category,\n  the evidence locator and the next action. Paging appends: earlier pages\n  survive a later page failing, iterations are listed once across pages, and\n  scans are summed.\n- **Suite run history** and **project Runs** show the run's own verdict on\n  terminal rows, including `inconclusive` and \"no verdict\" — two answers those\n  columns could not previously express.\n\nWhat this fixes beyond having one answer:\n\n- Local pass-rate math no longer decides anything a run has already decided. A\n  case that passes on threshold with a failing trial under it was being reported\n  as a failure; it now reads as the run decided it, with the failing trial still\n  shown as evidence beneath the verdict.\n- `notEstablished` is kept apart from `inconclusive`. One is the absence of a\n  verdict, the other is a verdict the validity phase reached and withheld.\n- The server's `diagnostics.complete` is rendered verbatim. When the client has\n  followed every cursor it was offered, that is said as a separate, differently\n  worded fact — a finished local walk never upgrades a partial page to \"these are\n  the failures\".\n- A quarantined stage chain withholds both the first failed stage and the\n  failure category, and a version-ahead analyzer is flagged rather than dropped.\n- Every word comes from the SDK's label maps, so the browser says \"User value\"\n  and \"first failed stage\" — never a raw `userValue`, never \"root cause\".\n\nReads are bounded by one shared controller: page keys dedupe, a global cap of\nfour concurrent requests, a bounded LRU, abort on the last subscriber leaving,\nand a stale window so asynchronous judge fanout is picked up rather than pinned\nto the first answer. Table rows load as they scroll into view, so a 50-row page\nis not 50 requests and \"Show all\" cannot ask for a whole history at once.\nPending and running rows stay lifecycle-only.\n\nThe legacy `/evals` tab is untouched: every surface takes the read as an\noff-by-default prop, so a flag-off render issues no decision-summary requests at\nall.",
-      "id": "evaluate-canonical-run-decision-summary"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Let the Claude Code harness bootstrap install its CLI on modern pnpm.\n\n`@anthropic-ai/claude-code` ships a `postinstall` that fetches its\nplatform-native binary. pnpm 10 stopped running dependency build scripts by\ndefault, and the computer template installs pnpm unpinned — so on a pnpm that\ntreats the skipped script as an error (`ERR_PNPM_IGNORED_BUILDS`) the\nbootstrap's `pnpm install` aborts, taking the adapter's own `install.cjs`\nrescue step down with it, and the harness dies before its first turn.\n\nThe bootstrap now writes an `.npmrc` beside the adapter's bundled manifest.",
-      "id": "harness-pnpm-allow-builds"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "The agent turn advertises Skills over MCP, so a server that serves skills is visible to it\n\nMCPJam serves Agent Skills over SEP-2640 and verifies them on the way in — but its own hosted agent surface (`send_chat_message` / the `/v1` chat turn) could never see one. Driving the playground against a skills-serving server returned `advertisedToolCount: 0`, and the model answered that it had no tool-calling interface at all: `withServerSkills` filters to extension-active connections, the hosted connection advertised nothing, so no `listSkills` / `loadSkill` was ever merged. A server that serves skills was indistinguishable from one that does not.\n\n`withSkillsExtensionCapability` had exactly one call site — the LOCAL connect path.\n\nThe declaration is opt-in rather than blanket, because most hosted connections **emulate a third-party host** and the debugger's whole promise is that the wire shows what that host would send; advertising skills on an emulated Cursor persona would be a lie about Cursor. The agent turn emulates no persona, pins no host config, and ships the fulfiller (`prepareChatV2` merges `withServerSkills`, which loads only through the verified read path in `server-skills.ts`), so advertise = enforce is satisfied there and nowhere else changes.\n\nIt is set on the manager's **defaults**, not on per-server `clientCapabilities`. The latter takes `MCPClientManager`'s exact-set branch and is advertised verbatim: since the default set declares `io.modelcontextprotocol/ui`, routing the extension through it would have silently stopped the agent turn advertising MCP Apps and lost widget rendering. It would also have overridden any host config that pinned its own capability set. Defaults merge; a pinned exact set still wins.\n\nTested with that concrete regression pinned — the capability object alone carries skills and not `ui`, and the merged result carries both.",
-      "id": "hosted-turn-advertises-skills"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Improve MCP profile probing and host compatibility support for tool-list changes,\nstructured tool results, and MCP Apps.",
-      "id": "probe-listchanged-structuredcontent"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Clean the two SDK skills before we publish them over MCP\n\n`explore-to-sdk-evals` never had valid frontmatter. Its opening fence was followed by `## name: playground-to-sdk-evals` — a markdown heading, not a YAML key — with no closing `---`, so the real parser returns two YAML errors and `frontmatter: undefined`. The declared name also disagreed with the directory. Both are fatal to `checkSkillIdentity`, and neither was caught because nothing ever parsed the file: it is consumed as raw text through `@mcpjam/sdk/skill-reference`. The fence is repaired and the skill is now named for its directory. The body carried the same damage — `` `**@mcpjam/sdk`** ``, `` `**package.json**` ``, `` `**jest.config.***` `` and about forty more interleaved emphasis/code markers, the residue of a rich-text paste — all corrected. Stale \"Playground\" naming is now \"Explore\", matching the surface it reads from.\n\n`create-mcp-eval` was 1,031 lines in one file with no supporting files, which is the opposite of what a per-file manifest is for. It is now a routing `SKILL.md` — the reference map, context gathering, and generation guidelines — plus six references: `project-setup`, `sdk-api`, `patterns`, `template`, `common-mistakes`, `agent-brief`. Verified content-preserving: the heading set before and after is identical but for the added reference map.\n\nThe split would otherwise have broken the Inspector's \"copy agent brief\" button, which puts one markdown blob on the clipboard for a reader who has no `references/` directory to follow links into. `SKILL_MD` therefore stays whole, assembled in `skill-reference.ts` from the same files the skill ships — one source of truth, two deliveries. `CREATE_MCP_EVAL_SKILL_MD` exposes the routing file alone for consumers that can fetch references themselves.\n\nAll four repo-authored skills now pass our own `checkSkillIdentity` gate against a `skill://mcpjam/<name>/SKILL.md` URI. `explore-to-sdk-evals` did not before.",
-      "id": "skills-content-cleanup"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
         {
           "name": "@mcpjam/sdk",
           "type": "patch"
@@ -179,8 +21,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Unbreak harness eval runs that carry skills, and make skill IDs obtainable without the web app.\n\nA harness eval run whose environment or suite pinned any skill failed at setup with `tokensUsed: 0` — its pins reached `prepareChatV2`, which refuses them because a harness already receives skills as SKILL.md on the box. Both iteration paths now route that decision through one seam, and the refusal's message says what to pass instead. Turn-end skill adoption is no longer allowed out of a pinned turn, where it could write an agent-authored skill back into the pool the next A/B arm resolves against.\n\nA `skills-enabled` gate refusal now surfaces as a 403 carrying the backend's message instead of an opaque `Server Error` 500.\n\nAdds a read-only Cloud Skills surface — `GET /v1/projects/:projectId/skills` and `/skills/:skillId`, the matching SDK operations, and `mcpjam cloud skills list|get` — so the skill IDs that `--compose-skill` and an environment's `skillSelection` demand can be discovered from the CLI and MCP catalog. Authoring stays an app flow.",
-      "id": "skills-harness-unbreak-and-reads"
+      "summary": "An environment's secret grant is reachable from the SDK, CLI and MCP again\n\n`secretSelection` is how a project secret is granted to the runs an environment launches. The API takes it on create and on update, the `/api/v1` route takes it on both, and `PlatformEnvironmentCreateBody` / `PlatformEnvironmentUpdateBody` have always declared it — but the two operation schemas in `platform/operations.ts` never did, so the only surfaces an agent or a script can use dropped it on the floor.\n\nBoth halves were silent in the way that costs the most time:\n\n- **Create** parses through a `z.object`, which STRIPS what it does not declare. A create carrying a grant returned 201 with `secretSelection: null` and no error anywhere — the environment simply had no credentials, and the failure surfaced much later as a run refusing to start for want of a secret that had apparently been attached.\n- **Update** validated fine, but the at-least-one-field `.refine` did not list the field, so a PATCH changing ONLY the grant was rejected client-side with a message that enumerated eight other fields and not the one the caller had passed.\n\nTogether those meant a secret could be attached by neither path: not on create, and not afterwards. The route's own comment says as much about what unclearable would cost — \"an environment's credential grant can only ever grow, and revoking it would require deleting the environment\" — and that was the state the SDK was in.\n\nThe field now rides a single shared `secretSelectionInput` used by both operations, matching how `skillSelection` and `pluginVersionIds` are already shared, with the same tri-state on update: omit to leave unchanged, `null` to REVOKE, a value to replace. `secretIds: []` is rejected rather than read as \"remove every credential\" — that is what `null` is for.\n\nThe CLI's `--file`/`--json` help on `environments create` and `environments update` listed every other body field but this one; it lists it now.\n\nNot changed: `ensure_adhoc_environment` and the run operations' `compose` still have no secrets axis, though the route accepts one. A composed stack cannot carry a grant, so a run that needs a credential still needs a named environment.",
+      "id": "environment-secret-selection-sdk"
     },
     {
       "releases": [
@@ -193,59 +35,72 @@
           "type": "patch"
         }
       ],
-      "summary": "Skills over MCP: re-sync the host to the current SEP-2640 draft\n\nOur SEP-2640 implementation was pinned to `modelcontextprotocol/docs @ d7490ec`. The draft has moved since, and three of its changes made our host wrong rather than merely out of date. Re-pinned to `modelcontextprotocol/modelcontextprotocol @ a3e147ca27` (`sep/skills-extension`).\n\n**`\"resources\": \"dynamic\"` crashed the parser.** The draft makes `resources` required and gives it two forms: an enumerated manifest, or the bare string `\"dynamic\"` for a skill generated per request. `skillEntrySchema` accepted only the array, so a conforming server answering `\"dynamic\"` produced an `InvalidSkillsPayloadError` — a wire error, for a form the spec defines, with no way for the user to tell a server bug from ours. It now parses, and MCPJam refuses to *load* it as a stated policy (`dynamic_resources`), kept distinct from a server that omitted `resources` entirely (`no_resources`). Those are different server behaviours and collapsing them tells a conforming author their skill is malformed.\n\n**`size` was never checked.** Each manifest entry now carries the file's byte length, and the draft makes a length mismatch \"a verification failure equivalent to a digest mismatch, whether or not the host goes on to compute the digest\". `verifySize` runs *before* hashing — which is the point of the field: it catches a truncated or padded read without paying for a digest, and it lets a host budget a skill from the entry alone. It gets its own `size_mismatch` kind, because \"this file was cut short\" and \"this file was tampered with\" are different diagnoses. A server that omits `size` is tolerated, not refused: the SEP is unratified and every implementation that exists today predates the field, so refusing would buy conformance with an unpublished rule at the cost of working with real servers.\n\n**Our own caps refused conforming skills.** The draft sets per-skill limits of 512 entries and 16 MiB total, and says hosts MUST support up to them. Our caps — 128 KiB for a SKILL.md, 2 MiB for a supporting file — were invented before the draft had any, and both sat *below* that floor, so a conforming 3 MiB SKILL.md was refused as `too_large`. That was our bug, not the server's. The limits are now the draft's, enforced from the manifest before the first byte is fetched, with `too_many_resources` and `too_large` naming which one was breached.\n\nAlso fixes an error-reporting regression the union would have introduced: a `z.union` reports `resources: Invalid input` and buries the real per-field diagnosis in nested alternatives, which defeats the reason these guards exist. `issuesOf` now descends into union alternatives and rebuilds the full path, so a missing digest still reads as `resources.0: digest: …`.\n\nTest coverage: `size`, the limits, and dynamic manifests get unit, fixture, and over-the-wire cases, including that a dynamic manifest authorizes *no* reads rather than all of them. The fixture gains `sizeMismatch`, `dynamicResources`, and `omitSizes` modes. `server-skills.ts` gets its first direct test — it was previously covered only through the chat wrapper.",
-      "id": "skills-sep2640-resync"
+      "summary": "A passing trial can have its chain read too\n\nD9's decision summary carries a per-trial user-value chain, and the browser already fetches it — for **non-passing trials only**. That filter lives in the contract assembler and is deliberate: diagnostics are evidence beneath a verdict, and a trial that passed is not evidence of anything going wrong. The consequence is that a reader who opens a trial that succeeded has nothing to read, and \"how far did value travel here\" is exactly as good a question about a passing trial as a failing one.\n\nThe iterations resource projects the same stage columns over every row of a run, passing included — verified against production, where all ten trials of a run came back carrying six rows each. This adds the client read for it.\n\n**One chain type, one validator.** The rows go through the contract's own chain assembler, now exported as `assembleEvalRunDecisionChain`, which is the same function D9's summary is built from. So the result is `EvalRunDecisionChain` — the type the decision card and the trial cards already render, with no adapter and no second shape — and the **whole derivation** is validated rather than the rows one at a time. Row-level validation accepts five rows, or six in the wrong order, and a renderer that numbers cards `01`–`06` by position would then publish a different claim about which stages were blocked, because `notReached` is derived from position. A test feeds it both shapes and pins that they come back `unverified`.\n\n**Three absences stay three facts.** A bare 404 from a router that never had the path is a deployment that does not serve iterations; an enveloped `NOT_FOUND` is a run that is not there; a row with no derivation is `absent`. Reading the first as the third would report every trial on an undeployed build as having no chain.\n\n**Keyed on the run's revision, not just terminal status.** A terminal run is not frozen — a judge landing minutes later rewrites `judgePending` into `judgeObserved`, which is a different chain for the same trial. The read keys its cache on the same revision marker the decision-summary store uses, so the two refresh together and one trial can never show two chains at once.\n\n**Silent unless asked.** Off without the caller's switch, a project id, and a finished run; with any missing it issues no request at all.\n\nThe route needed an entry in `authFetch`'s bearer allowlist, and the existing eval-chain test already pinned it in the negative list — so this is a **move**, not an addition, and the test now pins that the trace and per-iteration paths beneath it are still *not* granted. Without the entry the read ships no `Authorization` and the 401 surfaces as \"could not be loaded\", which reads as a backend outage while the API is fine. That has happened three times before on this surface.",
+      "id": "uvc-iteration-chain-read"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Every failing trial now shows its own user-value chain, as cards\n\nThe run-level funnel answers \"how much of this run was measured, and where did it stop\". The question a reader actually arrives with is narrower: **this** trial did not deliver value — how far did it get, and why. That answer already existed and was rendered as six lines of flat text inside a collapsed diagnostic row: `Connection: passed`, `Response: failed — the server reported a tool error`.\n\nIt is now the same six numbered cards the suite page uses, reading left to right, with a \"what happened\" card underneath the one a reader selects. The chain opens on the stage the contract named as the first failure, so a reader lands on the break rather than hunting for it.\n\n**A trial is not a population, and the card row says so.** The aggregate chip counts (`failed in 2 of 3 measured`); a trial's chip states (`failed`). There are no rates on a trial's card — \"100% (1/1)\" over a single observation is a statistic manufactured from one trial — and no latency, which is deliberately not a field on a stage row. What a trial's card carries instead is what a trial actually has: one state, one reason, and that row's own evidence.\n\n**The reason stays off the chip and on the detail card.** Some reason labels are whole sentences, six cards at their minimum width would wrap into unreadable columns, and — the part that matters — keeping the chip to the state word keeps the \"never says passed when nothing was decided\" invariant total over the five states rather than dependent on the twenty-nine-member reason vocabulary. Two reason labels contain the word \"made\", which that invariant's own regex matches.\n\n**Which card opens is a UI choice; where the chain stopped is the contract's.** The default selection is `firstFailedStage`, read from the chain and never re-derived by scanning rows — the day a second derivation disagreed, the UI would be the one that was wrong while looking authoritative. When the contract established no failed stage at all, the card that opens is the first non-passing row carrying a reason: that is the setup-abort and policy-block shape, where every stage reads `not measured` and the single sentence explaining the trial would otherwise sit behind a click nobody knows to make.\n\nA withheld (`unverified`) or absent chain renders its existing notice and no cards. An empty six-card row would read as measured, which is exactly what those two states exist to prevent.",
+      "id": "uvc-per-trial-stage-cards"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "The trace pane opens with the chain, not just the transcript\n\n\"View trace\" lands a reader on one trial's transcript — the place they arrive when they want to know why that trial did not deliver value. The answer was not on that screen. It was back on the run page, inside a diagnostic row they had already navigated away from, and for a trial that PASSED it did not exist anywhere.\n\nThe chain now sits above the transcript: six cards, opened on the break, with the \"what happened\" card under whichever one the reader selects. A passing trial reads as the delivery story end to end — Session connected → Tools and resources discovered → … → Request satisfied — which is the first time that story has been visible for a trial that worked.\n\n**`IterationDetails` does not fetch it.** It has five hosts and knows only its iteration: not the run, not the project, not whether the Evaluate opt-in is on — and the chain read needs all three. So it takes a slot, and the one host that can answer those questions builds the node. The other four pass nothing and issue no request, which keeps a shared component free of a read four of its callers never asked for.\n\n**The hooks sit above the early return, and that placement is load-bearing.** The editor returns a loading state before its test case resolves, so a hook called below it runs on some renders and not others — React reports that as \"rendered more hooks than during the previous render\". A test caught exactly that, on the first draft.\n\nSelection uses the same `undefined`-is-not-`null` rule as the run page: `undefined` means \"not chosen yet\" and derives the default at render time, `null` means the reader closed the card. The distinction is what makes the trace pane work at all — the chain arrives *after* mount there, so a state initialized once from an empty chain would compute `null` and never auto-open the break.\n\nAn absent map key means \"not loaded\", never \"no chain\": a trial the page walk has not reached renders nothing rather than a false absence.",
+      "id": "uvc-trial-chain-on-trace-pane"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "A run's case table says where each trial stopped\n\nThe run-scoped case view lists every trial of one case and told you, per row, whether it passed. \"Failed\" is the least useful true thing you can say about a trial: the reader's next question is always *where*, and answering it meant opening rows one at a time.\n\nEach row now carries a one-line summary of its chain — `broke at Tool response`, `Request satisfied`, `chain withheld` — from the same read the trace pane uses, so the whole table costs one request rather than one per row.\n\n**The table takes a lookup, not a run.** The chain is scoped by run, and only the run-scoped host of this table knows which run its rows belong to; the cross-run case view passes nothing and issues no read, because filling that column there would mean one request per run.\n\nThree shades of nothing stay distinct, which is the whole reason this is a function of the chain rather than of the row's result:\n\n- a row whose chain has not loaded renders **no chip** — an absent map key means \"not loaded\", never \"no chain\";\n- a chain the server withheld says `chain withheld`, not silence, because the rows exist and did not validate;\n- a trial with no failed stage says `Request satisfied` **only when user value actually passed**. A policy-blocked trial has no failed stage either, and calling that satisfied would claim an outcome from an absence of evidence; it reads `not measured` instead.",
+      "id": "uvc-trial-chain-table-chip"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "3.1.0",
+      "type": "patch",
+      "oldVersion": "3.3.3",
       "changesets": [
-        "clear-used-connection-link",
-        "d8a-chat-session-stage-adapter",
-        "d8c-chat-session-stage-worker",
-        "d8e-cross-surface-chain-ui",
-        "d8f2-promotion-content-acknowledgement",
-        "eval-import-claim-badges-and-receipts",
-        "eval-import-claims-and-per-run-approval",
-        "evaluate-canonical-run-decision-summary",
-        "harness-pnpm-allow-builds",
-        "hosted-turn-advertises-skills",
-        "probe-listchanged-structuredcontent",
-        "skills-content-cleanup",
-        "skills-harness-unbreak-and-reads",
-        "skills-sep2640-resync"
+        "drop-suite-stage-funnel",
+        "uvc-iteration-chain-read",
+        "uvc-per-trial-stage-cards",
+        "uvc-trial-chain-on-trace-pane",
+        "uvc-trial-chain-table-chip"
       ],
-      "newVersion": "3.2.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "5.1.0",
-      "changesets": [
-        "cli-serve-skills",
-        "eval-import-claims-and-per-run-approval",
-        "probe-listchanged-structuredcontent",
-        "skills-harness-unbreak-and-reads"
-      ],
-      "newVersion": "5.2.0"
+      "newVersion": "3.3.4"
     },
     {
       "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "8.1.0",
+      "type": "patch",
+      "oldVersion": "8.5.0",
       "changesets": [
-        "d8a-chat-session-stage-adapter",
-        "eval-import-claims-and-per-run-approval",
-        "eval-stage-analytics-contract",
-        "probe-listchanged-structuredcontent",
-        "skills-content-cleanup",
-        "skills-harness-unbreak-and-reads",
-        "skills-sep2640-resync"
+        "environment-secret-selection-sdk",
+        "uvc-iteration-chain-read"
       ],
-      "newVersion": "8.2.0"
+      "newVersion": "8.5.1"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "patch",
+      "oldVersion": "5.5.0",
+      "changesets": [
+        "environment-secret-selection-sdk"
+      ],
+      "newVersion": "5.5.1"
     },
     {
       "name": "@mcpjam/mcp",
@@ -253,6 +108,13 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
+    },
+    {
+      "name": "@mcpjam/slack-app",
+      "type": "none",
+      "oldVersion": "0.1.0",
+      "changesets": [],
+      "newVersion": "0.1.0"
     }
   ]
 }

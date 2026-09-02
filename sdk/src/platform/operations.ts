@@ -15,6 +15,10 @@ import {
   MAX_BATCH_CREATE_CASES,
   evalSuiteFileCaseImportSchema,
 } from "../contract/suite-file.js";
+import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+} from "../contract/stage-intent.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -74,6 +78,7 @@ import type {
   PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalStageAnalytics,
   PlatformGateWaiver,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
@@ -88,6 +93,8 @@ import type {
   PlatformEvalRunGroupCreated,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
+  PlatformEnvironmentSkillSelection,
+  PlatformEnvironmentSecretSelection,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -102,6 +109,8 @@ import type {
   PlatformJourneyRunCanceled,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformSecret,
+  PlatformSecretDeleted,
   PlatformRunScorecard,
   PlatformSessionSummary,
   PlatformSwarm,
@@ -449,6 +458,15 @@ export interface PlatformOperation<TInput, TOutput> {
 
 const PROJECT_SELECTOR_DESCRIPTION =
   "Project name or ID. Defaults to the most recently updated accessible project.";
+
+/**
+ * Up here, not beside the compose resolvers it belongs to, for the same
+ * temporal-dead-zone reason `composeRunTargetInput` is declared above the run
+ * inputs: both compose schemas read this at module-init time, and the earlier
+ * of the two sits thousands of lines above those resolvers.
+ */
+const SERVERS_SELECTOR_DESCRIPTION =
+  "Server(s) (name or ID) the stack must run against. Resolves to a pinned standalone server group holding exactly these servers, so the stack keeps testing them even if the host's own server list is edited later. Mutually exclusive with `serverGroup`.";
 
 const listProjectsInput = z.object({
   organizationId: z
@@ -829,6 +847,32 @@ function evalRunRef(
 }
 
 /**
+ * One iteration of an eval run, addressed through the run and the run's suite.
+ *
+ * Exported, unlike its siblings, because no catalog operation can compose it
+ * yet: the trace and iteration-list responses name the run but not the suite,
+ * and a ref needs both. The follow-up that stamps `suiteId` onto those DTOs
+ * is where this gets its first caller.
+ */
+export function evalIterationRef(
+  iterationId: string,
+  runId: string,
+  suiteId: string,
+  projectId?: string
+): PlatformResourceRef {
+  return {
+    type: "eval_iteration",
+    id: iterationId,
+    parent: {
+      type: "eval_run",
+      id: runId,
+      parent: { type: "eval_suite", id: suiteId },
+    },
+    ...(projectId ? { projectId } : {}),
+  };
+}
+
+/**
  * An eval case, addressed through its suite.
  *
  * Returns NOTHING when the suite is unknown rather than falling back to the
@@ -1115,7 +1159,10 @@ const PAGE_CURSOR_DESCRIPTION =
   "Opaque pagination cursor from a previous response.";
 
 const serverPagedInput = serverScopedInput.extend({
-  cursor: z.string().min(1).optional().describe(PAGE_CURSOR_DESCRIPTION),
+  // No `.min(1)`: `""` is a legitimate MCP cursor (2026-07-28
+  // `server/utilities/pagination`), and rejecting it would refuse to page a
+  // conforming server.
+  cursor: z.string().optional().describe(PAGE_CURSOR_DESCRIPTION),
 });
 
 export type ServerPagedInput = z.infer<typeof serverPagedInput>;
@@ -1144,13 +1191,17 @@ async function runServerListing(
   const server = await resolveLiveServer(client, project, input.server, signal);
   const page = await list(
     { projectId: project.id, serverId: server.id },
-    input.cursor ? { cursor: input.cursor } : {}
+    // Presence, not truthiness, in BOTH directions: this is a passthrough of
+    // the MCP server's cursor, and `""` is a valid one.
+    input.cursor !== undefined ? { cursor: input.cursor } : {}
   );
   return {
     project: toSelectedProjectInfo(project),
     server: toServerInfo(server),
     items: page.items,
-    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    ...(typeof page.nextCursor === "string"
+      ? { nextCursor: page.nextCursor }
+      : {}),
   };
 }
 
@@ -1748,14 +1799,20 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     const rawTools: Array<Record<string, unknown>> = [];
     let cursor: string | undefined;
     let truncated = false;
+    // No repeated-cursor guard: comparing two cursors for equality is itself
+    // a determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page. The cap below is
+    // the bound, and it already flags the read as incomplete.
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
-        { ...scope, body: cursor ? { cursor } : {} },
+        // Presence, not truthiness: `""` is a valid MCP continuation cursor.
+        { ...scope, body: cursor !== undefined ? { cursor } : {} },
         { signal }
       );
       rawTools.push(...result.items);
-      cursor = result.nextCursor;
-      if (!cursor) break;
+      cursor =
+        typeof result.nextCursor === "string" ? result.nextCursor : undefined;
+      if (cursor === undefined) break;
       // Hit the cap with tools still pending — don't pretend the report is
       // complete (a later page could hold widgets that change a verdict).
       if (page === HOST_COMPAT_TOOLS_PAGE_CAP - 1) truncated = true;
@@ -2934,24 +2991,62 @@ async function composeRunEnvironment(
   stack: {
     host: string;
     serverGroup?: string;
+    server?: string;
+    servers?: string[];
+    hostServers?: boolean;
     model?: string;
     models?: string[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
     computer?: string;
-    skills?: { mode: "explicit"; skillIds: string[] };
+    skills?: PlatformEnvironmentSkillSelection;
+    secrets?: PlatformEnvironmentSecretSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined,
   options: { attach: boolean } = { attach: true }
 ): Promise<ComposedRunEnvironment> {
-  const choices = expandComposeModelChoices(stack);
+  // Once, before the fan-out: every model cell shares one server group, and
+  // resolving inside the loop would re-list (and race to create) per cell.
+  const pinned = await materializeComposeServers(
+    client,
+    project,
+    stack,
+    signal
+  );
+  // Truthiness, not `!== undefined`, because that is what actually reaches the
+  // wire: `resolveComposeStack` drops a blank `serverGroup`, so a `""` checked
+  // for presence alone would clear this guard and then compose the exact
+  // unpinned environment it exists to refuse.
+  const pinnedGroup = pinned.serverGroup?.trim();
+  // Asking to follow the host AND to pin is a contradiction, and resolving it
+  // silently would drop one of the two things the caller said. The CLI rejects
+  // the pair too; repeated here because `execute` is reachable without it.
+  if (
+    stack.hostServers === true &&
+    (pinnedGroup || stack.server !== undefined || stack.servers !== undefined)
+  ) {
+    throw operationInputError(
+      "`hostServers` runs against the host's current list, so it cannot be combined with `server`/`servers`/`serverGroup`, which pin one."
+    );
+  }
+  // The server is the thing under test, so a composed RUN has to say which one.
+  // Without a pin the run reads the host's list at execution time, and editing
+  // that shared host silently repoints every eval composed against it — the
+  // failure this guard exists to stop. Following the host stays available, but
+  // only as something the caller asked for out loud.
+  if (!pinnedGroup && stack.hostServers !== true) {
+    throw operationInputError(
+      "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
+    );
+  }
+  const choices = expandComposeModelChoices(pinned);
   const cells: ComposedCell[] = [];
   for (const choice of choices) {
     const body = await resolveComposeStack(
       client,
       project,
-      { ...stack, model: choice.modelId },
+      { ...pinned, model: choice.modelId },
       signal
     );
     const ensured = await client.ensureAdhocEnvironment(
@@ -3039,15 +3134,21 @@ async function composeRunEnvironment(
  * flag both mean "do not send it" — an unknown field is a hard 400 on a strict
  * schema, not a silently ignored one.
  *
- * `modelOverrides` rides along rather than getting a second round-trip: both
- * questions are answered by the same route, and the compose path has to ask
- * both whenever a model is named.
+ * `modelOverrides` and `secretGrants` ride along rather than getting a second
+ * round-trip each: all three questions are answered by the same route, and the
+ * compose path has to ask whichever ones the stack actually names. This is
+ * what makes the axis preflights FREE on a launch — the read happens whether
+ * or not a model or a grant was named, so refusing early costs nothing.
  */
 async function probeComposeCapabilities(
   client: PlatformApiClient,
   projectId: string,
   signal: AbortSignal | undefined
-): Promise<{ ephemeralLaunch: boolean; modelOverrides: boolean }> {
+): Promise<{
+  ephemeralLaunch: boolean;
+  modelOverrides: boolean;
+  secretGrants: boolean;
+}> {
   try {
     const capabilities = await client.getEnvironmentCapabilities(
       { projectId },
@@ -3056,9 +3157,14 @@ async function probeComposeCapabilities(
     return {
       ephemeralLaunch: capabilities.ephemeralEnvironmentLaunch === true,
       modelOverrides: capabilities.modelOverrides === true,
+      secretGrants: capabilities.secretGrants === true,
     };
   } catch {
-    return { ephemeralLaunch: false, modelOverrides: false };
+    return {
+      ephemeralLaunch: false,
+      modelOverrides: false,
+      secretGrants: false,
+    };
   }
 }
 
@@ -3078,6 +3184,9 @@ function composeLaunchPolicy(input: {
   /** Explicit model ids were named (an inherit-only compose names none). */
   explicitModels: boolean;
   modelOverridesOk: boolean;
+  /** A credential grant was named on the stack. */
+  explicitSecrets: boolean;
+  secretGrantsOk: boolean;
   refreshSnapshot?: boolean;
 }): { attach: boolean; ephemeralLaunch: boolean } {
   if (input.explicitModels && !input.modelOverridesOk) {
@@ -3089,6 +3198,25 @@ function composeLaunchPolicy(input: {
     // the three agree with the web composer, which already refuses.
     throw operationInputError(
       "This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --compose-model / compose.models."
+    );
+  }
+  if (input.explicitSecrets && !input.secretGrantsOk) {
+    // The credential axis gets the same treatment as the model axis directly
+    // above, and for the same reason it is CHEAP: `probeComposeCapabilities`
+    // has already read this route, so the grant costs no round trip that the
+    // launch was not making anyway.
+    //
+    // Without it, `secretSelection` reaches `ensureAdhocEnvironment` on a
+    // deployment that has never heard of the field and dies in an argument
+    // validator — which is NOT a `ConvexError` with a code and a remedy, so
+    // the v1 write translator cannot classify it and answers its terminal
+    // 500. The user gets `INTERNAL_ERROR` for a client-version skew, and the
+    // on-call gets paged for it, after the compose has already listed or
+    // created a server group. Refusing here also refuses it for the CLI, the
+    // remote MCP surface and the in-app agent at once, exactly as the model
+    // check above does.
+    throw operationInputError(
+      "This MCPJam deployment does not support environment secret grants. Upgrade the platform, or omit --compose-secret / compose.secrets."
     );
   }
   if (input.choiceCount > 1 && input.refreshSnapshot) {
@@ -3330,6 +3458,105 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
  * until someone hits it.
  */
 /**
+ * The ONE skill-selection schema. Every surface that accepts a pinned skill
+ * selection — `create_project_environment`, `update_project_environment`,
+ * `ensure_adhoc_environment`, and the run ops' `compose` field — parses
+ * through this, so a selection means the same thing wherever it is written.
+ *
+ * `compose` used to declare its own narrower twin, which parsed `mode` and
+ * `skillIds` and dropped `versionPins` on the floor: composing a pinned stack
+ * silently ran Latest, which is precisely the arm the caller pinned away from.
+ *
+ * Declared HERE, above the run inputs, for the same temporal-dead-zone reason
+ * `composeRunTargetInput` is — the environment ops that also use it are far
+ * below.
+ */
+const skillSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    skillIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
+      ),
+    versionPins: z
+      .array(
+        z.object({
+          skillId: z.string().trim().min(1),
+          versionId: z.string().trim().min(1),
+        })
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+      ),
+  })
+  // The pins are only meaningful RELATIVE to the selection they ride on, so the
+  // relation is checked here rather than left to the API: a duplicate pin makes
+  // "which revision does this skill run?" ambiguous, and a pin for an
+  // unselected skill silently does nothing. Both are rejected server-side too —
+  // catching them in the SDK turns a round-trip error into an immediate one.
+  .superRefine((selection, ctx) => {
+    const pins = selection.versionPins ?? [];
+    const selected = new Set(selection.skillIds);
+    const seen = new Set<string>();
+    for (const pin of pins) {
+      if (seen.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
+        });
+      }
+      seen.add(pin.skillId);
+      if (!selected.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
+        });
+      }
+    }
+  })
+  .describe(
+    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
+  );
+
+/**
+ * The ONE secret-selection schema. Every surface that grants project secrets to
+ * an environment — `create_project_environment`, `update_project_environment`,
+ * `ensure_adhoc_environment`, and the run ops' `compose` field — parses through
+ * this, so a grant means the same thing wherever it is written.
+ *
+ * Deliberately simpler than {@link skillSelectionInput}: no version pins,
+ * because a secret has exactly one current value and "pin the previous value"
+ * is the opposite of what rotation is for.
+ *
+ * `.min(1)` for the same reason every other selection has it: `[]` reads as
+ * "remove every credential" but the API rejects it, so revoking is `null` on
+ * update — a distinction worth an immediate validation error.
+ *
+ * Declared HERE, above the run inputs, for the same temporal-dead-zone reason
+ * {@link skillSelectionInput} is: `composeRunTargetInput` is built at module
+ * load, and the environment ops that also use this are far below.
+ */
+const secretSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    secretIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project SECRET ids this environment grants. The environment is the GRANT BOUNDARY: no selection means a run receives no secrets, and there is no \"all of them\" mode. A `sharing: \"user\"` secret still reaches only sessions its owner started."
+      ),
+  })
+  .describe(
+    "Which project secrets runs launched from this environment receive."
+  );
+
+/**
  * A COMPOSED run target: assemble a stack instead of naming a saved
  * environment. Declared here, above the run inputs, for the same
  * temporal-dead-zone reason `publicMatchOptionsSchema` is.
@@ -3355,8 +3582,25 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). Omit to use the host's own servers."
+        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required unless `hostServers` opts into the host's live list."
       ),
+    hostServers: z
+      .boolean()
+      .optional()
+      .describe(
+        "Run against the host's CURRENT server list instead of pinning one. The list is read at run time, so editing the host later changes what a rerun tests — opt in only when following the host is the point."
+      ),
+    server: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Singular alias for `servers`."),
+    servers: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(SERVERS_SELECTOR_DESCRIPTION),
     model: z
       .string()
       .trim()
@@ -3390,19 +3634,23 @@ const composeRunTargetInput = z
       .describe(
         "Sandbox image (name or ID) to pin, so the run boots a fresh computer from it. Must be project-shared."
       ),
-    skills: z
-      .object({
-        mode: z.literal("explicit"),
-        skillIds: z.array(z.string().trim().min(1)).min(1),
-      })
+    skills: skillSelectionInput
       .optional()
-      .describe("Explicit pinned skill selection for the composed stack."),
+      .describe(
+        "Explicit pinned skill selection for the composed stack, `versionPins` included — the same schema every other skill-selection surface uses."
+      ),
+    secrets: secretSelectionInput
+      .optional()
+      .describe(
+        "Project secrets the composed stack grants to its runs — the same schema the named-environment surfaces use. Without it a composed stack carries NO credential, which is why a run needing one used to require a named environment."
+      ),
     pluginVersionIds: z
       .array(z.string().trim().min(1))
       .min(1)
       .optional()
       .describe("Plugin VERSION IDs to pin for the composed stack."),
   })
+  .superRefine(refineComposeServerSelectors)
   .describe(
     "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached."
   );
@@ -3768,6 +4016,8 @@ export const runEvalSuiteOperation: PlatformOperation<
           (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
+        explicitSecrets: input.compose.secrets !== undefined,
+        secretGrantsOk: capabilities.secretGrants,
         ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
       });
       composeAttach = policy.attach;
@@ -4285,6 +4535,8 @@ export const runEvalCaseOperation: PlatformOperation<
           (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
+        explicitSecrets: input.compose.secrets !== undefined,
+        secretGrantsOk: capabilities.secretGrants,
       });
       composeAttach = policy.attach;
       ephemeralLaunch = policy.ephemeralLaunch;
@@ -4436,6 +4688,11 @@ const stepInputSchema = z
 
 const evalCaseInput = z.object({
   title: z.string().trim().min(1).describe("Short label for the test case."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   runs: z
     .number()
     .int()
@@ -4642,6 +4899,11 @@ const caseModelSchema = z.object({
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
   // A `prompt` step is a model turn; a `toolCall` step is a deterministic
@@ -5578,6 +5840,14 @@ const updateEvalCaseInput = z.object({
     .describe(
       "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null to clear the stored claim; omit to leave it untouched."
     ),
+  // UPDATE-only nullability: absent preserves the existing label, `null`
+  // clears it, and a string replaces it. This mirrors the file reconciliation
+  // boundary so neither can silently conflate unlabelled with untouched.
+  intent: caseIntentUpdateSchema
+    .optional()
+    .describe(
+      "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
+    ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
 
@@ -5910,7 +6180,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. THE CHAIN, IN ORDER: connection → discovery → selection → call → response → userValue; a stage is only ever about the link it names, and the order is what makes `notReached` mean anything. Each diagnostic's `chain.status` is a THREE-WAY discriminant and only one of them carries rows: `verified` — the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present and may be read; `unverified` — a derivation was stored and did not validate, so the rows and both claims derived from them are withheld deliberately (substituting your own reading of the trace for the withheld claim is the one thing this state exists to stop); `absent` — no derivation was ever stored, which is a DIFFERENT fact from one that was rejected. A row's `state` is one of five, and the three non-verdicts are three different facts that must never be collapsed: `passed` — measured, and it passed; `failed` — measured, and it failed; `notReached` — it never ran, because an earlier stage failed; `notMeasured` — this run captured nothing that could decide it; `notApplicable` — the stage does not apply to this case at all. Reporting a `notMeasured` or `notReached` stage as healthy is the misreading the five-state vocabulary exists to prevent. `firstFailedStage` IS A LOCATION, NOT A CAUSE: it names where the chain stopped, and the nearest thing to a cause is `reason` on that same stage's row. `failureCategory` is a coarse bucket, and it can be present with NO `firstFailedStage` at all — a setup abort and an evaluator error are real answers about a trial that never reached a stage. Neither the location nor the bucket on its own authorizes proposing a change to the server under test. The `user-value-chain-glossary` skill on this server defines every member of all six vocabularies — the stages, the five states, the twenty-nine stage reasons, the seven categories, the four verdicts and the analytics exclusion classes — along with the population rules that decide what a count means; fetch it rather than guessing a member's meaning from its spelling. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -6098,7 +6368,7 @@ export const getEvalIterationTraceOperation: PlatformOperation<
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
-    "A trace payload for one iteration; iterations have no route of their own, and the response names no suite to reach the run through."
+    "A trace payload for one iteration. `eval_iteration` is addressable (the run page plus `?iteration=`), but the response names no suite to reach the run through, and the ref needs both."
   ),
   inputSchema: evalIterationTraceInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -6119,6 +6389,267 @@ export const getEvalIterationTraceOperation: PlatformOperation<
       runId: input.runId,
       iterationId: input.iterationId,
       trace,
+    };
+  },
+};
+
+// ── stage analytics ──────────────────────────────────────────────────────────
+/**
+ * The comparability contract, said once and spliced into both descriptions.
+ *
+ * Both operations return the SAME document, and the way to misuse it is the
+ * same in both places. Writing it twice would let the two drift, and the one
+ * that drifts is the one a reader happens to be looking at.
+ */
+const STAGE_ANALYTICS_READING_RULES =
+  "Counts are returned; RATES ARE NOT. Derive a rate only with its denominator in hand, and a ZERO DENOMINATOR MEANS NOT MEASURED — never 0% and never 100%: `0/0` read as either is the single failure mode this contract is built against. " +
+  "Never sum tallies ACROSS stages: one trial is counted in every stage's tally, so adding the six counts the same trial six times. " +
+  "Never merge documents ACROSS runs: each describes one run's population, and two funnels averaged together describe no run. " +
+  "`excludedTrials` names why observations left a denominator, and the classes are not interchangeable — `notApplicable` and `notMeasured` are population facts, `reachUnknown` is deliberately kept out of the reach denominator (a trial that captured nothing is not evidence of a drop-off), and `integrity` IS A BUG REPORT: a non-zero count there means something upstream is producing chains or measurements that do not validate, and reading it as a population fact hides that. " +
+  "`materializationState` is `provisional` while any applicable judge fanout is still pending — stage attribution can still be rewritten under it — and `final` once the counts have stopped moving. " +
+  "There is NO BACKFILL: a run that terminalized before stage measurement shipped has no document and never will, and that absence is unmeasured, never zeros. " +
+  "The `user-value-chain-glossary` skill on this server defines every stage, state, reason, category and exclusion class this document uses.";
+
+export type GetEvalRunStageAnalyticsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  /**
+   * Whether this run has a funnel at all.
+   *
+   * `measured` — `analytics` is the run's document. `unmeasured` — the run was
+   * RETRIEVED and has no document, which is the only path on which that claim
+   * is honest. A deployment that does not serve the route, and a run that could
+   * not be retrieved, are errors instead: see the operation's execute body.
+   */
+  analyticsState: "measured" | "unmeasured";
+  analytics: PlatformEvalStageAnalytics | null;
+};
+
+/**
+ * A bare 404 — the route is not there — as opposed to the route saying "no".
+ *
+ * Mirrors the web wrapper's `isRouteUnavailable`, and reads `codeSource` for
+ * the reason that wrapper documents: `STATUS_FALLBACK_CODES` maps a bare 404
+ * to `NOT_FOUND`, exactly like an enveloped one, so the CODE cannot separate
+ * them. Only the SOURCE of the code can.
+ *
+ * Getting this wrong is not cosmetic during a dark ship. A deployment without
+ * the route would report every run on it as "never measured" — a claim about
+ * the platform's history dressed up as a claim about each run.
+ */
+function isStageAnalyticsRouteUnavailable(error: unknown): boolean {
+  if (!(error instanceof PlatformApiError)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+/** The error a deployment without the route earns, in both operations. */
+function stageAnalyticsRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval stage analytics. That is a fact about the deployment, not about the run — do not report the run as unmeasured.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunStageAnalyticsOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunStageAnalyticsResult
+> = {
+  name: "get_eval_run_stage_analytics",
+  title: "Get MCPJam eval run stage analytics",
+  description:
+    "Get ONE run's materialized user-value-chain funnel: for each of the six stages (connection → discovery → selection → call → response → userValue), how many trials the stage applied to, how many reached it, how many were measured there, how many passed and failed, and how many were excluded and why — overall and sliced marginally by intent, model and host. This is the DENOMINATOR half of the chain story: `get_eval_run`'s `decisionSummary` says what one trial did and where it stopped, and this says how much was measured at all. " +
+    STAGE_ANALYTICS_READING_RULES +
+    ' ABSENCE IS THREE DIFFERENT FACTS and this operation keeps them apart. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run WAS retrieved and its document is absent does the result say `analyticsState: "unmeasured"` with `analytics: null` — and that state is permanent, because there is no backfill.',
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    // THE RUN FIRST, and this ordering is the whole point. The analytics route
+    // answers 404 for two different facts on purpose — the run is not visible,
+    // or it has no document — and the API declines to separate them so it does
+    // not leak the existence of runs in projects the caller cannot see. So the
+    // separation happens HERE, where the caller's own scope is already
+    // resolved: retrieving the run first turns "404" into "this run exists and
+    // has no funnel", which is the only footing on which "unmeasured" is an
+    // honest claim rather than a guess that reads identically to a typo.
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const analytics = await client.getEvalRunStageAnalytics(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        analyticsState: "measured",
+        analytics,
+      };
+    } catch (error) {
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw stageAnalyticsRouteUnavailableError();
+      }
+      if (error instanceof PlatformApiError && error.status === 404) {
+        return {
+          project: toSelectedProjectInfo(project),
+          runId: run.id,
+          suiteId: run.suiteId,
+          analyticsState: "unmeasured",
+          analytics: null,
+        };
+      }
+      throw error;
+    }
+  },
+};
+
+const listEvalSuiteStageAnalyticsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Project the suite belongs to (name or ID), as returned by list_eval_suites."
+    ),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  runGroupId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Narrow to ONE comparison group. The parity contract requires a shared runGroupId before two funnels may be read as a trend, so this is how you fetch a partition rather than filtering one out of a mixed page yourself."
+    ),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Opaque cursor from a previous response's nextCursor."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      "Documents per page (1-100, default 25). These are large; ask for what you will read."
+    ),
+  from: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Inclusive lower bound on the run's completion time, in epoch MILLISECONDS (not an ISO string). Runs that never completed carry no stamp and are excluded by any bound."
+    ),
+  to: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Inclusive upper bound on the run's completion time, in epoch MILLISECONDS. Must not be earlier than `from`."
+    ),
+});
+
+export type ListEvalSuiteStageAnalyticsInput = z.infer<
+  typeof listEvalSuiteStageAnalyticsInput
+>;
+
+export type ListEvalSuiteStageAnalyticsResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  /** One complete document PER RUN, newest completion first. Never merged. */
+  items: PlatformEvalStageAnalytics[];
+  nextCursor?: string;
+};
+
+export const listEvalSuiteStageAnalyticsOperation: PlatformOperation<
+  ListEvalSuiteStageAnalyticsInput,
+  ListEvalSuiteStageAnalyticsResult
+> = {
+  name: "list_eval_suite_stage_analytics",
+  title: "List MCPJam eval suite stage analytics",
+  description:
+    "List a suite's materialized user-value-chain funnels, newest run-completion first — one complete document PER RUN. This is a TREND SERIES, not an aggregate: the runs are returned side by side so you can look along them, and nothing here sums or averages them. " +
+    'BEFORE CLAIMING ANY TREND, PARTITION. Two funnels drawn beside each other IS a comparability claim, and it holds only within a partition on every field the parity contract pins: `runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`, `measurementsSchemaVersion`, and `materializationState: "final"`. An ABSENT `runGroupId`, `configRevision` or `caseSetFingerprint` BLOCKS comparability — it is never assumed compatible, because two runs that both record nothing compare equal while sharing nothing at all. A row carrying `sourceStageAnalyzerVersions` or `sourceMeasurementsSchemaVersions` aggregated more than one version and is comparable to nothing, itself included. `stageAnalyticsParityBlockers` in @mcpjam/sdk/contract names all eleven blockers and is the authority. ' +
+    'So "which stage has been failing this month" is answerable only WITHIN one parity partition, and reporting it across partitions is reporting a change in what was measured as a change in the server. ' +
+    STAGE_ANALYTICS_READING_RULES,
+  readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((document) =>
+      evalRunRef(document.runId, document.suiteId, result.project?.id)
+    )
+  ),
+  inputSchema: listEvalSuiteStageAnalyticsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    // An inverted window is a guaranteed 400, so it is refused before the
+    // request is built. In `execute` rather than a schema refinement, per the
+    // rule `operationInputError` states: a caller that invokes `execute`
+    // directly never parses the input schema, and a refine-only guard would
+    // simply not fire for it.
+    if (
+      input.from !== undefined &&
+      input.to !== undefined &&
+      input.to < input.from
+    ) {
+      throw operationInputError(
+        "`to` must not be earlier than `from` — the window is inclusive over the run's completion time in epoch milliseconds."
+      );
+    }
+    let page;
+    try {
+      page = await client.listEvalSuiteStageAnalytics(
+        {
+          projectId: project.id,
+          suiteId: suite.id,
+          ...(input.runGroupId !== undefined
+            ? { runGroupId: input.runGroupId }
+            : {}),
+          ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          ...(input.from !== undefined ? { from: input.from } : {}),
+          ...(input.to !== undefined ? { to: input.to } : {}),
+        },
+        { signal }
+      );
+    } catch (error) {
+      // Same discrimination as the run op, and needed for the same reason: an
+      // undeployed route must not be reported as a suite with no measured runs.
+      // The suite itself was already resolved above, so a 404 from HERE cannot
+      // mean "no such suite".
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw stageAnalyticsRouteUnavailableError();
+      }
+      throw error;
+    }
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
   },
 };
@@ -7045,6 +7576,14 @@ const sendChatMessageInput = z.object({
     .describe(
       'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required on a first turn. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.'
     ),
+  hostId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the real runtime; without one the turn runs MCPJam's emulated engine. The server reads the host's own config for this: harness and computer are never accepted from the request. PER-TURN, not pinned to the session — re-send it on every turn, and read the response's `engine` field to confirm what ran. A continuation of a session that named ONLY a host must re-send it: omitting it is refused (details.reason: 'HOST_TARGET_REQUIRED') rather than answered by the emulated engine. An environment already pins its own host, so pass this alongside environmentId only to assert which host you expect (a mismatch is rejected). A harness turn requires toolMode:'auto' with no allowedTools/maxToolCalls, because a harness builds its own tool set and this surface cannot narrow it. It also cannot be sent together with serverIds: hostId cannot be pinned beside them, so a later turn that omitted it would run the emulated engine on a session established on the harness (refused with details.kind: 'surface-unpinnable-host'). Use environmentId, or hostId alone plus per-turn allowedServerIds."
+    ),
   environmentId: z
     .string()
     .trim()
@@ -7115,7 +7654,7 @@ export const sendChatMessageOperation: PlatformOperation<
   name: "send_chat_message",
   title: "Send one agent Playground message",
   description:
-    "Send one message to a project's MCP servers and get the model's reply PLUS the telemetry a participant could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage. Pass the returned sessionId back to continue the conversation. SPENDS model credits per call. Configuration (model, target, system prompt, tool mode) pins on the first turn; a continuation that resends it is refused. Tools default to read_only; toolMode:'auto' may cause real external side effects.",
+    "Send one message to a project's MCP servers and get the model's reply PLUS the telemetry a participant could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage. Pass the returned sessionId back to continue the conversation. SPENDS model credits per call. Configuration (model, target, system prompt, tool mode) pins on the first turn; a continuation that resends it is refused. Tools default to read_only; toolMode:'auto' may cause real external side effects. Pass hostId (or target an environment, which pins its own host) to run a saved host — including one that declares a real agent harness; the response's `engine` field always names what actually ran.",
   readOnly: false,
   // Unknowable upstream of the call in the SAME sense `call_server_tool` is:
   // under `auto` this executes arbitrary third-party tools, and softening the
@@ -7160,6 +7699,10 @@ export const sendChatMessageOperation: PlatformOperation<
         ...(projectId ? { projectId } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(input.modelId ? { modelId: input.modelId } : {}),
+        // Forwarded EXPLICITLY, like every other field: the client builds the
+        // body key by key, so an input the operation validates but never hands
+        // over is silently dropped on the way to the wire (#4598).
+        ...(input.hostId ? { hostId: input.hostId } : {}),
         ...(input.environmentId ? { environmentId: input.environmentId } : {}),
         ...(input.serverIds ? { serverIds: input.serverIds } : {}),
         ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
@@ -7390,7 +7933,6 @@ export const searchSessionsOperation: PlatformOperation<
   description:
     "Search conversation sessions in a project across every surface (Playground, user testing, evals, swarms), ranked by relevance. " +
     "scope=titles (default) searches session titles and opening messages; scope=transcripts searches what was said inside the conversations. " +
-    "Older sessions (created before 2026-08-14) are EXCLUDED from transcript search — they cannot match at all; use scope=titles to find them. " +
     "Every result carries a link to open the session.",
   readOnly: true,
   permalink: responsePermalinks((result) =>
@@ -7512,11 +8054,11 @@ async function resolveClient(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformClientDetail> {
   return client.getClient(
     { projectId: project.id, client: selector },
-    { signal },
+    { signal }
   );
 }
 
@@ -7551,7 +8093,7 @@ export const listClientsOperation: PlatformOperation<
     );
     const page = await client.listClients(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -7607,7 +8149,7 @@ const createClientInput = z
       .min(1)
       .optional()
       .describe(
-        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor).",
+        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor)."
       ),
     theme: z
       .enum(["light", "dark"])
@@ -7617,7 +8159,7 @@ const createClientInput = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`.",
+        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`."
       ),
   })
   // ONE `superRefine`, shaped exactly like the route's, because the route's 400
@@ -7703,7 +8245,7 @@ const clientFieldSet = z
       .min(1)
       .optional()
       .describe(
-        "Model the client pins. Value only — there is no null, and a blank string is refused.",
+        "Model the client pins. Value only — there is no null, and a blank string is refused."
       ),
     systemPrompt: z
       .string()
@@ -7729,7 +8271,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe(
-        "Whole-object replacement. null resets to the platform defaults.",
+        "Whole-object replacement. null resets to the platform defaults."
       ),
     respectToolVisibility: z
       .boolean()
@@ -7742,11 +8284,11 @@ const clientFieldSet = z
       .optional()
       .describe("null clears the host-level opt-in."),
     harness: z
-      .enum(["claude-code", "codex"])
+      .enum(["claude-code", "codex", "cursor"])
       .nullable()
       .optional()
       .describe(
-        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does.",
+        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does."
       ),
     computer: z
       .object({
@@ -7836,12 +8378,12 @@ const updateClientInput = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between.",
+        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between."
       ),
     set: clientFieldSet
       .optional()
       .describe(
-        "Named fields to change, applied over the client's current config inside the write transaction.",
+        "Named fields to change, applied over the client's current config inside the write transaction."
       ),
   })
   // Mirrors the route's 400s exactly, so an agent is refused by the schema with
@@ -7910,7 +8452,7 @@ export const updateClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const body: Record<string, unknown> = {};
     if (input.name !== undefined) body.name = input.name;
@@ -7926,7 +8468,7 @@ export const updateClientOperation: PlatformOperation<
     if (input.set !== undefined) body.set = input.set;
     return client.updateClient(
       { projectId: project.id, client: input.client, body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7957,7 +8499,7 @@ export const deleteClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.deleteClient(
       {
@@ -7966,7 +8508,7 @@ export const deleteClientOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8012,7 +8554,7 @@ export const setClientServersOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.setClientServers(
       {
@@ -8025,7 +8567,7 @@ export const setClientServersOperation: PlatformOperation<
           ? { expectedImpact: input.expectedImpact }
           : {}),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8058,11 +8600,11 @@ export const duplicateClientOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     return client.duplicateClient(
       { projectId: project.id, client: input.client, name: input.name },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8109,7 +8651,7 @@ export const listHostsOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const page = await client.listHosts({ projectId: project.id }, { signal });
     return {
@@ -8131,14 +8673,14 @@ async function resolveHost(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformHost> {
   const page = await client.listHosts({ projectId: project.id }, { signal });
   return resolveByIdOrName(
     page.items,
     selector,
     "Host",
-    `project "${project.name}"`,
+    `project "${project.name}"`
   );
 }
 
@@ -8171,12 +8713,12 @@ export const getHostOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.getHost(
       { projectId: project.id, hostId: host.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8287,7 +8829,7 @@ export const createHostOperation: PlatformOperation<
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
-      input.project,
+      input.project
     );
     const body: Record<string, unknown> = { name: input.name };
     if (input.template) {
@@ -8336,7 +8878,7 @@ export const deleteHostOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8430,7 +8972,6 @@ export const duplicateHostOperation: PlatformOperation<
     );
   },
 };
-
 
 // ── Project Environments ─────────────────────────────────────────────────────
 //
@@ -8608,7 +9149,7 @@ export const getEnvironmentCapabilitiesOperation: PlatformOperation<
   name: "get_project_environment_capabilities",
   title: "Check what an MCPJam deployment's environment surface supports",
   description:
-    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
+    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override or a secret grant: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -8706,20 +9247,6 @@ export const resolveEnvironmentOperation: PlatformOperation<
   },
 };
 
-const skillSelectionInput = z
-  .object({
-    mode: z.literal("explicit"),
-    skillIds: z
-      .array(z.string().trim().min(1))
-      .min(1)
-      .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
-      ),
-  })
-  .describe(
-    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
-  );
-
 const pluginVersionIdsInput = z
   .array(z.string().trim().min(1))
   .min(1)
@@ -8767,6 +9294,7 @@ const createEnvironmentInput = z.object({
       'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
     ),
   skillSelection: skillSelectionInput.optional(),
+  secretSelection: secretSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
   sandboxImageId: z
     .string()
@@ -8786,7 +9314,7 @@ export const createEnvironmentOperation: PlatformOperation<
   name: "create_project_environment",
   title: "Create an MCPJam project environment",
   description:
-    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, and pinned plugin versions. Requires project admin.",
+    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, granted project secrets, and pinned plugin versions. Requires project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: createEnvironmentInput,
@@ -8811,6 +9339,9 @@ export const createEnvironmentOperation: PlatformOperation<
           ...(input.skillSelection !== undefined
             ? { skillSelection: input.skillSelection }
             : {}),
+          ...(input.secretSelection !== undefined
+            ? { secretSelection: input.secretSelection }
+            : {}),
           ...(input.pluginVersionIds !== undefined
             ? { pluginVersionIds: input.pluginVersionIds }
             : {}),
@@ -8828,10 +9359,10 @@ export const createEnvironmentOperation: PlatformOperation<
 //
 // A composed stack is the same thing as a saved environment MINUS the name:
 // one host, an optional server group, an optional model override, an optional
-// computer image, an optional skill selection. It exists so a caller can run a
-// specific combination WITHOUT adding a permanent entry to the project's
-// environment list that someone else then has to reason about — which is
-// exactly what `create_project_environment` would do.
+// computer image, an optional skill selection, an optional secret grant. It
+// exists so a caller can run a specific combination WITHOUT adding a permanent
+// entry to the project's environment list that someone else then has to reason
+// about — which is exactly what `create_project_environment` would do.
 //
 // Everything downstream still goes through the ENVIRONMENT path: an ad-hoc row
 // is an environment, so it resolves, snapshots and pins identically. There is
@@ -8856,6 +9387,17 @@ const composeStackFields = {
     .describe(
       "Standalone server group to pin (by ID). Omit to use the host's own servers."
     ),
+  server: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Singular alias for `servers`."),
+  servers: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(SERVERS_SELECTOR_DESCRIPTION),
   model: z
     .string()
     .trim()
@@ -8873,6 +9415,7 @@ const composeStackFields = {
       "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; promote a personal draft first."
     ),
   skills: skillSelectionInput.optional(),
+  secrets: secretSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
 } as const;
 
@@ -8884,7 +9427,7 @@ const ensureAdhocEnvironmentInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   ...composeStackFields,
-});
+}).superRefine(refineComposeServerSelectors);
 export type EnsureAdhocEnvironmentInput = z.infer<
   typeof ensureAdhocEnvironmentInput
 >;
@@ -8895,6 +9438,183 @@ export type EnsureAdhocEnvironmentResult = {
   /** False when this stack had already been composed — see the op description. */
   created: boolean;
 };
+
+/** How many `name (n)` variants to try before giving up on a colliding name. */
+const SERVER_GROUP_NAME_ATTEMPTS = 5;
+
+/**
+ * `server`/`servers` are two spellings of one axis, and `serverGroup` is the
+ * already-resolved form of the same thing — so at most one may be set. Shared
+ * by both compose schemas (a function declaration, so it is in scope for the
+ * run-target schema declared far above `composeStackFields`).
+ */
+function refineComposeServerSelectors(
+  value: { server?: string; servers?: string[]; serverGroup?: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.server !== undefined && value.servers !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["servers"],
+      message: "Provide either `server` or `servers`, not both.",
+    });
+  }
+  if (
+    value.serverGroup !== undefined &&
+    (value.server !== undefined || value.servers !== undefined)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["serverGroup"],
+      message:
+        "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both.",
+    });
+  }
+}
+
+/** Order-independent set equality over two id lists. */
+function sameServerSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = new Set(a);
+  return left.size === new Set(b).size && b.every((id) => left.has(id));
+}
+
+/**
+ * A stable, human-readable name for a group minted from server selectors.
+ *
+ * Sorted so the name does not depend on the order the selectors were typed —
+ * `--compose-server A B` and `--compose-server B A` describe one group and
+ * should not mint two.
+ */
+function composeServerGroupName(servers: PlatformProjectServer[]): string {
+  return [...servers]
+    .map((server) => server.name)
+    .sort((a, b) => a.localeCompare(b))
+    .join(" + ");
+}
+
+/**
+ * Resolve server selectors to a pinned server group, creating one if no
+ * existing group already holds exactly that set.
+ *
+ * Reuse is matched on CONTENT, not name, because the environment fingerprint
+ * keys on the group's ID: two same-content groups mint two ad-hoc
+ * environments, and a group a live environment pins cannot be deleted. So
+ * minting one per run would accumulate undeletable near-duplicates and defeat
+ * the content-addressing that makes re-composing a stack free.
+ *
+ * A name collision means someone already has a DIFFERENT group under the name
+ * we derived. We re-list before suffixing because the likeliest cause is a
+ * concurrent identical compose that won the race — reusing its group is the
+ * whole point. Only when the name is genuinely taken by other content do we
+ * suffix.
+ */
+async function resolveComposeServerGroup(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selectors: string[],
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  // Reuses the run-server resolver: same name-or-id rules, same up-front
+  // refusal of stdio/URL-less servers the hosted runner could never connect.
+  const servers = await resolveRunServers(client, project, selectors, signal);
+  const wanted = servers.map((server) => server.id);
+
+  const findMatch = async () => {
+    let page;
+    try {
+      page = await client.listServerGroups(
+        { projectId: project.id },
+        { signal }
+      );
+    } catch (error) {
+      // A deployment that predates the server-group routes answers 404 for the
+      // ROUTE, which would otherwise surface as a bare "not found" naming
+      // nothing the caller can act on. `--compose-server-group` still works
+      // there, so say so rather than leaving them to guess.
+      if (error instanceof PlatformApiError && error.status === 404) {
+        throw resolutionError(
+          "This deployment does not support --compose-server yet. Create a server group in the app and pass it with --compose-server-group <id>.",
+        );
+      }
+      throw error;
+    }
+    return page.items.find((group) => sameServerSet(group.serverIds, wanted));
+  };
+
+  const existing = await findMatch();
+  if (existing) return existing.id;
+
+  const baseName = composeServerGroupName(servers);
+  for (let attempt = 1; attempt <= SERVER_GROUP_NAME_ATTEMPTS; attempt += 1) {
+    const name = attempt === 1 ? baseName : `${baseName} (${attempt})`;
+    try {
+      const created = await client.createServerGroup(
+        {
+          projectId: project.id,
+          body: { name, serverIds: wanted },
+        },
+        { signal },
+      );
+      return created.id;
+    } catch (error) {
+      if (!(error instanceof PlatformApiError) || error.status !== 409) {
+        throw error;
+      }
+      const raced = await findMatch();
+      if (raced) return raced.id;
+    }
+  }
+
+  throw resolutionError(
+    `Could not create a server group named "${baseName}": that name and ${
+      SERVER_GROUP_NAME_ATTEMPTS - 1
+    } numbered variants are already taken by groups holding different servers. Rename one, or pass an existing group with --compose-server-group.`,
+  );
+}
+
+/**
+ * Rewrite a stack's `server`/`servers` selectors into the `serverGroup` the
+ * rest of the pipeline already understands.
+ *
+ * Deliberately separate from `resolveComposeStack`, which run composition
+ * calls once PER MODEL CELL: doing the list-and-maybe-create in there would
+ * repeat it per cell and let a fan-out race itself into a name conflict.
+ * Callers run this once, up front.
+ */
+async function materializeComposeServers<
+  T extends { serverGroup?: string; server?: string; servers?: string[] },
+>(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  stack: T,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  // Both refinement rules are repeated below, not just the group one: the
+  // schemas only run for callers that PARSE their input, and a direct
+  // `execute()` caller passing both would otherwise have one selector
+  // silently dropped and spend a run against the wrong servers.
+  if (stack.server !== undefined && stack.servers !== undefined) {
+    throw operationInputError(
+      "Provide either `server` or `servers`, not both."
+    );
+  }
+  const selectors = stack.servers ?? (stack.server ? [stack.server] : []);
+  if (selectors.length === 0) return stack;
+  if (stack.serverGroup !== undefined) {
+    throw operationInputError(
+      "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both.",
+    );
+  }
+  const serverGroup = await resolveComposeServerGroup(
+    client,
+    project,
+    selectors,
+    signal
+  );
+  const { server: _server, servers: _servers, ...rest } = stack;
+  return { ...rest, serverGroup } as T;
+}
 
 /**
  * Resolve a composed stack's selectors to the ids the platform stores.
@@ -8911,7 +9631,8 @@ async function resolveComposeStack(
     serverGroup?: string;
     model?: string;
     computer?: string;
-    skills?: { mode: "explicit"; skillIds: string[] };
+    skills?: PlatformEnvironmentSkillSelection;
+    secrets?: PlatformEnvironmentSecretSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined
@@ -8926,6 +9647,15 @@ async function resolveComposeStack(
     ...(stack.model ? { modelId: stack.model } : {}),
     ...(image ? { sandboxImageId: image.id } : {}),
     ...(stack.skills ? { skillSelection: stack.skills } : {}),
+    // The CREDENTIAL axis. Every other field here is a pointer; this one is a
+    // grant, and it is the axis a composed stack was missing outright — an
+    // ad-hoc environment could name a host, servers, a model, an image and
+    // skills, but not the one thing a run needs to authenticate, so anything
+    // that needed a credential had to fall back to a named environment.
+    // Content-addressed like the rest: two stacks that differ only by their
+    // grant resolve to two different ad-hoc rows, which is what keeps a
+    // credentialed cell from being reused as an uncredentialed one.
+    ...(stack.secrets ? { secretSelection: stack.secrets } : {}),
     ...(stack.pluginVersionIds
       ? { pluginVersionIds: stack.pluginVersionIds }
       : {}),
@@ -8939,7 +9669,7 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
   name: "ensure_adhoc_environment",
   title: "Compose an MCPJam environment without naming it",
   description:
-    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image and pinned skills. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
+    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image, pinned skills and granted project secrets. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -8952,7 +9682,13 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const body = await resolveComposeStack(client, project, input, signal);
+    const stack = await materializeComposeServers(
+      client,
+      project,
+      input,
+      signal
+    );
+    const body = await resolveComposeStack(client, project, stack, signal);
     const ensured = await client.ensureAdhocEnvironment(
       { projectId: project.id, body },
       { signal }
@@ -9088,6 +9824,12 @@ const updateEnvironmentInput = z
       .describe(
         "New pinned skill selection, or null to clear it. Omit to leave unchanged."
       ),
+    secretSelection: secretSelectionInput
+      .nullable()
+      .optional()
+      .describe(
+        "New credential grant, or null to REVOKE it entirely. Omit to leave unchanged. An empty `secretIds` is rejected — it is not a way to revoke."
+      ),
     pluginVersionIds: pluginVersionIdsInput
       .nullable()
       .optional()
@@ -9112,11 +9854,12 @@ const updateEnvironmentInput = z
       value.serverAttachmentId !== undefined ||
       value.modelId !== undefined ||
       value.skillSelection !== undefined ||
+      value.secretSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
@@ -9128,7 +9871,7 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: updateEnvironmentInput,
@@ -9156,6 +9899,8 @@ export const updateEnvironmentOperation: PlatformOperation<
     if (input.modelId !== undefined) body.modelId = input.modelId;
     if (input.skillSelection !== undefined)
       body.skillSelection = input.skillSelection;
+    if (input.secretSelection !== undefined)
+      body.secretSelection = input.secretSelection;
     if (input.pluginVersionIds !== undefined)
       body.pluginVersionIds = input.pluginVersionIds;
     if (input.sandboxImageId !== undefined)
@@ -9289,7 +10034,7 @@ export const listProjectSkillsOperation: PlatformOperation<
   name: "list_project_skills",
   title: "List MCPJam project skills",
   description:
-    "List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: \"project\"` skills can be pinned; each row's `pinnability` says whether that skill is eligible and, if not, why.",
+    'List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: "project"` skills can be pinned; each row\'s `pinnability` says whether that skill is eligible and, if not, why.',
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -10764,6 +11509,347 @@ export const deletePersonaOperation: PlatformOperation<
       { signal }
     );
     return { project: toSelectedProjectInfo(project), persona };
+  },
+};
+
+// ── Project secrets ─────────────────────────────────────────────────────────
+//
+// WRITE-ONLY. No operation here returns a value, and none can: the DTO has no
+// such field and the backend has no code path that produces one.
+//
+// `create_secret` and `update_secret` are excluded from the MCP catalog and the
+// agent registry (see `platformTools.ts` and `agent-op-registry.ts`), because
+// their input CARRIES the value — it would transit model context and be written
+// into chat transcripts before any approval could run. They stay reachable over
+// HTTP, the SDK and the CLI, where the caller controls where the value comes
+// from.
+
+const secretSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  secret: z.string().trim().min(1).describe("Secret id."),
+});
+
+const SECRET_NAME_DESCRIPTION =
+  "Environment-variable name — uppercase letters, digits and underscores, not starting with a digit (STRIPE_API_KEY). This IS the secret's identity: it is what a materialized delivery exports and what a workflow references, and it is immutable (renaming means delete and recreate).";
+
+const SECRET_DELIVERY_DESCRIPTION =
+  "How the value reaches a run. 'brokered' (prefer this): the sandbox's egress proxy injects it as a request header OUTSIDE the VM, so the box never holds it and a prompt-injected agent has nothing to exfiltrate — but it prevents EXTRACTION, not USE (any process in the box can call the bound host while the policy is live), and it works for HTTPS APIs only. 'materialized': a real environment variable inside the box, which is the only thing a CLI can read — EXTRACTABLE BY DESIGN, `env` prints it.";
+
+const SECRET_SHARING_DESCRIPTION =
+  "'project' (default) — admin-managed, delivered to every member's sessions. 'user' — personal, delivered ONLY in sessions its owner starts and silently absent from anyone else's run of the same environment. Immutable.";
+
+const secretBrokerFields = {
+  brokerHosts: z
+    .array(z.string().trim().min(1).max(253))
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the exact hostnames the header is injected on (api.stripe.com). No scheme, no port, no wildcard — the proxy matches a host, and a URL would install a rule that silently never fires."
+    ),
+  brokerHeader: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the header name, e.g. Authorization."
+    ),
+  brokerTemplate: z
+    .string()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Brokered only, and required for it: the header value, with {} where the secret goes — 'Bearer {}'. A template without {} is rejected: it would install a constant header that never carries the credential."
+    ),
+} as const;
+
+export type ListSecretsInput = z.infer<typeof listSecretsInput>;
+const listSecretsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+
+export type ListSecretsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformSecret[];
+};
+
+export const listSecretsOperation: PlatformOperation<
+  ListSecretsInput,
+  ListSecretsResult
+> = {
+  name: "list_secrets",
+  title: "List MCPJam project secrets",
+  description:
+    "The project's credentials, as METADATA ONLY — name, delivery mode, host binding, sharing, when each was last delivered. No value is ever returned by this or any other operation. Shows the project-shared secrets plus your own personal ones; another member's personal secret does not appear at all. Read this to find out what an environment can grant before selecting one.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "Secrets are managed inside the project settings surface as component state; there is no `secrets/:secretId` route."
+  ),
+  inputSchema: listSecretsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listSecrets(
+      { projectId: project.id },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetSecretInput = z.infer<typeof secretSelectorInput>;
+export type GetSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const getSecretOperation: PlatformOperation<
+  GetSecretInput,
+  GetSecretResult
+> = {
+  name: "get_secret",
+  title: "Get one MCPJam project secret",
+  description:
+    "One secret's metadata: delivery mode, host binding, sharing, and when it was last handed to a run. NEVER its value. Note that lastDeliveredAt means delivered, not used — brokered use is unobservable to us by construction, since the proxy injects the header and we never see the request.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "Secrets are managed inside the project settings surface as component state; there is no `secrets/:secretId` route."
+  ),
+  inputSchema: secretSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.getSecret(
+      { projectId: project.id, secretId: input.secret },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+const createSecretInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).max(64).describe(SECRET_NAME_DESCRIPTION),
+  value: z
+    .string()
+    .min(1)
+    .max(64 * 1024)
+    .describe(
+      "The credential itself. IT BECOMES VISIBLE TO WHATEVER SURFACE CARRIES THIS CALL — it travels in the request body, so it passes through that surface's process, logs, shell history and any transcript it keeps. Read it from a file, an environment variable or stdin rather than typing it into an argument. It is stored encrypted and no operation ever returns it."
+    ),
+  description: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      "What this credential is for, so a teammate does not have to guess."
+    ),
+  delivery: z
+    .enum(["brokered", "materialized"])
+    .describe(SECRET_DELIVERY_DESCRIPTION),
+  ...secretBrokerFields,
+  sharing: z
+    .enum(["user", "project"])
+    .optional()
+    .describe(SECRET_SHARING_DESCRIPTION),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. Pass one: a retried create without it fails as a name conflict with the row the first attempt already made, which is indistinguishable from a real collision."
+    ),
+});
+
+export type CreateSecretInput = z.infer<typeof createSecretInput>;
+export type CreateSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const createSecretOperation: PlatformOperation<
+  CreateSecretInput,
+  CreateSecretResult
+> = {
+  name: "create_secret",
+  title: "Create an MCPJam project secret",
+  description:
+    "Store a credential a workflow needs (a stripe CLI run, gh, psql) so environments can grant it to runs. THE VALUE TRAVELS IN THIS CALL and becomes visible to whatever surface makes it — its process, its logs, its transcript — so supply it from a file or an environment variable, not from something a human typed into a chat. Choose delivery deliberately: 'brokered' keeps the value outside the sandbox, 'materialized' puts it inside as an environment variable where a CLI can read it and anything in the box can print it. The response is metadata only.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: createSecretInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.createSecret(
+      {
+        projectId: project.id,
+        name: input.name,
+        value: input.value,
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        delivery: input.delivery,
+        ...(input.brokerHosts !== undefined
+          ? { brokerHosts: input.brokerHosts }
+          : {}),
+        ...(input.brokerHeader !== undefined
+          ? { brokerHeader: input.brokerHeader }
+          : {}),
+        ...(input.brokerTemplate !== undefined
+          ? { brokerTemplate: input.brokerTemplate }
+          : {}),
+        ...(input.sharing !== undefined ? { sharing: input.sharing } : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+const updateSecretInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  secret: z.string().trim().min(1).describe("Secret id."),
+  value: z
+    .string()
+    .min(1)
+    .max(64 * 1024)
+    .optional()
+    .describe(
+      "The new credential — a ROTATION. Same exposure as on create: it travels in this call and becomes visible to whatever surface makes it. Reaches NEW RUNS ONLY; a session already running holds the old value and cannot be reached mid-run."
+    ),
+  description: z
+    .string()
+    .max(500)
+    .nullable()
+    .optional()
+    .describe(
+      "Replacement description. `null` CLEARS it; omit to leave it unchanged. The tri-state matches the REST route and the SDK client, which have accepted `null` since this resource shipped — without it here, an operation caller could set a description and then never remove it."
+    ),
+  delivery: z
+    .enum(["brokered", "materialized"])
+    .optional()
+    .describe(
+      `${SECRET_DELIVERY_DESCRIPTION} Switching to 'brokered' requires supplying the host binding in the same call; switching to 'materialized' clears it.`
+    ),
+  ...secretBrokerFields,
+});
+
+export type UpdateSecretInput = z.infer<typeof updateSecretInput>;
+export type UpdateSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecret;
+};
+
+export const updateSecretOperation: PlatformOperation<
+  UpdateSecretInput,
+  UpdateSecretResult
+> = {
+  name: "update_secret",
+  title: "Rotate or re-bind an MCPJam project secret",
+  description:
+    "Rotate a secret's value and/or change how it is delivered. THE NEW VALUE TRAVELS IN THIS CALL, with the same exposure as create. A rotation reaches NEW RUNS ONLY — a session already running holds the old value, in its box's environment or inside an egress policy that cannot be read back, and there is no safe way to replace it mid-run. `name` and `sharing` cannot be changed: renaming would break the workflows referencing the environment variable, and re-sharing would change who has already been handed the value. Delete and recreate for either.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: updateSecretInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.updateSecret(
+      {
+        projectId: project.id,
+        secretId: input.secret,
+        ...(input.value !== undefined ? { value: input.value } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+        ...(input.brokerHosts !== undefined
+          ? { brokerHosts: input.brokerHosts }
+          : {}),
+        ...(input.brokerHeader !== undefined
+          ? { brokerHeader: input.brokerHeader }
+          : {}),
+        ...(input.brokerTemplate !== undefined
+          ? { brokerTemplate: input.brokerTemplate }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+export type DeleteSecretInput = z.infer<typeof secretSelectorInput>;
+export type DeleteSecretResult = {
+  project: SelectedProjectInfo;
+  secret: PlatformSecretDeleted;
+};
+
+export const deleteSecretOperation: PlatformOperation<
+  DeleteSecretInput,
+  DeleteSecretResult
+> = {
+  name: "delete_secret",
+  title: "Delete an MCPJam project secret",
+  description:
+    "Delete a stored credential. HARD — the row and the encrypted value both go, and MCPJam stops resolving and delivering it. Deliberately NOT blocked when an environment still selects it: refusing would leave a leaked credential undeletable until someone edited every environment naming it, and deletion must never wait on cleanup. TWO LIMITS, both important when responding to a leak: runs already in flight keep the value they were handed, and this does NOT revoke the credential at the provider that issued it — the key stays valid until it is rotated or revoked there.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: secretSelectorInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const secret = await client.deleteSecret(
+      { projectId: project.id, secretId: input.secret },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), secret };
   },
 };
 
@@ -12702,6 +13788,49 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   },
 };
 
+/**
+ * Stop one connection request.
+ *
+ * The counterpart the flow was missing. A request holds one of the owner's
+ * concurrent-connection slots for its full hour, so an attempt the user has
+ * abandoned — a link opened in the wrong browser, a consent screen they closed
+ * — is not merely untidy: enough of them and the owner cannot start the next
+ * one. Cancelling is idempotent, so a caller that is unsure may simply call it.
+ */
+export const cancelProjectServerConnectionOperation: PlatformOperation<
+  GetProjectServerConnectionStatusInput,
+  PlatformServerConnection
+> = {
+  name: "cancel_project_server_connection",
+  title: "Cancel a server connection",
+  description:
+    "Cancel a pending server connection request started by connect_project_server, releasing the concurrent-connection slot it holds. Already-finished requests are left as they are. Use this when an authorization was abandoned and the user wants to start over.",
+  // Same reading as `cancel_readiness_run`: a write, so it declares its risk,
+  // but one that STOPS work. It spends nothing and destroys no record — the
+  // request it ends is an authorization nobody completed.
+  readOnly: false,
+  risk: "none",
+  permalink: derivePermalinks((result) =>
+    result.server
+      ? [
+          {
+            type: "project_server" as const,
+            id: result.server.id,
+            ...(result.projectId ? { projectId: result.projectId } : {}),
+            label: `Open ${result.server.name}`,
+          },
+        ]
+      : []
+  ),
+  inputSchema: getProjectServerConnectionStatusInput,
+  async execute(input, { client, signal }) {
+    return await client.cancelServerConnection(
+      { connectionRequestId: input.connectionRequestId },
+      { signal }
+    );
+  },
+};
+
 const shareResourceSelectorInput = z.object({
   project: z
     .string()
@@ -13283,6 +14412,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   showServersOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
@@ -13326,6 +14456,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
@@ -13402,6 +14534,16 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   createPersonaOperation,
   updatePersonaOperation,
   deletePersonaOperation,
+  // PROJECT SECRETS. Write-only end to end — no operation here returns a value.
+  // The two write ops carry one in their INPUT, which is why they are excluded
+  // from the MCP catalog and the agent registry (see `platformTools.ts` and
+  // `agent-op-registry.ts`) while staying reachable over HTTP, the SDK and the
+  // CLI.
+  listSecretsOperation,
+  getSecretOperation,
+  createSecretOperation,
+  updateSecretOperation,
+  deleteSecretOperation,
   generatePersonasOperation,
   getJourneyOperation,
   createJourneyOperation,

@@ -241,6 +241,7 @@ export const HOST_TEMPLATE_IDS = [
   "goose",
   "slack",
   "cursor",
+  "cursor-cli",
   "codex",
   "copilot",
   "vscode",
@@ -414,6 +415,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // MCP UI extension intact.
       base.clientCapabilities = {
         ...base.clientCapabilities,
+        // MCPJam has both local and hosted bridges for form and URL
+        // elicitation. URL mode is narrowed or rejected on legacy protocol
+        // connections, so this only declares modes the active bridge can
+        // safely handle.
+        elicitation: { form: {}, url: {} },
         extensions: {
           ...(base.clientCapabilities.extensions as Record<string, unknown>),
           [XAA_MCP_EXTENSION]: {},
@@ -1767,6 +1773,90 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               setOpenInAppUrl: false,
               notifyIntrinsicHeight: false,
             },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "cursor-cli",
+    label: "Cursor CLI",
+    description:
+      "Cursor's coding CLI (cursor-agent, over ACP). Runs on your own Cursor account; no widget rendering.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // Its own skin, NOT the emulated `cursor` style: that one mirrors the
+        // Cursor IDE's chat panel, which renders MCP Apps in a webview. This is
+        // a terminal CLI. See CURSOR_CLI_HOST_STYLE in
+        // client-styles/built-ins.ts.
+        hostStyle: "cursor-cli",
+        // A NEUTRAL SENTINEL, not a real provider model. The adapter passes no
+        // model at all: cursor-agent runs on the customer's Cursor account and
+        // Cursor Auto picks. Seeding `anthropic/...` here would put a model id
+        // into traces and eval metadata that nothing ever ran — the one thing
+        // a host template must not fabricate. Matches the backend catalog seed.
+        modelId: "cursor/auto",
+        temperature: 1.0,
+        requireToolApproval: false,
+        // Run the REAL Cursor CLI (the @ai-sdk/harness-cursor adapter) instead
+        // of MCPJam's emulated engine. It executes inside an attached personal
+        // computer, so seed one too — the backend enforces `harness ⇒ computer`
+        // on write.
+        harness: "cursor",
+        computer: { kind: "personal" },
+      });
+      // REPLACED, not spread. A spread would leak the SDK default's
+      // `extensions["io.modelcontextprotocol/ui"]` back in and advertise a
+      // widget-rendering surface a terminal CLI cannot have — the same move the
+      // Claude Code and Codex templates make, and for the same reason.
+      //
+      // Conservative rather than probed: unlike Claude Code's, these are NOT
+      // from a live `start-host-probe` capture. `roots` + `elicitation` is the
+      // floor an ACP client is expected to support; widen it only from a real
+      // capture (the backend catalog row is `provenance: 'assumed'` to match).
+      base.clientCapabilities = {
+        roots: {},
+        elicitation: {},
+      };
+      // The real Cursor CLI owns native tool discovery from the MCP servers
+      // MCPJam feeds its ACP session, so MCPJam's progressive meta-tools stay
+      // off — `search_mcp_tools` must never look like a Cursor built-in.
+      base.progressiveToolDiscovery = false;
+      // CLI client: no widget rendering, so `hostContext` stays empty and the
+      // host-side app advertise is explicitly zeroed. `{}` is "advertise
+      // nothing" (resolveEffectiveHostCapabilities treats it distinctly from
+      // `undefined`/preset-inherit), so the Apps tab shows an honest empty
+      // hostCapabilities instead of inheriting a style preset's claims.
+      base.hostCapabilitiesOverride = {};
+      //
+      // The CLI's native toolset (bash/read/edit/…) is NOT seeded into
+      // `builtInToolIds`: under `harness: "cursor"` those come from the real
+      // runtime inside the sandbox, not MCPJam's built-in tool registry.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // ASSUMED, inherited from the same-vendor `cursor` template rather
+          // than measured — kept in lockstep with the backend catalog row.
+          supportedProtocolVersions: ["2025-11-25"],
+          // TODO(cursor-cli probe): capture the real clientInfo the cursor-agent
+          // MCP client sends and replace these.
+          //
+          // `version` is REQUIRED by the canonicalizer (non-empty string), so
+          // it cannot be omitted to signal "unknown". It carries the build
+          // actually OBSERVED during the harness spike — real, not a guess —
+          // but it is NOT a pin: the bootstrap installs via
+          // `curl https://cursor.com/install | bash`, which always fetches the
+          // current build, so most sessions run something newer. That gap is
+          // why the turn records the installed `agent --version` per session
+          // (see `runtimeVersionCommand` in the server registry); do not read
+          // this field as what ran. Kept in lockstep with the backend catalog.
+          clientInfo: {
+            name: "cursor-agent",
+            title: "Cursor CLI",
+            version: "2026.08.31-4057e58",
+            description: "Cursor's agentic coding CLI",
+            websiteUrl: "https://cursor.com/cli",
           },
         },
       };

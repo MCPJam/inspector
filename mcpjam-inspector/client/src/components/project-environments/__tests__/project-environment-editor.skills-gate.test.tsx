@@ -36,11 +36,7 @@ vi.mock("@/hooks/useSandboxImages", () => ({
 // Sibling sections are not under test — render inert placeholders. The skills
 // picker mock exposes attach/clear buttons so tests can drive `onChange`.
 vi.mock("@/components/hosts/HostPicker", () => ({
-  HostPicker: ({
-    onChange,
-  }: {
-    onChange: (hostId: string | null) => void;
-  }) => (
+  HostPicker: ({ onChange }: { onChange: (hostId: string | null) => void }) => (
     <button type="button" onClick={() => onChange("host-1")}>
       pick-host
     </button>
@@ -53,9 +49,7 @@ vi.mock("../ProjectEnvironmentSkillsPicker", () => ({
   ProjectEnvironmentSkillsPicker: ({
     onChange,
   }: {
-    onChange: (
-      next: { mode: "explicit"; skillIds: string[] } | null
-    ) => void;
+    onChange: (next: { mode: "explicit"; skillIds: string[] } | null) => void;
   }) => (
     <div data-testid="skills-picker">
       <button
@@ -69,6 +63,12 @@ vi.mock("../ProjectEnvironmentSkillsPicker", () => ({
       </button>
     </div>
   ),
+}));
+// The secrets picker is a sibling section, not what these tests are about. It
+// is stubbed rather than mocked at the hook level because it reads a live
+// Convex query, and a real one here would need the whole provider.
+vi.mock("../ProjectEnvironmentSecretsPicker", () => ({
+  ProjectEnvironmentSecretsPicker: () => <div />,
 }));
 vi.mock("@/components/computer/EnvironmentBuildBadge", () => ({
   EnvironmentBuildBadge: () => null,
@@ -86,7 +86,7 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 const PINNED = { mode: "explicit" as const, skillIds: ["sk-1", "sk-2"] };
 
 function envRow(
-  overrides: Partial<ProjectEnvironmentView> = {}
+  overrides: Partial<ProjectEnvironmentView> = {},
 ): ProjectEnvironmentView {
   return {
     environmentId: "env-1",
@@ -113,7 +113,7 @@ function renderEditor(environment: ProjectEnvironmentView | null) {
       projectId="proj-1"
       environment={environment}
       canManage
-    />
+    />,
   );
 }
 
@@ -154,7 +154,7 @@ describe("flag gating + the omission contract", () => {
     await waitFor(() => expect(mockUpdateEnvironment).toHaveBeenCalled());
     expect(
       "skillSelection" in
-        (mockUpdateEnvironment.mock.calls[0]![0] as Record<string, unknown>)
+        (mockUpdateEnvironment.mock.calls[0]![0] as Record<string, unknown>),
     ).toBe(false);
   });
 });
@@ -171,7 +171,7 @@ describe("flag flips false AFTER an edit", () => {
         projectId="proj-1"
         environment={envRow({ skillSelection: PINNED })}
         canManage
-      />
+      />,
     );
     expect(screen.queryByTestId("skills-picker")).not.toBeInTheDocument();
 
@@ -203,13 +203,13 @@ describe("flag flips false AFTER an edit", () => {
         projectId="proj-1"
         environment={null}
         canManage
-      />
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(mockCreateEnvironment).toHaveBeenCalled());
     expect(
       "skillSelection" in
-        (mockCreateEnvironment.mock.calls[0]![0] as Record<string, unknown>)
+        (mockCreateEnvironment.mock.calls[0]![0] as Record<string, unknown>),
     ).toBe(false);
   });
 });
@@ -233,7 +233,7 @@ describe("wire shapes (flag on)", () => {
     await waitFor(() => expect(mockUpdateEnvironment).toHaveBeenCalled());
     expect(
       (mockUpdateEnvironment.mock.calls[0]![0] as Record<string, unknown>)
-        .skillSelection
+        .skillSelection,
     ).toBeNull();
   });
 

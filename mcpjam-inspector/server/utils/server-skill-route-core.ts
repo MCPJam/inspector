@@ -12,6 +12,15 @@
  * `/read-file` would eventually disagree about whether an inactive extension is
  * a 200 with a refusal or a 500, and the client renders a missing refusal as a
  * generic `fetch_failed`: a network story for what is a capability state.
+ *
+ * Support is read with `ensureSkillsSupport`, NEVER the synchronous
+ * `getSkillsSupport`. A hosted manager is ephemeral: nothing has connected when
+ * the handler starts, so the synchronous read answers from a live connection
+ * that does not exist yet and reports the extension inactive on every request.
+ * The route then returns an empty listing and its own teardown aborts the
+ * negotiation still in flight — a 200 with no skills and an `AbortError` in the
+ * connection telemetry, against a server that is perfectly reachable. Local
+ * mode hid it, because there the manager is long-lived and already connected.
  */
 
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -36,7 +45,7 @@ export async function listServerSkillsCore(
   manager: Manager,
   body: { serverId: string }
 ) {
-  const support = manager.getSkillsSupport(body.serverId);
+  const support = await manager.ensureSkillsSupport(body.serverId);
   if (!support.active) {
     return {
       support,
@@ -55,7 +64,7 @@ export async function getServerSkillCore(
   manager: Manager,
   body: { serverId: string; uri: string }
 ) {
-  const support = manager.getSkillsSupport(body.serverId);
+  const support = await manager.ensureSkillsSupport(body.serverId);
   if (!support.active) return { support, refusal: EXTENSION_INACTIVE_REFUSAL };
   try {
     return {
@@ -76,7 +85,7 @@ export async function readServerSkillFileCore(
   manager: Manager,
   body: { serverId: string; skillUri: string; resourceUri: string }
 ) {
-  const support = manager.getSkillsSupport(body.serverId);
+  const support = await manager.ensureSkillsSupport(body.serverId);
   if (!support.active) return { support, refusal: EXTENSION_INACTIVE_REFUSAL };
   try {
     // The entry is re-fetched rather than taken from the caller: the manifest

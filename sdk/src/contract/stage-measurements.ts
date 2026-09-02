@@ -346,6 +346,9 @@ export type MeasurementSpanLike = {
   startedAt?: number | null;
   /** Epoch milliseconds. */
   endedAt?: number | null;
+  /** Trace wire aliases used by SDK and Inspector spans. */
+  startMs?: number | null;
+  endMs?: number | null;
 };
 
 export type StageMeasurementInput = {
@@ -373,8 +376,8 @@ type Interval = { start: number; end: number };
  * it to zero would launder that fault into a sample.
  */
 function intervalOf(span: MeasurementSpanLike): Interval | undefined {
-  const start = span.startedAt;
-  const end = span.endedAt;
+  const start = span.startedAt ?? span.startMs;
+  const end = span.endedAt ?? span.endMs;
   if (typeof start !== "number" || !Number.isFinite(start)) return undefined;
   if (typeof end !== "number" || !Number.isFinite(end)) return undefined;
   if (end < start) return undefined;
@@ -493,3 +496,35 @@ export function deriveStageMeasurements(
  * whether they were believed.
  */
 export const STAGE_MEASUREMENTS_METADATA_KEY = "stageMeasurements" as const;
+
+/**
+ * Attach derived measurements to an iteration metadata record.
+ *
+ * This is intentionally a no-op when no stage derivation was produced. That
+ * keeps setup-only/legacy metadata unchanged while ensuring every producer that
+ * has stage rows derives timing from the same in-memory spans.
+ */
+export function attachStageMeasurements(
+  metadata: Record<string, unknown>,
+  spans?: readonly MeasurementSpanLike[]
+): Record<string, unknown> {
+  const stageResults = metadata.stageResults;
+  if (!Array.isArray(stageResults) || stageResults.length === 0) return metadata;
+
+  const stageAnalyzerVersion =
+    typeof metadata.stageAnalyzerVersion === "number" &&
+    Number.isInteger(metadata.stageAnalyzerVersion) &&
+    metadata.stageAnalyzerVersion >= 1
+      ? metadata.stageAnalyzerVersion
+      : undefined;
+
+  const stageMeasurements = deriveStageMeasurements({
+    stageResults: stageResults as readonly StageResultRow[],
+    ...(stageAnalyzerVersion !== undefined ? { stageAnalyzerVersion } : {}),
+    spans,
+  });
+  return {
+    ...metadata,
+    [STAGE_MEASUREMENTS_METADATA_KEY]: stageMeasurements,
+  };
+}

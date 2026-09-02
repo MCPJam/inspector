@@ -40,6 +40,10 @@ export const MODEL_PROVIDER_FIXTURES: ProviderFixture[] = [
   { id: "openai/gpt-5", provider: "openai" },
   { id: "ollama/llama3.1", provider: "ollama" },
   { id: "openrouter/auto", provider: "openrouter" },
+  // The Cursor CLI harness sentinel. Before `cursor` was a known prefix this
+  // fell through to the bare-id rule and classified as `ollama`, which stamped
+  // eval projections and disclosure with a provider the run never touched.
+  { id: "cursor/auto", provider: "cursor" },
   { id: "qwen/qwen3-max", provider: "qwen" },
   { id: "mistral/mistral-large", provider: "mistral" },
   { id: "z-ai/glm-4.6", provider: "z-ai" },

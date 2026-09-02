@@ -10,6 +10,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { reportCaught } from "./lib/error-reporting";
+import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
@@ -183,7 +184,11 @@ if (isInIframe) {
   const handoffRuntimeApiHostname = getRuntimeWorkosApiHostname();
   const handoffWorkosOptions = handoffRuntimeApiHostname
     ? { apiHostname: handoffRuntimeApiHostname }
-    : resolveWorkosClientOptions(import.meta.env, window.location);
+    : resolveWorkosClientOptions(
+        import.meta.env,
+        window.location,
+        HOSTED_MODE
+      );
   const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
@@ -316,11 +321,23 @@ if (isInIframe) {
     ? { apiHostname: runtimeWorkosApiHostname }
     : resolveWorkosClientOptions(
         import.meta.env,
-        typeof window === "undefined" ? undefined : window.location
+        typeof window === "undefined" ? undefined : window.location,
+        HOSTED_MODE
       );
   clearLegacyWorkosRefreshTokenStorage();
 
-  const convex = new ConvexReactClient(convexUrl);
+  // INVARIANT: this MUST stay below the `refreshBufferInterval` passed to
+  // <AuthKitProvider> below. Convex refetches at `exp - leeway`; if that lands
+  // before authkit's own refresh threshold (`exp - refreshBufferInterval`),
+  // authkit hands back the SAME still-valid token, Convex sees an unchanged
+  // token, settles into `notRefetching` — and never schedules another refetch.
+  // The refresh loop then dies silently and the token expires under a live
+  // socket. Raised from the 10s default so the retry ladder in
+  // `useUnifiedConvexAuth` (~5s worst case) still completes while the current
+  // token is valid.
+  const convex = new ConvexReactClient(convexUrl, {
+    authRefreshTokenLeewaySeconds: 60,
+  });
   normalizeInitialLegacyHashBookmark();
 
   const Providers = (
@@ -328,9 +345,15 @@ if (isInIframe) {
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
       devMode={WORKOS_DEV_MODE}
+      // Must stay ABOVE `authRefreshTokenLeewaySeconds` on the Convex client
+      // above — see the invariant documented there.
+      refreshBufferInterval={90}
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
       }}
+      // Redirect a genuinely dead session to sign-in rather than leaving
+      // signed-in chrome over a de-authed connection. See the handler.
+      onRefreshFailure={handleWorkosRefreshFailure}
       /**
        * Send a returning sign-in back where it started, when something asked
        * to come back.

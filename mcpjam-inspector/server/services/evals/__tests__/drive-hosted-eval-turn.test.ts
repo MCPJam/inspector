@@ -50,6 +50,7 @@ function baseParams(
     extractToolCalls: () => [],
     acc: {
       messageHistory: [],
+      traceMessageHistory: [],
       capturedSpans: [],
       accumulatedUsage: {},
       toolsCalledByPrompt: [],
@@ -177,6 +178,47 @@ describe("harness execution options reach the engine", () => {
     expect(options.harness).toBe("claude-code");
   });
 
+  it("forwards the run's PROJECT ENVIRONMENT as the secret grant boundary", async () => {
+    // What a harness iteration scopes its BROKERED external-account credential
+    // check to. Without it the check is project-wide, and a bound secret this
+    // run's environment does not grant reads as available — the iteration then
+    // provisions a box whose egress carries no transform and fails vendor auth.
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      environmentId: "env-1",
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+    expect(options.environmentId).toBe("env-1");
+  });
+
+  it("forwards the replay path's UNRESOLVED reason when there is no id", async () => {
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      environmentUnresolvedReason: "replaying a run does not carry it.",
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+    expect(options.environmentUnresolvedReason).toBe(
+      "replaying a run does not carry it.",
+    );
+  });
+
+  it("drops the unresolved reason when the environment id IS known", async () => {
+    // The id answers the question; carrying an excuse alongside it could only
+    // weaken a refusal that has real evidence behind it.
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      environmentId: "env-1",
+      environmentUnresolvedReason: "should be ignored",
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+    expect(options.environmentId).toBe("env-1");
+    expect(options.environmentUnresolvedReason).toBeUndefined();
+  });
+
+  it("leaves the environment id off an EMULATED turn", async () => {
+    const options = await engineOptionsFor({
+      environmentId: "env-1",
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+    expect(options.environmentId).toBeUndefined();
+  });
+
   it("forwards a PRESENT-BUT-EMPTY pinnedHarnessSkills — the A/B arm", async () => {
     // The one harness field gated on `!== undefined` rather than truthiness,
     // and deliberately so: an empty array is how `skillsOverride: "exclude"`
@@ -274,5 +316,25 @@ describe("harness execution options reach the engine", () => {
     expect(options.modelVisibleMcpToolResults).toBeUndefined();
     expect(options.respectToolVisibility).toBeUndefined();
     expect(options.tasks).toBeUndefined();
+  });
+
+  it("forwards extraHeaders BY REFERENCE, so a rotated credential reaches later steps", async () => {
+    // The bench worker's `x-mcpjam-benchmark-grant` carrier. The engine reads
+    // `extraHeaders` per step and the worker rotates the grant inside the
+    // object when the backend reissues one, so copying it here would pin an
+    // in-flight run to a grant that has since expired — and its remaining
+    // steps would be refused by `/stream` with the run half-run and paid for.
+    const extraHeaders = { "x-mcpjam-benchmark-grant": "grant-token" };
+    const options = await engineOptionsFor({
+      extraHeaders,
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+
+    expect(options.extraHeaders).toBe(extraHeaders);
+  });
+
+  it("sends no extraHeaders when the caller has none", async () => {
+    const options = await engineOptionsFor({});
+
+    expect(options.extraHeaders).toBeUndefined();
   });
 });

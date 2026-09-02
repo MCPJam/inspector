@@ -48,13 +48,12 @@
  *
  * ── Wiring status ────────────────────────────────────────────────────────────
  *
- * B5a freezes this contract ONLY. No production suite-file validator, `EvalTest`
- * author, serializer, reporter or Platform mapping accepts or sends `intent`
- * yet; that is B5c's job, and it lands only once the backend that persists the
- * field is deployed. The rule this staging exists to honour is that no released
- * CLI or SDK may accept a nonempty intent and silently discard it — a field that
- * validates but is dropped on write is worse than a field that does not exist,
- * because the author believes it was saved.
+ * B5a froze this contract; B5c wires it through the suite-file validator,
+ * `EvalTest` authoring, serializers, reporters, and Platform mappings after
+ * the backend storage/ingest contract is deployed. The sequencing rule still
+ * matters: no released CLI or SDK may accept a nonempty intent and silently
+ * discard it — a field that validates but is dropped on write is worse than a
+ * field that does not exist, because the author believes it was saved.
  */
 
 import { z } from "zod";

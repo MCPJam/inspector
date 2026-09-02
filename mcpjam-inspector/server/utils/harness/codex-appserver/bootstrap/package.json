@@ -1,0 +1,10 @@
+{
+  "name": "mcpjam-codex-appserver-bootstrap",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openai/codex": "0.149.1",
+    "ws": "8.21.0"
+  }
+}
