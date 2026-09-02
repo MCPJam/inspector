@@ -168,6 +168,10 @@ export function wrapPage(page: AnyPage): DriverPage {
   // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
   // page tool should not pay for a CDP session.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
+  // The CDP session itself is memoized separately and shared: the WebMCP
+  // bridge and the viewport both want one, and attaching twice to the same
+  // page gives two sessions whose events interleave unpredictably.
+  let cdpPromise: Promise<CdpLike | null> | null = null;
 
   return {
     async goto(url) {
@@ -277,6 +281,14 @@ export function wrapPage(page: AnyPage): DriverPage {
     webmcp() {
       webmcpPromise ??= attachWebMcp(page);
       return webmcpPromise;
+    },
+    cdp() {
+      cdpPromise ??= (async () => {
+        const attach = cdpAttachers.get(page);
+        if (!attach) return null;
+        return attach().catch(() => null);
+      })();
+      return cdpPromise;
     },
   };
 }

@@ -63,6 +63,10 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import {
+  createLocalBrowserFramesWsHandler,
+  shutdownLocalBrowserFrameSockets,
+} from "./routes/web/local-browser-frames";
 import { shutdownLocalBrowserSessions } from "./services/browserd/local/local-browser-session";
 import {
   createWebMcpFramesWsHandler,
@@ -551,6 +555,12 @@ if (!HOSTED_MODE) {
     "/api/web/computers/local-terminal",
     createLocalComputerTerminalWsHandler(upgradeWebSocket),
   );
+  // The agent browser's viewport, on the same condition and for the same
+  // reason: a hosted replica runs no local browser to watch.
+  app.get(
+    "/api/web/computers/local-browser/frames",
+    createLocalBrowserFramesWsHandler(upgradeWebSocket),
+  );
 }
 // WebMCP Inspector frame stream WebSocket. Local only, for the same reason the
 // `/api/mcp/webmcp/*` routes are: a hosted replica runs no local browser to
@@ -1029,6 +1039,8 @@ async function shutdown() {
     // Same reason, same moment: a frame socket is an established connection
     // that `server.close()` would leave attached to an exiting process.
     shutdownWebMcpFrameSockets();
+    // Same again for the agent browser's own viewport sockets.
+    shutdownLocalBrowserFrameSockets();
     // Also before server.close(), and awaited: a WebMCP session owns a real
     // Chromium — a visible window when it is headed — and a fire-and-forget
     // teardown loses the race against the process.exit(0) below.

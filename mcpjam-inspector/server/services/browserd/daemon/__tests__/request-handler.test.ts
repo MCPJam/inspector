@@ -555,3 +555,105 @@ function heldLeaseFor(holder: string): HandoffLease {
   lease.acquire(holder, 60_000);
   return lease;
 }
+
+describe("BrowserdRequestHandler — watching and touching the page", () => {
+  function makeViewport() {
+    const listeners: Array<(f: unknown) => void> = [];
+    const dispatched: unknown[][] = [];
+    const viewport = {
+      subscribe(listener: (f: unknown) => void) {
+        listeners.push(listener);
+        return () => {
+          const i = listeners.indexOf(listener);
+          if (i >= 0) listeners.splice(i, 1);
+        };
+      },
+      subscriberCount: () => listeners.length,
+      async dispatchInput(events: unknown[]) {
+        dispatched.push(events);
+      },
+      async dispose() {},
+    };
+    return { viewport, listeners, dispatched };
+  }
+
+  function handlerWith(lease?: HandoffLease) {
+    const { viewport, listeners, dispatched } = makeViewport();
+    const handler = new BrowserdRequestHandler({
+      queue: { submit: vi.fn() },
+      driver: {
+        health: async () => ({ ok: true }),
+        viewport: async () => viewport as never,
+      },
+      bootId: "boot-1",
+      token: "t",
+      ...(lease ? { lease } : {}),
+    });
+    return { handler, listeners, dispatched };
+  }
+
+  it("lets anyone watch while nobody holds the browser", async () => {
+    const { handler, listeners } = handlerWith();
+    const result = await handler.subscribeFrames({ listener: () => {} });
+    expect(result.ok).toBe(true);
+    expect(listeners).toHaveLength(1);
+  });
+
+  it("shows frames to the holder, and to nobody else", async () => {
+    // A second pane showing a person's password field as they type it is the
+    // same leak as an agent screenshotting it.
+    const lease = new HandoffLease();
+    lease.acquire("rail-1", 60_000);
+    const { handler, listeners } = handlerWith(lease);
+
+    const theirs = await handler.subscribeFrames({
+      holder: "rail-1",
+      listener: () => {},
+    });
+    expect(theirs.ok).toBe(true);
+
+    const others = await handler.subscribeFrames({
+      holder: "rail-2",
+      listener: () => {},
+    });
+    expect(others).toMatchObject({ ok: false, error: "lease_held" });
+    const anonymous = await handler.subscribeFrames({ listener: () => {} });
+    expect(anonymous).toMatchObject({ ok: false, error: "lease_held" });
+    expect(listeners).toHaveLength(1);
+  });
+
+  it("takes input only from the person who holds the browser", async () => {
+    const lease = new HandoffLease();
+    lease.acquire("rail-1", 60_000);
+    const { handler, dispatched } = handlerWith(lease);
+
+    expect(
+      await handler.dispatchInput({
+        holder: "rail-1",
+        events: [{ type: "text", text: "hunter2" }],
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      await handler.dispatchInput({
+        holder: "someone-else",
+        events: [{ type: "text", text: "steal" }],
+      }),
+    ).toMatchObject({ ok: false, error: "lease_held_by_other" });
+
+    expect(dispatched).toHaveLength(1);
+  });
+
+  it("refuses input when nobody has taken control", async () => {
+    // With the lease free the agent may be mid-turn, and two drivers on one
+    // page is what the lease exists to prevent. Take it first.
+    const { handler, dispatched } = handlerWith();
+    expect(
+      await handler.dispatchInput({
+        holder: "rail-1",
+        events: [{ type: "text", text: "x" }],
+      }),
+    ).toMatchObject({ ok: false, error: "lease_required" });
+    expect(dispatched).toHaveLength(0);
+  });
+});

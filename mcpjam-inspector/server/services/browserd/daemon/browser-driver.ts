@@ -14,6 +14,7 @@ import {
   formatBrowserdError,
 } from "../protocol";
 import type { CommandExecutor } from "./command-queue";
+import type { TabViewport } from "./viewport";
 import { leaseRefusalFor, type HandoffLease } from "./lease";
 
 export interface DriverHealth {
@@ -41,6 +42,15 @@ export interface BrowserDriver {
   health(): Promise<DriverHealth>;
   /** Tear the browser down. Called on daemon shutdown. */
   close(): Promise<void>;
+  /**
+   * The live picture of a tab, for a PERSON rather than the model.
+   *
+   * Optional because a driver that cannot open a CDP session (a unit fake, a
+   * future engine that streams some other way) is still a perfectly good
+   * driver — the model's path never needs this. Resolves `null` when this tab
+   * cannot be watched.
+   */
+  viewport?(tabId?: string): Promise<TabViewport | null>;
 }
 
 /** Structural equality of two state tokens (L3). */

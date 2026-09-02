@@ -38,6 +38,7 @@ import {
 } from "./observation-budget";
 import { WebMcpBridgeError } from "./webmcp-bridge";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
+import { createTabViewport, type TabViewport } from "./viewport";
 import {
   DEFAULT_SETTLE_OPTIONS,
   settlePage,
@@ -140,6 +141,13 @@ export class ChromiumDriver implements BrowserDriver {
       >
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
+  /**
+   * One viewport per tab, created on first watch.
+   *
+   * Lazy for the same reason the WebMCP bridge is: attaching a CDP session and
+   * encoding JPEGs for a tab nobody is looking at is work done for nobody.
+   */
+  private readonly viewports = new Map<string, Promise<TabViewport | null>>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
@@ -635,6 +643,42 @@ export class ChromiumDriver implements BrowserDriver {
     });
   }
 
+  /**
+   * The live picture of a tab.
+   *
+   * Deliberately NOT routed through the command queue. Input arrives as
+   * pointer batches at up to twenty a second while someone drags a scrollbar,
+   * and every command consumes an idempotency slot from a per-boot ledger that
+   * refuses new ids once exhausted — a person scrolling for a few minutes
+   * would rotate the daemon. The lease is the gate on this path instead, which
+   * is the right one: it is the person's own hands, and the lease is what says
+   * the hands are theirs.
+   */
+  async viewport(tabId?: string): Promise<TabViewport | null> {
+    const key = tabId ?? DEFAULT_TAB;
+    const existing = this.viewports.get(key);
+    if (existing) return existing;
+    // OPENS the tab when it does not exist yet, unlike every model-facing
+    // verb but `navigate`. Someone opening the pane before the agent has done
+    // anything should see the browser's blank startup page, not an error —
+    // and they need a page to exist before they can take control and type a
+    // URL into it. An explicit tabId that names no tab is still unknown.
+    const entry =
+      tabId === undefined || key === DEFAULT_TAB
+        ? await this.getOrCreateTab(key)
+        : this.tabs.get(key);
+    if (!entry || entry.page.isClosed()) return null;
+    const created = (async () => {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return null;
+      return createTabViewport(cdp, {
+        surface: BROWSERD_OBSERVATION_VIEWPORT,
+      });
+    })();
+    this.viewports.set(key, created);
+    return created;
+  }
+
   async health(): Promise<DriverHealth> {
     return this.context.isConnected()
       ? { ok: true }
@@ -642,6 +686,10 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async close(): Promise<void> {
+    for (const viewport of this.viewports.values()) {
+      await viewport.then((v) => v?.dispose()).catch(() => {});
+    }
+    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {});
     }

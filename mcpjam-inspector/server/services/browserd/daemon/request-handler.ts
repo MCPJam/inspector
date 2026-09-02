@@ -22,6 +22,7 @@ import type {
 } from "../protocol";
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
+import type { ViewportFrame, ViewportInputEvent } from "./viewport";
 import { constantTimeEquals, presentedBearer } from "./auth";
 import {
   HandoffLease,
@@ -63,7 +64,7 @@ interface CommandRequestBody {
 
 export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit">;
-  driver: Pick<BrowserDriver, "health">;
+  driver: Pick<BrowserDriver, "health" | "viewport">;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -80,7 +81,7 @@ export interface BrowserdHandlerDeps {
 
 export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
-  private readonly driver: Pick<BrowserDriver, "health">;
+  private readonly driver: Pick<BrowserDriver, "health" | "viewport">;
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
@@ -221,6 +222,71 @@ export class BrowserdRequestHandler {
 
     const outcome = await this.queue.submit(parsed.command);
     return this.mapOutcome(outcome);
+  }
+
+  /**
+   * Watch a tab.
+   *
+   * Not an HTTP route: frames are a stream, and the local engine's transport
+   * is a function call rather than a socket. It lives on the handler anyway,
+   * beside the command gate, because the daemon is where the lease is
+   * ENFORCED — "any future path that reads the browser must go through the
+   * daemon to inherit that" (the rollout doc's own words). A viewport that
+   * subscribed straight to the driver would be exactly the reader that
+   * bypasses it.
+   *
+   * While someone holds the browser, only THEY may watch: a second pane
+   * showing a person's password field as they type it is the same leak as an
+   * agent screenshotting it, and the lease is the only thing that knows whose
+   * hands are on the page.
+   */
+  async subscribeFrames(args: {
+    tabId?: string;
+    holder?: string;
+    listener: (frame: ViewportFrame) => void;
+  }): Promise<
+    { ok: true; unsubscribe: () => void } | { ok: false; error: string }
+  > {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    return { ok: true, unsubscribe: viewport.subscribe(args.listener) };
+  }
+
+  /**
+   * Forward a person's input.
+   *
+   * Requires the lease, and requires it to be THEIRS — this is the one path
+   * that puts keystrokes into the page without a per-action approval, so the
+   * question "who is typing" has to have an answer that is not "whoever
+   * reached the endpoint".
+   */
+  async dispatchInput(args: {
+    tabId?: string;
+    holder: string;
+    events: readonly ViewportInputEvent[];
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const refusal = leaseRefusalFor(this.lease.state(), {
+      source: "manual",
+      holder: args.holder,
+    });
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    await viewport.dispatchInput(args.events);
+    return { ok: true };
+  }
+
+  /** May this watcher see frames right now? */
+  private watcherRefusal(holder: string | undefined): LeaseRefusal | undefined {
+    const lease = this.lease.state();
+    if (lease.state === "free") return undefined;
+    return holder && holder === lease.holder
+      ? undefined
+      : lease.state === "held"
+        ? "lease_held"
+        : "lease_parked";
   }
 
   /**

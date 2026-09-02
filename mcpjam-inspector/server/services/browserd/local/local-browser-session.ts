@@ -295,15 +295,27 @@ export function touchLocalBrowserSession(
   }
 }
 
-/** The live session behind a bootId, for the routes that drive the pane. */
-export function findLocalBrowserSession(
-  bootId: string,
-): { stack: BrowserdStack; lease: HandoffLease; handle: LocalBrowserSessionHandle } | undefined {
+/**
+ * The live session behind a bootId, for the routes that drive the pane.
+ *
+ * Hands back the CLIENT rather than the raw stack: the client carries the
+ * per-boot bearer, so a route cannot accidentally reach the handler
+ * unauthenticated — and the handler is where the lease is enforced. `handler`
+ * comes along only for the frame subscription, which is a stream rather than a
+ * request and so has no client method.
+ */
+export function findLocalBrowserSession(bootId: string):
+  | {
+      client: LocalBrowserSessionHandle["client"];
+      handler: BrowserdStack["handler"];
+      handle: LocalBrowserSessionHandle;
+    }
+  | undefined {
   for (const session of sessions.values()) {
     if (session.stack.bootId === bootId) {
       return {
-        stack: session.stack,
-        lease: session.lease,
+        client: session.handle.client,
+        handler: session.stack.handler,
         handle: session.handle,
       };
     }

@@ -490,6 +490,54 @@ var BrowserdRequestHandler = class {
     return this.mapOutcome(outcome);
   }
   /**
+   * Watch a tab.
+   *
+   * Not an HTTP route: frames are a stream, and the local engine's transport
+   * is a function call rather than a socket. It lives on the handler anyway,
+   * beside the command gate, because the daemon is where the lease is
+   * ENFORCED — "any future path that reads the browser must go through the
+   * daemon to inherit that" (the rollout doc's own words). A viewport that
+   * subscribed straight to the driver would be exactly the reader that
+   * bypasses it.
+   *
+   * While someone holds the browser, only THEY may watch: a second pane
+   * showing a person's password field as they type it is the same leak as an
+   * agent screenshotting it, and the lease is the only thing that knows whose
+   * hands are on the page.
+   */
+  async subscribeFrames(args) {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    return { ok: true, unsubscribe: viewport.subscribe(args.listener) };
+  }
+  /**
+   * Forward a person's input.
+   *
+   * Requires the lease, and requires it to be THEIRS — this is the one path
+   * that puts keystrokes into the page without a per-action approval, so the
+   * question "who is typing" has to have an answer that is not "whoever
+   * reached the endpoint".
+   */
+  async dispatchInput(args) {
+    const refusal = leaseRefusalFor(this.lease.state(), {
+      source: "manual",
+      holder: args.holder
+    });
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    await viewport.dispatchInput(args.events);
+    return { ok: true };
+  }
+  /** May this watcher see frames right now? */
+  watcherRefusal(holder) {
+    const lease = this.lease.state();
+    if (lease.state === "free") return void 0;
+    return holder && holder === lease.holder ? void 0 : lease.state === "held" ? "lease_held" : "lease_parked";
+  }
+  /**
    * Lease control. Every action names its `holder` so one person's lease
    * cannot be released by another tab that happens to know the endpoint.
    */
@@ -1209,6 +1257,297 @@ var WebMcpBridge = class {
   }
 };
 
+// server/services/webmcp-inspector/frame-throttle.ts
+function createFrameThrottle(options) {
+  const now = options.now ?? Date.now;
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  let lastEmitAt = Number.NEGATIVE_INFINITY;
+  let trailing;
+  let timer;
+  let boostUntil = Number.NEGATIVE_INFINITY;
+  let boostIntervalMs = options.minIntervalMs;
+  const interval = () => now() < boostUntil ? boostIntervalMs : options.minIntervalMs;
+  const flush = () => {
+    timer = void 0;
+    if (!trailing) return;
+    const remaining = interval() - (now() - lastEmitAt);
+    if (remaining > 0) {
+      timer = setTimer(flush, remaining);
+      return;
+    }
+    const { value } = trailing;
+    trailing = void 0;
+    lastEmitAt = now();
+    options.emit(value);
+  };
+  return {
+    push(value) {
+      const elapsed = now() - lastEmitAt;
+      const minIntervalMs = interval();
+      if (elapsed >= minIntervalMs) {
+        trailing = void 0;
+        if (timer !== void 0) {
+          clearTimer(timer);
+          timer = void 0;
+        }
+        lastEmitAt = now();
+        options.emit(value);
+        return;
+      }
+      trailing = { value };
+      if (timer === void 0) {
+        timer = setTimer(flush, minIntervalMs - elapsed);
+      }
+    },
+    boost(intervalMs, windowMs) {
+      boostIntervalMs = intervalMs;
+      boostUntil = now() + windowMs;
+      if (trailing === void 0 || timer === void 0) return;
+      const remaining = intervalMs - (now() - lastEmitAt);
+      clearTimer(timer);
+      timer = void 0;
+      if (remaining <= 0) {
+        flush();
+        return;
+      }
+      timer = setTimer(flush, remaining);
+    },
+    reset() {
+      trailing = void 0;
+      if (timer !== void 0) {
+        clearTimer(timer);
+        timer = void 0;
+      }
+      lastEmitAt = Number.NEGATIVE_INFINITY;
+      boostUntil = Number.NEGATIVE_INFINITY;
+      boostIntervalMs = options.minIntervalMs;
+    }
+  };
+}
+
+// shared/jpeg-dimensions.ts
+function isStandalone(marker) {
+  return marker >= 208 && marker <= 215 || marker === 1;
+}
+function isStartOfFrame(marker) {
+  if (marker < 192 || marker > 207) return false;
+  return marker !== 196 && marker !== 200 && marker !== 204;
+}
+function readJpegDimensions(bytes) {
+  if (bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216) {
+    return void 0;
+  }
+  let offset = 2;
+  while (offset + 1 < bytes.length) {
+    if (bytes[offset] !== 255) return void 0;
+    let marker = bytes[offset + 1];
+    while (marker === 255 && offset + 2 < bytes.length) {
+      offset += 1;
+      marker = bytes[offset + 1];
+    }
+    if (marker === 217 || marker === 218) return void 0;
+    if (isStandalone(marker)) {
+      offset += 2;
+      continue;
+    }
+    if (offset + 3 >= bytes.length) return void 0;
+    const length = bytes[offset + 2] << 8 | bytes[offset + 3];
+    if (length < 2) return void 0;
+    if (isStartOfFrame(marker)) {
+      if (length < 8 || offset + 8 >= bytes.length) return void 0;
+      const height = bytes[offset + 5] << 8 | bytes[offset + 6];
+      const width = bytes[offset + 7] << 8 | bytes[offset + 8];
+      if (width <= 0 || height <= 0) return void 0;
+      return { width, height };
+    }
+    offset += 2 + length;
+  }
+  return void 0;
+}
+
+// server/services/browserd/daemon/viewport.ts
+var DEFAULT_QUALITY = 75;
+var DEFAULT_MIN_INTERVAL_MS = 100;
+var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+function createTabViewport(cdp, options) {
+  const quality = options.quality ?? DEFAULT_QUALITY;
+  const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+  const now = options.now ?? Date.now;
+  const listeners = /* @__PURE__ */ new Set();
+  let streaming = false;
+  let disposed = false;
+  let lastData;
+  let seq = 0;
+  const publish = (frame) => {
+    for (const listener of listeners) {
+      try {
+        listener(frame);
+      } catch {
+      }
+    }
+  };
+  const throttle = createFrameThrottle({
+    minIntervalMs: options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS,
+    emit: publish,
+    ...options.now ? { now: options.now } : {},
+    ...options.setTimer ? { setTimer: options.setTimer } : {},
+    ...options.clearTimer ? { clearTimer: options.clearTimer } : {}
+  });
+  cdp.on("Page.screencastFrame", (payload) => {
+    const frame = payload;
+    if (frame.sessionId !== void 0) {
+      void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {
+      });
+    }
+    if (!streaming || disposed || !frame.data) return;
+    if (frame.data === lastData) return;
+    lastData = frame.data;
+    const bytes = Math.floor(frame.data.length * 3 / 4);
+    if (bytes > maxBytes) return;
+    const measured = measure(frame.data, options.surface);
+    throttle.push({
+      data: frame.data,
+      deviceWidth: measured.width,
+      deviceHeight: measured.height,
+      scale: measured.scale,
+      ts: now(),
+      seq: seq += 1
+    });
+  });
+  const start = async () => {
+    if (streaming || disposed) return;
+    streaming = true;
+    lastData = void 0;
+    await cdp.send("Page.startScreencast", {
+      format: "jpeg",
+      quality,
+      // Not multiplied by any device scale: Chromium clamps a screencast to
+      // the CSS size of the surface, so asking for more is a no-op that only
+      // makes this line look like a promise.
+      maxWidth: options.surface.width,
+      maxHeight: options.surface.height
+    }).catch(() => {
+      streaming = false;
+    });
+  };
+  const stop = async () => {
+    if (!streaming) return;
+    streaming = false;
+    throttle.reset();
+    await cdp.send("Page.stopScreencast").catch(() => {
+    });
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      if (listeners.size === 1) void start();
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) void stop();
+      };
+    },
+    subscriberCount: () => listeners.size,
+    async dispatchInput(events) {
+      for (const event of events) {
+        await dispatchOne(cdp, event).catch(() => {
+        });
+      }
+    },
+    async dispose() {
+      disposed = true;
+      listeners.clear();
+      await stop();
+    }
+  };
+}
+function measure(base64, surface) {
+  const dimensions = readJpegDimensions(decodeBase64(base64));
+  if (!dimensions) {
+    return { width: surface.width, height: surface.height, scale: 1 };
+  }
+  const scale = dimensions.width > 0 ? dimensions.width / surface.width : 1;
+  return {
+    width: dimensions.width,
+    height: dimensions.height,
+    scale: Number.isFinite(scale) && scale > 0 ? scale : 1
+  };
+}
+function decodeBase64(value) {
+  const prefix = value.slice(0, 4096);
+  const binary = Buffer.from(prefix, "base64");
+  return new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength);
+}
+var BUTTON_MASK = { left: 1, middle: 4, right: 2 };
+async function dispatchOne(cdp, event) {
+  switch (event.type) {
+    case "mouse_move":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: event.x,
+        y: event.y,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "mouse_down":
+    case "mouse_up":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: event.type === "mouse_down" ? "mousePressed" : "mouseReleased",
+        x: event.x,
+        y: event.y,
+        button: event.button,
+        buttons: BUTTON_MASK[event.button] ?? 1,
+        clickCount: event.clickCount ?? 1,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "wheel":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: event.x,
+        y: event.y,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "text":
+      await cdp.send("Input.insertText", { text: event.text });
+      return;
+    case "key_down":
+    case "key_up": {
+      const descriptor = describeKey(event.key, event.code);
+      await cdp.send("Input.dispatchKeyEvent", {
+        type: event.type === "key_down" ? "keyDown" : "keyUp",
+        modifiers: event.modifiers ?? 0,
+        key: event.key,
+        ...descriptor
+      });
+      return;
+    }
+  }
+}
+var KEY_CODES = {
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+  Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
+  Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
+  Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
+  ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38 },
+  ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+  ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
+  Home: { code: "Home", windowsVirtualKeyCode: 36 },
+  End: { code: "End", windowsVirtualKeyCode: 35 },
+  PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
+  PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 }
+};
+function describeKey(key, code) {
+  const known = KEY_CODES[key];
+  if (known) return known;
+  return code ? { code } : {};
+}
+
 // server/services/browserd/daemon/settle.ts
 var DEFAULT_SETTLE_OPTIONS = { maxWaitMs: 1e4 };
 async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
@@ -1260,6 +1599,13 @@ var ChromiumDriver = class {
   webmcpOutputBudgetBytes;
   lease;
   tabs = /* @__PURE__ */ new Map();
+  /**
+   * One viewport per tab, created on first watch.
+   *
+   * Lazy for the same reason the WebMCP bridge is: attaching a CDP session and
+   * encoding JPEGs for a tab nobody is looking at is work done for nobody.
+   */
+  viewports = /* @__PURE__ */ new Map();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -1639,10 +1985,42 @@ var ChromiumDriver = class {
       domSignal: await entry.page.domStructureSignal()
     });
   }
+  /**
+   * The live picture of a tab.
+   *
+   * Deliberately NOT routed through the command queue. Input arrives as
+   * pointer batches at up to twenty a second while someone drags a scrollbar,
+   * and every command consumes an idempotency slot from a per-boot ledger that
+   * refuses new ids once exhausted — a person scrolling for a few minutes
+   * would rotate the daemon. The lease is the gate on this path instead, which
+   * is the right one: it is the person's own hands, and the lease is what says
+   * the hands are theirs.
+   */
+  async viewport(tabId) {
+    const key = tabId ?? DEFAULT_TAB;
+    const existing = this.viewports.get(key);
+    if (existing) return existing;
+    const entry = tabId === void 0 || key === DEFAULT_TAB ? await this.getOrCreateTab(key) : this.tabs.get(key);
+    if (!entry || entry.page.isClosed()) return null;
+    const created = (async () => {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return null;
+      return createTabViewport(cdp, {
+        surface: BROWSERD_OBSERVATION_VIEWPORT
+      });
+    })();
+    this.viewports.set(key, created);
+    return created;
+  }
   async health() {
     return this.context.isConnected() ? { ok: true } : { ok: false, detail: "browser context disconnected" };
   }
   async close() {
+    for (const viewport of this.viewports.values()) {
+      await viewport.then((v) => v?.dispose()).catch(() => {
+      });
+    }
+    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {
       });
@@ -2047,6 +2425,7 @@ function wrapPage(page) {
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
   let webmcpPromise = null;
+  let cdpPromise = null;
   return {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
@@ -2127,6 +2506,14 @@ function wrapPage(page) {
     webmcp() {
       webmcpPromise ??= attachWebMcp(page);
       return webmcpPromise;
+    },
+    cdp() {
+      cdpPromise ??= (async () => {
+        const attach = cdpAttachers.get(page);
+        if (!attach) return null;
+        return attach().catch(() => null);
+      })();
+      return cdpPromise;
     }
   };
 }

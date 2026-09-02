@@ -129,6 +129,8 @@ let killLocalTerminals: (() => void) | null = null;
  */
 let shutdownLocalBrowsers: (() => Promise<void>) | null = null;
 let killLocalBrowsers: (() => Promise<void>) | null = null;
+let shutdownLocalBrowserFrames: (() => void) | null = null;
+let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
@@ -453,6 +455,8 @@ async function startHonoServer(): Promise<number> {
       killWebMcpFrameSockets,
       shutdownLocalBrowserSessions,
       killLocalBrowserSessions,
+      shutdownLocalBrowserFrameSockets,
+      killLocalBrowserFrameSockets,
     } = await createHonoApp();
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
@@ -470,6 +474,10 @@ async function startHonoServer(): Promise<number> {
     // the next launch then has to refuse.
     shutdownLocalBrowsers = shutdownLocalBrowserSessions;
     killLocalBrowsers = killLocalBrowserSessions;
+    // The viewport sockets are established WebSockets that `server.close()`
+    // leaves attached, with the same latching/non-latching split.
+    shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
+    killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -967,6 +975,7 @@ app.on("window-all-closed", () => {
   // quit, and latching would refuse every browser the user opened after
   // reopening the window from the dock.
   void killLocalBrowsers?.();
+  killLocalBrowserFrames?.();
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
@@ -1094,6 +1103,7 @@ app.on("before-quit", (event) => {
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
   void shutdownLocalBrowsers?.();
+  shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();
   }

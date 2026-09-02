@@ -1,4 +1,33 @@
 import type { DriverContext, DriverPage } from "../browser-page";
+import type { CdpLike } from "../webmcp-bridge";
+
+/**
+ * A CDP session that records and never answers anything interesting.
+ *
+ * The fixture has one by default because a page nobody can WATCH is not a
+ * useful stand-in any more: the viewport, and everything the pane does through
+ * it, is written against `cdp()`. Tests that care what was sent pass their own.
+ */
+export function fakeCdpSession(): CdpLike & {
+  sent: Array<{ method: string; params?: Record<string, unknown> }>;
+  emit(event: string, payload: unknown): void;
+} {
+  const sent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+  const handlers = new Map<string, (payload: unknown) => void>();
+  return {
+    sent,
+    async send(method, params) {
+      sent.push({ method, ...(params ? { params } : {}) });
+      return {};
+    },
+    on(event, handler) {
+      handlers.set(event, handler);
+    },
+    emit(event, payload) {
+      handlers.get(event)?.(payload);
+    },
+  };
+}
 
 /**
  * The fake browser the daemon's unit tests drive.
@@ -26,6 +55,9 @@ export interface FakePage extends DriverPage {
    * a test could acquire the lease itself, the command has already finished.
    */
   onAct?: () => void;
+  /** The CDP session the viewport attaches to. Set `null` to model a page
+   *  that cannot be watched at all. */
+  cdpSession?: CdpLike | null;
   setDom(d: string): void;
   pushConsole(entry: { type: string; text: string; at: number }): void;
   readonly calls: {
@@ -66,6 +98,7 @@ export function fakePage(init: {
     front: 0,
     a11yRoots: [] as (string | undefined)[],
   };
+  const defaultCdp = fakeCdpSession();
   const setDom = (d: string) => { dom = d; };
   const setUrl = (u: string) => { url = u; };
   const act = (entry: string) => {
@@ -123,6 +156,9 @@ export function fakePage(init: {
       consoleEntries.length = keep;
     },
     async webmcp() { return (init.webmcp ?? null) as never; },
+    async cdp() {
+      return page.cdpSession === undefined ? defaultCdp : page.cdpSession;
+    },
 
     setUrl,
     setDom,

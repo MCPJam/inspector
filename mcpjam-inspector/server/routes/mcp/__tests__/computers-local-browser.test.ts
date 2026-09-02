@@ -62,8 +62,72 @@ vi.mock("../../../utils/browser-rendering-setup.js", () => ({
   },
 }));
 
+/**
+ * A real browserd stack over the fake browser, so these routes are exercised
+ * against the actual lease rather than a mock of it. The lease is the whole
+ * point of the pane's routes; a stubbed one would test nothing.
+ */
+const browserState = vi.hoisted(() => ({
+  sessions: new Map<string, any>(),
+}));
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
-  listLocalBrowserSessions: () => [],
+  listLocalBrowserSessions: () =>
+    [...browserState.sessions.values()].map((s: any) => ({
+      key: "proj",
+      handle: s.handle,
+      lastUsedAt: 0,
+      leaseHeld: s.lease.isBlocking(),
+    })),
+  findLocalBrowserSession: (bootId: string) =>
+    browserState.sessions.get(bootId),
+  touchLocalBrowserSession: () => {},
+  ensureLocalBrowserSession: async () => {
+    const { buildBrowserdStack } = await import(
+      "../../../services/browserd/daemon/server.js"
+    );
+    const { ChromiumDriver } = await import(
+      "../../../services/browserd/daemon/chromium-driver.js"
+    );
+    const { HandoffLease } = await import(
+      "../../../services/browserd/daemon/lease.js"
+    );
+    const { createInProcessBrowserdClient } = await import(
+      "../../../services/browserd/in-process-client.js"
+    );
+    const { fakeContext } = await import(
+      "../../../services/browserd/daemon/__tests__/fake-page.js"
+    );
+    const existing = [...browserState.sessions.values()][0];
+    if (existing) return existing.handle;
+
+    const lease = new HandoffLease();
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context, { lease });
+    const stack = buildBrowserdStack(driver, { token: "tok", lease });
+    const client = createInProcessBrowserdClient(stack, "tok");
+    const handle = {
+      engine: "local" as const,
+      bootId: stack.bootId,
+      client,
+      contextMode: "persistent" as const,
+      reused: false,
+    };
+    browserState.sessions.set(stack.bootId, {
+      client,
+      handler: stack.handler,
+      handle,
+      lease,
+    });
+    return handle;
+  },
+  LocalBrowserUnavailableError: class extends Error {
+    constructor(
+      readonly code: string,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
 }));
 
 import computers from "../computers.js";
@@ -86,6 +150,10 @@ async function grantConsent(): Promise<string> {
 }
 
 beforeEach(() => {
+  // Each test gets a fresh browser: these sessions carry a LEASE, and a lease
+  // held over from a previous test is the kind of shared state that makes a
+  // suite pass in isolation and fail in order.
+  browserState.sessions.clear();
   authState.verified = true;
   authState.guest = false;
   configState.browserEnabled = true;
@@ -123,6 +191,151 @@ describe("GET /local-browser/status", () => {
     authState.verified = true;
     authState.guest = true;
     expect((await status()).status).toBe(403);
+  });
+});
+
+describe("driving the browser from the pane", () => {
+  async function ensured(token: string) {
+    const res = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj-1" }),
+      },
+    );
+    return (await res.json()) as { bootId: string };
+  }
+
+  function post(path: string, token: string, body: unknown) {
+    return createApp().request(`/api/mcp/computers/local-browser/${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [LOCAL_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("starts a browser and reports how to reach it", async () => {
+    const token = await grantConsent();
+    const { bootId } = await ensured(token);
+    expect(bootId).toBeTruthy();
+  });
+
+  it("refuses input until somebody takes control", async () => {
+    // With the lease free the agent may be mid-turn, and two drivers on one
+    // page is exactly what the lease prevents.
+    const token = await grantConsent();
+    const { bootId } = await ensured(token);
+    const res = await post("input", token, {
+      bootId,
+      holder: "pane-1",
+      events: [{ type: "text", text: "hello" }],
+    });
+    expect(res.status).toBe(423);
+    expect(await res.json()).toMatchObject({ error: "lease_required" });
+  });
+
+  it("takes control, accepts that pane's input, and refuses another's", async () => {
+    const token = await grantConsent();
+    const { bootId } = await ensured(token);
+
+    const taken = await post("lease", token, {
+      bootId,
+      action: "acquire",
+      holder: "pane-1",
+    });
+    expect(taken.status).toBe(200);
+    expect(await taken.json()).toMatchObject({
+      lease: { state: "held", holder: "pane-1", holderKind: "human" },
+    });
+
+    expect(
+      (
+        await post("input", token, {
+          bootId,
+          holder: "pane-1",
+          events: [{ type: "text", text: "hunter2" }],
+        })
+      ).status,
+    ).toBe(200);
+
+    const other = await post("input", token, {
+      bootId,
+      holder: "pane-2",
+      events: [{ type: "text", text: "steal" }],
+    });
+    expect(other.status).toBe(423);
+    expect(await other.json()).toMatchObject({ error: "lease_held_by_other" });
+  });
+
+  it("tells a second pane it did not get control", async () => {
+    const token = await grantConsent();
+    const { bootId } = await ensured(token);
+    await post("lease", token, { bootId, action: "acquire", holder: "pane-1" });
+    const second = await post("lease", token, {
+      bootId,
+      action: "acquire",
+      holder: "pane-2",
+    });
+    // 409, never a silent no-op: a pane that believes it has the browser would
+    // show a person a live view while the agent kept driving.
+    expect(second.status).toBe(409);
+  });
+
+  it("records that a SCRIPT is driving, so the resume note can say so", async () => {
+    const token = await grantConsent();
+    const { bootId } = await ensured(token);
+    const res = await post("lease", token, {
+      bootId,
+      action: "acquire",
+      holder: "cdp-1",
+      kind: "script",
+    });
+    expect(await res.json()).toMatchObject({
+      lease: { holderKind: "script" },
+    });
+  });
+
+  it("needs consent for every one of these", async () => {
+    const token = await grantConsent();
+    const { bootId } = await ensured(token);
+    for (const [path, body] of [
+      ["ensure", { projectId: "proj-1" }],
+      ["token", { projectId: "proj-1" }],
+      ["lease", { bootId, action: "acquire", holder: "p" }],
+      ["input", { bootId, holder: "p", events: [{ type: "text", text: "x" }] }],
+    ] as const) {
+      const res = await createApp().request(
+        `/api/mcp/computers/local-browser/${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      expect(res.status, `${path} must require consent`).toBe(403);
+    }
+  });
+
+  it("mints a frames nonce that is single-use and kind-bound", async () => {
+    const { consumeLocalNonce } = await import(
+      "../../../utils/computers/local-terminal-auth.js"
+    );
+    const token = await grantConsent();
+    const res = await post("token", token, { projectId: "proj-1" });
+    const { nonce } = (await res.json()) as { nonce: string };
+
+    // A frames nonce must not open a shell.
+    expect(consumeLocalNonce("terminal", nonce)).toBeNull();
+    // And having been tried, it is spent — probing which kind it is must not
+    // be free.
+    expect(consumeLocalNonce("browser-frames", nonce)).toBeNull();
   });
 });
 
