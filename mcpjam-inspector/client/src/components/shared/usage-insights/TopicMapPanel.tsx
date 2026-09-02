@@ -267,7 +267,26 @@ export type TopicMapColorMode = "theme" | "outcome";
  * Those two palettes used to share hexes (completed == a theme green, unclear
  * == "no colour"), so flipping to Outcome left most dots looking uncoded.
  */
+/**
+ * One mapping per palette object. `colorForNode` runs per node per repaint on
+ * a 10k-session map, so building a fresh record there was pure garbage.
+ */
+const OUTCOME_COLOR_CACHE = new WeakMap<
+  TopicMapCanvasPalette,
+  Record<string, string>
+>();
+
 function outcomeColorsForPalette(
+  palette: TopicMapCanvasPalette,
+): Record<string, string> {
+  const cached = OUTCOME_COLOR_CACHE.get(palette);
+  if (cached) return cached;
+  const built = buildOutcomeColors(palette);
+  OUTCOME_COLOR_CACHE.set(palette, built);
+  return built;
+}
+
+function buildOutcomeColors(
   palette: TopicMapCanvasPalette,
 ): Record<string, string> {
   return {

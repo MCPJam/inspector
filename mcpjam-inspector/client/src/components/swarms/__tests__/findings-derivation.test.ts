@@ -468,12 +468,44 @@ describe("diagnosis + defaults", () => {
     expect(goal.diagnosis.title).toBe("Discovery");
   });
 
-  it("reads Landed only when something is actually ok", () => {
+  it("does not read Landed off a successful launch alone", () => {
+    // Every session launched, nothing was graded. Launch outcomes are not a
+    // finding about the server, so they cannot earn "Landed" by themselves.
     const model = derive({});
+    const goal = model.personas[0]!.goals[0]!;
+    expect(goal.stages.connection.state).toBe("ok");
+    expect(goal.diagnosis.title).toBe("Nothing graded yet");
+    expect(goal.diagnosis.detail).toBe(
+      "No finding landed on any stage of this goal."
+    );
+  });
+
+  it("reads Landed only when a graded stage is actually ok", () => {
+    const model = derive({
+      runs: [
+        run({
+          goalScoreSummary: { gradedCount: 4, passedCount: 4, avgScore: 1 },
+        }),
+      ],
+    });
     const goal = model.personas[0]!.goals[0]!;
     expect(goal.diagnosis.title).toBe("Landed");
     expect(goal.diagnosis.detail).toBe(
       "Every measured stage held for this goal."
+    );
+  });
+
+  it("reads Friction, not Landed, when the only evidence is a warning", () => {
+    const model = derive({
+      signals: signals({
+        candidates: [candidate({ detector: "latency_outlier" })], // response warn
+      }),
+    });
+    const goal = model.personas[0]!.goals[0]!;
+    expect(goal.diagnosisStage).toBeNull();
+    expect(goal.diagnosis.title).toBe("Friction");
+    expect(goal.diagnosis.detail).toBe(
+      "No stage broke outright, but at least one measured stage showed friction."
     );
   });
 

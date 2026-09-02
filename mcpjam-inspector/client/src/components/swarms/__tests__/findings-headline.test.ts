@@ -73,6 +73,11 @@ describe("shortenGoalTitle", () => {
       )
     ).toBe("Execute custom code to…");
   });
+
+  it("returns an empty string for an empty title", () => {
+    expect(shortenGoalTitle("")).toBe("");
+    expect(shortenGoalTitle("   ")).toBe("");
+  });
 });
 
 describe("composeFindingsHeadline", () => {
@@ -105,6 +110,50 @@ describe("composeFindingsHeadline", () => {
     );
     expect(headline).toBe("1 of 2 goals showed friction.");
     expect(countWords(headline)).toBeLessThanOrEqual(10);
+  });
+
+  it("counts only measured goals in the friction denominator", () => {
+    // The second goal has nothing graded at all — counting it would present
+    // an ungraded goal as one that held.
+    const headline = composeFindingsHeadline(
+      modelFor([
+        run({
+          goalScoreSummary: { gradedCount: 4, passedCount: 3, avgScore: 0.8 },
+        }),
+        run({ runId: "run-2", journeyRefId: "journey-2" }),
+      ])
+    );
+    expect(headline).toBe("1 of 1 goals showed friction.");
+  });
+
+  it("keeps a persona-scoped failure at persona level", () => {
+    // The detector's subject is the persona, so derivation fanned the same
+    // evidence to every one of her goals — it cannot name which goal broke.
+    const model = deriveSwarmFindingsModel({
+      runs: [
+        run(),
+        run({ runId: "run-2", journeyRefId: "journey-2", journeyName: "Ship" }),
+      ],
+      signals: signals({
+        candidates: [
+          {
+            detector: "tool_errors",
+            subjectKind: "persona",
+            subjectId: "persona-1",
+            subjectLabel: "Maya Chen",
+            affectedSessions: 2,
+            sliceTotal: 4,
+            exemplarSessionIds: [],
+            contrastSessionIds: [],
+            severityScore: 1,
+          },
+        ],
+      }),
+      personas: [],
+    });
+    const headline = composeFindingsHeadline(model);
+    expect(headline).toBe("A persona stalled at tool response.");
+    expect(headline).not.toContain("Export the board");
   });
 
   it("celebrates only when every graded goal landed", () => {
@@ -158,7 +207,8 @@ describe("deriveHonestyFootnotes", () => {
       }),
       hasGroupId: true,
     });
-    expect(notes).not.toContain("No judge graded these sessions");
+    // Zero graded of eight is the WORST coverage, not a reason to stay quiet.
+    expect(notes).toContain("Judge covered 0 of 8 sessions");
     expect(notes).toContain("Session scan hit its cap — counts cover a subset");
     expect(notes).toContain(
       "Most sessions are unanalyzed — treat counts as partial"

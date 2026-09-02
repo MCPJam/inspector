@@ -7,10 +7,12 @@
 import { cn } from "@/lib/utils";
 import type { SentimentPillModel, SentimentTone } from "./findings-derivation";
 
+// Role tokens only — literal hex/oklch() in a component is forbidden by
+// AGENTS.md and would not track the theme (design:lint gates CI).
 const TONE_CLASSES: Record<SentimentTone, string> = {
-  fail: "border-[#FBB7B0] bg-[oklch(94%_0.04_25)] text-[#AC1922] dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-400",
-  warn: "border-[#EACF83] bg-[#FEF2C5] text-[oklch(45%_0.1_85)] dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400",
-  ok: "border-[#9DD4AB] bg-[#D3F5DB] text-[oklch(40%_0.11_152)] dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-400",
+  fail: "border-destructive/40 bg-destructive/10 text-destructive",
+  warn: "border-warning/40 bg-warning/10 text-warning",
+  ok: "border-success/40 bg-success/10 text-success",
   muted: "border-border bg-muted/40 text-muted-foreground",
 };
 

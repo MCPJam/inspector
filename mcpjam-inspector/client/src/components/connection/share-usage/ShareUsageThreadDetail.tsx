@@ -81,17 +81,25 @@ export function SwarmJudgeSection({
   const [notGradeable, setNotGradeable] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
   const autoAttemptedRef = useRef(false);
+  // The session the UI is currently showing. A judge request that resolves
+  // after the reader moved on must not write over the new session's state.
+  const activeThreadRef = useRef(threadId);
+  activeThreadRef.current = threadId;
 
   const rerun = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
+      const requestedFor = threadId;
+      const isStale = () => activeThreadRef.current !== requestedFor;
       setRequesting(true);
       setRequestError(null);
       try {
-        const result = await requestJudge({ sessionId: threadId });
+        const result = await requestJudge({ sessionId: requestedFor });
+        if (isStale()) return;
         // Current backend returns null for an honest skip. Older deploys
         // still throw; both mean the same thing.
         setNotGradeable(result == null);
       } catch (err) {
+        if (isStale()) return;
         if (isNotGradeableSwarmSessionError(err)) {
           setNotGradeable(true);
           return;
@@ -104,7 +112,7 @@ export function SwarmJudgeSection({
           toast.error(message);
         }
       } finally {
-        setRequesting(false);
+        if (!isStale()) setRequesting(false);
       }
     },
     [requestJudge, threadId]
@@ -114,6 +122,8 @@ export function SwarmJudgeSection({
     autoAttemptedRef.current = false;
     setNotGradeable(false);
     setRequestError(null);
+    // A request for the previous session is abandoned, not awaited.
+    setRequesting(false);
   }, [threadId]);
 
   useEffect(() => {

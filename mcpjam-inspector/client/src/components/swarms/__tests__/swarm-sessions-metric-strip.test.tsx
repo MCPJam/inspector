@@ -1,4 +1,11 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -24,6 +31,7 @@ vi.mock("convex/react", () => ({
 
 import { SwarmSessionsMetricStrip } from "../swarm-sessions-metric-strip";
 import { SWARM_QUERIES, type SwarmSessionMetrics } from "@/lib/swarm-api";
+import { collapsibleSessionMetricsStorageKey } from "@/components/shared/collapsible-session-metrics-shell";
 
 function fullMetrics(
   overrides: Partial<SwarmSessionMetrics> = {},
@@ -157,5 +165,44 @@ describe("SwarmSessionsMetricStrip", () => {
     render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
     expect(screen.getByTestId("swarm-sessions-metric-shell")).toBeTruthy();
     expect(screen.getByTestId("swarm-sessions-metric-toggle")).toBeTruthy();
+  });
+
+  it("collapses on click and persists the preference", async () => {
+    metricsFixture = fullMetrics();
+    window.localStorage.removeItem(collapsibleSessionMetricsStorageKey());
+    render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
+
+    const toggle = screen.getByTestId("swarm-sessions-metric-toggle");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("swarm-sessions-metric-toggle"),
+      ).toHaveAttribute("aria-expanded", "false");
+    });
+    expect(screen.getByTestId("swarm-sessions-metric-shell")).toHaveAttribute(
+      "data-expanded",
+      "false",
+    );
+    await waitFor(() => {
+      expect(
+        window.localStorage.getItem(collapsibleSessionMetricsStorageKey()),
+      ).toBe("false");
+    });
+  });
+
+  it("opens collapsed when storage says so", () => {
+    metricsFixture = fullMetrics();
+    window.localStorage.setItem(
+      collapsibleSessionMetricsStorageKey(),
+      "false",
+    );
+    render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
+    expect(
+      screen.getByTestId("swarm-sessions-metric-toggle"),
+    ).toHaveAttribute("aria-expanded", "false");
+    window.localStorage.removeItem(collapsibleSessionMetricsStorageKey());
   });
 });

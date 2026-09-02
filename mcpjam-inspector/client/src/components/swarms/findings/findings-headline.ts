@@ -21,6 +21,18 @@ function firstFailingGoal(
   return persona.goals.find((goal) => goal.diagnosisStage !== null);
 }
 
+/**
+ * Whether this goal's diagnosis rests on evidence the miner attached to the
+ * goal itself. Persona-scoped evidence fans to ALL of a persona's goals, so a
+ * stage carrying only that cannot single one out.
+ */
+function diagnosisIsGoalSpecific(goal: GoalFindingsModel): boolean {
+  if (goal.diagnosisStage === null) return false;
+  return goal.stages[goal.diagnosisStage].evidence.some(
+    (item) => item.tone === "fail" && !item.personaScoped
+  );
+}
+
 export function countWords(text: string): number {
   return text
     .trim()
@@ -65,8 +77,18 @@ export function composeFindingsHeadline(model: SwarmFindingsModel): string {
     const lead = failingPersonas[0]!;
     const goal = firstFailingGoal(lead)!;
     const stage = journeyStageTitle(goal.diagnosisStage!).toLowerCase();
-    const title = shortenGoalTitle(goal.title);
     const others = failingPersonas.length - 1;
+    // Persona-scoped evidence was fanned to every goal of that persona, so it
+    // never identifies WHICH goal broke. Name the goal only when journey-scoped
+    // evidence put it there.
+    if (!diagnosisIsGoalSpecific(goal)) {
+      const headline =
+        others > 0
+          ? `${failingPersonas.length} personas stalled at ${stage}.`
+          : `A persona stalled at ${stage}.`;
+      return limitWords(headline);
+    }
+    const title = shortenGoalTitle(goal.title);
     const headline =
       others > 0
         ? `"${title}" broke at ${stage}. ${failingPersonas.length} stalled.`
@@ -77,8 +99,13 @@ export function composeFindingsHeadline(model: SwarmFindingsModel): string {
   const goals = model.personas.flatMap((persona) => persona.goals);
   const frictionGoals = goals.filter((goal) => goal.sentiment.tone === "warn");
   if (frictionGoals.length > 0) {
+    // Denominator counts measured goals only — an ungraded goal is not
+    // evidence of a goal that held.
+    const measuredGoals = goals.filter(
+      (goal) => goal.sentiment.label !== "Unscored"
+    );
     return limitWords(
-      `${frictionGoals.length} of ${goals.length} goals showed friction.`
+      `${frictionGoals.length} of ${measuredGoals.length} goals showed friction.`
     );
   }
 
@@ -111,7 +138,7 @@ export function deriveHonestyFootnotes(args: {
     notes.push("This swarm is still running — findings may change");
   }
   const { graded, total } = signals.judgeCoverage;
-  if (graded > 0 && graded < total) {
+  if (graded < total) {
     notes.push(`Judge covered ${graded} of ${total} sessions`);
   }
   if (signals.truncated) {

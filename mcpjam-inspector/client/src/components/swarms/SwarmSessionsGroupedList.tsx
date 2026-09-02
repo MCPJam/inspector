@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import {
   Collapsible,
@@ -69,9 +70,20 @@ function SwarmSessionGroupSection({
     group.rows.length === 1 ? "" : "s"
   }`;
   const sectionTestId = groupTestId(group, groupUnit);
+  const holdsSelection =
+    selectedThreadId !== null &&
+    group.rows.some((row) => row.id === selectedThreadId);
+
+  const [open, setOpen] = useState(defaultOpen || holdsSelection);
+  // A deep-linked session can live in any group, and its row may only arrive
+  // with a later page — open the group that holds the selection whenever that
+  // becomes true, so the list never hides the session the detail pane shows.
+  useEffect(() => {
+    if (holdsSelection) setOpen(true);
+  }, [holdsSelection]);
 
   return (
-    <Collapsible defaultOpen={defaultOpen}>
+    <Collapsible open={open} onOpenChange={setOpen}>
       <section
         className="overflow-hidden rounded-lg border border-border/60 bg-background shadow-sm"
         data-testid={sectionTestId}

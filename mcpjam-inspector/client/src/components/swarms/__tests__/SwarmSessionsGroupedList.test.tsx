@@ -117,4 +117,123 @@ describe("SwarmSessionsGroupedList", () => {
     ).toHaveAttribute("data-state", "open");
     expect(screen.getByText("Persona B")).toBeInTheDocument();
   });
+
+  it("opens the group that holds the selected session, wherever it sits", () => {
+    const groups = [
+      group("goal-a", "Goal A", ["s1"]),
+      group("goal-b", "Goal B", ["s2"]),
+    ];
+    const threadsById = new Map([
+      ["s1", thread("s1", "Persona A")],
+      ["s2", thread("s2", "Persona B")],
+    ]);
+
+    render(
+      <SwarmSessionsGroupedList
+        groups={groups}
+        threadsById={threadsById}
+        selectedThreadId="s2"
+        onSelectThread={() => {}}
+        groupUnit="goal"
+      />,
+    );
+
+    expect(
+      screen.getByTestId("swarm-goal-group-goal-b-content"),
+    ).toHaveAttribute("data-state", "open");
+    expect(screen.getByText("Persona B")).toBeInTheDocument();
+  });
+
+  it("opens the holding group when its row arrives on a later page", () => {
+    const threadsById = new Map([
+      ["s1", thread("s1", "Persona A")],
+      ["s2", thread("s2", "Persona B")],
+    ]);
+    const props = {
+      threadsById,
+      selectedThreadId: "s2",
+      onSelectThread: () => {},
+      groupUnit: "goal" as const,
+    };
+
+    const { rerender } = render(
+      <SwarmSessionsGroupedList
+        groups={[group("goal-a", "Goal A", ["s1"])]}
+        {...props}
+      />,
+    );
+    expect(screen.queryByTestId("swarm-goal-group-goal-b-content")).toBeNull();
+
+    rerender(
+      <SwarmSessionsGroupedList
+        groups={[
+          group("goal-a", "Goal A", ["s1"]),
+          group("goal-b", "Goal B", ["s2"]),
+        ]}
+        {...props}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("swarm-goal-group-goal-b-content"),
+    ).toHaveAttribute("data-state", "open");
+  });
+
+  it("labels a null runId as ungrouped and tolerates empty rows", () => {
+    const ungrouped: SwarmSessionRunGroup = {
+      runId: null,
+      latestActivityAt: Date.now(),
+      rows: [],
+    };
+
+    render(
+      <SwarmSessionsGroupedList
+        groups={[ungrouped]}
+        threadsById={new Map()}
+        selectedThreadId={null}
+        onSelectThread={() => {}}
+        groupUnit="goal"
+      />,
+    );
+
+    const section = screen.getByTestId("swarm-goal-group-ungrouped");
+    expect(within(section).getByText("Ungrouped sessions")).toBeInTheDocument();
+    expect(within(section).getByText("0 sessions")).toBeInTheDocument();
+  });
+
+  it("skips a row with no loaded thread, and selects the ones it has", async () => {
+    const user = userEvent.setup();
+    const onSelectThread = vi.fn();
+
+    render(
+      <SwarmSessionsGroupedList
+        groups={[group("goal-a", "Goal A", ["s1", "missing"])]}
+        // `missing` has no entry — a row whose thread page has not landed.
+        threadsById={new Map([["s1", thread("s1", "Persona A")]])}
+        selectedThreadId={null}
+        onSelectThread={onSelectThread}
+        groupUnit="goal"
+      />,
+    );
+
+    const content = screen.getByTestId("swarm-goal-group-goal-a-content");
+    expect(within(content).getByText("Persona A")).toBeInTheDocument();
+    // The label is shared by both rows; only the loaded one renders.
+    expect(within(content).getAllByText("Persona A")).toHaveLength(1);
+
+    await user.click(within(content).getByText("Persona A"));
+    expect(onSelectThread).toHaveBeenCalledWith("s1");
+  });
+
+  it("falls back to a short id when no label is known for the run", () => {
+    render(
+      <SwarmSessionsGroupedList
+        groups={[group("run-abcdef123456", "Goal A", ["s1"])]}
+        threadsById={new Map([["s1", thread("s1", "Persona A")]])}
+        selectedThreadId={null}
+        onSelectThread={() => {}}
+      />,
+    );
+    expect(screen.getByText("Run 123456")).toBeInTheDocument();
+  });
 });

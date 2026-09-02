@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 
 import type {
   SwarmOverview,
@@ -133,7 +134,7 @@ vi.mock("@/components/shared/usage-insights/run-insights", async (orig) => {
   >();
   return {
     ...actual,
-    RunInsightsProvider: ({ children }: { children?: React.ReactNode }) => (
+    RunInsightsProvider: ({ children }: { children?: ReactNode }) => (
       <>{children}</>
     ),
     RunInsightsRecommendations: () => null,
@@ -207,12 +208,97 @@ describe("SwarmFindingsTab", () => {
     // The failing goal opens on its diagnosis stage.
     expect(screen.getByTestId("findings-goal-inspect")).toBeInTheDocument();
     expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
-      "aria-pressed",
+      "aria-selected",
       "true"
     );
     // Evidence phrases through the shared deterministic sentence.
     expect(screen.getByTestId("findings-stage-evidence").textContent).toContain(
       'Agents invented a tool named "listSkills"'
+    );
+  });
+
+  it("keeps the chosen persona when a live wave adds one before her", () => {
+    const { rerender } = render(
+      <SwarmFindingsTab
+        wave={wave()}
+        waveSignals={waveSignals}
+        personas={personas}
+      />
+    );
+    fireEvent.click(
+      screen.getAllByRole("tab").find((t) =>
+        t.textContent?.includes("Jonah Okoye")
+      )!
+    );
+    expect(
+      within(screen.getByTestId("findings-persona-card")).getByText(
+        "Jonah Okoye"
+      )
+    ).toBeInTheDocument();
+
+    // Personas sort by name, so "Ada" lands ahead of both — the old
+    // index-keyed selection would have jumped to Jonah's neighbor.
+    const withAda = groupRunsIntoSwarmWaves([
+      ...overview.runs,
+      run({
+        runId: "run-3",
+        journeyRefId: "journey-3",
+        journeyName: "Invite a teammate",
+        personaName: "Ada First",
+      }),
+    ])[0]!;
+    rerender(
+      <SwarmFindingsTab
+        wave={withAda}
+        waveSignals={waveSignals}
+        personas={personas}
+      />
+    );
+
+    expect(
+      within(screen.getByTestId("findings-persona-card")).getByText(
+        "Jonah Okoye"
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("moves between stages with the arrow keys, one tab stop for the strip", () => {
+    render(
+      <SwarmFindingsTab
+        wave={wave()}
+        waveSignals={waveSignals}
+        personas={personas}
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+
+    const selected = screen.getByTestId("findings-stage-discovery");
+    expect(selected).toHaveAttribute("tabindex", "0");
+    expect(screen.getByTestId("findings-stage-call")).toHaveAttribute(
+      "tabindex",
+      "-1"
+    );
+
+    fireEvent.keyDown(selected, { key: "ArrowRight" });
+    expect(screen.getByTestId("findings-stage-selection")).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+
+    fireEvent.keyDown(screen.getByTestId("findings-stage-selection"), {
+      key: "Home",
+    });
+    expect(screen.getByTestId("findings-stage-connection")).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+
+    fireEvent.keyDown(screen.getByTestId("findings-stage-connection"), {
+      key: "End",
+    });
+    expect(screen.getByTestId("findings-stage-value")).toHaveAttribute(
+      "aria-selected",
+      "true"
     );
   });
 
@@ -246,7 +332,10 @@ describe("SwarmFindingsTab", () => {
     fireEvent.click(jonahTab);
     const panel = screen.getByTestId("findings-persona-card");
     expect(within(panel).getByText("Jonah Okoye")).toBeInTheDocument();
-    expect(panel.textContent).not.toContain("not a score for the person");
+    // The panel shows Jonah's own diagnosis, not the previously selected
+    // persona's — a real check on the swap, unlike a phrase the app never
+    // renders.
+    expect(panel.textContent).not.toContain("Maya Chen");
     expect(within(panel).getByTestId("findings-persona-meta").textContent).toBe(
       "New hire · 4 sessions"
     );

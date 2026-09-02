@@ -176,6 +176,36 @@ describe("SwarmJudgeSection", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("ignores a judge request that resolves after the reader switched sessions", async () => {
+    let rejectFirst: ((reason: unknown) => void) | undefined;
+    requestJudgeMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        })
+    );
+    const { rerender } = render(<SwarmJudgeSection threadId="session-1" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+    });
+
+    // Move to another session, then let the FIRST request fail.
+    requestJudgeMock.mockResolvedValueOnce(null);
+    rerender(<SwarmJudgeSection threadId="session-2" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-2" });
+    });
+    rejectFirst?.(new Error("stale judge failure"));
+
+    // The new session's state stands — no error banner from the old request.
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/stale judge failure/)
+      ).not.toBeInTheDocument();
+    });
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
   it("isNotGradeableSwarmSessionError matches the Convex payload and the message", () => {
     expect(
       isNotGradeableSwarmSessionError(

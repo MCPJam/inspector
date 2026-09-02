@@ -1,7 +1,8 @@
 /**
  * The headline card at the top of the Findings tab: kicker, the
  * deterministic headline, then honesty footnote chips. Layout matches the
- * Paper findings mock — a light card with coral orbs on the right.
+ * Paper findings mock — a light card with accent orbs on the right. The orbs
+ * use the `primary` role token; literal hex is forbidden by AGENTS.md.
  */
 
 export function FindingsSummaryCard({
@@ -21,11 +22,11 @@ export function FindingsSummaryCard({
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-5 -top-8 size-40 rounded-full bg-[#E07856] opacity-90"
+        className="pointer-events-none absolute -right-5 -top-8 size-40 rounded-full bg-primary opacity-90"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute right-24 -top-8 size-32 rounded-full bg-[#E07856] opacity-40"
+        className="pointer-events-none absolute right-24 -top-8 size-32 rounded-full bg-primary opacity-40"
       />
       <div className="relative">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">

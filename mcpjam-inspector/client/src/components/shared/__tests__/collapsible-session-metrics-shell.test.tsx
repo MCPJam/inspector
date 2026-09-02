@@ -64,4 +64,55 @@ describe("CollapsibleSessionMetricsShell", () => {
       "false",
     );
   });
+
+  it("renders an em dash for every nullable metric when collapsed", () => {
+    render(
+      <CollapsibleSessionMetricsShell
+        expanded={false}
+        onExpandedChange={vi.fn()}
+        metrics={{
+          ...metricsFixture,
+          toolErrorRate: null,
+          latencyP50Ms: null,
+          avgToolCallsPerSession: null,
+          avgTokensPerSession: null,
+        }}
+        testIdPrefix="swarm"
+      >
+        <div data-testid="strip-body">metrics grid</div>
+      </CollapsibleSessionMetricsShell>,
+    );
+
+    // One chip per nullable metric: Errors, P50, Calls, Tokens.
+    expect(screen.getAllByText("—")).toHaveLength(4);
+  });
+
+  it("takes the collapsed panel out of the accessibility tree", () => {
+    const { rerender } = render(
+      <CollapsibleSessionMetricsShell
+        expanded
+        onExpandedChange={vi.fn()}
+        metrics={metricsFixture}
+        testIdPrefix="swarm"
+      >
+        <div data-testid="strip-body">metrics grid</div>
+      </CollapsibleSessionMetricsShell>,
+    );
+    const panel = document.getElementById("swarm-sessions-metric-panel")!;
+    expect(panel).toHaveAttribute("aria-hidden", "false");
+
+    rerender(
+      <CollapsibleSessionMetricsShell
+        expanded={false}
+        onExpandedChange={vi.fn()}
+        metrics={metricsFixture}
+        testIdPrefix="swarm"
+      >
+        <div data-testid="strip-body">metrics grid</div>
+      </CollapsibleSessionMetricsShell>,
+    );
+    expect(
+      document.getElementById("swarm-sessions-metric-panel"),
+    ).toHaveAttribute("aria-hidden", "true");
+  });
 });

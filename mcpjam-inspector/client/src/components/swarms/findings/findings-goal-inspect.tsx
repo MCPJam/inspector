@@ -6,7 +6,7 @@
  * evidence is UNKNOWN and must not read as a pass.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { JOURNEY_STAGES, type JourneyStageId } from "./journey-stages";
@@ -61,6 +61,26 @@ export function FindingsGoalInspect({
     setOpenEvidence(canListSessions ? 0 : -1);
   }, [selectedStage, goal.runId, canListSessions]);
 
+  // Roving tabindex: one tab stop for the whole strip, arrows move between
+  // stages — same contract as `FindingsPersonaTabs`.
+  const stageListRef = useRef<HTMLOListElement>(null);
+  const handleStageKeyDown = (event: React.KeyboardEvent, index: number) => {
+    const count = JOURNEY_STAGES.length;
+    let next: number | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      next = (index + 1) % count;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      next = (index - 1 + count) % count;
+    } else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = count - 1;
+    if (next === null) return;
+    event.preventDefault();
+    onSelectStage(JOURNEY_STAGES[next]!.id);
+    stageListRef.current
+      ?.querySelectorAll<HTMLButtonElement>("[role='tab']")
+      [next]?.focus();
+  };
+
   return (
     <article
       className="mb-2 overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-950 text-zinc-50 shadow-[0_16px_40px_-24px_rgba(0,0,0,0.8)]"
@@ -90,11 +110,12 @@ export function FindingsGoalInspect({
 
       <div className="px-5 py-4 sm:px-6">
         <ol
+          ref={stageListRef}
           className="grid list-none grid-cols-2 gap-2 p-0 sm:grid-cols-3 lg:grid-cols-6"
           role="tablist"
           aria-label="User value chain stages"
         >
-        {JOURNEY_STAGES.map((stage) => {
+        {JOURNEY_STAGES.map((stage, stageIndex) => {
           const state = goal.stages[stage.id].state;
           const pressed = stage.id === selectedStage;
           return (
@@ -102,10 +123,11 @@ export function FindingsGoalInspect({
               <button
                 type="button"
                 role="tab"
-                aria-pressed={pressed}
                 aria-selected={pressed}
                 aria-controls={evidencePanelId}
+                tabIndex={pressed ? 0 : -1}
                 onClick={() => onSelectStage(stage.id)}
+                onKeyDown={(event) => handleStageKeyDown(event, stageIndex)}
                 className={cn(
                   "group flex min-h-[6.5rem] w-full flex-col rounded-xl border p-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
                   STAGE_BUTTON_CLASSES[state],

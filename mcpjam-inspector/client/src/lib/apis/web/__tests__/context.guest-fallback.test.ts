@@ -9,7 +9,6 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 import { getGuestBearerToken } from "@/lib/guest-session";
-import * as webContext from "../context";
 import {
   getApiAuthorizationHeader,
   setApiContext,
@@ -218,9 +217,9 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     expect(guestResult).toBe("Bearer guest-stale");
     expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
 
-    const resetSpy = vi
-      .spyOn(webContext, "resetTokenCache")
-      .mockImplementation(() => {});
+    // No `resetTokenCache` spy here: `setApiContext` calls it through the
+    // module's own binding, so a namespace spy never takes effect. The real
+    // reset runs, and the assertions below hold on that behavior.
     const getAccessToken = vi.fn().mockResolvedValue("workos-after-sign-in");
     setApiContext({
       projectId: "ws-guest-owned",
@@ -228,13 +227,40 @@ describe("getApiAuthorizationHeader guest fallback", () => {
       getAccessToken,
       isAuthenticated: true,
     });
-    resetSpy.mockRestore();
 
     const signedInResult = await getApiAuthorizationHeader();
 
     expect(signedInResult).toBe("Bearer workos-after-sign-in");
     expect(getAccessToken).toHaveBeenCalledTimes(1);
     expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not hand back a guest token minted for an actor that just signed in", async () => {
+    // Guest mode at the start; the sign-in lands while the guest bearer
+    // lookup is still in flight.
+    setApiContext({
+      projectId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+    });
+
+    const getAccessToken = vi.fn().mockResolvedValue("workos-after-switch");
+    vi.mocked(getGuestBearerToken).mockImplementationOnce(async () => {
+      setApiContext({
+        projectId: "ws-1",
+        serverIdsByName: {},
+        getAccessToken,
+        isAuthenticated: true,
+      });
+      return "guest-from-previous-actor";
+    });
+
+    const result = await getApiAuthorizationHeader();
+
+    expect(result).toBe("Bearer workos-after-switch");
+    // And the stale guest token was not cached for the next caller either.
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-should-not-be-used");
+    expect(await getApiAuthorizationHeader()).toBe("Bearer workos-after-switch");
   });
 
   it("re-evaluates guest token after cache expiry", async () => {

@@ -152,6 +152,9 @@ export function CollapsibleSessionMetricsShell({
 
       <div
         id={`${testIdPrefix}-sessions-metric-panel`}
+        // Collapsed content is only visually clipped, so it stays reachable by
+        // screen readers unless it is taken out of the accessibility tree.
+        aria-hidden={!expanded}
         className={cn(
           "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
           expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",

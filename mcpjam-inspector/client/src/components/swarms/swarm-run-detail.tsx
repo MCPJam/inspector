@@ -43,7 +43,6 @@ import {
   swarmWaveRouteId,
   swarmWaveTitle,
   waveLiveProgress,
-  type SwarmWave,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
 

@@ -747,7 +747,19 @@ async function pollForSessionBearerToken(): Promise<string | null> {
   return null;
 }
 
-export async function getApiAuthorizationHeader(): Promise<string | null> {
+export async function getApiAuthorizationHeader(
+  /** Guards the re-resolution below from looping on a flapping actor. */
+  retriesLeft = 1
+): Promise<string | null> {
+  // The actor can change while a token lookup is in flight (sign-in,
+  // sign-out). Every cache write and return below happens after an await, so
+  // each one re-checks the mode it resolved under and re-resolves rather than
+  // handing back — or caching — the previous actor's token.
+  const guestModeAtStart = shouldPreferGuestBearer();
+  const authChanged = () => shouldPreferGuestBearer() !== guestModeAtStart;
+  const reresolve = () =>
+    retriesLeft > 0 ? getApiAuthorizationHeader(retriesLeft - 1) : null;
+
   // Single bearer-resolution path for hosted and local. authFetch decides
   // whether to attach the result based on the request's loopback/origin and
   // whether a token is available; this function never short-circuits on mode.
@@ -772,6 +784,7 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   // masking valid guest sessions.
   if (shouldPreferGuestBearer()) {
     const guestToken = await getGuestBearerToken();
+    if (authChanged()) return reresolve();
     if (guestToken) {
       cachedBearerToken = {
         token: guestToken,
@@ -787,6 +800,7 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
   if (getAccessToken) {
     try {
       const token = await getAccessToken();
+      if (authChanged()) return reresolve();
       if (token) {
         cachedBearerToken = {
           token,
@@ -809,6 +823,7 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
     // `shouldRetryApiAuth401` deliberately refuses to swap a resolving session
     // for a guest bearer. Wait for the token rather than firing and failing.
     const sessionToken = await awaitSessionBearerToken();
+    if (authChanged()) return reresolve();
     if (sessionToken) {
       cachedBearerToken = {
         token: sessionToken,
@@ -822,6 +837,7 @@ export async function getApiAuthorizationHeader(): Promise<string | null> {
 
   // Fall back to guest token for explicit guest-capable surfaces only.
   const guestToken = await getGuestBearerToken();
+  if (authChanged()) return reresolve();
   if (guestToken) {
     cachedBearerToken = {
       token: guestToken,

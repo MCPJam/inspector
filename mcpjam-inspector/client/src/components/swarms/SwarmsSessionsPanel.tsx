@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
 import { MessageSquare } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -168,12 +169,24 @@ export function SwarmsSessionsPanel({
     }
   }, [initialThreadId, rows]);
 
-  // Walk the rest of the feed as each page lands. Convex flips the status to
-  // LoadingMore on every call, so this is one page at a time — not a click,
-  // and not every remaining row in one request.
+  // Walk the feed as each page lands, but do NOT drain an unbounded project
+  // history just because someone opened the Sessions tab. Automatic paging is
+  // for work that needs rows it has not seen yet:
+  //   - an unresolved deep link, until its row arrives
+  //   - the run-scoped view, whose filter runs client-side over loaded pages
+  // The plain feed gets a few pages, then hands the reader a Load more button.
+  const AUTO_PAGE_LIMIT = 4;
+  const [autoPagesLoaded, setAutoPagesLoaded] = useState(0);
+  const pendingDeepLink = Boolean(initialThreadId) && !appliedInitialRef.current;
+  const autoPagingAllowed =
+    pendingDeepLink || Boolean(runIdSet) || autoPagesLoaded < AUTO_PAGE_LIMIT;
   useEffect(() => {
-    if (status === "CanLoadMore") loadMore(DEFAULT_PAGE_SIZE);
-  }, [status, loadMore]);
+    if (status !== "CanLoadMore" || !autoPagingAllowed) return;
+    setAutoPagesLoaded((n) => n + 1);
+    loadMore(DEFAULT_PAGE_SIZE);
+    // `autoPagesLoaded` is a dep on purpose: each landed page re-evaluates the
+    // budget, so the walk continues until the cap and then stops.
+  }, [status, loadMore, autoPagingAllowed, autoPagesLoaded]);
 
   const threads = useMemo(
     () => rows.map((r) => journeySessionRowToThread(r, personaName)),
@@ -251,6 +264,21 @@ export function SwarmsSessionsPanel({
               }`}
             </p>
           )}
+          {status === "CanLoadMore" && !autoPagingAllowed ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 shrink-0 text-xs"
+              data-testid="swarms-sessions-load-more"
+              onClick={() => {
+                setAutoPagesLoaded(0);
+                loadMore(DEFAULT_PAGE_SIZE);
+              }}
+            >
+              Load more
+            </Button>
+          ) : null}
           <Select
             value={groupBy}
             onValueChange={(value) => {

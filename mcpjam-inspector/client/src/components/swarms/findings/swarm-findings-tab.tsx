@@ -58,7 +58,10 @@ export function SwarmFindingsTab({
     [waveSignals, wave.runs]
   );
 
-  const [personaChoice, setPersonaChoice] = useState<number | null>(null);
+  // Keyed by name, not index: `deriveSwarmFindingsModel` sorts personas
+  // alphabetically, so a live wave adding a persona would shift indices under
+  // the reader and silently select someone else.
+  const [personaChoice, setPersonaChoice] = useState<string | null>(null);
   const [expandedChoice, setExpandedChoice] = useState<{
     personaName: string;
     runId: string | null;
@@ -68,8 +71,12 @@ export function SwarmFindingsTab({
     stage: JourneyStageId;
   } | null>(null);
 
+  const chosenIndex =
+    personaChoice === null
+      ? -1
+      : model.personas.findIndex((p) => p.name === personaChoice);
   const personaIndex = Math.min(
-    personaChoice ?? model.defaultPersonaIndex,
+    chosenIndex >= 0 ? chosenIndex : model.defaultPersonaIndex,
     Math.max(0, model.personas.length - 1)
   );
   const persona = model.personas[personaIndex];
@@ -113,7 +120,9 @@ export function SwarmFindingsTab({
           personas={model.personas}
           selectedIndex={personaIndex}
           onSelect={(index) => {
-            setPersonaChoice(index);
+            const next = model.personas[index];
+            if (!next) return;
+            setPersonaChoice(next.name);
             setExpandedChoice(null);
           }}
         />

@@ -85,7 +85,7 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
-    user: { id: "user-1", email: "prathmesh@mcpjam.com" },
+    user: { id: "user-1", email: "user-1@example.com" },
   }),
 }));
 

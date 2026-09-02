@@ -426,19 +426,28 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 });
 
 describe("SwarmsTab — top-level Journeys view", () => {
-  it("pages the project feed automatically instead of asking for Load more", async () => {
+  it("pages the project feed a bounded number of times, then hands over Load more", async () => {
+    // Auto-paging exists to resolve a deep link and to fill the run-scoped
+    // view — not to drain an unbounded project history on tab open.
     projectSessionsStatus = "CanLoadMore";
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     openSessionsTab();
 
     const panel = await screen.findByTestId("swarms-sessions-panel");
-    expect(
-      within(panel).queryByRole("button", { name: /load more/i })
-    ).toBeNull();
     await waitFor(() => {
       expect(projectSessionsLoadMore).toHaveBeenCalled();
     });
+
+    const loadMore = await within(panel).findByTestId(
+      "swarms-sessions-load-more"
+    );
+    // Auto-paging stopped on its own — the button only exists once it has.
+    const autoCalls = projectSessionsLoadMore.mock.calls.length;
+    fireEvent.click(loadMore);
+    expect(projectSessionsLoadMore.mock.calls.length).toBeGreaterThan(
+      autoCalls
+    );
   });
 
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {

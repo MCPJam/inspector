@@ -676,6 +676,18 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
   });
 
   it("does not render the retired launch-outcome strip", async () => {
+    // The wave needs a durable group id, or the detail page dispatches
+    // `getWaveSignals` with "skip" and this fixture never reaches the
+    // component — the assertions below would pass with the strip re-added.
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        withGroup(newest!, "wave-nightly"),
+        withGroup(second!, "wave-nightly"),
+        ...rest,
+      ],
+    };
     waveSignalsData = {
       candidates: [],
       targetHealth: [
@@ -697,9 +709,16 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       terminal: true,
     };
 
-    renderTab("run-2b");
+    renderTab("wave-nightly");
 
     expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
+    // The query really fired with this wave's args, so the target-health
+    // fixture above did reach the component.
+    const signalsCall = queryCalls.find(
+      (c) => c.name === "swarmWaveInsights:getWaveSignals"
+    );
+    expect(signalsCall).toBeTruthy();
+    expect(signalsCall!.args).toMatchObject({ swarmRunGroupId: "wave-nightly" });
     expect(screen.queryByTestId("swarm-target-health")).toBeNull();
     expect(screen.queryByText(/Some launches did not reach a session/i)).toBeNull();
   });

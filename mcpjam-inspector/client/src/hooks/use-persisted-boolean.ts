@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 function readStoredBoolean(key: string, defaultValue: boolean): boolean {
   if (typeof window === "undefined") return defaultValue;
@@ -21,20 +21,29 @@ export function usePersistedBoolean(
     readStoredBoolean(key, defaultValue),
   );
 
+  // The updater stays pure — persisting inside it would let a StrictMode
+  // replay or an interrupted concurrent render write a preference the UI
+  // never committed. Mirror the COMMITTED value instead.
   const setPersisted = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
-      setValue((prev) => {
-        const resolved = typeof next === "function" ? next(prev) : next;
-        try {
-          window.localStorage.setItem(key, String(resolved));
-        } catch {
-          // Ignore write failures.
-        }
-        return resolved;
-      });
+      setValue((prev) => (typeof next === "function" ? next(prev) : next));
     },
-    [key],
+    [],
   );
+
+  // Skip the write for the value we just read back out of storage.
+  const hydratedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (hydratedKey.current !== key) {
+      hydratedKey.current = key;
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, String(value));
+    } catch {
+      // Private mode or quota — in-memory state still wins.
+    }
+  }, [key, value]);
 
   return [value, setPersisted];
 }

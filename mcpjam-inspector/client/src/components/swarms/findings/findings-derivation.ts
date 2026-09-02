@@ -324,16 +324,27 @@ function goalDiagnosis(stages: Record<JourneyStageId, GoalStageModel>): {
       };
     }
   }
-  const anythingMeasured = JOURNEY_STAGES.some(
-    (stage) => stages[stage.id].state !== "none"
+  // Launch outcomes are not a finding about the server (CONNECTION_CAVEAT),
+  // so a successful launch alone never earns "Landed" — it is not grading.
+  const gradedStages = JOURNEY_STAGES.filter(
+    (stage) => stage.id !== "connection" && stages[stage.id].state !== "none"
   );
-  if (anythingMeasured) {
+  if (gradedStages.length > 0) {
+    const sawWarn = gradedStages.some(
+      (stage) => stages[stage.id].state === "warn"
+    );
     return {
       diagnosisStage: null,
-      diagnosis: {
-        title: "Landed",
-        detail: "Every measured stage held for this goal.",
-      },
+      diagnosis: sawWarn
+        ? {
+            title: "Friction",
+            detail:
+              "No stage broke outright, but at least one measured stage showed friction.",
+          }
+        : {
+            title: "Landed",
+            detail: "Every measured stage held for this goal.",
+          },
     };
   }
   return {
