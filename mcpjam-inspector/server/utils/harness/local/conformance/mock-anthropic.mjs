@@ -6,12 +6,18 @@
 //   "COUNT"            -> text: number of user turns seen in this request (continuity probe)
 //   anything else      -> text echo
 // After a tool_result arrives, answers with a final text summarising the result.
-// Verifies the gateway's proof-of-possession header when MOCK_POP_SECRET is set.
+// Verifies the gateway's proof-of-possession header. MOCK_POP_SECRET is required.
 import http from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const port = Number(process.env.MOCK_PORT ?? 0);
 const popSecret = process.env.MOCK_POP_SECRET ?? "";
+// This process is the ORACLE for the gateway's proof of possession. Without a
+// secret it verified nothing and answered 200 to everything, so a runner that
+// forgot to set it would produce a green suite that proved the header exists
+// and never that it is correct. The gateway already refuses to start without
+// its half; this is the same rule on the side that checks the answer.
+if (!popSecret) throw new Error("MOCK_POP_SECRET required and must be non-empty");
 /** The credential the gateway is expected to present upstream, if the run set one. */
 const expectedUpstreamKey = process.env.MOCK_UPSTREAM_KEY ?? "";
 /**
@@ -96,7 +102,6 @@ function lastUserText(messages) {
   return { text: "", toolResult: null };
 }
 function verifyPop(req) {
-  if (!popSecret) return { ok: true };
   const h = req.headers["x-mcpjam-pop"];
   if (typeof h !== "string") return { ok: false, why: "missing x-mcpjam-pop" };
   const [ts, nonce, mac] = h.split(".");
