@@ -205,7 +205,25 @@ async function startChild(script: string, env: Record<string, string>) {
   });
   helpers.push(child);
   const stderr: string[] = [];
-  child.stderr!.on("data", (c) => stderr.push(...String(c).split("\n").filter(Boolean)));
+  // Line-BUFFERED. Splitting each chunk on its own breaks wherever the OS
+  // handed over the pipe, so `[gw] upstream error …` could arrive as
+  // `[gw] upstream er` + `ror …` and neither fragment matches a filter looking
+  // for it. Assertions read this array; one that can silently miss its subject
+  // is worse than none.
+  let stderrTail = "";
+  const onStderr = (chunk: Buffer | string) => {
+    stderrTail += String(chunk);
+    const lines = stderrTail.split("\n");
+    // The last element is whatever came after the final newline: keep it back
+    // until the rest of it arrives.
+    stderrTail = lines.pop() ?? "";
+    for (const line of lines) if (line !== "") stderr.push(line);
+  };
+  child.stderr!.on("data", onStderr);
+  // A helper that dies mid-line still has to be heard: flush what is held.
+  child.stderr!.on("end", () => {
+    if (stderrTail !== "") { stderr.push(stderrTail); stderrTail = ""; }
+  });
   const port = await new Promise<number>((resolve, reject) => {
     let buf = "";
     child.stdout!.on("data", (c) => {
@@ -601,6 +619,13 @@ async function main() {
   const gatewayErrors = gw.stderr.filter((l) => l.includes("upstream error") || l.includes("upstream timeout"));
   if (gatewayErrors.length > 0) failures.push(`the gateway failed ${gatewayErrors.length} upstream call(s): ${JSON.stringify(gatewayErrors.slice(0, 3))}`);
   if (turn2.approvals < 1) failures.push("turn2 ran Bash without ever requesting approval");
+  // EXECUTED, not merely requested. A tool-call part says the model asked for
+  // Bash; approving it and having nothing run would satisfy every check above.
+  // The mock answers a tool_result with `TOOL RESULT RECEIVED: <output>`, so
+  // the workspace path coming back is `pwd`'s own output making the whole round
+  // trip — request, approval, execution, result, model.
+  if ((turn2.parts["tool-result"] ?? 0) < 1) failures.push(`turn2 produced no tool-result, so the approved Bash never ran (parts=${JSON.stringify(turn2.parts)})`);
+  if (!turn2.text.includes(plan.workspacePath)) failures.push("turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model)");
 
   gw.child.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 200));

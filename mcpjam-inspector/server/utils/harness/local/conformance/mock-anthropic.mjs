@@ -26,10 +26,23 @@ const expectedUpstreamKey = process.env.MOCK_UPSTREAM_KEY ?? "";
  * simplification — it is the reason the suite agreed with a broken gateway.
  */
 const latencyMs = Number(process.env.MOCK_LATENCY_MS ?? 0);
+// Validated, not coerced. `Number("50ms")` is NaN and `NaN > 0` is false, so a
+// typo turned the stress off and left the suite quietly back in the state that
+// hid the gateway defect in the first place — a knob that silently does
+// nothing is worse than no knob.
+if (!Number.isFinite(latencyMs) || latencyMs < 0) {
+  throw new Error(
+    `MOCK_LATENCY_MS must be a finite, non-negative number of milliseconds; got ${JSON.stringify(process.env.MOCK_LATENCY_MS)}`,
+  );
+}
 const seenNonces = new Set();
 const log = (...a) => console.error("[mock]", ...a);
 let requestCount = 0;
 
+/** Run `send` after the configured upstream latency, if any. */
+function held(send) {
+  held(send);
+}
 function sse(res, events) {
   const send = () => {
     // The client may already be gone — the gateway cancels an upstream call
@@ -138,7 +151,10 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: "malformed JSON body" }));
         return;
       }
-      if (req.url.includes("count_tokens")) { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ input_tokens: 42 })); return; }
+      // Delayed like every other answer: this is a real forwarded request
+      // through the gateway, so leaving it instant left one upstream path the
+      // timing stress never covered.
+      if (req.url.includes("count_tokens")) { held(() => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ input_tokens: 42 })); }); return; }
       const messages = Array.isArray(body.messages) ? body.messages : [];
       const userTurns = messages.filter((m) => m.role === "user" && (typeof m.content === "string" || (Array.isArray(m.content) && m.content.some((b) => b.type === "text")))).length;
       const id = `msg_${requestCount}`;

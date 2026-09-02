@@ -34,7 +34,7 @@ if (upstreamKey && upstream.protocol === "http:" && !upstreamIsLoopback) {
 }
 /** How long an upstream may take before this gateway gives up on it. */
 const UPSTREAM_TIMEOUT_MS = 120_000;
-const stats = { requests: 0, rejected: 0, upstreamMs: [], bytesIn: 0, bytesOut: 0 };
+const stats = { requests: 0, rejected: 0, upstreamMs: [], upstreamNon2xx: 0, bytesIn: 0, bytesOut: 0 };
 const log = (...a) => console.error("[gw]", ...a);
 let revoked = false;
 
@@ -65,6 +65,14 @@ const server = http.createServer((req, res) => {
   const transport = upstream.protocol === "https:" ? https : http;
   const up = transport.request({ hostname: upstream.hostname, port: upstream.port, path: req.url, method: req.method, headers }, (upRes) => {
     stats.upstreamMs.push(Math.round(performance.now() - t0));
+    // A non-2xx upstream is a failed call as much as a transport error is, and
+    // only the transport case was logged — so a scenario asserting "no upstream
+    // call failed" would have accepted a turn that spent itself retrying an
+    // upstream answering 500.
+    if (upRes.statusCode === undefined || upRes.statusCode < 200 || upRes.statusCode >= 300) {
+      stats.upstreamNon2xx = (stats.upstreamNon2xx ?? 0) + 1;
+      log("upstream error", `HTTP ${upRes.statusCode}`, req.method, req.url);
+    }
     res.writeHead(upRes.statusCode, upRes.headers);
     upRes.on("data", (c) => { stats.bytesOut += c.length; });
     upRes.pipe(res);

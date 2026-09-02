@@ -203,9 +203,24 @@ async function startChild(script: string, env: Record<string, string>) {
   // say for itself, and "exited 1" alone has cost one Windows debugging round
   // already.
   const stderr: string[] = [];
-  child.stderr!.on("data", (c) =>
-    stderr.push(...String(c).split("\n").filter(Boolean)),
-  );
+  // Line-BUFFERED. Splitting each chunk on its own breaks wherever the OS
+  // handed over the pipe, so `[gw] upstream error …` could arrive as
+  // `[gw] upstream er` + `ror …` and neither fragment matches a filter looking
+  // for it. Assertions read this array; one that can silently miss its subject
+  // is worse than none.
+  let stderrTail = "";
+  const onStderr = (chunk: Buffer | string) => {
+    stderrTail += String(chunk);
+    const lines = stderrTail.split("\n");
+    // The last element is whatever came after the final newline: keep it back
+    // until the rest of it arrives.
+    stderrTail = lines.pop() ?? "";
+    for (const line of lines) if (line !== "") stderr.push(line);
+  };
+  child.stderr!.on("data", onStderr);
+  child.stderr!.on("end", () => {
+    if (stderrTail !== "") { stderr.push(stderrTail); stderrTail = ""; }
+  });
   const port = await new Promise<number>((resolve, reject) => {
     // On a COMPLETE line only: a chunk boundary can land mid-JSON, and
     // `JSON.parse` on the partial then threw inside a `data` handler and
