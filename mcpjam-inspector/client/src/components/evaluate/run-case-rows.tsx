@@ -19,12 +19,14 @@ import { cn } from "@/lib/utils";
 import {
   USER_VALUE_STAGES,
   USER_VALUE_STAGE_LABELS,
+  type UserValueStage,
 } from "@mcpjam/sdk/contract";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import {
   caseRowReasonLabel,
   type CaseRowIterationCell,
   type EvaluateCaseRow,
+  type StageCellState,
 } from "./evaluate-case-row-model";
 import type { RunChangePill } from "./evaluate-run-diff-model";
 
@@ -129,40 +131,96 @@ function IterationStrip({ row }: { row: EvaluateCaseRow }) {
   );
 }
 
+/**
+ * One square per stage, saying what happened there across the loaded chains.
+ *
+ * The rule this enforces is the row's whole reason for existing: a stage is
+ * green only when every chain we hold reported it PASSED. A case that stopped
+ * at Selection never reached Call, and painting Call green because nothing
+ * broke there would be a claim about three stages the run never measured.
+ */
+function StageCell({
+  stage,
+  state,
+}: {
+  stage: UserValueStage;
+  state: StageCellState;
+}) {
+  const label = USER_VALUE_STAGE_LABELS[stage];
+
+  if (state.kind === "failed") {
+    return (
+      <span
+        className="inline-flex h-3 min-w-[14px] items-center justify-center rounded-[2px] bg-destructive px-[3px] text-[9px] font-bold tabular-nums text-destructive-foreground"
+        title={`${label}: ${state.count} broke here`}
+      >
+        {state.count}
+      </span>
+    );
+  }
+
+  if (state.kind === "passed") {
+    return (
+      <span
+        className="inline-block h-2 w-3.5 rounded-[2px] bg-success/70"
+        title={`${label}: passed in ${state.count} ${
+          state.count === 1 ? "iteration" : "iterations"
+        }`}
+      />
+    );
+  }
+
+  if (state.kind === "partial") {
+    // Split, not rounded. Some iterations passed here and the rest never
+    // arrived; either solid colour would be false about most of them.
+    const total = state.passed + state.unreached;
+    return (
+      <span
+        className="inline-flex h-2 w-3.5 overflow-hidden rounded-[2px]"
+        title={`${label}: passed in ${state.passed} of ${total}, ${state.unreached} never reached it`}
+      >
+        <span
+          className="h-full bg-success/70"
+          style={{ width: `${Math.round((state.passed / total) * 100)}%` }}
+        />
+        <span className="h-full flex-1 bg-muted-foreground/30" />
+      </span>
+    );
+  }
+
+  if (state.kind === "notReached") {
+    return (
+      <span
+        className="inline-block h-2 w-3.5 rounded-[2px] bg-muted-foreground/30"
+        title={`${label}: never reached`}
+      />
+    );
+  }
+
+  return (
+    <span
+      className="inline-block h-2 w-3.5 rounded-[2px] border border-dashed border-border"
+      title={`${label}: ${
+        state.kind === "notLoaded"
+          ? "chain not loaded"
+          : state.kind === "notApplicable"
+            ? "does not apply to this case"
+            : "not measured"
+      }`}
+    />
+  );
+}
+
 function ChainCells({ row }: { row: EvaluateCaseRow }) {
   return (
     <span className="hidden items-center gap-1 sm:inline-flex">
-      {USER_VALUE_STAGES.map((stage) => {
-        const breaks = row.coverage.breaksByStage[stage];
-        if (breaks > 0) {
-          return (
-            <span
-              key={stage}
-              className="inline-flex h-3 min-w-[14px] items-center justify-center rounded-[2px] bg-destructive px-[3px] text-[9px] font-bold tabular-nums text-destructive-foreground"
-              title={`${breaks} broke at ${USER_VALUE_STAGE_LABELS[stage]}`}
-            >
-              {breaks}
-            </span>
-          );
-        }
-        const loadedNone = row.coverage.loaded === 0;
-        return (
-          <span
-            key={stage}
-            title={
-              loadedNone
-                ? `${USER_VALUE_STAGE_LABELS[stage]}: chain not loaded`
-                : USER_VALUE_STAGE_LABELS[stage]
-            }
-            className={cn(
-              "inline-block h-2 w-3.5 rounded-[2px]",
-              loadedNone
-                ? "border border-dashed border-border"
-                : "bg-success/70",
-            )}
-          />
-        );
-      })}
+      {USER_VALUE_STAGES.map((stage) => (
+        <StageCell
+          key={stage}
+          stage={stage}
+          state={row.coverage.stageStates[stage]}
+        />
+      ))}
     </span>
   );
 }

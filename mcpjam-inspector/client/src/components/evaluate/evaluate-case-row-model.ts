@@ -34,6 +34,7 @@ import {
   type EvalRunDecisionDiagnostic,
   type EvalRunDecisionSummary,
   type StageReason,
+  type StageState,
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
 
@@ -67,11 +68,32 @@ export type CaseRowBreak =
   | { kind: "notLoaded" }
   | { kind: "none" };
 
+/**
+ * What one stage looked like across the iterations whose chains we hold.
+ *
+ * NOT just a break count. The first draft of this row painted every stage with
+ * zero breaks green, which meant a case that stopped at Selection rendered
+ * Call, Response and User value as passing — three stages it never reached.
+ * That is the same over-claim the chip vocabulary exists to prevent, made by a
+ * row of coloured squares instead of a word.
+ */
+export type StageCellState =
+  | { kind: "failed"; count: number }
+  | { kind: "passed"; count: number }
+  /** Some iterations passed here and the rest never got this far. */
+  | { kind: "partial"; passed: number; unreached: number }
+  | { kind: "notReached"; count: number }
+  | { kind: "notMeasured"; count: number }
+  | { kind: "notApplicable"; count: number }
+  | { kind: "notLoaded" };
+
 export type CaseRowCoverage = {
   total: number;
   loaded: number;
   /** Iterations whose chain says a stage failed, tallied by that stage. */
   breaksByStage: Record<UserValueStage, number>;
+  /** What each stage looked like across the loaded chains. */
+  stageStates: Record<UserValueStage, StageCellState>;
   withheld: number;
   /** Set only when some chain was not loaded, so the row can say so in words. */
   note: string | null;
@@ -219,6 +241,48 @@ function breakFromChain(chain: EvalRunDecisionChain | null): CaseRowBreak {
   return { kind: "none" };
 }
 
+/**
+ * One stage's cell, from the states every loaded chain reported for it.
+ *
+ * The break count wins the cell when there is one, because that is what a
+ * reader is looking for. Otherwise the states decide, and `partial` exists so
+ * that "seven iterations passed here and three never arrived" is not rounded up
+ * to green or down to grey — both would be false about most of them.
+ */
+function summarizeStage(
+  states: readonly StageState[] | undefined,
+  breaks: number,
+): StageCellState {
+  if (breaks > 0) return { kind: "failed", count: breaks };
+  if (!states || states.length === 0) return { kind: "notLoaded" };
+
+  const tally = { passed: 0, notReached: 0, notMeasured: 0, notApplicable: 0 };
+  for (const state of states) {
+    if (state === "passed") tally.passed += 1;
+    else if (state === "notReached") tally.notReached += 1;
+    else if (state === "notApplicable") tally.notApplicable += 1;
+    else tally.notMeasured += 1;
+  }
+
+  if (tally.passed === states.length) {
+    return { kind: "passed", count: tally.passed };
+  }
+  if (tally.notReached === states.length) {
+    return { kind: "notReached", count: tally.notReached };
+  }
+  if (tally.notApplicable === states.length) {
+    return { kind: "notApplicable", count: tally.notApplicable };
+  }
+  if (tally.passed === 0) {
+    return { kind: "notMeasured", count: states.length };
+  }
+  return {
+    kind: "partial",
+    passed: tally.passed,
+    unreached: states.length - tally.passed,
+  };
+}
+
 /** Rank for sorting. Failures first, then anything undecided, then passes. */
 function sortRank(row: EvaluateCaseRow): number {
   if (row.mark === "failed") return 0;
@@ -242,6 +306,17 @@ export function buildEvaluateCaseRows(
     let loaded = 0;
     let withheld = 0;
 
+    // Per stage, the states every loaded chain reported there. Aggregated from
+    // the rows themselves rather than inferred from the break counts, so a
+    // stage nobody reached cannot come out looking like one that passed.
+    const observed = USER_VALUE_STAGES.reduce(
+      (acc, stage) => {
+        acc[stage] = [];
+        return acc;
+      },
+      {} as Record<UserValueStage, StageState[]>,
+    );
+
     for (const iteration of group.iterations) {
       const chain = chainFor(
         iteration._id,
@@ -255,12 +330,25 @@ export function buildEvaluateCaseRows(
           ? (chain.firstFailedStage ?? null)
           : null;
       if (stage) breaksByStage[stage] += 1;
+      if (chain && chain.status === "verified") {
+        for (const row of chain.stages) {
+          observed[row.stage]?.push(row.state);
+        }
+      }
       cells.push({
         iterationId: iteration._id,
         outcome: outcomeOf(iteration),
         stage,
       });
     }
+
+    const stageStates = USER_VALUE_STAGES.reduce(
+      (acc, stage) => {
+        acc[stage] = summarizeStage(observed[stage], breaksByStage[stage]);
+        return acc;
+      },
+      {} as Record<UserValueStage, StageCellState>,
+    );
 
     // Which iteration opens: the first failing one whose chain explains it,
     // then the first failing one at all, then the first iteration.
@@ -377,6 +465,7 @@ export function buildEvaluateCaseRows(
         total: group.iterations.length,
         loaded,
         breaksByStage,
+        stageStates,
         withheld,
         note,
       },

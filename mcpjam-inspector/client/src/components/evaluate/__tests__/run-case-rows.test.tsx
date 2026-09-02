@@ -36,6 +36,14 @@ function row(overrides: Partial<EvaluateCaseRow> = {}): EvaluateCaseRow {
         response: 0,
         userValue: 0,
       },
+      stageStates: {
+        connection: { kind: "passed", count: 10 },
+        discovery: { kind: "passed", count: 10 },
+        selection: { kind: "failed", count: 3 },
+        call: { kind: "partial", passed: 6, unreached: 4 },
+        response: { kind: "partial", passed: 6, unreached: 4 },
+        userValue: { kind: "notMeasured", count: 10 },
+      },
       withheld: 0,
       note: null,
     },
@@ -144,6 +152,45 @@ describe("RunCaseRows", () => {
       />,
     );
     expect(screen.queryByText("Open this iteration")).toBeNull();
+  });
+
+  it("never paints a stage green that the run did not reach", () => {
+    // The bug this replaced: any stage with zero breaks rendered solid green,
+    // so a case that stopped at Selection showed Call, Response and User value
+    // as passing — three stages it never measured.
+    render(
+      <RunCaseRows
+        rows={[
+          row({
+            coverage: {
+              ...row().coverage,
+              stageStates: {
+                connection: { kind: "passed", count: 1 },
+                discovery: { kind: "passed", count: 1 },
+                selection: { kind: "failed", count: 1 },
+                call: { kind: "notReached", count: 1 },
+                response: { kind: "notReached", count: 1 },
+                userValue: { kind: "notMeasured", count: 1 },
+              },
+            },
+          }),
+        ]}
+        defaultOpenKey={null}
+      />,
+    );
+
+    expect(screen.getByTitle("Tool call: never reached")).toBeInTheDocument();
+    expect(screen.getByTitle("Response: never reached")).toBeInTheDocument();
+    expect(screen.getByTitle("User value: not measured")).toBeInTheDocument();
+    // And nothing claims a pass for them.
+    expect(screen.queryByTitle(/Tool call: passed/)).toBeNull();
+  });
+
+  it("splits a stage some iterations reached and others did not", () => {
+    render(<RunCaseRows rows={[row()]} defaultOpenKey={null} />);
+    expect(
+      screen.getByTitle("Tool call: passed in 6 of 10, 4 never reached it"),
+    ).toBeInTheDocument();
   });
 
   it("says so plainly when a run has no cases", () => {
