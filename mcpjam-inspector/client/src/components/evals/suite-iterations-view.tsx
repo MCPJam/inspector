@@ -52,6 +52,7 @@ import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
+import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
@@ -1330,7 +1331,26 @@ export function SuiteIterationsView({
                     projectId ? () => setTracesExportOpen(true) : undefined
                   }
                 >
-                  {runDetailView}
+                  {projectId ? (
+                    <EvaluateRunContent
+                      projectId={projectId}
+                      run={selectedRunDetails}
+                      iterations={caseGroupsForSelectedRun}
+                      decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                      onOpenIteration={({ testCaseId, iterationId }) =>
+                        // Same routing rule the decision card follows: an
+                        // iteration id is only consumed by the case editor, so
+                        // sending a reader to run detail would land them on the
+                        // page they are already looking at with nothing opened.
+                        navigation.toTestEdit(suite._id, testCaseId, {
+                          iteration: iterationId,
+                        })
+                      }
+                      fallbackBody={runDetailView}
+                    />
+                  ) : (
+                    runDetailView
+                  )}
                 </EvaluateRunPage>
               </motion.div>
             ) : showEvaluateSuiteDetail ? (
