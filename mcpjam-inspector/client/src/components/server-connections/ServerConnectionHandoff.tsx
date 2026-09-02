@@ -313,13 +313,21 @@ export function ServerConnectionHandoff() {
   // stripped after a claim succeeds), the page cold-mounts, hydration races the
   // claim again, and the same screen comes back. Every cold load of a handoff
   // link is exactly the case that loses this race.
+  //
+  // ONLY THE CLAIM WAITS. The other two paths through this effect authenticate
+  // with the continuation cookie and want nothing from AuthKit, so holding
+  // them on it is strictly harmful: a slow hydration delays the `/state` read,
+  // and a hydration that never settles strands `/authorize/complete` — the
+  // code exchange — AFTER the user has already consented at the authorization
+  // server, spending an authorization that can never be redeemed. Route first,
+  // gate second.
   useEffect(() => {
-    if (isAuthLoading) return;
+    const route = matchHandoffRoute(window.location.pathname);
+    if (route?.kind === "claim" && isAuthLoading) return;
     if (claimed.current) return;
     claimed.current = true;
 
     void (async () => {
-      const route = matchHandoffRoute(window.location.pathname);
       const callback = readCallbackParams(window.location.search);
       const pending = readPendingAuthorization();
 
