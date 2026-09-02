@@ -85,7 +85,11 @@ import {
 } from "../../utils/effective-auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
-import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import {
+  checkHarnessRuntimeAvailable,
+  externalAccountHostModelRefusalReason,
+} from "../../utils/harness/harness-availability.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
@@ -285,7 +289,19 @@ chatV2.post("/", async (c) => {
     }
 
     let modelDefinition = model;
-    if (!modelDefinition) {
+    // The ID, not just the object. `model` arrives through an unvalidated body
+    // cast (`hostedChatSchema` does not describe it), and `ModelDefinition.id`
+    // being REQUIRED in TypeScript says nothing about what a browser posted.
+    //
+    // An id-less body used to reach the persist as `String(undefined)` /
+    // `String("")` — a session row that names a model nothing ran, or names
+    // nothing at all and reads blank in the sessions list. It survived that far
+    // only on the harness rail: every other path eventually derives an org
+    // provider key and 400s, while an external-account harness turn skips both
+    // the provider derivation AND the harness model gates by design. So the one
+    // rail with no downstream id check is exactly the one that persisted a
+    // blank. Check it once, here, for all of them.
+    if (!modelDefinition || !String(modelDefinition.id ?? "").trim()) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
@@ -740,8 +756,57 @@ chatV2.post("/", async (c) => {
     // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
     // selections with vendor-prefixed ids) would otherwise inherit the
     // body's provider and route to the wrong runtime.
+    //
+    // Host-wins for a scenario (a share-link client must not re-route the
+    // session), and ALSO for an EXTERNAL-ACCOUNT harness on any surface —
+    // including a Playground preview, where the body normally wins.
+    //
+    // That exception is not a preference, it is honesty about what ran. The
+    // Cursor adapter passes NO model (`toNativeModel: () => undefined`); the
+    // runtime picks one on the customer's own account. So the body's model is
+    // not an override of anything — nothing consumes it — while the host's
+    // `cursor/auto` sentinel is the one value that describes the turn. The
+    // Playground picker cannot even hold that sentinel (it is not in
+    // `availableModels`, so the host-reseed effect skips it), which left the
+    // browser sending whatever unrelated model was last selected; that id is
+    // what the transcript, the trace and eval metadata then recorded — a model
+    // the turn never touched. Recording the sentinel is the whole reason it
+    // exists.
+    //
+    // UNCONDITIONAL for such a harness — deliberately NOT narrowed to a host
+    // that carries the sentinel. It does not need to be: by the time the
+    // promotion runs, the refusal directly below has already established that
+    // this host carries one. Narrowing it as well would only invite the reader
+    // to wonder which of the two decides, and would leave the BODY's model
+    // standing if the refusal were ever moved.
+    const externalAccountHarnessTurn = Boolean(
+      resolvedExecution.harness &&
+        harnessUsesExternalAccount(resolvedExecution.harness),
+    );
+    // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
+    // below resolves anything. `resolveHostModelDefinition` asks the org's
+    // model config about an id it cannot possibly list, on a call carrying a
+    // 15 s timeout — and this host is going to be refused by the harness
+    // pre-flight further down regardless. Deciding it here keeps the same
+    // refusal (one shared sentence, one rule) and pays nothing for it.
+    //
+    // The pre-flight's own copy of the rule stays: it is the gate every surface
+    // shares, and this is a shortcut in front of it, not a replacement.
+    if (resolvedExecution.harness) {
+      const hostModelRefusal = externalAccountHostModelRefusalReason({
+        harnessId: resolvedExecution.harness,
+        modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
+      });
+      if (hostModelRefusal) {
+        throw new WebRouteError(
+          503,
+          ErrorCode.INTERNAL_ERROR,
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+        );
+      }
+    }
     if (
-      isScenarioSession &&
+      (isScenarioSession || externalAccountHarnessTurn) &&
       hostRuntimeConfig &&
       resolvedExecution.modelId &&
       resolvedExecution.modelId !== modelDefinition.id
@@ -759,6 +824,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
+          externalAccountHarness: externalAccountHarnessTurn,
         },
       );
       modelDefinition = hostModel;
@@ -802,6 +868,10 @@ chatV2.post("/", async (c) => {
       // turns are not necessarily an attended member running on their own
       // machine. Local execution belongs on the local route.
       actorEligible: false,
+      // Nothing here can consent, so there is no acting user to bind a grant
+      // to. Both gates above already refuse a local target on this route; this
+      // says the same thing in the one field a grant would be verified against.
+      actingUserId: null,
     });
     if (hostedHarnessTargetParse.kind === "refused") {
       return c.json({ error: hostedHarnessTargetParse.reason }, 400);
@@ -827,6 +897,13 @@ chatV2.post("/", async (c) => {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
         },
+        // The HOST's own configured id, kept separate from the resolved model
+        // above. Only the external-account rule reads it, and only that rule
+        // should: it asks whether this HOST carries the runtime's sentinel, a
+        // question a request body must not be able to answer.
+        ...(resolvedExecution.modelId
+          ? { hostModelId: resolvedExecution.modelId }
+          : {}),
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).

@@ -555,10 +555,18 @@ describe("SwarmsTab — New swarm create flow", () => {
     fillDescribe();
 
     expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
+    const block = screen.getByTestId("new-swarm-server-unreachable");
+    expect(block).toHaveTextContent(/prod-like has no servers to run against/i);
+    // BB-63 G1: nothing is attached yet, so this is a setup step — not an
+    // alarm about something the user broke.
+    expect(block).toHaveAttribute("data-tone", "guidance");
+    // BB-63 G2: name what is missing instead of ordering a fix.
+    expect(screen.getByText(/pick a server to continue/i)).toBeVisible();
+    // BB-63: an empty project cannot be fixed on this screen, so the one
+    // navigation that does fix it is a click rather than a sentence.
     expect(
-      screen.getByTestId("new-swarm-server-unreachable"),
-    ).toHaveTextContent(/prod-like has no servers to run against/i);
-    expect(screen.getByText(/fix where it runs to continue/i)).toBeVisible();
+      screen.getByRole("button", { name: /connect a server/i }),
+    ).toBeVisible();
     expect(createSwarmMock).not.toHaveBeenCalled();
   });
 
