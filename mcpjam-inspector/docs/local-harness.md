@@ -233,6 +233,51 @@ Verify with `feature-flags-test-evaluation-create` against a real distinct id
 before each widening; a flag that evaluates `undefined` is off, which is the
 correct failure but an invisible one.
 
+## What blocks Windows
+
+Windows is refused in three places that agree, and the conformance leg is
+non-gating. That is a decision, not an oversight — but as of this branch it is
+also a *measured* one, because the windows leg now runs far enough to say why.
+
+The pack builds, installs, digest-verifies and resolves. Availability passes.
+A session is created. It then fails inside the framework's bootstrap recipe:
+
+```
+CommandTranslationError: path operand
+"/a/inspector/inspector/mcpjam-inspector/C:\Users\runneradmin\.mcpjam\…\work/.harness-bootstrap/claude-code"
+contains a shell metacharacter or glob
+```
+
+Read that string carefully: a POSIX-looking prefix, then a Windows absolute
+path appended to it rather than replacing it. `@ai-sdk/harness` composes the
+bootstrap directory with
+
+```ts
+posix.isAbsolute(path) ? path : posix.resolve(defaultWorkingDirectory, path)
+```
+
+unconditionally, on every platform. `posix.isAbsolute("C:\Users\…")` is
+`false`, so on Windows it resolves a native absolute path against the process
+cwd and produces that hybrid. `supervised-provider.ts` mirrors this deliberately
+— the translator has to expect the exact string the adapter will emit — so our
+side is right and must NOT be "fixed" to use win32 resolution. Doing that would
+make the translator stop recognising the adapter's own commands, which is worse
+than the refusal.
+
+Two things therefore stand between this and Windows support, in order:
+
+1. **Upstream.** The framework's bootstrap recipe is POSIX-only. Until it
+   resolves paths per-platform, no adapter command on Windows carries a path
+   the translator can accept.
+2. **Then ours.** `assertPlainPathOperand` rejects `\` as a shell
+   metacharacter, which is correct on POSIX and wrong on a platform where it is
+   the path separator. Making it platform-aware is a change to a security
+   boundary and wants its own tests: a backslash that separates must be
+   admitted, a backslash that escapes must not.
+
+Neither is a reason to hold the darwin/linux ship. `nativePlatforms` keeps
+refusing win32, and the leg keeps reporting — which is the point of running it.
+
 ## Launch / rollback checklist
 
 **Before enabling for anyone**
