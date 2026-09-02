@@ -1324,6 +1324,7 @@ export function SuiteIterationsView({
                 <EvaluateRunPage
                   run={selectedRunDetails}
                   hostNamesById={hostNamesById}
+                  iterations={caseGroupsForSelectedRun}
                   otherRuns={runs.filter(
                     (candidate) =>
                       candidate._id !== selectedRunDetails._id &&

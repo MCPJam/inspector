@@ -50,6 +50,7 @@ import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
 import { RunStageStrip } from "./run-stage-strip";
 import { buildStageStrip } from "./run-stage-strip-model";
+import { RunGradingPeek } from "./run-grading-peek";
 import { RunVerdictCaveats } from "./run-verdict-caveats";
 import {
   buildEvaluateImprovePrompt,
@@ -58,6 +59,7 @@ import {
 import { remedyForDiagnostic } from "./stage-remedy";
 import { RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
+import { useEvaluateRunPageHeaderActions } from "./evaluate-run-page";
 
 export function EvaluateRunContent({
   projectId,
@@ -299,14 +301,28 @@ export function EvaluateRunContent({
   }, [improvePrompt]);
 
   const focusTarget = view.focus?.diagnostic;
-  const openFailingTrace =
-    onOpenIteration && focusTarget?.testCaseId
-      ? () =>
-          onOpenIteration({
-            testCaseId: focusTarget.testCaseId as string,
-            iterationId: focusTarget.iterationId,
-          })
-      : undefined;
+  const openFailingTrace = useCallback(() => {
+    if (!onOpenIteration || !focusTarget?.testCaseId) return;
+    onOpenIteration({
+      testCaseId: focusTarget.testCaseId,
+      iterationId: focusTarget.iterationId,
+    });
+  }, [onOpenIteration, focusTarget?.testCaseId, focusTarget?.iterationId]);
+
+  const canOpenFailingTrace = Boolean(
+    onOpenIteration && focusTarget?.testCaseId,
+  );
+
+  const inRunPageHeader = useEvaluateRunPageHeaderActions(
+    canOpenFailingTrace || improvePrompt
+      ? {
+          ...(improvePrompt ? { onImprove: copyImprovePrompt } : {}),
+          ...(canOpenFailingTrace
+            ? { onOpenFailingTrace: openFailingTrace }
+            : {}),
+        }
+      : null,
+  );
 
   return (
     <div
@@ -315,9 +331,11 @@ export function EvaluateRunContent({
     >
       <RunVerdictHero
         view={view}
-        {...(openFailingTrace ? { onOpenFailingTrace: openFailingTrace } : {})}
+        {...(!inRunPageHeader && canOpenFailingTrace
+          ? { onOpenFailingTrace: openFailingTrace }
+          : {})}
         actions={
-          improvePrompt ? (
+          !inRunPageHeader && improvePrompt ? (
             <Button
               type="button"
               size="sm"
@@ -343,7 +361,13 @@ export function EvaluateRunContent({
         </p>
       ) : null}
 
-      <div className="px-5 pb-4">
+      <div className="flex flex-col gap-3 px-5 pb-4">
+        {view.sentence.kind === "brokeAt" ? (
+          <RunGradingPeek
+            expected={view.sentence.expected}
+            observed={view.sentence.observed}
+          />
+        ) : null}
         <RunVerdictCaveats
           summary={detail.summary}
           shownDiagnostics={detail.diagnostics.length}
