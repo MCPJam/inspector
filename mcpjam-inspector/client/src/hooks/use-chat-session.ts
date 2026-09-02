@@ -96,6 +96,8 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
+import { useLocalHarnessTarget } from "@/hooks/useLocalHarnessTarget";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
@@ -1636,6 +1638,12 @@ export function useChatSession(
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
+  // The HARNESS execution target — a different axis from the computer engine
+  // above (where the whole agent runs, not where one bash call runs), resolved
+  // and transmitted the same way. Consent-gated: `target` is `local-native`
+  // only when a stored grant exists, so a selection without one sends nothing
+  // and the turn runs hosted while the consent sheet is what the user sees.
+  const localHarnessTarget = useLocalHarnessTarget(hostedProjectId ?? null);
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
@@ -2800,6 +2808,22 @@ export function useChatSession(
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
+    // Scoped to /api/mcp/chat-v2 for the same reason the consent header above
+    // is: the local target only exists on the local server's route. The web
+    // route parses it too — and refuses it — so a stray send would be a 400
+    // rather than a silent hosted turn, but not sending it at all is better
+    // than relying on that.
+    const sendLocalHarnessTarget =
+      !shouldUseOrgAwareChatApi &&
+      !hostedScenarioId &&
+      localHarnessTarget.target === "local-native" &&
+      localHarnessTarget.consent !== null &&
+      authIsMemberRef.current;
+    if (sendLocalHarnessTarget && localHarnessTarget.consent) {
+      // The capability, in a HEADER. Never in the body, which is persisted.
+      mergedHeaders[LOCAL_HARNESS_GRANT_HEADER] =
+        localHarnessTarget.consent.token;
+    }
     // Only the local-computer consent capability rides the transport, because
     // it is not a credential authFetch knows how to resolve.
     const transportHeaders =
@@ -2958,6 +2982,13 @@ export function useChatSession(
                 // path). Absent ⇒ the legacy cloud-family resolution.
                 ...(sendLocalEngine
                   ? { computerEngine: "local" as const }
+                  : {}),
+                // "Native on this machine": run the whole Claude Code agent
+                // here. Opaque ids only — the capability rides the header
+                // above, and every id is re-derived server-side before
+                // anything spawns.
+                ...(sendLocalHarnessTarget && localHarnessTarget.consent
+                  ? { harnessTarget: localHarnessTarget.consent.target }
                   : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),

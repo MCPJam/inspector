@@ -24,12 +24,55 @@ The third runs on **your own vendor account**:
 ## What happens when you run a turn
 
 1. **Pre-flight check.** Before the stream opens, MCPJam verifies that the host can run: the model is supported by the selected harness, the Computer data plane is configured, and the host settings are ones the runtime can honor. Any failure returns a clear error before the turn starts — a turn never silently falls back to the emulated engine.
-2. **Computer wake.** The host's project Computer is reserved or woken (provisioned on first use). Both harness hosts **require** a Computer — there is no local fallback.
+2. **Where it runs.** By default the host's project Computer is reserved or woken (provisioned on first use). In the desktop app and `npx @mcpjam/inspector`, a Claude Code host can instead run **natively on your own machine** — see [Running Claude Code on your machine](#running-claude-code-on-your-machine) below. A turn never moves between the two on its own: if the target you chose cannot run, you are told why, and you decide.
 3. **Credential delivery.** MCPJam installs a short-lived model credential into the sandbox's egress layer outside the VM. Neither the sandbox nor your browser ever holds a real model key. The agent runs pointed at MCPJam's model proxy, which verifies the credential and meters every generation. There is no raw-key fallback.
 4. **MCP delivery.** The two harnesses deliver MCP servers differently:
    - **Claude Code (native)** — selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel. The runtime's own MCP client connects to them and the model calls the tools through native function calling. No upstream credentials enter the sandbox.
    - **Codex (host-executed)** — the Codex CLI does not make MCP server tools model-callable in the mode MCPJam drives ([openai/codex#19425](https://github.com/openai/codex/issues/19425)), so MCPJam instead enumerates each selected server's tools at turn start and hands them to the agent as *host-executed* tools. The bridge injects their descriptions into the prompt, the model invokes them through a CLI shim, and **MCPJam executes them on its own server** against the already-authorized connection. Nothing about your servers — no URL, no token — enters the sandbox.
 5. **The turn runs.** The agent's own loop executes; native tools run inside the sandbox; file changes land on the Computer's disk; the transcript and trace persist like any other chat.
+
+## Running Claude Code on your machine
+
+<Note>
+  Available in the MCPJam desktop app and `npx @mcpjam/inspector` — never in the
+  hosted product — and only where MCPJam has enabled it for your account.
+</Note>
+
+A Claude Code host can run the real agent as a process on your own computer
+instead of in a cloud sandbox. Same agent, same tools, same MCP servers, same
+metered model access through MCPJam's proxy — but the files it works on are
+your actual checkout, and the commands it runs happen on your machine.
+
+**This is not a sandbox.** The agent runs as your user account. The folder you
+grant is where it *starts*, not a boundary it cannot leave: anything your user
+can read or change, it can read or change. Edits inside the folder run freely;
+commands still ask for approval in chat. If that is not what you want, run the
+host hosted, which is the default.
+
+Three things happen once, in this order, before your first local turn:
+
+1. **Install the local runtime.** About 200 MB, downloaded once and shared by
+   every project: Claude Code, its supporting runtime, and the Node it runs on.
+   MCPJam verifies the download's signature and then verifies the contents
+   again after extraction, and refuses anything that does not match what this
+   Inspector build expects.
+2. **Choose the project folder.** In the desktop app this opens your OS folder
+   picker. This is the directory the agent starts in.
+3. **Authorize.** The authorization is scoped to this project and this machine,
+   and it expires on its own. Changing the runtime, the folder, or the
+   permission profile means authorizing again — the old authorization does not
+   carry over, by design.
+
+While a local turn runs, MCPJam keeps the model credential in the Inspector
+process and hands the agent only a per-session token that works with nothing
+else. Stopping a session stops the whole process tree it started, including the
+agent binary. **Stop all local sessions** in the local-execution panel ends
+everything immediately.
+
+**When it is not offered.** Your platform is not supported (Windows is not yet),
+the runtime is not installed, you are signed in as a guest, the session is a
+shared scenario or swarm run, or the feature is not enabled for your account.
+The selector says which.
 
 ## Host settings
 
@@ -76,7 +119,7 @@ Claude Code hosts are unaffected by all of the above — they use the runtime's 
 
 ## Requirements
 
-- A project **Computer** (the E2B data plane must be configured for your deployment).
+- A project **Computer** (the E2B data plane must be configured for your deployment) — **or**, for a Claude Code host in the desktop app or `npx`, the local runtime installed and authorized (see [Running Claude Code on your machine](#running-claude-code-on-your-machine)).
 - For **Claude Code**: an MCPJam-provided Anthropic model selected on the host.
 - For **Codex**: an MCPJam-provided OpenAI gpt-5 family model selected on the host.
 - A **signed-in project member** — guest sessions cannot run harness hosts.
@@ -182,8 +225,8 @@ Until KMS is configured, a self-hosted deployment cannot store a
 
 ## Billing
 
-- **Computer time** — the harness runtime keeps the Computer awake, so it meters into your org's monthly computer-time allowance exactly like terminal use.
-- **Model tokens** — every generation is priced and settled by the model proxy against your org, the same accounting as regular chat. Spend caps and empty-wallet rejections apply before the stream starts.
+- **Computer time** — the harness runtime keeps the Computer awake, so it meters into your org's monthly computer-time allowance exactly like terminal use. A turn that runs **on your own machine** uses no Computer and meters no computer time.
+- **Model tokens** — every generation is priced and settled by the model proxy against your org, the same accounting as regular chat, **whether the turn ran hosted or on your own machine**. Spend caps and empty-wallet rejections apply before the stream starts either way.
 
 ## Failure modes
 
@@ -200,6 +243,17 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Org out of compute allowance and credits | Computer pauses with a billing notice. |
 | Org spending limit reached | Clean rejection before any model call. |
 | Sandbox dies mid-run | Turn errors; the next turn starts a fresh session. |
+
+**Running on your own machine** (Claude Code, desktop app and `npx` only):
+
+| Condition | What you see |
+|---|---|
+| The local runtime is not installed | The Native option is offered but not selectable, with an Install step in the authorization sheet. |
+| The runtime on disk does not match what this Inspector expects | Refused — reinstall it. MCPJam will not launch a runtime it cannot verify. |
+| Your platform cannot prove whole-tree cleanup (Windows today) | Native is not offered, and says why: MCPJam could not guarantee that stopping a session stops everything it started. |
+| The authorization expired, or the runtime, folder or permissions changed | Refused, with the authorization sheet — the old authorization does not cover the new terms. |
+| Guest, shared scenario session, or swarm run | Native is not offered; the turn runs hosted. |
+| The agent's control channel is reachable from your network | The session stops rather than proceeding. A local agent's control channel is never published to the LAN. |
 
 **Eval-specific pre-flight refusals** (harness eval runs only):
 

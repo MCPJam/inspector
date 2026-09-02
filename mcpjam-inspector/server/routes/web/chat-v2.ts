@@ -16,6 +16,7 @@ import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
   HOSTED_MODE,
+  LOCAL_HARNESS_ENABLED,
   WEB_STREAM_TIMEOUT_MS,
 } from "../../config.js";
 import {
@@ -89,6 +90,11 @@ import {
   externalAccountHostModelRefusalReason,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import {
+  LOCAL_HARNESS_GRANT_HEADER,
+  parseHarnessExecutionTarget,
+  type RawHarnessTargetInput,
+} from "../../utils/harness/local/request-target.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
@@ -844,6 +850,33 @@ chatV2.post("/", async (c) => {
     // runtime isn't available on this server — never silently degrade to the
     // emulated engine. Capability-driven (computer / approval / MCP / model
     // eligibility), so a new harness gets the right gates for free.
+    // The LOCAL harness target is parsed here too — by the same shared parser
+    // the /api/mcp route uses — precisely so it can be REFUSED rather than
+    // ignored.
+    //
+    // This route serves the hosted product and the org-aware path. A hosted
+    // replica running a vendor agent on ITS machine is the structural thing the
+    // whole local design forbids, so `serverEnabled` is false here by
+    // construction (HOSTED_MODE forces the kill switch off) and an explicit ask
+    // gets a 400 saying so. Dropping the field silently would leave a
+    // misconfigured client believing its turn ran locally.
+    const hostedHarnessTargetParse = parseHarnessExecutionTarget({
+      body: body as { harnessTarget?: RawHarnessTargetInput },
+      grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+      // Even on a non-hosted deployment this route is the org-aware one, whose
+      // turns are not necessarily an attended member running on their own
+      // machine. Local execution belongs on the local route.
+      actorEligible: false,
+      // Nothing here can consent, so there is no acting user to bind a grant
+      // to. Both gates above already refuse a local target on this route; this
+      // says the same thing in the one field a grant would be verified against.
+      actingUserId: null,
+    });
+    if (hostedHarnessTargetParse.kind === "refused") {
+      return c.json({ error: hostedHarnessTargetParse.reason }, 400);
+    }
+
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
