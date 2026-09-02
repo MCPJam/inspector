@@ -137,6 +137,26 @@ describe("org model helpers", () => {
     expect(models.some((m) => isMCPJamProvidedModelMenuItem(m))).toBe(true);
   });
 
+  it("renders the GPT-5.6 rows for an OpenAI key, as BYOK rather than free", () => {
+    // A catalog without these ids, so what surfaces can only be the BYOK path
+    // — the snapshot fallback serves them as hosted rows too.
+    const models = buildAvailableModels({
+      ...NO_KEYS,
+      hasToken: (provider) => provider === "openai",
+      hostedCatalog: [CATALOG_ONLY]
+    });
+    const byId = new Map(models.map((m) => [String(m.id), m]));
+
+    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
+      const row = byId.get(id);
+      expect(row, `${id} missing from the BYOK list`).toBeDefined();
+      expect(row!.contextLength).toBe(1_050_000);
+      // These ids are in the hosted catalog too, so the free/paid split rests
+      // on the classifier being asked without a provider.
+      expect(isMCPJamProvidedModelMenuItem(row!)).toBe(false);
+    }
+  });
+
   it("buildAvailableModelsFromOrgConfig uses the injected catalog for the hosted source", () => {
     const models = buildAvailableModelsFromOrgConfig(
       { providers: [] },
