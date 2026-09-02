@@ -122,22 +122,52 @@ type LiveSession = {
   cleanup(): Promise<void>;
 };
 
-/** Every descendant pid of `pid`, read straight from procfs. */
-function childrenOf(pid: number): number[] {
-  const out: number[] = [];
+/**
+ * Every descendant of `pid`, transitively, read straight from procfs.
+ *
+ * TRANSITIVE ON PURPOSE. The tree here is three deep — bridge, the `codex.js`
+ * launcher the bootstrap installs, and the real codex binary under it — so a
+ * direct-children walk names only the launcher. Killing that alone leaves a
+ * ~258 MB codex orphaned for the rest of the test, and makes "kill Codex out
+ * from under the bridge" only half true: the bridge does observe its own child
+ * dying, but the process the test is nominally about is still running.
+ */
+function descendantsOf(pid: number): number[] {
+  const byParent = new Map<number, number[]>();
   for (const entry of readdirSync("/proc")) {
     if (!/^\d+$/.test(entry)) continue;
     try {
       const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
-      // Field 4 is the ppid, but field 2 (comm) may contain spaces or
-      // parentheses — so split after the LAST ')'.
+      // Field 4 is the ppid, but field 2 (comm) is an arbitrary string in
+      // parentheses that may itself contain spaces or ')' — so parse after the
+      // LAST ')' rather than splitting the whole line.
       const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      if (Number(fields[1]) === pid) out.push(Number(entry));
+      const ppid = Number(fields[1]);
+      byParent.set(ppid, [...(byParent.get(ppid) ?? []), Number(entry)]);
     } catch {
       /* the process exited while we were reading it */
     }
   }
+  const out: number[] = [];
+  const queue = [pid];
+  while (queue.length) {
+    for (const child of byParent.get(queue.shift()!) ?? []) {
+      out.push(child);
+      queue.push(child);
+    }
+  }
   return out;
+}
+
+/** SIGKILL a whole subtree, deepest first so nothing is reparented away. */
+function killTree(pid: number): void {
+  for (const child of descendantsOf(pid).reverse()) {
+    try {
+      process.kill(child, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
 }
 
 /** Bring up the real bridge and hold the socket open across turns. */
@@ -152,6 +182,10 @@ async function startLiveSession(script: unknown[]): Promise<LiveSession> {
 
   const cleanup = async () => {
     socket?.close();
+    // The whole subtree: killing the bridge alone leaves the codex binary to
+    // notice its stdin closed and exit on its own, which is incidental rather
+    // than guaranteed, and leaves the box holding it in the meantime.
+    if (bridge?.pid) killTree(bridge.pid);
     bridge?.kill("SIGKILL");
     await fake.close();
   };
@@ -393,14 +427,16 @@ describe.skipIf(!LIVE || !CODEX_BIN)("codex app-server, end to end", () => {
       });
       expect(first.map((frame) => frame.type)).toContain("finish");
 
-      // Kill Codex out from under the bridge. The bridge's own child is the
-      // `codex.js` launcher; killing it is what the adapter sees as an exit.
-      const children = childrenOf(session.bridgePid);
-      expect(children.length).toBeGreaterThan(0);
-      for (const pid of children) process.kill(pid, "SIGKILL");
+      // Kill Codex out from under the bridge — the WHOLE subtree, because the
+      // bridge's own child is only the `codex.js` launcher and the real binary
+      // sits under it. The launcher's death is what the adapter observes as an
+      // exit; taking the binary with it is what makes the scenario honest.
+      const subtree = descendantsOf(session.bridgePid);
+      expect(subtree.length).toBeGreaterThan(1);
+      killTree(session.bridgePid);
       await vi.waitFor(
         () => {
-          expect(childrenOf(session.bridgePid)).toHaveLength(0);
+          expect(descendantsOf(session.bridgePid)).toHaveLength(0);
         },
         { timeout: 15_000 },
       );
@@ -416,7 +452,7 @@ describe.skipIf(!LIVE || !CODEX_BIN)("codex app-server, end to end", () => {
       expect(types).not.toContain("error");
       expect(types).toContain("finish");
       // ...and it really is a NEW process, not a resurrected handle.
-      expect(childrenOf(session.bridgePid).length).toBeGreaterThan(0);
+      expect(descendantsOf(session.bridgePid).length).toBeGreaterThan(0);
     } finally {
       await session.cleanup();
     }

@@ -60,6 +60,10 @@ const OBJECT_ONLY_KEYWORDS = [
   "required",
   "dependentRequired",
   "dependentSchemas",
+  // draft-07's predecessor to the two above. MCP tool schemas in the wild are
+  // routinely draft-07, so leaving it out would drop exactly the dependent
+  // argument constraints this list exists to preserve.
+  "dependencies",
   "minProperties",
   "maxProperties",
 ] as const;

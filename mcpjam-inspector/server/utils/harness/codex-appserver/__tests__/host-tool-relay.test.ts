@@ -141,6 +141,8 @@ describe("host tool naming", () => {
       { maxProperties: 4 },
       { propertyNames: { pattern: "^x-" } },
       { dependentRequired: { a: ["b"] } },
+      // draft-07 spelling, which MCP tool schemas still use widely.
+      { dependencies: { a: ["b"] } },
     ]) {
       const catalog = buildHostToolCatalog([
         { name: "constrained", inputSchema },
