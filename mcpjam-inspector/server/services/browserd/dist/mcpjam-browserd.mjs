@@ -20,6 +20,55 @@ var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   perQueueDepthCap: 8,
   maxCommandsPerBoot: 5e4
 };
+var BROWSERD_ERROR_CODES = [
+  // --- transport / control plane (HTTP envelope) -------------------------
+  "cross_origin_forbidden",
+  "invalid_json",
+  "invalid_command",
+  "invalid_lease_action",
+  "holder_required",
+  "command_unknown_boot",
+  "command_expired",
+  "daemon_at_capacity",
+  "stale_observation",
+  /** A person holds the browser; nothing ran and nothing was observed. */
+  "lease_held",
+  /** Their lease ran out mid-flow; still blocked until they hand it back. */
+  "lease_parked",
+  /** A `manual` command arrived while nobody holds the lease. */
+  "lease_required",
+  /** A `manual` command named a holder who is not the one holding it. */
+  "lease_held_by_other",
+  // --- driver (result `error`, `"<code>: <detail>"`) ---------------------
+  "unknown_tab",
+  "tab_exists",
+  "unknown_selector",
+  "target_not_found",
+  "act_failed",
+  "out_of_viewport",
+  "unsupported_target",
+  /** An `a11yRef` whose node has left the page — distinct from not found. */
+  "stale_ref",
+  "webmcp_unsupported",
+  "webmcp_error",
+  /** A dialog is open and waiting for the person who holds the lease. */
+  "dialog_pending",
+  /** A download exceeded the per-file or per-session cap and was cancelled. */
+  "download_over_cap",
+  // --- session establishment (never reaches the daemon) ------------------
+  /** This engine needs a Chromium that is not installed on this machine. */
+  "chromium_not_installed",
+  /** Another live process owns this profile directory. */
+  "profile_in_use",
+  /** A result's URL is outside an unattended run's origin allowlist. */
+  "origin_not_allowed"
+];
+var BROWSERD_ERROR_CODE_SET = new Set(
+  BROWSERD_ERROR_CODES
+);
+function formatBrowserdError(code, detail) {
+  return detail ? `${code}: ${detail}` : code;
+}
 
 // server/services/browserd/daemon/command-queue.ts
 function queueKeyFor(command) {
@@ -204,6 +253,10 @@ var HandoffLease = class {
    * window and leave the earliest (most sensitive) entries readable.
    */
   heldSince;
+  /** The kind of the current (or just-ended) hold; see `LeaseHolderKind`. */
+  holderKind = "human";
+  /** The kind of the hold the pending resume note describes. */
+  resumedHolderKind;
   /**
    * Start of the EARLIEST hold that has ended without its console being purged
    * yet, consumed alongside the flag.
@@ -231,7 +284,11 @@ var HandoffLease = class {
    */
   state() {
     if (this.current.state === "held" && this.now() >= this.current.expiresAt) {
-      this.current = { state: "parked", holder: this.current.holder };
+      this.current = {
+        state: "parked",
+        holder: this.current.holder,
+        holderKind: this.current.holderKind
+      };
     }
     return this.current;
   }
@@ -239,7 +296,7 @@ var HandoffLease = class {
   isBlocking() {
     return this.state().state !== "free";
   }
-  acquire(holder, ttlMs) {
+  acquire(holder, ttlMs, kind = "human") {
     const state = this.state();
     if (state.state !== "free" && state.holder !== holder) {
       return state;
@@ -248,10 +305,14 @@ var HandoffLease = class {
       Math.max(1e3, ttlMs ?? this.defaultTtlMs),
       this.maxTtlMs
     );
-    if (state.state === "free") this.heldSince = this.now();
+    if (state.state === "free") {
+      this.heldSince = this.now();
+      this.holderKind = kind;
+    }
     this.current = {
       state: "held",
       holder,
+      holderKind: this.holderKind,
       expiresAt: this.now() + ttl
     };
     return this.current;
@@ -260,7 +321,7 @@ var HandoffLease = class {
   heartbeat(holder, ttlMs) {
     const state = this.state();
     if (state.state !== "held" || state.holder !== holder) return state;
-    return this.acquire(holder, ttlMs);
+    return this.acquire(holder, ttlMs, state.holderKind);
   }
   /**
    * Hand control back. Only the holder may — including from `parked`, which
@@ -275,6 +336,7 @@ var HandoffLease = class {
     this.resumedDirty = true;
     if (this.resumedHeldSince === void 0) {
       this.resumedHeldSince = this.heldSince;
+      this.resumedHolderKind = this.holderKind;
     }
     this.heldSince = void 0;
     return this.current;
@@ -308,8 +370,32 @@ var HandoffLease = class {
     this.resumedHeldSince = void 0;
     return since;
   }
+  /**
+   * What held the browser across the handoff the next observation describes.
+   * Read (not consumed) alongside `consumeResumedDirty`, which owns the
+   * once-only semantics — two independent consume flags would let the note and
+   * its subject come apart.
+   */
+  resumedFromKind() {
+    return this.resumedHolderKind ?? this.holderKind;
+  }
 };
+function leaseRefusalFor(lease, command) {
+  if (command.source !== "manual") {
+    if (lease.state === "free") return void 0;
+    return lease.state === "held" ? "lease_held" : "lease_parked";
+  }
+  if (lease.state === "free") return "lease_required";
+  if (!command.holder || command.holder !== lease.holder) {
+    return "lease_held_by_other";
+  }
+  return void 0;
+}
 var RESUMED_AFTER_HANDOFF_NOTE = "A person took control of this browser and has handed it back. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before the handoff.";
+var RESUMED_AFTER_SCRIPT_NOTE = "A script took control of this browser over its debugging endpoint and has released it. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before it ran.";
+function handoffNoteFor(kind) {
+  return kind === "script" ? RESUMED_AFTER_SCRIPT_NOTE : RESUMED_AFTER_HANDOFF_NOTE;
+}
 
 // server/services/browserd/daemon/request-handler.ts
 var BrowserdRequestHandler = class {
@@ -377,12 +463,19 @@ var BrowserdRequestHandler = class {
       };
     }
     const leaseState = this.lease.state();
-    if (leaseState.state !== "free" && parsed.command.source !== "manual") {
+    const refusal = leaseRefusalFor(
+      leaseState,
+      parsed.command
+    );
+    if (refusal) {
       return {
         status: 423,
         body: {
-          error: leaseState.state === "held" ? "lease_held" : "lease_parked",
-          holder: leaseState.holder,
+          error: refusal,
+          ...leaseState.state === "free" ? {} : {
+            holder: leaseState.holder,
+            holderKind: leaseState.holderKind
+          },
           bootId: this.bootId
         }
       };
@@ -415,10 +508,11 @@ var BrowserdRequestHandler = class {
       return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
     }
     const ttlMs = typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs) ? parsed.ttlMs : void 0;
+    const kind = parsed?.kind === "script" ? "script" : "human";
     let state;
     switch (parsed?.action) {
       case "acquire":
-        state = this.lease.acquire(holder, ttlMs);
+        state = this.lease.acquire(holder, ttlMs, kind);
         break;
       case "heartbeat":
         state = this.lease.heartbeat(holder, ttlMs);
@@ -449,6 +543,17 @@ var BrowserdRequestHandler = class {
   mapOutcome(outcome) {
     switch (outcome.status) {
       case "ok":
+        if (outcome.result.leaseBlocked) {
+          const lease = this.lease.state();
+          return {
+            status: 423,
+            body: {
+              error: outcome.result.error ?? "lease_held",
+              ...lease.state === "free" ? {} : { holder: lease.holder, holderKind: lease.holderKind },
+              bootId: outcome.bootId
+            }
+          };
+        }
         if (outcome.result.staleObservation) {
           return {
             status: 409,
@@ -484,7 +589,7 @@ var BrowserdRequestHandler = class {
 function isValidCommand(value) {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value;
-  return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string");
+  return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
 
 // server/services/browserd/daemon/browser-driver.ts
@@ -507,6 +612,22 @@ function guardStaleness(driver) {
       };
     }
     return driver.execute(command);
+  };
+}
+function guardLease(lease, executor) {
+  return async (command) => {
+    const refusal = leaseRefusalFor(lease.state(), command);
+    if (refusal) {
+      return {
+        ok: false,
+        leaseBlocked: true,
+        error: formatBrowserdError(
+          refusal,
+          "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+        )
+      };
+    }
+    return executor(command);
   };
 }
 
@@ -592,8 +713,11 @@ function headerValue(value) {
 }
 function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID();
-  const queue = new CommandQueue(guardStaleness(driver), bootId);
   const lease = config.lease ?? new HandoffLease();
+  const queue = new CommandQueue(
+    guardLease(lease, guardStaleness(driver)),
+    bootId
+  );
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
@@ -1146,6 +1270,12 @@ var ChromiumDriver = class {
   }
   async execute(command) {
     this.purgeHandoffConsole();
+    const permit = this.permitFor(command);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+      );
+    }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
@@ -1168,7 +1298,8 @@ var ChromiumDriver = class {
         return this.navigateVerb(
           tabId,
           await this.getOrCreateTab(tabId),
-          (page) => page.goto(action.url)
+          (page) => page.goto(action.url),
+          permit
         );
       }
       case "back":
@@ -1180,13 +1311,14 @@ var ChromiumDriver = class {
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => action.kind === "back" ? page.goBack() : page.reload()
+          (page) => action.kind === "back" ? page.goBack() : page.reload(),
+          permit
         );
       }
       case "observe":
-        return this.observe(tabId, action);
+        return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action);
+        return this.act(tabId, action, permit);
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action);
       case "webmcp_cancel":
@@ -1202,7 +1334,7 @@ var ChromiumDriver = class {
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
    */
-  async act(tabId, action) {
+  async act(tabId, action, permit) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1240,6 +1372,11 @@ var ChromiumDriver = class {
       };
     }
     const settled = await this.settle(page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+      );
+    }
     const frame = await this.snapshot(page);
     const screenshot = await page.screenshotBase64().catch(() => void 0);
     return {
@@ -1369,17 +1506,27 @@ var ChromiumDriver = class {
    * (L3). Every W1 navigating verb funnels through here so settle + token are
    * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
-  async navigateVerb(tabId, entry, navigate) {
+  async navigateVerb(tabId, entry, navigate, permit) {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
+      );
+    }
     const frame = await this.snapshot(entry.page);
     return {
       ...this.observation(tabId, entry, { url: frame.url }, frame),
       settled
     };
   }
-  async observe(tabId, action) {
+  async observe(tabId, action, permit) {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
+    }
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1394,7 +1541,7 @@ var ChromiumDriver = class {
         return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry);
+        return this.observeScreenshot(tabId, entry, permit);
       case "a11y": {
         const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
         if (action.rootSelector && snapshot === null) {
@@ -1460,9 +1607,14 @@ var ChromiumDriver = class {
    * `settled: false` (its token from the post-capture read) so the caller
    * re-observes rather than pinning an act to it.
    */
-  async observeScreenshot(tabId, entry) {
+  async observeScreenshot(tabId, entry, permit) {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person has taken control of this browser; nothing was observed"
+        );
+      }
       const before = await this.snapshot(entry.page);
       const screenshot2 = await entry.page.screenshotBase64();
       const after2 = await this.snapshot(entry.page);
@@ -1520,7 +1672,37 @@ var ChromiumDriver = class {
    * actually crossed the handoff rather than every later one.
    */
   withHandoffNote(output) {
-    return this.lease?.consumeResumedDirty() ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE } : output;
+    return this.lease?.consumeResumedDirty() ? {
+      ...output,
+      handoffNote: handoffNoteFor(this.lease.resumedFromKind())
+    } : output;
+  }
+  /**
+   * May THIS command look at the page right now?
+   *
+   * Bound to the command rather than read globally, because "a lease is held"
+   * is not the same as "you may not look": the holder's own `manual` commands
+   * are exactly what a lease is for. It is the same predicate the handler and
+   * the dequeue guard ask, asked a third time — and passed down as a closure
+   * rather than stored on the instance, because two tabs run concurrently and
+   * a shared field would answer one command's question with another's.
+   *
+   * Asked immediately before EVERY capture rather than once per command: a
+   * command can take seconds (a navigation settles for up to ten), and the
+   * handoff it must respect is the one happening NOW.
+   */
+  permitFor(command) {
+    const lease = this.lease;
+    if (!lease) return () => true;
+    return () => leaseRefusalFor(lease.state(), command) === void 0;
+  }
+  /** The result a capture-time handoff produces: no output, no token, no frame. */
+  leaseBlockedResult(detail) {
+    return {
+      ok: false,
+      leaseBlocked: true,
+      error: formatBrowserdError("lease_held", detail)
+    };
   }
   /**
    * Drop console captured while a person held the browser, across EVERY tab —

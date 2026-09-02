@@ -1,136 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ChromiumDriver } from "../chromium-driver";
 import { shortHash } from "../state-token";
-import type { DriverContext, DriverPage } from "../browser-page";
 import type { BrowserCommand } from "../../protocol";
 import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
-
-/** Every act the fake page recorded, in order, as `verb:detail` strings. */
-type ActLog = string[];
-
-interface FakePage extends DriverPage {
-  setUrl(u: string): void;
-  setDom(d: string): void;
-  pushConsole(entry: { type: string; text: string; at: number }): void;
-  readonly calls: {
-    goto: string[];
-    reload: number;
-    goBack: number;
-    shots: number;
-    acts: ActLog;
-    front: number;
-    a11yRoots: (string | undefined)[];
-  };
-}
-
-function fakePage(init: {
-  url?: string;
-  dom?: string;
-  hangNetwork?: boolean;
-  /** Called inside screenshotBase64 — used to simulate a shift mid-capture. */
-  onScreenshot?: (page: { setDom: (d: string) => void; setUrl: (u: string) => void }) => void;
-  /** Make a targeted act fail, as a missing element would. */
-  actError?: Error;
-  a11y?: unknown;
-  /** Subtrees reachable by `rootSelector`; anything else "matches nothing". */
-  a11yBySelector?: Record<string, unknown>;
-  console?: Array<{ type: string; text: string; at: number }>;
-  webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> } ? B | null : never;
-} = {}): FakePage {
-  let url = init.url ?? "about:blank";
-  const consoleEntries = [...(init.console ?? [])];
-  let dom = init.dom ?? "0BODY";
-  let closed = false;
-  const calls = {
-    goto: [] as string[],
-    reload: 0,
-    goBack: 0,
-    shots: 0,
-    acts: [] as ActLog,
-    front: 0,
-    a11yRoots: [] as (string | undefined)[],
-  };
-  const setDom = (d: string) => { dom = d; };
-  const setUrl = (u: string) => { url = u; };
-  const act = (entry: string) => {
-    calls.acts.push(entry);
-    if (init.actError) throw init.actError;
-  };
-  return {
-    async goto(u) { calls.goto.push(u); url = u; },
-    async reload() { calls.reload++; },
-    async goBack() { calls.goBack++; },
-    async waitForNetworkIdle(signal) {
-      if (!init.hangNetwork) return;
-      return new Promise<void>((_r, reject) =>
-        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }),
-      );
-    },
-    async requestAnimationFrame() {},
-    async domStructureSignal() { return dom; },
-    async screenshotBase64() {
-      calls.shots++;
-      init.onScreenshot?.({ setDom, setUrl });
-      return "BASE64PNG";
-    },
-    url: () => url,
-    close: async () => { closed = true; },
-    isClosed: () => closed,
-    bringToFront: async () => { calls.front++; },
-
-    async clickAt(point, options) {
-      act(`click:${point.x},${point.y}${options?.button ? `:${options.button}` : ""}`);
-    },
-    async clickSelector(selector) { act(`click:${selector}`); },
-    async hoverAt(point) { act(`hover:${point.x},${point.y}`); },
-    async hoverSelector(selector) { act(`hover:${selector}`); },
-    async typeText(text) { act(`type:${text}`); },
-    async fillSelector(selector, text) { act(`fill:${selector}:${text}`); },
-    async press(key) { act(`press:${key}`); },
-    async scrollBy({ dx, dy }) { act(`scroll:${dx},${dy}`); },
-    async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
-    async selectOption(selector, value) { act(`select:${selector}:${value}`); },
-    async a11ySnapshot(rootSelector?: string) {
-      calls.a11yRoots.push(rootSelector);
-      // Mirrors the live adapter: an unmatched root selector resolves null,
-      // which is what the driver must turn into `unknown_selector`.
-      if (rootSelector !== undefined) {
-        return (init.a11yBySelector?.[rootSelector] ?? null) as never;
-      }
-      return (init.a11y ?? null) as never;
-    },
-    consoleEntries: () => consoleEntries,
-    dropConsoleSince: (since: number) => {
-      let keep = consoleEntries.length;
-      while (keep > 0 && consoleEntries[keep - 1].at >= since) keep -= 1;
-      consoleEntries.length = keep;
-    },
-    async webmcp() { return (init.webmcp ?? null) as never; },
-
-    setUrl,
-    setDom,
-    pushConsole: (e: { type: string; text: string; at: number }) =>
-      consoleEntries.push(e),
-    calls,
-  };
-}
-
-function fakeContext(init: { pages?: FakePage[]; connected?: boolean } = {}) {
-  let i = 0;
-  let connected = init.connected ?? true;
-  let closed = false;
-  const created: FakePage[] = [];
-  const context: DriverContext = {
-    async newPage() {
-      const page = init.pages?.[i++] ?? fakePage();
-      created.push(page);
-      return page;
-    },
-    isConnected: () => connected,
-    close: async () => { closed = true; },
-  };
-  return { context, created, setConnected: (v: boolean) => (connected = v), wasClosed: () => closed };
-}
+import { fakeContext, fakePage, type FakePage } from "./fake-page";
 
 function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
   return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };
@@ -925,5 +798,53 @@ describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () =
     expect(text).not.toContain("SECRET-ONE");
     expect(text).not.toContain("SECRET-TWO");
     expect(text).toContain("before any handoff");
+  });
+});
+
+describe("ChromiumDriver — a handoff that happens MID-command (W4/L6)", () => {
+  it("takes no screenshot when a person grabs the browser while the page settles", async () => {
+    const lease = new HandoffLease();
+    const page = fakePage({ url: "https://example.com/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+    const shotsBefore = page.calls.shots;
+
+    // The click dispatches, and the person takes control while the page is
+    // still settling — exactly the window the handler's 423 cannot see.
+    page.onAct = () => lease.acquire("rail-1", 60_000);
+
+    const result = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [5, 5] } }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.leaseBlocked).toBe(true);
+    expect(result.error).toMatch(/^lease_held:/);
+    // The act itself ran — we say so rather than pretending it did not — but
+    // nothing looked at the page afterwards.
+    expect(page.calls.acts).toHaveLength(1);
+    expect(page.calls.shots).toBe(shotsBefore);
+    expect(result.output).toBeUndefined();
+    expect(result.stateToken).toBeUndefined();
+  });
+
+  it("still serves the holder's own commands while they hold it", async () => {
+    const lease = new HandoffLease();
+    lease.acquire("rail-1", 60_000);
+    const page = fakePage({ url: "https://example.com/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+
+    const result = await driver.execute({
+      commandId: "m1",
+      source: "manual",
+      holder: "rail-1",
+      action: { kind: "navigate", url: "https://example.com/login" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(page.calls.goto).toEqual(["https://example.com/login"]);
   });
 });

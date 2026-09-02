@@ -13,7 +13,7 @@ import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { CommandQueue } from "./command-queue";
 import { BrowserdRequestHandler, type DaemonResponse } from "./request-handler";
-import { guardStaleness, type BrowserDriver } from "./browser-driver";
+import { guardLease, guardStaleness, type BrowserDriver } from "./browser-driver";
 import { HandoffLease } from "./lease";
 
 /** Requests bigger than this are refused with 413 before they reach the queue. */
@@ -142,11 +142,20 @@ export function buildBrowserdStack(
   } & DaemonServerOptions,
 ): BrowserdStack {
   const bootId = config.bootId ?? randomUUID();
-  const queue = new CommandQueue(guardStaleness(driver), bootId);
-  // ONE lease instance, shared: the handler refuses commands while it is held,
-  // and the driver reads its resumed flag to make the first post-handoff
-  // observation loud (L6). Two instances would let those disagree.
+  // ONE lease instance, shared THREE ways: the handler refuses commands that
+  // arrive while it is held, the queue's executor re-refuses the ones already
+  // admitted when it is taken, and the driver reads it both to refuse a
+  // capture mid-command and to make the first post-handoff observation loud
+  // (L6). Two instances would let those disagree — which, for a gate whose
+  // whole job is privacy, means a screenshot of someone's password field.
   const lease = config.lease ?? new HandoffLease();
+  // The lease check wraps the staleness guard rather than the other way round:
+  // reading a tab's current state token to compare it IS an observation of the
+  // page, so it must not happen for a command the lease is about to refuse.
+  const queue = new CommandQueue(
+    guardLease(lease, guardStaleness(driver)),
+    bootId,
+  );
   const handler = new BrowserdRequestHandler({
     queue,
     driver,

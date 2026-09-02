@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  guardLease,
   guardStaleness,
   stateTokensMatch,
   type BrowserDriver,
 } from "../browser-driver";
+import { HandoffLease } from "../lease";
 import type {
   BrowserCommand,
   BrowserCommandResult,
@@ -95,5 +97,50 @@ describe("guardStaleness", () => {
     const result = await guardStaleness(driver)(actCmd(token()));
     expect(result).toMatchObject({ ok: true });
     expect(driver.execute).toHaveBeenCalledOnce();
+  });
+});
+
+describe("guardLease — the refusal a queued command gets at DEQUEUE", () => {
+  const cmd = (over: Partial<BrowserCommand> = {}): BrowserCommand => ({
+    commandId: "q1",
+    source: "chat",
+    action: { kind: "observe", mode: "screenshot" },
+    ...over,
+  });
+
+  it("refuses a command admitted BEFORE the handoff, without touching the driver", async () => {
+    // The handler's 423 only sees commands as they arrive. A per-tab FIFO can
+    // hold several, and one admitted a moment before someone clicked "Take
+    // control" would otherwise run — and capture — under their hands.
+    const lease = new HandoffLease();
+    const executor = vi.fn().mockResolvedValue({ ok: true });
+    const guarded = guardLease(lease, executor);
+
+    lease.acquire("rail-1", 60_000);
+    const result = await guarded(cmd());
+
+    expect(result.ok).toBe(false);
+    expect(result.leaseBlocked).toBe(true);
+    expect(result.error).toMatch(/^lease_held:/);
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("lets everything through while nobody holds it", async () => {
+    const lease = new HandoffLease();
+    const executor = vi.fn().mockResolvedValue({ ok: true });
+    const result = await guardLease(lease, executor)(cmd());
+    expect(result).toEqual({ ok: true });
+    expect(executor).toHaveBeenCalledOnce();
+  });
+
+  it("lets the holder's own command through", async () => {
+    const lease = new HandoffLease();
+    lease.acquire("rail-1", 60_000);
+    const executor = vi.fn().mockResolvedValue({ ok: true });
+    const result = await guardLease(lease, executor)(
+      cmd({ source: "manual", holder: "rail-1" }),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(executor).toHaveBeenCalledOnce();
   });
 });

@@ -23,7 +23,13 @@ import type {
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
 import { constantTimeEquals, presentedBearer } from "./auth";
-import { HandoffLease, type LeaseState } from "./lease";
+import {
+  HandoffLease,
+  leaseRefusalFor,
+  type LeaseHolderKind,
+  type LeaseRefusal,
+  type LeaseState,
+} from "./lease";
 
 /** A parsed inbound request; the adapter fills this from a Node req. */
 export interface DaemonRequest {
@@ -171,16 +177,31 @@ export class BrowserdRequestHandler {
     // model-driven runs and — just as importantly — nothing OBSERVES: this
     // refusal happens before the queue, before the driver, before any frame is
     // captured, so a password being typed right now cannot reach a trace.
-    // `manual` is the person's own command, which is the one thing that must
-    // still work while they hold it.
+    //
+    // `manual` is the person's own command, the one thing that must still work
+    // while they hold it — but only THEIRS. A `manual` command that names no
+    // holder, or names someone else, is the bypass this gate exists to close:
+    // without the check, anything able to reach the daemon could drive and
+    // observe a browser someone is signing into by simply claiming the source.
+    // And a `manual` command while the lease is FREE is refused too: with
+    // nobody holding it the agent may be mid-turn, and two drivers on one page
+    // is precisely what the lease is for. Take the lease first.
     const leaseState = this.lease.state();
-    if (leaseState.state !== "free" && parsed.command.source !== "manual") {
+    const refusal: LeaseRefusal | undefined = leaseRefusalFor(
+      leaseState,
+      parsed.command,
+    );
+    if (refusal) {
       return {
         status: 423,
         body: {
-          error:
-            leaseState.state === "held" ? "lease_held" : "lease_parked",
-          holder: leaseState.holder,
+          error: refusal,
+          ...(leaseState.state === "free"
+            ? {}
+            : {
+                holder: leaseState.holder,
+                holderKind: leaseState.holderKind,
+              }),
           bootId: this.bootId,
         },
       };
@@ -210,7 +231,12 @@ export class BrowserdRequestHandler {
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }
-    let parsed: { action?: unknown; holder?: unknown; ttlMs?: unknown };
+    let parsed: {
+      action?: unknown;
+      holder?: unknown;
+      ttlMs?: unknown;
+      kind?: unknown;
+    };
     try {
       parsed = JSON.parse(req.body) as typeof parsed;
     } catch {
@@ -224,11 +250,15 @@ export class BrowserdRequestHandler {
       typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs)
         ? parsed.ttlMs
         : undefined;
+    // Anything but the exact string is a person: a mislabelled script would
+    // make the resume note tell the model a human was here, and the note's
+    // whole job is to say what actually touched the page.
+    const kind: LeaseHolderKind = parsed?.kind === "script" ? "script" : "human";
 
     let state: LeaseState;
     switch (parsed?.action) {
       case "acquire":
-        state = this.lease.acquire(holder, ttlMs);
+        state = this.lease.acquire(holder, ttlMs, kind);
         break;
       case "heartbeat":
         state = this.lease.heartbeat(holder, ttlMs);
@@ -266,6 +296,23 @@ export class BrowserdRequestHandler {
   private mapOutcome(outcome: BrowserCommandOutcome): DaemonResponse {
     switch (outcome.status) {
       case "ok":
+        // A command the lease caught INSIDE the queue (at dequeue, or between
+        // an act and its capture) comes back as an ok outcome carrying
+        // `leaseBlocked`. Map it to the same 423 the gate returns: one refusal
+        // whichever side of the queue the handoff happened on.
+        if (outcome.result.leaseBlocked) {
+          const lease = this.lease.state();
+          return {
+            status: 423,
+            body: {
+              error: outcome.result.error ?? "lease_held",
+              ...(lease.state === "free"
+                ? {}
+                : { holder: lease.holder, holderKind: lease.holderKind }),
+              bootId: outcome.bootId,
+            },
+          };
+        }
         // An `act` refused for a stale observation (L3) rides back as an OK
         // outcome carrying a `staleObservation` result; surface it as a 409 with
         // the fresh state so the caller re-decides.
@@ -312,6 +359,7 @@ function isValidCommand(value: unknown): value is BrowserCommand {
     typeof candidate.source === "string" &&
     typeof candidate.action === "object" &&
     candidate.action !== null &&
-    (candidate.tabId === undefined || typeof candidate.tabId === "string")
+    (candidate.tabId === undefined || typeof candidate.tabId === "string") &&
+    (candidate.holder === undefined || typeof candidate.holder === "string")
   );
 }

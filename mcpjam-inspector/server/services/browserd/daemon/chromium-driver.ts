@@ -18,6 +18,7 @@
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
+  formatBrowserdError,
   isPointInViewport,
   type BrowserAction,
   type BrowserCommand,
@@ -36,7 +37,7 @@ import {
   type ConsoleBudget,
 } from "./observation-budget";
 import { WebMcpBridgeError } from "./webmcp-bridge";
-import { RESUMED_AFTER_HANDOFF_NOTE, type HandoffLease } from "./lease";
+import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import {
   DEFAULT_SETTLE_OPTIONS,
   settlePage,
@@ -74,11 +75,18 @@ interface FrameSnapshot {
 export interface ChromiumDriverOptions {
   settle?: SettleOptions;
   /**
-   * The human-handoff lease, shared with the request handler. The driver only
-   * READS it, to make the first observation after a handoff loud (L6) — the
-   * blocking itself happens at the handler, before anything is captured.
+   * The human-handoff lease, shared with the request handler.
+   *
+   * The driver READS it for two things: to make the first observation after a
+   * handoff loud (L6), and to refuse a capture the moment someone takes the
+   * browser mid-command. The handler's 423 covers commands that ARRIVE during
+   * a hold; it cannot cover the one already executing, whose screenshot would
+   * otherwise be taken a beat after a person started typing a password.
    */
-  lease?: Pick<HandoffLease, "consumeResumedDirty" | "consumeResumedHeldSince">;
+  lease?: Pick<
+    HandoffLease,
+    "consumeResumedDirty" | "consumeResumedHeldSince" | "resumedFromKind" | "state"
+  >;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
@@ -123,7 +131,13 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
   private readonly lease:
-    | Pick<HandoffLease, "consumeResumedDirty" | "consumeResumedHeldSince">
+    | Pick<
+        HandoffLease,
+        | "consumeResumedDirty"
+        | "consumeResumedHeldSince"
+        | "resumedFromKind"
+        | "state"
+      >
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
 
@@ -145,6 +159,15 @@ export class ChromiumDriver implements BrowserDriver {
     // in would otherwise be readable the instant they hand back. Doing it here
     // rather than in the console branch covers every future reader too.
     this.purgeHandoffConsole();
+    // The third and last gate (handler → dequeue → here). A command that got
+    // this far while a person holds the browser must not run: `execute` is
+    // where the page is actually touched.
+    const permit = this.permitFor(command);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed",
+      );
+    }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
@@ -170,8 +193,11 @@ export class ChromiumDriver implements BrowserDriver {
             };
           }
         }
-        return this.navigateVerb(tabId, await this.getOrCreateTab(tabId), (page) =>
-          page.goto(action.url),
+        return this.navigateVerb(
+          tabId,
+          await this.getOrCreateTab(tabId),
+          (page) => page.goto(action.url),
+          permit,
         );
       }
       case "back":
@@ -182,14 +208,17 @@ export class ChromiumDriver implements BrowserDriver {
         if (!entry || entry.page.isClosed()) {
           return { ok: false, error: `unknown_tab: ${tabId}` };
         }
-        return this.navigateVerb(tabId, entry, (page) =>
-          action.kind === "back" ? page.goBack() : page.reload(),
+        return this.navigateVerb(
+          tabId,
+          entry,
+          (page) => (action.kind === "back" ? page.goBack() : page.reload()),
+          permit,
         );
       }
       case "observe":
-        return this.observe(tabId, action);
+        return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action);
+        return this.act(tabId, action, permit);
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action);
       case "webmcp_cancel":
@@ -209,6 +238,7 @@ export class ChromiumDriver implements BrowserDriver {
   private async act(
     tabId: string,
     action: Extract<BrowserAction, { kind: "act" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -257,6 +287,14 @@ export class ChromiumDriver implements BrowserDriver {
     }
 
     const settled = await this.settle(page);
+    // The act RAN. If a person took the browser while the page settled, we
+    // still owe the caller an honest answer — but not a picture of whatever
+    // they are doing now. Say what happened and hand back nothing else.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
+      );
+    }
     const frame = await this.snapshot(page);
     const screenshot = await page.screenshotBase64().catch(() => undefined);
     return {
@@ -430,10 +468,16 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     entry: TabEntry,
     navigate: (page: DriverPage) => Promise<void>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
+      );
+    }
     const frame = await this.snapshot(entry.page);
     return {
       ...this.observation(tabId, entry, { url: frame.url }, frame),
@@ -444,7 +488,13 @@ export class ChromiumDriver implements BrowserDriver {
   private async observe(
     tabId: string,
     action: Extract<BrowserAction, { kind: "observe" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -461,7 +511,7 @@ export class ChromiumDriver implements BrowserDriver {
         return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry);
+        return this.observeScreenshot(tabId, entry, permit);
       case "a11y": {
         // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
         // a marker naming the retrieval verb), never by cutting one open.
@@ -543,9 +593,17 @@ export class ChromiumDriver implements BrowserDriver {
   private async observeScreenshot(
     tabId: string,
     entry: TabEntry,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
+      // Re-checked per attempt: this loop captures more than once, and a
+      // handoff between attempts must stop the next one.
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person has taken control of this browser; nothing was observed",
+        );
+      }
       const before = await this.snapshot(entry.page);
       const screenshot = await entry.page.screenshotBase64();
       const after = await this.snapshot(entry.page);
@@ -619,8 +677,40 @@ export class ChromiumDriver implements BrowserDriver {
    */
   private withHandoffNote(output: Record<string, unknown>) {
     return this.lease?.consumeResumedDirty()
-      ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE }
+      ? {
+          ...output,
+          handoffNote: handoffNoteFor(this.lease.resumedFromKind()),
+        }
       : output;
+  }
+
+  /**
+   * May THIS command look at the page right now?
+   *
+   * Bound to the command rather than read globally, because "a lease is held"
+   * is not the same as "you may not look": the holder's own `manual` commands
+   * are exactly what a lease is for. It is the same predicate the handler and
+   * the dequeue guard ask, asked a third time — and passed down as a closure
+   * rather than stored on the instance, because two tabs run concurrently and
+   * a shared field would answer one command's question with another's.
+   *
+   * Asked immediately before EVERY capture rather than once per command: a
+   * command can take seconds (a navigation settles for up to ten), and the
+   * handoff it must respect is the one happening NOW.
+   */
+  private permitFor(command: BrowserCommand): () => boolean {
+    const lease = this.lease;
+    if (!lease) return () => true;
+    return () => leaseRefusalFor(lease.state(), command) === undefined;
+  }
+
+  /** The result a capture-time handoff produces: no output, no token, no frame. */
+  private leaseBlockedResult(detail: string): BrowserCommandResult {
+    return {
+      ok: false,
+      leaseBlocked: true,
+      error: formatBrowserdError("lease_held", detail),
+    };
   }
 
   /**

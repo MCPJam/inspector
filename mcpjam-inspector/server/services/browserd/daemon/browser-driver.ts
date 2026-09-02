@@ -11,8 +11,10 @@ import {
   BrowserCommand,
   BrowserCommandResult,
   ObservationStateToken,
+  formatBrowserdError,
 } from "../protocol";
 import type { CommandExecutor } from "./command-queue";
+import { leaseRefusalFor, type HandoffLease } from "./lease";
 
 export interface DriverHealth {
   ok: boolean;
@@ -85,5 +87,40 @@ export function guardStaleness(driver: BrowserDriver): CommandExecutor {
       };
     }
     return driver.execute(command);
+  };
+}
+
+/**
+ * Wrap an executor with the lease check, re-asked AT DEQUEUE.
+ *
+ * The handler refuses commands that ARRIVE while a person holds the browser.
+ * That is not the whole story: the per-tab FIFO can hold several commands, and
+ * one admitted a moment before someone clicked "Take control" would otherwise
+ * run — and capture — under their hands. The queue is deliberately not drained
+ * or cancelled (a cancelled command would have to be re-issued blind, and its
+ * commandId is already spent); instead each one re-asks the same question when
+ * its turn comes, and the ones that lose answer `leaseBlocked` without ever
+ * reaching the driver.
+ *
+ * Composed OUTSIDE `guardStaleness` so the lease is checked before the
+ * staleness read, which is itself an observation of the page.
+ */
+export function guardLease(
+  lease: Pick<HandoffLease, "state">,
+  executor: CommandExecutor,
+): CommandExecutor {
+  return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
+    const refusal = leaseRefusalFor(lease.state(), command);
+    if (refusal) {
+      return {
+        ok: false,
+        leaseBlocked: true,
+        error: formatBrowserdError(
+          refusal,
+          "a person took control of this browser before this action ran; nothing was run and nothing was observed",
+        ),
+      };
+    }
+    return executor(command);
   };
 }

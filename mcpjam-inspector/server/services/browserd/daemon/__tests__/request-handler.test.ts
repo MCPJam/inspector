@@ -260,10 +260,15 @@ describe("BrowserdRequestHandler — authenticated /v1/status (W2)", () => {
 });
 
 describe("BrowserdRequestHandler — handoff lease gate (W4)", () => {
-  const commandFrom = (source: BrowserCommand["source"]) =>
+  const commandFrom = (source: BrowserCommand["source"], holder?: string) =>
     req({
       body: JSON.stringify({
-        command: { commandId: "c1", source, action: { kind: "reload" } },
+        command: {
+          commandId: "c1",
+          source,
+          action: { kind: "reload" },
+          ...(holder ? { holder } : {}),
+        },
       }),
     });
 
@@ -310,16 +315,81 @@ describe("BrowserdRequestHandler — handoff lease gate (W4)", () => {
 
   it("still runs the person's own `manual` command while they hold it", async () => {
     const { handler, submit } = makeHandler({ lease: heldLease() });
-    const res = await handler.handle(commandFrom("manual"));
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
     expect(res.status).toBe(200);
     expect(submit).toHaveBeenCalledOnce();
   });
 
-  it("still runs a `manual` command while the lease is parked", async () => {
+  it("still runs the holder's `manual` command while the lease is parked", async () => {
+    // Parked is "your time ran out mid-flow", not "you are done" — the person
+    // may still be typing a card number. Their own commands keep working.
     const { handler, submit } = makeHandler({ lease: parkedLease() });
-    const res = await handler.handle(commandFrom("manual"));
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
     expect(res.status).toBe(200);
     expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it("423s a `manual` command that names NOBODY — the source is not a credential", async () => {
+    // The bypass this closes: `manual` is the one source the gate lets past,
+    // so anything able to reach the daemon could drive and observe a browser
+    // someone is signing into by simply claiming to be them.
+    const { handler, submit } = makeHandler({ lease: heldLease() });
+    const res = await handler.handle(commandFrom("manual"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({ error: "lease_held_by_other" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("423s a `manual` command from someone who is not the holder", async () => {
+    const { handler, submit } = makeHandler({ lease: heldLease() });
+    const res = await handler.handle(commandFrom("manual", "panel-b"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({ error: "lease_held_by_other" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("423s a `manual` command while NOBODY holds the lease", async () => {
+    // With the lease free the agent may be mid-turn, and two drivers on one
+    // page is the exact thing the lease exists to prevent. Take it first.
+    const { handler, submit } = makeHandler();
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({ error: "lease_required" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("reports WHAT holds the browser, so the pane and the model can say", async () => {
+    const lease = new HandoffLease();
+    lease.acquire("script-1", 60_000, "script");
+    const { handler } = makeHandler({ lease });
+    const res = await handler.handle(commandFrom("chat"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({
+      error: "lease_held",
+      holder: "script-1",
+      holderKind: "script",
+    });
+  });
+
+  it("maps a result the lease caught INSIDE the queue to the same 423", async () => {
+    // The gate cannot see a command that was already admitted. `guardLease`
+    // and the driver's capture permit answer those with `leaseBlocked`, and a
+    // caller must read one refusal whichever side of the queue it happened on.
+    const lease = heldLease();
+    const { handler } = makeHandler({
+      lease,
+      submit: vi.fn().mockResolvedValue({
+        status: "ok",
+        bootId: "boot-1",
+        result: { ok: false, leaseBlocked: true, error: "lease_held: taken" },
+      }),
+    });
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({
+      error: "lease_held: taken",
+      holder: "panel-a",
+    });
   });
 
   it("blocks OBSERVATIONS too — the privacy half of the gate", async () => {
