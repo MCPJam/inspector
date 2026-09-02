@@ -151,6 +151,25 @@ export type ChatSessionEngineResult =
  * A rule added there (a new capability, a new credential path) must apply here
  * too, and calling the one function is the only way to guarantee that.
  *
+ * THE ORDER OF THE REFUSALS IS PART OF THE CONTRACT, because only the first one
+ * is ever seen. They run MOST-FUNDAMENTAL FIRST — measured by how much of the
+ * request the caller must abandon to get past each — so a caller never spends a
+ * round trip fixing something that was not going to be enough:
+ *
+ *   1. AVAILABILITY. This deployment, this host, this model. No shape of
+ *      request gets past it, so nothing may precede it: telling a caller to
+ *      restructure their target and letting them hit an unconfigured computers
+ *      plane afterwards is the same wasted round trip in the other direction.
+ *   2. UNPINNABLE HOST. A property of the SESSION, fixable only by starting a
+ *      different one. Nothing in the next request can change it.
+ *   3. APPROVAL. Fixable on the HOST (`requireToolApproval`), keeping the
+ *      session.
+ *   4. TOOL POLICY. Fixable in the very next request — `toolMode: "auto"` with
+ *      no `allowedTools`/`maxToolCalls`. The cheapest to fix, so it is last.
+ *
+ * 1, 3 and 4 keep the relative order they have always had; only the newest rule
+ * was placed, and it was placed by that measure rather than by arrival.
+ *
  * The two `surface-*` rules on top of it are properties of THIS route, not of
  * any harness, and each closes a hole the shared gate cannot see:
  *
@@ -228,6 +247,30 @@ export function resolveChatSessionEngine(args: {
     };
   }
 
+  // SECOND, because a session shape cannot be fixed by anything in the next
+  // request. The engine must survive turn TWO: a host reached by pointer is
+  // re-resolved from the body every turn, so a session that pins its own
+  // `serverIds` can be continued without one, resolve no host at all, and
+  // append an emulated turn to a harness transcript — the failure this whole
+  // module exists to make impossible. This is the only point where both facts
+  // are known; the continuation cannot tell a harness-established session from
+  // an ordinary `serverIds` one, because nothing durable says so.
+  if (args.hostTarget.source === "host" && args.sessionPinsOwnServerIds) {
+    return {
+      ok: false,
+      harness,
+      kind: "surface-unpinnable-host",
+      reason:
+        `this session pins its own serverIds, and hostId cannot be pinned ` +
+        `alongside them — so a later turn that omitted hostId would run the ` +
+        `emulated engine on a session established on the ${name} harness, and ` +
+        "nothing in the transcript would say where the engine changed. Target " +
+        "an environmentId instead (an environment pins its own host, on every " +
+        "turn including continuations), or send hostId ALONE and narrow the " +
+        "host's servers per turn with allowedServerIds",
+    };
+  }
+
   if (requireToolApproval) {
     return {
       ok: false,
@@ -262,29 +305,6 @@ export function resolveChatSessionEngine(args: {
         'toolMode: "auto" with no allowedTools/maxToolCalls to run the real ' +
         "runtime, or target a non-harness host. allowedServerIds still " +
         "applies — it narrows the server set the harness is given",
-    };
-  }
-
-  // The engine must survive turn TWO. A host reached by pointer is re-resolved
-  // from the body every turn; a session that pins its own `serverIds` can be
-  // continued without one and would then resolve no host at all — an emulated
-  // turn appended to a harness transcript, which is the failure this whole
-  // module exists to make impossible. Refused here, at the only point where
-  // both facts are known: the continuation cannot tell a harness-established
-  // session from an ordinary `serverIds` one, because nothing durable says so.
-  if (args.hostTarget.source === "host" && args.sessionPinsOwnServerIds) {
-    return {
-      ok: false,
-      harness,
-      kind: "surface-unpinnable-host",
-      reason:
-        `this session pins its own serverIds, and hostId cannot be pinned ` +
-        `alongside them — so a later turn that omitted hostId would run the ` +
-        `emulated engine on a session established on the ${name} harness, and ` +
-        "nothing in the transcript would say where the engine changed. Target " +
-        "an environmentId instead (an environment pins its own host, on every " +
-        "turn including continuations), or send hostId ALONE and narrow the " +
-        "host's servers per turn with allowedServerIds",
     };
   }
 

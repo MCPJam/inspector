@@ -605,6 +605,26 @@ describe("a pointer-reached harness must survive the NEXT turn", () => {
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
+  it("reports the SHAPE first, not a tool policy the caller could fix", async () => {
+    // `toolMode` defaults to read_only, which a harness also refuses — but that
+    // one is fixable in the next request and this one is not. Surfacing the
+    // cheap refusal first would send the caller away to fix `toolMode`, only to
+    // meet the impossibility on the round trip after. Most-fundamental first.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, harness: "claude-code" },
+    });
+
+    const response = await turn(
+      firstTurn({ hostId: HOST, serverIds: ["srv_1"], toolMode: undefined }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.details.kind).toBe("surface-unpinnable-host");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
   it("leaves the same combination alone on an EMULATED host", async () => {
     // Nothing to lose on turn two: both turns run the same engine either way.
     fetchHostRuntimeConfigMock.mockResolvedValue({
@@ -884,6 +904,43 @@ describe("resolveChatSessionEngine", () => {
         hostTarget: hostTarget({ harness: "claude-code" }),
       }),
     ).toMatchObject({ ok: false, kind: "surface-unpinnable-host" });
+  });
+
+  it("outranks the tool policy, which is fixable in the next request", () => {
+    expect(
+      resolveChatSessionEngine({
+        ...base,
+        sessionPinsOwnServerIds: true,
+        toolPolicy: { toolMode: "read_only" },
+        hostTarget: hostTarget({ harness: "claude-code" }),
+      }),
+    ).toMatchObject({ ok: false, kind: "surface-unpinnable-host" });
+  });
+
+  it("outranks the approval rule, which is fixable on the host", () => {
+    expect(
+      resolveChatSessionEngine({
+        ...base,
+        sessionPinsOwnServerIds: true,
+        hostTarget: hostTarget({
+          harness: "claude-code",
+          requireToolApproval: true,
+        }),
+      }),
+    ).toMatchObject({ ok: false, kind: "surface-unpinnable-host" });
+  });
+
+  it("yields to AVAILABILITY, which no session shape can get past", () => {
+    // The one rule more fundamental than the shape. Reversing these would send
+    // a caller to restructure their target and then meet the wall anyway.
+    expect(
+      resolveChatSessionEngine({
+        ...base,
+        sessionPinsOwnServerIds: true,
+        model: { id: "custom:acme:local-llm", provider: "custom" },
+        hostTarget: hostTarget({ harness: "claude-code" }),
+      }),
+    ).toMatchObject({ ok: false, kind: "model-not-hosted" });
   });
 
   it("allows a pinned-servers session whose host came from an ENVIRONMENT", () => {

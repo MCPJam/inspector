@@ -73,6 +73,14 @@ error: an `environmentId` pins its host durably, and `hostId` alone plus
 per-turn `allowedServerIds` narrows the same set. On an emulated host the
 pairing is untouched — there is no engine to lose.
 
+The harness refusals are ordered most-fundamental-first, since only the first
+one is ever seen: runtime availability, then the session shape, then the host's
+approval setting, then the per-turn tool policy — measured by how much of the
+request a caller has to abandon to get past each. A shape that can never work
+is reported before a `toolMode` the caller could have fixed in the next
+request, so nobody spends a round trip on a fix that was not going to be
+enough.
+
 An environment-backed harness turn now delivers the ENVIRONMENT's resolved
 skills. The emulated engine already honoured them; the harness read
 `runtimeSkillsOverride`, which nothing set here, so it fell back to the live
