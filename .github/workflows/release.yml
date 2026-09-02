@@ -288,11 +288,29 @@ jobs:
       apply_release_patch: true
     secrets: inherit
 
+  # The local-harness runtime pack. Not a desktop artifact — it is downloaded
+  # on demand by both distributions — but it is published on the same release,
+  # so it is built alongside them and gated the same way.
+  build-local-harness-pack:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
+    uses: ./.github/workflows/local-harness-pack.yml
+    with:
+      pack_version: ${{ needs.preflight.outputs.inspector_version }}
+      # A release must publish packs the committed digest table already names.
+      # Otherwise the desktop artifacts — built in parallel from the checked-in
+      # table — would ship digests that match nothing, `expectedPackFor` would
+      # answer `null`, and every published pack would be rejected as
+      # unsupported: artifacts that exist and cannot be installed.
+      enforce_committed_digests: true
+    secrets: inherit
+
   artifact-gate:
     needs:
       - preflight
       - build-mac
       - build-windows
+      - build-local-harness-pack
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -314,6 +332,14 @@ jobs:
 
           if [ "${{ needs.build-windows.result }}" != "success" ]; then
             echo "Windows artifact build failed." >&2
+            exit 1
+          fi
+
+          # A release whose packs did not build would ship an Inspector whose
+          # manifest names digests for assets that are not there, and every
+          # install would fail verification with nothing to point at.
+          if [ "${{ needs.build-local-harness-pack.result }}" != "success" ]; then
+            echo "Local harness runtime pack build failed." >&2
             exit 1
           fi
 
@@ -774,6 +800,16 @@ jobs:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/windows
 
+      # Every platform's pack, its signed manifest, its signature and its
+      # sha256 — this is where the installer downloads from.
+      - name: Download local harness runtime packs
+        if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: local-harness-pack-*
+          path: .release-assets/runtime
+          merge-multiple: true
+
       - name: Create GitHub release
         if: needs.preflight.outputs.release_tag != ''
         uses: softprops/action-gh-release@v2
@@ -786,3 +822,4 @@ jobs:
           files: |
             .release-assets/macos/**
             .release-assets/windows/**
+            .release-assets/runtime/**

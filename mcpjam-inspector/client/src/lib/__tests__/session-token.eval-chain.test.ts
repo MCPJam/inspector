@@ -61,6 +61,8 @@ describe("authFetch bearer on the eval chain routes", () => {
     // pinned as unreachable until a reader needed it, and the entry it now
     // requires is the one that would otherwise 401 as "could not be loaded".
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
+    // What changed since the previous run.
+    "/api/v1/projects/proj_1/eval-runs/run_1/compare",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });
@@ -97,6 +99,9 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1/trace",
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1",
     "/api/v1/projects/proj_1/eval-runs/run_1/steps",
+    // Same narrowness for the compare read: the literal segment only.
+    "/api/v1/projects/proj_1/eval-runs/run_1/compare-export",
+    "/api/v1/projects/proj_1/eval-runs/run_1/compare/cases",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });

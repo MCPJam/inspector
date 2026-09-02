@@ -20,10 +20,18 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
-import { WEBMCP_INSPECTOR_ENABLED } from "../../config";
+import {
+  HOSTED_MODE,
+  LOCAL_HARNESS_ENABLED,
+  WEBMCP_INSPECTOR_ENABLED,
+} from "../../config";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
-import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import {
+  checkHarnessRuntimeAvailable,
+  externalAccountHostModelRefusalReason,
+} from "../../utils/harness/harness-availability.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -100,6 +108,11 @@ import {
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
 import { isGuestChatRequest } from "../../utils/computers/local-engine-request.js";
+import {
+  LOCAL_HARNESS_GRANT_HEADER,
+  parseHarnessExecutionTarget,
+  type RawHarnessTargetInput,
+} from "../../utils/harness/local/request-target.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -668,6 +681,12 @@ chatV2.post("/", async (c) => {
       // (computer still comes only from the server-resolved runtime config).
       // "local" additionally requires the consent capability header.
       computerEngine?: "local" | "cloud";
+      // Run a CLAUDE CODE HARNESS turn on this machine rather than in a cloud
+      // computer. Opaque ids only; the consent capability rides the
+      // `x-mcpjam-local-harness-grant` header, never the body, so it cannot
+      // enter a persisted transcript. Local-route only — `/api/web/chat-v2`
+      // parses it too, and refuses it, so the two cannot disagree about shape.
+      harnessTarget?: RawHarnessTargetInput;
     };
     const mcpClientManager = c.mcpClientManager;
     const rawScopeStepUpResume = body.scopeStepUpResume;
@@ -925,8 +944,44 @@ chatV2.post("/", async (c) => {
     // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
     // selections with vendor-prefixed ids) would otherwise inherit the
     // body's provider and route to the wrong runtime.
+    //
+    // Host-wins for a scenario, and ALSO for an EXTERNAL-ACCOUNT harness on any
+    // surface — see the twin gate in `routes/web/chat-v2.ts`. The Cursor
+    // adapter passes no model, so the body's model overrides nothing and only
+    // the host's `cursor/auto` sentinel describes the turn; recording the
+    // browser's leftover pick would attribute the turn to a model that never
+    // ran.
+    //
+    // Unconditional for such a harness, matching the web rail: the refusal
+    // directly above has already established that this host carries the
+    // sentinel, so there is nothing left for a narrowing here to decide.
+    // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
+    // below resolves anything. `resolveHostModelDefinition` asks the org's
+    // model config about an id it cannot possibly list, on a call carrying a
+    // 15 s timeout — and this host is going to be refused by the harness
+    // pre-flight further down regardless. Deciding it here keeps the same
+    // refusal (one shared sentence, one rule) and pays nothing for it.
+    //
+    // The pre-flight's own copy of the rule stays: it is the gate every surface
+    // shares, and this is a shortcut in front of it, not a replacement.
+    if (resolvedExecution.harness) {
+      const hostModelRefusal = externalAccountHostModelRefusalReason({
+        harnessId: resolvedExecution.harness,
+        modelId: resolvedExecution.modelId ?? String(model?.id ?? ""),
+      });
+      if (hostModelRefusal) {
+        return c.json(
+          {
+            error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+          },
+          503,
+        );
+      }
+    }
     if (
-      isScenarioSession &&
+      (isScenarioSession ||
+        (resolvedExecution.harness &&
+          harnessUsesExternalAccount(resolvedExecution.harness))) &&
       hostRuntimeConfig &&
       model &&
       resolvedExecution.modelId &&
@@ -1004,13 +1059,39 @@ chatV2.post("/", async (c) => {
       modelDefinition.id &&
       isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
     );
+    // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
+    // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
+    // `streamWebChatTurn` makes, for the same reason: without it a Cursor host
+    // on this rail passes the harness preflight above and then falls into the
+    // org-BYOK branch, which asks the org config for a `cursor` provider key
+    // that cannot exist — so the harness never runs and the user sees a
+    // configuration error for a host the product just called ready.
+    //
+    // Kept separate from `isMcpJamProvidedModel` rather than folded into it:
+    // that name means "MCPJam pays for this model", and an external-account
+    // turn is precisely the case where it does not. The two facts differ, so
+    // the values do too — `modelSource` below reads this one.
+    const isExternalAccountHarnessTurn = Boolean(
+      resolvedExecution.harness &&
+        harnessUsesExternalAccount(resolvedExecution.harness),
+    );
+    const usesMcpjamFreePath =
+      isMcpJamProvidedModel || isExternalAccountHarnessTurn;
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
     // allowlist. A guest MCPJam-model request still gets its bearer minted
     // lazily below (resolveMcpJamAuthHeader).
     let mcpJamAuthHeader = requestAuthHeader;
     const resolveMcpJamAuthHeader = async () => {
-      if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;
+      // Keyed on the FREE-PATH predicate, not on "MCPJam provides this model".
+      // An external-account harness turn takes the same branch below and needs
+      // the same bearer for everything that branch does with it — persisting
+      // the session, reserving the box, fetching runtime config. Gating the
+      // mint on `isMcpJamProvidedModel` left an anonymous Cursor turn holding
+      // `undefined` and 503-ing on "Unable to authenticate with MCPJam
+      // servers" before the harness ever started, on a host the preflight had
+      // just called ready.
+      if (mcpJamAuthHeader || !usesMcpjamFreePath) return mcpJamAuthHeader;
       try {
         mcpJamAuthHeader = (await getProductionGuestAuthHeader()) ?? undefined;
       } catch {
@@ -1023,7 +1104,7 @@ chatV2.post("/", async (c) => {
     // it before tool prep too, otherwise host-enabled built-ins are omitted
     // even though the later MCPJam model path can authenticate the turn.
     if (
-      isMcpJamProvidedModel &&
+      usesMcpjamFreePath &&
       !mcpJamAuthHeader &&
       process.env.CONVEX_HTTP_URL
     ) {
@@ -1088,10 +1169,37 @@ chatV2.post("/", async (c) => {
 
     // Harness preflight: fail closed with a clear message when a host-resolved
     // harness (claude-code | codex) can't run on this server (never silent-
+    // The HARNESS execution target, resolved BEFORE the availability gate,
+    // because it changes what that gate checks: a local turn reserves and wakes
+    // no E2B box, so the computers-data-plane requirement does not apply to it.
+    //
+    // Parsed by the same shared rules `/api/web/chat-v2` uses, so the two
+    // routes cannot disagree about shape. An explicit ask that cannot be
+    // honoured is REFUSED here, before a stream opens, rather than silently
+    // relocated to a cloud box: quietly moving a turn the user deliberately
+    // scoped to their machine is the dishonesty this design removes.
+    const harnessTargetParse = parseHarnessExecutionTarget({
+      body,
+      grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+      actorEligible:
+        !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
+    });
+    if (harnessTargetParse.kind === "refused") {
+      return c.json({ error: harnessTargetParse.reason }, 400);
+    }
+    const harnessExecutionTarget =
+      harnessTargetParse.kind === "local-native"
+        ? harnessTargetParse.target
+        : undefined;
+
     // fallback). Capability-driven (computer / approval / MCP / model eligibility).
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
+        // A local turn reserves and wakes nothing, so the computers-data-plane
+        // check does not apply to it. Every other rule still does.
+        ...(harnessExecutionTarget ? { localExecution: true } : {}),
         requireToolApproval: resolvedExecution.requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
         // The RESOLVED definition — eligibility and the canonical id are both
@@ -1101,6 +1209,13 @@ chatV2.post("/", async (c) => {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
         },
+        // The HOST's own configured id, kept separate from the resolved model
+        // above. Only the external-account rule reads it, and only that rule
+        // should: it asks whether this HOST carries the runtime's sentinel, a
+        // question a request body must not be able to answer.
+        ...(resolvedExecution.modelId
+          ? { hostModelId: resolvedExecution.modelId }
+          : {}),
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
@@ -1173,6 +1288,7 @@ chatV2.post("/", async (c) => {
           : {}),
       localConsentValid,
     });
+
 
     // Filled by the resolver when browser tools are advertised; merged into
     // the engines' single `uiToolApprovals` slot below.
@@ -1533,8 +1649,9 @@ chatV2.post("/", async (c) => {
         })
       : undefined;
 
-    // MCPJam-provided models: delegate to stream handler
-    if (isMcpJamProvidedModel && modelDefinition.id) {
+    // MCPJam-provided models — and external-account harness turns, which carry
+    // a sentinel model id instead of a hosted one — delegate to stream handler
+    if (usesMcpjamFreePath && modelDefinition.id) {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
@@ -1635,6 +1752,10 @@ chatV2.post("/", async (c) => {
         ...(harnessComputerWorkdir
           ? { computerWorkdir: harnessComputerWorkdir }
           : {}),
+        // Run on the user's own machine. Opaque ids plus the consent
+        // capability, all re-verified by the availability gate before anything
+        // spawns.
+        ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).
@@ -1646,7 +1767,13 @@ chatV2.post("/", async (c) => {
               return await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
-                modelSource: "mcpjam",
+                // `'external-account'` rather than `'mcpjam'` when the runtime
+                // pays on the customer's own vendor account: `'mcpjam'` is what
+                // makes a turn consume the org's MCPJam spend limit, and this
+                // turn spent none of it.
+                modelSource: isExternalAccountHarnessTurn
+                  ? "external-account"
+                  : "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
                 ...(!isScenarioSession && body.rewind

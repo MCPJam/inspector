@@ -352,6 +352,96 @@ describe("checkHarnessRuntimeAvailable", () => {
       ).toEqual({ ok: true });
     });
 
+    it("refuses an external-account host that pins an ORDINARY model id", () => {
+      // The exemption is not "no model rule applies", it is "a different one
+      // does": the host must carry the runtime's sentinel. Cursor ignores
+      // whatever id the host holds and picks its own model, so a host pinned to
+      // `anthropic/claude-sonnet-4.5` would run Cursor Auto while the session
+      // row, the trace and the eval metadata all named Sonnet as the model that
+      // ran — the exact mis-attribution this whole change exists to stop, just
+      // arriving from the host side instead of the browser's.
+      setFullyAvailable();
+      const r = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "cursor" as HarnessId,
+          model: {
+            id: "anthropic/claude-sonnet-4.5",
+            provider: "anthropic",
+          },
+        }),
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.kind).toBe("model-unsupported");
+        // Names the id it found, so the owner can see what to reset.
+        expect(r.reason).toContain("anthropic/claude-sonnet-4.5");
+      }
+    });
+
+    it("holds the HOST's id to the rule, not the one the request supplied", () => {
+      // The mis-configured host, entered from the other side. Everything the
+      // external-account rule protects is a fact about the HOST — nothing
+      // consumes the turn's model on this arm — so a caller must not be able to
+      // satisfy it by sending the sentinel in the body while the host itself
+      // carries an ordinary id. Left reading `model.id`, this combination was
+      // ACCEPTED and Cursor ran under a host that pinned Sonnet.
+      setFullyAvailable();
+      const r = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "cursor" as HarnessId,
+          model: { id: "cursor/auto", provider: "cursor" },
+          hostModelId: "anthropic/claude-sonnet-4.5",
+        }),
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.kind).toBe("model-unsupported");
+        // The refusal names the HOST's id — the thing whose owner has to fix it.
+        expect(r.reason).toContain("anthropic/claude-sonnet-4.5");
+        expect(r.reason).not.toContain("cursor/auto");
+      }
+    });
+
+    it("accepts a host that pins the sentinel whatever the turn's model says", () => {
+      // The other direction of the same precedence: the host is what counts, so
+      // a stale body model on a correctly configured host is not the gate's
+      // problem (the routes promote the host's model over it anyway).
+      setFullyAvailable();
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "cursor" as HarnessId,
+            model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+            hostModelId: "cursor/auto",
+          }),
+        ),
+      ).toEqual({ ok: true });
+    });
+
+    it("falls back to the turn's model when the host pinned none", () => {
+      // A host with a harness and no model at all pins nothing to validate, so
+      // the turn's own model is the only description of what it runs: a
+      // sentinel is a true one, an ordinary id is still refused.
+      setFullyAvailable();
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "cursor" as HarnessId,
+            model: { id: "cursor/auto", provider: "cursor" },
+          }),
+        ),
+      ).toEqual({ ok: true });
+
+      const ordinary = checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "cursor" as HarnessId,
+          model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+        }),
+      );
+      expect(ordinary.ok).toBe(false);
+      if (!ordinary.ok) expect(ordinary.kind).toBe("model-unsupported");
+    });
+
     it("does not exempt a BROKERED harness from the model gate", () => {
       // The exemption is keyed on `modelAccess`, not on "harness runs a CLI".
       setFullyAvailable();
@@ -423,6 +513,19 @@ describe("harnessModelEligibleForRuntime", () => {
         provider: "cursor",
       }),
     ).toBe(true);
+  });
+
+  it("refuses an ordinary model id on an EXTERNAL-ACCOUNT harness", () => {
+    // The dispatch half of the rule above. Left `true`, this is what let a
+    // mis-configured Cursor host run the real runtime and report an unrelated
+    // model id as the one that ran.
+    expect(
+      harnessModelEligibleForRuntime({
+        adapter: getHarnessAdapter("cursor"),
+        modelId: "anthropic/claude-sonnet-4.5",
+        provider: "anthropic",
+      }),
+    ).toBe(false);
   });
 
   it("still refuses a non-hosted model for a BROKERED harness", () => {

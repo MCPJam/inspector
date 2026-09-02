@@ -253,6 +253,18 @@ describe("v1 harness routes", () => {
       }
     });
 
+    it("returns the cursor built-in tools (bash, read, edit, webSearch)", async () => {
+      const res = await request("GET", "/api/v1/harness/cursor/builtin-tools");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { items: ToolInfo[] };
+      expect(Array.isArray(body.items)).toBe(true);
+      const keys = new Set(body.items.map((t) => t.key));
+      for (const expected of ["bash", "read", "edit", "webSearch"]) {
+        expect(keys).toContain(expected);
+      }
+      for (const t of body.items) expect(t.name.length).toBeGreaterThan(0);
+    });
+
     it("404s for an unknown / not-yet-installed harness id", async () => {
       // `pi` is a plausible-but-unregistered runtime (codex is now installed).
       const res = await request("GET", "/api/v1/harness/pi/builtin-tools");

@@ -112,6 +112,8 @@ interface Fixture {
   ephemeralLaunch?: boolean;
   /** Deployment that predates environment model overrides. */
   modelOverrides?: boolean;
+  /** Deployment that predates environment secret grants. */
+  secretGrants?: boolean;
   /** Suite already has these attached environment ids (union-cap tests). */
   attachedEnvironmentIds?: string[];
   /** Server groups the project already holds. */
@@ -205,6 +207,7 @@ function makeClient(fixture: Fixture = {}) {
         modelOverrides: fixture.modelOverrides !== false,
         modelMatrix: fixture.modelOverrides !== false,
         ephemeralEnvironmentLaunch: fixture.ephemeralLaunch !== false,
+        secretGrants: fixture.secretGrants !== false,
       });
     }
     if (/\/environments\/[^/]+$/.test(path) && method === "GET") {
@@ -1115,6 +1118,255 @@ describe("compose skill selection", () => {
     expect(unselected.success).toBe(false);
     expect(JSON.stringify(unselected.error?.issues)).toContain(
       "which is not in skillIds",
+    );
+  });
+});
+
+/**
+ * The CREDENTIAL axis on a composed stack.
+ *
+ * `secretSelection` reached the named-environment operations in #4598 and
+ * stopped there: `composeStackFields` and `resolveComposeStack` carried only
+ * skills and plugin versions, and a `z.object` strips what it does not
+ * declare — so a grant passed to `ensure_adhoc_environment` or to a run's
+ * `compose` vanished silently between the caller and the wire. The route had
+ * accepted the field the whole time. The consequence was not cosmetic: a
+ * composed stack could not carry a credential at all, so any harness run that
+ * needed one had to fall back to a named environment.
+ *
+ * Asserted at the WIRE, like the skills-pin regression above it: parsing
+ * "succeeds" either way, and the body is the only place the drop shows.
+ */
+describe("compose secret grants", () => {
+  const GRANT = {
+    mode: "explicit" as const,
+    secretIds: ["secret-vercel-token"],
+  };
+
+  it("carries a grant into the ensure-adhoc body", async () => {
+    const { client, fetchMock } = makeClient();
+    // Through the SCHEMA, the way every real caller arrives (MCP tool call,
+    // `--secret` flag parse). `execute` on a hand-built object would sail
+    // past the very stripping this covers.
+    const input = ensureAdhocEnvironmentOperation.inputSchema.parse({
+      host: "Claude Code",
+      secrets: GRANT,
+    });
+    await ensureAdhocEnvironmentOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      secretSelection: GRANT,
+    });
+  });
+
+  it("carries a grant through a composed RUN's cells", async () => {
+    const { client, fetchMock } = makeClient();
+    const input = runEvalSuiteOperation.inputSchema.parse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+    await runEvalSuiteOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      secretSelection: GRANT,
+    });
+  });
+
+  it("is on the single-case run path too", async () => {
+    const { client, fetchMock } = makeClient();
+    const input = runEvalCaseOperation.inputSchema.parse({
+      suite: "Smoke",
+      case: "echo works",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+    await runEvalCaseOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      secretSelection: GRANT,
+    });
+  });
+
+  it("omits the field entirely when no grant is asked for", async () => {
+    const { client, fetchMock } = makeClient();
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code" },
+      { client },
+    );
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).not.toHaveProperty(
+      "secretSelection",
+    );
+  });
+
+  it("shares the named-environment schema, so `[]` is refused here too", () => {
+    // Revoking is `null` on an update; an empty list would read as "grant
+    // nothing" and is rejected everywhere rather than on some surfaces.
+    const adhoc = ensureAdhocEnvironmentOperation.inputSchema.safeParse({
+      host: "Claude Code",
+      secrets: { mode: "explicit", secretIds: [] },
+    });
+    expect(adhoc.success).toBe(false);
+
+    const run = runEvalSuiteOperation.inputSchema.safeParse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: { mode: "explicit", secretIds: [] },
+      },
+    });
+    expect(run.success).toBe(false);
+  });
+
+  it("keeps the grant beside the other axes rather than replacing one", async () => {
+    // The bug class this belongs to is "a field the resolver forgot", so the
+    // guard is that ALL of them survive one composition together.
+    const { client, fetchMock } = makeClient();
+    const input = ensureAdhocEnvironmentOperation.inputSchema.parse({
+      host: "Claude Code",
+      computer: "heavy",
+      model: "anthropic/claude-sonnet-4-5",
+      skills: { mode: "explicit", skillIds: ["skill-a"] },
+      secrets: GRANT,
+    });
+    await ensureAdhocEnvironmentOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      sandboxImageId: "img-heavy",
+      modelId: "anthropic/claude-sonnet-4-5",
+      skillSelection: { mode: "explicit", skillIds: ["skill-a"] },
+      secretSelection: GRANT,
+    });
+  });
+});
+
+/**
+ * The VERSION-SKEW refusal for the credential axis.
+ *
+ * `secretSelection` is a field a deployment may never have heard of, and an
+ * unknown argument does not die politely there: it is an argument-VALIDATOR
+ * rejection, not a `ConvexError({ code, message })`, so the v1 write
+ * translator has nothing to classify and answers its terminal 500. The caller
+ * sees `INTERNAL_ERROR` for what is really a client that shipped ahead of the
+ * platform, and the on-call is paged for it — after the compose has already
+ * created or reused a server group.
+ *
+ * Placed in `composeLaunchPolicy`, beside the model-override refusal it is
+ * modelled on, for the same two reasons that one gives. It is FREE: the
+ * launch already reads `/environments/capabilities` before it mints anything,
+ * so `secretGrants` arrives on a response the compose was fetching regardless.
+ * And it is SHARED: the CLI, the remote MCP surface and the in-app agent all
+ * enter through these operations, so one refusal here is what makes the three
+ * agree instead of three preflights that can drift.
+ */
+describe("compose secret grants — deployment skew", () => {
+  const GRANT = {
+    mode: "explicit" as const,
+    secretIds: ["secret-vercel-token"],
+  };
+
+  it("refuses a suite launch before it composes anything", async () => {
+    const { client, fetchMock } = makeClient({ secretGrants: false });
+    const input = runEvalSuiteOperation.inputSchema.parse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+
+    await expect(
+      runEvalSuiteOperation.execute(input, { client }),
+    ).rejects.toThrow(/does not support environment secret grants/);
+
+    // Nothing was written. The refusal has to land before the mint, because
+    // compose WRITES before it spends — an ad-hoc row and possibly a server
+    // group — and none of that should exist for a launch that cannot run.
+    expect(
+      fetchMock.mock.calls.filter((call) =>
+        /ensure-adhoc$/.test(new URL(String(call[0])).pathname),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("refuses the single-case launch the same way", async () => {
+    const { client } = makeClient({ secretGrants: false });
+    const input = runEvalCaseOperation.inputSchema.parse({
+      suite: "Smoke",
+      case: "echo works",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+
+    await expect(
+      runEvalCaseOperation.execute(input, { client }),
+    ).rejects.toThrow(/does not support environment secret grants/);
+  });
+
+  it("costs no round trip a composed launch was not already making", async () => {
+    // The whole cost argument, measured. `probeComposeCapabilities` reads this
+    // route for `ephemeralEnvironmentLaunch` and `modelOverrides` whether or
+    // not a grant was named, so the grant check is a field read on a response
+    // already in hand — one call with a grant, one call without.
+    const withGrant = makeClient();
+    await runEvalSuiteOperation.execute(
+      runEvalSuiteOperation.inputSchema.parse({
+        suite: "Smoke",
+        compose: { host: "Claude Code", hostServers: true, secrets: GRANT },
+      }),
+      { client: withGrant.client },
+    );
+
+    const withoutGrant = makeClient();
+    await runEvalSuiteOperation.execute(
+      runEvalSuiteOperation.inputSchema.parse({
+        suite: "Smoke",
+        compose: { host: "Claude Code", hostServers: true },
+      }),
+      { client: withoutGrant.client },
+    );
+
+    const capabilityCalls = (mock: typeof withGrant.fetchMock) =>
+      mock.mock.calls.filter((call) =>
+        /\/environments\/capabilities$/.test(new URL(String(call[0])).pathname),
+      ).length;
+
+    expect(capabilityCalls(withGrant.fetchMock)).toBe(1);
+    expect(capabilityCalls(withoutGrant.fetchMock)).toBe(
+      capabilityCalls(withGrant.fetchMock),
+    );
+  });
+
+  it("does not refuse a composed launch that names no grant", async () => {
+    // The gate is the GRANT, not the deployment: an old backend still composes
+    // and launches perfectly well as long as nothing asks it for a credential.
+    const { client, fetchMock } = makeClient({ secretGrants: false });
+    await runEvalSuiteOperation.execute(
+      runEvalSuiteOperation.inputSchema.parse({
+        suite: "Smoke",
+        compose: { host: "Claude Code", hostServers: true },
+      }),
+      { client },
+    );
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).not.toHaveProperty(
+      "secretSelection",
     );
   });
 });

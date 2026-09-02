@@ -53,6 +53,7 @@ import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog"
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -325,6 +326,11 @@ startHostedModelCatalogRefresh();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Reports whether a local-harness runtime pack is present. Deliberately
+// only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
+// kill switch and a consent grant is installed when the user asks, never
+// at startup and never during a session start.
+reportLocalHarnessRuntimeStatusInBackground();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
