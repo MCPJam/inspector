@@ -322,3 +322,26 @@ export function buildCaseMetricStripData(
   );
   return finalizeMetricStripData(series);
 }
+
+/** One-line headline for the collapsed suite metrics band. */
+export function formatMetricStripCollapsedSummary(
+  data: MetricStripData,
+): string {
+  const { latest } = data;
+  const verdict =
+    latest.failed > 0 ? `${latest.failed} failing` : "All passing";
+  const parts = [
+    verdict,
+    `${latest.passRate}%`,
+    `${latest.passed}/${latest.total} passed`,
+  ];
+  if (latest.latencyP50 != null) {
+    parts.push(`P50 ${formatDurationMs(latest.latencyP50)}`);
+  }
+  if (latest.latencyP95 != null) {
+    parts.push(`P95 ${formatDurationMs(latest.latencyP95)}`);
+  }
+  parts.push(`${formatCompactNumber(latest.tokens)} tokens`);
+  parts.push(`${formatCompactNumber(latest.toolCalls)} tool calls`);
+  return parts.join(" · ");
+}

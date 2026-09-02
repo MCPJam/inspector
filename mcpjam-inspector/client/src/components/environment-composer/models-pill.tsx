@@ -63,8 +63,12 @@ export function ModelsPill({
   const staleExplicit = explicit.filter((id) => !catalogIds.has(id));
   const includeDefaults = value.includeClientDefaults;
   const triggerLabel = useMemo(
-    () => modelsPillTriggerLabel(value),
-    [value]
+    () =>
+      modelsPillTriggerLabel(value, {
+        clientDefaultLabel,
+        availableModels,
+      }),
+    [availableModels, clientDefaultLabel, value]
   );
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
@@ -263,13 +267,41 @@ export function ModelsPill({
   );
 }
 
-export function modelsPillTriggerLabel(value: ModelSelection): string {
-  const n = value.explicitModelIds.length;
-  if (value.includeClientDefaults && n === 0) return "Client defaults";
-  if (value.includeClientDefaults && n > 0) return `Client defaults +${n}`;
-  if (n === 1) return "1 model";
-  if (n > 1) return `${n} models`;
-  return "No models · pick some";
+export type ModelsPillTriggerLabelOptions = {
+  /** Previewed host model id or display string — shown on the pill, not in copy. */
+  clientDefaultLabel?: string | null;
+  availableModels?: ReadonlyArray<{ id: string | number; name: string }>;
+};
+
+function resolveModelDisplayName(
+  modelId: string,
+  availableModels: ReadonlyArray<{ id: string | number; name: string }>
+): string {
+  const catalog = availableModels.find((model) => String(model.id) === modelId);
+  return compactModelLabel(catalog?.name ?? modelId) || modelId;
+}
+
+/** Pill trigger copy — literal model names; dropdown keeps "Client defaults". */
+export function modelsPillTriggerLabel(
+  value: ModelSelection,
+  options?: ModelsPillTriggerLabelOptions
+): string {
+  const availableModels = options?.availableModels ?? [];
+  const names: string[] = [];
+
+  if (value.includeClientDefaults) {
+    const fromCatalog = options?.clientDefaultLabel
+      ? resolveModelDisplayName(options.clientDefaultLabel, availableModels)
+      : null;
+    names.push(fromCatalog ?? "Default model");
+  }
+  for (const modelId of value.explicitModelIds) {
+    names.push(resolveModelDisplayName(modelId, availableModels));
+  }
+
+  if (names.length === 0) return "No models · pick some";
+  if (names.length === 1) return names[0]!;
+  return `${names[0]!} +${names.length - 1}`;
 }
 
 function wouldExceedBudget(

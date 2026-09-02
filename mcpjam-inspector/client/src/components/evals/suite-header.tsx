@@ -122,6 +122,8 @@ interface SuiteHeaderProps {
   onSuiteHostAttachmentsUpdate?: (
     attachments: HostAttachmentDraft[]
   ) => Promise<void>;
+  /** When the global header shows the suite switcher, hide the duplicate title row. */
+  omitOverviewIdentity?: boolean;
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -176,6 +178,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runningTestCaseId = null,
     runsViewMode = "runs",
     onSuiteHostAttachmentsUpdate,
+    omitOverviewIdentity = false,
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
   } = props;
@@ -942,45 +945,47 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       className="mb-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2"
     >
       <div className="flex min-w-0 items-center gap-2">
-        <div className="min-w-0 max-w-[20rem] shrink overflow-hidden sm:max-w-md">
-          <div className="flex min-w-0 items-center gap-2">
-            {isEditingName ? (
-              <input
-                type="text"
-                value={editedName}
-                onChange={(e) => setEditedName(e.target.value)}
-                onBlur={handleNameBlur}
-                onKeyDown={handleNameKeyDown}
-                autoFocus
-                className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
-              />
-            ) : readOnlyConfig ? (
-              <h2
-                className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
-                title={suite.name}
-              >
-                {suite.name}
-              </h2>
-            ) : (
-              <Button
-                variant="ghost"
-                onClick={handleNameClick}
-                className="h-8 min-w-0 max-w-full flex-1 justify-start gap-0 px-2 text-left text-base font-semibold leading-none hover:bg-accent md:text-lg"
-                title={suite.name}
-              >
-                <span className="min-w-0 truncate text-left">{suite.name}</span>
-              </Button>
-            )}
-            {latestRunForMetadata ? (
-              <span className="shrink-0">
-                <CiMetadataDisplay
-                  ciMetadata={latestRunForMetadata.ciMetadata}
-                  compact={true}
+        {!omitOverviewIdentity ? (
+          <div className="min-w-0 max-w-[20rem] shrink overflow-hidden sm:max-w-md">
+            <div className="flex min-w-0 items-center gap-2">
+              {isEditingName ? (
+                <input
+                  type="text"
+                  value={editedName}
+                  onChange={(e) => setEditedName(e.target.value)}
+                  onBlur={handleNameBlur}
+                  onKeyDown={handleNameKeyDown}
+                  autoFocus
+                  className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
                 />
-              </span>
-            ) : null}
+              ) : readOnlyConfig ? (
+                <h2
+                  className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
+                  title={suite.name}
+                >
+                  {suite.name}
+                </h2>
+              ) : (
+                <Button
+                  variant="ghost"
+                  onClick={handleNameClick}
+                  className="h-8 min-w-0 max-w-full flex-1 justify-start gap-0 px-2 text-left text-base font-semibold leading-none hover:bg-accent md:text-lg"
+                  title={suite.name}
+                >
+                  <span className="min-w-0 truncate text-left">{suite.name}</span>
+                </Button>
+              )}
+              {latestRunForMetadata ? (
+                <span className="shrink-0">
+                  <CiMetadataDisplay
+                    ciMetadata={latestRunForMetadata.ciMetadata}
+                    compact={true}
+                  />
+                </span>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
         <div className="min-w-0 shrink">{suiteOverviewHostBar}</div>
         {overviewSettingsButton}
         {overviewSuiteNavButtons}

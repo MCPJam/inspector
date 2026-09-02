@@ -20,12 +20,13 @@
  * Seeding never writes — only user edits do.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "convex/react";
+import { useConvexAuth, useMutation } from "convex/react";
 import { Globe, Server } from "lucide-react";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import {
   EnvironmentComposer,
-  EVALS_COMPOSER_SLOTS,
+  EVALS_RUNS_COMPOSER_SLOTS,
+  EVALS_SUITE_SETUP_COMPOSER_SLOTS,
 } from "@/components/environment-composer/environment-composer";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
@@ -46,6 +47,8 @@ import {
 } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { useHostList } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -86,22 +89,39 @@ export function SuiteEnvironmentComposerBar({
    * this bar exists to remove. Show the legacy axes read-only instead.
    */
   const attachesEnvironments = (suite.environmentIds?.length ?? 0) > 0;
-  const editable =
-    !readOnly && Boolean(onUpdate) && !(attachesEnvironments && !envCapable);
+  /**
+   * Legacy bar writes `hostAttachments`, which `buildSuiteRunPlans` ignores once
+   * `environmentIds` exist — so block that path when the suite already attaches
+   * environments but this deployment cannot offer the composer.
+   *
+   * Environment mode writes through `setSuiteEnvironments` instead, so it must
+   * NOT inherit that gate: the first model/client edit converts a legacy suite
+   * into `environmentIds`, and applying the legacy guard afterward would lock
+   * the strip forever whenever project-environments is off.
+   */
+  const legacyEditable =
+    !readOnly &&
+    Boolean(onUpdate) &&
+    !(attachesEnvironments && !envCapable);
 
-  return envCapable && projectId ? (
+  // Any project-scoped suite uses the environment composer — including legacy
+  // hostAttachments suites — so the model axis matches create-suite ("Where it
+  // runs"). LegacyModeBar is only for suites with no project. Gating on
+  // `envCapable` alone hid the models pill whenever project-environments was
+  // off, even though create-suite still offered clients + models.
+  return projectId ? (
     <BarShell className={className} containerVariant={containerVariant}>
       <EnvironmentModeBar
         suite={suite}
         projectId={projectId}
-        disabled={!editable}
+        disabled={readOnly}
       />
     </BarShell>
   ) : (
     <BarShell className={className} containerVariant={containerVariant}>
       <LegacyModeBar
         suite={suite}
-        editable={editable}
+        editable={legacyEditable}
         onUpdate={onUpdate}
         onUpdateServerAttachment={onUpdateServerAttachment}
       />
@@ -173,12 +193,47 @@ function EnvironmentModeBar({
     () => (environments ?? []).filter((e) => !e.archivedAt),
     [environments]
   );
+  /**
+   * Rows returned by the last resolve, overlaid until the live query catches up.
+   * Without this, a successful write leaves `environmentIds` pointing at ad-hoc
+   * rows the list query has not delivered yet — every attachment reads as
+   * unresolved and the strip locks itself.
+   */
+  const [resolvedEnvOverlay, setResolvedEnvOverlay] = useState<
+    Map<string, NonNullable<(typeof liveEnvironments)[number]>>
+  >(() => new Map());
+  useEffect(() => {
+    setResolvedEnvOverlay((prev) => {
+      if (prev.size === 0) return prev;
+      const liveIds = new Set(liveEnvironments.map((e) => e.environmentId));
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of prev.keys()) {
+        if (liveIds.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [liveEnvironments]);
+  const environmentsForComposer = useMemo(() => {
+    const byId = new Map(
+      liveEnvironments.map((env) => [env.environmentId, env])
+    );
+    for (const env of resolvedEnvOverlay.values()) {
+      if (!byId.has(env.environmentId)) byId.set(env.environmentId, env);
+    }
+    return [...byId.values()];
+  }, [liveEnvironments, resolvedEnvOverlay]);
   const attachedEnvironments = useMemo(
     () =>
       attachedIds
-        .map((id) => liveEnvironments.find((e) => e.environmentId === id))
+        .map((id) =>
+          environmentsForComposer.find((e) => e.environmentId === id)
+        )
         .filter((e): e is NonNullable<typeof e> => Boolean(e)),
-    [attachedIds, liveEnvironments]
+    [attachedIds, environmentsForComposer]
   );
   /** `undefined` until the query settles. `[]` would read as "none exist". */
   const environmentsLoading = environments === undefined;
@@ -258,32 +313,25 @@ function EnvironmentModeBar({
     // the slot as "client defaults", so the first pill edit resolves rows
     // without the override and silently moves the suite to another model.
     (!modelsEnabled && environmentsCarryModels(attachedEnvironments));
-  /**
-   * The capability probe has not answered yet. Distinct from `collapsesByHost`:
-   * nothing is wrong with the attachments, we just cannot yet tell whether the
-   * models slot exists — and until we can, `modelsEnabled` reads false, which
-   * is the same input that makes a model-bearing attachment look uneditable.
-   * Disabling (rather than declaring a collapse) keeps the hint from flashing
-   * on every load, matching how the environment list is handled above.
-   */
-  const modelCapabilityPending = Boolean(projectId) && modelMatrix === undefined;
-
   const [state, setState] = useState<EnvironmentComposerState>(seeded);
   const [saving, setSaving] = useState(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   // Re-seed when the suite's own data changes (another tab, the settings sheet,
   // or our own write landing) — keyed on content so a new array identity from
   // the live query doesn't stomp what the user is mid-way through.
   const seedKey = JSON.stringify(seeded);
   useEffect(() => {
+    if (saving) return;
     setState(JSON.parse(seedKey) as EnvironmentComposerState);
-  }, [seedKey]);
+  }, [seedKey, saving]);
 
   // Version counter: a stale failure must not roll back state a newer
   // successful commit already wrote.
   const commitVersion = useRef(0);
   const commit = useCallback(
     async (next: EnvironmentComposerState) => {
-      const previous = state;
+      const previous = stateRef.current;
       const mine = ++commitVersion.current;
       setState(next);
       setSaving(true);
@@ -295,20 +343,29 @@ function EnvironmentModeBar({
         const emptied = !composerHasTarget(next);
         // Resolve BEFORE writing: a failure mid-way leaves at most some
         // deduped ad-hoc rows nothing points at, never a half-updated suite.
-        const environmentIds = emptied
+        const resolved = emptied
           ? null
-          : (
-              await resolveTargets({
-                state: next,
-                liveEnvironments,
-                max: MAX_SUITE_ENVIRONMENTS,
-              })
-            ).environmentIds;
+          : await resolveTargets({
+              state: next,
+              liveEnvironments: environmentsForComposer,
+              max: MAX_SUITE_ENVIRONMENTS,
+            });
+        if (resolved) {
+          setResolvedEnvOverlay((prev) => {
+            const overlay = new Map(prev);
+            for (const env of resolved.environments) {
+              overlay.set(env.environmentId, env);
+            }
+            return overlay;
+          });
+        }
         await setSuiteEnvironments({
           suiteId: suite._id,
           // The backend rejects an empty array; `null` is how a field clears.
           environmentIds:
-            environmentIds && environmentIds.length > 0 ? environmentIds : null,
+            resolved && resolved.environmentIds.length > 0
+              ? resolved.environmentIds
+              : null,
         });
       } catch (err) {
         if (commitVersion.current === mine) setState(previous);
@@ -320,36 +377,59 @@ function EnvironmentModeBar({
       }
     },
     [
-      liveEnvironments,
+      environmentsForComposer,
       resolveTargets,
       setSuiteEnvironments,
-      state,
       suite._id,
     ]
   );
 
+  const { isAuthenticated } = useConvexAuth();
+  const { hosts } = useHostList({ isAuthenticated, projectId });
+  const [previewedHostId] = usePreviewedHostId(projectId);
+  const clientDefaultLabel = useMemo(() => {
+    const attachedHostId =
+      previewedHostId ?? state.stack.hostIds[0] ?? null;
+    const host =
+      (attachedHostId
+        ? hosts.find((entry) => entry.hostId === attachedHostId)
+        : undefined) ?? hosts[0];
+    return host?.modelId ?? null;
+  }, [hosts, previewedHostId, state.stack.hostIds]);
+
+  const composerDisabled =
+    disabled ||
+    collapsesByHost ||
+    (environmentsLoading && attachedIds.length > 0);
+
+  const composerCommon = {
+    projectId,
+    environments: environmentsForComposer,
+    value: state,
+    onChange: (next: EnvironmentComposerState) => void commit(next),
+    maxTargets: MAX_SUITE_ENVIRONMENTS,
+    disabled: composerDisabled,
+    showTargetCount: false,
+    testIdPrefix: "suite-env",
+    clientDefaultLabel,
+  };
+
   return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
+    <div
+      className="flex min-w-0 flex-col gap-1.5"
+      aria-busy={saving}
+      data-saving={saving ? "true" : undefined}
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-2 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <EnvironmentComposer
-          projectId={projectId}
-          environments={liveEnvironments}
-          value={state}
-          onChange={(next) => void commit(next)}
-          maxTargets={MAX_SUITE_ENVIRONMENTS}
-          slots={EVALS_COMPOSER_SLOTS}
-          // Also disabled while the environment list is still loading: resolving
-          // against an empty live list would miss a matching NAMED environment
-          // and mint an unnamed twin of it.
-          disabled={
-            disabled ||
-            saving ||
-            environmentsLoading ||
-            modelCapabilityPending ||
-            unresolvedCount > 0 ||
-            collapsesByHost
-          }
-          testIdPrefix="suite-env"
+          {...composerCommon}
+          slots={EVALS_SUITE_SETUP_COMPOSER_SLOTS}
+          className="space-y-0"
+        />
+        <EnvironmentComposer
+          {...composerCommon}
+          slots={EVALS_RUNS_COMPOSER_SLOTS}
+          className="space-y-0"
         />
       </div>
       {unresolvedCount > 0 ? (
@@ -358,9 +438,9 @@ function EnvironmentModeBar({
           data-testid="suite-env-unresolved-hint"
         >
           {unresolvedCount === 1
-            ? "One attached environment is archived or unavailable."
-            : `${unresolvedCount} attached environments are archived or unavailable.`}{" "}
-          Detach it in suite settings before changing where this runs.
+            ? "One attached environment is archived or still loading."
+            : `${unresolvedCount} attached environments are archived or still loading.`}{" "}
+          Edits here will rewrite the suite&apos;s targets from the strip below.
         </p>
       ) : collapsesByHost ? (
         <p

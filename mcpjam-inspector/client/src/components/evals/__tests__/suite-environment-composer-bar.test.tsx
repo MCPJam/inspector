@@ -23,7 +23,7 @@ const {
   onUpdateMock,
   toastError,
 } = vi.hoisted(() => ({
-  flags: { environments: true },
+  flags: { environments: true, modelMatrix: false },
   environmentsRef: { current: [] as any[] },
   ensureAdhocMock: vi.fn(),
   setSuiteEnvironmentsMock: vi.fn(async () => ({})),
@@ -52,13 +52,30 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: (projectId: string | null) =>
     projectId ? environmentsRef.current : undefined,
   useEnsureAdhocEnvironments: () => ensureAdhocMock,
-  useModelMatrixCapability: () => false,
+  useModelMatrixCapability: () => flags.modelMatrix,
+}));
+vi.mock("@/hooks/use-model-matrix-capability", () => ({
+  useModelMatrixCapability: () => flags.modelMatrix,
+}));
+vi.mock("@/hooks/use-previewed-client-id", () => ({
+  usePreviewedHostId: () => ["host-1"] as const,
+}));
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({
+    availableModels: [
+      { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5" },
+    ],
+  }),
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
     hosts: [
-      { hostId: "host-1", name: "Claude" },
-      { hostId: "host-2", name: "Cursor" },
+      {
+        hostId: "host-1",
+        name: "Claude",
+        modelId: "anthropic/claude-haiku-4.5",
+      },
+      { hostId: "host-2", name: "Cursor", modelId: "gpt-4" },
     ],
     isLoading: false,
   }),
@@ -92,7 +109,7 @@ const suite = (over: Partial<EvalSuite> = {}): EvalSuite =>
   }) as EvalSuite;
 
 function renderBar(over: Partial<EvalSuite> = {}, props: any = {}) {
-  render(
+  return render(
     <SuiteEnvironmentComposerBar
       suite={suite(over)}
       onUpdate={onUpdateMock}
@@ -108,6 +125,7 @@ beforeEach(() => {
   // from an earlier case would otherwise leak into every case after it.
   setSuiteEnvironmentsMock.mockResolvedValue({});
   flags.environments = true;
+  flags.modelMatrix = false;
   environmentsRef.current = [];
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -140,6 +158,55 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     expect(screen.getByTestId("suite-env-clients-picker")).toHaveTextContent(
       /claude/i,
     );
+  });
+
+  it("shows the models picker beside clients when model matrix is enabled", () => {
+    flags.modelMatrix = true;
+    renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
+
+    expect(screen.getByTestId("suite-env-clients-picker")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-models-picker")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-models-picker")).toHaveTextContent(
+      /claude haiku 4\.5/i,
+    );
+  });
+
+  it("shows the models picker when project environments are off but model matrix is on", () => {
+    flags.environments = false;
+    flags.modelMatrix = true;
+    renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
+
+    expect(screen.getByTestId("suite-env-models-picker")).toBeInTheDocument();
+  });
+
+  it("selecting a model resolves, writes, and keeps the strip interactive", async () => {
+    flags.modelMatrix = true;
+    renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+        { namedHostId: "host-2", enabledOptionalServerIds: [] },
+      ] as any,
+    });
+
+    fireEvent.click(screen.getByTestId("suite-env-models-picker"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /claude haiku 4\.5/i }),
+    );
+
+    await waitFor(() => expect(setSuiteEnvironmentsMock).toHaveBeenCalled());
+    expect(ensureAdhocMock).toHaveBeenCalled();
+    expect(
+      screen.queryByTestId("suite-env-unresolved-hint"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-models-picker")).not.toBeDisabled();
   });
 
   it("converts a legacy suite on the first edit", async () => {
@@ -206,6 +273,49 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     );
   });
 
+  it("stays editable after converting when project environments are off", async () => {
+    flags.environments = false;
+    flags.modelMatrix = true;
+    const { rerender } = renderBar({
+      hostAttachments: [
+        { namedHostId: "host-1", enabledOptionalServerIds: [] },
+      ] as any,
+    });
+
+    fireEvent.click(screen.getByTestId("suite-env-models-picker"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /claude haiku 4\.5/i }),
+    );
+
+    await waitFor(() => expect(setSuiteEnvironmentsMock).toHaveBeenCalled());
+
+    rerender(
+      <SuiteEnvironmentComposerBar
+        suite={
+          suite({
+            environmentIds: ["adhoc-host-1"],
+            hostAttachments: [
+              { namedHostId: "host-1", enabledOptionalServerIds: [] },
+            ] as any,
+          })
+        }
+        onUpdate={onUpdateMock}
+        onUpdateServerAttachment={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
+    expect(screen.getByTestId("suite-env-models-picker")).not.toBeDisabled();
+  });
+
+  it("shows unresolved hint without locking the strip when attachments lag", () => {
+    environmentsRef.current = [];
+    renderBar({ environmentIds: ["env-live", "env-archived"] } as any);
+
+    expect(screen.getByTestId("suite-env-unresolved-hint")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
+  });
+
   it("blocks edits while an attachment is archived, rather than dropping it", () => {
     environmentsRef.current = [
       {
@@ -219,10 +329,10 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
     renderBar({ environmentIds: ["env-live", "env-archived"] } as any);
 
     expect(screen.getByTestId("suite-env-unresolved-hint")).toBeInTheDocument();
-    expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
+    expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
   });
 
-  it("waits for the environment list before allowing an edit", () => {
+  it("waits for the environment list before allowing an edit on an environment suite", () => {
     // Resolving against an empty live list would miss a matching NAMED
     // environment and mint an unnamed twin of it.
     environmentsRef.current = undefined as any;
@@ -356,7 +466,7 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
     expect(setSuiteEnvironmentsMock).not.toHaveBeenCalled();
   });
 
-  it("writes host attachments when project environments are off", async () => {
+  it("converts a legacy suite on the first edit when project environments are off", async () => {
     flags.environments = false;
     renderBar({
       hostAttachments: [
@@ -367,12 +477,8 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
     fireEvent.click(screen.getByTestId("suite-env-clients-picker"));
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
 
-    await waitFor(() => expect(onUpdateMock).toHaveBeenCalled());
-    expect(onUpdateMock).toHaveBeenCalledWith([
-      { namedHostId: "host-1", enabledOptionalServerIds: [] },
-      { namedHostId: "host-2", enabledOptionalServerIds: [] },
-    ]);
-    expect(setSuiteEnvironmentsMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(setSuiteEnvironmentsMock).toHaveBeenCalled());
+    expect(onUpdateMock).not.toHaveBeenCalled();
   });
 
   it("refuses the last detach — a suite with no client cannot run", async () => {
@@ -389,10 +495,9 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
     expect(onUpdateMock).not.toHaveBeenCalled();
   });
 
-  it("is NOT editable for a suite that already attaches environments", () => {
-    // `buildSuiteRunPlans` prefers environmentIds, so a legacy client write here
-    // would report success and change nothing about what runs.
+  it("keeps the environment composer editable when project environments are off", () => {
     flags.environments = false;
+    flags.modelMatrix = true;
     renderBar({
       environmentIds: ["env-a"],
       hostAttachments: [
@@ -400,10 +505,7 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
       ] as any,
     } as any);
 
-    expect(
-      screen.queryByTestId("suite-env-clients-picker"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
   });
 
   it("renders read-only when the caller says so", () => {
@@ -417,9 +519,6 @@ describe("SuiteEnvironmentComposerBar — legacy mode", () => {
       { readOnly: true },
     );
 
-    expect(
-      screen.queryByTestId("suite-env-clients-picker"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
   });
 });

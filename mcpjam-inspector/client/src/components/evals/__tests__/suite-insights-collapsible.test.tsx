@@ -29,7 +29,7 @@ const completedRun = {
 };
 
 describe("SuiteInsightsCollapsible", () => {
-  it("shows the insight summary inline in a compact callout", () => {
+  it("shows the insight summary in a collapsible callout", () => {
     useRunInsightsMock.mockReturnValue({
       summary: "Insight body text",
       pending: false,
@@ -44,8 +44,34 @@ describe("SuiteInsightsCollapsible", () => {
     expect(screen.getByText("Run insights")).toBeInTheDocument();
     expect(screen.getByText("Insight body text")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Run insights/i }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /Collapse Run insights/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("collapses to a one-line summary and hides the body", async () => {
+    const user = userEvent.setup();
+    useRunInsightsMock.mockReturnValue({
+      summary: "Insight body text",
+      pending: false,
+      failedGeneration: false,
+      requestRunInsights: vi.fn(),
+      unavailable: false,
+      requested: false,
+    });
+
+    renderWithProviders(<SuiteInsightsCollapsible runs={[completedRun]} />);
+
+    await user.click(
+      screen.getByRole("button", { name: /Collapse Run insights/i }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Expand Run insights/i }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Insight body text")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: /Expand Run insights/i }),
+    ).toHaveTextContent("Insight body text");
   });
 
   it("offers show more when the summary is long", async () => {

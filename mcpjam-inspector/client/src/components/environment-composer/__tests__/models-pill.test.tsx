@@ -41,25 +41,45 @@ function renderPill(
 }
 
 describe("modelsPillTriggerLabel", () => {
-  it("names Client defaults, plus extras, or a model count", () => {
+  const catalog = [
+    { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5" },
+  ];
+
+  it("uses literal model names on the pill trigger", () => {
     expect(
-      modelsPillTriggerLabel({
-        includeClientDefaults: true,
-        explicitModelIds: [],
-      })
-    ).toBe("Client defaults");
+      modelsPillTriggerLabel(
+        {
+          includeClientDefaults: true,
+          explicitModelIds: [],
+        },
+        {
+          clientDefaultLabel: "anthropic/claude-haiku-4.5",
+          availableModels: catalog,
+        }
+      )
+    ).toBe("Claude Haiku 4.5");
     expect(
-      modelsPillTriggerLabel({
-        includeClientDefaults: true,
-        explicitModelIds: ["a", "b"],
-      })
-    ).toBe("Client defaults +2");
+      modelsPillTriggerLabel(
+        {
+          includeClientDefaults: true,
+          explicitModelIds: ["google/gemini-2.5-flash"],
+        },
+        {
+          clientDefaultLabel: "anthropic/claude-haiku-4.5",
+          availableModels: catalog,
+        }
+      )
+    ).toBe("Claude Haiku 4.5 +1");
     expect(
-      modelsPillTriggerLabel({
-        includeClientDefaults: false,
-        explicitModelIds: ["a", "b"],
-      })
-    ).toBe("2 models");
+      modelsPillTriggerLabel(
+        {
+          includeClientDefaults: false,
+          explicitModelIds: ["google/gemini-2.5-flash", "anthropic/claude-haiku-4.5"],
+        },
+        { availableModels: catalog }
+      )
+    ).toBe("Gemini 2.5 Flash +1");
   });
 });
 

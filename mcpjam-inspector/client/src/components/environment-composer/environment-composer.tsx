@@ -64,9 +64,23 @@ export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
   "computers",
 ];
 
+/** Evals "where it runs" row: client fan-out beside the model axis. */
+export const EVALS_RUNS_COMPOSER_SLOTS: ComposerSlot[] = ["clients", "models"];
+
+/** Evals suite setup row: saved environments plus shared stack slots. */
+export const EVALS_SUITE_SETUP_COMPOSER_SLOTS: ComposerSlot[] = [
+  "environments",
+  "servers",
+  "skills",
+  "computers",
+];
+
 export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
-  ...DEFAULT_COMPOSER_SLOTS,
-  "models",
+  "environments",
+  ...EVALS_RUNS_COMPOSER_SLOTS,
+  "servers",
+  "skills",
+  "computers",
 ];
 
 export function EnvironmentComposer({
@@ -82,6 +96,7 @@ export function EnvironmentComposer({
   className,
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
+  showTargetCount = true,
   emptyServerLabel = "Server group · client default",
   serverInfoText = "Optional shared server group for every client in this setup.",
 }: {
@@ -101,6 +116,8 @@ export function EnvironmentComposer({
   slots?: readonly ComposerSlot[];
   /** Secondary text on the Client-defaults row (previewed host's model). */
   clientDefaultLabel?: string | null;
+  /** Fan-out budget line under the strip. Off for compact headers (eval suite). */
+  showTargetCount?: boolean;
   /**
    * Empty-state label and info tooltip for the servers pill. The defaults are
    * the strip's own wording, where the group is genuinely optional; a surface
@@ -420,7 +437,7 @@ export function EnvironmentComposer({
             : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
-      {modelsEnabled && !disabled ? (
+      {showTargetCount && modelsEnabled && !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}

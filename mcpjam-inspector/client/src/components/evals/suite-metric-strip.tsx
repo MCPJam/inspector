@@ -3,7 +3,9 @@ import { MetricStrip } from "./metric-strip";
 import {
   buildAggregateMetricStripData,
   buildSuiteMetricStripData,
+  formatMetricStripCollapsedSummary,
 } from "./metric-strip-data";
+import { SuiteDashboardCollapsibleSection } from "./suite-dashboard-collapsible-section";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
 /**
@@ -31,7 +33,26 @@ export function SuiteMetricStrip({
     [runs, allIterations, aggregate],
   );
 
+  const collapsedSummary = useMemo(
+    () => (data ? formatMetricStripCollapsedSummary(data) : null),
+    [data],
+  );
+
+  if (!data) return null;
+
   return (
-    <MetricStrip data={data} density="default" testId="suite-metric-strip" />
+    <SuiteDashboardCollapsibleSection
+      label="Metrics"
+      summary={collapsedSummary}
+      variant="card"
+      testId="suite-metric-strip-collapsible"
+    >
+      <MetricStrip
+        data={data}
+        density="default"
+        surface="embedded"
+        testId="suite-metric-strip"
+      />
+    </SuiteDashboardCollapsibleSection>
   );
 }

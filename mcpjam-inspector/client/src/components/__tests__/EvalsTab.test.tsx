@@ -401,7 +401,7 @@ describe("EvalsTab", () => {
     });
   });
 
-  it("navigates back to suite overview from the breadcrumb on test detail", async () => {
+  it("shows suite switcher and nested case label on test detail", () => {
     mocks.route.current = {
       type: "test-detail",
       suiteId: "suite-a",
@@ -412,15 +412,14 @@ describe("EvalsTab", () => {
         makeQueryState(selectedSuiteId),
     );
 
-    const user = userEvent.setup();
     render(<EvalsTab projectId="ws-1" />);
 
-    await user.click(screen.getByRole("button", { name: "Suite suite-a" }));
-
-    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
-      type: "suite-overview",
-      suiteId: "suite-a",
-    });
+    expect(
+      screen.getByRole("button", {
+        name: /Switch suite \(current: Suite suite-a\)/,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Case")).toBeInTheDocument();
   });
 
   it("redirects invalid suite routes back to the eval list", async () => {

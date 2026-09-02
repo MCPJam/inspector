@@ -29,6 +29,7 @@ import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import {
   EnvironmentComposer,
+  EVALS_RUNS_COMPOSER_SLOTS as EVALS_CREATE_RUNS_SLOTS,
   type ComposerSlot,
 } from "@/components/environment-composer/environment-composer";
 import {
@@ -73,11 +74,7 @@ export type CreateSuitePayload = {
 /** Servers as its own required field — one pill, matching the evals mock. */
 export const EVALS_CREATE_SERVER_SLOTS: readonly ComposerSlot[] = ["servers"];
 
-/** Where it runs: client + model side by side on the shared lego strip. */
-export const EVALS_CREATE_RUNS_SLOTS: readonly ComposerSlot[] = [
-  "clients",
-  "models",
-];
+export { EVALS_CREATE_RUNS_SLOTS };
 
 type CreateSuitePageProps = {
   onCancel: () => void;
@@ -422,6 +419,14 @@ export function CreateSuitePage({
                     disabled={isSaving}
                     testIdPrefix="create-suite"
                     slots={EVALS_CREATE_RUNS_SLOTS}
+                    clientDefaultLabel={
+                      (() => {
+                        const previewed =
+                          hosts.find((h) => h.hostId === previewedHostId) ??
+                          hosts[0];
+                        return previewed?.modelId ?? null;
+                      })()
+                    }
                   />
                 </div>
               </>

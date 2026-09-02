@@ -7,14 +7,6 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@mcpjam/design-system/breadcrumb";
 import { EvalsEmptyHero } from "./evals/evals-empty-hero";
 import {
   runExcalidrawQuickstart,
@@ -196,7 +188,7 @@ function EvalsTabContent({
     environmentIds: string[] | null;
   }) => Promise<unknown>;
 
-  const selectedSuiteId =
+  const routeSuiteId =
     route.type === "suite-overview" ||
     route.type === "run-detail" ||
     route.type === "test-detail" ||
@@ -204,6 +196,13 @@ function EvalsTabContent({
     route.type === "suite-edit"
       ? route.suiteId
       : null;
+  /** Suite to keep visible under the create dialog while `/evals/create` is open. */
+  const [createOverlaySuiteId, setCreateOverlaySuiteId] = useState<
+    string | null
+  >(null);
+  const selectedSuiteId =
+    routeSuiteId ??
+    (route.type === "create" ? createOverlaySuiteId : null);
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
@@ -333,10 +332,35 @@ function EvalsTabContent({
   );
 
   useEffect(() => {
+    if (route.type !== "create") {
+      setCreateOverlaySuiteId(null);
+    }
+  }, [route.type]);
+
+  // Deep-linked `/evals/create` should still show a suite behind the dialog.
+  useEffect(() => {
+    if (route.type !== "create" || createOverlaySuiteId) {
+      return;
+    }
+    if (overviewQueries.isOverviewLoading) {
+      return;
+    }
+    const mostRecent = sortSuiteOverviewEntries(visibleSuites, "recently_run")[0];
+    if (mostRecent) {
+      setCreateOverlaySuiteId(mostRecent.suite._id);
+    }
+  }, [
+    route.type,
+    createOverlaySuiteId,
+    overviewQueries.isOverviewLoading,
+    visibleSuites,
+  ]);
+
+  useEffect(() => {
     if (route.type === "list" || route.type === "create") {
       return;
     }
-    if (!selectedSuiteId) {
+    if (!routeSuiteId) {
       return;
     }
     if (overviewQueries.isOverviewLoading) {
@@ -349,7 +373,7 @@ function EvalsTabContent({
     overviewQueries.isOverviewLoading,
     route.type,
     selectedSuiteEntry,
-    selectedSuiteId,
+    routeSuiteId,
   ]);
 
   // No standalone suites list: landing on /evals jumps straight into the most
@@ -405,8 +429,12 @@ function EvalsTabContent({
 
   const handleOpenCreateSuite = useCallback(() => {
     setCreateSuitePrefillName(null);
+    const fallbackSuiteId =
+      sortSuiteOverviewEntries(visibleSuites, "recently_run")[0]?.suite._id ??
+      null;
+    setCreateOverlaySuiteId(routeSuiteId ?? fallbackSuiteId);
     navigatePlaygroundEvalsRoute({ type: "create" });
-  }, []);
+  }, [routeSuiteId, visibleSuites]);
 
   const [isQuickstartRunning, setIsQuickstartRunning] = useState(false);
 
@@ -456,12 +484,23 @@ function EvalsTabContent({
 
   const showQuickstart = Boolean(handleConnect);
 
-  const handleCreateDialogChange = useCallback((open: boolean) => {
-    if (!open) {
-      setCreateSuitePrefillName(null);
-      navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
-    }
-  }, []);
+  const handleCreateDialogChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setCreateSuitePrefillName(null);
+        const returnSuiteId = createOverlaySuiteId;
+        if (returnSuiteId) {
+          navigatePlaygroundEvalsRoute(
+            { type: "suite-overview", suiteId: returnSuiteId },
+            { replace: true },
+          );
+        } else {
+          navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+        }
+      }
+    },
+    [createOverlaySuiteId],
+  );
 
   const handleCreateSuite = useCallback(
     async (payload: CreateSuitePayload) => {
@@ -527,16 +566,6 @@ function EvalsTabContent({
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);
-
-  const handleNavigateToSuiteOverview = useCallback(() => {
-    if (!selectedSuiteId) return;
-    navigatePlaygroundEvalsRoute({
-      type: "suite-overview",
-      suiteId: selectedSuiteId,
-    });
-  }, [selectedSuiteId]);
-
-  const isSuiteOverviewRoute = route.type === "suite-overview";
 
   // Shared by the Generate button (below, on the selected suite) and the
   // agent's generateEvalTests command (any resolved suite): one
@@ -988,7 +1017,8 @@ function EvalsTabContent({
       route.type === "run-detail" ||
       route.type === "test-detail" ||
       route.type === "test-edit" ||
-      route.type === "suite-edit");
+      route.type === "suite-edit" ||
+      (route.type === "create" && createOverlaySuiteId != null));
 
   const selectedTestCase = useMemo(() => {
     if (!selectedTestId) return null;
@@ -997,85 +1027,48 @@ function EvalsTabContent({
     );
   }, [selectedTestId, suiteDetails]);
 
-  const renderPlaygroundBreadcrumb = () => {
+  const renderPlaygroundHeaderNav = () => {
     if (!hasDetailRoute || !selectedSuite) return null;
-    const selectedSuiteName =
-      stripTimestampSuffix(selectedSuite.name || "") || "Untitled suite";
+
+    const isSuiteOverviewRoute = route.type === "suite-overview";
+    const nestedLabel =
+      route.type === "run-detail"
+        ? `Run ${formatRunId(route.runId)}`
+        : route.type === "test-detail" || route.type === "test-edit"
+          ? selectedTestCase?.title ??
+            (isDraftTestCaseId(selectedTestId) ? "New case" : "Case")
+          : route.type === "suite-edit"
+            ? "Settings"
+            : null;
 
     return (
-      <Breadcrumb className="min-w-0 flex-1">
-        <BreadcrumbList className="min-w-0 flex-nowrap">
-          <BreadcrumbItem>
-            <SuiteSwitcher
-              suites={visibleSuites}
-              currentSuiteId={selectedSuite._id}
-              onSelectSuite={handleSelectSuite}
-              onCreateSuite={handleOpenCreateSuite}
-              onDeleteSuite={handlers.handleDelete}
-              canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
-            />
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem className="max-w-[min(220px,32vw)] min-w-0 sm:max-w-[280px]">
-            {isSuiteOverviewRoute ? (
-              <BreadcrumbPage
-                className="truncate font-medium"
-                title={selectedSuiteName}
-              >
-                {selectedSuiteName}
-              </BreadcrumbPage>
-            ) : (
-              <BreadcrumbLink asChild>
-                <button
-                  type="button"
-                  onClick={handleNavigateToSuiteOverview}
-                  title={selectedSuiteName}
-                  className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
-                >
-                  {selectedSuiteName}
-                </button>
-              </BreadcrumbLink>
-            )}
-          </BreadcrumbItem>
-          {route.type === "run-detail" ? (
-            <>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage className="truncate font-medium">
-                  Run {formatRunId(route.runId)}
-                </BreadcrumbPage>
-              </BreadcrumbItem>
-            </>
-          ) : null}
-          {route.type === "test-detail" || route.type === "test-edit" ? (
-            <>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem className="max-w-[min(220px,32vw)] min-w-0">
-                <BreadcrumbPage
-                  className="truncate font-medium"
-                  title={
-                    selectedTestCase?.title ??
-                    (isDraftTestCaseId(selectedTestId) ? "New case" : "Case")
-                  }
-                >
-                  {selectedTestCase?.title ??
-                    (isDraftTestCaseId(selectedTestId) ? "New case" : "Case")}
-                </BreadcrumbPage>
-              </BreadcrumbItem>
-            </>
-          ) : null}
-          {route.type === "suite-edit" ? (
-            <>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage className="truncate font-medium">
-                  Settings
-                </BreadcrumbPage>
-              </BreadcrumbItem>
-            </>
-          ) : null}
-        </BreadcrumbList>
-      </Breadcrumb>
+      <>
+        <SuiteSwitcher
+          suites={visibleSuites}
+          currentSuiteId={selectedSuite._id}
+          onSelectSuite={handleSelectSuite}
+          onCreateSuite={handleOpenCreateSuite}
+          onDeleteSuite={handlers.handleDelete}
+          canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
+          hideFooterCreate
+        />
+        {!isSuiteOverviewRoute && nestedLabel ? (
+          <>
+            <span
+              className="shrink-0 text-sm text-muted-foreground"
+              aria-hidden
+            >
+              /
+            </span>
+            <span
+              className="min-w-0 truncate text-sm font-medium text-foreground"
+              title={nestedLabel}
+            >
+              {nestedLabel}
+            </span>
+          </>
+        ) : null}
+      </>
     );
   };
 
@@ -1184,6 +1177,7 @@ function EvalsTabContent({
           canDeleteRuns={canDeleteRuns}
           canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
           hideRunActions
+          omitOverviewIdentity
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1230,7 +1224,9 @@ function EvalsTabContent({
       projectId={projectId}
       isDirectGuest={isDirectGuest}
       header={
-        <EvalsHeader mode="suites">{renderPlaygroundBreadcrumb()}</EvalsHeader>
+        <EvalsHeader mode="suites" onCreateSuite={handleOpenCreateSuite}>
+          {renderPlaygroundHeaderNav()}
+        </EvalsHeader>
       }
     >
       <>
