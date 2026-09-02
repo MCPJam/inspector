@@ -24,14 +24,21 @@ import { Button } from "@mcpjam/design-system/button";
 
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
+import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
 } from "@/lib/evals/eval-decision-summary-store";
 
 import { unifyTriageRows } from "../evals/ai-triage-helpers";
+import { groupRunIterationsByTestCase } from "../evals/run-case-groups";
 import { useServerQuality } from "../evals/use-server-quality";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import {
+  buildEvaluateCaseRows,
+  defaultOpenCaseRow,
+} from "./evaluate-case-row-model";
+import { RunCaseRows } from "./run-case-rows";
 import { RunVerdictCaveats } from "./run-verdict-caveats";
 import {
   buildEvaluateImprovePrompt,
@@ -84,6 +91,37 @@ export function EvaluateRunContent({
       }),
     [run, iterations, detail.status, detail.summary, detail.diagnostics],
   );
+
+  // Chains for the iterations D9 does not describe. Diagnostics cover the
+  // non-passing set only, by contract, so a passing case's chain comes from
+  // here — and this read is page-capped, which is why a row states its
+  // coverage instead of implying an unfetched stage was clean.
+  const chains = useEvalRunIterationChains({
+    projectId,
+    run,
+    enabled: active,
+  });
+
+  const caseRows = useMemo(() => {
+    const groups = groupRunIterationsByTestCase([...iterations], "test");
+    return buildEvaluateCaseRows({
+      groups,
+      summary: detail.summary,
+      diagnostics: detail.diagnostics,
+      chains: chains.chains,
+      chainsLoaded: chains.status === "ready",
+      decisionStatus: detail.status,
+    });
+  }, [
+    iterations,
+    detail.summary,
+    detail.diagnostics,
+    detail.status,
+    chains.chains,
+    chains.status,
+  ]);
+
+  const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
 
   // Advisory only, and read from the same place the existing triage card reads
   // it. `autoRequest` is deliberately off: a server-quality generation costs
@@ -196,6 +234,14 @@ export function EvaluateRunContent({
           scannedIterations={detail.scannedIterations}
           serverComplete={detail.serverComplete}
           walkExhausted={detail.walkExhausted}
+        />
+      </div>
+
+      <div className="border-t border-border/40">
+        <RunCaseRows
+          rows={caseRows}
+          defaultOpenKey={openRowKey}
+          {...(onOpenIteration ? { onOpenIteration } : {})}
         />
       </div>
 
