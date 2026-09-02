@@ -38,7 +38,10 @@ import {
   type LocalHarnessLaunchPlan,
 } from "./availability.js";
 import { resolveNodeLauncher } from "./node-launcher.js";
-import { startLocalModelGateway } from "./model-gateway.js";
+import {
+  startLocalModelGateway,
+  type LocalModelGateway,
+} from "./model-gateway.js";
 import { readRuntimeInstallStatus } from "./runtime-install.js";
 import { createSupervisedLocalHarnessProvider } from "./supervised-provider.js";
 import { LocalHarnessSupervisor } from "./supervisor.js";
@@ -262,114 +265,166 @@ export async function prepareLocalHarnessTurn(
     "sessions",
     args.sessionId,
   );
-  await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
 
-  const gatewayStartedAt = Date.now();
-  let gateway: Awaited<ReturnType<typeof startLocalModelGateway>>;
+  // From here the lease exists, and shortly a loopback listener that can spend
+  // it. Every step below can fail — a state directory that will not create, a
+  // port nothing will give up, a launcher that refuses the pack's node — and a
+  // failure that escaped this stretch used to leave BOTH behind: no registry
+  // record, so `stop-all` could not reach them, and no teardown, so only the
+  // lease's own TTL would have ended it. The module header calls that "a
+  // credential nobody is watching"; this is what makes the setup path obey it
+  // too, not just the teardown path.
+  let gateway: LocalModelGateway | null = null;
   try {
-    gateway = await startLocalModelGateway({
-      lease: broker.lease,
-      upstreamBaseUrl: broker.proxyBaseUrl,
-      // The gateway serves only processes in this session's supervised tree.
-      // Asked of the supervisor rather than captured as a pid set, because the
-      // tree grows: the bridge spawns the vendor CLI after the gateway is
-      // already listening.
-      isSupervisedPid: (pid) => supervisor.ownsPid(args.sessionId, pid),
-    });
-  } catch (error) {
-    // The lease exists and nothing can use it, so it is revoked before the
-    // failure propagates rather than left to its TTL.
-    await revokeLease(broker.runId, args.bearer);
-    return {
-      ok: false,
-      status: "gateway-unavailable",
-      message:
-        "The local model gateway could not start: " +
-        `${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  const localGatewayReadyMs = Date.now() - gatewayStartedAt;
+    await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
 
-  const bridgePort = await reserveLoopbackPort();
-  const launcher = resolveNodeLauncher({
-    // Inside the tree the digest just covered. The npx server's own execPath is
-    // not, and Electron cannot be a launcher at all.
-    bundledNodePath: plan.runtime.nodePath ?? "",
-  });
-
-  const sandbox = createSupervisedLocalHarnessProvider({
-    harnessId: "claude-code",
-    manifest: plan.manifest,
-    runtime: plan.runtime,
-    supervisor,
-    launcher,
-    workspacePath: plan.workspacePath,
-    workspaceGrantId: plan.target.workspaceGrantId,
-    sessionStateDir,
-    targetKind: "local-native",
-    bridgePort,
-    scopedEnv: {
-      ...(args.scopedEnv ?? {}),
-    },
-  });
-
-  const teardownOnce = onceAsync(async () => {
+    const gatewayStartedAt = Date.now();
     try {
-      gateway.revoke();
-      await gateway.close();
-    } finally {
-      // Dropped from the registry here, not only on the stop-all path: a turn
-      // that ends normally leaves a record behind otherwise, and the map is
-      // what `stop-all` and the telemetry count read. Every completed local
-      // turn would add one more dead session to both.
-      forgetLocalHarnessSession(args.sessionId);
+      gateway = await startLocalModelGateway({
+        lease: broker.lease,
+        upstreamBaseUrl: broker.proxyBaseUrl,
+        // The gateway serves only processes in this session's supervised tree.
+        // Asked of the supervisor rather than captured as a pid set, because the
+        // tree grows: the bridge spawns the vendor CLI after the gateway is
+        // already listening.
+        isSupervisedPid: (pid) => supervisor.ownsPid(args.sessionId, pid),
+      });
+    } catch (error) {
+      // The lease exists and nothing can use it, so it is revoked before the
+      // failure propagates rather than left to its TTL.
       await revokeLease(broker.runId, args.bearer);
+      return {
+        ok: false,
+        status: "gateway-unavailable",
+        message:
+          "The local model gateway could not start: " +
+          `${error instanceof Error ? error.message : String(error)}`,
+      };
     }
-  });
+    const started = gateway;
+    const localGatewayReadyMs = Date.now() - gatewayStartedAt;
 
-  // Registered so `stop-all` and the abort path can end this session without
-  // holding a reference to the turn that created it.
-  registerLocalHarnessSession({
-    sessionId: args.sessionId,
-    runtimeId: plan.runtime.runtimeId,
-    workspaceGrantId: plan.target.workspaceGrantId,
-    brokerRunId: broker.runId,
-    gateway,
-    stop: async () => {
-      await supervisor.stopSession(args.sessionId);
-    },
-    revokeLease: () => revokeLease(broker.runId, args.bearer),
-    startedAt: Date.now(),
-  });
+    const bridgePort = await reserveLoopbackPort();
+    const launcher = resolveNodeLauncher({
+      // Inside the tree the digest just covered. The npx server's own execPath
+      // is not, and Electron cannot be a launcher at all.
+      bundledNodePath: plan.runtime.nodePath ?? "",
+    });
 
-  logger.info("[local-harness] turn prepared", {
-    sessionId: args.sessionId,
-    runtimeId: plan.runtime.runtimeId,
-    permissionMode,
-    localRuntimeVerifyMs,
-    localGatewayReadyMs,
-  });
+    const sandbox = createSupervisedLocalHarnessProvider({
+      harnessId: "claude-code",
+      manifest: plan.manifest,
+      runtime: plan.runtime,
+      supervisor,
+      launcher,
+      workspacePath: plan.workspacePath,
+      workspaceGrantId: plan.target.workspaceGrantId,
+      sessionStateDir,
+      targetKind: "local-native",
+      bridgePort,
+      scopedEnv: {
+        ...(args.scopedEnv ?? {}),
+      },
+    });
 
-  return {
-    ok: true,
-    prepared: {
-      plan,
-      sandbox,
-      // The child's credential: the gateway, and a capability that means
-      // nothing anywhere else. The lease is not in here and never will be.
-      auth: {
-        ANTHROPIC_AUTH_TOKEN: gateway.sessionCapability,
-        ANTHROPIC_API_KEY: gateway.sessionCapability,
-        ANTHROPIC_BASE_URL: gateway.baseUrl,
-      } as HarnessAuth,
-      sandboxWorkDir: "project",
-      permissionMode,
+    const teardownOnce = onceAsync(async () => {
+      try {
+        started.revoke();
+        await started.close();
+      } finally {
+        // Dropped from the registry here, not only on the stop-all path: a turn
+        // that ends normally leaves a record behind otherwise, and the map is
+        // what `stop-all` and the telemetry count read. Every completed local
+        // turn would add one more dead session to both.
+        forgetLocalHarnessSession(args.sessionId);
+        await revokeLease(broker.runId, args.bearer);
+      }
+    });
+
+    // Registered so `stop-all` and the abort path can end this session without
+    // holding a reference to the turn that created it.
+    registerLocalHarnessSession({
+      sessionId: args.sessionId,
+      runtimeId: plan.runtime.runtimeId,
+      workspaceGrantId: plan.target.workspaceGrantId,
       brokerRunId: broker.runId,
-      timings: { localRuntimeVerifyMs, localGatewayReadyMs },
-      teardown: teardownOnce,
-    },
-  };
+      gateway: started,
+      stop: async () => {
+        await supervisor.stopSession(args.sessionId);
+      },
+      revokeLease: () => revokeLease(broker.runId, args.bearer),
+      startedAt: Date.now(),
+    });
+
+    logger.info("[local-harness] turn prepared", {
+      sessionId: args.sessionId,
+      runtimeId: plan.runtime.runtimeId,
+      permissionMode,
+      localRuntimeVerifyMs,
+      localGatewayReadyMs,
+    });
+
+    return {
+      ok: true,
+      prepared: {
+        plan,
+        sandbox,
+        // The child's credential: the gateway, and a capability that means
+        // nothing anywhere else. The lease is not in here and never will be.
+        auth: {
+          ANTHROPIC_AUTH_TOKEN: started.sessionCapability,
+          ANTHROPIC_API_KEY: started.sessionCapability,
+          ANTHROPIC_BASE_URL: started.baseUrl,
+        } as HarnessAuth,
+        sandboxWorkDir: "project",
+        permissionMode,
+        brokerRunId: broker.runId,
+        timings: { localRuntimeVerifyMs, localGatewayReadyMs },
+        teardown: teardownOnce,
+      },
+    };
+  } catch (error) {
+    // Whatever went wrong, the lease and any listener that could spend it go
+    // with it. Both steps are attempted; a gateway that will not close is not a
+    // reason to leave the lease live.
+    await abandonLocalSetup({
+      gateway,
+      sessionId: args.sessionId,
+      runId: broker.runId,
+      bearer: args.bearer,
+    });
+    throw error;
+  }
 }
+
+/**
+ * Undo a local setup that failed partway through.
+ *
+ * Not `endLocalHarnessSession`: there is no supervised tree yet, and there may
+ * be no registry record either — the failure can land before registration. What
+ * there always is, past the broker, is a lease; and there may be a listener
+ * holding it.
+ */
+async function abandonLocalSetup(args: {
+  gateway: LocalModelGateway | null;
+  sessionId: string;
+  runId: string;
+  bearer: string;
+}): Promise<void> {
+  try {
+    args.gateway?.revoke();
+    await args.gateway?.close();
+  } catch (error) {
+    logger.warn("[local-harness] gateway close during abandoned setup failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // A no-op unless the failure landed after registration, which is the one
+  // window where a record exists for a session that will never run.
+  forgetLocalHarnessSession(args.sessionId);
+  await revokeLease(args.runId, args.bearer);
+}
+
 
 async function revokeLease(runId: string, bearer: string): Promise<void> {
   try {
