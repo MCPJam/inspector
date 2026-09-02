@@ -88,12 +88,13 @@ The inspector's left pane shows the page as it paints, over the same session
 that carries tools and invocations:
 
 ```text
-Page.screencastFrame → ack FIRST → oversize drop → 10fps throttle (with a
-mandatory trailing frame) → runtime publishFrame → hub's coalesced slot → SSE
-→ store liveFrame → the pane
+Page.screencastFrame → ack FIRST → drop a byte-identical repeat → oversize
+substitute → 10fps throttle (with a mandatory trailing frame) → runtime
+publishFrame → hub's coalesced slot → binary WS (or SSE) → store liveFrame →
+the pane
 ```
 
-Four properties hold this together, and each one is a bug if it is dropped:
+Six properties hold this together, and each one is a bug if it is dropped:
 
 - **Ack before anything else.** Chromium sends the next frame only once the
   current one is acknowledged. Acking after consumption lets a slow consumer
@@ -109,6 +110,65 @@ Four properties hold this together, and each one is a bug if it is dropped:
   session that could not be reaped while animating would hold a capacity slot
   nobody is using. Asking for the stream *does* tick it — that is a person
   opening the pane.
+- **A frame identical to the one before it is dropped.** Not an optimisation:
+  every `Page.captureScreenshot` makes Chromium produce a compositor frame to
+  satisfy the copy request, and the screencast sends that frame back
+  byte-for-byte. Publishing it would undo the settle still below a tenth of a
+  second after it landed, and counting it as a paint would make each still
+  induce the next one — a capture loop on a page doing nothing.
+- **A frame describes its own geometry.** Dimensions come from the JPEG's SOF
+  marker and ride the wire beside a `scale` (device pixels per CSS pixel), so a
+  still captured at one scale and a streamed frame captured at another are safe
+  to mix. CDP's screencast metadata reports DIP whatever the device scale
+  factor is, and clicks are scaled against whatever a frame claims to be.
+
+### Sharp at rest, and adaptive under pressure
+
+The stream is encoded for motion — 10fps at quality 75 — which is the wrong
+trade the moment a page stops moving. A housekeeping timer notices 800ms
+without a paint or an input and publishes ONE still of the page at quality 85,
+taken with a raw `Page.captureScreenshot` from the compositor surface.
+
+Two things about that capture are load-bearing. It is not Playwright's
+`page.screenshot()`, whose `caret: "hide"` writes an inline style onto every
+text field and restores it — two mutations that paint, which makes the still
+discard itself as overtaken. And it carries NO `clip`: measured against
+Chromium 141, a clip capture clobbers the context's own `deviceScaleFactor`
+emulation and pushes an off-content frame into the stream.
+
+A focused text field blinks its caret about twice a second, so the quiet window
+never arrives while somebody is typing into one. The still fires when focus
+leaves. That is accepted rather than worked around — suppressing caret paints
+means telling the page not to draw a caret.
+
+In the other direction, three sources report a frame that could NOT be handed
+over: the WS pacer replacing a held frame, the SSE route replacing its held one,
+and the provider itself refusing a frame over the 256 KiB cap. The last one
+matters most and is the easiest to miss — it never reaches a transport, so
+nothing downstream is in a position to report it, and a smaller encode is
+exactly the cure. Three of those inside two seconds steps the stream down a
+quality rung; ten
+seconds without one climbs it back, a rung at a time, with a three-second hold
+between moves so the frames still in flight from the old rung are not read as
+fresh pressure. The current quality rides on the session as `streamQuality`, so
+a struggling link is visible as a fact rather than a mystery — and while the
+stream is below its baseline the settle still is skipped entirely.
+
+A refused frame also asks for a budgeted substitute still, so the pane converges
+on the current paint rather than freezing on whatever last fitted. That retry is
+drained by the housekeeping timer rather than by the capture that preceded it: a
+page repainting continuously above the cap lands another refused frame inside
+every capture, and a self-scheduled retry would turn that into an unpaced
+`Page.captureScreenshot` loop on top of an encode already too expensive to
+carry.
+
+The session's render scale is the VIEWER's: the client sends its
+`devicePixelRatio` (clamped to 2) at session start and it becomes the browser
+context's `deviceScaleFactor`, fixed for the session — a second device-metrics
+override would fight the one Playwright re-applies on every navigation. Note
+what that does and does not buy: Chromium clamps a screencast to the CSS size
+of the surface (`maxWidth` can only scale a capture DOWN), so a 2x session
+streams supersampled 1280x800 rather than 2560x1600.
 
 Streaming is demand-driven through the `set_screencast` command, sent when the
 pane is visible and withdrawn when it is not. A server that predates the command
@@ -222,10 +282,11 @@ movement is the flooding vector, and batching solves the rate at the transport
 rather than asking every caller to remember to. The client half lives in
 `client/src/lib/webmcp-inspector/input-forwarder.ts`:
 
-- **Scaling** happens on the client, against the dimensions of the frame
-  currently on screen — only the client knows its rendered rectangle and how
-  `object-contain` letterboxes the picture inside it. A click on a letterbox bar
-  is dropped rather than mapped to the nearest edge.
+- **Scaling** happens on the client, against the CSS dimensions of the frame
+  currently on screen (its device size divided by its `scale`) — only the client
+  knows its rendered rectangle and how `object-contain` letterboxes the picture
+  inside it, and the page's own coordinate space is CSS pixels. A click on a
+  letterbox bar is dropped rather than mapped to the nearest edge.
 - **Batching** coalesces moves to the latest and flushes on a ~50ms timer, but
   button and key transitions flush IMMEDIATELY: a click that waits out a batch
   window reads as a click that did not register.

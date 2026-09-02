@@ -15,7 +15,10 @@ const packageVersion = JSON.parse(
 ).version as string;
 
 export default defineConfig({
-  entry: ["server/index.ts"],
+  // Two entries: the server, and the `harness install` subcommand's installer.
+  // The subcommand cannot import the server entry — that module starts a
+  // listening server as a side effect of being imported.
+  entry: ["server/index.ts", "server/harness-install-cli.ts"],
   define: {
     "process.env.MCPJAM_INSPECTOR_VERSION": JSON.stringify(packageVersion),
   },

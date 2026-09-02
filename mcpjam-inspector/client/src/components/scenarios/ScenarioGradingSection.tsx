@@ -149,7 +149,7 @@ export function ScenarioGradingSection({
   return (
     <section
       data-testid="scenario-grading-section"
-      className="mt-8 space-y-4 border-t border-border/40 pt-4"
+      className="space-y-4 border-t border-border/40 pt-4"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">

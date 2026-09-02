@@ -34,7 +34,17 @@
  * survive into product copy.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+} from "node:fs/promises";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
@@ -367,6 +377,24 @@ export function createSupervisedLocalHarnessProvider(
   // ours lives in disposable session state instead of the user's checkout, so
   // a local session leaves no adapter scaffolding behind.
   const bootstrapOverlay = join(opts.sessionStateDir, "bootstrap");
+  // The framework requires the agent's working directory to be a proper
+  // SUBDIRECTORY of the session's default working directory ("." and absolute
+  // paths are both rejected), and it puts its own `.agent-runs/<session>` and
+  // `.harness-bootstrap` references under that default directory too.
+  //
+  // Making the granted workspace the default working directory therefore had
+  // two consequences, both wrong: the agent ran in
+  // `<workspace>/claude-code-<sessionId>` rather than in the user's checkout,
+  // and the bridge wrote its state — including `start-config.json`, mode 0644,
+  // carrying the session's model capability — INTO that checkout.
+  //
+  // So the default working directory is session-owned state, and the workspace
+  // is reached through the relative work dir `project`: a symlink to the
+  // granted path, inside the 0700 session directory. Confinement is unchanged,
+  // because the link resolves into the workspace root, which is already one of
+  // the two roots the file API allows.
+  const workRoot = join(opts.sessionStateDir, "work");
+  const WORKSPACE_LINK_NAME = "project";
 
   const buildSession = async (
     sessionId: string,
@@ -379,6 +407,46 @@ export function createSupervisedLocalHarnessProvider(
       await mkdir(dir, { recursive: true, mode: 0o700 });
     }
     await mkdir(bootstrapOverlay, { recursive: true, mode: 0o700 });
+    await mkdir(workRoot, { recursive: true, mode: 0o700 });
+    const workspaceLink = join(workRoot, WORKSPACE_LINK_NAME);
+    try {
+      const existing = await lstat(workspaceLink);
+      if (!existing.isSymbolicLink()) {
+        throw new Error(`${workspaceLink} exists and is not the workspace link`);
+      }
+      // WHERE it points, not just that it is a link. This is the path the
+      // agent's cwd resolves to, and consent binds to a workspace grant — so a
+      // state directory reused under a different grant would have run the
+      // agent against the previous checkout, which is the one thing the grant
+      // exists to prevent. Repointed rather than refused: `opts.workspacePath`
+      // came through the availability gate and IS the authority, so making the
+      // link agree with it keeps the invariant true by construction.
+      // Both the link's TEXT and what it actually resolves to. `readlink`
+      // alone compares a string: a link whose text still reads
+      // `/granted/path` passes it even after `/granted/path` itself became a
+      // symlink to somewhere else, and the agent's cwd would resolve into the
+      // redirected directory. `opts.workspacePath` is `workspace.canonicalPath`
+      // — already a `realpath` — so in the healthy case these agree exactly and
+      // nothing is repointed. A dangling link resolves to nothing and is stale
+      // by the same rule.
+      const current = await readlink(workspaceLink);
+      const resolved = await realpath(workspaceLink).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        },
+      );
+      if (current !== opts.workspacePath || resolved !== opts.workspacePath) {
+        logger.warn("[local-harness] repointing a stale workspace link", {
+          sessionStateDir: opts.sessionStateDir,
+        });
+        await rm(workspaceLink, { force: true });
+        await symlink(opts.workspacePath, workspaceLink);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await symlink(opts.workspacePath, workspaceLink);
+    }
 
     // The two roots the Inspector file API will touch, and nothing else.
     //
@@ -406,14 +474,18 @@ export function createSupervisedLocalHarnessProvider(
       // default working directory — so the translator matches the string the
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        opts.workspacePath,
+        workRoot,
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
       adapterBootstrapFiles: opts.manifest.adapterBootstrapFiles,
       bootstrapOverlayDir: bootstrapOverlay,
       nodeExecutable: opts.launcher.executable,
-      sessionRoot: opts.workspacePath,
+      // Launch the pack's loopback wrapper rather than the remapped
+      // `bridge.mjs`, which stays byte-identical so the recipe compare holds.
+      bridgeLauncherPath: opts.runtime.launcherPath,
+      // The framework's default working directory (and the bridge's cwd).
+      sessionRoot: workRoot,
       syntheticHome,
       // The same symlink-aware check the file API uses. The translator awaits
       // it for every session-scoped operand, including the bridge's own
@@ -546,7 +618,35 @@ export function createSupervisedLocalHarnessProvider(
     ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
       switch (translated.kind) {
         case "reply":
-          return { exitCode: 0, stdout: translated.stdout, stderr: "" };
+          return {
+            exitCode: translated.exitCode ?? 0,
+            stdout: translated.stdout,
+            stderr: "",
+          };
+        // The framework's skills writer, performed with `node:fs`. Operands
+        // were confined to the synthetic home by the translator; no shell is
+        // involved at any point.
+        case "rename": {
+          await rename(translated.from, translated.to);
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        case "remove": {
+          for (const path of translated.paths) {
+            await rm(path, { recursive: true, force: true });
+          }
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        case "probe-absent": {
+          try {
+            await stat(translated.path);
+            return { exitCode: 1, stdout: "", stderr: "" };
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+              return { exitCode: 0, stdout: "", stderr: "" };
+            }
+            throw error;
+          }
+        }
         case "noop":
           logger.debug("[local-harness] adapter command satisfied by bundle", {
             reason: translated.reason,
@@ -594,7 +694,7 @@ export function createSupervisedLocalHarnessProvider(
       // session's artefacts stay identifiable inside the user's own checkout.
       // Staged materialization with diff-based apply-back is a separate step
       // and is not pretended here.
-      defaultWorkingDirectory: opts.workspacePath,
+      defaultWorkingDirectory: workRoot,
       description:
         `Supervised local ${opts.harnessId} process on this machine. ` +
         `Working directory ${opts.workspacePath}. Bridge on loopback port ` +
@@ -767,6 +867,10 @@ export function createSupervisedLocalHarnessProvider(
               ...(opts.bridgeReadinessTimeoutMs !== undefined
                 ? { readinessTimeoutMs: opts.bridgeReadinessTimeoutMs }
                 : {}),
+              // Corroborates the connect probe by reading the binding out of
+              // the kernel, which catches an address the machine has but this
+              // process cannot route to — unreachable from here, still bound.
+              bridgePid: handle.pid,
               // Ties the listener to the process we started: a port answering
               // after our bridge died is somebody else's.
               isBridgeAlive: async () =>

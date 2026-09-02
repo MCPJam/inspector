@@ -50,6 +50,7 @@ export {
   type PlatformPermalink,
   type PlatformPermalinkContext,
   type PlatformPermalinkPolicy,
+  type PlatformResourceParentRef,
   type PlatformResourceRef,
   type PlatformResourceType,
 } from "./permalinks.js";
@@ -307,6 +308,7 @@ export {
 } from "./show-servers.js";
 
 export {
+  evalIterationRef,
   buildImageOperation,
   callServerToolOperation,
   renderServerWidgetOperation,
@@ -356,6 +358,8 @@ export {
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   getServerPromptOperation,
@@ -707,6 +711,9 @@ export {
   type CompareEvalRunInput,
   type CompareEvalRunResult,
   type GetEvalRunResult,
+  type GetEvalRunStageAnalyticsResult,
+  type ListEvalSuiteStageAnalyticsInput,
+  type ListEvalSuiteStageAnalyticsResult,
   type GetServerPromptInput,
   type GetServerPromptResult,
   type ListScenariosResult,

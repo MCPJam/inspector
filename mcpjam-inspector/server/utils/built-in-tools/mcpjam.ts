@@ -46,6 +46,8 @@ import {
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
   listScenariosOperation,
@@ -167,6 +169,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getEvalRunOperation,
+  // The measured description beside the decision: how much of the run was
+  // measured at all, per stage. Reads, so they ride with the run read.
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   waiveEvalGateOperation,
   getEvalGateWaiverOperation,

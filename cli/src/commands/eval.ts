@@ -18,6 +18,8 @@ import {
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
@@ -232,6 +234,7 @@ function composeField(options: {
   composeServerGroup?: string;
   composeHostServers?: boolean;
   composeSkill?: string[];
+  composeSecret?: string[];
   withClientDefault?: boolean;
   saveTargets?: boolean;
 }): {
@@ -246,6 +249,7 @@ function composeField(options: {
     saveTargets?: boolean;
     computer?: string;
     skills?: { mode: "explicit"; skillIds: string[] };
+    secrets?: { mode: "explicit"; secretIds: string[] };
   };
 } {
   const models = Array.isArray(options.composeModel)
@@ -260,6 +264,7 @@ function composeField(options: {
     options.composeServerGroup !== undefined ||
     options.composeHostServers === true ||
     (options.composeSkill?.length ?? 0) > 0 ||
+    (options.composeSecret?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
     options.saveTargets === true;
   if (!options.composeHost) {
@@ -317,6 +322,17 @@ function composeField(options: {
             skills: {
               mode: "explicit" as const,
               skillIds: options.composeSkill,
+            },
+          }
+        : {}),
+      // The credential axis. Absent means the composed cells grant NOTHING —
+      // the environment is the grant boundary, so a run that needs a token
+      // used to have no choice but a named environment.
+      ...(options.composeSecret?.length
+        ? {
+            secrets: {
+              mode: "explicit" as const,
+              secretIds: options.composeSecret,
             },
           }
         : {}),
@@ -2024,6 +2040,9 @@ async function runEvalCompare(
       reporter,
       out: options.out,
       format: globalOptions.format,
+      ...(outcome.decisionSummary
+        ? { decisionSummary: outcome.decisionSummary }
+        : {}),
     },
     outcome.compare
       ? buildRunCompareReport(outcome.compare, outcome.report, {
@@ -2271,6 +2290,15 @@ async function writeCompareResult(
     reporter: ReturnType<typeof parseReporterFormat>;
     out?: string;
     format: ReturnType<typeof getGlobalOptions>["format"];
+    /**
+     * The COMPARE side's own decision, for the JSON document.
+     *
+     * Already built by the caller for the report and the human block; carried
+     * here so `--format json` stops being the one terminal that gets the gate
+     * verdict without the run's verdict. Absent whenever it could not be
+     * assembled — an incomplete comparison, a failed walk.
+     */
+    decisionSummary?: EvalRunDecisionSummary;
   },
   structured: StructuredRunReport | undefined
 ): Promise<void> {
@@ -2285,7 +2313,18 @@ async function writeCompareResult(
     return;
   }
   writeResult(
-    { compare: args.report, exitCode: evalGateExitCode(args.report) },
+    {
+      compare: args.report,
+      exitCode: evalGateExitCode(args.report),
+      // JSON ONLY. `writeResult` pretty-prints this same object in human
+      // format, so including it there would put the raw wire enums on the
+      // terminal immediately above the label-aware block that exists to
+      // replace them — the narrative twice, once unreadably. `eval status`
+      // strips it for exactly this reason.
+      ...(args.format === "json" && args.decisionSummary
+        ? { decisionSummary: args.decisionSummary }
+        : {}),
+    },
     args.format
   );
 }
@@ -2983,6 +3022,10 @@ export function registerEvalCommands(program: Command): void {
         "Project-shared skill IDs to pin on the composed stack"
       )
       .option(
+        "--compose-secret <id...>",
+        "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
+      )
+      .option(
         "--allow-approximated <case...>",
         "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason."
       )
@@ -3003,6 +3046,7 @@ export function registerEvalCommands(program: Command): void {
         composeServerGroup?: string;
         composeHostServers?: boolean;
         composeSkill?: string[];
+        composeSecret?: string[];
         project?: string;
         suite?: string;
         file?: string;
@@ -3317,15 +3361,21 @@ export function registerEvalCommands(program: Command): void {
 
           if (!needsReport) {
             // No report was asked for, so no iteration walk was paid for — but
-            // in human format the whole value of `--wait` is being told what
-            // happened, and today a failing wait prints a receipt and an exit
-            // code and nothing about why. One bounded read buys that back.
+            // the whole value of `--wait` is being told what happened, and
+            // without this a failing wait prints a receipt and an exit code and
+            // nothing about why. One bounded read buys that back.
+            //
+            // NOT human-only any more. `--format json` used to drop this on the
+            // floor — the guard read `format === "human"` — so the machine
+            // consumer, the one that cannot ask a follow-up question, was the
+            // one surface that never got the decision. The cost is exactly one
+            // extra read on `--wait --format json` single-run paths (and, on a
+            // deployment without the endpoint, a bounded fallback walk).
             //
             // SINGLE-RUN ONLY, here and below. `StructuredRunReport` carries
             // one summary and a fan-out has several runs; attaching one of them
             // would label a report about N runs with the decision of one.
             const soloSummary =
-              globalOptions.format === "human" &&
               result.targets.length === 1 &&
               runs.length === 1 &&
               TERMINAL_RUN_STATUSES.has(runs[0]!.status)
@@ -3491,7 +3541,22 @@ export function registerEvalCommands(program: Command): void {
         writeReporterResult(reporter, report);
       } else {
         writeResult(
-          { launch: result, runs: completion.runs },
+          {
+            launch: result,
+            runs: completion.runs,
+            // ONE DOCUMENT, and the decision belongs in it. `--format json` is
+            // the stable contract and the human block below is not, so a
+            // pipeline that reads stdout used to get run ids and a status and
+            // had to make a second call to learn what the run decided.
+            //
+            // JSON ONLY, though: `writeResult` pretty-prints this same object
+            // in human format, so leaving it ungated would print the raw wire
+            // enums directly above the label-aware block written to replace
+            // them. `eval status` strips it for the same reason.
+            ...(globalOptions.format === "json" && completion.decisionSummary
+              ? { decisionSummary: completion.decisionSummary }
+              : {}),
+          },
           globalOptions.format
         );
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
@@ -3548,29 +3613,70 @@ export function registerEvalCommands(program: Command): void {
       .command("status")
       .description("Get the status and summary of an eval run")
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      )
+      .option(
+        "--diagnostics-limit <n>",
+        "Failure diagnostics per page (1–200; default 20)"
+      )
+      .option(
+        "--diagnostics-cursor <cursor>",
+        "Cursor from a previous response's decisionSummary.diagnostics.nextCursor"
+      )
+      .option(
+        "--stages",
+        "Print all six user-value chain rows for each failing trial (human output)"
       ).action(
     async (
-      options: PlatformOptions & { project?: string; run: string },
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        diagnosticsLimit?: string;
+        diagnosticsCursor?: string;
+        stages?: boolean;
+      },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       let decisionSummary: EvalRunDecisionSummary | undefined;
       const resolved = resolveCloudProjectArgs(options);
+      // VALIDATED, not cast. The cast this replaced asserted a shape rather
+      // than checking one, so `--diagnostics-limit 500` would have travelled
+      // to the wire instead of failing here against the schema's own 1..200
+      // bound. `projectOptional` is load-bearing: the schema requires
+      // `project` and the cloud CLI fills it from --project/env/link AFTER
+      // this point, so without the flag omitting the flag becomes a usage
+      // error on a command that has always worked without it.
+      const input = validateOpInput(
+        getEvalRunOperation,
+        {
+          runId: options.run,
+          ...(resolved.project === undefined
+            ? {}
+            : { project: resolved.project }),
+          ...(options.diagnosticsLimit !== undefined
+            ? {
+                diagnosticsLimit: parsePositiveInteger(
+                  options.diagnosticsLimit,
+                  "--diagnostics-limit"
+                ),
+              }
+            : {}),
+          ...(options.diagnosticsCursor !== undefined
+            ? { diagnosticsCursor: options.diagnosticsCursor }
+            : {}),
+        },
+        { projectOptional: true }
+      );
       const result = await runPlatformCommand(
         platformOptionsOf(command),
         globalOptions.timeout,
         async (context) => {
           webOrigin = context.webOrigin;
-          const result = await getEvalRunOperation.execute(
-            {
-              runId: options.run,
-              ...(resolved.project === undefined
-                ? {}
-                : { project: resolved.project }),
-            } as { project: string; runId: string },
-            { client: context.client, signal: context.signal }
-          );
+          const result = await getEvalRunOperation.execute(input, {
+            client: context.client,
+            signal: context.signal,
+          });
           // Any terminal run that did NOT pass — not just a failed one.
           // `inconclusive` and a run that stopped without a verdict are the
           // outcomes a reader is least able to explain on their own, and the
@@ -3615,13 +3721,94 @@ export function registerEvalCommands(program: Command): void {
       writeEvalDecisionSummary(
         globalOptions.format,
         decisionSummary,
-        process.stdout
+        process.stdout,
+        { stages: options.stages === true }
       );
       writeRunLink(globalOptions.format, webOrigin, {
         projectId: result.project.id,
         suiteId: result.run.suiteId,
         runId: result.run.id,
       });
+    }
+  );
+
+      addProjectOption(
+      evals
+      .command("stage-analytics")
+      .description(
+        "Read the user-value chain funnel for one run (--run) or a suite's runs as a trend series (--suite)"
+      )
+      )
+      .option("--run <id>", "Eval run ID — one run's funnel")
+      .option(
+        "--suite <id-or-name>",
+        "Eval suite name or ID — one page of runs, newest first"
+      )
+      .option(
+        "--cursor <cursor>",
+        "Pagination cursor from a previous response (--suite only)"
+      )
+      .option("--limit <n>", "Documents per page, 1-100 (--suite only)").action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run?: string;
+        suite?: string;
+        cursor?: string;
+        limit?: string;
+      },
+      command
+    ) => {
+      // XOR, and both halves refused explicitly. `--run` and `--suite` address
+      // two genuinely different reads — one document, or a page of them — so
+      // "neither" has nothing to fetch and "both" would silently pick one and
+      // answer a question the caller did not ask.
+      if ((options.run === undefined) === (options.suite === undefined)) {
+        throw usageError(
+          "Provide either --run <id> or --suite <id-or-name>, not both."
+        );
+      }
+      const suiteMode = options.suite !== undefined;
+      if (
+        !suiteMode &&
+        (options.cursor !== undefined || options.limit !== undefined)
+      ) {
+        // A single run has ONE document. Accepting paging flags there would
+        // imply pages that do not exist.
+        throw usageError("--cursor and --limit apply to --suite only.");
+      }
+      const operation = suiteMode
+        ? listEvalSuiteStageAnalyticsOperation
+        : getEvalRunStageAnalyticsOperation;
+      // `projectOptional` is load-bearing: both schemas REQUIRE `project` (a
+      // run id alone is ambiguous across projects), and the cloud CLI fills it
+      // from --project/env/link/automatic AFTER this point. Without the flag,
+      // omitting --project would be a usage error on a command that should
+      // resolve a project the way every sibling does.
+      const input = validateOpInput(
+        operation as PlatformOperation<Record<string, unknown>, unknown>,
+        {
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(suiteMode
+            ? {
+                suite: options.suite,
+                ...(options.cursor !== undefined
+                  ? { cursor: options.cursor }
+                  : {}),
+                ...(options.limit !== undefined
+                  ? { limit: parsePositiveInteger(options.limit, "--limit") }
+                  : {}),
+              }
+            : { runId: options.run }),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        operation as PlatformOperation<Record<string, unknown>, unknown>,
+        input,
+        options,
+        command
+      );
     }
   );
 
@@ -4671,6 +4858,10 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--compose-secret <id...>",
+        "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
       ).action(
     async (
       options: PlatformOptions & {
@@ -4681,6 +4872,7 @@ export function registerEvalCommands(program: Command): void {
         composeServerGroup?: string;
         composeHostServers?: boolean;
         composeSkill?: string[];
+        composeSecret?: string[];
         project?: string;
         suite: string;
         case: string;

@@ -36,63 +36,8 @@ import {
   type FailureCategory,
   type StageReason,
 } from "@mcpjam/sdk/contract";
-import type { StageAnalyticsFailureKind } from "@/lib/apis/eval-stage-analytics-api";
 
 // ── panel state ──────────────────────────────────────────────────────────────
-/**
- * What the panel is showing, as five mutually exclusive facts.
- *
- * `unsupported` and `unmeasuredLegacy` are deliberately NOT `empty`. "The
- * backend could not answer", "these runs finished before we measured this" and
- * "this suite has no runs" are three different things to know, and the one
- * thing none of them may look like is a funnel of zeros.
- */
-export type StageAnalyticsPanelState =
-  /** The read did not complete, or this deployment does not serve the route. */
-  | { kind: "unsupported"; message: string }
-  /** The route answered badly, or answered about something else. */
-  | { kind: "error"; message: string }
-  /** No runs at all yet — there is nothing to have measured. */
-  | { kind: "empty" }
-  /** The suite HAS runs, and none of them carries a document. Not a zero. */
-  | { kind: "unmeasuredLegacy"; runCount: number }
-  | { kind: "loading" }
-  | { kind: "ready"; rows: EvalStageAnalyticsV1[] };
-
-export function deriveStageAnalyticsPanelState(input: {
-  status: "idle" | "loading" | "ready" | "error";
-  rows: EvalStageAnalyticsV1[];
-  error: { message: string; kind: StageAnalyticsFailureKind } | null;
-  /** Whether the suite has runs at all — the legacy/empty distinction. */
-  runCount: number;
-  runsLoading: boolean;
-}): StageAnalyticsPanelState {
-  if (input.status === "error" && input.error) {
-    // A service failure and a contract failure are both visible states, and
-    // neither is an empty chart. They are split because only one of them is
-    // actionable by the reader: "try again later" versus "this is a bug".
-    if (
-      input.error.kind === "routeUnavailable" ||
-      input.error.kind === "requestFailed"
-    ) {
-      return { kind: "unsupported", message: input.error.message };
-    }
-    return { kind: "error", message: input.error.message };
-  }
-  if (input.status === "idle" || input.status === "loading") {
-    return { kind: "loading" };
-  }
-  if (input.rows.length > 0) return { kind: "ready", rows: input.rows };
-  // Zero rows is ambiguous on its own, and the run list is what disambiguates
-  // it. Hold the loading frame rather than guessing while runs are still
-  // arriving — guessing here would flash "no runs yet" at a suite that has
-  // hundreds.
-  if (input.runsLoading) return { kind: "loading" };
-  if (input.runCount > 0) {
-    return { kind: "unmeasuredLegacy", runCount: input.runCount };
-  }
-  return { kind: "empty" };
-}
 
 // ── rate formatting ──────────────────────────────────────────────────────────
 /** The words a zero denominator renders as. Never a percentage. */

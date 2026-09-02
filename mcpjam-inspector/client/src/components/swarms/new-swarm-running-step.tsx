@@ -121,6 +121,14 @@ type FirstFinding = {
    * than surfaced as an unfollowable line.
    */
   sessionId: string;
+  /**
+   * The criterion that failed, when exactly one did. Carried so the run page
+   * this link leaves for can NAME the finding — the wizard's own line says
+   * what was found, and that sentence used to be lost the moment the viewer
+   * followed it. Omitted for a multi-check failure: naming one of several
+   * would misreport which claim the viewer is looking at.
+   */
+  criterionId?: string;
 };
 
 function shortRole(role: string): string {
@@ -518,7 +526,13 @@ function findFirstFinding(
       const reason =
         session.goalScore?.reason?.trim() ||
         `failed ${failed.length} ${failed.length === 1 ? "check" : "checks"}`;
-      return { text: `First finding: ${reason}`, sessionId: session.id };
+      return {
+        text: `First finding: ${reason}`,
+        sessionId: session.id,
+        ...(failed.length === 1 && failed[0]
+          ? { criterionId: failed[0].criterionId }
+          : {}),
+      };
     }
   }
   return null;
@@ -545,7 +559,7 @@ export function NewSwarmRunningStep({
    * is and the run's durable home, so following a finding stays reversible
    * while the run keeps going.
    */
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
   const hosts = useQuery(
     SWARM_QUERIES.listHosts as any,
@@ -1083,7 +1097,9 @@ export function NewSwarmRunningStep({
               className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
               data-testid="new-swarm-running-finding-open"
               aria-label="Open the session behind this finding"
-              onClick={() => onOpenSession(finding.sessionId)}
+              onClick={() =>
+                onOpenSession(finding.sessionId, finding.criterionId)
+              }
             >
               Look now
             </button>
