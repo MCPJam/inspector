@@ -113,8 +113,10 @@ const error: typeof sonnerToast.error = (message, data) =>
         text={message}
         // A toast that splits its failure across title and description has to
         // copy both, or the button hands over a server name and nothing else.
+        // Blank descriptions are skipped: the delimiter would be all it added.
         copyText={
-          typeof data?.description === "string"
+          typeof data?.description === "string" &&
+          data.description.trim() !== ""
             ? `${message}: ${data.description}`
             : undefined
         }
@@ -132,5 +134,5 @@ const error: typeof sonnerToast.error = (message, data) =>
 export const toast: typeof sonnerToast = Object.assign(
   (...args: Parameters<typeof sonnerToast>) => sonnerToast(...args),
   sonnerToast,
-  { error }
+  { error },
 );
