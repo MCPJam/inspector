@@ -246,7 +246,31 @@ export async function readProcessBirthIdentity(
 export function supportsOwnershipProof(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  return platform === "linux" || platform === "darwin";
+  if (platform === "linux" || platform === "darwin") return true;
+  // Windows has no process group, so the guarantee comes from a Job Object with
+  // KILL_ON_JOB_CLOSE — and only when the launcher that creates one is present
+  // AND verified as part of the runtime pack's digest. Until then this answers
+  // false and every caller treats that as "do not run here".
+  //
+  // The latch is set by runtime resolution, not by a filesystem probe here:
+  // "the helper exists" is a weaker claim than "the helper is inside the tree
+  // whose digest consent named", and only the resolver can make the second.
+  if (platform === "win32") return windowsJobLauncherVerified;
+  return false;
+}
+
+/**
+ * Whether a VERIFIED Windows job launcher is available in this process.
+ *
+ * Latched by `resolveManagedBundle` when it resolves a pack that contains one.
+ * Deliberately not a probe: a helper sitting next to the pack proves nothing,
+ * and a helper this process has not digest-verified is a binary we would be
+ * spawning on a promise.
+ */
+let windowsJobLauncherVerified = false;
+
+export function setWindowsJobLauncherVerified(verified: boolean): void {
+  windowsJobLauncherVerified = verified;
 }
 
 /**

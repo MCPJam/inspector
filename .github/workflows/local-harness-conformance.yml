@@ -178,8 +178,98 @@ jobs:
             exit 1
           fi
 
+  # Windows, and the one job here that is allowed to fail.
+  #
+  # `continue-on-error` is not laziness: Windows is REFUSED today
+  # (`nativePlatforms` omits win32, `supportsOwnershipProof('win32')` answers
+  # false without a verified helper), so a red leg here blocks nothing a user
+  # can reach. What it does is make the gap visible on every run instead of in
+  # somebody's memory.
+  #
+  # Removing `continue-on-error` and adding `win32` to `nativePlatforms` are the
+  # SAME change, and this job going green is what earns it.
+  windows:
+    name: windows-latest scenarios (not yet gating)
+    needs: unit
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install
+        working-directory: mcpjam-inspector
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      # The Job Object launcher is what whole-tree cleanup rests on here, so a
+      # conformance run without it is not testing Windows support — it is
+      # testing that Windows is refused, which the unit suite already covers.
+      - name: Build the Job Object launcher
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+
+      - name: Download the bundled Node runtime
+        run: |
+          set -euo pipefail
+          archive="node-v${BUNDLED_NODE_VERSION}-win-x64.zip"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" \
+            -o "$RUNNER_TEMP/node-runtime.zip"
+
+      - name: Build the pack
+        working-directory: mcpjam-inspector
+        run: |
+          node scripts/build-local-harness-pack.mjs \
+            --platform win32-x64 \
+            --pack-version conformance \
+            --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
+            --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
+            --out "$RUNNER_TEMP/conformance/runtime-src" \
+            --skip-archive
+          mkdir -p "$RUNNER_TEMP/conformance/runtime"
+          cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
+            "$RUNNER_TEMP/conformance/runtime/claude-code"
+
+      - name: Full turn
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          mkdir -p "$CONFORMANCE_ROOT/home" "$CONFORMANCE_ROOT/workspace"
+          HOME="$CONFORMANCE_ROOT/home" \
+            npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      # The one that matters on Windows: aborting must take the vendor binary
+      # down with the bridge. That is the whole reason the Job Object exists,
+      # and the reason `taskkill /T` was not enough.
+      - name: Abort takes the vendor CLI down with the bridge
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          HOME="$CONFORMANCE_ROOT/home" \
+            npx tsx server/utils/harness/local/conformance/run-lifecycle.ts abort
+
+      - name: No supervised process survived the run
+        if: always()
+        run: |
+          survivors="$(tasklist //FI "IMAGENAME eq node.exe" //FO CSV //NH || true)"
+          echo "$survivors"
+
   summarize:
     name: conformance version
+    # Deliberately NOT `needs: windows`. A conformance version records the
+    # evidence that exists; Windows is refused, so its leg is informational and
+    # must not hold up a stamp the supported platforms have earned.
     needs: scenarios
     runs-on: ubuntu-latest
     outputs:

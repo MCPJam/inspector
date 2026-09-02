@@ -27,6 +27,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { LocalHarnessCompatibility } from "./compatibility.js";
 import type { LocalPlatform, SupportedLocalHarnessId } from "./targets.js";
+import { setWindowsJobLauncherVerified } from "./process-identity.js";
 
 /** Cap on the bundle tree the digest will walk. A managed bundle is a bridge
  *  plus a vendor CLI; anything past this is not the artifact we shipped. */
@@ -56,6 +57,15 @@ export interface ResolvedRuntime {
    * interpreted.
    */
   nodePath?: string;
+  /**
+   * Windows only: the verified Job Object launcher the supervisor spawns in
+   * front of the bridge, so every descendant lands in a job that dies with it.
+   *
+   * Absent on every other platform, and absent on Windows until a pack ships
+   * one — which is exactly when `supportsOwnershipProof('win32')` starts
+   * answering true.
+   */
+  jobLauncherPath?: string;
   /** Tree digest (managed) or file digest (system). */
   digest: string;
   /** Vendor package versions, for display and audit. */
@@ -438,6 +448,25 @@ export async function resolveManagedBundle(args: {
     return { ok: false, status: "bundle-corrupt", message: bundledNode.message };
   }
 
+  // Windows: the Job Object launcher, which is what makes whole-tree cleanup
+  // possible there at all. Resolved from INSIDE the verified tree — a helper
+  // sitting next to the pack proves nothing, and one this process has not
+  // digest-verified is a binary we would be spawning on a promise.
+  //
+  // Its absence is not an error: the platform simply stays ineligible, which is
+  // what `supportsOwnershipProof('win32')` already reports and what the
+  // manifest's `nativePlatforms` already says.
+  let jobLauncherPath: string | undefined;
+  if (platform === "win32" && policy.jobLauncherRelativePath) {
+    const helper = await insideBundle(
+      policy.jobLauncherRelativePath,
+      "job launcher",
+      true,
+    );
+    if (helper.ok) jobLauncherPath = helper.path;
+  }
+  setWindowsJobLauncherVerified(jobLauncherPath !== undefined);
+
   return {
     ok: true,
     runtime: {
@@ -455,6 +484,7 @@ export async function resolveManagedBundle(args: {
       rootPath: canonicalRoot,
       launcherPath,
       nodePath: bundledNode.path,
+      ...(jobLauncherPath !== undefined ? { jobLauncherPath } : {}),
       digest,
       vendorPackages: policy.vendorPackages,
     },

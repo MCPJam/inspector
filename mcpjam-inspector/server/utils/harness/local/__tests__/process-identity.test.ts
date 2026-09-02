@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import {
   listGroupMembers,
   parseDarwinPsLine,
@@ -9,6 +9,7 @@ import {
   probeProcessGroup,
   readProcessBirthIdentity,
   sameBirthIdentity,
+  setWindowsJobLauncherVerified,
   supportsOwnershipProof,
   terminateOwnedProcess,
   terminateOwnedProcessGroup,
@@ -582,5 +583,37 @@ describe("terminating one member of a snapshot", () => {
         graceMs: 20,
       }),
     ).resolves.toBe("already-gone");
+  });
+});
+
+describe("ownership proof, per platform", () => {
+  afterEach(() => setWindowsJobLauncherVerified(false));
+
+  it("is provable on the POSIX platforms, where a process group is", () => {
+    expect(supportsOwnershipProof("linux")).toBe(true);
+    expect(supportsOwnershipProof("darwin")).toBe(true);
+  });
+
+  it("is NOT provable on Windows without a verified job launcher", () => {
+    // Windows has no process group. `taskkill /T` walks a parent chain a
+    // re-parented process has already left, so without a Job Object there is
+    // nothing that makes "stop" mean stop — and an unenforced cleanup promise
+    // is worse than no Windows support.
+    expect(supportsOwnershipProof("win32")).toBe(false);
+  });
+
+  it("becomes provable on Windows once one is verified", () => {
+    // Latched by runtime resolution, which is the only thing that can say the
+    // helper is inside the tree whose digest consent named. A helper sitting
+    // beside the pack would not qualify.
+    setWindowsJobLauncherVerified(true);
+    expect(supportsOwnershipProof("win32")).toBe(true);
+  });
+
+  it("stays unprovable everywhere else, whatever the latch says", () => {
+    setWindowsJobLauncherVerified(true);
+    for (const platform of ["aix", "freebsd", "sunos"] as NodeJS.Platform[]) {
+      expect(supportsOwnershipProof(platform)).toBe(false);
+    }
   });
 });

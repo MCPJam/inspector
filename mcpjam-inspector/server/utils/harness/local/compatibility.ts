@@ -65,6 +65,17 @@ export type LocalHarnessRuntimePolicy =
        *  and the npx server's `process.execPath` is a Node outside the tree
        *  the digest covers. */
       nodeLauncherRelativePath: string;
+      /**
+       * Windows only: the Job Object launcher, relative to the pack root.
+       *
+       * Windows has no process group, so whole-tree cleanup comes from a job
+       * with KILL_ON_JOB_CLOSE — and the helper that creates one has to be
+       * INSIDE the pack, covered by its tree digest, or the supervisor would be
+       * spawning an unverified binary to enforce its own guarantee.
+       *
+       * Absent on every other platform, where the guarantee is POSIX.
+       */
+      jobLauncherRelativePath?: string;
       /** Exact vendor packages the bundle is built from, for the audit record
        *  and for the version the UI shows before start. */
       vendorPackages: Readonly<Record<string, string>>;
@@ -182,6 +193,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
       bundleDigest: PACK_TREE_DIGESTS["claude-code"],
       launcherRelativePath: "launcher.mjs",
       nodeLauncherRelativePath: "bin/node",
+      jobLauncherRelativePath: "bin/mcpjam-job-launcher.exe",
       vendorPackages: {
         "@anthropic-ai/claude-code": "pinned-by-adapter-bridge-lockfile",
       },
@@ -197,9 +209,22 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
       // off on a host.
     },
     // Native eligibility is per platform. macOS and Linux have POSIX process
-    // groups, which is what whole-tree cleanup is built on. Windows is absent
-    // until the supervisor's Job Object path is implemented and conformance-
-    // tested — an unenforced cleanup promise is worse than no Windows support.
+    // groups, which is what whole-tree cleanup is built on.
+    //
+    // Windows is still absent, and deliberately so even though the Job Object
+    // launcher now exists (`tools/mcpjam-job-launcher`, in this package). Two
+    // things have to be true before `win32` is added here, and neither is yet:
+    //
+    //   1. the launcher ships inside the Windows pack, so its bytes are covered
+    //      by the tree digest — `supportsOwnershipProof('win32')` answers false
+    //      until runtime resolution has verified one;
+    //   2. the conformance suite passes on `windows-latest`, which is what
+    //      turns "we wrote a Job Object" into evidence that stopping a session
+    //      stops everything it started.
+    //
+    // An unenforced cleanup promise is worse than no Windows support: a user
+    // told their session stopped, whose 376 MB agent is still running, has been
+    // lied to.
     nativePlatforms: ["darwin", "linux"],
     // Empty until a backend's escape probes actually pass (I6).
     isolatedBackends: {},

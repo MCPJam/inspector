@@ -37,6 +37,7 @@
 //     --platform linux-x64 \
 //     --out .pack-out \
 //     [--pack-version 3] [--sign-key-file key.pem] [--skip-archive]
+//     [--job-launcher path/to/mcpjam-job-launcher.exe]   (win32 only)
 import { createHash, sign as edSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
@@ -248,9 +249,18 @@ function installBundledNode(packRoot, nodeTarball, platformKey) {
     const staging = mkdtempSync(join(tmpdir(), "mcpjam-node-"));
     try {
       if (nodeTarball.endsWith(".zip")) {
-        execFileSync("unzip", ["-q", nodeTarball, "-d", staging], {
-          stdio: "inherit",
-        });
+        // `tar` first: Windows 10+ ships bsdtar, which reads zip, and Git Bash
+        // on the runner does not reliably have `unzip`. Falling back the other
+        // way round would fail on the platform this branch exists for.
+        try {
+          execFileSync("tar", ["-xf", nodeTarball, "-C", staging], {
+            stdio: "inherit",
+          });
+        } catch {
+          execFileSync("unzip", ["-q", nodeTarball, "-d", staging], {
+            stdio: "inherit",
+          });
+        }
       } else {
         execFileSync("tar", ["-xf", nodeTarball, "-C", staging], {
           stdio: "inherit",
@@ -366,6 +376,28 @@ function main() {
 
   // 5. The pack's own Node.
   const node = installBundledNode(packRoot, nodeTarball, platformKey);
+
+  // 5b. Windows only: the Job Object launcher. It goes INSIDE the pack so the
+  //     tree digest covers it — the supervisor refuses to enforce whole-tree
+  //     cleanup with a helper it has not verified, and a helper sitting beside
+  //     the pack would be exactly that.
+  if (platformKey.startsWith("win32")) {
+    const helperSource = args["job-launcher"]
+      ? resolve(String(args["job-launcher"]))
+      : null;
+    if (helperSource === null || !existsSync(helperSource)) {
+      // Not a build failure: a Windows pack without the helper is a pack whose
+      // platform stays ineligible, which is the state Windows is in today and
+      // the state `nativePlatforms` already describes.
+      console.warn(
+        "[pack] no --job-launcher given; this Windows pack cannot prove " +
+          "whole-tree cleanup and the platform stays refused",
+      );
+    } else {
+      copyFileSync(helperSource, join(packRoot, "bin", "mcpjam-job-launcher.exe"));
+      chmodSync(join(packRoot, "bin", "mcpjam-job-launcher.exe"), 0o755);
+    }
+  }
 
   // 6. Refuse a pack with any symlink left in it. The digest would throw at
   //    verification time on the user's machine; failing here instead means the

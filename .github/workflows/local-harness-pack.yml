@@ -56,6 +56,13 @@ jobs:
           - platform_key: linux-arm64
             runner: ubuntu-24.04-arm
             node_dist: linux-arm64
+          # Built so the artifact and the digest exist, and so a regression in
+          # the pack build is caught on Windows too. The PLATFORM stays refused
+          # regardless: `nativePlatforms` does not list win32 until the
+          # conformance suite passes on `windows-latest`.
+          - platform_key: win32-x64
+            runner: windows-latest
+            node_dist: win-x64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -74,33 +81,61 @@ jobs:
       # recipe and installs that recipe's own frozen graph inside the pack.
       - name: Install the pinned adapter
         working-directory: mcpjam-inspector
+        shell: bash
         run: npm install --legacy-peer-deps --no-audit --no-fund
 
       # The pack ships an official nodejs.org build, not the runner's Node:
       # the runner's is not signed the way a binary we ask users to execute
       # needs to be, and it is not reproducible across runner images.
       - name: Download the bundled Node runtime
+        shell: bash
         run: |
           set -euo pipefail
-          url="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz"
-          curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
-          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/SHASUMS256.txt"
-          expected="$(grep "node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz" "$RUNNER_TEMP/SHASUMS256.txt" | cut -d' ' -f1)"
-          actual="$(shasum -a 256 "$RUNNER_TEMP/node-runtime.tar.gz" | cut -d' ' -f1)"
-          if [ "$expected" != "$actual" ]; then
-            echo "nodejs.org tarball checksum mismatch: expected $expected, got $actual" >&2
+          # nodejs.org publishes Windows builds as .zip and everything else as
+          # .tar.gz. The extension is part of the checksum line, so it has to be
+          # right in both places or the verification silently matches nothing.
+          case "${{ matrix.node_dist }}" in
+            win-*) ext="zip" ;;
+            *) ext="tar.gz" ;;
+          esac
+          archive="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.${ext}"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" \
+            -o "$RUNNER_TEMP/node-runtime.${ext}"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" \
+            -o "$RUNNER_TEMP/SHASUMS256.txt"
+          expected="$(grep " ${archive}\$" "$RUNNER_TEMP/SHASUMS256.txt" | cut -d' ' -f1)"
+          actual="$(sha256sum "$RUNNER_TEMP/node-runtime.${ext}" | cut -d' ' -f1)"
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "nodejs.org archive checksum mismatch for ${archive}" >&2
             exit 1
           fi
+          echo "NODE_ARCHIVE=$RUNNER_TEMP/node-runtime.${ext}" >> "$GITHUB_ENV"
+
+      # Windows has no process group, so whole-tree cleanup comes from a Job
+      # Object — and the helper that creates one has to live INSIDE the pack,
+      # covered by its tree digest. Built here rather than checked in, so the
+      # binary that ships is the one this commit's source produces.
+      - name: Build the Job Object launcher
+        if: startsWith(matrix.platform_key, 'win32')
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        # `shell: bash` on every step below, Windows included: the runner's
+        # default there is PowerShell, and one workflow with two shell dialects
+        # is a workflow whose Windows leg breaks on a change nobody tested on
+        # Windows. Git Bash ships on the windows runner image.
+        shell: bash
+        run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
       - name: Build the pack
         working-directory: mcpjam-inspector
+        shell: bash
         env:
           LOCAL_HARNESS_PACK_SIGNING_KEY: ${{ secrets.LOCAL_HARNESS_PACK_SIGNING_KEY }}
         run: |
           node scripts/build-local-harness-pack.mjs \
             --platform ${{ matrix.platform_key }} \
             --pack-version "${{ inputs.pack_version }}" \
-            --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
+            --node-tarball "$NODE_ARCHIVE" \
+            ${{ startsWith(matrix.platform_key, 'win32') && format('--job-launcher "{0}/mcpjam-job-launcher.exe"', runner.temp) || '' }} \
             --out "$RUNNER_TEMP/pack-out" \
             | tee "$RUNNER_TEMP/pack-build.log"
 
@@ -124,6 +159,7 @@ jobs:
         env:
           MCPJAM_RUNTIME_ROOT: ${{ runner.temp }}/verify-root
           MCPJAM_LOCAL_HARNESS_PACK_SOURCE: ${{ runner.temp }}/pack-out/local-harness-pack-${{ matrix.platform_key }}-${{ inputs.pack_version }}.tar.gz
+        shell: bash
         run: >
           npx tsx scripts/verify-local-harness-pack.ts
           "${{ steps.digest.outputs.digest }}"
