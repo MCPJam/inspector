@@ -367,6 +367,10 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option(
         "--skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--secret <id...>",
+        "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
       ).action(
     async (
       options: PlatformOptions & {
@@ -376,6 +380,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         model?: string;
         computer?: string;
         skill?: string[];
+        secret?: string[];
       },
       command
     ) => {
@@ -393,6 +398,9 @@ export function registerEnvironmentsCommands(program: Command): void {
           : {}),
         ...(options.skill?.length
           ? { skills: { mode: "explicit", skillIds: options.skill } }
+          : {}),
+        ...(options.secret?.length
+          ? { secrets: { mode: "explicit", secretIds: options.secret } }
           : {}),
       });
       const result = await runPlatformCommand(

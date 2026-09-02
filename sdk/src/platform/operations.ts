@@ -94,6 +94,7 @@ import type {
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
   PlatformEnvironmentSkillSelection,
+  PlatformEnvironmentSecretSelection,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -2973,6 +2974,7 @@ async function composeRunEnvironment(
     saveTargets?: boolean;
     computer?: string;
     skills?: PlatformEnvironmentSkillSelection;
+    secrets?: PlatformEnvironmentSecretSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined,
@@ -3464,6 +3466,38 @@ const skillSelectionInput = z
   );
 
 /**
+ * The ONE secret-selection schema. Every surface that grants project secrets to
+ * an environment — `create_project_environment`, `update_project_environment`,
+ * `ensure_adhoc_environment`, and the run ops' `compose` field — parses through
+ * this, so a grant means the same thing wherever it is written.
+ *
+ * Deliberately simpler than {@link skillSelectionInput}: no version pins,
+ * because a secret has exactly one current value and "pin the previous value"
+ * is the opposite of what rotation is for.
+ *
+ * `.min(1)` for the same reason every other selection has it: `[]` reads as
+ * "remove every credential" but the API rejects it, so revoking is `null` on
+ * update — a distinction worth an immediate validation error.
+ *
+ * Declared HERE, above the run inputs, for the same temporal-dead-zone reason
+ * {@link skillSelectionInput} is: `composeRunTargetInput` is built at module
+ * load, and the environment ops that also use this are far below.
+ */
+const secretSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    secretIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project SECRET ids this environment grants. The environment is the GRANT BOUNDARY: no selection means a run receives no secrets, and there is no \"all of them\" mode. A `sharing: \"user\"` secret still reaches only sessions its owner started."
+      ),
+  })
+  .describe(
+    "Which project secrets runs launched from this environment receive."
+  );
+
+/**
  * A COMPOSED run target: assemble a stack instead of naming a saved
  * environment. Declared here, above the run inputs, for the same
  * temporal-dead-zone reason `publicMatchOptionsSchema` is.
@@ -3545,6 +3579,11 @@ const composeRunTargetInput = z
       .optional()
       .describe(
         "Explicit pinned skill selection for the composed stack, `versionPins` included — the same schema every other skill-selection surface uses."
+      ),
+    secrets: secretSelectionInput
+      .optional()
+      .describe(
+        "Project secrets the composed stack grants to its runs — the same schema the named-environment surfaces use. Without it a composed stack carries NO credential, which is why a run needing one used to require a named environment."
       ),
     pluginVersionIds: z
       .array(z.string().trim().min(1))
@@ -9140,32 +9179,6 @@ const pluginVersionIdsInput = z
     "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files."
   );
 
-/**
- * The ONE secret-selection schema, shared by `create_project_environment` and
- * `update_project_environment` so a grant means the same thing on both.
- *
- * Deliberately simpler than {@link skillSelectionInput}: no version pins,
- * because a secret has exactly one current value and "pin the previous value"
- * is the opposite of what rotation is for.
- *
- * `.min(1)` for the same reason every other selection has it: `[]` reads as
- * "remove every credential" but the API rejects it, so revoking is `null` on
- * update — a distinction worth an immediate validation error.
- */
-const secretSelectionInput = z
-  .object({
-    mode: z.literal("explicit"),
-    secretIds: z
-      .array(z.string().trim().min(1))
-      .min(1)
-      .describe(
-        "Project SECRET ids this environment grants. The environment is the GRANT BOUNDARY: no selection means a run receives no secrets, and there is no \"all of them\" mode. A `sharing: \"user\"` secret still reaches only sessions its owner started."
-      ),
-  })
-  .describe(
-    "Which project secrets runs launched from this environment receive."
-  );
-
 const createEnvironmentInput = z.object({
   project: z
     .string()
@@ -9271,10 +9284,10 @@ export const createEnvironmentOperation: PlatformOperation<
 //
 // A composed stack is the same thing as a saved environment MINUS the name:
 // one host, an optional server group, an optional model override, an optional
-// computer image, an optional skill selection. It exists so a caller can run a
-// specific combination WITHOUT adding a permanent entry to the project's
-// environment list that someone else then has to reason about — which is
-// exactly what `create_project_environment` would do.
+// computer image, an optional skill selection, an optional secret grant. It
+// exists so a caller can run a specific combination WITHOUT adding a permanent
+// entry to the project's environment list that someone else then has to reason
+// about — which is exactly what `create_project_environment` would do.
 //
 // Everything downstream still goes through the ENVIRONMENT path: an ad-hoc row
 // is an environment, so it resolves, snapshots and pins identically. There is
@@ -9327,6 +9340,7 @@ const composeStackFields = {
       "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; promote a personal draft first."
     ),
   skills: skillSelectionInput.optional(),
+  secrets: secretSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
 } as const;
 
@@ -9543,6 +9557,7 @@ async function resolveComposeStack(
     model?: string;
     computer?: string;
     skills?: PlatformEnvironmentSkillSelection;
+    secrets?: PlatformEnvironmentSecretSelection;
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined
@@ -9557,6 +9572,15 @@ async function resolveComposeStack(
     ...(stack.model ? { modelId: stack.model } : {}),
     ...(image ? { sandboxImageId: image.id } : {}),
     ...(stack.skills ? { skillSelection: stack.skills } : {}),
+    // The CREDENTIAL axis. Every other field here is a pointer; this one is a
+    // grant, and it is the axis a composed stack was missing outright — an
+    // ad-hoc environment could name a host, servers, a model, an image and
+    // skills, but not the one thing a run needs to authenticate, so anything
+    // that needed a credential had to fall back to a named environment.
+    // Content-addressed like the rest: two stacks that differ only by their
+    // grant resolve to two different ad-hoc rows, which is what keeps a
+    // credentialed cell from being reused as an uncredentialed one.
+    ...(stack.secrets ? { secretSelection: stack.secrets } : {}),
     ...(stack.pluginVersionIds
       ? { pluginVersionIds: stack.pluginVersionIds }
       : {}),
@@ -9570,7 +9594,7 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
   name: "ensure_adhoc_environment",
   title: "Compose an MCPJam environment without naming it",
   description:
-    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image and pinned skills. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
+    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image, pinned skills and granted project secrets. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(

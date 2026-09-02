@@ -1118,3 +1118,133 @@ describe("compose skill selection", () => {
     );
   });
 });
+
+/**
+ * The CREDENTIAL axis on a composed stack.
+ *
+ * `secretSelection` reached the named-environment operations in #4598 and
+ * stopped there: `composeStackFields` and `resolveComposeStack` carried only
+ * skills and plugin versions, and a `z.object` strips what it does not
+ * declare — so a grant passed to `ensure_adhoc_environment` or to a run's
+ * `compose` vanished silently between the caller and the wire. The route had
+ * accepted the field the whole time. The consequence was not cosmetic: a
+ * composed stack could not carry a credential at all, so any harness run that
+ * needed one had to fall back to a named environment.
+ *
+ * Asserted at the WIRE, like the skills-pin regression above it: parsing
+ * "succeeds" either way, and the body is the only place the drop shows.
+ */
+describe("compose secret grants", () => {
+  const GRANT = {
+    mode: "explicit" as const,
+    secretIds: ["secret-vercel-token"],
+  };
+
+  it("carries a grant into the ensure-adhoc body", async () => {
+    const { client, fetchMock } = makeClient();
+    // Through the SCHEMA, the way every real caller arrives (MCP tool call,
+    // `--secret` flag parse). `execute` on a hand-built object would sail
+    // past the very stripping this covers.
+    const input = ensureAdhocEnvironmentOperation.inputSchema.parse({
+      host: "Claude Code",
+      secrets: GRANT,
+    });
+    await ensureAdhocEnvironmentOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      secretSelection: GRANT,
+    });
+  });
+
+  it("carries a grant through a composed RUN's cells", async () => {
+    const { client, fetchMock } = makeClient();
+    const input = runEvalSuiteOperation.inputSchema.parse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+    await runEvalSuiteOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      secretSelection: GRANT,
+    });
+  });
+
+  it("is on the single-case run path too", async () => {
+    const { client, fetchMock } = makeClient();
+    const input = runEvalCaseOperation.inputSchema.parse({
+      suite: "Smoke",
+      case: "echo works",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+    await runEvalCaseOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      secretSelection: GRANT,
+    });
+  });
+
+  it("omits the field entirely when no grant is asked for", async () => {
+    const { client, fetchMock } = makeClient();
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code" },
+      { client },
+    );
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).not.toHaveProperty(
+      "secretSelection",
+    );
+  });
+
+  it("shares the named-environment schema, so `[]` is refused here too", () => {
+    // Revoking is `null` on an update; an empty list would read as "grant
+    // nothing" and is rejected everywhere rather than on some surfaces.
+    const adhoc = ensureAdhocEnvironmentOperation.inputSchema.safeParse({
+      host: "Claude Code",
+      secrets: { mode: "explicit", secretIds: [] },
+    });
+    expect(adhoc.success).toBe(false);
+
+    const run = runEvalSuiteOperation.inputSchema.safeParse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: { mode: "explicit", secretIds: [] },
+      },
+    });
+    expect(run.success).toBe(false);
+  });
+
+  it("keeps the grant beside the other axes rather than replacing one", async () => {
+    // The bug class this belongs to is "a field the resolver forgot", so the
+    // guard is that ALL of them survive one composition together.
+    const { client, fetchMock } = makeClient();
+    const input = ensureAdhocEnvironmentOperation.inputSchema.parse({
+      host: "Claude Code",
+      computer: "heavy",
+      model: "anthropic/claude-sonnet-4-5",
+      skills: { mode: "explicit", skillIds: ["skill-a"] },
+      secrets: GRANT,
+    });
+    await ensureAdhocEnvironmentOperation.execute(input, { client });
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      sandboxImageId: "img-heavy",
+      modelId: "anthropic/claude-sonnet-4-5",
+      skillSelection: { mode: "explicit", skillIds: ["skill-a"] },
+      secretSelection: GRANT,
+    });
+  });
+});

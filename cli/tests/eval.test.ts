@@ -5979,6 +5979,80 @@ test("eval run --compose-* mints ephemerally and does not attach", async () => {
   }
 });
 
+test("eval run --compose-secret grants a credential to the composed cell", async () => {
+  // The gap this closes: a composed stack had no secrets axis at all, so a
+  // harness run that needed a token could only be launched from a NAMED
+  // environment. The flag has to survive three hops that each drop unknown
+  // keys — the CLI's compose object, the op's zod schema, and the compose
+  // resolver — so the assertion is on the ensure-adhoc BODY, not on exit 0.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-host-servers",
+            "--compose-secret",
+            "secret-vercel-token"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      secretSelection: {
+        mode: "explicit",
+        secretIds: ["secret-vercel-token"],
+      },
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-secret still needs --compose-host", async () => {
+  // Same rule as every other refinement: the host is what makes it a composed
+  // run, so a lone credential flag is a usage error rather than a silently
+  // ignored one.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-secret",
+          "secret-vercel-token"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--compose-\* flags need --compose-host/);
+    assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval run --compose-model variadic launches one group without attaching", async () => {
   const fixture = await startEvalFixture();
   try {

@@ -735,6 +735,7 @@ Requires project membership, not admin (pinning plugin versions still requires a
 | `--model <id>` | No | Model to run instead of the host's pinned one |
 | `--computer <id-or-name>` | No | Project-shared sandbox image to pin, so runs boot a fresh computer from it |
 | `--skill <id...>` | No | Project-shared skill IDs to pin |
+| `--secret <id...>` | No | Project secret IDs the stack grants to its runs (`secrets list` shows them) |
 | `--project <id-or-name>` | No | Project name or ID |
 
 ### `cloud environments name`
@@ -1179,12 +1180,13 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
 
 #### Composing a target instead of naming one
 
 `--compose-host <id-or-name>` builds an execution stack for this run instead of
 naming a saved environment, refined by `--compose-computer`, `--compose-model`,
-`--compose-server-group` and `--compose-skill`. The stack becomes an unnamed,
+`--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
 content-addressed environment (the same one `environments ensure-adhoc`
 produces), so composing the same stack twice reuses one environment.
 
@@ -2052,6 +2054,7 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
 | `--iterations <n>` | No | Run the case this many times (1-10) |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 
