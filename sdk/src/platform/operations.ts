@@ -3108,15 +3108,21 @@ async function composeRunEnvironment(
  * flag both mean "do not send it" — an unknown field is a hard 400 on a strict
  * schema, not a silently ignored one.
  *
- * `modelOverrides` rides along rather than getting a second round-trip: both
- * questions are answered by the same route, and the compose path has to ask
- * both whenever a model is named.
+ * `modelOverrides` and `secretGrants` ride along rather than getting a second
+ * round-trip each: all three questions are answered by the same route, and the
+ * compose path has to ask whichever ones the stack actually names. This is
+ * what makes the axis preflights FREE on a launch — the read happens whether
+ * or not a model or a grant was named, so refusing early costs nothing.
  */
 async function probeComposeCapabilities(
   client: PlatformApiClient,
   projectId: string,
   signal: AbortSignal | undefined
-): Promise<{ ephemeralLaunch: boolean; modelOverrides: boolean }> {
+): Promise<{
+  ephemeralLaunch: boolean;
+  modelOverrides: boolean;
+  secretGrants: boolean;
+}> {
   try {
     const capabilities = await client.getEnvironmentCapabilities(
       { projectId },
@@ -3125,9 +3131,14 @@ async function probeComposeCapabilities(
     return {
       ephemeralLaunch: capabilities.ephemeralEnvironmentLaunch === true,
       modelOverrides: capabilities.modelOverrides === true,
+      secretGrants: capabilities.secretGrants === true,
     };
   } catch {
-    return { ephemeralLaunch: false, modelOverrides: false };
+    return {
+      ephemeralLaunch: false,
+      modelOverrides: false,
+      secretGrants: false,
+    };
   }
 }
 
@@ -3147,6 +3158,9 @@ function composeLaunchPolicy(input: {
   /** Explicit model ids were named (an inherit-only compose names none). */
   explicitModels: boolean;
   modelOverridesOk: boolean;
+  /** A credential grant was named on the stack. */
+  explicitSecrets: boolean;
+  secretGrantsOk: boolean;
   refreshSnapshot?: boolean;
 }): { attach: boolean; ephemeralLaunch: boolean } {
   if (input.explicitModels && !input.modelOverridesOk) {
@@ -3158,6 +3172,25 @@ function composeLaunchPolicy(input: {
     // the three agree with the web composer, which already refuses.
     throw operationInputError(
       "This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --compose-model / compose.models."
+    );
+  }
+  if (input.explicitSecrets && !input.secretGrantsOk) {
+    // The credential axis gets the same treatment as the model axis directly
+    // above, and for the same reason it is CHEAP: `probeComposeCapabilities`
+    // has already read this route, so the grant costs no round trip that the
+    // launch was not making anyway.
+    //
+    // Without it, `secretSelection` reaches `ensureAdhocEnvironment` on a
+    // deployment that has never heard of the field and dies in an argument
+    // validator — which is NOT a `ConvexError` with a code and a remedy, so
+    // the v1 write translator cannot classify it and answers its terminal
+    // 500. The user gets `INTERNAL_ERROR` for a client-version skew, and the
+    // on-call gets paged for it, after the compose has already listed or
+    // created a server group. Refusing here also refuses it for the CLI, the
+    // remote MCP surface and the in-app agent at once, exactly as the model
+    // check above does.
+    throw operationInputError(
+      "This MCPJam deployment does not support environment secret grants. Upgrade the platform, or omit --compose-secret / compose.secrets."
     );
   }
   if (input.choiceCount > 1 && input.refreshSnapshot) {
@@ -3957,6 +3990,8 @@ export const runEvalSuiteOperation: PlatformOperation<
           (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
+        explicitSecrets: input.compose.secrets !== undefined,
+        secretGrantsOk: capabilities.secretGrants,
         ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
       });
       composeAttach = policy.attach;
@@ -4474,6 +4509,8 @@ export const runEvalCaseOperation: PlatformOperation<
           (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
+        explicitSecrets: input.compose.secrets !== undefined,
+        secretGrantsOk: capabilities.secretGrants,
       });
       composeAttach = policy.attach;
       ephemeralLaunch = policy.ephemeralLaunch;

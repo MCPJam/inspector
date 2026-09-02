@@ -5995,7 +5995,7 @@ test("eval run --compose-secret grants a credential to the composed cell", async
   // environment. The flag has to survive three hops that each drop unknown
   // keys — the CLI's compose object, the op's zod schema, and the compose
   // resolver — so the assertion is on the ensure-adhoc BODY, not on exit 0.
-  const fixture = await startEvalFixture();
+  const fixture = await startEvalFixture({ environmentSecretGrants: true });
   try {
     const run = await captureProcessOutput(() =>
       main(
@@ -6184,6 +6184,167 @@ test("environments ensure-adhoc pays for no preflight when it sends no grant", a
     );
   } finally {
     await fixture.close();
+  }
+});
+
+/**
+ * The same version-skew probe, on the LAUNCH paths.
+ *
+ * These were left unprobed on the argument that a launch should not pay for a
+ * preflight round-trip, matching `--compose-model`. Neither half holds:
+ * `--compose-model` IS probed on this path (`composeLaunchPolicy`), and the
+ * read it probes with — `probeComposeCapabilities` — is one the composed
+ * launch already performs before it mints anything. `secretGrants` comes back
+ * on that same response, so the check is a field read, not a request.
+ *
+ * The failure it replaces is the worst kind: the backend's rejection of an
+ * unknown `secretSelection` is a bare argument-validator error, NOT a
+ * `ConvexError` with a code and a remedy, so the v1 write translator cannot
+ * classify it and answers its terminal 500. The user gets `INTERNAL_ERROR`
+ * for a client-version skew, and the on-call gets paged for it.
+ *
+ * The refusal lives in the SDK's compose policy rather than in these two
+ * commands, so the CLI, the remote MCP surface and the in-app agent all get
+ * it — the same placement the model-override refusal already has.
+ */
+test("eval run --compose-secret refuses a deployment that cannot grant", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-host",
+          "Claude Code",
+          "--compose-host-servers",
+          "--compose-secret",
+          "secret-vercel-token"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support environment secret grants/);
+    // Refused BEFORE anything was composed or launched: no half-built stack,
+    // no run row, nothing to clean up.
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval cases run --compose-secret refuses a deployment that cannot grant", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "cases",
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--case",
+          "echo works",
+          "--compose-host",
+          "Claude Code",
+          "--compose-host-servers",
+          "--compose-secret",
+          "secret-vercel-token"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support environment secret grants/);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-secret spends no EXTRA round trip to check", async () => {
+  // The cost objection, answered by measurement. A composed launch ALREADY
+  // reads `/environments/capabilities` — `probeComposeCapabilities` needs
+  // `ephemeralEnvironmentLaunch` and `modelOverrides` from it before it mints
+  // anything — so reading `secretGrants` off the same response is free. One
+  // call with a grant, one call without: the preflight is not a new request,
+  // it is a field on a request the launch was making regardless.
+  const withGrant = await startEvalFixture({ environmentSecretGrants: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            withGrant.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-host-servers",
+            "--compose-secret",
+            "secret-vercel-token"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(
+      withGrant.requests.filter((path) => path.endsWith("/capabilities"))
+        .length,
+      1
+    );
+  } finally {
+    await withGrant.close();
+  }
+
+  const withoutGrant = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            withoutGrant.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-host-servers"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(
+      withoutGrant.requests.filter((path) => path.endsWith("/capabilities"))
+        .length,
+      1
+    );
+  } finally {
+    await withoutGrant.close();
   }
 });
 

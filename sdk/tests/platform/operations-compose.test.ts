@@ -112,6 +112,8 @@ interface Fixture {
   ephemeralLaunch?: boolean;
   /** Deployment that predates environment model overrides. */
   modelOverrides?: boolean;
+  /** Deployment that predates environment secret grants. */
+  secretGrants?: boolean;
   /** Suite already has these attached environment ids (union-cap tests). */
   attachedEnvironmentIds?: string[];
   /** Server groups the project already holds. */
@@ -205,6 +207,7 @@ function makeClient(fixture: Fixture = {}) {
         modelOverrides: fixture.modelOverrides !== false,
         modelMatrix: fixture.modelOverrides !== false,
         ephemeralEnvironmentLaunch: fixture.ephemeralLaunch !== false,
+        secretGrants: fixture.secretGrants !== false,
       });
     }
     if (/\/environments\/[^/]+$/.test(path) && method === "GET") {
@@ -1246,5 +1249,124 @@ describe("compose secret grants", () => {
       skillSelection: { mode: "explicit", skillIds: ["skill-a"] },
       secretSelection: GRANT,
     });
+  });
+});
+
+/**
+ * The VERSION-SKEW refusal for the credential axis.
+ *
+ * `secretSelection` is a field a deployment may never have heard of, and an
+ * unknown argument does not die politely there: it is an argument-VALIDATOR
+ * rejection, not a `ConvexError({ code, message })`, so the v1 write
+ * translator has nothing to classify and answers its terminal 500. The caller
+ * sees `INTERNAL_ERROR` for what is really a client that shipped ahead of the
+ * platform, and the on-call is paged for it — after the compose has already
+ * created or reused a server group.
+ *
+ * Placed in `composeLaunchPolicy`, beside the model-override refusal it is
+ * modelled on, for the same two reasons that one gives. It is FREE: the
+ * launch already reads `/environments/capabilities` before it mints anything,
+ * so `secretGrants` arrives on a response the compose was fetching regardless.
+ * And it is SHARED: the CLI, the remote MCP surface and the in-app agent all
+ * enter through these operations, so one refusal here is what makes the three
+ * agree instead of three preflights that can drift.
+ */
+describe("compose secret grants — deployment skew", () => {
+  const GRANT = {
+    mode: "explicit" as const,
+    secretIds: ["secret-vercel-token"],
+  };
+
+  it("refuses a suite launch before it composes anything", async () => {
+    const { client, fetchMock } = makeClient({ secretGrants: false });
+    const input = runEvalSuiteOperation.inputSchema.parse({
+      suite: "Smoke",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+
+    await expect(
+      runEvalSuiteOperation.execute(input, { client }),
+    ).rejects.toThrow(/does not support environment secret grants/);
+
+    // Nothing was written. The refusal has to land before the mint, because
+    // compose WRITES before it spends — an ad-hoc row and possibly a server
+    // group — and none of that should exist for a launch that cannot run.
+    expect(
+      fetchMock.mock.calls.filter((call) =>
+        /ensure-adhoc$/.test(new URL(String(call[0])).pathname),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("refuses the single-case launch the same way", async () => {
+    const { client } = makeClient({ secretGrants: false });
+    const input = runEvalCaseOperation.inputSchema.parse({
+      suite: "Smoke",
+      case: "echo works",
+      compose: {
+        host: "Claude Code",
+        hostServers: true,
+        secrets: GRANT,
+      },
+    });
+
+    await expect(
+      runEvalCaseOperation.execute(input, { client }),
+    ).rejects.toThrow(/does not support environment secret grants/);
+  });
+
+  it("costs no round trip a composed launch was not already making", async () => {
+    // The whole cost argument, measured. `probeComposeCapabilities` reads this
+    // route for `ephemeralEnvironmentLaunch` and `modelOverrides` whether or
+    // not a grant was named, so the grant check is a field read on a response
+    // already in hand — one call with a grant, one call without.
+    const withGrant = makeClient();
+    await runEvalSuiteOperation.execute(
+      runEvalSuiteOperation.inputSchema.parse({
+        suite: "Smoke",
+        compose: { host: "Claude Code", hostServers: true, secrets: GRANT },
+      }),
+      { client: withGrant.client },
+    );
+
+    const withoutGrant = makeClient();
+    await runEvalSuiteOperation.execute(
+      runEvalSuiteOperation.inputSchema.parse({
+        suite: "Smoke",
+        compose: { host: "Claude Code", hostServers: true },
+      }),
+      { client: withoutGrant.client },
+    );
+
+    const capabilityCalls = (mock: typeof withGrant.fetchMock) =>
+      mock.mock.calls.filter((call) =>
+        /\/environments\/capabilities$/.test(new URL(String(call[0])).pathname),
+      ).length;
+
+    expect(capabilityCalls(withGrant.fetchMock)).toBe(1);
+    expect(capabilityCalls(withoutGrant.fetchMock)).toBe(
+      capabilityCalls(withGrant.fetchMock),
+    );
+  });
+
+  it("does not refuse a composed launch that names no grant", async () => {
+    // The gate is the GRANT, not the deployment: an old backend still composes
+    // and launches perfectly well as long as nothing asks it for a credential.
+    const { client, fetchMock } = makeClient({ secretGrants: false });
+    await runEvalSuiteOperation.execute(
+      runEvalSuiteOperation.inputSchema.parse({
+        suite: "Smoke",
+        compose: { host: "Claude Code", hostServers: true },
+      }),
+      { client },
+    );
+
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).not.toHaveProperty(
+      "secretSelection",
+    );
   });
 });
