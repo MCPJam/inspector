@@ -298,7 +298,7 @@ describe("EvaluateRunContent", () => {
     });
   });
 
-  it("shows no stage strip while its flag is off", () => {
+  it("says when stage measurements were not recorded", () => {
     detailState.current = {
       ...detailState.current,
       status: "ready",
@@ -306,7 +306,9 @@ describe("EvaluateRunContent", () => {
       diagnostics: [DIAGNOSTIC],
     };
     renderContent();
-    expect(screen.queryByTestId("run-stage-strip")).toBeNull();
+    expect(screen.getByTestId("run-stage-strip")).toHaveTextContent(
+      "Stage measurements were not recorded for this run",
+    );
   });
 
   it("filters the case rows to the stage a reader picks", async () => {

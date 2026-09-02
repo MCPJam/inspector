@@ -26,7 +26,6 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
@@ -40,7 +39,6 @@ import {
   buildEvaluateCaseRows,
   defaultOpenCaseRow,
 } from "./evaluate-case-row-model";
-import { RUN_STAGE_ANALYTICS_FLAG } from "../evals/run-user-value-chain-slot";
 import {
   describeRunChanges,
   pillsByRowKey,
@@ -143,24 +141,24 @@ export function EvaluateRunContent({
 
   const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
 
-  // The strip is the run-level view of the same evidence and rides its own
-  // flag, because the analytics document is a separate read from the decision.
-  const stageAnalyticsEnabled =
-    useFeatureFlagEnabled(RUN_STAGE_ANALYTICS_FLAG) === true;
+  // No second flag. This whole surface is already behind `evaluate-enabled`,
+  // and gating the strip again meant it vanished with no way for a reader to
+  // tell an ungated section from a broken one — which is exactly what happened.
+  // The strip is part of the page; whether it has numbers is the document's
+  // business, and it says which.
   const stageAnalytics = useEvalRunStageAnalytics({
     projectId,
     runId: run._id,
     runStatus: run.status,
-    enabled: active && stageAnalyticsEnabled,
+    enabled: active,
   });
   const stripView = useMemo(
     () =>
       buildStageStrip({
-        flagEnabled: stageAnalyticsEnabled,
         status: stageAnalytics.status,
         document: stageAnalytics.document,
       }),
-    [stageAnalyticsEnabled, stageAnalytics.status, stageAnalytics.document],
+    [stageAnalytics.status, stageAnalytics.document],
   );
 
   // What changed since the previous run. One read, no store: the answer is not

@@ -15,7 +15,7 @@ import { buildStageStrip } from "../run-stage-strip-model";
 import { GOLDEN_STAGE_ANALYTICS } from "@/test/stage-analytics-fixtures";
 
 function view(document: EvalStageAnalyticsV1 = GOLDEN_STAGE_ANALYTICS) {
-  return buildStageStrip({ flagEnabled: true, status: "ready", document });
+  return buildStageStrip({ status: "ready", document });
 }
 
 describe("the stage strip", () => {
@@ -53,33 +53,33 @@ describe("the stage strip", () => {
     }
   });
 
-  it("treats a missing document as an absence, not a funnel of zeros", () => {
-    // A run that terminalized before the materializer shipped has no row, and
-    // that absence IS the honest answer.
-    expect(
-      buildStageStrip({ flagEnabled: true, status: "absent", document: null }),
-    ).toEqual({ kind: "hidden" });
+  it("says a run was not measured rather than vanishing", () => {
+    // A run that terminalized before the materializer shipped has no document,
+    // and that absence is the honest answer — but said out loud. A section that
+    // silently disappeared left a reader unable to tell "not measured" from
+    // "this page is broken", which is exactly what it did.
+    const result = buildStageStrip({ status: "absent", document: null });
+    expect(result.kind).toBe("notMeasured");
+    if (result.kind !== "notMeasured") return;
+    expect(result.message).toContain("not recorded for this run");
+    // Still no zeros: the absence is words, never a funnel.
+    expect(result.message).not.toMatch(/\b0\b|0%/);
+  });
+
+  it("stays quiet only when nothing was asked for", () => {
+    expect(buildStageStrip({ status: "idle", document: null })).toEqual({
+      kind: "hidden",
+    });
   });
 
   it("keeps a failed read distinct from an unmeasured run", () => {
     const result = buildStageStrip({
-      flagEnabled: true,
       status: "error",
       document: null,
     });
     expect(result.kind).toBe("unavailable");
     if (result.kind !== "unavailable") return;
     expect(result.message).toContain("could not be read");
-  });
-
-  it("shows nothing at all when the flag is off", () => {
-    expect(
-      buildStageStrip({
-        flagEnabled: false,
-        status: "ready",
-        document: GOLDEN_STAGE_ANALYTICS,
-      }),
-    ).toEqual({ kind: "hidden" });
   });
 
   it("says out loud when a judge fanout could still move the numbers", () => {

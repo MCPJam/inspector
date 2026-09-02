@@ -43,6 +43,17 @@ export function RunStageStrip({
     );
   }
 
+  if (view.kind === "notMeasured") {
+    return (
+      <div
+        className="px-5 py-3 text-[12.5px] text-muted-foreground"
+        data-testid="run-stage-strip"
+      >
+        {view.message}
+      </div>
+    );
+  }
+
   if (view.kind === "unavailable") {
     return (
       <div

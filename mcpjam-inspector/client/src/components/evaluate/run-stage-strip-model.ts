@@ -40,9 +40,19 @@ export type StageStripCell = {
 };
 
 export type StageStripView =
-  /** Nothing to show, and no claim implied: the flag is off or nothing exists. */
+  /** Nothing was asked for, so nothing is claimed. */
   | { kind: "hidden" }
   | { kind: "loading" }
+  /**
+   * This run has no stage measurements, said out loud.
+   *
+   * Documents are materialized at terminalization and never backfilled, so a
+   * run that finished before that shipped genuinely has none. The section stays
+   * on the page and says so: a strip that silently vanished left a reader
+   * unable to tell "not measured" from "the page is broken", which is the
+   * confusion this state exists to end.
+   */
+  | { kind: "notMeasured"; message: string }
   /** The read failed. Distinct from "this run was not measured". */
   | { kind: "unavailable"; message: string }
   | {
@@ -55,20 +65,26 @@ export type StageStripView =
     };
 
 export type BuildStageStripInput = {
-  flagEnabled: boolean;
   status: "idle" | "loading" | "ready" | "absent" | "error";
   document: EvalStageAnalyticsV1 | null;
 };
 
 export function buildStageStrip(input: BuildStageStripInput): StageStripView {
-  if (!input.flagEnabled) return { kind: "hidden" };
+  // `idle` means the read was never made — no project id, or a run that is not
+  // terminal. Nothing was asked, so nothing is said.
   if (input.status === "idle") return { kind: "hidden" };
   if (input.status === "loading") return { kind: "loading" };
 
-  // `absent` is a 404, and the honest reading is that this run predates the
-  // materializer or never had one. That is not an error, and it is emphatically
-  // not a funnel of zeros — so the strip simply is not there.
-  if (input.status === "absent") return { kind: "hidden" };
+  // `absent` is a 404: this run predates the materializer or never had a
+  // document. Still not a funnel of zeros — but not a disappearing section
+  // either, because a reader cannot tell a hidden strip from a broken page.
+  if (input.status === "absent") {
+    return {
+      kind: "notMeasured",
+      message:
+        "Stage measurements were not recorded for this run, so how far its iterations got is not established.",
+    };
+  }
 
   if (input.status === "error" || !input.document) {
     return {
@@ -78,7 +94,13 @@ export function buildStageStrip(input: BuildStageStripInput): StageStripView {
   }
 
   const overall = overallSlice(input.document);
-  if (!overall) return { kind: "hidden" };
+  if (!overall) {
+    return {
+      kind: "notMeasured",
+      message:
+        "This run's stage document carries no overall slice, so nothing is counted here.",
+    };
+  }
 
   const talliesByStage = new Map(
     overall.stages.map((tally) => [tally.stage, tally]),
