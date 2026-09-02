@@ -569,9 +569,8 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
   it("keeps the suite header on the edit route so rename and Done stay reachable", () => {
     // `viewMode` falls through to "overview" for suite-edit, so the opt-in has
     // to exclude edit mode explicitly. SuiteHeader is the ONLY mount point for
-    // the edit chrome (name editor + Done) and for SuiteEnvironmentComposerBar
-    // — suppressing it leaves the settings sheet headerless and the suite's
-    // client/model/server composer unreachable from both routes.
+    // the edit chrome (name editor + Done). The environment composer lives on
+    // the settings sheet, not the overview header.
     renderOverview({
       suiteDetailOverview: true,
       route: { type: "suite-edit", suiteId: "suite-1" },

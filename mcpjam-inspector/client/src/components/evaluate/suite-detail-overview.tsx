@@ -501,24 +501,17 @@ export function SuiteDetailOverview({
           </div>
         )}
 
-        <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
-          {hiddenRunCount > 0 ? (
-            <>
-              <button
-                type="button"
-                className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => setShowAllRuns(true)}
-              >
-                view all {filteredRows.length.toLocaleString()} runs →
-              </button>
-              <span aria-hidden> · </span>
-            </>
-          ) : null}
-          <span>
-            quick runs appear tagged &apos;quick · nx&apos;, grayed, excluded
-            from stability
-          </span>
-        </div>
+        {hiddenRunCount > 0 ? (
+          <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => setShowAllRuns(true)}
+            >
+              view all {filteredRows.length.toLocaleString()} runs →
+            </button>
+          </div>
+        ) : null}
       </section>
       ) : null}
 

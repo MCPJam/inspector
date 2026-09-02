@@ -12,7 +12,7 @@ import {
   EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
 } from "@/components/computer/CloudUnreachableNotice";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
-import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
+import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
@@ -803,6 +803,22 @@ export function SuiteIterationsView({
     }
   };
 
+  const handleServerAttachmentUpdate = async (serverAttachmentId: string) => {
+    // Picker calls this synchronously inside onClick — don't rethrow,
+    // or the unawaited promise becomes an unhandled rejection.
+    try {
+      await updateSuite({
+        suiteId: suite._id,
+        serverAttachmentId,
+      });
+      toast.success("Server group updated");
+    } catch (error) {
+      toast.error(
+        getBillingErrorMessage(error, "Failed to update server group")
+      );
+    }
+  };
+
   const handleRunClick = (runId: string) => {
     navigation.toRunDetail(suite._id, runId, undefined, {
       insightsFocus: true,
@@ -889,10 +905,8 @@ export function SuiteIterationsView({
   //
   // `viewMode` falls through to "overview" for the suite-edit route, so edit
   // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
-  // edit-mode chrome lives (the name editor and Done), and the only mount
-  // point for SuiteEnvironmentComposerBar. Suppressing it there would leave
-  // the settings sheet headerless and the suite's client/model/server
-  // composer unreachable from both routes.
+  // edit-mode chrome lives (the name editor and Done). The environment
+  // composer lives on the settings sheet, not the overview header.
   const showEvaluateSuiteDetail =
     suiteDetailOverview &&
     hideRunActions &&
@@ -1167,9 +1181,6 @@ export function SuiteIterationsView({
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
-            onSuiteHostAttachmentsUpdate={
-              readOnlyConfig ? undefined : handleUpdateHostAttachments
-            }
             omitRunDetailIdentity={omitRunDetailIdentity}
           />
         </div>
@@ -1733,23 +1744,25 @@ export function SuiteIterationsView({
                 </SettingsSection>
               ) : null}
 
-              {/* ── Environments (project environments, flag-gated) ────
-                  Attach-ordered bundles of one client + optional server
-                  group + pinned skills. Run all fires one run per attached
-                  environment; the backend resolves each at launch. */}
-              {projectEnvironmentsEnabled && projectId ? (
-                <SettingsSection
-                  settingKey="environments"
-                  label="Environments"
-                  layout="inline"
-                  inlineSlot={
-                    <SuiteProjectEnvironmentsPicker
-                      suiteId={suite._id}
-                      projectId={projectId}
-                      environmentIds={suite.environmentIds}
-                    />
-                  }
-                >
+              {/* ── Environments (where this runs) ─────────────────────
+                  Full composer: named environments plus clients, models,
+                  servers, and skills. Replaces the header strip so this
+                  axis is edited here rather than on the overview. A
+                  suite without project environments still gets the
+                  legacy clients/servers pills through the same bar. */}
+              <SettingsSection
+                settingKey="environments"
+                label="Environments"
+              >
+                <SuiteEnvironmentComposerBar
+                  containerVariant="panel"
+                  className="bg-transparent py-0"
+                  suite={suite}
+                  onUpdate={handleUpdateHostAttachments}
+                  onUpdateServerAttachment={handleServerAttachmentUpdate}
+                  omitComputers={computersEnabled && Boolean(projectId)}
+                />
+                {projectEnvironmentsEnabled && projectId ? (
                   <p className="text-[11px] text-muted-foreground/60">
                     Run all fires one run per environment, in this order. An
                     environment bundles one client, an optional server group,
@@ -1757,8 +1770,8 @@ export function SuiteIterationsView({
                     skills always apply on top; a suite skills
                     &quot;exclude&quot; override wins over both.
                   </p>
-                </SettingsSection>
-              ) : null}
+                ) : null}
+              </SettingsSection>
 
               {/* ── Tool calls ───────────────────────────────────────── */}
               <SettingsSection
