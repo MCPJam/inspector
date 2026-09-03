@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { CORS_ORIGINS } from "../../config.js";
-import { MCP_APPS_SANDBOX_PROXY_HTML } from "../apps/SandboxProxyHtml.bundled.js";
-import { RECORDER_SHIM_JS } from "../apps/mcp-apps/recorder-shim.js";
+import {
+  buildSandboxProxyFrameAncestors,
+  renderSandboxProxyHtml,
+} from "../apps/mcp-apps/sandbox-proxy-html.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -23,11 +24,6 @@ import {
 const apps = new Hono();
 
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
-const SANDBOX_PROXY_HTML_WITH_RECORDER = MCP_APPS_SANDBOX_PROXY_HTML.replace(
-  '"__MCPJAM_RECORDER_SHIM__"',
-  () => JSON.stringify(RECORDER_SHIM_JS),
-);
-
 // Mimetypes accepted by the hosted-mode widget-content route. Mirrors
 // the local route in routes/apps/mcp-apps/index.ts — see the long-form
 // comment there for rationale (SEP-1865 canonical + two legacy Apps SDK
@@ -39,23 +35,6 @@ const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
   SKYBRIDGE_MIMETYPE,
   PLAIN_HTML_MIMETYPE,
 ]);
-
-const LOCALHOST_FRAME_SOURCES = [
-  "http://localhost:*",
-  "http://127.0.0.1:*",
-  "https://localhost:*",
-  "https://127.0.0.1:*",
-];
-
-export function buildFrameAncestors(): string {
-  const origins = new Set<string>(["'self'", ...LOCALHOST_FRAME_SOURCES]);
-  for (const origin of CORS_ORIGINS) {
-    if (origin.startsWith("https://")) {
-      origins.add(origin);
-    }
-  }
-  return `frame-ancestors ${Array.from(origins).join(" ")}`;
-}
 
 function extractHtmlFromResourceContent(content: unknown): string {
   if (!content || typeof content !== "object") return "";
@@ -108,9 +87,11 @@ const mcpAppsWidgetContentSchema = projectServerSchema.extend({
 apps.get("/mcp-apps/sandbox-proxy", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  c.header("Content-Security-Policy", buildFrameAncestors());
+  // Same list the proxy pins its host origin against — see
+  // sandbox-proxy-html.ts for why these two must not drift.
+  c.header("Content-Security-Policy", buildSandboxProxyFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
-  return c.body(SANDBOX_PROXY_HTML_WITH_RECORDER);
+  return c.body(renderSandboxProxyHtml());
 });
 
 // ── MCP Apps Widget Content ──────────────────────────────────────────

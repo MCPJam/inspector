@@ -702,6 +702,71 @@ document.addEventListener('securitypolicyviolation', function(e) {
       // Tier 2 recorder shim source, injected at serve time (see index.ts).
       // Stays the placeholder string when recording is unavailable.
       const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";
+
+      /**
+       * Origins this deploy will accept as the host, templated at serve time
+       * (see sandbox-proxy-html.ts). An unreplaced placeholder is still the
+       * string literal, and is treated as "no list" — which preserves the
+       * behavior this document had before pinning existed rather than making
+       * an un-templated build fail closed and render nothing. The route test
+       * that asserts the placeholder IS replaced is what keeps production
+       * honest, so it is load-bearing.
+       */
+      const HOST_ORIGIN_PATTERNS = "__MCPJAM_HOST_ORIGINS__";
+      const hostOriginPatterns =
+        typeof HOST_ORIGIN_PATTERNS === "string" ? null : HOST_ORIGIN_PATTERNS;
+      if (!hostOriginPatterns) {
+        console.warn(
+          "[MCP Apps] sandbox proxy has no host-origin allowlist; accepting any parent."
+        );
+      }
+      /** The host origin locked in at the first accepted message. */
+      let hostOrigin = null;
+
+      /**
+       * Parse an origin pattern into its parts, or null when it is not one.
+       * `*` is allowed only as the whole port, never inside the host: a
+       * wildcard that could span a dot would make `https://evil-mcpjam.com`
+       * match a pattern meant for `https://mcpjam.com`.
+       * @param {string} pattern
+       * @returns {{scheme: string, host: string, port: string | null} | null}
+       */
+      function parseOriginPattern(pattern) {
+        if (typeof pattern !== "string") return null;
+        const m = /^(https?):\/\/([^/:*]+)(?::(\*|\d+))?$/.exec(pattern.trim());
+        if (!m) return null;
+        return { scheme: m[1], host: m[2].toLowerCase(), port: m[3] ?? null };
+      }
+
+      /**
+       * Whether `origin` matches any pattern. Fails closed on everything
+       * ambiguous: no list, an empty list, and the opaque `"null"` origin a
+       * sandboxed document sends (which `new URL` rejects anyway).
+       * @param {string} origin
+       * @param {string[] | null} patterns
+       * @returns {boolean}
+       */
+      function hostOriginAllowed(origin, patterns) {
+        if (!patterns || patterns.length === 0) return false;
+        let parsed;
+        try {
+          parsed = new URL(origin);
+        } catch (error) {
+          return false;
+        }
+        const scheme = parsed.protocol.slice(0, -1).toLowerCase();
+        const host = parsed.hostname.toLowerCase();
+        // An origin on its scheme's default port reports an empty port, and a
+        // pattern that names no port means exactly that default.
+        const port = parsed.port === "" ? null : parsed.port;
+        for (const pattern of patterns) {
+          const p = parseOriginPattern(pattern);
+          if (!p) continue;
+          if (p.scheme !== scheme || p.host !== host) continue;
+          if (p.port === "*" || p.port === port) return true;
+        }
+        return false;
+      }
       let recorderDebugEnabled = false;
       function recorderDebug(message, details) {
         try {
@@ -917,7 +982,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
             mode,
             url: mode === "url" ? document.URL : "about:srcdoc",
           },
-          "*",
+          hostOrigin || "*",
         );
         return mode;
       }
@@ -956,7 +1021,26 @@ document.addEventListener('securitypolicyviolation', function(e) {
       // Handle messages from parent (host) and inner (guest UI)
       window.addEventListener("message", async (event) => {
         if (event.source === window.parent) {
-          // Message from host
+          // Message from host.
+          //
+          // Anyone who can frame this document can post to it, and what it
+          // does with a message is load untrusted HTML and relay the widget's
+          // traffic back out — so the sender has to be an origin this deploy
+          // actually serves the app from. The first accepted origin is locked
+          // in: a page that framed us legitimately cannot later be joined by
+          // a second sender, and the relay below has one unambiguous address
+          // to answer instead of "*".
+          if (
+            hostOriginPatterns &&
+            !hostOriginAllowed(event.origin, hostOriginPatterns)
+          ) {
+            return;
+          }
+          if (hostOrigin === null) {
+            hostOrigin = event.origin;
+          } else if (event.origin !== hostOrigin) {
+            return;
+          }
           if (
             event.data &&
             event.data.method === "ui/notifications/sandbox-resource-ready"
@@ -1175,7 +1259,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               ) {
                 recorderDebug("forward " + data.type);
               }
-              window.parent.postMessage(data, "*");
+              window.parent.postMessage(data, hostOrigin || "*");
             }
           }
         }

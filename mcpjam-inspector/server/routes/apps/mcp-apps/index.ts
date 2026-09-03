@@ -12,8 +12,10 @@ import { logger } from "../../../utils/logger";
 import { getRequestLogger } from "../../../utils/request-logger";
 import { classifyWidgetError } from "../../../utils/error-classify";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
-import { RECORDER_SHIM_JS } from "./recorder-shim";
+import {
+  buildSandboxProxyFrameAncestors,
+  renderSandboxProxyHtml,
+} from "./sandbox-proxy-html";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
 import {
   canSkipListingLookup,
@@ -378,23 +380,14 @@ apps.post("/widget-content", async (c) => {
   }
 });
 
-// Inject the Tier 2 recorder shim (a JS string from recorder-shim.ts) into the
-// proxy's `RECORDER_SHIM` placeholder at serve time, so the heavy, unit-tested
-// shim source lives in one TS module and never drifts from a copy in the HTML.
-const SANDBOX_PROXY_HTML_WITH_RECORDER = MCP_APPS_SANDBOX_PROXY_HTML.replace(
-  '"__MCPJAM_RECORDER_SHIM__"',
-  () => JSON.stringify(RECORDER_SHIM_JS)
-);
-
 apps.get("/sandbox-proxy", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  c.header(
-    "Content-Security-Policy",
-    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-  );
+  // Same list the proxy pins its host origin against — see
+  // sandbox-proxy-html.ts for why these two must not drift.
+  c.header("Content-Security-Policy", buildSandboxProxyFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
-  return c.body(SANDBOX_PROXY_HTML_WITH_RECORDER);
+  return c.body(renderSandboxProxyHtml());
 });
 
 export default apps;

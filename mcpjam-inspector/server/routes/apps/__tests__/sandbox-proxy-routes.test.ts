@@ -34,5 +34,14 @@ describe("Sandbox proxy routes", () => {
     expect(body).not.toContain(
       'const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";'
     );
+    // Load-bearing: an unreplaced host-origin placeholder makes the proxy
+    // accept a message from ANY parent (it fails open on purpose, to preserve
+    // pre-pinning behavior rather than render nothing). This assertion is what
+    // keeps a real build from shipping that way.
+    expect(body).not.toContain(
+      'const HOST_ORIGIN_PATTERNS = "__MCPJAM_HOST_ORIGINS__";'
+    );
+    expect(body).toContain('"http://127.0.0.1:*"');
+    expect(body).toContain("function hostOriginAllowed");
   });
 });
