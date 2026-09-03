@@ -80,16 +80,21 @@ export function NetworkAccessError() {
   return (
     <div
       style={{
+        boxSizing: "border-box",
         padding: "2rem",
         fontFamily: "system-ui, sans-serif",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
-        // Fill the viewport and scroll internally: the global body/#root
-        // overflow is hidden, so without this the guidance and Retry button
-        // clip (and become unreachable) on short/mobile viewports.
+        // Bound the height to exactly one viewport and scroll internally. The
+        // global #root is overflow:hidden, so an unbounded minHeight:100vh
+        // element grows PAST the clipped root and overflowY never engages —
+        // stranding the guidance and Retry button on short/mobile viewports.
+        // maxHeight + border-box clamps it to the viewport; the inner card's
+        // auto margins center it when there's room and let it scroll (without
+        // clipping the top, which justifyContent:center would) when there isn't.
         minHeight: "100vh",
+        maxHeight: "100vh",
         overflowY: "auto",
         // Explicit light surface + dark text so the screen is legible
         // regardless of the page theme behind it. This renders at bootstrap,
@@ -99,7 +104,14 @@ export function NetworkAccessError() {
         color: "#18181b",
       }}
     >
-      <div style={{ maxWidth: "460px", width: "100%", textAlign: "center" }}>
+      <div
+        style={{
+          margin: "auto 0",
+          maxWidth: "460px",
+          width: "100%",
+          textAlign: "center",
+        }}
+      >
         <img
           src="/mcp_jam.svg"
           alt="MCPJam Logo"
