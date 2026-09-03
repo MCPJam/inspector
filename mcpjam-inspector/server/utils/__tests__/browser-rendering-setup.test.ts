@@ -192,6 +192,50 @@ describe("chromium install — one lock, both doors", () => {
     expect(getChromiumInstallState().status).toBe("failed");
   });
 
+  it("says it is installing again after an earlier attempt failed", async () => {
+    // A retry that follows a failure has to REPLACE the failure, not run
+    // behind it. The auto path published every terminal state but never the
+    // one that says work is under way, so the pane sat on "install failed"
+    // while an installer was actually running — and the consent screen's own
+    // call, which joins that run, was handed the stale failure back. The
+    // button looked dead.
+    let finish!: () => void;
+    const running = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const isInstalled = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+
+    await ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled,
+      runInstall: async () => {
+        throw new Error("network down");
+      },
+      logger: silentLogger,
+    });
+    expect(getChromiumInstallState().status).toBe("failed");
+
+    // Past the cooldown, the way a later render attempt would arrive.
+    resetBrowserRenderingSetupForTests();
+    const retry = ensureLocalChromiumInstalled({
+      env: localEnv,
+      isInstalled,
+      runInstall: () => running,
+      logger: silentLogger,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getChromiumInstallState().status).toBe("installing");
+    expect((await startChromiumInstall({ isInstalled })).status).toBe(
+      "installing",
+    );
+
+    finish();
+    await retry;
+  });
+
   it("does not start a second installer for a double click", async () => {
     let finish!: () => void;
     const running = new Promise<void>((resolve) => {

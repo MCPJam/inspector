@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
   installs: 0,
   inputs: [] as unknown[],
   ensures: [] as string[],
+  /** Holds the next lease answer open, so a test can move the pane under it. */
+  leaseGate: null as Promise<void> | null,
   /** The last socket handed to the pane, so a test can deliver a frame. */
   socket: null as {
     readyState: number;
@@ -48,6 +50,7 @@ vi.mock("@/lib/local-browser/client", async () => {
       expiresAtMs: Date.now() + 60_000,
     }),
     actOnLocalBrowserLease: async ({ action, holder }: any) => {
+      if (api.leaseGate) await api.leaseGate;
       api.lease =
         action === "resume"
           ? { state: "free", holder: undefined }
@@ -83,6 +86,7 @@ beforeEach(() => {
   api.installs = 0;
   api.inputs = [];
   api.ensures = [];
+  api.leaseGate = null;
   api.socket = null;
   window.sessionStorage.clear();
 });
@@ -272,6 +276,43 @@ describe("the agent browser pane — driving it", () => {
       expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
     );
     expect(api.ensures).toEqual(["proj-1"]);
+  });
+
+  it("ignores a lease answer from a browser the pane has left", async () => {
+    // Away and back again. The project id reads "proj-1" both times, so a
+    // guard that compares ids alone sees no change and applies the answer —
+    // and the pane says "You have control" of a browser that was torn down,
+    // wiring its keyboard and mouse to nothing. Two visits are two browsers.
+    const view = renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await screen.findByText(/agent is driving/i);
+
+    let release!: () => void;
+    api.leaseGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /take control/i }),
+    );
+
+    for (const projectId of ["proj-2", "proj-1"]) {
+      view.rerender(
+        <LocalBrowserBody
+          projectId={projectId}
+          consentGranted
+          consentToken="tok"
+        />,
+      );
+    }
+
+    release();
+    api.leaseGate = null;
+    await waitFor(() => expect(api.ensures).toEqual(["proj-1"]));
+
+    expect(screen.getByText(/agent is driving/i)).toBeTruthy();
+    expect(screen.queryByText(/you have control/i)).toBeNull();
   });
 });
 

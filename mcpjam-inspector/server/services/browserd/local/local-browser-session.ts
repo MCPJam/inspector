@@ -255,6 +255,12 @@ async function startSession(
   args: EnsureLocalBrowserArgs,
   deps: LocalBrowserDeps,
 ): Promise<LocalBrowserSessionHandle> {
+  // Which sweep generation this launch belongs to, read before the first await
+  // in this function so a kill that lands during any of them is detectable
+  // afterwards. The install probe below is an await too: read this first or a
+  // kill during that probe is invisible and the launch survives the sweep.
+  const bornAt = killGeneration;
+
   if (!(await deps.chromiumInstalled())) {
     // Never install from inside a chat turn: the download is hundreds of
     // megabytes and the model would sit in a tool call for minutes with no way
@@ -267,10 +273,6 @@ async function startSession(
       ),
     );
   }
-
-  // Which sweep generation this launch belongs to, read before the first
-  // await so a kill that lands during it is detectable afterwards.
-  const bornAt = killGeneration;
   const contextMode: BrowserContextMode = args.contextMode ?? "persistent";
   const persistent = contextMode === "persistent";
   const profileDir = persistent
@@ -470,9 +472,14 @@ export async function sweepLocalBrowserSessions(
     // because `isBlocking()` is true for both states. Parking still blocks the
     // AGENT, which is all it is for.
     if (!stillReapable(session, now)) {
-      // Refresh the clock only for the one case that is genuinely in use, so a
-      // held browser is not reaped out from under somebody mid-login.
-      if (session.context.isConnected()) session.lastUsedAt = now;
+      // Refresh the clock only for a browser somebody is HOLDING, so a long
+      // login is not reaped out from under them. Not for every session that
+      // merely has not expired yet: the sweep runs every 30 s, so refreshing
+      // there would push `lastUsedAt` forward forever and the idle reap could
+      // never fire at all.
+      if (session.context.isConnected() && session.lease.state().state === "held") {
+        session.lastUsedAt = now;
+      }
       continue;
     }
     logger.info("[local-browser] reaping an idle browser", {

@@ -316,6 +316,8 @@ export const BROWSERD_ERROR_CODES = [
   "dialog_pending",
   /** A download exceeded the per-file or per-session cap and was cancelled. */
   "download_over_cap",
+  /** The browser is being torn down; nothing new is opened on it. */
+  "driver_closed",
 
   // --- session establishment (never reaches the daemon) ------------------
   /** This engine needs a Chromium that is not installed on this machine. */

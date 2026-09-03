@@ -197,9 +197,21 @@ export function LocalBrowserBody({
    * abandoned for the same reason.
    */
   const projectRef = useRef(projectId);
+  /**
+   * Which browser this pane is looking at, as a number that only goes up.
+   *
+   * The project id alone cannot say: switch A → B → A and it reads "A" again,
+   * so a lease response from the FIRST A is accepted as if it described the
+   * browser now on screen — a "you have control" from a browser nobody is
+   * watching any more. Two visits to the same project are two different
+   * browsers, and so are two `start()` calls within one project; a counter is
+   * the only thing that tells them apart.
+   */
+  const railGeneration = useRef(0);
   useEffect(() => {
     if (projectRef.current === projectId) return;
     projectRef.current = projectId;
+    railGeneration.current += 1;
     setSession(null);
     setLease({ state: "free" });
     setFrame(null);
@@ -216,6 +228,9 @@ export function LocalBrowserBody({
       // The project may have changed while this was in flight; a late answer
       // describes a browser this rail is no longer looking at.
       if (projectRef.current !== projectId) return;
+      // A different browser from here on, even within this project: anything
+      // still in flight against the last one must not land on this one.
+      railGeneration.current += 1;
       setSession({ bootId: next.bootId });
       setLease(next.lease);
     } catch (err) {
@@ -318,20 +333,20 @@ export function LocalBrowserBody({
   const setLeaseAction = useCallback(
     async (action: "acquire" | "resume") => {
       if (!session) return;
-      const project = projectRef.current;
+      const generation = railGeneration.current;
       setError(null);
       try {
         const { lease: next } = await actOnLocalBrowserLease(
           { bootId: session.bootId, action, holder },
           consentToken,
         );
-        // A lease belongs to ONE browser. If the rail moved to another project
-        // while this was in flight, applying it would show control of a
-        // browser this pane is no longer looking at.
-        if (projectRef.current !== project) return;
+        // A lease belongs to ONE browser. If the pane moved on while this was
+        // in flight — another project, or another browser in this one —
+        // applying it would show control of something nobody is watching.
+        if (railGeneration.current !== generation) return;
         setLease(next);
       } catch (err) {
-        if (projectRef.current !== project) return;
+        if (railGeneration.current !== generation) return;
         setError(err instanceof Error ? err.message : String(err));
       }
     },

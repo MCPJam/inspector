@@ -1015,10 +1015,16 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   // Serialized: the body awaits a teardown, and a second click arriving inside
   // that await would otherwise pass the same zero-window check.
+  // The tail catch is what keeps this queue usable: a `handleActivate` that
+  // throws would otherwise leave `activating` REJECTED — an unhandled
+  // rejection now, and a link the next dock click has to swallow before it can
+  // do anything. Logged and absorbed here, so the chain always resolves and
+  // the next click starts from a clean one.
   activating = (activating ?? Promise.resolve())
-    .catch(() => {})
-    .then(() => handleActivate());
-  void activating;
+    .then(() => handleActivate())
+    .catch((error) => {
+      log.error("Failed to handle dock activation:", error);
+    });
 });
 
 async function handleActivate(): Promise<void> {

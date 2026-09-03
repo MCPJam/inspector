@@ -192,6 +192,27 @@ describe("local browser session", () => {
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
 
+  it("reaps one nobody used even though the sweep keeps looking at it", async () => {
+    // The sweep runs every 30 s and the idle window is ten minutes, so it sees
+    // a session ~20 times before that session is old enough to take. Touching
+    // `lastUsedAt` on any of those passes pushes the deadline forward by the
+    // sweep interval every time and the idle reap can never fire at all — a
+    // Chromium per project pinned open for the life of the server. Only a HELD
+    // lease earns that refresh; merely being looked at does not.
+    const { deps, advance, at } = makeDeps();
+    await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+
+    const step = Math.floor(LOCAL_BROWSER_IDLE_MS / 4);
+    for (let i = 0; i < 4; i += 1) {
+      advance(step);
+      await sweepLocalBrowserSessions(at());
+    }
+    advance(LOCAL_BROWSER_IDLE_MS - step * 4 + 1);
+    await sweepLocalBrowserSessions(at());
+
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
   it("does NOT reap a browser a person is holding", async () => {
     // Taking control IS using it. Reaping here closes the window someone is
     // typing a password into.
@@ -372,6 +393,37 @@ describe("local browser session — the reaper decides on current facts", () => 
     await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
     advance(LOCAL_BROWSER_IDLE_MS + 1);
     await sweepLocalBrowserSessions(at());
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("closes a browser whose launch outlived a kill during the INSTALL probe", async () => {
+    // The generation has to be read before the FIRST await in the launch path,
+    // not just before `launch()`. `chromiumInstalled()` is an await too — it
+    // shells out to Playwright — and a kill landing during it bumped the
+    // generation before this launch had read one, so the launch adopted the
+    // post-kill generation and registered a browser the sweep had already run
+    // past.
+    const closed: boolean[] = [];
+    const { deps } = makeDeps({
+      async chromiumInstalled() {
+        await killLocalBrowserSessions();
+        return true;
+      },
+      async launch() {
+        const { context } = fakeContext();
+        const original = context.close.bind(context);
+        context.close = async () => {
+          closed.push(true);
+          await original();
+        };
+        return context;
+      },
+    });
+
+    await expect(
+      ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
+    ).rejects.toMatchObject({ code: "disabled" });
+    expect(closed).toEqual([true]);
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
 

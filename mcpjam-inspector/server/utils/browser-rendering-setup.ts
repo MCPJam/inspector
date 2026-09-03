@@ -315,6 +315,12 @@ export async function ensureLocalChromiumInstalled(
     log.info(
       `[browser-rendering] Chromium missing; setting up Playwright Chromium (${reason})`
     );
+    // An install is genuinely starting NOW, so say so — this is the last of
+    // the runner's states to be published and the one it was missing. Without
+    // it, a retry that follows an earlier failure runs with the pane still
+    // reading "install failed": the button appears dead, because the consent
+    // screen's own call joins this run and is handed back the stale failure.
+    explicitInstallState = { status: "installing" };
     try {
       await runInstall();
       const ready = await isInstalled();
@@ -332,9 +338,10 @@ export async function ensureLocalChromiumInstalled(
     } catch (error) {
       lastInstallFailureAt = Date.now();
       const message = error instanceof Error ? error.message : String(error);
-      if (explicitInstallState.status === "installing") {
-        explicitInstallState = { status: "failed", error: message };
-      }
+      // Unconditional now that the `installing` above is this runner's own:
+      // the state to replace is the one it just published, whatever a joiner
+      // did with it meanwhile.
+      explicitInstallState = { status: "failed", error: message };
       log.warn(
         `[browser-rendering] Failed to set up Playwright Chromium: ${message}`
       );

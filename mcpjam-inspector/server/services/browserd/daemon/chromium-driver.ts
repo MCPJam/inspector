@@ -108,6 +108,16 @@ function parsePoint(value: string | undefined): ActPoint | null {
 const DEFAULT_SCROLL_STEP = 600;
 
 /**
+ * How long teardown waits for tab creations that were already in flight.
+ *
+ * Long enough for a healthy `newPage()` (tens of milliseconds), short enough
+ * that a browser which has stopped answering cannot hold the server's shutdown
+ * open. Nothing is lost by giving up: `closing` keeps whatever lands late from
+ * registering, and the browser process is killed either way.
+ */
+const CLOSE_PENDING_TAB_GRACE_MS = 2_000;
+
+/**
  * A scroll's `value`: `"down"`/`"up"`, a pixel count, or `"dx,dy"`. Anything
  * unrecognized scrolls down by the default step rather than erroring — a
  * scroll is cheap and recoverable, and refusing one teaches nothing.
@@ -157,7 +167,16 @@ export class ChromiumDriver implements BrowserDriver {
    * and subscribers split across two pages, one of which nothing will ever
    * drive again.
    */
-  private readonly pendingTabs = new Map<string, Promise<TabEntry>>();
+  private readonly pendingTabs = new Map<string, Promise<TabEntry | null>>();
+  /**
+   * Teardown has begun; no new page is opened on this browser.
+   *
+   * `close()` can only settle the creations it can SEE. Without a latch, a
+   * caller arriving one tick later opens a page after the sweep has run and
+   * leaves a renderer nobody will ever close — the exact leak `pendingTabs`
+   * was added to prevent, moved one step later.
+   */
+  private closing = false;
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
@@ -211,9 +230,19 @@ export class ChromiumDriver implements BrowserDriver {
             };
           }
         }
+        const entry = await this.getOrCreateTab(tabId);
+        if (!entry) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "driver_closed",
+              "this browser is shutting down; no new tab was opened",
+            ),
+          };
+        }
         return this.navigateVerb(
           tabId,
-          await this.getOrCreateTab(tabId),
+          entry,
           (page) => page.goto(action.url),
           permit,
         );
@@ -765,11 +794,24 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async close(): Promise<void> {
+    // Refuse new pages from here on, so nothing can register behind the sweep.
+    this.closing = true;
     // A tab creation already awaiting `newPage()` would otherwise register its
     // page after this ran, leaving a renderer nobody closes for the life of
     // the browser. Settle them first, then let the sweep below take whatever
-    // they added.
-    await Promise.allSettled([...this.pendingTabs.values()]);
+    // they added — but BOUNDED: `newPage()` against a browser that has stopped
+    // answering never settles, and teardown is on the server's shutdown path,
+    // where waiting forever means the process never exits and Chromium is
+    // orphaned. Whatever has not landed by the deadline is dropped instead;
+    // the latch above is what makes dropping it safe.
+    await Promise.race([
+      Promise.allSettled([...this.pendingTabs.values()]),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, CLOSE_PENDING_TAB_GRACE_MS);
+        // Never the reason the process stays alive.
+        (timer as { unref?: () => void }).unref?.();
+      }),
+    ]);
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {});
     }
@@ -914,16 +956,25 @@ export class ChromiumDriver implements BrowserDriver {
     return settled;
   }
 
-  private async getOrCreateTab(tabId: string): Promise<TabEntry> {
+  /** `null` means teardown has begun and no new page will be opened. */
+  private async getOrCreateTab(tabId: string): Promise<TabEntry | null> {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
+    if (this.closing) return null;
     const creating = (async () => {
       // Replacing a closed tab retires everything attached to the old page —
       // its viewport is bound to a CDP session that will never speak again.
       await this.dropTab(tabId);
       const page = await this.context.newPage();
+      // `newPage()` is an await, so the close may have started — and finished
+      // its sweep — inside it. Registering now is exactly the orphaned
+      // renderer this guards against, so close the page instead of keeping it.
+      if (this.closing) {
+        await page.close().catch(() => {});
+        return null;
+      }
       const entry: TabEntry = { page, navCounter: 0 };
       this.tabs.set(tabId, entry);
       return entry;

@@ -255,7 +255,15 @@ describe("input the browser must not receive", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(batches[0]).toEqual([{ type: "text", text: "first" }]);
-    expect(batches[1]).toHaveLength(INPUT_BATCH_LIMIT);
+    // The LITERAL, not the imported constant. The route slices at 64 of its
+    // own (`server/routes/mcp/computers.ts`, pinned by the matching literal in
+    // `computers-local-browser.test.ts`), and the client cannot import from
+    // `server/**` to share one. Asserting the constant against itself passes
+    // however far the two drift — and the cost of drift is silence: an
+    // oversized batch loses its tail, so a key or a button is left held on a
+    // page nobody pressed it on.
+    expect(INPUT_BATCH_LIMIT).toBe(64);
+    expect(batches[1]).toHaveLength(64);
     // Nothing lost: every queued event arrives, across as many requests as
     // the limit needs.
     expect(batches.flat()).toHaveLength(101);

@@ -380,21 +380,64 @@ describe("createTabViewport — the mask does not outlive the hand that set it",
     expect(masks(sent).at(-1)).toBe(0);
   });
 
-  it("drops the mask on dispose", async () => {
-    const { cdp } = recorder();
+  it("does not let a refused batch clear the NEXT holder's button", async () => {
+    // The handoff makes this the common case, not an exotic one: the outgoing
+    // holder's batch is still in flight when the incoming holder's first click
+    // arrives. Interleaved, the old batch's refusal — or just its own stale
+    // mask, committed after the await it was computed before — lands between
+    // the new holder's press and their drag, and the person actually at the
+    // keyboard watches their drag turn into a hover. Batches run one after
+    // another instead, so a refusal can only clear a mask nobody has set
+    // since.
+    const { cdp, sent } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    // Three moves from the outgoing holder; the lease goes on the third.
+    let asked = 0;
+    const outgoing = viewport.dispatchInput(
+      [
+        { type: "mouse_move", x: 1, y: 1 },
+        { type: "mouse_move", x: 2, y: 2 },
+        { type: "mouse_move", x: 3, y: 3 },
+      ],
+      () => {
+        asked += 1;
+        return asked <= 2;
+      },
+    );
+
+    // The incoming holder presses, then drags, while that batch is still
+    // running — two requests, as the pane sends them.
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 9, y: 9, button: "left" },
+    ]);
+    await viewport.dispatchInput([{ type: "mouse_move", x: 10, y: 10 }]);
+    await outgoing;
+
+    // Their drag carries the button they are holding.
+    expect(masks(sent).at(-1)).toBe(1);
+  });
+
+  it("dispatches nothing once it has been disposed", async () => {
+    // The earlier version of this test asserted on a BRAND-NEW viewport, whose
+    // mask starts at 0 whether or not dispose clears anything — it passed with
+    // the fix reverted. What actually needs pinning is this viewport: its page
+    // is gone, its mask has been dropped, and a `mouse_move` arriving late
+    // must not reach a CDP session that no longer speaks for anything.
+    const { cdp, sent } = recorder();
     const viewport = createTabViewport(cdp, {
       surface: { width: 100, height: 100 },
     });
     await viewport.dispatchInput([
       { type: "mouse_down", x: 1, y: 1, button: "left" },
     ]);
-    await viewport.dispose();
+    expect(masks(sent)).toEqual([1]);
 
-    const after = recorder();
-    const revived = createTabViewport(after.cdp, {
-      surface: { width: 100, height: 100 },
-    });
-    await revived.dispatchInput([{ type: "mouse_move", x: 1, y: 1 }]);
-    expect(masks(after.sent)).toEqual([0]);
+    await viewport.dispose();
+    await viewport.dispatchInput([{ type: "mouse_move", x: 2, y: 2 }]);
+
+    expect(masks(sent)).toEqual([1]);
   });
 });

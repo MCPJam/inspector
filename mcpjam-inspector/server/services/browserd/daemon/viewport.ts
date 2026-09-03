@@ -62,8 +62,20 @@ export type ViewportInputEvent =
       clickCount?: number;
       modifiers?: number;
     }
-  | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number; modifiers?: number }
-  | { type: "key_down" | "key_up"; key: string; code?: string; modifiers?: number }
+  | {
+      type: "wheel";
+      x: number;
+      y: number;
+      deltaX: number;
+      deltaY: number;
+      modifiers?: number;
+    }
+  | {
+      type: "key_down" | "key_up";
+      key: string;
+      code?: string;
+      modifiers?: number;
+    }
   | { type: "text"; text: string };
 
 export interface TabViewportOptions {
@@ -130,6 +142,18 @@ export function createTabViewport(
    * mid-selection, the other is a drag that never moves anything.
    */
   let buttonMask = 0;
+  /**
+   * Batches dispatch one after another, never interleaved.
+   *
+   * `buttonMask` is read, modified and written across an await PER EVENT, so
+   * two batches in flight together shred it: the losing one's release clears a
+   * bit the winning one just set. The lease makes that likely rather than
+   * exotic — the outgoing holder's queued batch and the incoming holder's
+   * first click overlap by construction — and the visible result is a drag
+   * that turns into a hover halfway through someone's gesture. Input is a
+   * sequence; this is what makes it one.
+   */
+  let inputChain: Promise<void> = Promise.resolve();
   let lastData: string | undefined;
   let seq = 0;
 
@@ -237,34 +261,11 @@ export function createTabViewport(
     },
     subscriberCount: () => listeners.size,
     async dispatchInput(events, stillPermitted) {
-      for (const event of events) {
-        if (stillPermitted && !stillPermitted()) {
-          // The batch stops mid-gesture, so the release for anything held will
-          // never arrive. Forget it: the mask is shared by whoever holds the
-          // browser NEXT, and a bit left set means their first hover reaches
-          // Chromium as a drag, selecting text they never grabbed.
-          buttonMask = 0;
-          return;
-        }
-        // Computed, dispatched, and only THEN committed. `dispatchOne` can
-        // reject (a closed target, a detached session) and its rejection is
-        // swallowed here; committing first would leave the local mask claiming
-        // a button Chromium never received.
-        const next =
-          event.type === "mouse_down"
-            ? buttonMask | (BUTTON_MASK[event.button] ?? 1)
-            : event.type === "mouse_up"
-              ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1)
-              : buttonMask;
-        try {
-          // Each event under its own catch: one exotic key must not swallow
-          // the click behind it.
-          await dispatchOne(cdp, event, next);
-          buttonMask = next;
-        } catch {
-          // A failed event does not advance what we believe the page holds.
-        }
-      }
+      const run = inputChain.then(() => dispatchBatch(events, stillPermitted));
+      // The chain must never carry a rejection forward, or one failed batch
+      // would refuse every batch after it for the life of the viewport.
+      inputChain = run.catch(() => {});
+      return run;
     },
     async dispose() {
       disposed = true;
@@ -273,6 +274,47 @@ export function createTabViewport(
       await stop();
     },
   };
+
+  async function dispatchBatch(
+    events: readonly ViewportInputEvent[],
+    stillPermitted?: () => boolean,
+  ): Promise<void> {
+    // Re-asked HERE, not at the call, because a batch that waited its turn in
+    // the chain may have been queued under a lease that has since changed
+    // hands — and a disposed viewport's page is gone: its tab was closed,
+    // replaced, or the whole browser is coming down. Its CDP session speaks
+    // for nothing, and the dispose that retired it also dropped the button
+    // mask, so anything sent here would carry a mask describing no page.
+    if (disposed) return;
+    for (const event of events) {
+      if (stillPermitted && !stillPermitted()) {
+        // The batch stops mid-gesture, so the release for anything held will
+        // never arrive. Forget it: the mask is shared by whoever holds the
+        // browser NEXT, and a bit left set means their first hover reaches
+        // Chromium as a drag, selecting text they never grabbed.
+        buttonMask = 0;
+        return;
+      }
+      // Computed, dispatched, and only THEN committed. `dispatchOne` can
+      // reject (a closed target, a detached session) and its rejection is
+      // swallowed here; committing first would leave the local mask claiming
+      // a button Chromium never received.
+      const next =
+        event.type === "mouse_down"
+          ? buttonMask | (BUTTON_MASK[event.button] ?? 1)
+          : event.type === "mouse_up"
+            ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1)
+            : buttonMask;
+      try {
+        // Each event under its own catch: one exotic key must not swallow
+        // the click behind it.
+        await dispatchOne(cdp, event, next);
+        buttonMask = next;
+      } catch {
+        // A failed event does not advance what we believe the page holds.
+      }
+    }
+  }
 }
 
 /**
@@ -380,22 +422,24 @@ async function dispatchOne(
  * which Chromium handles for most keys and ignores for the rest — a wrong
  * keycode would be worse than a missing one.
  */
-const KEY_CODES: Record<string, { code: string; windowsVirtualKeyCode: number }> =
-  {
-    Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
-    Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
-    Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
-    Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
-    Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
-    ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38 },
-    ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
-    ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
-    ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
-    Home: { code: "Home", windowsVirtualKeyCode: 36 },
-    End: { code: "End", windowsVirtualKeyCode: 35 },
-    PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
-    PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 },
-  };
+const KEY_CODES: Record<
+  string,
+  { code: string; windowsVirtualKeyCode: number }
+> = {
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+  Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
+  Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
+  Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
+  ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38 },
+  ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+  ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
+  Home: { code: "Home", windowsVirtualKeyCode: 36 },
+  End: { code: "End", windowsVirtualKeyCode: 35 },
+  PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
+  PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 },
+};
 
 function describeKey(
   key: string,
