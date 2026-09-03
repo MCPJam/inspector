@@ -39,6 +39,20 @@ describe("changedClientSettings", () => {
         }),
       }),
     ).toEqual(["mcp.tool_call_cancellation.modern"]);
+
+    expect(
+      changedClientSettings({
+        savedName: "Client",
+        draftName: "Client",
+        savedConfig: config(),
+        draftConfig: config({
+          mcpProfile: {
+            profileVersion: 1,
+            toolCallCancellation: { legacy: false },
+          },
+        }),
+      }),
+    ).toEqual(["mcp.tool_call_cancellation.legacy"]);
   });
 
   it("returns each changed setting once for a multi-setting save", () => {
