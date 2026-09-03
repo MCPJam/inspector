@@ -801,6 +801,12 @@ describe("web auth manager batching", () => {
             title: "ChatGPT",
           },
           supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+          // `mcpProfile.toolListChanged.listens` / `.refetches`. Both were
+          // computed client-side and accepted by every hop below this one, but
+          // never placed on the SDK config — so hosted connections opened the
+          // listen channel and refetched no matter what the host asked for.
+          suppressListenChannel: true,
+          dropToolListChanged: true,
         },
       }
     );
@@ -814,6 +820,8 @@ describe("web auth manager batching", () => {
         title: "ChatGPT",
       },
       supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+      suppressListenChannel: true,
+      dropToolListChanged: true,
     });
   });
 
@@ -856,6 +864,11 @@ describe("web auth manager batching", () => {
     const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
     expect(config).not.toHaveProperty("clientInfo");
     expect(config).not.toHaveProperty("supportedProtocolVersions");
+    // Absence is what makes the connection conforming: the SDK opens the
+    // listen channel and honors `notifications/tools/list_changed` unless a
+    // suppression switch is actually present.
+    expect(config).not.toHaveProperty("suppressListenChannel");
+    expect(config).not.toHaveProperty("dropToolListChanged");
   });
 
   // Verify the public `projectServerSchema` declares the two new
@@ -884,6 +897,64 @@ describe("web auth manager batching", () => {
       "2025-11-25",
       "2025-06-18",
     ]);
+  });
+
+  // The hop that ate the two `toolListChanged` knobs. The client computed
+  // them and the body carried them, but `projectServerSchema` declared
+  // neither, so Zod stripped both before any route could read them — every
+  // hosted connection ran as a fully conforming client regardless of the
+  // switch.
+  it("projectServerSchema keeps the toolListChanged conformance knobs", async () => {
+    const { projectServerSchema } = await import("../auth.js");
+    const parsed = projectServerSchema.parse({
+      projectId: "project-1",
+      serverId: "server-1",
+      suppressListenChannel: true,
+      dropToolListChanged: true,
+    });
+    expect(parsed.suppressListenChannel).toBe(true);
+    expect(parsed.dropToolListChanged).toBe(true);
+  });
+
+  it("extractMcpInitializeOptions pins the toolListChanged knobs from the body", async () => {
+    const { extractMcpInitializeOptions } = await import("../auth.js");
+    expect(
+      extractMcpInitializeOptions({
+        projectId: "project-1",
+        serverId: "server-1",
+        suppressListenChannel: true,
+        dropToolListChanged: true,
+      }).initializePins
+    ).toEqual({ suppressListenChannel: true, dropToolListChanged: true });
+  });
+
+  it("extractMcpInitializeOptions ignores the conforming value of the toolListChanged knobs", async () => {
+    const { extractMcpInitializeOptions } = await import("../auth.js");
+    // Same one-explicit-value rule as the sibling knobs: only `true` opts into
+    // the non-conforming simulation, so a body that spells out the default
+    // must produce no pins at all rather than a `false` the SDK would read as
+    // "field present".
+    expect(
+      extractMcpInitializeOptions({
+        projectId: "project-1",
+        serverId: "server-1",
+        suppressListenChannel: false,
+        dropToolListChanged: false,
+      }).initializePins
+    ).toBeUndefined();
+  });
+
+  it("extractMcpInitializeOptions carries one toolListChanged knob without the other", async () => {
+    const { extractMcpInitializeOptions } = await import("../auth.js");
+    // The two switches are independent: a host that listens but ignores the
+    // notification is a real configuration, not a half-applied one.
+    expect(
+      extractMcpInitializeOptions({
+        projectId: "project-1",
+        serverId: "server-1",
+        dropToolListChanged: true,
+      }).initializePins
+    ).toEqual({ dropToolListChanged: true });
   });
 
   // CONTRACT: the swarm runner threads each pinned server's

@@ -166,6 +166,13 @@ export const projectServerSchema = z.object({
   // as a fully conforming client. Only the non-default value is ever sent.
   firstPageOnly: z.boolean().optional(),
   supportsMrtr: z.boolean().optional(),
+  // `mcpProfile.toolListChanged.listens` / `.refetches`, as the two
+  // suppression switches the SDK reads. Same declaration reason and the same
+  // one-non-default-value rule as the pair above: without these two lines the
+  // client could send them faithfully and every hosted connection would still
+  // open the listen channel and refetch on `notifications/tools/list_changed`.
+  suppressListenChannel: z.boolean().optional(),
+  dropToolListChanged: z.boolean().optional(),
   // Host enterprise-managed authorization policy, resolved client-side from
   // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
   // so the wire contract documents it, but VALIDATED by
@@ -825,6 +832,14 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    /**
+     * `mcpProfile.toolListChanged`, forwarded onto
+     * `BaseServerConfig.suppressListenChannel` / `.dropToolListChanged`:
+     * `listens: false` never opens the GET listen stream, `refetches: false`
+     * drops `notifications/tools/list_changed` before the client sees it.
+     */
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   /**
@@ -874,6 +889,12 @@ export function toHttpConfig(
           : {}),
         ...(initializePins?.supportsMrtr === false
           ? { supportsMrtr: false }
+          : {}),
+        ...(initializePins?.suppressListenChannel === true
+          ? { suppressListenChannel: true }
+          : {}),
+        ...(initializePins?.dropToolListChanged === true
+          ? { dropToolListChanged: true }
           : {}),
         ...(initializePins?.toolCallCancellation
           ? { toolCallCancellation: initializePins.toolCallCancellation }
@@ -959,6 +980,12 @@ export function toHttpConfig(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(initializePins?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
     ...(initializePins?.toolCallCancellation
       ? { toolCallCancellation: initializePins.toolCallCancellation }
       : {}),
@@ -982,6 +1009,8 @@ function resolveEffectiveInitializePinsForServer(
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
@@ -996,6 +1025,8 @@ function resolveEffectiveInitializePinsForServer(
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressListenChannel?: boolean;
+      dropToolListChanged?: boolean;
       toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     }
   | undefined {
@@ -1030,6 +1061,12 @@ function resolveEffectiveInitializePinsForServer(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(initializePins?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
     ...(initializePins?.toolCallCancellation
       ? { toolCallCancellation: initializePins.toolCallCancellation }
       : {}),
@@ -1101,6 +1138,8 @@ export async function createAuthorizedManager(
       /** Client-conformance knobs; host-level, so batch-uniform. */
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressListenChannel?: boolean;
+      dropToolListChanged?: boolean;
       toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     };
     /**
@@ -1969,6 +2008,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
@@ -2005,6 +2046,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Same one-explicit-value rule for the sibling knobs.
   const truncatePagination = raw.firstPageOnly === true;
   const disableMrtr = raw.supportsMrtr === false;
+  const suppressListenChannel = raw.suppressListenChannel === true;
+  const dropToolListChanged = raw.dropToolListChanged === true;
   const rawCancellation =
     raw.toolCallCancellation && typeof raw.toolCallCancellation === "object"
       ? (raw.toolCallCancellation as { legacy?: unknown; modern?: unknown })
@@ -2020,6 +2063,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     suppressParamMirroring ||
     truncatePagination ||
     disableMrtr ||
+    suppressListenChannel ||
+    dropToolListChanged ||
     disableCancellation
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
@@ -2031,6 +2076,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
+          ...(suppressListenChannel ? { suppressListenChannel: true } : {}),
+          ...(dropToolListChanged ? { dropToolListChanged: true } : {}),
           ...(disableCancellation
             ? { toolCallCancellation: cancellationLeaves }
             : {}),
