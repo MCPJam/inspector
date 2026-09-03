@@ -54,7 +54,9 @@ import { getGlobalOptions } from "../lib/server-config.js";
  * API does — a partial update would have to read the stored values to merge
  * them, and nothing may read them but the sender. Passing no header flag at
  * all leaves the stored set alone, which is the common case when editing
- * anything else.
+ * anything else, and `--clear-headers` removes them: three outcomes, because
+ * "leave them" and "remove them" must not be spelled the same when one of them
+ * sends a vendor's credentials to a new endpoint.
  *
  * ## Redaction is the default and stays that way unless you say otherwise
  *
@@ -73,6 +75,7 @@ type HeaderOptions = {
   header?: string[];
   headerEnv?: string[];
   headerFile?: string[];
+  clearHeaders?: boolean;
 };
 
 /** `Name=rest` → `[Name, rest]`, splitting on the FIRST `=` only. */
@@ -97,8 +100,18 @@ function splitOnFirst(
 /**
  * Collect header values from every source the caller named.
  *
- * Returns `undefined` when none were given, which the API reads as "leave the
- * stored headers alone" — distinct from `{}`, which would clear them.
+ * THREE OUTCOMES, and the distinction is the whole contract:
+ *
+ *   - `undefined` — no header flag was given. The API leaves the stored
+ *     headers alone.
+ *   - `{}` — `--clear-headers`. The API replaces the set with nothing, which
+ *     is what you want before pointing a destination at a new endpoint that
+ *     must not receive the old vendor's credentials.
+ *   - a populated record — the new set, REPLACING the stored one.
+ *
+ * Accumulated on a null-prototype object: a header named `__proto__` passes
+ * the HTTP-token rule, and assigning it on an object literal would set the
+ * prototype instead of a key.
  *
  * A FILE IS READ VERBATIM apart from one trailing newline. Unlike a secret
  * value, an HTTP header cannot contain a newline at all: a stored one would
@@ -109,8 +122,21 @@ function splitOnFirst(
 export function resolveHeaders(
   options: HeaderOptions
 ): Record<string, string> | undefined {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = Object.create(null);
   const seen = new Map<string, string>();
+
+  const named =
+    (options.header?.length ?? 0) +
+    (options.headerEnv?.length ?? 0) +
+    (options.headerFile?.length ?? 0);
+  if (options.clearHeaders) {
+    if (named > 0) {
+      throw usageError(
+        "--clear-headers removes every header, so it cannot be combined with a header flag. Pass one or the other."
+      );
+    }
+    return {};
+  }
 
   const put = (name: string, value: string, flag: string) => {
     const key = name.toLowerCase();
@@ -163,7 +189,7 @@ export function resolveHeaders(
     put(name, contents.replace(/\r?\n$/, ""), "--header-file");
   }
 
-  return Object.keys(headers).length > 0 ? headers : undefined;
+  return Object.keys(headers).length > 0 ? { ...headers } : undefined;
 }
 
 /** `--attr key=value`, repeatable. */
@@ -171,15 +197,18 @@ export function resolveAttributes(
   pairs: string[] | undefined
 ): Record<string, string> | undefined {
   if (!pairs || pairs.length === 0) return undefined;
-  const out: Record<string, string> = {};
+  // Null-prototype, and an OWN-property duplicate check: `key in out` on a
+  // plain object reports `toString` and `constructor` as already present, so a
+  // first attribute with either name would be refused as a duplicate.
+  const out: Record<string, string> = Object.create(null);
   for (const raw of pairs) {
     const [key, value] = splitOnFirst(raw, "=", "--attr");
-    if (key in out) {
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
       throw usageError(`Resource attribute "${key}" was given twice.`);
     }
     out[key] = value;
   }
-  return out;
+  return { ...out };
 }
 
 const SOURCE_TYPES = ["eval", "scenario", "swarm", "direct"] as const;
@@ -398,6 +427,10 @@ export function registerTraceDestinationsCommands(program: Command): void {
       collect
     )
     .option(
+      "--clear-headers",
+      "Remove every stored header. Reach for this before pointing a destination at a new endpoint that must not receive the old vendor's credentials — omitting the header flags LEAVES them, which is not the same thing."
+    )
+    .option(
       "--attr <key=value>",
       "Repeatable: REPLACES the resource attributes.",
       collect
@@ -603,7 +636,9 @@ export function registerTraceDestinationsCommands(program: Command): void {
       "--days <n>",
       "How far back to replay. 1 to 30.",
       (value: string) => {
-        const days = Number.parseInt(value, 10);
+        // `Number`, not `parseInt`: parseInt("1.5") and parseInt("1foo") both
+        // yield 1, so a typo would silently become a one-day replay.
+        const days = Number(value.trim());
         if (!Number.isInteger(days) || days < 1 || days > 30) {
           throw usageError("--days expects a whole number between 1 and 30.");
         }

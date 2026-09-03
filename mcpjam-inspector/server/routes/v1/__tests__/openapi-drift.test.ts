@@ -119,7 +119,7 @@ const KNOWN_UNDOCUMENTED = new Set([
   // comes off", and its routes are "kept out of reference/openapi.json and
   // listed in the Inspector's KNOWN_UNDOCUMENTED baseline"). Same posture the
   // harness capability probe above takes, for the same reason. Document the
-  // whole surface — nine routes and six schemas — when the flag comes off; the
+  // whole surface — ten routes and six schemas — when the flag comes off; the
   // SDK and CLI carry it in the meantime, because a caller who HAS been
   // flagged in needs a client.
   "get /organizations/{organizationId}/trace-destinations",

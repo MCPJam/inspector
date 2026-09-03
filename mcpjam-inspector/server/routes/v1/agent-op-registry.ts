@@ -2389,10 +2389,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Sends traffic to a third party's intake. Harmless once, but it is an outbound call to someone else's system on the organization's credentials.",
   backfill_trace_destination:
     "Can queue a month of an organization's history at a vendor that bills on ingest — a spend decision whose size the agent cannot see from here.",
-  // The three reads are excluded for the same reason `list_secrets` is: the
-  // surface is org administration, and an agent turn that pages through an
-  // organization's vendor bindings is doing an admin's job with an admin's
-  // visibility. Available on REST/SDK/CLI, where the caller asked.
+  // The three READS are excluded too, which DEPARTS from the secrets
+  // precedent rather than following it: `list_secrets` and `get_secret` are
+  // `direct` in this same file, because a secret's metadata is project context
+  // an agent legitimately needs to reason about a run. A trace destination is
+  // not context for anything a turn does — it is the organization's vendor
+  // wiring, and an agent that can page through it is doing an admin's job with
+  // an admin's visibility and none of an admin's reason to be looking.
+  // Available on REST/SDK/CLI, where the caller asked.
   list_trace_destinations:
     "Organization observability configuration is an admin surface, not a turn concern. Available on REST/SDK/CLI.",
   get_trace_destination:

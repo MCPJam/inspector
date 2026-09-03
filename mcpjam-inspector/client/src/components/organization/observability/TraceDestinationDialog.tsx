@@ -33,16 +33,46 @@ import {
   presetById,
 } from "./presets";
 
+const DEFAULT_CORALOGIX_REGION = "eu2";
+
+/**
+ * The region a stored Coralogix endpoint is in.
+ *
+ * Without this, editing a us1 destination shows the picker sitting on the
+ * default — and touching any other field re-derives the endpoint from that
+ * stale selection, silently moving the destination to another continent.
+ */
+function regionFromEndpoint(endpointUrl: string): string {
+  const match = /^https:\/\/ingress\.([a-z0-9]+)\.coralogix\.com/i.exec(
+    endpointUrl.trim(),
+  );
+  const region = match?.[1]?.toLowerCase();
+  return region && (CORALOGIX_REGIONS as readonly string[]).includes(region)
+    ? region
+    : DEFAULT_CORALOGIX_REGION;
+}
+
 /**
  * Create or edit one trace destination.
  *
  * HEADER VALUES ARE WRITE-ONLY. The server never returns them — a destination
  * carries `headerNames` and nothing else — so editing shows a name with a
- * masked value and an empty input. Leaving every value blank on an edit sends
- * no `headers` at all, which the backend reads as "leave the stored set
- * alone"; typing into any one of them REPLACES the whole set, because that is
- * what the backend's `headers` argument does and pretending otherwise would
- * silently drop the headers the admin did not retype.
+ * masked value and an empty input.
+ *
+ * THE SET IS REPLACE-ONLY, and the form has to say so rather than imply
+ * otherwise. The backend takes `headers` as a whole set or not at all: there
+ * is no per-header edit, because a partial update would have to read the
+ * stored values to merge them and nothing may read them but the sender. So an
+ * edit has exactly two outcomes:
+ *
+ *   - EVERY value left blank AND every name untouched → no `headers` is sent
+ *     and the stored set survives. This is the common edit, where someone is
+ *     changing the source list or the project allowlist.
+ *   - anything else — a value typed, a row removed, a name changed → the
+ *     whole set is replaced, so every remaining row needs its value typed
+ *     again. `handleSubmit` refuses with that sentence rather than sending a
+ *     partial set, because the alternative is a Remove button that quietly
+ *     does nothing and a rename that is silently discarded.
  */
 
 interface KeyValueRow {
@@ -95,7 +125,7 @@ export function TraceDestinationDialog({
 
   const [name, setName] = useState("");
   const [preset, setPreset] = useState<string>("otlp");
-  const [region, setRegion] = useState<string>("eu2");
+  const [region, setRegion] = useState<string>(DEFAULT_CORALOGIX_REGION);
   const [endpointUrl, setEndpointUrl] = useState("");
   const [headerRows, setHeaderRows] = useState<KeyValueRow[]>([]);
   const [attrRows, setAttrRows] = useState<KeyValueRow[]>([]);
@@ -108,6 +138,8 @@ export function TraceDestinationDialog({
   const [compression, setCompression] = useState<"gzip" | "none">("none");
   const [enabled, setEnabled] = useState(true);
   const [localError, setLocalError] = useState<string | null>(null);
+  /** The header names the server holds, to tell an edit of the set from a keep. */
+  const [storedHeaderNames, setStoredHeaderNames] = useState<string[]>([]);
 
   // Reset from props every time the dialog opens, so reopening after a cancel
   // does not show the previous edit's half-typed state.
@@ -118,6 +150,8 @@ export function TraceDestinationDialog({
       setName(destination.name);
       setPreset(destination.preset ?? "otlp");
       setEndpointUrl(destination.endpointUrl);
+      setRegion(regionFromEndpoint(destination.endpointUrl));
+      setStoredHeaderNames(destination.headerNames);
       setHeaderRows(
         destination.headerNames.map((headerName) =>
           makeRow(headerName, "", true),
@@ -138,8 +172,9 @@ export function TraceDestinationDialog({
     }
     setName("");
     setPreset("otlp");
-    setRegion("eu2");
+    setRegion(DEFAULT_CORALOGIX_REGION);
     setEndpointUrl("");
+    setStoredHeaderNames([]);
     setHeaderRows([makeRow()]);
     setAttrRows([makeRow()]);
     setSourceTypes(["eval"]);
@@ -152,15 +187,23 @@ export function TraceDestinationDialog({
 
   const selectedPreset = useMemo(() => presetById(preset), [preset]);
 
-  /** Applying a preset fills what is empty; it never overwrites typed input. */
+  /**
+   * Applying a preset fills what is empty; it never overwrites typed input.
+   *
+   * The endpoint included — it used to be the one field that contradicted
+   * this, so someone who pasted their collector URL and THEN picked a vendor
+   * for its header names lost the URL they had just typed.
+   */
   const applyPreset = (nextPresetId: string) => {
     setPreset(nextPresetId);
     const next = presetById(nextPresetId);
     if (!next) return;
-    if (next.regional) {
-      setEndpointUrl(coralogixIngressUrl(region as never));
-    } else if (next.endpointUrl) {
-      setEndpointUrl(next.endpointUrl);
+    if (!endpointUrl.trim()) {
+      if (next.regional) {
+        setEndpointUrl(coralogixIngressUrl(region as never));
+      } else if (next.endpointUrl) {
+        setEndpointUrl(next.endpointUrl);
+      }
     }
     if (next.compression) setCompression(next.compression);
     setHeaderRows((rows) => {
@@ -218,14 +261,35 @@ export function TraceDestinationDialog({
     }
     setLocalError(null);
 
-    // Only rows the admin actually typed a value into. On an edit, none means
-    // "leave the stored headers alone"; on a create there is nothing stored,
-    // so the same expression is simply the headers.
-    const typedHeaders = headerRows.filter(
-      (row) => row.key.trim() && row.value.length > 0,
-    );
-    const headers =
-      typedHeaders.length > 0 ? rowsToRecord(typedHeaders) : undefined;
+    // REPLACE-ONLY, resolved here. The set is being edited if any value was
+    // typed OR the names no longer match what the server holds — a removed
+    // row and a renamed row both land in the second case, and both used to be
+    // silently dropped because neither carries a value.
+    const namedRows = headerRows.filter((row) => row.key.trim());
+    const currentNames = namedRows.map((row) => row.key.trim()).sort();
+    const namesChanged =
+      currentNames.length !== storedHeaderNames.length ||
+      currentNames.some(
+        (name, index) => name !== [...storedHeaderNames].sort()[index],
+      );
+    const anyValueTyped = namedRows.some((row) => row.value.length > 0);
+    const replacingHeaders = anyValueTyped || namesChanged;
+
+    let headers: Record<string, string> | undefined;
+    if (replacingHeaders) {
+      const missing = namedRows.filter((row) => row.value.length === 0);
+      if (missing.length > 0) {
+        setLocalError(
+          `Headers are replace-only — the server never hands a value back, so it cannot merge one in. Enter a value for ${missing
+            .map((row) => `"${row.key.trim()}"`)
+            .join(
+              ", ",
+            )}, or undo your changes to keep the stored headers as they are.`,
+        );
+        return;
+      }
+      headers = rowsToRecord(namedRows);
+    }
 
     await onSubmit({
       name: name.trim(),
@@ -328,7 +392,11 @@ export function TraceDestinationDialog({
 
           <KeyValueEditor
             legend="Headers"
-            hint="Values are write-only — they are encrypted on save and never shown again. On an edit, leave every value blank to keep the stored headers; typing any value replaces all of them."
+            hint={
+              isEdit
+                ? "Values are write-only — encrypted on save and never shown again, so the server cannot merge one in. Leave every value blank AND every name untouched to keep the stored headers; changing anything (a value, a name, a removed row) replaces the whole set, so every row then needs its value typed again."
+                : "Values are write-only — they are encrypted on save and never shown again."
+            }
             keyPlaceholder="Authorization"
             valuePlaceholder="Bearer …"
             secret

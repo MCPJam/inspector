@@ -303,6 +303,7 @@ async function parseBody<T>(
 async function readDestination(
   client: ReturnType<typeof createConvexClient>,
   destinationId: string,
+  organizationId: string,
 ): Promise<TraceDestinationRow> {
   let row: TraceDestinationRow | null;
   try {
@@ -322,7 +323,37 @@ async function readDestination(
       "That trace destination no longer exists.",
     );
   }
+  // THE PATH SEGMENT IS PART OF THE ADDRESS, not decoration. Convex checks
+  // membership against the destination's OWN organization, so a caller can
+  // never read one they do not belong to — but a member of two organizations
+  // could otherwise name org A in the URL and operate on a destination in
+  // org B, and a route whose path does not mean what it says is a bug waiting
+  // for the caller that scripts against it. 404, not 403: the id is simply
+  // not there, at this address.
+  if (row.organizationId !== organizationId) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "That trace destination does not belong to this organization.",
+    );
+  }
   return row;
+}
+
+/**
+ * Refuse a destination that does not live in the organization the path names.
+ *
+ * For the routes that act WITHOUT reading the row back first (delete, test,
+ * backfill, backfills). `readDestination` makes the same check for the rest;
+ * both exist so the path segment means the same thing on every route rather
+ * than on most of them.
+ */
+async function assertDestinationInOrg(
+  client: ReturnType<typeof createConvexClient>,
+  destinationId: string,
+  organizationId: string,
+): Promise<void> {
+  await readDestination(client, destinationId, organizationId);
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
@@ -356,7 +387,11 @@ traceDestinations.get(
   "/organizations/:organizationId/trace-destinations/:destinationId",
   async (c) => {
     const client = createConvexClient(await getConvexBearerForRequest(c));
-    const row = await readDestination(client, c.req.param("destinationId"));
+    const row = await readDestination(
+      client,
+      c.req.param("destinationId"),
+      c.req.param("organizationId"),
+    );
     return v1Resource(c, toTraceDestinationDto(row));
   },
 );
@@ -385,7 +420,7 @@ traceDestinations.post(
       throw translateConvexWriteError(error, { resource: "Trace destination" });
     }
 
-    const row = await readDestination(client, destinationId);
+    const row = await readDestination(client, destinationId, organizationId);
     return v1Resource(c, toTraceDestinationDto(row), 201);
   },
 );
@@ -414,7 +449,11 @@ traceDestinations.patch(
       throw translateConvexWriteError(error, { resource: "Trace destination" });
     }
 
-    const row = await readDestination(client, destinationId);
+    const row = await readDestination(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
     return v1Resource(c, toTraceDestinationDto(row));
   },
 );
@@ -429,6 +468,11 @@ traceDestinations.delete(
   async (c) => {
     const destinationId = c.req.param("destinationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    await assertDestinationInOrg(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
 
     try {
       await client.mutation(
@@ -456,6 +500,11 @@ traceDestinations.post(
   async (c) => {
     const destinationId = c.req.param("destinationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    await assertDestinationInOrg(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
 
     try {
       await client.mutation(
@@ -490,7 +539,11 @@ traceDestinations.post(
       throw translateConvexWriteError(error, { resource: "Trace destination" });
     }
 
-    const row = await readDestination(client, destinationId);
+    const row = await readDestination(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
     return v1Resource(c, toTraceDestinationDto(row));
   },
 );
@@ -517,7 +570,11 @@ traceDestinations.post(
       throw translateConvexWriteError(error, { resource: "Trace destination" });
     }
 
-    const row = await readDestination(client, destinationId);
+    const row = await readDestination(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
     return v1Resource(c, {
       ...toTraceDestinationDto(row),
       pausedSince: result?.pausedSince ?? null,
@@ -535,6 +592,11 @@ traceDestinations.post(
     const destinationId = c.req.param("destinationId");
     const body = await parseBody(c, backfillSchema);
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    await assertDestinationInOrg(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
 
     let result: { jobId: string };
     try {
@@ -576,6 +638,11 @@ traceDestinations.get(
   async (c) => {
     const destinationId = c.req.param("destinationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    await assertDestinationInOrg(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
 
     let jobs: BackfillJobRow[];
     try {

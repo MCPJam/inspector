@@ -12204,7 +12204,9 @@ const backfillTraceDestinationInput = z.object({
     .int()
     .min(1)
     .max(30)
-    .describe("How far back to replay, in days. Clamped to [1, 30]."),
+    .describe(
+      "How far back to replay, in days. REJECTED outside [1, 30] — this schema refuses the call rather than clamping it, so 40 is an error, not 30."
+    ),
 });
 
 export type BackfillTraceDestinationInput = z.infer<
@@ -12218,7 +12220,7 @@ export const backfillTraceDestinationOperation: PlatformOperation<
   name: "backfill_trace_destination",
   title: "Backfill an MCPJam trace destination",
   description:
-    "Replay a window of history into a destination — for filling the gap a pause left, or seeding a new destination with recent runs. Queues every eligible session active in the window, so a wide window on a busy organization is a lot of outbound traffic and a lot of vendor ingest. Refused while the destination is paused or disabled, because nothing would be queued.",
+    "Replay a window of history into a destination — for filling the gap a pause left, or seeding a new destination with recent runs. Queues every eligible session active in the window, so a wide window on a busy organization is a lot of outbound traffic and a lot of vendor ingest. `days` outside 1-30 is refused, not clamped. Refused too while the destination is paused or disabled, because nothing would be queued.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),

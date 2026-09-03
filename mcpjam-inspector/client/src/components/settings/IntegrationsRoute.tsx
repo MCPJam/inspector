@@ -285,8 +285,12 @@ function ObservabilityCard({
   const availability = useTraceDestinationsAvailability(
     enabled ? activeOrganizationId : null,
   );
+  // GATED ON THE SERVER'S ANSWER, not just the flag. A flagged-in member of an
+  // organization the server has NOT covered would otherwise fire this
+  // org-scoped read for a feature they cannot use, and its refusal would reach
+  // the boundary as an ErrorCard for a card that should not be there at all.
   const { destinations } = useOrgTraceDestinations(
-    enabled ? activeOrganizationId : null,
+    availability?.state === "enabled" ? activeOrganizationId : null,
   );
 
   if (!enabled) return null;
@@ -377,12 +381,19 @@ export function IntegrationsRoute({
           <DiscordCard activeOrganizationId={activeOrganizationId} />
         </ErrorBoundary>
 
-        <ErrorBoundary
-          name="integrations_observability"
-          fallback={({ error, reset }) => (
-            <ErrorCard error={error} onRetry={reset} />
-          )}
-        >
+        {/*
+          RENDERS NOTHING ON A THROW, unlike its three siblings above.
+          Those surfaces are generally available, so an error card is the
+          honest answer when their backend misbehaves. This one is dark: the
+          ordinary way to reach this boundary is a client flagged on against a
+          backend that has not deployed `traceDestinations:getAvailability`
+          yet, and an error card there advertises a feature to someone who
+          cannot use it while telling them nothing they can act on. The
+          boundary is still required — without it the throw takes the whole
+          Integrations page down — and it still reports to Sentry, because
+          silent to the USER is a UI choice and never a telemetry one.
+        */}
+        <ErrorBoundary name="integrations_observability" fallback={null}>
           <ObservabilityCard activeOrganizationId={activeOrganizationId} />
         </ErrorBoundary>
       </div>

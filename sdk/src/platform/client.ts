@@ -3524,7 +3524,8 @@ export class PlatformApiClient {
    *
    * Refused while the destination is paused or disabled: enqueue skips both, so
    * a backfill against one would scan the whole window and queue nothing.
-   * `days` is clamped to [1, 30].
+   * `days` outside 1-30 is REFUSED, not clamped — the operation's schema
+   * rejects it before the request is sent, so 40 is an error rather than 30.
    */
   backfillTraceDestination(
     params: { organizationId: string; destinationId: string; days: number },

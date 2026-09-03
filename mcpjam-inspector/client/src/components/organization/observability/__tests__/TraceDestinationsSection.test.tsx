@@ -98,19 +98,40 @@ describe("TraceDestinationsSection", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders nothing when the server says the org is not covered", () => {
+  it("explains a resolved no instead of leaving a blank page", () => {
+    // The nav strip advertises this section from the CLIENT flag, which knows
+    // nothing about this organization — so a flagged-in admin whose org the
+    // server has not covered can click a real tab and land here. Rendering
+    // nothing would read as a broken screen.
     availabilityMock.mockReturnValue({ state: "disabled", canEdit: true });
-    const { container } = render(
-      <TraceDestinationsSection organizationId="org1" isAdmin />,
-    );
-    expect(container).toBeEmptyDOMElement();
+    render(<TraceDestinationsSection organizationId="org1" isAdmin />);
+    expect(screen.getByText(/not enabled for this organization/i)).toBeTruthy();
+    expect(screen.queryByText("New destination")).toBeNull();
+  });
+
+  it("says plainly when the caller is not a member", () => {
+    availabilityMock.mockReturnValue({ state: "unavailable", canEdit: false });
+    render(<TraceDestinationsSection organizationId="org1" isAdmin />);
+    expect(screen.getByText(/not a member of this organization/i)).toBeTruthy();
   });
 
   it("never renders a header value, only its name", () => {
+    // The fixture is deliberately given a value the DTO has no field for, cast
+    // in. If a `headers` field ever reaches the client and something renders
+    // it, this catches that; asserting on a fixture that could not hold a
+    // value in the first place would have passed forever while checking
+    // nothing.
+    setDestinations([
+      {
+        ...destination(),
+        headers: { Authorization: "Bearer sk-live-do-not-render" },
+      } as unknown as TraceDestination,
+    ]);
     render(<TraceDestinationsSection organizationId="org1" isAdmin />);
-    // The name is fine to show; the value never reaches the client at all,
-    // and this asserts the DTO shape has not quietly grown one.
+
+    expect(screen.getByText("Coralogix (production)")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Bearer");
+    expect(document.body.textContent).not.toContain("sk-live-do-not-render");
   });
 
   it("hides every action from a member", () => {
@@ -152,11 +173,49 @@ describe("TraceDestinationsSection", () => {
 
     fireEvent.click(screen.getByText("Resume"));
     await waitFor(() =>
-      expect(screen.getByText("Backfill the paused window")).toBeTruthy(),
+      expect(screen.getByText("Backfill the last 3 days")).toBeTruthy(),
     );
 
-    fireEvent.click(screen.getByText("Backfill the paused window"));
+    fireEvent.click(screen.getByText("Backfill the last 3 days"));
     expect(writes.startBackfill).toHaveBeenCalledWith("d1", 3);
+  });
+
+  it("names the number of days it will actually backfill", async () => {
+    // The button used to promise "the paused window", which a whole-day
+    // granularity cannot deliver. Saying the real number is the honest
+    // version of the same affordance.
+    const pausedSince = Date.now() - (3 * 86_400_000 - 3_600_000);
+    writes.resumeDestination.mockResolvedValue(pausedSince);
+    setDestinations([
+      destination({ paused: { at: pausedSince, reason: "manual" } }),
+    ]);
+    render(<TraceDestinationsSection organizationId="org1" isAdmin />);
+
+    fireEvent.click(screen.getByText("Resume"));
+    await waitFor(() =>
+      expect(screen.getByText("Backfill the last 3 days")).toBeTruthy(),
+    );
+    expect(screen.queryByText(/longer than 30 days/i)).toBeNull();
+  });
+
+  it("says so when the pause outran what a backfill can reach", async () => {
+    const pausedSince = Date.now() - 45 * 86_400_000;
+    writes.resumeDestination.mockResolvedValue(pausedSince);
+    setDestinations([
+      destination({ paused: { at: pausedSince, reason: "manual" } }),
+    ]);
+    render(<TraceDestinationsSection organizationId="org1" isAdmin />);
+
+    fireEvent.click(screen.getByText("Resume"));
+    await waitFor(() =>
+      expect(screen.getByText("Backfill the last 30 days")).toBeTruthy(),
+    );
+    // Silently capping would tell someone their gap was filled when 15 days
+    // of it were not.
+    expect(screen.getByText(/longer than 30 days/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Backfill the last 30 days"));
+    expect(writes.startBackfill).toHaveBeenCalledWith("d1", 30);
   });
 
   it("shows a capped pending count as N+", () => {
@@ -174,12 +233,22 @@ describe("TraceDestinationsSection", () => {
   });
 
   it("says whether content is redacted", () => {
-    render(<TraceDestinationsSection organizationId="org1" isAdmin />);
+    const first = render(
+      <TraceDestinationsSection organizationId="org1" isAdmin />,
+    );
     expect(screen.getByText("Redacted")).toBeTruthy();
+    expect(screen.queryByText("Content included")).toBeNull();
+
+    // UNMOUNT between the two. `render` appends a second container rather than
+    // replacing the first, so without this the earlier "Redacted" badge stays
+    // in the document and a component that rendered BOTH states would still
+    // satisfy the assertions below.
+    first.unmount();
 
     setDestinations([destination({ includeContent: true })]);
     render(<TraceDestinationsSection organizationId="org1" isAdmin />);
-    expect(screen.getAllByText("Content included").length).toBe(1);
+    expect(screen.getByText("Content included")).toBeTruthy();
+    expect(screen.queryByText("Redacted")).toBeNull();
   });
 
   it("warns that a delete cannot retract what was already delivered", async () => {

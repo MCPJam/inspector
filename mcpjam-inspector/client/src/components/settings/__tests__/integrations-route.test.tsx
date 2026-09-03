@@ -41,6 +41,7 @@ const {
   mockObservability: {
     enabled: false,
     calls: [] as Array<string | null | undefined>,
+    listCalls: [] as Array<string | null | undefined>,
     availability: undefined as
       | { state: "enabled" | "disabled" | "unavailable"; canEdit: boolean }
       | undefined,
@@ -121,11 +122,21 @@ vi.mock("@/hooks/useTraceDestinationsEnabled", () => ({
 vi.mock("@/hooks/useOrgTraceDestinations", () => ({
   useTraceDestinationsAvailability: (organizationId: string | null) => {
     mockObservability.calls.push(organizationId);
-    return mockObservability.availability;
+    // MODELS THE SKIP. The real hook passes "skip" to `useQuery` when the org
+    // id is null and returns `undefined` — so a mock that answered anyway
+    // would let the card behave as if the server had spoken when no query was
+    // ever sent, which is the exact thing these tests exist to pin down.
+    return organizationId === null ? undefined : mockObservability.availability;
   },
-  useOrgTraceDestinations: () => ({
-    destinations: mockObservability.destinations,
-  }),
+  // The LIST read is recorded too, not just availability. It is equally
+  // org-scoped and signed-in, and equally throws on a backend that has not
+  // deployed it — so a regression that fired it while flagged off, or for an
+  // organization the server said no to, would otherwise pass every assertion
+  // below while producing exactly the ErrorCard this gating exists to prevent.
+  useOrgTraceDestinations: (organizationId: string | null) => {
+    mockObservability.listCalls.push(organizationId);
+    return { destinations: mockObservability.destinations };
+  },
 }));
 
 import { IntegrationsRoute } from "../IntegrationsRoute";
@@ -151,6 +162,7 @@ function renderRoute({
   mockSlackConnections.value = slackConnections;
   mockSurfaceSettingsCalls.value = [];
   mockObservability.calls = [];
+  mockObservability.listCalls = [];
   mockNavigate.mockClear();
   return render(
     <MemoryRouter initialEntries={["/settings/integrations"]}>
@@ -377,10 +389,11 @@ describe("IntegrationsRoute", () => {
       expect(
         screen.queryByTestId("integration-card-observability"),
       ).not.toBeInTheDocument();
-      // The flag has to reach the QUERY, not just the render: a flagged-off
-      // visitor must not fire an org-scoped signed-in read at a backend that
-      // may not have deployed it yet.
+      // The flag has to reach the QUERIES, not just the render: a flagged-off
+      // visitor must fire NEITHER org-scoped signed-in read at a backend that
+      // may not have deployed them yet.
       expect(mockObservability.calls).toEqual([null]);
+      expect(mockObservability.listCalls).toEqual([null]);
     });
 
     it("stays hidden when the flag is on but the server says no", () => {
@@ -392,6 +405,10 @@ describe("IntegrationsRoute", () => {
           screen.queryByTestId("integration-card-observability"),
         ).not.toBeInTheDocument();
         expect(mockObservability.calls).toEqual(["org-1"]);
+        // Availability was asked; the LIST was not. A "disabled" answer means
+        // this organization has no destinations surface, so reading its
+        // destinations would be a refusal waiting to happen.
+        expect(mockObservability.listCalls).toEqual([null]);
       } finally {
         mockObservability.enabled = false;
       }

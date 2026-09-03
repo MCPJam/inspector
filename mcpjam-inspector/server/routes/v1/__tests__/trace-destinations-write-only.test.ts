@@ -119,6 +119,37 @@ describe("the trace-destinations surface is write-only for header values", () =>
     expect(openapi).not.toContain("TraceDestination");
   });
 
+  it("enforces the organization path segment rather than trusting the id", () => {
+    // Convex checks membership against the destination's OWN organization, so
+    // no caller can read one they do not belong to. But a member of TWO
+    // organizations could name org A in the URL and address a destination in
+    // org B, and a route whose path does not mean what it says is a bug
+    // waiting for the caller that scripts against it. The check reads as a
+    // 404: at this address, that id is simply not there.
+    const body = declarationBody(
+      readFileSync(ROUTE_PATH, "utf8"),
+      "async function readDestination(",
+    );
+    expect(body).toContain("row.organizationId !== organizationId");
+    expect(body).toContain("ErrorCode.NOT_FOUND");
+
+    // And every by-id route passes the segment in, or the check above guards
+    // nothing: a call site that omitted it would not compile, but one that
+    // passed the WRONG thing (a destination id twice, say) would.
+    const source = readFileSync(ROUTE_PATH, "utf8");
+    const callSites = source
+      .split("await readDestination(")
+      .slice(1)
+      .map((chunk) => chunk.slice(0, chunk.indexOf(");")));
+
+    expect(callSites.length).toBeGreaterThanOrEqual(6);
+    for (const args of callSites) {
+      expect(args, `readDestination(${args}) omits the organization`).toMatch(
+        /organizationId/,
+      );
+    }
+  });
+
   it("is absent from the guest allowlist, so guests cannot reach it", () => {
     // `guest-allowed-paths.ts` is default-deny, so this is not "no rule denies
     // it" — it is "no rule ADMITS it". A single added entry would be the one

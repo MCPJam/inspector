@@ -89,7 +89,24 @@ export function TraceDestinationsSection({
   // answer is in flight is right; treating it as `disabled` would blank the
   // page for an admin who cold-loads this URL.
   if (availability === undefined) return null;
-  if (availability.state !== "enabled") return null;
+
+  // A RESOLVED "no" gets a sentence, not a blank page. The nav strip decides
+  // whether to advertise this section from the CLIENT flag, which knows
+  // nothing about this particular organization — so a flagged-in admin whose
+  // org the server has not covered can click a real tab and arrive here. An
+  // empty page reads as a broken screen; saying so reads as an answer.
+  if (availability.state !== "enabled") {
+    return (
+      <Card className="space-y-2 p-6">
+        <h2 className="text-base font-semibold">Trace destinations</h2>
+        <p className="text-sm text-muted-foreground">
+          {availability.state === "unavailable"
+            ? "You are not a member of this organization."
+            : "Streaming traces to an observability vendor is not enabled for this organization yet. Traces are still exportable on demand from any completed run."}
+        </p>
+      </Card>
+    );
+  }
 
   const canEdit = isAdmin && availability.canEdit;
 
@@ -271,6 +288,12 @@ function DestinationRow({
   onBackfill: (days: number) => void;
 }) {
   const [pausedSince, setPausedSince] = useState<number | null>(null);
+  const elapsedDays =
+    pausedSince === null
+      ? 0
+      : Math.max(1, Math.ceil((Date.now() - pausedSince) / 86_400_000));
+  const backfillDays = Math.min(30, elapsedDays);
+  const cappedAtThirtyDays = elapsedDays > 30;
   const badge = healthLabel(destination);
   const health = destination.health;
 
@@ -376,27 +399,41 @@ function DestinationRow({
           <AlertTitle>Resumed</AlertTitle>
           <AlertDescription className="space-y-2">
             <p>
-              Nothing was queued while this destination was paused. Backfill the
-              window if you need those traces.
+              Nothing was queued while this destination was paused. Backfill if
+              you need those traces.
             </p>
             {canEdit ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const days = Math.min(
-                    30,
-                    Math.max(
-                      1,
-                      Math.ceil((Date.now() - pausedSince) / 86_400_000),
-                    ),
-                  );
-                  onBackfill(days);
-                  setPausedSince(null);
-                }}
-              >
-                Backfill the paused window
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onBackfill(backfillDays);
+                    setPausedSince(null);
+                  }}
+                >
+                  Backfill the last {backfillDays}{" "}
+                  {backfillDays === 1 ? "day" : "days"}
+                </Button>
+                {/*
+                  THE BUTTON SAYS DAYS BECAUSE THE BACKFILL TAKES DAYS. A
+                  whole-day granularity cannot express "the two hours you were
+                  paused", and rounding UP is the right direction — a backfill
+                  that stops short leaves exactly the gap this exists to close
+                  — but it means re-sending traces that already arrived.
+                  Delivery is at-least-once and span ids are deterministic, so
+                  the vendor sees the same spans again rather than duplicates
+                  of different ones. Saying the real number beats a label that
+                  implies an exactness the API does not offer.
+                */}
+                {cappedAtThirtyDays ? (
+                  <p className="text-xs">
+                    This destination was paused for longer than 30 days, which
+                    is the furthest a backfill reaches. Anything older stays
+                    missing.
+                  </p>
+                ) : null}
+              </>
             ) : null}
           </AlertDescription>
         </Alert>
