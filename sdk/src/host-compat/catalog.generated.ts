@@ -1881,7 +1881,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--font-sans":
             '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
           "--font-mono":
-            '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+            '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
           "--font-weight-normal": "400",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
@@ -1922,7 +1922,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1788393600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2034,7 +2034,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--font-sans":
               '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
             "--font-mono":
-              '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+              '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
             "--font-weight-normal": "400",
             "--font-weight-medium": "500",
             "--font-weight-semibold": "600",
