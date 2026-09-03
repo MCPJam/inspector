@@ -233,7 +233,22 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
     nativePlatforms: ["darwin", "linux"],
     // Empty until a backend's escape probes actually pass (I6).
     isolatedBackends: {},
-    lifecycleConformanceVersion: "",
+    // Names the RUN that earned it, not the commit that records it: this is
+    // evidence, and evidence is traceable or it is decoration. From
+    // `local-harness-conformance.yml` run 33707770702 on 1f3f53f38f, where
+    // linux-x64 and darwin-arm64 scenarios both passed against a real pack, a
+    // real supervisor, a real bridge and the real vendor CLI.
+    //
+    // Windows is not in that evidence and does not need to be — `summarize`
+    // deliberately does not wait for its leg, because `nativePlatforms`
+    // refuses win32 anyway. A stamp records what the SUPPORTED platforms
+    // proved.
+    //
+    // Re-earned, not carried: a change under `harness/local/` re-runs the
+    // suite on every PR, and an adapter bump already fails the version check
+    // above it. If this value ever outlives the code it vouched for, that is
+    // the bug — clear it rather than leave it standing.
+    lifecycleConformanceVersion: "local-1f3f53f38f40",
     adapterBootstrapDir: ".harness-bootstrap/claude-code",
     adapterBootstrapFiles: [
       "package.json",
