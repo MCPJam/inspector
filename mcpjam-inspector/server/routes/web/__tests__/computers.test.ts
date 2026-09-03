@@ -26,6 +26,10 @@ vi.mock("../../../config.js", async () => {
   };
 });
 
+// The kill switch the route reads for `engines.local.browserAvailable`.
+// Imported through the SAME specifier the mock above registers, so the test
+// and the route see one value rather than a hard-coded `true`.
+import { LOCAL_BROWSER_ENABLED } from "../../../config.js";
 import { createComputersRoutes } from "../computers";
 import { isLocalComputerEngineAvailable } from "../../../utils/computers/local-machine";
 import { getLocalTerminalAvailability } from "../../../utils/computers/local-pty";
@@ -139,17 +143,23 @@ describe("GET /api/web/computers/config", () => {
     // host running the tests just like `available` does — compose it from the
     // same probe the route consults rather than hard-coding either answer.
     const terminal = await getLocalTerminalAvailability();
+    // `browserAvailable` is a SERVER capability bit, independent of whether
+    // bash is on this machine's PATH — the agent browser does not need a
+    // shell. Composed from the same switch the route reads so the suite stays
+    // honest on a server where it is turned off.
     return availability.available
       ? {
           available: true,
           terminalAvailable: terminal.available,
           workspaceDisplayRoot: "~/.mcpjam/computer",
+          browserAvailable: LOCAL_BROWSER_ENABLED,
         }
       : {
           available: false,
           // A machine whose local ENGINE is off never offers a terminal.
           terminalAvailable: false,
           workspaceDisplayRoot: null,
+          browserAvailable: LOCAL_BROWSER_ENABLED,
           reason: availability.reason,
         };
   }
