@@ -68,6 +68,7 @@ export type SwarmLaunchedRun = {
 
 export type SwarmRunningColumn = {
   key: string;
+  hostId?: string;
   label: string;
 };
 
@@ -216,6 +217,7 @@ function columnsFromRun(
       });
       return {
         key,
+        hostId: host.hostId,
         label:
           hostName(host.hostId) ??
           host.environmentRef?.name ??
@@ -228,7 +230,11 @@ function columnsFromRun(
     hostSummaries: run.hostSummaries ?? [],
     snapshotHosts: run.snapshot?.hosts,
     hostName,
-  }).map((target) => ({ key: target.key, label: target.label }));
+  }).map((target) => ({
+    key: target.key,
+    hostId: target.hostId,
+    label: target.label,
+  }));
 }
 
 function attributeSessions(
@@ -276,6 +282,7 @@ function attributeSessions(
     return {
       columns: fallbackTargets.map((target) => ({
         key: target.key,
+        hostId: target.hostId,
         label: target.label,
       })),
       targets: fallbackTargets,
@@ -713,18 +720,6 @@ export function NewSwarmRunningStep({
     };
   }, [environments, hostById, hostName]);
 
-  const clientLogoLabel = useMemo(() => {
-    const envById = new Map(
-      environments.map((env) => [env.environmentId, env] as const)
-    );
-    return (key: string): string | undefined => {
-      const hostId = key.startsWith("environment:")
-        ? envById.get(key.slice("environment:".length))?.hostId
-        : key;
-      return hostId ? hostById.get(hostId)?.name : undefined;
-    };
-  }, [environments, hostById]);
-
   const [snapshots, setSnapshots] = useState<Record<string, RunLiveSnapshot>>(
     {}
   );
@@ -753,6 +748,7 @@ export function NewSwarmRunningStep({
           prev.columns.every(
             (column, index) =>
               column.key === snapshot.columns[index]?.key &&
+              column.hostId === snapshot.columns[index]?.hostId &&
               column.label === snapshot.columns[index]?.label
           ) &&
           prev.targets.length === snapshot.targets.length &&
@@ -783,20 +779,26 @@ export function NewSwarmRunningStep({
   // placeholder — keeping them after load made Cursor look "queued" when the
   // journeys were still single-client.
   const columns = useMemo((): SwarmRunningColumn[] => {
-    const seen = new Map<string, string>();
+    const seen = new Map<string, SwarmRunningColumn>();
+    const addColumn = (column: SwarmRunningColumn) => {
+      seen.set(column.key, {
+        ...column,
+        label: clientLabel(column.key, column.label),
+      });
+    };
     const snapList = Object.values(snapshots);
     if (snapList.length === 0) {
       for (const column of fallbackColumns) {
-        seen.set(column.key, clientLabel(column.key, column.label));
+        addColumn(column);
       }
     } else {
       for (const snap of snapList) {
         for (const column of snap.columns) {
-          seen.set(column.key, clientLabel(column.key, column.label));
+          addColumn(column);
         }
       }
     }
-    return Array.from(seen.entries()).map(([key, label]) => ({ key, label }));
+    return Array.from(seen.values());
   }, [clientLabel, fallbackColumns, snapshots]);
 
   const missingPlannedClients = useMemo(() => {
@@ -1058,7 +1060,11 @@ export function NewSwarmRunningStep({
                     >
                       <span className="inline-flex items-center justify-center gap-1.5">
                         <JourneyHostLogoMark
-                          label={clientLogoLabel(column.key) ?? column.label}
+                          label={
+                            (column.hostId
+                              ? hostById.get(column.hostId)?.name
+                              : undefined) ?? column.label
+                          }
                         />
                         <span className="truncate">{column.label}</span>
                       </span>

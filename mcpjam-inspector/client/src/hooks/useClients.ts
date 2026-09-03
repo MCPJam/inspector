@@ -79,10 +79,13 @@ export function useHostList({
   const isUserReady = useDbUserReady();
   const catalogState = useHostCatalog();
   const presetClientNames = useMemo(
-    () =>
-      catalogState.catalog
-        ? getCatalogHosts(catalogState.catalog).map((host) => host.label)
-        : BUNDLED_PRESET_CLIENT_NAMES,
+    () => {
+      if (!catalogState.catalog) return BUNDLED_PRESET_CLIENT_NAMES;
+      return [
+        ...BUNDLED_PRESET_CLIENT_NAMES,
+        ...getCatalogHosts(catalogState.catalog).map((host) => host.label),
+      ];
+    },
     [catalogState.catalog],
   );
   const queryProjectId = projectId?.trim() ?? "";

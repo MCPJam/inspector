@@ -139,9 +139,17 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     sessionsFixture = [];
     runFixture.status = "running";
     runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
+    runFixture.hostSummaries![0].targetId = "environment:env-1";
+    runFixture.snapshot!.hosts[0].targetId = "environment:env-1";
   });
 
   it("shows an empty stream pane until a session is clicked", async () => {
+    runFixture.hostSummaries![0].targetId = "opaque-target";
+    runFixture.snapshot!.hosts[0].targetId = "opaque-target";
+    streamState.cellStatus = {
+      "opaque-target:0": "running",
+      "opaque-target:1": "pending",
+    };
     render(
       <div className="h-[40rem]">
         <NewSwarmRunningStep

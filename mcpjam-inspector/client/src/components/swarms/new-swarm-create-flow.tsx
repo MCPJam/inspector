@@ -1667,6 +1667,7 @@ export function NewSwarmCreateFlow({
       return [
         {
           key: `environment:${environmentId}`,
+          hostId: env.hostId,
           label: environmentLabel(env, { hostName: hostNameById }),
         },
       ];

@@ -14,19 +14,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHostList } from "../useClients";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 
-const { mockUseMutation, mockUseQuery, mockDbUserReady, mockCatalogState } = vi.hoisted(() => ({
-  mockUseMutation: vi.fn(),
-  mockUseQuery: vi.fn(),
-  mockDbUserReady: { value: true },
-  mockCatalogState: {
-    value: {
-      status: "loading",
-      catalog: null,
-      version: null,
-      source: null,
-    } as any,
-  },
-}));
+const { mockUseMutation, mockUseQuery, mockDbUserReady, mockCatalogState } =
+  vi.hoisted(() => ({
+    mockUseMutation: vi.fn(),
+    mockUseQuery: vi.fn(),
+    mockDbUserReady: { value: true },
+    mockCatalogState: {
+      value: {
+        status: "loading",
+        catalog: null,
+        version: null,
+        source: null,
+      } as any,
+    },
+  }));
 
 vi.mock("convex/react", () => ({
   useMutation: mockUseMutation,
@@ -136,7 +137,6 @@ describe("useHostList private-backing filter", () => {
       status: "live",
       catalog: {
         hostsById: {
-          ...bundled.hostsById,
           future: { ...template, id: "future", label: "Future Client" },
         },
       },
@@ -145,6 +145,7 @@ describe("useHostList private-backing filter", () => {
     } as any;
     mockUseQuery.mockReturnValue([
       { hostId: "saved-future", name: "Future Client", createdAt: 1 },
+      { hostId: "saved-cursor", name: "Cursor", createdAt: 2 },
     ]);
 
     const { result } = renderHook(() =>
@@ -152,6 +153,7 @@ describe("useHostList private-backing filter", () => {
     );
 
     expect(result.current.hosts[0]?.displayName).toBe("Future Client #2");
+    expect(result.current.hosts[1]?.displayName).toBe("Cursor #2");
   });
 
   it("reports loading (not an empty list) while the query is in flight", () => {
