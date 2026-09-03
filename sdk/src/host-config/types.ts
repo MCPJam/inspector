@@ -987,6 +987,76 @@ export type HostConfigInputV2 = {
   >;
 };
 
+/**
+ * Every top-level key a host-config WRITE accepts. Portable
+ * **persistence-contract source of truth**, like `HARNESS_IDS`: the backend's
+ * hand-mirrored `hostConfigInputV2Validator` is a strict `v.object` over
+ * exactly these fields, and the inspector's v1 client routes check a
+ * caller-supplied config against this list before the write leaves Node.
+ *
+ * That pre-check is why the list is exported at all. Convex rejects an unknown
+ * field at the CALL boundary, before the handler runs, and production Convex
+ * redacts the resulting `ArgumentValidationError` to a bare "Server Error" — so
+ * without a check on this side the caller is told only that the write failed,
+ * never which field failed it.
+ */
+export const HOST_CONFIG_INPUT_V2_WIRE_KEYS = [
+  "builtInToolIds",
+  "chatUiOverride",
+  "clientCapabilities",
+  "computer",
+  "connectionDefaults",
+  "harness",
+  "hostCapabilitiesOverride",
+  "hostContext",
+  "hostStyle",
+  "mcpProfile",
+  "mcpToolResultImageRendering",
+  "modelId",
+  "modelVisibleMcpToolResults",
+  "optionalServerIds",
+  "progressiveToolDiscovery",
+  "requireToolApproval",
+  "respectToolVisibility",
+  "serverConnectionOverrides",
+  "serverIds",
+  "skillSelection",
+  "systemPrompt",
+  "temperature",
+] as const;
+
+type HostConfigInputV2WireKey = (typeof HOST_CONFIG_INPUT_V2_WIRE_KEYS)[number];
+
+/**
+ * Fields this type declares that no write accepts yet. `oauthProfile` is
+ * canonicalized but has no backend validator or column, so a config carrying it
+ * fails closed. Naming it keeps the guard below honest rather than letting the
+ * gap read as an oversight; closing it means moving the key into the wire list.
+ */
+type HostConfigKeyNotOnTheWire = "oauthProfile";
+
+// Both directions are load-bearing. A key on the type but missing from the list
+// is one the routes would reject on a VALID config; a key in the list but not on
+// the type is one nothing validates. So adding a field to `HostConfigInputV2`
+// stops this compiling until the field is either accepted on the wire or named
+// as a known gap above.
+const _wireKeysMatchTheType: [
+  | Exclude<
+      keyof HostConfigInputV2,
+      HostConfigInputV2WireKey | HostConfigKeyNotOnTheWire
+    >
+  | Exclude<HostConfigInputV2WireKey, keyof HostConfigInputV2>
+] extends [never]
+  ? true
+  : [
+      "HOST_CONFIG_INPUT_V2_WIRE_KEYS is out of sync with HostConfigInputV2",
+      Exclude<
+        keyof HostConfigInputV2,
+        HostConfigInputV2WireKey | HostConfigKeyNotOnTheWire
+      >
+    ] = true;
+void _wireKeysMatchTheType;
+
 export type CanonicalHostConfigV2 = {
   schemaVersion: typeof HOST_CONFIG_SCHEMA_VERSION_V2;
   hostStyle: HostConfigStyle;

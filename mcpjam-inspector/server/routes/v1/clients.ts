@@ -54,7 +54,10 @@ import {
 // harness added to HARNESS_IDS is accepted here without a second hand-edit
 // nobody would think to make (this route accepts no unknown-harness value, so
 // a stale copy is a silent "that host cannot be created through the API").
-import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import {
+  HARNESS_IDS,
+  HOST_CONFIG_INPUT_V2_WIRE_KEYS,
+} from "@mcpjam/sdk/host-config/internal";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
@@ -463,6 +466,82 @@ function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
  */
 const READ_ONLY_CONFIG_KEYS = ["id", "schemaVersion"] as const;
 
+const WRITABLE_CONFIG_KEYS: ReadonlySet<string> = new Set(
+  HOST_CONFIG_INPUT_V2_WIRE_KEYS,
+);
+
+/**
+ * Where a misplaced key actually belongs.
+ *
+ * Every entry is a real config field one level down, so the mistake it catches
+ * is a NESTING error rather than an invented field — a root `initialize` is the
+ * one that reached production, from a caller that pasted an MCP `initialize`
+ * handshake at the top of an otherwise valid config. A key absent from this map
+ * still gets named, just without the pointer, so a stale map costs a hint and
+ * never a wrong rejection.
+ */
+// A Map, not an object literal: the lookup key is caller-supplied, and a plain
+// object would answer `toString` or `constructor` from the prototype chain and
+// interpolate a function into the message.
+const NESTED_CONFIG_FIELD_HOMES = new Map<string, string>([
+  ["apps", "mcpProfile.apps"],
+  ["initialize", "mcpProfile.initialize"],
+  ["mcpProtocolVersion", "mcpProfile.mcpProtocolVersion"],
+  ["mrtrModes", "mcpProfile.mrtrModes"],
+  ["mrtrSupport", "mcpProfile.mrtrSupport"],
+  ["paginationTraversal", "mcpProfile.paginationTraversal"],
+  ["profileVersion", "mcpProfile.profileVersion"],
+  ["toolCallCancellation", "mcpProfile.toolCallCancellation"],
+  ["toolListChanged", "mcpProfile.toolListChanged"],
+  ["toolParamHeaderMirroring", "mcpProfile.toolParamHeaderMirroring"],
+]);
+
+/**
+ * Refuse a caller-supplied config carrying a key no write accepts.
+ *
+ * Convex validates `input` at the CALL boundary, so an unknown top-level key
+ * fails before the mutation runs — and production Convex redacts that
+ * `ArgumentValidationError` to a bare "Server Error", which
+ * `translateConvexWriteError` can only report as a generic 500. The caller was
+ * therefore told that the write failed but never which field failed it, and an
+ * agent caller retried the same body blind. Naming the key is the whole point;
+ * VALUES are never echoed, because a config carries
+ * `connectionDefaults.headers`.
+ *
+ * Only the caller's OWN config is checked. A template resolved from our catalog
+ * stays unchecked deliberately: a metadata leak there is our bug, and a 400
+ * would blame the caller for it.
+ *
+ * Runs AFTER `normalizeConfigForWrite`, so the read-only projection keys a
+ * `get` → edit → `update` round-trip carries are already gone and don't read as
+ * the caller's mistake.
+ *
+ * The cost is a deploy-order coupling the old forward-everything behavior did
+ * not have: a field the backend validator gains is refused here until
+ * `HOST_CONFIG_INPUT_V2_WIRE_KEYS` learns it, so add the key to the SDK list in
+ * the same change that adds the column.
+ */
+function assertConfigKeysAreWritable(config: Record<string, unknown>): void {
+  const unknown = Object.keys(config).filter(
+    (key) => !WRITABLE_CONFIG_KEYS.has(key),
+  );
+  if (unknown.length === 0) return;
+  const described = unknown
+    .map((key) => {
+      const home = NESTED_CONFIG_FIELD_HOMES.get(key);
+      return home ? `\`${key}\` (did you mean \`${home}\`?)` : `\`${key}\``;
+    })
+    .join(", ");
+  throw new WebRouteError(
+    400,
+    ErrorCode.VALIDATION_ERROR,
+    `Unrecognized client config ${
+      unknown.length === 1 ? "field" : "fields"
+    }: ${described}.`,
+    { unknownFields: unknown },
+  );
+}
+
 /**
  * Return `config` ready for the Convex write: `modelId` TRIMMED, and the
  * read-only projection keys dropped so `get` output round-trips into `update`.
@@ -779,6 +858,7 @@ async function createHandler(c: Context, surface: Surface) {
       ? await resolveHostTemplateInput(body.template, body.theme)
       : body.config!,
   );
+  if (!body.template) assertConfigKeysAreWritable(input);
 
   let created: { hostId: string };
   try {
@@ -859,13 +939,15 @@ async function updateClientHandler(c: Context) {
         await readHostDetail(token, projectId, clientId),
         body.config,
       );
+      const input = normalizeConfigForWrite(body.config);
+      assertConfigKeysAreWritable(input);
       await convexClient.mutation(
         "hosts:updateHost" as any,
         {
           hostId: clientId,
           projectId,
           ...(body.name === undefined ? {} : { name: body.name }),
-          input: normalizeConfigForWrite(body.config),
+          input,
           ...tokens,
         } as any,
       );
@@ -907,7 +989,9 @@ async function updateHostAliasHandler(c: Context) {
       await readHostDetail(token, projectId, hostId),
       body.config,
     );
-    updateArgs.input = normalizeConfigForWrite(body.config);
+    const input = normalizeConfigForWrite(body.config);
+    assertConfigKeysAreWritable(input);
+    updateArgs.input = input;
   }
   const convexClient = createConvexClient(token);
   try {
