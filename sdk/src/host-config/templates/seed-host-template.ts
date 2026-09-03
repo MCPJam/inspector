@@ -986,7 +986,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // JSON editor surfaces the field on day one — without this,
           // the field would only appear after a manual edit and the
           // injected-globals chip would read "(from preset)".
-          compatRuntime: { openaiApps: true },
+          compatRuntime: {
+            openaiApps: true,
+            // An omitted method is ON; only turn-OFFs belong here.
+            // 2026-09-02: `window.openai.notifyIntrinsicHeight` is gone from
+            // ChatGPT's shim. `notifyIntrinsicWidth` is present in its place,
+            // so this is a rename on ChatGPT's side rather than a dropped
+            // feature — but there is no catalog key for the width form, and a
+            // widget calling the height one now hits `undefined`.
+            openaiAppsOverrides: {
+              notifyIntrinsicHeight: false,
+            },
+          },
           sandbox: {
             csp: {
               mode: "declared",
@@ -1011,11 +1022,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               // Per ui/initialize hostCapabilities only `microphone` is
               // advertised. Per the outer iframe `allow=` attribute,
-              // `clipboard-write` is ALSO emitted at runtime even though
-              // it's not in the advertised metadata. Include both so a
-              // widget testing in MCPJam-as-ChatGPT actually gets what
-              // the production iframe grants.
-              allow: { microphone: true, clipboardWrite: true },
+              // 2026-09-02: ChatGPT advertises `microphone` alone.
+              // `permissions.allow` is the SEP-1865 declaration, so it
+              // mirrors that. The earlier note here kept `clipboardWrite`
+              // to reproduce a `clipboard-write` grant seen in the
+              // production iframe's `allow=` attribute — but that is the
+              // raw Permissions Policy axis, which belongs in
+              // `allowFeatures` under the kebab token, not in a spec
+              // permission key. The 2026-09-02 capture does not report
+              // `allow=`, so nothing was written there either.
+              allow: { microphone: true },
             },
             // The 2026-08-24 capture read and wrote all three browser
             // storage APIs from inside the widget sandbox — every one
@@ -1683,7 +1699,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.148.0-alpha.15",
+            // Bumped with the 2026-09-02 re-probe, from 0.148.0-alpha.15.
+            version: "0.150.0-alpha.12.2",
           },
         },
         apps: {
