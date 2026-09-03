@@ -11958,7 +11958,7 @@ const createTraceDestinationInput = z.object({
     .string()
     .trim()
     .min(1)
-    .max(120)
+    .max(80)
     .describe("Human label for this destination."),
   endpointUrl: z
     .string()
@@ -12043,7 +12043,7 @@ const updateTraceDestinationInput = z.object({
     .min(1)
     .describe(ORGANIZATION_SELECTOR_DESCRIPTION),
   destination: z.string().trim().min(1).describe("Trace destination id."),
-  name: z.string().trim().min(1).max(120).optional(),
+  name: z.string().trim().min(1).max(80).optional(),
   endpointUrl: z.string().trim().min(1).optional(),
   headers: z
     .record(z.string(), z.string())

@@ -94,6 +94,39 @@ describe("useOrgScopedWrite", () => {
     expect(result.current.isSaving).toBe(false);
   });
 
+  it("keeps isSaving true until the LAST overlapping write finishes", async () => {
+    // The other ordering, and the one the generation alone does not survive:
+    // the NEWER write finishes first. Being the current generation, it used to
+    // clear `isSaving` while the older one was still running — the exact
+    // defect the generation exists to prevent, just approached from the side
+    // that was never tested. The in-flight count is what makes both orderings
+    // true; the generation still decides who may report an error.
+    const first = deferred();
+    const second = deferred();
+    const { result } = renderHook(() => useOrgScopedWrite("org-a"));
+
+    let firstSettled: Promise<void>;
+    let secondSettled: Promise<void>;
+    act(() => {
+      firstSettled = result.current.run(() => first.promise).catch(() => {});
+    });
+    act(() => {
+      secondSettled = result.current.run(() => second.promise).catch(() => {});
+    });
+
+    await act(async () => {
+      second.resolve();
+      await secondSettled;
+    });
+    expect(result.current.isSaving).toBe(true);
+
+    await act(async () => {
+      first.resolve();
+      await firstSettled;
+    });
+    await waitFor(() => expect(result.current.isSaving).toBe(false));
+  });
+
   it("lets only the NEWEST write of the same org report", async () => {
     // The org id alone cannot separate these: both writes belong to org-a.
     // Without a generation, the first to finish clears `isSaving` while the

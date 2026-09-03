@@ -73,8 +73,9 @@ export interface AppSurfaceManifest {
   /**
    * Not reachable in hosted deployments — this field is the SOURCE OF TRUTH
    * for that, and `hosted-tab-policy.ts` derives its block list from it. Set
-   * it only when the screen genuinely cannot work hosted (Tracing needs the
-   * local OTLP collector); a screen that merely isn't ready yet belongs
+   * it only when the screen genuinely cannot work hosted (Tracing streams
+   * from the local Inspector's RPC bus, which hosted does not run); a screen
+   * that merely isn't ready yet belongs
    * behind a feature flag instead.
    * Kept out of the atlas when the atlas is built for a hosted surface, so
    * the model isn't handed a map to a door that is locked.

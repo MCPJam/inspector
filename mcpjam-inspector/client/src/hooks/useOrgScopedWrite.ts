@@ -66,16 +66,31 @@ export function useOrgScopedWrite(organizationId: string | null): {
   const currentOrgRef = useRef(organizationId);
 
   /**
-   * Which write is the LATEST one started.
+   * Which write is the LATEST one started, for ERROR attribution.
    *
-   * The org id alone is not enough, because two writes for the SAME org
-   * overlap all the time — a Switch toggled while a save is in flight, Enter
-   * pressed twice. Comparing only the org, whichever finished FIRST would
-   * clear `isSaving` out from under the one still running, and its failure
-   * would overwrite the newer write's error. Only the newest generation may
-   * report.
+   * Two writes for the same org overlap all the time — a Switch toggled while
+   * a save runs, Enter pressed twice — and the org id alone cannot separate
+   * them. Only the newest may set `error`, so a stale failure cannot overwrite
+   * a fresher answer.
    */
   const generationRef = useRef(0);
+
+  /**
+   * How many writes for the current org are still running, for `isSaving`.
+   *
+   * SEPARATE FROM THE GENERATION, because the two questions want different
+   * answers when writes overlap. Newest-wins is right for the error — a stale
+   * failure should not overwrite a fresher answer. It is wrong for the
+   * spinner: if the NEWER write finishes first it is the current generation,
+   * so it cleared `isSaving` out from under the older one still running, which
+   * is the exact defect the generation was introduced to prevent. It only
+   * looked fixed because the ordering that exposes it is the less obvious one.
+   *
+   * A count is true in both orderings: the spinner stops when the last write
+   * stops. A switch away zeroes it, which is what retires the previous org's
+   * writes.
+   */
+  const inFlightRef = useRef(0);
 
   // LAYOUT, not passive. A passive effect runs after the browser paints, and a
   // write for the previous org can settle in the window between the commit for
@@ -88,6 +103,7 @@ export function useOrgScopedWrite(organizationId: string | null): {
     // Retire every write in flight: a completion from the previous org must
     // not land on this one, whatever order the round trips finish in.
     generationRef.current += 1;
+    inFlightRef.current = 0;
     setError(null);
     setIsSaving(false);
   }, [organizationId]);
@@ -102,19 +118,29 @@ export function useOrgScopedWrite(organizationId: string | null): {
       const startedFor = organizationId;
       generationRef.current += 1;
       const generation = generationRef.current;
-      const isCurrent = () =>
-        currentOrgRef.current === startedFor &&
-        generationRef.current === generation;
+      const isSameOrg = () => currentOrgRef.current === startedFor;
+      const isNewest = () =>
+        isSameOrg() && generationRef.current === generation;
 
+      inFlightRef.current += 1;
       setError(null);
       setIsSaving(true);
       try {
         await work();
       } catch (nextError) {
-        if (isCurrent()) setError(messageOf(nextError));
+        if (isNewest()) setError(messageOf(nextError));
         throw nextError;
       } finally {
-        if (isCurrent()) setIsSaving(false);
+        // The org, not the generation: an older write of the SAME org still
+        // has to decrement the count it incremented, or the spinner never
+        // stops.
+        if (isSameOrg()) {
+          inFlightRef.current -= 1;
+          if (inFlightRef.current <= 0) {
+            inFlightRef.current = 0;
+            setIsSaving(false);
+          }
+        }
       }
     },
     [organizationId],

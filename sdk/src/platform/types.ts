@@ -3037,7 +3037,8 @@ export interface PlatformTraceDestination {
   /**
    * Non-null means NOTHING IS BEING QUEUED. `reason` is a machine name so a
    * client can map it to its own copy: `manual`, `auth_failed`,
-   * `secret_unreadable`, `redirect_required`, `permanent_failures`.
+   * `secret_unreadable`, `too_many_failures`, `endpoint_private`,
+   * `redirect_required`.
    */
   paused: { at: number; reason: string } | null;
   health: PlatformTraceDestinationHealth | null;
