@@ -208,3 +208,110 @@ describe("tab viewport", () => {
     expect(fake.methods()).toEqual(["Input.dispatchMouseEvent"]);
   });
 });
+
+describe("createTabViewport — the button mask Chromium actually reads", () => {
+  function cdpRecorder() {
+    const sent: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const handlers = new Map<string, (p: unknown) => void>();
+    const cdp: CdpLike = {
+      async send(method, params) {
+        sent.push({ method, ...(params ? { params } : {}) });
+        return {};
+      },
+      on(event, handler) {
+        handlers.set(event, handler);
+      },
+    };
+    return { cdp, sent };
+  }
+
+  function mouseEvents(sent: Array<{ method: string; params?: any }>) {
+    return sent
+      .filter((s) => s.method === "Input.dispatchMouseEvent")
+      .map((s) => ({ type: s.params?.type, buttons: s.params?.buttons }));
+  }
+
+  it("releases the button it is releasing", async () => {
+    // `buttons` is the mask of buttons STILL HELD. Sending the released
+    // button's bit on mouseReleased leaves Chromium believing the drag never
+    // ended, which strands the page mid-selection.
+    const { cdp, sent } = cdpRecorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+      { type: "mouse_move", x: 5, y: 5 },
+      { type: "mouse_up", x: 5, y: 5, button: "left" },
+      { type: "mouse_move", x: 9, y: 9 },
+    ]);
+
+    expect(mouseEvents(sent)).toEqual([
+      { type: "mousePressed", buttons: 1 },
+      // A move mid-drag must carry the held button, or nothing is dragged.
+      { type: "mouseMoved", buttons: 1 },
+      { type: "mouseReleased", buttons: 0 },
+      { type: "mouseMoved", buttons: 0 },
+    ]);
+  });
+
+  it("keeps a second button held while the first is released", async () => {
+    const { cdp, sent } = cdpRecorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+      { type: "mouse_down", x: 1, y: 1, button: "right" },
+      { type: "mouse_up", x: 1, y: 1, button: "left" },
+    ]);
+
+    expect(mouseEvents(sent).map((e) => e.buttons)).toEqual([1, 3, 2]);
+  });
+});
+
+describe("createTabViewport — a stale start must not silence the new stream", () => {
+  it("lets only the current start/stop pair decide whether it is streaming", async () => {
+    // A watcher leaves and comes straight back. The first `startScreencast` is
+    // still in flight and about to fail; its handler used to clear `streaming`
+    // for the stream that replaced it, leaving the live watcher frozen.
+    const pending: Array<{ reject: (e: unknown) => void }> = [];
+    const sent: string[] = [];
+    const handlers = new Map<string, (p: unknown) => void>();
+    const cdp: CdpLike = {
+      send(method) {
+        sent.push(method);
+        if (method === "Page.startScreencast" && pending.length === 0) {
+          return new Promise((_resolve, reject) => pending.push({ reject }));
+        }
+        return Promise.resolve({});
+      },
+      on(event, handler) {
+        handlers.set(event, handler);
+      },
+    };
+
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+    const frames: ViewportFrame[] = [];
+
+    const first = viewport.subscribe(() => {});
+    first();
+    viewport.subscribe((f) => frames.push(f));
+    // The first attempt now fails, after the second has already started.
+    pending[0]?.reject(new Error("target closed"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    handlers.get("Page.screencastFrame")?.({
+      data: Buffer.from([0xff, 0xd8, 0xff]).toString("base64"),
+      sessionId: 1,
+    });
+
+    expect(sent.filter((m) => m === "Page.startScreencast")).toHaveLength(2);
+    expect(frames.length).toBeGreaterThan(0);
+  });
+});

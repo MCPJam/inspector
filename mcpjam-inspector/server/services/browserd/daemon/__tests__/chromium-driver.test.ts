@@ -984,3 +984,74 @@ describe("ChromiumDriver — a handoff that lands DURING the read", () => {
     expect(result.error).toContain("the action ran");
   });
 });
+
+/**
+ * The viewport cache is keyed by tabId; its contents belong to a PAGE. Every
+ * case here is one where those two came apart.
+ */
+describe("ChromiumDriver — the viewport follows its page, not its name", () => {
+  it("retires a closed tab's viewport instead of handing it out again", async () => {
+    const first = fakePage({ url: "https://a.test/" });
+    const second = fakePage({ url: "https://b.test/" });
+    const { context } = fakeContext({ pages: [first, second] });
+    const driver = new ChromiumDriver(context);
+
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/", newTab: true }, "tab-1"),
+    );
+    const before = await driver.viewport("tab-1");
+    expect(before).not.toBeNull();
+
+    await driver.execute(
+      cmd({ kind: "act", verb: "close_tab" }, "tab-1"),
+    );
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/", newTab: true }, "tab-1"),
+    );
+    const after = await driver.viewport("tab-1");
+
+    // A fresh one, bound to the live page. The old viewport held the closed
+    // page's CDP session: it would publish no frames and swallow every key.
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+  });
+
+  it("drops a viewport whose page closed itself", async () => {
+    const page = fakePage({ url: "https://a.test/" });
+    const { context } = fakeContext({ pages: [page, fakePage()] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }));
+    const before = await driver.viewport();
+
+    // `window.close()`, or a crashed renderer: nothing went through the
+    // driver, so only the freshness check here can notice.
+    await page.close();
+    const after = await driver.viewport();
+
+    expect(after).not.toBe(before);
+  });
+
+  it("opens ONE page when two callers ask for the same tab at once", async () => {
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+
+    const [a, b] = await Promise.all([driver.viewport(), driver.viewport()]);
+
+    expect(created).toHaveLength(1);
+    // ...and one viewport on it: two screencasts is two encoders for one
+    // picture, and subscribers split between them.
+    expect(a).toBe(b);
+  });
+
+  it("does not create a second page for a concurrent navigate and watch", async () => {
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+
+    await Promise.all([
+      driver.execute(cmd({ kind: "navigate", url: "https://a.test/" })),
+      driver.viewport(),
+    ]);
+
+    expect(created).toHaveLength(1);
+  });
+});

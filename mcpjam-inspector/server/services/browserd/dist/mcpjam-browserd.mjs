@@ -1415,7 +1415,9 @@ function createTabViewport(cdp, options) {
   const now = options.now ?? Date.now;
   const listeners = /* @__PURE__ */ new Set();
   let streaming = false;
+  let streamGeneration = 0;
   let disposed = false;
+  let buttonMask = 0;
   let lastData;
   let seq = 0;
   const publish = (frame) => {
@@ -1457,6 +1459,7 @@ function createTabViewport(cdp, options) {
   const start = async () => {
     if (streaming || disposed) return;
     streaming = true;
+    const generation = ++streamGeneration;
     lastData = void 0;
     await cdp.send("Page.startScreencast", {
       format: "jpeg",
@@ -1467,12 +1470,13 @@ function createTabViewport(cdp, options) {
       maxWidth: options.surface.width,
       maxHeight: options.surface.height
     }).catch(() => {
-      streaming = false;
+      if (generation === streamGeneration) streaming = false;
     });
   };
   const stop = async () => {
     if (!streaming) return;
     streaming = false;
+    streamGeneration += 1;
     throttle.reset();
     await cdp.send("Page.stopScreencast").catch(() => {
     });
@@ -1490,7 +1494,12 @@ function createTabViewport(cdp, options) {
     async dispatchInput(events, stillPermitted) {
       for (const event of events) {
         if (stillPermitted && !stillPermitted()) return;
-        await dispatchOne(cdp, event).catch(() => {
+        if (event.type === "mouse_down") {
+          buttonMask |= BUTTON_MASK[event.button] ?? 1;
+        } else if (event.type === "mouse_up") {
+          buttonMask &= ~(BUTTON_MASK[event.button] ?? 1);
+        }
+        await dispatchOne(cdp, event, buttonMask).catch(() => {
         });
       }
     },
@@ -1519,13 +1528,16 @@ function decodeBase64(value) {
   return new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength);
 }
 var BUTTON_MASK = { left: 1, middle: 4, right: 2 };
-async function dispatchOne(cdp, event) {
+async function dispatchOne(cdp, event, buttons) {
   switch (event.type) {
     case "mouse_move":
       await cdp.send("Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: event.x,
         y: event.y,
+        // Carried on MOVES too: this is how Chromium tells a drag from a
+        // hover, and a drag with no buttons held moves nothing.
+        buttons,
         modifiers: event.modifiers ?? 0
       });
       return;
@@ -1536,7 +1548,7 @@ async function dispatchOne(cdp, event) {
         x: event.x,
         y: event.y,
         button: event.button,
-        buttons: BUTTON_MASK[event.button] ?? 1,
+        buttons,
         clickCount: event.clickCount ?? 1,
         modifiers: event.modifiers ?? 0
       });
@@ -1548,6 +1560,7 @@ async function dispatchOne(cdp, event) {
         y: event.y,
         deltaX: event.deltaX,
         deltaY: event.deltaY,
+        buttons,
         modifiers: event.modifiers ?? 0
       });
       return;
@@ -1646,6 +1659,16 @@ var ChromiumDriver = class {
    * encoding JPEGs for a tab nobody is looking at is work done for nobody.
    */
   viewports = /* @__PURE__ */ new Map();
+  /**
+   * Tab creations already under way, by tabId.
+   *
+   * `context.newPage()` is awaited, so without this two callers arriving
+   * together — a navigate and the pane opening, say — each open a page and the
+   * second overwrites the first in `tabs`. The result is an orphaned renderer
+   * and subscribers split across two pages, one of which nothing will ever
+   * drive again.
+   */
+  pendingTabs = /* @__PURE__ */ new Map();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -1729,7 +1752,7 @@ var ChromiumDriver = class {
     if (action.verb === "close_tab") {
       await page.close().catch(() => {
       });
-      this.tabs.delete(tabId);
+      await this.dropTab(tabId);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "activate_tab") {
@@ -2069,10 +2092,17 @@ var ChromiumDriver = class {
    */
   async viewport(tabId) {
     const key = tabId ?? DEFAULT_TAB;
-    const existing = this.viewports.get(key);
-    if (existing) return existing;
+    const live = this.tabs.get(key);
+    if (live && !live.page.isClosed()) {
+      const cached = this.viewports.get(key);
+      if (cached) return cached;
+    } else {
+      await this.dropViewport(key);
+    }
     const entry = tabId === void 0 || key === DEFAULT_TAB ? await this.getOrCreateTab(key) : this.tabs.get(key);
     if (!entry || entry.page.isClosed()) return null;
+    const raced = this.viewports.get(key);
+    if (raced) return raced;
     const created = (async () => {
       const cdp = await entry.page.cdp();
       if (!cdp) return null;
@@ -2218,10 +2248,41 @@ var ChromiumDriver = class {
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
-    const page = await this.context.newPage();
-    const entry = { page, navCounter: 0 };
-    this.tabs.set(tabId, entry);
-    return entry;
+    const inFlight = this.pendingTabs.get(tabId);
+    if (inFlight) return inFlight;
+    const creating = (async () => {
+      await this.dropTab(tabId);
+      const page = await this.context.newPage();
+      const entry = { page, navCounter: 0 };
+      this.tabs.set(tabId, entry);
+      return entry;
+    })();
+    this.pendingTabs.set(tabId, creating);
+    try {
+      return await creating;
+    } finally {
+      this.pendingTabs.delete(tabId);
+    }
+  }
+  /** Forget a tab and everything attached to it. */
+  async dropTab(tabId) {
+    this.tabs.delete(tabId);
+    await this.dropViewport(tabId);
+  }
+  /**
+   * Retire a tab's viewport.
+   *
+   * The cache is keyed by tabId but its contents belong to a PAGE. A closed or
+   * replaced tab left its viewport in place, still holding the dead page's CDP
+   * session: it published no more frames and swallowed the new page's input,
+   * so the recreated tab could be neither watched nor driven.
+   */
+  async dropViewport(tabId) {
+    const viewport = this.viewports.get(tabId);
+    if (!viewport) return;
+    this.viewports.delete(tabId);
+    await viewport.then((v) => v?.dispose()).catch(() => {
+    });
   }
 };
 

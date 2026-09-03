@@ -148,6 +148,16 @@ export class ChromiumDriver implements BrowserDriver {
    * encoding JPEGs for a tab nobody is looking at is work done for nobody.
    */
   private readonly viewports = new Map<string, Promise<TabViewport | null>>();
+  /**
+   * Tab creations already under way, by tabId.
+   *
+   * `context.newPage()` is awaited, so without this two callers arriving
+   * together — a navigate and the pane opening, say — each open a page and the
+   * second overwrites the first in `tabs`. The result is an orphaned renderer
+   * and subscribers split across two pages, one of which nothing will ever
+   * drive again.
+   */
+  private readonly pendingTabs = new Map<string, Promise<TabEntry>>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
@@ -257,7 +267,7 @@ export class ChromiumDriver implements BrowserDriver {
     // Tab lifecycle verbs do not produce an observation of their own tab.
     if (action.verb === "close_tab") {
       await page.close().catch(() => {});
-      this.tabs.delete(tabId);
+      await this.dropTab(tabId);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "activate_tab") {
@@ -700,8 +710,16 @@ export class ChromiumDriver implements BrowserDriver {
    */
   async viewport(tabId?: string): Promise<TabViewport | null> {
     const key = tabId ?? DEFAULT_TAB;
-    const existing = this.viewports.get(key);
-    if (existing) return existing;
+    const live = this.tabs.get(key);
+    if (live && !live.page.isClosed()) {
+      const cached = this.viewports.get(key);
+      if (cached) return cached;
+    } else {
+      // The page this viewport watched is gone. Retire it here as well as at
+      // `close_tab`, because a page can also close itself (`window.close()`,
+      // a crashed renderer) with nothing routed through the driver.
+      await this.dropViewport(key);
+    }
     // OPENS the tab when it does not exist yet, unlike every model-facing
     // verb but `navigate`. Someone opening the pane before the agent has done
     // anything should see the browser's blank startup page, not an error —
@@ -712,6 +730,11 @@ export class ChromiumDriver implements BrowserDriver {
         ? await this.getOrCreateTab(key)
         : this.tabs.get(key);
     if (!entry || entry.page.isClosed()) return null;
+    // Re-read after the await: a concurrent caller resuming from the same
+    // `getOrCreateTab` promise may already have attached one, and two
+    // screencasts on one page is two encoders for one picture.
+    const raced = this.viewports.get(key);
+    if (raced) return raced;
     const created = (async () => {
       const cdp = await entry.page.cdp();
       if (!cdp) return null;
@@ -877,9 +900,43 @@ export class ChromiumDriver implements BrowserDriver {
   private async getOrCreateTab(tabId: string): Promise<TabEntry> {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
-    const page = await this.context.newPage();
-    const entry: TabEntry = { page, navCounter: 0 };
-    this.tabs.set(tabId, entry);
-    return entry;
+    const inFlight = this.pendingTabs.get(tabId);
+    if (inFlight) return inFlight;
+    const creating = (async () => {
+      // Replacing a closed tab retires everything attached to the old page —
+      // its viewport is bound to a CDP session that will never speak again.
+      await this.dropTab(tabId);
+      const page = await this.context.newPage();
+      const entry: TabEntry = { page, navCounter: 0 };
+      this.tabs.set(tabId, entry);
+      return entry;
+    })();
+    this.pendingTabs.set(tabId, creating);
+    try {
+      return await creating;
+    } finally {
+      this.pendingTabs.delete(tabId);
+    }
+  }
+
+  /** Forget a tab and everything attached to it. */
+  private async dropTab(tabId: string): Promise<void> {
+    this.tabs.delete(tabId);
+    await this.dropViewport(tabId);
+  }
+
+  /**
+   * Retire a tab's viewport.
+   *
+   * The cache is keyed by tabId but its contents belong to a PAGE. A closed or
+   * replaced tab left its viewport in place, still holding the dead page's CDP
+   * session: it published no more frames and swallowed the new page's input,
+   * so the recreated tab could be neither watched nor driven.
+   */
+  private async dropViewport(tabId: string): Promise<void> {
+    const viewport = this.viewports.get(tabId);
+    if (!viewport) return;
+    this.viewports.delete(tabId);
+    await viewport.then((v) => v?.dispose()).catch(() => {});
   }
 }

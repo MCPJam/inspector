@@ -118,7 +118,18 @@ export function createTabViewport(
   const now = options.now ?? Date.now;
   const listeners = new Set<ViewportListener>();
   let streaming = false;
+  let streamGeneration = 0;
   let disposed = false;
+  /**
+   * Which mouse buttons are down RIGHT NOW.
+   *
+   * CDP's `buttons` is the mask of buttons still held, not the button this
+   * event is about — so sending the released button's bit on `mouseReleased`
+   * tells Chromium the drag is still going, and omitting the mask on
+   * `mouseMoved` tells it a drag is not happening at all. One is a page stuck
+   * mid-selection, the other is a drag that never moves anything.
+   */
+  let buttonMask = 0;
   let lastData: string | undefined;
   let seq = 0;
 
@@ -177,6 +188,12 @@ export function createTabViewport(
   const start = async () => {
     if (streaming || disposed) return;
     streaming = true;
+    // Which start/stop pair this is. A subscriber who leaves and comes
+    // straight back issues stop→start while the previous `startScreencast`
+    // is still in flight; without this its failure handler would clear
+    // `streaming` for the NEW stream and leave the watcher with a still
+    // picture and no way to ask again.
+    const generation = ++streamGeneration;
     // The first frame of a (re)started cast is the current picture, and must
     // not be dropped as a duplicate of the last frame of the previous one —
     // that frame is exactly what a newly arrived watcher is waiting for.
@@ -194,14 +211,16 @@ export function createTabViewport(
       .catch(() => {
         // Reported by falling back to "not streaming" rather than thrown: a
         // browser that cannot screencast should degrade to a still-image pane,
-        // not fail the session that asked to watch it.
-        streaming = false;
+        // not fail the session that asked to watch it. Only the CURRENT
+        // attempt may draw that conclusion.
+        if (generation === streamGeneration) streaming = false;
       });
   };
 
   const stop = async () => {
     if (!streaming) return;
     streaming = false;
+    streamGeneration += 1;
     throttle.reset();
     await cdp.send("Page.stopScreencast").catch(() => {});
   };
@@ -220,9 +239,16 @@ export function createTabViewport(
     async dispatchInput(events, stillPermitted) {
       for (const event of events) {
         if (stillPermitted && !stillPermitted()) return;
+        // Updated BEFORE dispatch so press and release both describe the state
+        // the page should see after this event.
+        if (event.type === "mouse_down") {
+          buttonMask |= BUTTON_MASK[event.button] ?? 1;
+        } else if (event.type === "mouse_up") {
+          buttonMask &= ~(BUTTON_MASK[event.button] ?? 1);
+        }
         // Each event under its own catch: one exotic key must not swallow the
         // click behind it.
-        await dispatchOne(cdp, event).catch(() => {});
+        await dispatchOne(cdp, event, buttonMask).catch(() => {});
       }
     },
     async dispose() {
@@ -272,6 +298,8 @@ const BUTTON_MASK: Record<string, number> = { left: 1, middle: 4, right: 2 };
 async function dispatchOne(
   cdp: CdpLike,
   event: ViewportInputEvent,
+  /** Buttons held after this event — see `buttonMask` at the call site. */
+  buttons: number,
 ): Promise<void> {
   switch (event.type) {
     case "mouse_move":
@@ -279,6 +307,9 @@ async function dispatchOne(
         type: "mouseMoved",
         x: event.x,
         y: event.y,
+        // Carried on MOVES too: this is how Chromium tells a drag from a
+        // hover, and a drag with no buttons held moves nothing.
+        buttons,
         modifiers: event.modifiers ?? 0,
       });
       return;
@@ -289,7 +320,7 @@ async function dispatchOne(
         x: event.x,
         y: event.y,
         button: event.button,
-        buttons: BUTTON_MASK[event.button] ?? 1,
+        buttons,
         clickCount: event.clickCount ?? 1,
         modifiers: event.modifiers ?? 0,
       });
@@ -301,6 +332,7 @@ async function dispatchOne(
         y: event.y,
         deltaX: event.deltaX,
         deltaY: event.deltaY,
+        buttons,
         modifiers: event.modifiers ?? 0,
       });
       return;
