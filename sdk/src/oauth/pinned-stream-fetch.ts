@@ -45,8 +45,13 @@ import type { IncomingMessage } from "node:http";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 
 import { OAuthProxyError } from "../oauth-proxy-error.js";
-import { isLoopbackOAuthUrl } from "./ssrf-guard.js";
-import { createPinnedLookup, resolvePinnedAddresses } from "./pinned-dns.js";
+import { isLoopbackOAuthUrl, isPrivateHost } from "./ssrf-guard.js";
+import {
+  createPinnedLookup,
+  resolveEgressPolicy,
+  resolvePinnedAddresses,
+} from "./pinned-dns.js";
+import type { EgressPolicy } from "./pinned-dns.js";
 
 export interface PinnedStreamingFetchOptions {
   /**
@@ -55,6 +60,18 @@ export interface PinnedStreamingFetchOptions {
    * at loopback, however many redirects it takes to try.
    */
   allowLoopback?: boolean;
+  /**
+   * Permit private destinations for the whole chain: loopback, RFC 1918,
+   * CGNAT, unique-local, and any hostname resolving to one. This is what the
+   * LOCAL inspector sets, where reaching a developer's own network is the
+   * product. It supersedes {@link allowLoopback} (loopback is a subset), and
+   * it never permits a link-local or cloud-metadata destination.
+   *
+   * Like the loopback opt-in it is a property of the CHAIN: the allowance is
+   * decided by where the chain started, so a public target cannot redirect its
+   * way onto the caller's LAN.
+   */
+  allowPrivateNetwork?: boolean;
   /**
    * Budget for DNS + connect + response headers, summed across every hop of
    * the redirect chain. An established body stream is outside it — see the
@@ -268,13 +285,13 @@ async function openPinnedHop(
   method: string,
   headers: Record<string, string>,
   body: Buffer | undefined,
-  hopAllowsLoopback: boolean,
+  policy: EgressPolicy,
   signal: AbortSignal,
   targetLabel: string,
 ): Promise<HopResult> {
   const pinnedAddresses = await resolvePinnedAddresses(
     targetUrl,
-    hopAllowsLoopback,
+    policy,
     signal,
     targetLabel,
   );
@@ -491,7 +508,12 @@ export function createPinnedStreamingFetch(
     // the opt-in set but derived per hop, a PUBLIC target could answer
     // `302 Location: http://127.0.0.1:11434/…` and have that hop dialled:
     // attacker-chosen path, plaintext, on the user's own machine.
-    if (options.allowLoopback !== true && isLoopbackOAuthUrl(startUrl)) {
+    const allowPrivateNetwork = options.allowPrivateNetwork === true;
+    if (
+      !allowPrivateNetwork &&
+      options.allowLoopback !== true &&
+      isLoopbackOAuthUrl(startUrl)
+    ) {
       throw new OAuthProxyError(
         400,
         `Refusing a connection to loopback address "${safeHost(startUrl)}".`,
@@ -499,6 +521,10 @@ export function createPinnedStreamingFetch(
     }
     const chainAllowsLoopback =
       options.allowLoopback === true && isLoopbackOAuthUrl(startUrl);
+    // The private allowance is likewise the chain's: a chain that started
+    // public may not redirect onto the caller's LAN even in local mode.
+    const chainAllowsPrivate =
+      allowPrivateNetwork && isPrivateHost(new URL(startUrl).hostname);
 
     // ONE deadline for the whole chain's DNS/connect/header phases. Handing
     // each hop the full budget would let a five-hop chain outlive five of them.
@@ -587,7 +613,14 @@ export function createPinnedStreamingFetch(
 
         const parsed = new URL(currentUrl);
         const hopIsLoopback = isLoopbackOAuthUrl(currentUrl);
-        if (parsed.protocol !== "https:" && !(chainAllowsLoopback && hopIsLoopback)) {
+        const hopIsPrivate = isPrivateHost(parsed.hostname);
+        // Plaintext is a property of the DESTINATION, not of the mode: a
+        // private hop on a private chain may be http, exactly as a loopback
+        // hop on a loopback chain may. A public host still must serve https.
+        const hopMayBePlaintext =
+          (chainAllowsLoopback && hopIsLoopback) ||
+          (chainAllowsPrivate && hopIsPrivate);
+        if (parsed.protocol !== "https:" && !hopMayBePlaintext) {
           throw new OAuthProxyError(
             400,
             // Name the fix. This refusal is about the SCHEME, and a message
@@ -602,7 +635,10 @@ export function createPinnedStreamingFetch(
           currentMethod,
           currentHeaders,
           currentBody,
-          chainAllowsLoopback && hopIsLoopback,
+          resolveEgressPolicy({
+            allowPrivateNetwork: chainAllowsPrivate,
+            startUrl,
+          }),
           socketController.signal,
           targetLabel,
         );

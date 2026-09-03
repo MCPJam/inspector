@@ -204,6 +204,30 @@ describe("oauth-proxy helpers", () => {
       executeOAuthProxy({ url: "https://attacker.example/oauth/token" })
     ).rejects.toMatchObject({
       status: 400,
+      message: expect.stringContaining(
+        "link-local or cloud-metadata address"
+      ),
+    });
+    expect(httpsRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mixed DNS answer whose private member is a LAN address", async () => {
+    dnsLookupMock.mockImplementation(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void
+      ) =>
+        callback(null, [
+          { address: "93.184.216.34", family: 4 },
+          { address: "10.0.0.5", family: 4 },
+        ])
+    );
+
+    await expect(
+      executeOAuthProxy({ url: "https://attacker.example/oauth/token" })
+    ).rejects.toMatchObject({
+      status: 400,
       message: expect.stringContaining("private/reserved IP address"),
     });
     expect(httpsRequestMock).not.toHaveBeenCalled();
@@ -241,12 +265,16 @@ describe("oauth-proxy helpers", () => {
   });
 
   it.each([
-    ["loopback", "http://127.0.0.1:8787/oauth/token"],
-    ["LAN", "http://192.168.1.10/oauth/token"],
-    ["link-local metadata service", "http://169.254.169.254/latest/meta-data"],
+    ["loopback", "http://127.0.0.1:8787/oauth/token", "private/reserved host"],
+    ["LAN", "http://192.168.1.10/oauth/token", "private/reserved host"],
+    [
+      "link-local metadata service",
+      "http://169.254.169.254/latest/meta-data",
+      "link-local or cloud-metadata host",
+    ],
   ])(
     "rejects a generic public request redirected to %s before connecting",
-    async (_destinationType, location) => {
+    async (_destinationType, location, expectedRefusal) => {
       queueMetadataResponses(httpsRequestMock, [
         {
           status: 302,
@@ -259,7 +287,7 @@ describe("oauth-proxy helpers", () => {
         executeOAuthProxy({ url: "https://auth.example.com/oauth/token" })
       ).rejects.toMatchObject({
         status: 400,
-        message: expect.stringContaining("private/reserved host"),
+        message: expect.stringContaining(expectedRefusal),
       });
       expect(httpsRequestMock).toHaveBeenCalledTimes(1);
       expect(httpRequestMock).not.toHaveBeenCalled();
@@ -1030,5 +1058,139 @@ describe("fetchPinnedPublicDocument guards", () => {
     await expect(
       fetchPinnedPublicDocument("https://127.0.0.1/meta.json")
     ).rejects.toThrow(/private or reserved/i);
+  });
+});
+
+/**
+ * The LOCAL inspector's policy. A developer running on their own machine can
+ * already reach their LAN with `curl`, so the address guard yields — but only
+ * for addresses that can host a real authorization server. The pin is still
+ * taken, and the never-dialable set still answers to nobody.
+ */
+describe("allowPrivateNetwork (local inspector)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requestWriteMocks.length = 0;
+  });
+
+  function resolveTo(address: string, family = 4) {
+    dnsLookupMock.mockImplementation(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void
+      ) => callback(null, [{ address, family }])
+    );
+  }
+
+  it("reaches a public hostname that resolves to loopback", async () => {
+    // The reported case: an authorization server named `auth.local` or
+    // `auth.localtest.me` that answers 127.0.0.1. Strict mode reads this as
+    // DNS rebinding; for a local developer it is just their own machine.
+    resolveTo("127.0.0.1");
+    queueMetadataResponses(httpRequestMock, [
+      { body: JSON.stringify({ issuer: "http://auth.localtest.me:9400" }) },
+    ]);
+
+    const result = await fetchOAuthMetadata(
+      "http://auth.localtest.me:9400/.well-known/oauth-authorization-server",
+      { allowPrivateNetwork: true }
+    );
+
+    expect(result).toMatchObject({
+      metadata: { issuer: "http://auth.localtest.me:9400" },
+    });
+    expect(httpRequestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("pins the resolved address it validated", async () => {
+    resolveTo("10.0.0.5");
+    queueMetadataResponses(httpRequestMock, [{ body: "{}" }]);
+
+    await fetchOAuthMetadata("http://mcp.corp.internal/.well-known/oauth", {
+      allowPrivateNetwork: true,
+    });
+
+    const options = httpRequestMock.mock.calls[0][1];
+    expect(options.lookup).toBeTypeOf("function");
+    const pinned = await new Promise((resolve) =>
+      options.lookup("mcp.corp.internal", { all: true }, (_e: unknown, a: unknown) =>
+        resolve(a)
+      )
+    );
+    expect(pinned).toEqual([{ address: "10.0.0.5", family: 4 }]);
+  });
+
+  it("reaches a LAN literal over plaintext", async () => {
+    resolveTo("192.168.1.10");
+    queueMetadataResponses(httpRequestMock, [{ body: "{}" }]);
+
+    await expect(
+      executeOAuthProxy({
+        url: "http://192.168.1.10:8080/oauth/token",
+        method: "POST",
+        allowPrivateNetwork: true,
+      })
+    ).resolves.toMatchObject({ status: 200 });
+  });
+
+  it.each([
+    ["cloud metadata", "http://169.254.169.254/latest/meta-data"],
+    ["Alibaba cloud metadata inside CGNAT", "http://100.100.100.200/latest"],
+    ["the unspecified address", "http://0.0.0.0:9000/oauth"],
+    ["IPv6 link-local", "http://[fe80::1]/oauth"],
+    ["AWS IPv6 metadata inside the ULA range", "http://[fd00:ec2::254]/latest"],
+  ])("still refuses %s", async (_label, url) => {
+    await expect(
+      executeOAuthProxy({ url, allowPrivateNetwork: true })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("link-local or cloud-metadata"),
+    });
+    expect(httpRequestMock).not.toHaveBeenCalled();
+    expect(httpsRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a name that resolves to cloud metadata", async () => {
+    resolveTo("169.254.169.254");
+
+    await expect(
+      executeOAuthProxy({
+        url: "http://harmless.example/oauth/token",
+        allowPrivateNetwork: true,
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("link-local or cloud-metadata address"),
+    });
+    expect(httpRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("is overridden by httpsOnly, so hosted mode cannot be talked out of it", async () => {
+    await expect(
+      executeOAuthProxy({
+        url: "https://127.0.0.1/oauth/token",
+        httpsOnly: true,
+        allowPrivateNetwork: true,
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("private/reserved host"),
+    });
+    expect(httpsRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps refusing private targets when it is not set", async () => {
+    resolveTo("127.0.0.1");
+
+    await expect(
+      fetchOAuthMetadata(
+        "http://auth.localtest.me:9400/.well-known/oauth-authorization-server"
+      )
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("private/reserved IP address"),
+    });
+    expect(httpRequestMock).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,8 @@ import {
   assertOutboundOAuthUrlAllowed,
   isDisallowedIpAddress,
   isLoopbackOAuthUrl,
+  isNeverDialableHost,
+  isNeverDialableIpAddress,
   isPrivateHost,
   OAuthOutboundUrlBlockedError,
 } from "../../src/oauth/ssrf-guard.js";
@@ -232,5 +234,96 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
     await advance(machine);
     const urls = inner.mock.calls.map((c) => c[0].url);
     expect(urls).toContain("http://127.0.0.1:8080/register");
+  });
+});
+
+/**
+ * The never-dialable set is the floor under `allowPrivateNetwork`: the
+ * addresses that are never a real OAuth endpoint, and that a local developer
+ * therefore gains nothing by reaching.
+ */
+describe("isNeverDialableIpAddress / isNeverDialableHost", () => {
+  it("flags link-local, metadata, unspecified, multicast and reserved", () => {
+    for (const ip of [
+      "169.254.169.254", // AWS/GCP/Azure IMDS
+      "169.254.170.2", // ECS task credentials
+      "100.100.100.200", // Alibaba IMDS, inside CGNAT
+      "0.0.0.0",
+      "0.1.2.3",
+      "224.0.0.1",
+      "255.255.255.255",
+      "fe80::1",
+      "ff02::1",
+      "::",
+      "100::1",
+      "fd00:ec2::254", // AWS IPv6 IMDS, inside the ULA range
+      "::ffff:169.254.169.254", // mapped form of the same
+      "64:ff9b::a9fe:a9fe", // NAT64-embedded link-local
+      "not-an-ip-at-all:::",
+    ]) {
+      expect(isNeverDialableIpAddress(ip), ip).toBe(true);
+    }
+  });
+
+  it("leaves the private ranges a developer legitimately uses alone", () => {
+    for (const ip of [
+      "127.0.0.1",
+      "::1",
+      "::ffff:127.0.0.1",
+      "10.0.0.5",
+      "192.168.1.10",
+      "172.16.5.5",
+      "100.64.0.1", // CGNAT, minus the Alibaba IMDS address
+      "fc00::1", // unique-local, minus the AWS IMDS address
+      "93.184.216.34",
+    ]) {
+      expect(isNeverDialableIpAddress(ip), ip).toBe(false);
+      // …and every one of them is still "private" to the strict classifier,
+      // which is what keeps hosted mode unchanged.
+      if (ip !== "93.184.216.34") expect(isPrivateHost(ip), ip).toBe(true);
+    }
+  });
+
+  it("names the metadata hostnames, which resolve nowhere useful to check", () => {
+    expect(isNeverDialableHost("metadata.google.internal")).toBe(true);
+    expect(isNeverDialableHost("localhost")).toBe(false);
+    expect(isNeverDialableHost("auth.local")).toBe(false);
+  });
+});
+
+describe("assertOutboundOAuthUrlAllowed with allowPrivateNetwork", () => {
+  it("permits loopback, LAN and localhost names", () => {
+    for (const url of [
+      "http://127.0.0.1:9000/.well-known/oauth-authorization-server",
+      "http://localhost:9000/register",
+      "http://auth.localhost:9000/register",
+      "http://10.0.0.5/token",
+      "http://[fc00::1]/token",
+    ]) {
+      expect(() =>
+        assertOutboundOAuthUrlAllowed(url, { allowPrivateNetwork: true }),
+      ).not.toThrow();
+    }
+  });
+
+  it("refuses the never-dialable set regardless of the opt-in", () => {
+    for (const url of [
+      "http://169.254.169.254/latest/meta-data",
+      "http://100.100.100.200/latest",
+      "http://metadata.google.internal/computeMetadata/v1/",
+      "http://0.0.0.0:9000/oauth",
+    ]) {
+      expect(() =>
+        assertOutboundOAuthUrlAllowed(url, { allowPrivateNetwork: true }),
+      ).toThrow(/link-local or cloud-metadata/i);
+    }
+  });
+
+  it("still refuses a non-http scheme", () => {
+    expect(() =>
+      assertOutboundOAuthUrlAllowed("file:///etc/passwd", {
+        allowPrivateNetwork: true,
+      }),
+    ).toThrow(/http\(s\)/i);
   });
 });

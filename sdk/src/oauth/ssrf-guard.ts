@@ -144,6 +144,122 @@ export function isPrivateHost(hostname: string): boolean {
 }
 
 /**
+ * The subset of {@link isDisallowedIpAddress} that stays refused even for a
+ * caller that has opted into private networks (`allowPrivateNetwork`, the
+ * LOCAL inspector's default).
+ *
+ * The reasoning behind the split: a developer running the inspector on their
+ * own machine can already reach their LAN with `curl`, so refusing 10/8 or a
+ * name that answers 127.0.0.1 buys nothing and blocks the product's whole
+ * purpose. These addresses are different — none of them is ever a legitimate
+ * OAuth destination, and each is a known credential-bearing or
+ * traffic-amplifying target:
+ *
+ *   - `0/8` — "this host". Reachable as loopback on Linux/macOS, so it is an
+ *     alias that bypasses an operator's mental model of what is exposed.
+ *   - `169.254/16` / `fe80::/10` — link-local, which is where every cloud
+ *     instance-metadata service lives (`169.254.169.254` on AWS/GCP/Azure/
+ *     DigitalOcean, `169.254.170.2` for ECS task credentials). A developer
+ *     running this on a cloud VM is exactly who this protects.
+ *   - `100.100.100.200` — Alibaba Cloud's IMDS, which sits INSIDE the CGNAT
+ *     range that corporate VPNs legitimately use, so it needs naming
+ *     individually rather than blocking all of 100.64/10.
+ *   - `fd00:ec2::254` — the same problem in IPv6: AWS's IMDS inside the ULA
+ *     range that IPv6 LANs legitimately use.
+ *   - multicast / reserved / discard — not unicast destinations at all.
+ */
+export function isNeverDialableIpAddress(ip: string): boolean {
+  const addr = ip
+    .replace(/^\[|\]$/g, "")
+    .trim()
+    .toLowerCase();
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) return isNeverDialableIpv4(addr);
+  if (addr.includes(":")) return isNeverDialableIpv6(addr);
+  return false;
+}
+
+function isNeverDialableIpv4(ip: string): boolean {
+  const parts = ip.split(".").map((o) => parseInt(o, 10));
+  if (
+    parts.length !== 4 ||
+    parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
+  ) {
+    return true; // malformed → reject
+  }
+  const [a, b, c, d] = parts;
+  if (a === 0) return true; // 0.0.0.0/8 "this host"
+  if (a === 169 && b === 254) return true; // 169.254/16 link-local (cloud IMDS)
+  // Alibaba Cloud IMDS, inside the CGNAT range this policy otherwise allows.
+  if (a === 100 && b === 100 && c === 100 && d === 200) return true;
+  if (a >= 224 && a <= 239) return true; // 224/4 multicast
+  if (a >= 240) return true; // 240/4 reserved (incl. 255.255.255.255)
+  return false;
+}
+
+function isNeverDialableEmbeddedIpv4(h6: number, h7: number): boolean {
+  return isNeverDialableIpv4(
+    `${h6 >> 8}.${h6 & 0xff}.${h7 >> 8}.${h7 & 0xff}`,
+  );
+}
+
+function isNeverDialableIpv6(input: string): boolean {
+  const h = ipv6ToHextets(input);
+  if (!h) return true; // unparseable → reject
+  const topZero = h.slice(0, 6).every((x) => x === 0);
+  // `::` is the unspecified address; `::1` is loopback and stays dialable.
+  // Both must be decided HERE: the IPv4-compatible branch at the bottom would
+  // otherwise read `::1` as the embedded address `0.0.0.1` and refuse it.
+  if (topZero && h[6] === 0 && (h[7] === 0 || h[7] === 1)) return h[7] === 0;
+  if (h[0] >= 0xfe80 && h[0] <= 0xfebf) return true; // fe80::/10 link-local
+  if (h[0] >> 8 === 0xff) return true; // ff00::/8 multicast
+  if (h[0] === 0x0100 && h[1] === 0 && h[2] === 0 && h[3] === 0) return true; // 100::/64 discard
+  // AWS IPv6 IMDS, inside the ULA range this policy otherwise allows.
+  if (
+    h[0] === 0xfd00 &&
+    h[1] === 0x0ec2 &&
+    h[2] === 0 &&
+    h[3] === 0 &&
+    h[4] === 0 &&
+    h[5] === 0 &&
+    h[6] === 0 &&
+    h[7] === 0x0254
+  ) {
+    return true;
+  }
+  // NAT64 and IPv4-mapped/compatible: the embedded IPv4 decides, so a
+  // translator cannot carry a link-local address in through the back door.
+  if (h[0] === 0x0064 && h[1] === 0xff9b) {
+    return isNeverDialableEmbeddedIpv4(h[6], h[7]);
+  }
+  if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0) {
+    if (h[5] === 0xffff || h[5] === 0)
+      return isNeverDialableEmbeddedIpv4(h[6], h[7]);
+  }
+  return false;
+}
+
+/**
+ * Hostnames that resolve to instance metadata by convention. `isNeverDialable`
+ * is an ADDRESS check, and the pinned resolver applies it to every answer, so
+ * this is belt-and-braces for the pre-flight (browser-safe) path where no
+ * resolution happens.
+ */
+const NEVER_DIALABLE_HOSTNAMES = new Set([
+  "metadata.google.internal",
+  "metadata.goog",
+]);
+
+/**
+ * True for a host that stays refused even under `allowPrivateNetwork`.
+ * See {@link isNeverDialableIpAddress} for what qualifies and why.
+ */
+export function isNeverDialableHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (NEVER_DIALABLE_HOSTNAMES.has(host)) return true;
+  return isNeverDialableIpAddress(host);
+}
+
+/**
  * True for an IPv4-mapped/compatible IPv6 literal whose embedded address is
  * loopback (127.0.0.0/8), e.g. `::ffff:127.0.0.1` or `::ffff:7f00:1`. Used so
  * the loopback opt-in treats a mapped-loopback host consistently with a plain
@@ -196,12 +312,23 @@ export class OAuthOutboundUrlBlockedError extends Error {
 
 /**
  * Refuse an outbound OAuth metadata fetch to a private/reserved destination
- * before it runs. `allowLoopback` (local-dev opt-in) carves out loopback hosts
- * only — it never relaxes the guard for a LAN/link-local/reserved address.
+ * before it runs.
+ *
+ * Two opt-ins, deliberately different in width:
+ *
+ *   - `allowLoopback` carves out loopback hosts ONLY, and callers derive it
+ *     per-target from the user-configured server URL. It never relaxes the
+ *     guard for a LAN/link-local/reserved address. This is what a HOSTED
+ *     deployment uses when it has an exact-origin reason to permit one.
+ *   - `allowPrivateNetwork` is the LOCAL inspector's default. It permits every
+ *     private destination — loopback, RFC 1918, CGNAT, unique-local, and any
+ *     hostname that resolves to one — because a developer's own machine can
+ *     already reach them. It still refuses {@link isNeverDialableHost}: the
+ *     link-local/metadata addresses that are never a real OAuth endpoint.
  */
 export function assertOutboundOAuthUrlAllowed(
   rawUrl: string,
-  options: { allowLoopback?: boolean } = {},
+  options: { allowLoopback?: boolean; allowPrivateNetwork?: boolean } = {},
 ): URL {
   let url: URL;
   try {
@@ -223,6 +350,21 @@ export function assertOutboundOAuthUrlAllowed(
   }
 
   const host = url.hostname;
+
+  // The never-dialable set is checked FIRST and answers to no opt-in, so a
+  // caller cannot reach cloud metadata by asking for private networks.
+  if (isNeverDialableHost(host)) {
+    throw new OAuthOutboundUrlBlockedError(
+      rawUrl,
+      "private-host",
+      `Refusing outbound OAuth fetch to link-local or cloud-metadata host "${host}"`,
+    );
+  }
+
+  if (options.allowPrivateNetwork === true) {
+    return url;
+  }
+
   if (isLoopbackHost(host) || isMappedLoopbackHost(host)) {
     if (options.allowLoopback === true) {
       return url;

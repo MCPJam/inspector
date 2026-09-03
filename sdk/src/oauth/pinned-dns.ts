@@ -26,11 +26,61 @@ import { lookup as dnsLookupCb } from "node:dns";
 import type { LookupFunction } from "node:net";
 
 import { OAuthProxyError } from "../oauth-proxy-error.js";
-import { isDisallowedIpAddress, isLoopbackOAuthUrl, isPrivateHost } from "./ssrf-guard.js";
+import {
+  isDisallowedIpAddress,
+  isLoopbackOAuthUrl,
+  isNeverDialableHost,
+  isNeverDialableIpAddress,
+  isPrivateHost,
+} from "./ssrf-guard.js";
 
 export interface PinnedAddress {
   address: string;
   family: number;
+}
+
+/**
+ * What a chain is allowed to reach. Computed ONCE per chain by
+ * {@link resolveEgressPolicy} and handed to every hop, so the three buffered
+ * entry points and the streaming transport cannot drift apart on the question
+ * of what "local" means.
+ */
+export interface EgressPolicy {
+  /**
+   * The chain started at a loopback target and the caller opted in, so
+   * loopback answers are permitted (and, for a loopback target, required).
+   */
+  allowLoopbackFlow: boolean;
+  /**
+   * The caller is a local inspector: every private destination is permitted,
+   * and only {@link isNeverDialableHost} stays refused.
+   */
+  allowPrivateNetwork: boolean;
+}
+
+/**
+ * Derive the chain policy from a caller's options.
+ *
+ * `httpsOnly` is the hosted switch and always wins: a hosted deployment fetches
+ * on OUR infrastructure, where a private destination means our own network, so
+ * neither opt-in survives it.
+ */
+export function resolveEgressPolicy(options: {
+  httpsOnly?: boolean;
+  allowPrivateNetwork?: boolean;
+  startUrl: string;
+}): EgressPolicy {
+  if (options.httpsOnly === true) {
+    return { allowLoopbackFlow: false, allowPrivateNetwork: false };
+  }
+  const allowPrivateNetwork = options.allowPrivateNetwork === true;
+  return {
+    // Private-network callers get loopback as a subset, so a chain that starts
+    // on a private host is not held to the loopback-only rule below.
+    allowLoopbackFlow:
+      !allowPrivateNetwork && isLoopbackOAuthUrl(options.startUrl),
+    allowPrivateNetwork,
+  };
 }
 
 function isLoopbackAddress(address: string): boolean {
@@ -45,20 +95,33 @@ function isLoopbackAddress(address: string): boolean {
  * `null` when the host is a numeric literal: there is no name to re-resolve,
  * so there is nothing a rebind could change.
  *
- * `allowLoopbackFlow` is narrow on purpose — it permits a loopback TARGET, and
- * then still requires every resolved address to be loopback, so a name that
- * looks local but answers publicly is refused rather than dialled.
+ * `policy.allowLoopbackFlow` is narrow on purpose — it permits a loopback
+ * TARGET, and then still requires every resolved address to be loopback, so a
+ * name that looks local but answers publicly is refused rather than dialled.
+ *
+ * `policy.allowPrivateNetwork` is the local inspector's wider allowance: any
+ * private answer is fine, so the rebinding question becomes "did it land on
+ * something never-dialable", not "did it land off loopback". Resolution is
+ * still done ONCE and still pinned, so the address that was classified is the
+ * address that gets dialled.
  */
 export async function resolvePinnedAddresses(
   targetUrl: URL,
-  allowLoopbackFlow: boolean,
+  policy: EgressPolicy,
   signal: AbortSignal | undefined,
   targetLabel = "OAuth metadata target",
 ): Promise<PinnedAddress[] | null> {
   const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
 
-  if (isPrivateHost(targetUrl.hostname)) {
-    if (!(allowLoopbackFlow && targetIsLoopback)) {
+  if (isNeverDialableHost(targetUrl.hostname)) {
+    throw new OAuthProxyError(
+      400,
+      `${targetLabel} is a link-local or cloud-metadata host (${targetUrl.hostname})`,
+    );
+  }
+
+  if (!policy.allowPrivateNetwork && isPrivateHost(targetUrl.hostname)) {
+    if (!(policy.allowLoopbackFlow && targetIsLoopback)) {
       throw new OAuthProxyError(
         400,
         `${targetLabel} is a private/reserved host (${targetUrl.hostname})`,
@@ -117,6 +180,17 @@ export async function resolvePinnedAddresses(
   }
 
   for (const { address } of addresses) {
+    if (isNeverDialableIpAddress(address)) {
+      throw new OAuthProxyError(
+        400,
+        `${targetLabel} resolves to a link-local or cloud-metadata address (${address})`,
+      );
+    }
+    if (policy.allowPrivateNetwork) {
+      // Every remaining answer is dialable for a local caller; the pin below
+      // still binds the socket to exactly what was classified here.
+      continue;
+    }
     if (targetIsLoopback) {
       if (!isLoopbackAddress(address)) {
         throw new OAuthProxyError(

@@ -16,6 +16,13 @@ export interface OAuthProxyRequest {
   body?: unknown;
   headers?: Record<string, string>;
   httpsOnly?: boolean;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local, and
+   * any hostname resolving to one). The LOCAL inspector sets this; hosted
+   * callers never do, and `httpsOnly` overrides it if both are set.
+   * Link-local and cloud-metadata addresses stay refused either way.
+   */
+  allowPrivateNetwork?: boolean;
   /** Redirect handling. httpsOnly always forces "manual" (cannot be
    * weakened); otherwise an explicit value is honored and omission preserves
    * the historical "follow". */
@@ -40,7 +47,6 @@ export interface OAuthProxyResponse {
 // stays here. Re-exported to preserve the public `isDisallowedIpAddress` symbol.
 import {
   isDisallowedIpAddress,
-  isLoopbackOAuthUrl,
   isPrivateHost,
 } from "./oauth/ssrf-guard.js";
 // The DNS half — resolve once, classify, pin — lives in its own node-only
@@ -48,8 +54,10 @@ import {
 // this exact implementation rather than forking a second one.
 import {
   createPinnedLookup,
+  resolveEgressPolicy,
   resolvePinnedAddresses,
 } from "./oauth/pinned-dns.js";
+import type { EgressPolicy } from "./oauth/pinned-dns.js";
 export { isDisallowedIpAddress };
 
 interface ValidatedUrl {
@@ -87,19 +95,35 @@ function parseAndValidateUrl(url: string, httpsOnly = false): URL {
   return targetUrl;
 }
 
+/**
+ * Options for the destination checks. The boolean form is the historical
+ * `httpsOnly` positional and stays supported so existing callers (including
+ * consumers of the published package) need no change.
+ */
+export interface ValidateUrlOptions {
+  httpsOnly?: boolean;
+  allowPrivateNetwork?: boolean;
+}
+
+function toValidateOptions(
+  options: boolean | ValidateUrlOptions | undefined,
+): ValidateUrlOptions {
+  if (typeof options === "boolean") return { httpsOnly: options };
+  return options ?? {};
+}
+
 export async function validateUrl(
   url: string,
-  httpsOnly = false,
+  options: boolean | ValidateUrlOptions = false,
 ): Promise<ValidatedUrl> {
+  const { httpsOnly = false, allowPrivateNetwork } = toValidateOptions(options);
   const targetUrl = parseAndValidateUrl(url, httpsOnly);
-  const allowLoopbackFlow =
-    !httpsOnly && isLoopbackOAuthUrl(targetUrl.toString());
-  await resolvePinnedAddresses(
-    targetUrl,
-    allowLoopbackFlow,
-    undefined,
-    "OAuth target",
-  );
+  const policy = resolveEgressPolicy({
+    httpsOnly,
+    allowPrivateNetwork,
+    startUrl: targetUrl.toString(),
+  });
+  await resolvePinnedAddresses(targetUrl, policy, undefined, "OAuth target");
 
   return { url: targetUrl };
 }
@@ -454,12 +478,12 @@ function updateRequestForRedirect(
 async function requestPinnedOAuthHop(
   targetUrl: URL,
   requestInit: PreparedOAuthRequest,
-  allowLoopbackFlow: boolean,
+  policy: EgressPolicy,
   signal: AbortSignal | undefined
 ): Promise<RawPinnedOAuthResponse> {
   const pinnedAddresses = await resolvePinnedAddresses(
     targetUrl,
-    allowLoopbackFlow,
+    policy,
     signal,
     "OAuth proxy target"
   );
@@ -504,8 +528,11 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
   signal: AbortSignal | undefined;
 }> {
   const initialUrl = parseAndValidateUrl(req.url, req.httpsOnly);
-  const allowLoopbackFlow =
-    !req.httpsOnly && isLoopbackOAuthUrl(initialUrl.toString());
+  const policy = resolveEgressPolicy({
+    httpsOnly: req.httpsOnly,
+    allowPrivateNetwork: req.allowPrivateNetwork,
+    startUrl: initialUrl.toString(),
+  });
   const redirectMode = req.httpsOnly ? "manual" : req.redirect ?? "follow";
   const signal = requestTimeoutSignal(req.timeoutMs, req.signal);
   let currentUrl = initialUrl;
@@ -516,7 +543,7 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
       const response = await requestPinnedOAuthHop(
         currentUrl,
         requestInit,
-        allowLoopbackFlow,
+        policy,
         signal
       );
 
@@ -830,12 +857,12 @@ interface RawOAuthMetadataResponse {
 
 async function requestPinnedOAuthMetadata(
   targetUrl: URL,
-  allowLoopbackFlow: boolean,
+  policy: EgressPolicy,
   signal: AbortSignal | undefined
 ): Promise<RawOAuthMetadataResponse> {
   const pinnedAddresses = await resolvePinnedAddresses(
     targetUrl,
-    allowLoopbackFlow,
+    policy,
     signal
   );
   const transport = targetUrl.protocol === "https:" ? https : http;
@@ -911,7 +938,7 @@ async function requestPinnedOAuthMetadata(
 
 export async function fetchOAuthMetadata(
   url: string,
-  httpsOnly = false,
+  options: boolean | ValidateUrlOptions = false,
   timeoutMs?: number
 ): Promise<
   | {
@@ -921,9 +948,13 @@ export async function fetchOAuthMetadata(
     }
   | { status: number; statusText: string }
 > {
+  const { httpsOnly = false, allowPrivateNetwork } = toValidateOptions(options);
   const metadataUrl = parseAndValidateUrl(url, httpsOnly);
-  const allowLoopbackFlow =
-    !httpsOnly && isLoopbackOAuthUrl(metadataUrl.toString());
+  const policy = resolveEgressPolicy({
+    httpsOnly,
+    allowPrivateNetwork,
+    startUrl: metadataUrl.toString(),
+  });
   const signal = requestTimeoutSignal(timeoutMs);
   let currentUrl = metadataUrl;
   let response: RawOAuthMetadataResponse | undefined;
@@ -943,11 +974,7 @@ export async function fetchOAuthMetadata(
     }
 
     try {
-      response = await requestPinnedOAuthMetadata(
-        currentUrl,
-        allowLoopbackFlow,
-        signal
-      );
+      response = await requestPinnedOAuthMetadata(currentUrl, policy, signal);
     } catch (error) {
       if (signal?.aborted) {
         throw new OAuthProxyError(
