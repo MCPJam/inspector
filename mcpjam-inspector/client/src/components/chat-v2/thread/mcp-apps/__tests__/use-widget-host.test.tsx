@@ -12,7 +12,11 @@ import { useWidgetHost } from "../use-widget-host";
 
 // Pin HOSTED_MODE off so the listResourceTemplates guard is exercised purely via
 // the web-managed-servers context (the security-sensitive boundary concern).
-vi.mock("@/lib/config", () => ({ HOSTED_MODE: false, SANDBOX_ORIGIN: "" }));
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+  SANDBOX_ORIGIN: "",
+  VIEW_MOUNT_MODE: "write",
+}));
 
 // Isolate the hook from the api/network layer.
 const listResourceTemplatesMock = vi.fn();
