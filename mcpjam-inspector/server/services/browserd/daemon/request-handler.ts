@@ -344,7 +344,11 @@ export class BrowserdRequestHandler {
     // somebody else's page.
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
-    await viewport.dispatchInput(args.events, () => stillTheirs() === undefined);
+    await viewport.dispatchInput(
+      args.events,
+      () => stillTheirs() === undefined,
+      args.holder,
+    );
     return { ok: true };
   }
 

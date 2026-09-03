@@ -420,6 +420,35 @@ describe("createTabViewport — the mask does not outlive the hand that set it",
     expect(masks(sent).at(-1)).toBe(1);
   });
 
+  it("does not hand the next person a button the last one never released", async () => {
+    // The handoff that is NOT interrupted, which is the ordinary one: the
+    // outgoing holder presses, the lease changes hands, and the release never
+    // arrives because their pane stopped sending. Nothing was refused, so the
+    // refusal path above never runs — and the bit sits in the mask until
+    // somebody happens to press and release that same button. The next
+    // holder's first hover reaches Chromium as a drag over a page they have
+    // not touched.
+    const { cdp, sent } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    await viewport.dispatchInput(
+      [{ type: "mouse_down", x: 1, y: 1, button: "left" }],
+      undefined,
+      "rail-1",
+    );
+    expect(masks(sent)).toEqual([1]);
+
+    await viewport.dispatchInput(
+      [{ type: "mouse_move", x: 5, y: 5 }],
+      undefined,
+      "rail-2",
+    );
+
+    expect(masks(sent).at(-1)).toBe(0);
+  });
+
   it("dispatches nothing once it has been disposed", async () => {
     // The earlier version of this test asserted on a BRAND-NEW viewport, whose
     // mask starts at 0 whether or not dispose clears anything — it passed with

@@ -569,7 +569,11 @@ var BrowserdRequestHandler = class {
     if (!viewport) return { ok: false, error: "unknown_tab" };
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
-    await viewport.dispatchInput(args.events, () => stillTheirs() === void 0);
+    await viewport.dispatchInput(
+      args.events,
+      () => stillTheirs() === void 0,
+      args.holder
+    );
     return { ok: true };
   }
   /** May this watcher see frames right now? */
@@ -1426,6 +1430,7 @@ function createTabViewport(cdp, options) {
   let disposed = false;
   let buttonMask = 0;
   let inputChain = Promise.resolve();
+  let inputHolder;
   let lastData;
   let seq = 0;
   const publish = (frame) => {
@@ -1499,8 +1504,10 @@ function createTabViewport(cdp, options) {
       };
     },
     subscriberCount: () => listeners.size,
-    async dispatchInput(events, stillPermitted) {
-      const run = inputChain.then(() => dispatchBatch(events, stillPermitted));
+    async dispatchInput(events, stillPermitted, holder) {
+      const run = inputChain.then(
+        () => dispatchBatch(events, stillPermitted, holder)
+      );
       inputChain = run.catch(() => {
       });
       return run;
@@ -1512,7 +1519,11 @@ function createTabViewport(cdp, options) {
       await stop();
     }
   };
-  async function dispatchBatch(events, stillPermitted) {
+  async function dispatchBatch(events, stillPermitted, holder) {
+    if (holder !== inputHolder) {
+      buttonMask = 0;
+      inputHolder = holder;
+    }
     if (disposed) return;
     for (const event of events) {
       if (stillPermitted && !stillPermitted()) {

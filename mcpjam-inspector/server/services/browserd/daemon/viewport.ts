@@ -113,10 +113,15 @@ export interface TabViewport {
    * batch: 64 keystrokes and pointer moves can span a handoff, and the events
    * after it belong to whoever holds the lease now, not to whoever sent them.
    * Omitted by callers that have no lease to consult (tests, fakes).
+   *
+   * `holder` names whose input this is. A change of hand drops the button
+   * mask, because the release for anything the last hand was holding is never
+   * coming — their pane stopped sending the moment they lost the lease.
    */
   dispatchInput(
     events: readonly ViewportInputEvent[],
     stillPermitted?: () => boolean,
+    holder?: string,
   ): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -154,6 +159,8 @@ export function createTabViewport(
    * sequence; this is what makes it one.
    */
   let inputChain: Promise<void> = Promise.resolve();
+  /** Whose input the current `buttonMask` describes. */
+  let inputHolder: string | undefined;
   let lastData: string | undefined;
   let seq = 0;
 
@@ -260,8 +267,10 @@ export function createTabViewport(
       };
     },
     subscriberCount: () => listeners.size,
-    async dispatchInput(events, stillPermitted) {
-      const run = inputChain.then(() => dispatchBatch(events, stillPermitted));
+    async dispatchInput(events, stillPermitted, holder) {
+      const run = inputChain.then(() =>
+        dispatchBatch(events, stillPermitted, holder),
+      );
       // The chain must never carry a rejection forward, or one failed batch
       // would refuse every batch after it for the life of the viewport.
       inputChain = run.catch(() => {});
@@ -278,7 +287,19 @@ export function createTabViewport(
   async function dispatchBatch(
     events: readonly ViewportInputEvent[],
     stillPermitted?: () => boolean,
+    holder?: string,
   ): Promise<void> {
+    if (holder !== inputHolder) {
+      // A different hand. The refusal path below only fires when a batch is
+      // interrupted, and the common handoff is not interrupted at all: the
+      // outgoing holder's `mouse_down` completes cleanly under a lease they
+      // still had, and the `mouse_up` that would clear it is never sent —
+      // their pane stopped the moment they lost the browser. The bit would
+      // then sit here until someone happened to press and release that same
+      // button, so the next holder's first hover reaches Chromium as a drag.
+      buttonMask = 0;
+      inputHolder = holder;
+    }
     // Re-asked HERE, not at the call, because a batch that waited its turn in
     // the chain may have been queued under a lease that has since changed
     // hands — and a disposed viewport's page is gone: its tab was closed,
