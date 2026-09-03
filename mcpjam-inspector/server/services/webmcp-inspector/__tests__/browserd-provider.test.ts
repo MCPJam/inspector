@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserdWebMcpProvider } from "../browserd-provider";
 import { WebMcpBridge } from "../../browserd/daemon/webmcp-bridge";
-import type { BrowserSessionHandle } from "../../browserd/browser-session";
+import type { HostedBrowserSessionHandle } from "../../browserd/browser-session";
 import type { BrowserCommand } from "../../browserd/protocol";
 import type {
   ProviderToolDescriptor,
@@ -9,6 +9,7 @@ import type {
 } from "../provider";
 
 const HANDLE = {
+  engine: "hosted" as const,
   sessionId: "sessions_1",
   computerId: "computers_1",
   bootId: "boot-1",
@@ -17,7 +18,7 @@ const HANDLE = {
   streamPassword: "pw",
   contextMode: "persistent",
   reused: true,
-} as BrowserSessionHandle;
+} as HostedBrowserSessionHandle;
 
 type Reply = { status: string; result?: any; bootId: string };
 

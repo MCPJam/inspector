@@ -155,6 +155,19 @@ export interface BrowserCommand {
   tabId?: string;
   source: BrowserCommandSource;
   action: BrowserAction;
+  /**
+   * WHO is sending this, when the source is `manual`.
+   *
+   * `manual` is the one source the handoff lease does not block — it is the
+   * person's own command, and blocking it would mean handing someone the
+   * browser and then refusing to let them use it. But an unauthenticated
+   * `manual` is a bypass: anything that can reach the daemon could drive (and
+   * observe) a browser a person is signing into simply by claiming to be them.
+   * So a `manual` command must NAME the lease holder it is acting as, and the
+   * daemon checks that name against the live lease. Unused for every other
+   * source, which the lease blocks outright.
+   */
+  holder?: string;
 }
 
 /** The daemon's result for one executed command. Opaque to the queue. */
@@ -184,6 +197,18 @@ export interface BrowserCommandResult {
    * with this flag to `409 stale_observation`.
    */
   staleObservation?: boolean;
+  /**
+   * Set when a person took the browser AFTER this command was admitted — at
+   * the front of its queue, or between the act and the capture that would have
+   * shown its effect.
+   *
+   * The handler's 423 covers commands that arrive while a lease is held; it
+   * cannot cover the ones already inside. Without this, a screenshot requested
+   * a moment before someone typed their password is taken a moment after. The
+   * HTTP layer maps this to the same `423` the gate returns, so a caller reads
+   * one refusal whichever side of the queue it happened on.
+   */
+  leaseBlocked?: boolean;
 }
 
 /**
@@ -240,3 +265,92 @@ export const DEFAULT_COMMAND_QUEUE_OPTIONS: Required<
   perQueueDepthCap: 8,
   maxCommandsPerBoot: 50_000,
 };
+
+/**
+ * Every error code browserd answers with, in one place.
+ *
+ * These began as bare prose inside the driver and the HTTP layer, which meant
+ * a caller wanting to branch on "the element is gone" had to match a message
+ * — and a reworded message silently changed behaviour somewhere else. The
+ * codes are the stable half of an error; the text after the colon is the
+ * human half and may say anything.
+ *
+ * THE WIRE FORM IS `"<code>: <detail>"`. A result's `error` starts with the
+ * code; `parseBrowserdErrorCode` reads it back. Codes that ride the HTTP
+ * envelope (`{error: "lease_held"}`) carry no detail and are listed here too,
+ * so the two vocabularies cannot drift into naming the same condition twice.
+ */
+export const BROWSERD_ERROR_CODES = [
+  // --- transport / control plane (HTTP envelope) -------------------------
+  "cross_origin_forbidden",
+  "invalid_json",
+  "invalid_command",
+  "invalid_lease_action",
+  "holder_required",
+  "command_unknown_boot",
+  "command_expired",
+  "daemon_at_capacity",
+  "stale_observation",
+  /** A person holds the browser; nothing ran and nothing was observed. */
+  "lease_held",
+  /** Their lease ran out mid-flow; still blocked until they hand it back. */
+  "lease_parked",
+  /** A `manual` command arrived while nobody holds the lease. */
+  "lease_required",
+  /** A `manual` command named a holder who is not the one holding it. */
+  "lease_held_by_other",
+
+  // --- driver (result `error`, `"<code>: <detail>"`) ---------------------
+  "unknown_tab",
+  "tab_exists",
+  "unknown_selector",
+  "target_not_found",
+  "act_failed",
+  "out_of_viewport",
+  "unsupported_target",
+  /** An `a11yRef` whose node has left the page — distinct from not found. */
+  "stale_ref",
+  "webmcp_unsupported",
+  "webmcp_error",
+  /** A dialog is open and waiting for the person who holds the lease. */
+  "dialog_pending",
+  /** A download exceeded the per-file or per-session cap and was cancelled. */
+  "download_over_cap",
+
+  // --- session establishment (never reaches the daemon) ------------------
+  /** This engine needs a Chromium that is not installed on this machine. */
+  "chromium_not_installed",
+  /** Another live process owns this profile directory. */
+  "profile_in_use",
+  /** A result's URL is outside an unattended run's origin allowlist. */
+  "origin_not_allowed",
+] as const;
+
+export type BrowserdErrorCode = (typeof BROWSERD_ERROR_CODES)[number];
+
+const BROWSERD_ERROR_CODE_SET: ReadonlySet<string> = new Set(
+  BROWSERD_ERROR_CODES,
+);
+
+/** Compose the wire form. The detail is free text and may contain colons. */
+export function formatBrowserdError(
+  code: BrowserdErrorCode,
+  detail?: string,
+): string {
+  return detail ? `${code}: ${detail}` : code;
+}
+
+/**
+ * Read the code back off a result's `error`, or undefined when the message
+ * predates this vocabulary (or is a bare Chromium/Playwright string that
+ * reached the caller unclassified).
+ */
+export function parseBrowserdErrorCode(
+  error: string | undefined,
+): BrowserdErrorCode | undefined {
+  if (!error) return undefined;
+  const head = error.split(":", 1)[0]?.trim() ?? "";
+  return BROWSERD_ERROR_CODE_SET.has(head)
+    ? (head as BrowserdErrorCode)
+    : undefined;
+}
