@@ -228,9 +228,9 @@ export class ChromiumDriver implements BrowserDriver {
       case "act":
         return this.act(tabId, action, permit);
       case "webmcp_invoke":
-        return this.webmcpInvoke(tabId, action);
+        return this.webmcpInvoke(tabId, action, permit);
       case "webmcp_cancel":
-        return this.webmcpCancel(tabId, action);
+        return this.webmcpCancel(tabId, action, permit);
     }
   }
 
@@ -263,7 +263,7 @@ export class ChromiumDriver implements BrowserDriver {
     if (action.verb === "activate_tab") {
       await page.bringToFront();
       const frame = await this.snapshot(page);
-      return this.observation(tabId, entry, { url: frame.url }, frame);
+      return this.observation(tabId, entry, { url: frame.url }, frame, permit);
     }
 
     try {
@@ -276,7 +276,12 @@ export class ChromiumDriver implements BrowserDriver {
       const kind = /timeout|not found|no element|strict mode/i.test(message)
         ? "target_not_found"
         : "act_failed";
-      const frame = await this.snapshot(page).catch(() => null);
+      // Same rule as the success path: the act may have failed, but the page
+      // it failed on can still be someone's now. `permit()` decides whether we
+      // may say anything about it beyond "it failed".
+      const frame = permit()
+        ? await this.snapshot(page).catch(() => null)
+        : null;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -311,6 +316,8 @@ export class ChromiumDriver implements BrowserDriver {
         entry,
         { url: frame.url, ...(screenshot ? { screenshot } : {}) },
         frame,
+        permit,
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
       ),
       settled,
     };
@@ -408,6 +415,7 @@ export class ChromiumDriver implements BrowserDriver {
   private async webmcpInvoke(
     tabId: string,
     action: Extract<BrowserAction, { kind: "webmcp_invoke" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -437,6 +445,8 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           { invocationId, result: capped, ...(omitted ? { omitted } : {}) },
           frame,
+          permit,
+          "the page's tool ran, but a person took control of this browser before its result could be read; re-run it after they hand it back",
         ),
       };
     } catch (error) {
@@ -453,6 +463,7 @@ export class ChromiumDriver implements BrowserDriver {
   private async webmcpCancel(
     tabId: string,
     action: Extract<BrowserAction, { kind: "webmcp_cancel" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -461,6 +472,14 @@ export class ChromiumDriver implements BrowserDriver {
     const bridge = await entry.page.webmcp();
     if (!bridge) {
       return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    // Cancelling reaches into the page, and `bridge.webmcp()` above was an
+    // await — so the permit is re-asked here even though this verb returns no
+    // observation of its own.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the cancellation could be delivered",
+      );
     }
     const known = await bridge.cancel(action.invocationId);
     return { ok: true, output: { cancelled: known } };
@@ -488,7 +507,14 @@ export class ChromiumDriver implements BrowserDriver {
     }
     const frame = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { url: frame.url }, frame),
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url },
+        frame,
+        permit,
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
+      ),
       settled,
     };
   }
@@ -510,13 +536,19 @@ export class ChromiumDriver implements BrowserDriver {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame);
+        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
       }
       case "dom": {
         // The token is computed from the SAME snapshot returned as output, so
         // they cannot disagree.
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
+        return this.observation(
+          tabId,
+          entry,
+          { dom: frame.domSignal },
+          frame,
+          permit,
+        );
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
@@ -550,6 +582,7 @@ export class ChromiumDriver implements BrowserDriver {
             ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
           },
           frame,
+          permit,
         );
       }
       case "console": {
@@ -563,6 +596,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           { console: entries, ...(omitted > 0 ? { omitted } : {}) },
           frame,
+          permit,
         );
       }
       case "webmcp_tools": {
@@ -577,6 +611,7 @@ export class ChromiumDriver implements BrowserDriver {
             entry,
             { webmcpSupported: false, tools: [] },
             frame,
+            permit,
           );
         }
         return this.observation(
@@ -584,6 +619,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           { webmcpSupported: true, tools: bridge.list() },
           frame,
+          permit,
         );
       }
     }
@@ -619,15 +655,23 @@ export class ChromiumDriver implements BrowserDriver {
       // route change moves the URL while `domSignal` holds, and would otherwise
       // bind a new-route token to an old-route image (P1).
       if (before.url === after.url && before.domSignal === after.domSignal) {
-        return this.observation(tabId, entry, { screenshot }, after);
+        return this.observation(tabId, entry, { screenshot }, after, permit);
       }
     }
     // Would not stabilise within budget: hand back the frame but flag it unsettled
     // so nothing pins an act to a possibly-stale image.
+    // The one capture in this method that is NOT inside the loop, and so was
+    // the one the per-attempt check above could not cover: a handoff landing
+    // during the final attempt would otherwise be photographed here.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
     const screenshot = await entry.page.screenshotBase64();
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { screenshot }, after),
+      ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false,
     };
   }
@@ -703,15 +747,37 @@ export class ChromiumDriver implements BrowserDriver {
    * in, never re-read here — so the token can never describe a different state
    * than the returned output (P1).
    */
+  /**
+   * The ONE funnel every page-derived result leaves through — which is why the
+   * last permit check lives here rather than at each caller.
+   *
+   * Every observation is read from the page across at least one `await`, and a
+   * check made before that await can only say the lease was free when the read
+   * STARTED. Asking again here, on the result's way out, is what makes "while a
+   * person holds the browser the agent observes nothing" true rather than
+   * nearly true: whatever was read is dropped instead of returned. Callers
+   * keep their own earlier checks — those refuse cheaply, before the read —
+   * and pass the prose that fits what already happened.
+   */
   private observation(
     tabId: string,
     entry: TabEntry,
     output: Record<string, unknown>,
     frame: FrameSnapshot,
+    permit: () => boolean,
+    blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed",
   ): BrowserCommandResult {
+    if (!permit()) return this.leaseBlockedResult(blockedDetail);
     return {
       ok: true,
-      output: this.withHandoffNote(output),
+      // WHERE this came from, on every observation without exception. The
+      // unattended origin allowlist is enforced against the result's `url`
+      // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
+      // carrying none fails that check OPEN — a screenshot of an off-allowlist
+      // page would reach the model unfiltered. Stamped at the funnel so no
+      // future observation mode can forget it. An explicit `url` in `output`
+      // still wins; today it is the same value.
+      output: this.withHandoffNote({ url: frame.url, ...output }),
       stateToken: this.tokenFor(tabId, entry, frame),
     };
   }

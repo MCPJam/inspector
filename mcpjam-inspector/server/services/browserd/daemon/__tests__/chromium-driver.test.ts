@@ -65,14 +65,20 @@ describe("ChromiumDriver — observe", () => {
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
 
     const shot = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
-    expect(shot.output).toEqual({ screenshot: "BASE64PNG" });
+    // `url` rides on EVERY observation, screenshots included: the unattended
+    // origin allowlist is enforced against it, and a result without one would
+    // pass that check by default.
+    expect(shot.output).toEqual({
+      url: "https://x.test/",
+      screenshot: "BASE64PNG",
+    });
     expect(shot.stateToken).toBeDefined();
 
     const url = await driver.execute(cmd({ kind: "observe", mode: "url" }));
     expect(url.output).toEqual({ url: "https://x.test/" });
 
     const dom = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
-    expect(dom.output).toEqual({ dom: "0BODY>1DIV" });
+    expect(dom.output).toEqual({ url: "https://x.test/", dom: "0BODY>1DIV" });
   });
 
   it("fails an observe on a tab that was never navigated", async () => {
@@ -230,7 +236,10 @@ describe("ChromiumDriver — screenshot token binds to the captured frame (P1)",
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
-    expect(res.output).toEqual({ screenshot: "BASE64PNG" });
+    expect(res.output).toEqual({
+      url: "https://x.test/",
+      screenshot: "BASE64PNG",
+    });
     expect(res.stateToken!.domHash).toBe(shortHash("0BODY>1MAIN")); // matches the frame
     expect(res.settled).toBeUndefined(); // stable capture, not flagged
   });
@@ -846,5 +855,132 @@ describe("ChromiumDriver — a handoff that happens MID-command (W4/L6)", () => 
 
     expect(result.ok).toBe(true);
     expect(page.calls.goto).toEqual(["https://example.com/login"]);
+  });
+});
+
+/**
+ * The gap the earlier mid-command tests left: those pin the checks the driver
+ * made BEFORE a read. These pin the ones it makes after, because every read
+ * crosses an `await` and a handoff can land inside it. A result that is built
+ * from the page must not be handed back by a driver that no longer has the
+ * right to look at it.
+ */
+describe("ChromiumDriver — a handoff that lands DURING the read", () => {
+  it("drops an a11y tree read while the lease was being taken", async () => {
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://example.com/",
+      a11y: { role: "WebArea", name: "private", children: [] },
+      // The person clicks "Take control" while the tree is being walked.
+      onA11y: () => lease.acquire("rail-1", 60_000),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+
+    const result = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    expect(result.ok).toBe(false);
+    expect(result.leaseBlocked).toBe(true);
+    expect(result.output).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+
+  it("drops a console read the same way", async () => {
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://example.com/",
+      console: [{ type: "log", text: "SECRET-IN-RING", at: 1 }],
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+    // The ring is copied first, then the frame is read; take the browser in
+    // between, which is the moment the copy is already in hand.
+    const original = page.domStructureSignal.bind(page);
+    page.domStructureSignal = async () => {
+      lease.acquire("rail-1", 60_000);
+      return original();
+    };
+
+    const result = await driver.execute(
+      cmd({ kind: "observe", mode: "console" }),
+    );
+
+    expect(result.leaseBlocked).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("SECRET-IN-RING");
+  });
+
+  it("drops a WebMCP tool result that arrived after the handoff", async () => {
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://example.com/",
+      onWebmcp: () => lease.acquire("rail-1", 60_000),
+      webmcp: {
+        isSupported: () => true,
+        list: () => [],
+        async invoke() {
+          return { invocationId: "inv-1", output: "ACCOUNT-BALANCE" };
+        },
+        async cancel() {
+          return true;
+        },
+      } as never,
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+
+    const result = await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "read_account", input: {} }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.leaseBlocked).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("ACCOUNT-BALANCE");
+  });
+
+  it("does not take the unstable-page FALLBACK screenshot after a handoff", async () => {
+    const lease = new HandoffLease();
+    let shot = 0;
+    const page = fakePage({
+      url: "https://example.com/",
+      // Never settles: every capture moves the DOM, so both attempts fail the
+      // before/after comparison and the method reaches its fallback capture —
+      // the one shot that used to be taken with no permit check at all.
+      onScreenshot: ({ setDom }) => {
+        shot += 1;
+        setDom(`0BODY>${shot}DIV`);
+        if (shot === 2) lease.acquire("rail-1", 60_000);
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+
+    const result = await driver.execute(
+      cmd({ kind: "observe", mode: "screenshot" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.leaseBlocked).toBe(true);
+    // Two attempts, and NOT the third: the fallback capture never happened.
+    expect(page.calls.shots).toBe(2);
+    expect(result.output).toBeUndefined();
+  });
+
+  it("says the ACT ran even though its result is withheld", async () => {
+    const lease = new HandoffLease();
+    const page = fakePage({ url: "https://example.com/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+
+    page.onAct = () => lease.acquire("rail-1", 60_000);
+    const result = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [1, 1] } }),
+    );
+
+    expect(result.error).toContain("the action ran");
   });
 });

@@ -386,8 +386,11 @@ describe("BrowserdRequestHandler — handoff lease gate (W4)", () => {
     });
     const res = await handler.handle(commandFrom("manual", "panel-a"));
     expect(res.status).toBe(423);
+    // The ENVELOPE carries the bare code — that is what the client codec
+    // matches on — and the prose rides alongside as `detail`.
     expect(res.body).toMatchObject({
-      error: "lease_held: taken",
+      error: "lease_held",
+      detail: "lease_held: taken",
       holder: "panel-a",
     });
   });
@@ -569,16 +572,25 @@ describe("BrowserdRequestHandler — watching and touching the page", () => {
         };
       },
       subscriberCount: () => listeners.length,
-      async dispatchInput(events: unknown[]) {
-        dispatched.push(events);
+      // Mirrors the real viewport: the permit is re-asked BEFORE each event,
+      // so a batch that spans a handoff stops at the boundary instead of
+      // delivering the rest under the new holder.
+      async dispatchInput(events: unknown[], stillPermitted?: () => boolean) {
+        for (const event of events) {
+          if (stillPermitted && !stillPermitted()) return;
+          dispatched.push([event]);
+        }
       },
       async dispose() {},
     };
-    return { viewport, listeners, dispatched };
+    const emit = (frame: unknown) => {
+      for (const listener of [...listeners]) listener(frame);
+    };
+    return { viewport, listeners, dispatched, emit };
   }
 
   function handlerWith(lease?: HandoffLease) {
-    const { viewport, listeners, dispatched } = makeViewport();
+    const { viewport, listeners, dispatched, emit } = makeViewport();
     const handler = new BrowserdRequestHandler({
       queue: { submit: vi.fn() },
       driver: {
@@ -589,7 +601,7 @@ describe("BrowserdRequestHandler — watching and touching the page", () => {
       token: "t",
       ...(lease ? { lease } : {}),
     });
-    return { handler, listeners, dispatched };
+    return { handler, listeners, dispatched, emit };
   }
 
   it("lets anyone watch while nobody holds the browser", async () => {
@@ -641,7 +653,7 @@ describe("BrowserdRequestHandler — watching and touching the page", () => {
       }),
     ).toMatchObject({ ok: false, error: "lease_held_by_other" });
 
-    expect(dispatched).toHaveLength(1);
+    expect(dispatched).toEqual([[{ type: "text", text: "hunter2" }]]);
   });
 
   it("refuses input when nobody has taken control", async () => {
@@ -655,5 +667,125 @@ describe("BrowserdRequestHandler — watching and touching the page", () => {
       }),
     ).toMatchObject({ ok: false, error: "lease_required" });
     expect(dispatched).toHaveLength(0);
+  });
+});
+
+/**
+ * The setup-time checks above answer "who may start watching". These answer
+ * "who may KEEP watching" — the lease moves, and a subscription taken while it
+ * was free must not outlive that.
+ */
+describe("BrowserdRequestHandler — the lease moves mid-stream", () => {
+  function makeViewport(afterEvent?: (delivered: number) => void) {
+    const listeners: Array<(f: unknown) => void> = [];
+    const viewport = {
+      subscribe(listener: (f: unknown) => void) {
+        listeners.push(listener);
+        return () => {
+          const i = listeners.indexOf(listener);
+          if (i >= 0) listeners.splice(i, 1);
+        };
+      },
+      subscriberCount: () => listeners.length,
+      async dispatchInput(events: unknown[], stillPermitted?: () => boolean) {
+        for (const event of events) {
+          if (stillPermitted && !stillPermitted()) return;
+          delivered.push(event);
+          afterEvent?.(delivered.length);
+        }
+      },
+      async dispose() {},
+    };
+    const delivered: unknown[] = [];
+    return {
+      viewport,
+      delivered,
+      emit: (frame: unknown) => {
+        for (const listener of [...listeners]) listener(frame);
+      },
+      subscriberCount: () => listeners.length,
+    };
+  }
+
+  function handlerWith(
+    lease: HandoffLease,
+    afterEvent?: (delivered: number) => void,
+  ) {
+    const v = makeViewport(afterEvent);
+    const handler = new BrowserdRequestHandler({
+      queue: { submit: vi.fn() },
+      driver: {
+        health: async () => ({ ok: true }),
+        viewport: async () => v.viewport as never,
+      },
+      bootId: "boot-1",
+      token: "t",
+      lease,
+    });
+    return { handler, ...v };
+  }
+
+  it("stops frames, unsubscribes and says why when someone else takes control", async () => {
+    const lease = new HandoffLease();
+    const { handler, emit, subscriberCount } = handlerWith(lease);
+    const frames: unknown[] = [];
+    const revoked: string[] = [];
+
+    const sub = await handler.subscribeFrames({
+      listener: (f) => frames.push(f),
+      onRevoked: (reason) => revoked.push(reason),
+    });
+    expect(sub.ok).toBe(true);
+
+    emit({ seq: 1 });
+    expect(frames).toHaveLength(1);
+
+    // Somebody takes the browser. The socket that was watching a free page is
+    // now a stranger looking over their shoulder.
+    lease.acquire("rail-1", 60_000);
+    emit({ seq: 2 });
+
+    expect(frames).toHaveLength(1);
+    expect(revoked).toEqual(["lease_held"]);
+    expect(subscriberCount()).toBe(0);
+
+    // Idempotent: further frames cannot revive it, and revoke fires once.
+    emit({ seq: 3 });
+    expect(frames).toHaveLength(1);
+    expect(revoked).toHaveLength(1);
+  });
+
+  it("keeps showing the HOLDER their own frames", async () => {
+    const lease = new HandoffLease();
+    const { handler, emit } = handlerWith(lease);
+    const frames: unknown[] = [];
+
+    lease.acquire("rail-1", 60_000);
+    await handler.subscribeFrames({
+      holder: "rail-1",
+      listener: (f) => frames.push(f),
+    });
+
+    emit({ seq: 1 });
+    emit({ seq: 2 });
+
+    expect(frames).toHaveLength(2);
+  });
+
+  it("stops a keystroke batch at the moment control changes", async () => {
+    const lease = new HandoffLease();
+    // The person hands the browser back (or their lease lapses) halfway
+    // through a batch that is already in flight.
+    const { handler, delivered } = handlerWith(lease, (count) => {
+      if (count === 2) lease.release("rail-1");
+    });
+    lease.acquire("rail-1", 60_000);
+
+    const events = ["h", "u", "n", "t"].map((text) => ({ type: "text", text }));
+    const result = await handler.dispatchInput({ holder: "rail-1", events });
+
+    expect(result).toEqual({ ok: true });
+    // Two, not four: the tail belongs to whoever holds the browser now.
+    expect(delivered).toHaveLength(2);
   });
 });

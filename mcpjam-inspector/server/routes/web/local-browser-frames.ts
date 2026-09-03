@@ -105,7 +105,26 @@ export function createLocalBrowserFramesWsHandler(
       }
     }
 
+    // One socket's teardown state, shared by every exit path below. A close
+    // can land WHILE `subscribeFrames` is still awaiting, in which case
+    // `onClose` runs before `unsubscribe` exists — `closed` is what lets the
+    // late setup undo itself instead of leaving a viewport listener attached
+    // to a socket nobody is reading.
     let unsubscribe: (() => void) | undefined;
+    let registered: { close(): void } | undefined;
+    let closed = false;
+    const detach = () => {
+      closed = true;
+      unsubscribe?.();
+      unsubscribe = undefined;
+      if (registered) {
+        // Removed by IDENTITY, so a reconnect cannot retain the dead
+        // `WSContext` of the connection it replaced: without this the set grows
+        // by one closure per reconnect for the life of the process.
+        liveSockets.delete(registered);
+        registered = undefined;
+      }
+    };
 
     return {
       async onOpen(_event, ws: WSContext) {
@@ -125,6 +144,18 @@ export function createLocalBrowserFramesWsHandler(
 
         const subscription = await session.handler.subscribeFrames({
           ...(holder ? { holder } : {}),
+          onRevoked: (reason) => {
+            // The lease moved to somebody else while this pane was watching.
+            // Say so and close rather than going quiet: a frozen picture reads
+            // as a broken stream, and the pane can offer "wait for them to
+            // hand it back" only if it knows that is what happened.
+            try {
+              ws.close(CLOSE_UNAUTHORIZED, reason);
+            } catch {
+              // Already gone.
+            }
+            detach();
+          },
           listener: (frame: ViewportFrame) => {
             // JSON rather than the binary header the WebMCP stream uses. This
             // socket is loopback on the user's own machine, where the base64
@@ -146,8 +177,17 @@ export function createLocalBrowserFramesWsHandler(
           ws.close(CLOSE_UNAUTHORIZED, subscription.error);
           return;
         }
+        // Both races the await above opens: the client hung up, or shutdown
+        // swept `liveSockets` while we were subscribing. Either way this socket
+        // must not be registered — it would survive `server.close()`.
+        if (closed || shuttingDown) {
+          subscription.unsubscribe();
+          if (!closed) ws.close(CLOSE_UNAVAILABLE, "The inspector is shutting down.");
+          return;
+        }
         unsubscribe = subscription.unsubscribe;
-        liveSockets.add({ close: () => ws.close(CLOSE_UNAVAILABLE, "closed") });
+        registered = { close: () => ws.close(CLOSE_UNAVAILABLE, "closed") };
+        liveSockets.add(registered);
         // Watching IS using it: a person with the pane open must not have the
         // browser reaped out from under them. Frames themselves never tick the
         // clock — a CSS spinner would keep a browser alive forever.
@@ -167,15 +207,13 @@ export function createLocalBrowserFramesWsHandler(
         }
       },
       onClose() {
-        unsubscribe?.();
-        unsubscribe = undefined;
+        detach();
       },
       onError(error: unknown) {
         logger.warn("[local-browser-frames] socket error", {
           error: error instanceof Error ? error.message : String(error),
         });
-        unsubscribe?.();
-        unsubscribe = undefined;
+        detach();
       },
     };
   });

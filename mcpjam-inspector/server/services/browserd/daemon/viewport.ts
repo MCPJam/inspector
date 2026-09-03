@@ -94,8 +94,18 @@ export interface TabViewport {
    */
   subscribe(listener: ViewportListener): () => void;
   subscriberCount(): number;
-  /** Forward a person's input. Refused by the caller unless they hold the lease. */
-  dispatchInput(events: readonly ViewportInputEvent[]): Promise<void>;
+  /**
+   * Forward a person's input.
+   *
+   * `stillPermitted` is re-asked before every event rather than once for the
+   * batch: 64 keystrokes and pointer moves can span a handoff, and the events
+   * after it belong to whoever holds the lease now, not to whoever sent them.
+   * Omitted by callers that have no lease to consult (tests, fakes).
+   */
+  dispatchInput(
+    events: readonly ViewportInputEvent[],
+    stillPermitted?: () => boolean,
+  ): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -207,8 +217,9 @@ export function createTabViewport(
       };
     },
     subscriberCount: () => listeners.size,
-    async dispatchInput(events) {
+    async dispatchInput(events, stillPermitted) {
       for (const event of events) {
+        if (stillPermitted && !stillPermitted()) return;
         // Each event under its own catch: one exotic key must not swallow the
         // click behind it.
         await dispatchOne(cdp, event).catch(() => {});

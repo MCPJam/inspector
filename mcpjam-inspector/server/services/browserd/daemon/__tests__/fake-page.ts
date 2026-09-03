@@ -77,6 +77,14 @@ export function fakePage(init: {
   hangNetwork?: boolean;
   /** Called inside screenshotBase64 — used to simulate a shift mid-capture. */
   onScreenshot?: (page: { setDom: (d: string) => void; setUrl: (u: string) => void }) => void;
+  /**
+   * Called inside `a11ySnapshot` / `webmcp`, before the driver builds its
+   * result. Same purpose as `onScreenshot`: they are the only way to open the
+   * window in which a person takes the browser WHILE a read is in flight,
+   * which is the window every permit re-check exists to close.
+   */
+  onA11y?: () => void;
+  onWebmcp?: () => void;
   /** Make a targeted act fail, as a missing element would. */
   actError?: Error;
   a11y?: unknown;
@@ -142,6 +150,7 @@ export function fakePage(init: {
     async selectOption(selector, value) { act(`select:${selector}:${value}`); },
     async a11ySnapshot(rootSelector?: string) {
       calls.a11yRoots.push(rootSelector);
+      init.onA11y?.();
       // Mirrors the live adapter: an unmatched root selector resolves null,
       // which is what the driver must turn into `unknown_selector`.
       if (rootSelector !== undefined) {
@@ -155,7 +164,10 @@ export function fakePage(init: {
       while (keep > 0 && consoleEntries[keep - 1].at >= since) keep -= 1;
       consoleEntries.length = keep;
     },
-    async webmcp() { return (init.webmcp ?? null) as never; },
+    async webmcp() {
+      init.onWebmcp?.();
+      return (init.webmcp ?? null) as never;
+    },
     async cdp() {
       return page.cdpSession === undefined ? defaultCdp : page.cdpSession;
     },

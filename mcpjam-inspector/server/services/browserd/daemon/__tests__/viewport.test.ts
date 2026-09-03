@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createTabViewport, type ViewportFrame } from "../viewport";
 import type { CdpLike } from "../webmcp-bridge";
 

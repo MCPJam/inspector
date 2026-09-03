@@ -16,9 +16,10 @@
  * `DaemonResponse`, so it is unit-testable without a socket. The thin Node-http
  * adapter that reads the body and writes the response lives in `server.ts`.
  */
-import type {
-  BrowserCommand,
-  BrowserCommandOutcome,
+import {
+  parseBrowserdErrorCode,
+  type BrowserCommand,
+  type BrowserCommandOutcome,
 } from "../protocol";
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
@@ -244,6 +245,12 @@ export class BrowserdRequestHandler {
     tabId?: string;
     holder?: string;
     listener: (frame: ViewportFrame) => void;
+    /**
+     * Called once if the subscription is revoked mid-stream because the lease
+     * moved. The transport is expected to close the connection: a watcher who
+     * has lost the right to watch should be told, not silently starved.
+     */
+    onRevoked?: (reason: LeaseRefusal) => void;
   }): Promise<
     { ok: true; unsubscribe: () => void } | { ok: false; error: string }
   > {
@@ -251,7 +258,44 @@ export class BrowserdRequestHandler {
     if (refusal) return { ok: false, error: refusal };
     const viewport = await this.driver.viewport?.(args.tabId);
     if (!viewport) return { ok: false, error: "unknown_tab" };
-    return { ok: true, unsubscribe: viewport.subscribe(args.listener) };
+    // Re-checked after the await: resolving the viewport can open a tab and
+    // attach a CDP session, and a handoff during that is exactly the case this
+    // whole method exists to refuse.
+    const afterAwait = this.watcherRefusal(args.holder);
+    if (afterAwait) return { ok: false, error: afterAwait };
+
+    // ...and re-checked on EVERY frame. `watcherRefusal` at setup only says
+    // who was allowed to watch when the socket opened; a pane that subscribed
+    // while the lease was free would otherwise keep receiving frames for the
+    // whole time somebody else is typing into the page. This is the only check
+    // that tracks the lease rather than sampling it once.
+    let live = true;
+    let unsubscribe: (() => void) | undefined;
+    const revoke = (reason: LeaseRefusal) => {
+      if (!live) return;
+      live = false;
+      // May be called from inside `subscribe` itself, before the returned
+      // function exists; the `live` flag holds the line until it does.
+      unsubscribe?.();
+      args.onRevoked?.(reason);
+    };
+    unsubscribe = viewport.subscribe((frame) => {
+      if (!live) return;
+      const lost = this.watcherRefusal(args.holder);
+      if (lost) {
+        revoke(lost);
+        return;
+      }
+      args.listener(frame);
+    });
+    if (!live) unsubscribe();
+    return {
+      ok: true,
+      unsubscribe: () => {
+        live = false;
+        unsubscribe?.();
+      },
+    };
   }
 
   /**
@@ -267,14 +311,22 @@ export class BrowserdRequestHandler {
     holder: string;
     events: readonly ViewportInputEvent[];
   }): Promise<{ ok: true } | { ok: false; error: string }> {
-    const refusal = leaseRefusalFor(this.lease.state(), {
-      source: "manual",
-      holder: args.holder,
-    });
+    const stillTheirs = () =>
+      leaseRefusalFor(this.lease.state(), {
+        source: "manual",
+        holder: args.holder,
+      });
+    const refusal = stillTheirs();
     if (refusal) return { ok: false, error: refusal };
     const viewport = await this.driver.viewport?.(args.tabId);
     if (!viewport) return { ok: false, error: "unknown_tab" };
-    await viewport.dispatchInput(args.events);
+    // Re-asked after the await and then before EVERY event: a batch is up to
+    // 64 keystrokes and pointer moves, and a lease that expires or is handed
+    // on midway through must not let the previous holder keep typing into
+    // somebody else's page.
+    const afterAwait = stillTheirs();
+    if (afterAwait) return { ok: false, error: afterAwait };
+    await viewport.dispatchInput(args.events, () => stillTheirs() === undefined);
     return { ok: true };
   }
 
@@ -368,10 +420,20 @@ export class BrowserdRequestHandler {
         // whichever side of the queue the handoff happened on.
         if (outcome.result.leaseBlocked) {
           const lease = this.lease.state();
+          // The ENVELOPE carries the bare code, because that is what the client
+          // codec matches on: a `lease_parked: <prose>` forwarded whole reads
+          // to it as an unknown refusal and gets reported as `held`, which is
+          // the wrong word for "the browser is parked mid-handoff". The prose
+          // is not lost — it rides along as `detail`.
+          const code =
+            parseBrowserdErrorCode(outcome.result.error) ?? "lease_held";
           return {
             status: 423,
             body: {
-              error: outcome.result.error ?? "lease_held",
+              error: code,
+              ...(outcome.result.error && outcome.result.error !== code
+                ? { detail: outcome.result.error }
+                : {}),
               ...(lease.state === "free"
                 ? {}
                 : { holder: lease.holder, holderKind: lease.holderKind }),

@@ -144,3 +144,42 @@ describe("guardLease — the refusal a queued command gets at DEQUEUE", () => {
     expect(executor).toHaveBeenCalledOnce();
   });
 });
+
+describe("guardStaleness — the lease, re-asked after the state read", () => {
+  it("refuses when a handoff lands while the current token is being read", async () => {
+    const lease = new HandoffLease();
+    const driver = fakeDriver({
+      // Reading the token touches the page. `guardLease` upstream can only
+      // vouch for the moment before this began — so the guard re-asks after.
+      currentStateToken: vi.fn(async () => {
+        lease.acquire("rail-1", 60_000);
+        return token();
+      }),
+    });
+
+    const result = await guardStaleness(driver, lease)(actCmd(token()));
+
+    expect(result.ok).toBe(false);
+    expect(result.leaseBlocked).toBe(true);
+    expect(driver.execute).not.toHaveBeenCalled();
+  });
+
+  it("still runs the holder's own act", async () => {
+    const lease = new HandoffLease();
+    lease.acquire("rail-1", 60_000);
+    const driver = fakeDriver();
+
+    const result = await guardStaleness(
+      driver,
+      lease,
+    )(actCmd(token(), { source: "manual", holder: "rail-1" }));
+
+    expect(result).toEqual({ ok: true, output: "ran" });
+  });
+
+  it("is a no-op without a lease, as a fake-driver test composes it", async () => {
+    const driver = fakeDriver();
+    const result = await guardStaleness(driver)(actCmd(token()));
+    expect(result).toEqual({ ok: true, output: "ran" });
+  });
+});

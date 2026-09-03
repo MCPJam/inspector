@@ -69,6 +69,11 @@ var BROWSERD_ERROR_CODE_SET = new Set(
 function formatBrowserdError(code, detail) {
   return detail ? `${code}: ${detail}` : code;
 }
+function parseBrowserdErrorCode(error) {
+  if (!error) return void 0;
+  const head = error.split(":", 1)[0]?.trim() ?? "";
+  return BROWSERD_ERROR_CODE_SET.has(head) ? head : void 0;
+}
 
 // server/services/browserd/daemon/command-queue.ts
 function queueKeyFor(command) {
@@ -510,7 +515,33 @@ var BrowserdRequestHandler = class {
     if (refusal) return { ok: false, error: refusal };
     const viewport = await this.driver.viewport?.(args.tabId);
     if (!viewport) return { ok: false, error: "unknown_tab" };
-    return { ok: true, unsubscribe: viewport.subscribe(args.listener) };
+    const afterAwait = this.watcherRefusal(args.holder);
+    if (afterAwait) return { ok: false, error: afterAwait };
+    let live = true;
+    let unsubscribe;
+    const revoke = (reason) => {
+      if (!live) return;
+      live = false;
+      unsubscribe?.();
+      args.onRevoked?.(reason);
+    };
+    unsubscribe = viewport.subscribe((frame) => {
+      if (!live) return;
+      const lost = this.watcherRefusal(args.holder);
+      if (lost) {
+        revoke(lost);
+        return;
+      }
+      args.listener(frame);
+    });
+    if (!live) unsubscribe();
+    return {
+      ok: true,
+      unsubscribe: () => {
+        live = false;
+        unsubscribe?.();
+      }
+    };
   }
   /**
    * Forward a person's input.
@@ -521,14 +552,17 @@ var BrowserdRequestHandler = class {
    * reached the endpoint".
    */
   async dispatchInput(args) {
-    const refusal = leaseRefusalFor(this.lease.state(), {
+    const stillTheirs = () => leaseRefusalFor(this.lease.state(), {
       source: "manual",
       holder: args.holder
     });
+    const refusal = stillTheirs();
     if (refusal) return { ok: false, error: refusal };
     const viewport = await this.driver.viewport?.(args.tabId);
     if (!viewport) return { ok: false, error: "unknown_tab" };
-    await viewport.dispatchInput(args.events);
+    const afterAwait = stillTheirs();
+    if (afterAwait) return { ok: false, error: afterAwait };
+    await viewport.dispatchInput(args.events, () => stillTheirs() === void 0);
     return { ok: true };
   }
   /** May this watcher see frames right now? */
@@ -593,10 +627,12 @@ var BrowserdRequestHandler = class {
       case "ok":
         if (outcome.result.leaseBlocked) {
           const lease = this.lease.state();
+          const code = parseBrowserdErrorCode(outcome.result.error) ?? "lease_held";
           return {
             status: 423,
             body: {
-              error: outcome.result.error ?? "lease_held",
+              error: code,
+              ...outcome.result.error && outcome.result.error !== code ? { detail: outcome.result.error } : {},
               ...lease.state === "free" ? {} : { holder: lease.holder, holderKind: lease.holderKind },
               bootId: outcome.bootId
             }
@@ -644,13 +680,15 @@ function isValidCommand(value) {
 function stateTokensMatch(a, b) {
   return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
 }
-function guardStaleness(driver) {
+function guardStaleness(driver, lease) {
   return async (command) => {
     const { action } = command;
     if (action.kind !== "act" || action.expectedState === void 0) {
       return driver.execute(command);
     }
     const current = await driver.currentStateToken(command.tabId);
+    const refusal = lease && leaseRefusalFor(lease.state(), command);
+    if (refusal) return leaseBlockedResult(refusal);
     if (current !== void 0 && !stateTokensMatch(current, action.expectedState)) {
       return {
         ok: false,
@@ -662,19 +700,20 @@ function guardStaleness(driver) {
     return driver.execute(command);
   };
 }
+function leaseBlockedResult(refusal) {
+  return {
+    ok: false,
+    leaseBlocked: true,
+    error: formatBrowserdError(
+      refusal,
+      "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+    )
+  };
+}
 function guardLease(lease, executor) {
   return async (command) => {
     const refusal = leaseRefusalFor(lease.state(), command);
-    if (refusal) {
-      return {
-        ok: false,
-        leaseBlocked: true,
-        error: formatBrowserdError(
-          refusal,
-          "a person took control of this browser before this action ran; nothing was run and nothing was observed"
-        )
-      };
-    }
+    if (refusal) return leaseBlockedResult(refusal);
     return executor(command);
   };
 }
@@ -763,7 +802,7 @@ function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID();
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver)),
+    guardLease(lease, guardStaleness(driver, lease)),
     bootId
   );
   const handler = new BrowserdRequestHandler({
@@ -1448,8 +1487,9 @@ function createTabViewport(cdp, options) {
       };
     },
     subscriberCount: () => listeners.size,
-    async dispatchInput(events) {
+    async dispatchInput(events, stillPermitted) {
       for (const event of events) {
+        if (stillPermitted && !stillPermitted()) return;
         await dispatchOne(cdp, event).catch(() => {
         });
       }
@@ -1666,9 +1706,9 @@ var ChromiumDriver = class {
       case "act":
         return this.act(tabId, action, permit);
       case "webmcp_invoke":
-        return this.webmcpInvoke(tabId, action);
+        return this.webmcpInvoke(tabId, action, permit);
       case "webmcp_cancel":
-        return this.webmcpCancel(tabId, action);
+        return this.webmcpCancel(tabId, action, permit);
     }
   }
   /**
@@ -1695,14 +1735,14 @@ var ChromiumDriver = class {
     if (action.verb === "activate_tab") {
       await page.bringToFront();
       const frame2 = await this.snapshot(page);
-      return this.observation(tabId, entry, { url: frame2.url }, frame2);
+      return this.observation(tabId, entry, { url: frame2.url }, frame2, permit);
     }
     try {
       await this.dispatchVerb(page, action);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const frame2 = await this.snapshot(page).catch(() => null);
+      const frame2 = permit() ? await this.snapshot(page).catch(() => null) : null;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -1730,7 +1770,9 @@ var ChromiumDriver = class {
         tabId,
         entry,
         { url: frame.url, ...screenshot ? { screenshot } : {} },
-        frame
+        frame,
+        permit,
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
       ),
       settled
     };
@@ -1797,7 +1839,7 @@ var ChromiumDriver = class {
         return;
     }
   }
-  async webmcpInvoke(tabId, action) {
+  async webmcpInvoke(tabId, action, permit) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1824,7 +1866,9 @@ var ChromiumDriver = class {
           tabId,
           entry,
           { invocationId, result: capped, ...omitted ? { omitted } : {} },
-          frame
+          frame,
+          permit,
+          "the page's tool ran, but a person took control of this browser before its result could be read; re-run it after they hand it back"
         )
       };
     } catch (error) {
@@ -1834,7 +1878,7 @@ var ChromiumDriver = class {
       };
     }
   }
-  async webmcpCancel(tabId, action) {
+  async webmcpCancel(tabId, action, permit) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1842,6 +1886,11 @@ var ChromiumDriver = class {
     const bridge = await entry.page.webmcp();
     if (!bridge) {
       return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the cancellation could be delivered"
+      );
     }
     const known = await bridge.cancel(action.invocationId);
     return { ok: true, output: { cancelled: known } };
@@ -1863,7 +1912,14 @@ var ChromiumDriver = class {
     }
     const frame = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { url: frame.url }, frame),
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url },
+        frame,
+        permit,
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
+      ),
       settled
     };
   }
@@ -1880,11 +1936,17 @@ var ChromiumDriver = class {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame);
+        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
       }
       case "dom": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
+        return this.observation(
+          tabId,
+          entry,
+          { dom: frame.domSignal },
+          frame,
+          permit
+        );
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
@@ -1908,7 +1970,8 @@ var ChromiumDriver = class {
             a11y: tree,
             ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
           },
-          frame
+          frame,
+          permit
         );
       }
       case "console": {
@@ -1921,7 +1984,8 @@ var ChromiumDriver = class {
           tabId,
           entry,
           { console: entries, ...omitted > 0 ? { omitted } : {} },
-          frame
+          frame,
+          permit
         );
       }
       case "webmcp_tools": {
@@ -1932,14 +1996,16 @@ var ChromiumDriver = class {
             tabId,
             entry,
             { webmcpSupported: false, tools: [] },
-            frame
+            frame,
+            permit
           );
         }
         return this.observation(
           tabId,
           entry,
           { webmcpSupported: true, tools: bridge.list() },
-          frame
+          frame,
+          permit
         );
       }
     }
@@ -1965,13 +2031,18 @@ var ChromiumDriver = class {
       const screenshot2 = await entry.page.screenshotBase64();
       const after2 = await this.snapshot(entry.page);
       if (before.url === after2.url && before.domSignal === after2.domSignal) {
-        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2);
+        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2, permit);
       }
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
     }
     const screenshot = await entry.page.screenshotBase64();
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { screenshot }, after),
+      ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false
     };
   }
@@ -2035,10 +2106,30 @@ var ChromiumDriver = class {
    * in, never re-read here — so the token can never describe a different state
    * than the returned output (P1).
    */
-  observation(tabId, entry, output, frame) {
+  /**
+   * The ONE funnel every page-derived result leaves through — which is why the
+   * last permit check lives here rather than at each caller.
+   *
+   * Every observation is read from the page across at least one `await`, and a
+   * check made before that await can only say the lease was free when the read
+   * STARTED. Asking again here, on the result's way out, is what makes "while a
+   * person holds the browser the agent observes nothing" true rather than
+   * nearly true: whatever was read is dropped instead of returned. Callers
+   * keep their own earlier checks — those refuse cheaply, before the read —
+   * and pass the prose that fits what already happened.
+   */
+  observation(tabId, entry, output, frame, permit, blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed") {
+    if (!permit()) return this.leaseBlockedResult(blockedDetail);
     return {
       ok: true,
-      output: this.withHandoffNote(output),
+      // WHERE this came from, on every observation without exception. The
+      // unattended origin allowlist is enforced against the result's `url`
+      // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
+      // carrying none fails that check OPEN — a screenshot of an off-allowlist
+      // page would reach the model unfiltered. Stamped at the funnel so no
+      // future observation mode can forget it. An explicit `url` in `output`
+      // still wins; today it is the same value.
+      output: this.withHandoffNote({ url: frame.url, ...output }),
       stateToken: this.tokenFor(tabId, entry, frame)
     };
   }

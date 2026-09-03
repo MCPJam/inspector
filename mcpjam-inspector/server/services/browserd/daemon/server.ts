@@ -153,7 +153,7 @@ export function buildBrowserdStack(
   // reading a tab's current state token to compare it IS an observation of the
   // page, so it must not happen for a command the lease is about to refuse.
   const queue = new CommandQueue(
-    guardLease(lease, guardStaleness(driver)),
+    guardLease(lease, guardStaleness(driver, lease)),
     bootId,
   );
   const handler = new BrowserdRequestHandler({
