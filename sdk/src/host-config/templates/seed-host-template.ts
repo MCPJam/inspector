@@ -832,17 +832,25 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // documented catalogue of what that runtime exposes.
       base.mcpProfile = {
         profileVersion: 1,
+        // The 2026-09-03 capture, on the 2026-07-28 `server/discover` lane:
+        // followed `nextCursor` to page two of tools/list, and opened
+        // `subscriptions/listen` — which is how a client listens on that lane,
+        // so the absent standalone GET SSE stream is correct rather than a
+        // miss. `refetches` stays absent: probe-list-changed was never run
+        // against this client, so nothing was published for it to react to.
+        paginationTraversal: "full",
+        toolListChanged: { listens: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          // Capability provenance above is from the v2.1.176 probe; this
-          // newer version is identity metadata only until a fresh probe updates
-          // both the version and the capability snapshot. `title` /
+          // Capability provenance above is from the v2.1.176 probe. The
+          // 2026-09-03 capture refreshed the version and settled the two
+          // listing knobs above, but not the capability snapshot. `title` /
           // `description` / `websiteUrl` land in the pass-through
           // `Record<string, unknown>` per host-config-v2.
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.237",
+            version: "2.1.246",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },

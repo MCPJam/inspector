@@ -749,7 +749,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787097600000,
+      verifiedAt: 1788393600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -808,12 +808,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostContext: {},
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "full",
+        toolListChanged: {
+          listens: true,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.237",
+            version: "2.1.246",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
