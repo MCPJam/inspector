@@ -49,7 +49,7 @@ export function ClientsPill({
    * Render the popover INLINE rather than portalled, for callers inside a Radix
    * Dialog — a portalled popover lands outside the dialog, where the modal
    * overlay swallows every click. Same escape hatch, same name, as
-   * `EnvironmentPicker` and `ServerGroupPicker`.
+   * `EnvironmentPicker` and `ServerPicker`.
    */
   inModal?: boolean;
 }) {

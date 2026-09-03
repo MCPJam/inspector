@@ -28,7 +28,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { joinLabels } from "@/lib/cloud-server-readiness";
@@ -369,7 +369,7 @@ export function GenerateSwarmDialog({
           <div className="flex flex-col gap-1.5">
             <Label>Servers</Label>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <ServerGroupPicker
+              <ServerPicker
                 projectId={projectId}
                 value={targetState.stack.serverAttachmentId}
                 onChange={(serverAttachmentId) =>
@@ -379,15 +379,7 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
-                onClearSelection={() =>
-                  setTargetState((prev) => ({
-                    ...prev,
-                    stack: { ...prev.stack, serverAttachmentId: null },
-                    customized: true,
-                  }))
-                }
                 emptyTriggerLabel="Server group · client default"
-                infoText="Generation reads these servers' tools to write the goals."
                 triggerTestId="generate-server-group-picker"
                 inModal
               />
