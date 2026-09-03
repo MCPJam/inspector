@@ -253,7 +253,14 @@ apps.post("/widget-content", async (c) => {
             })
         );
 
-    const { csp, permissions, prefersBorder, metadataSources, metadataSource } =
+    const {
+      csp,
+      permissions,
+      prefersBorder,
+      domain: declaredDomain,
+      metadataSources,
+      metadataSource,
+    } =
       resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
 
     // Log CSP and permissions configuration for security review (SEP-1865)
@@ -340,6 +347,7 @@ apps.post("/widget-content", async (c) => {
       permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,
+      declaredDomain,
       // Echoed for trace clarity. The renderer's reload-key already
       // uses the flag it sent (not this echoed value), but persisting
       // the server-confirmed value alongside cached HTML makes saved

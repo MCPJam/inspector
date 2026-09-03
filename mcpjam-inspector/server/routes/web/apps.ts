@@ -178,6 +178,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         csp: cspFromMeta,
         permissions: permissionsFromMeta,
         prefersBorder: prefersBorderFromMeta,
+        domain: declaredDomain,
         metadataSource,
         metadataSources,
       } = resolveUiResourceMeta({
@@ -219,6 +220,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
         prefersBorder: prefersBorderFromMeta,
+        declaredDomain,
         injectedOpenAiCompat: shouldInjectOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           shouldInjectOpenAiCompat &&
