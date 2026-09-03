@@ -1,6 +1,8 @@
 import { type ReactNode, useMemo } from "react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
+import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
+import type { ConnectionStatus } from "@/state/app-types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,6 +17,8 @@ export type ServerOption = {
   id: string;
   name: string;
   meta?: string;
+  /** Live connection status. Absent means unknown, which draws no mark. */
+  status?: ConnectionStatus;
 };
 
 interface ServerSelectionListProps {
@@ -30,7 +34,7 @@ interface ServerSelectionListProps {
   emptyState?: ReactNode;
   /** Optional ARIA label for the surrounding group; defaults to "Servers". */
   ariaLabel?: string;
-};
+}
 
 /**
  * Pure controlled list of server checkboxes. No data fetching, no
@@ -38,9 +42,10 @@ interface ServerSelectionListProps {
  *
  * Used by the suite/scenario attachment editor's Servers tab and any
  * future surface that needs the same per-server selection UX. Stay
- * structural — visual flourishes (status dots, transport badges,
- * connection state) layer on top via a richer wrapper component, not
- * here.
+ * structural — transport badges and per-row actions layer on top via a
+ * richer wrapper, not here. Connection status is the exception, and is
+ * drawn here because the row is where the choice is made: hiding it let a
+ * failed server be picked as readily as a working one (BB-49).
  */
 export function ServerSelectionList({
   servers,
@@ -50,10 +55,7 @@ export function ServerSelectionList({
   emptyState,
   ariaLabel = "Servers",
 }: ServerSelectionListProps) {
-  const stableSelected = useMemo(
-    () => new Set(selectedIds),
-    [selectedIds],
-  );
+  const stableSelected = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   if (servers.length === 0) {
     return (
@@ -68,13 +70,12 @@ export function ServerSelectionList({
   }
 
   return (
-    <div
-      role="group"
-      aria-label={ariaLabel}
-      className="flex flex-col gap-1"
-    >
+    <div role="group" aria-label={ariaLabel} className="flex flex-col gap-1">
       {servers.map((server) => {
         const checked = stableSelected.has(server.id);
+        const statusMeta = server.status
+          ? getConnectionStatusMeta(server.status)
+          : null;
         return (
           <Label
             key={server.id}
@@ -85,12 +86,25 @@ export function ServerSelectionList({
           >
             <Checkbox
               checked={checked}
-              onCheckedChange={(next) =>
-                onToggle(server.id, next === true)
-              }
+              onCheckedChange={(next) => onToggle(server.id, next === true)}
               disabled={disabled}
-              aria-label={server.name}
+              // The status rides the accessible name so the mark is never
+              // colour-only; the dot below is its sighted half.
+              aria-label={
+                statusMeta
+                  ? `${server.name} (${statusMeta.label})`
+                  : server.name
+              }
             />
+            {statusMeta ? (
+              <span
+                data-testid={`server-status-${server.id}`}
+                className="size-2 shrink-0 rounded-full"
+                style={{ backgroundColor: statusMeta.indicatorColor }}
+                title={statusMeta.label}
+                aria-hidden
+              />
+            ) : null}
             <span className="flex min-w-0 flex-col">
               <span className="truncate font-normal">{server.name}</span>
               {server.meta ? (

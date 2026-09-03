@@ -9,6 +9,7 @@
  * need renaming.
  */
 import { describe, expect, it } from "vitest";
+import type { ConnectionStatus } from "@/state/app-types";
 import { deriveServerGroupName, newGroupDraft } from "../server-group-name";
 
 describe("deriveServerGroupName", () => {
@@ -18,7 +19,7 @@ describe("deriveServerGroupName", () => {
 
   it("names a multi-server group after the first, and counts the rest", () => {
     expect(deriveServerGroupName(["draw", "Notion", "Linear"], [])).toBe(
-      "draw + 2"
+      "draw + 2",
     );
   });
 
@@ -104,7 +105,7 @@ describe("newGroupDraft", () => {
 describe("newGroupDraft leaves unreachable servers alone", () => {
   it("does not preselect a stdio server", () => {
     expect(
-      newGroupDraft([{ _id: "s-0", name: "big-mcp", command: "uvx" }], [])
+      newGroupDraft([{ _id: "s-0", name: "big-mcp", command: "uvx" }], []),
     ).toEqual({ serverIds: [], name: "group 1" });
   });
 
@@ -112,8 +113,8 @@ describe("newGroupDraft leaves unreachable servers alone", () => {
     expect(
       newGroupDraft(
         [{ _id: "s-0", name: "local", url: "http://localhost:3000/mcp" }],
-        []
-      )
+        [],
+      ),
     ).toEqual({ serverIds: [], name: "group 1" });
   });
 
@@ -124,8 +125,56 @@ describe("newGroupDraft leaves unreachable servers alone", () => {
           { _id: "s-0", name: "big-mcp", command: "uvx" },
           { _id: "s-1", name: "draw", url: "https://mcp.example.com/mcp" },
         ],
-        []
-      )
+        [],
+      ),
     ).toEqual({ serverIds: ["s-1"], name: "draw" });
+  });
+});
+
+/**
+ * BB-49. The same rule, now that the draft can see connection status: a server
+ * whose last attempt FAILED builds a group that fails the moment it is
+ * attached, so the form offers it and does not tick it.
+ *
+ * `disconnected` deliberately does NOT count. Every server reads disconnected
+ * on a fresh load, so treating it as broken would empty the draft in exactly
+ * the case BB-63 filled it.
+ */
+describe("newGroupDraft and connection status", () => {
+  const remote = (name: string, status?: ConnectionStatus) => ({
+    _id: `s-${name}`,
+    name,
+    url: `https://${name}.example.com/mcp`,
+    ...(status ? { status } : {}),
+  });
+
+  it("does not preselect a server whose last connection failed", () => {
+    expect(newGroupDraft([remote("test-bad-url", "failed")], [])).toEqual({
+      serverIds: [],
+      name: "group 1",
+    });
+  });
+
+  it("preselects only the servers that have not failed", () => {
+    expect(
+      newGroupDraft(
+        [remote("test-bad-url", "failed"), remote("draw", "connected")],
+        [],
+      ),
+    ).toEqual({ serverIds: ["s-draw"], name: "draw" });
+  });
+
+  it("still preselects a disconnected server, which is every server on load", () => {
+    expect(newGroupDraft([remote("draw", "disconnected")], [])).toEqual({
+      serverIds: ["s-draw"],
+      name: "draw",
+    });
+  });
+
+  it("still preselects a server whose status is unknown", () => {
+    expect(newGroupDraft([remote("draw")], [])).toEqual({
+      serverIds: ["s-draw"],
+      name: "draw",
+    });
   });
 });

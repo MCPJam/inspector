@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useProjectServers } from "@/hooks/useViews";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { ServerSelectionList } from "@/components/hosts/server-selection-list";
 import type { EvalServerAttachment } from "@/components/evals/types";
 
@@ -99,6 +100,22 @@ export function ServerGroupPicker({
     isAuthenticated,
     projectId,
   });
+  /**
+   * Convex stores a server's config, not whether it answers — the live status
+   * is in app state, keyed by name. Joining them is what stops this form
+   * offering a failed server as readily as a working one (BB-49). Optional
+   * read: the picker also renders with no provider above it.
+   */
+  const appState = useOptionalSharedAppState();
+  const runtimeServers = appState?.servers;
+  const serverPool = useMemo(
+    () =>
+      projectServers.map((server) => ({
+        ...server,
+        status: runtimeServers?.[server.name]?.connectionStatus,
+      })),
+    [projectServers, runtimeServers],
+  );
 
   const [open, setOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -509,10 +526,7 @@ export function ServerGroupPicker({
               <button
                 type="button"
                 onClick={() => {
-                  const draft = newGroupDraft(
-                    projectServers,
-                    existingGroupNames
-                  );
+                  const draft = newGroupDraft(serverPool, existingGroupNames);
                   setShowCreate(true);
                   setNameEdited(false);
                   setCreateTouched(false);
@@ -562,9 +576,10 @@ export function ServerGroupPicker({
                   pushes the Create button below the fold. */}
               <div className="max-h-48 overflow-y-auto pr-1">
                 <ServerSelectionList
-                  servers={projectServers.map((s) => ({
+                  servers={serverPool.map((s) => ({
                     id: s._id,
                     name: s.name,
+                    status: s.status,
                   }))}
                   selectedIds={createServerIds}
                   onToggle={handleToggleServer}

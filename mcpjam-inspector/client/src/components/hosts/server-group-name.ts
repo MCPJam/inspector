@@ -1,4 +1,5 @@
 import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
+import type { ConnectionStatus } from "@/state/app-types";
 
 /**
  * Default name and selection for a new server group, derived from its contents.
@@ -62,6 +63,11 @@ export interface GroupDraftServer {
   name: string;
   command?: unknown;
   url?: unknown;
+  /**
+   * Live connection status, when the caller can see it. Only `failed` blocks
+   * preselection — `disconnected` is what every server reads on a fresh load.
+   */
+  status?: ConnectionStatus;
 }
 
 /** The state a brand-new group form opens in: a small pool arrives already answered. */
@@ -69,10 +75,12 @@ export function newGroupDraft(
   pool: readonly GroupDraftServer[],
   existingGroupNames: readonly string[],
 ): { serverIds: string[]; name: string } {
-  // A local server cannot run in the cloud, so ticking one for the user would
-  // build a group that fails the moment it is attached. Offer it, never pick it.
+  // Ticking either of these builds a group that fails the moment it is
+  // attached: a local server cannot run in the cloud, and a server whose last
+  // attempt failed is already known not to answer (BB-49). Offer, never pick.
   const reachable = pool.filter(
-    (server) => !isLocalOnlyMcpServerConfig(server),
+    (server) =>
+      !isLocalOnlyMcpServerConfig(server) && server.status !== "failed",
   );
   const preselected =
     reachable.length > 0 && reachable.length <= PRESELECT_MAX ? reachable : [];
