@@ -41,8 +41,10 @@ afterAll(() => {
 });
 
 afterEach(() => {
-  // Remove any clipboard stub a test installed so it doesn't leak.
+  // Remove any stub a test installed so a failing assertion mid-test can't
+  // leak it into later tests.
   delete (navigator as { clipboard?: unknown }).clipboard;
+  delete (document as { execCommand?: unknown }).execCommand;
 });
 
 describe("NetworkAccessError", () => {
@@ -94,8 +96,6 @@ describe("NetworkAccessError", () => {
     expect(
       await screen.findByRole("button", { name: "Copied" })
     ).toBeInTheDocument();
-
-    delete (document as { execCommand?: unknown }).execCommand;
   });
 
   it("does not confirm when the execCommand copy fails", async () => {
@@ -115,8 +115,6 @@ describe("NetworkAccessError", () => {
     expect(
       screen.queryByRole("button", { name: "Copied" })
     ).not.toBeInTheDocument();
-
-    delete (document as { execCommand?: unknown }).execCommand;
   });
 
   it("reloads the page when Retry is clicked", () => {

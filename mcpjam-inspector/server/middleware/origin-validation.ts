@@ -78,6 +78,16 @@ function getConfiguredAllowedHosts(): string[] {
  * (its exact scheme+port origins stay governed by `getAllowedOrigins`); a bare
  * IP/host in the allowlist can never widen to localhost. DNS rebinding is still
  * blocked — a malicious domain's Origin host is not the allowlisted host.
+ *
+ * Matching is host-only (any scheme/port on the allowlisted host is accepted),
+ * unlike the exact scheme+port localhost half. This is deliberate and mirrors
+ * the token gate (`isAllowedHost` in localhost-check.ts also matches host-only),
+ * so one `MCPJAM_ALLOWED_HOSTS` entry opens both gates consistently — the
+ * allowlist is host-based and carries no port to match against. The tradeoff:
+ * another service on the same allowlisted host (e.g. `https://192.168.1.50:9999`)
+ * is also accepted as an Origin. That is the operator's trust decision when they
+ * allowlist a host; an operator who wants a narrower origin surface can use the
+ * exact-origin `ALLOWED_ORIGINS` instead.
  */
 function originHostIsAllowlisted(origin: string): boolean {
   const allowedHosts = getConfiguredAllowedHosts();

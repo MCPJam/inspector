@@ -50,11 +50,15 @@ export function NetworkAccessError() {
       textarea.style.position = "fixed";
       textarea.style.opacity = "0";
       document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(textarea);
-      if (ok) flashCopied();
+      // Remove the node in `finally` so an unavailable/throwing execCommand
+      // can't leak an invisible fixed textarea on every failed Copy click.
+      try {
+        textarea.focus();
+        textarea.select();
+        if (document.execCommand("copy")) flashCopied();
+      } finally {
+        document.body.removeChild(textarea);
+      }
     } catch {
       // Give up silently; the value is visible above for a manual copy.
     }
@@ -82,7 +86,16 @@ export function NetworkAccessError() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
+        // Fill the viewport and scroll internally: the global body/#root
+        // overflow is hidden, so without this the guidance and Retry button
+        // clip (and become unreachable) on short/mobile viewports.
         minHeight: "100vh",
+        overflowY: "auto",
+        // Explicit light surface + dark text so the screen is legible
+        // regardless of the page theme behind it. This renders at bootstrap,
+        // before the app applies the stored (possibly dark) theme, so it can't
+        // rely on theme tokens; a self-contained light card is always readable.
+        backgroundColor: "#ffffff",
         color: "#18181b",
       }}
     >
