@@ -77,7 +77,9 @@ export function getLocalBrowserProfileDir(projectId: string): string {
 export interface LocalBrowserDeps {
   launch(options: LaunchBrowserdContextOptions): Promise<DriverContext>;
   chromiumInstalled(): Promise<boolean>;
-  probeProfileOwner(dir: string): Promise<{ live: boolean; pid?: number }>;
+  probeProfileOwner(
+    dir: string,
+  ): Promise<{ live: boolean; pid?: number; host?: string }>;
   now(): number;
   env: NodeJS.ProcessEnv;
 }
@@ -124,6 +126,8 @@ interface LocalSession {
   lastUsedAt: number;
   startedAt: number;
   disposing: boolean;
+  /** The in-flight teardown, so two callers await ONE close, not two. */
+  disposal?: Promise<void>;
 }
 
 /** Idle and absolute lifetimes, matching the WebMCP session registry's. */
@@ -193,14 +197,28 @@ export async function ensureLocalBrowserSession(
   args: EnsureLocalBrowserArgs,
   deps: LocalBrowserDeps = liveDeps(),
 ): Promise<LocalBrowserSessionHandle> {
-  if (HOSTED_MODE || !LOCAL_BROWSER_ENABLED) {
+  // `shuttingDown` belongs here and not only in the sweep: a turn already in
+  // flight when the process began terminating would otherwise launch a
+  // Chromium that nothing is left to reap, and the profile lock would outlive
+  // the inspector.
+  if (HOSTED_MODE || !LOCAL_BROWSER_ENABLED || shuttingDown) {
     throw new LocalBrowserUnavailableError(
       "disabled",
-      "the local browser engine is disabled on this server",
+      shuttingDown
+        ? "the inspector is shutting down"
+        : "the local browser engine is disabled on this server",
     );
   }
   const key = sessionKey(args);
   return withKeyedLock(`local-browser:${key}`, async () => {
+    // Re-asked inside the lock: waiting for it can take as long as a teardown,
+    // and the answer may have changed while we queued.
+    if (shuttingDown) {
+      throw new LocalBrowserUnavailableError(
+        "disabled",
+        "the inspector is shutting down",
+      );
+    }
     const existing = sessions.get(key);
     if (existing && !existing.disposing && existing.context.isConnected()) {
       existing.lastUsedAt = deps.now();
@@ -251,7 +269,9 @@ async function startSession(
         "profile_in_use",
         formatBrowserdError(
           "profile_in_use",
-          `another process (pid ${owner.pid ?? "unknown"}) is already using this project's browser profile; close it, or run this inspector with a different project`,
+          owner.host
+            ? `this project's browser profile is held by a process on ${owner.host} (pid ${owner.pid ?? "unknown"}) — it lives on a directory shared between machines, and opening it twice would corrupt it`
+            : `another process (pid ${owner.pid ?? "unknown"}) is already using this project's browser profile; close it, or run this inspector with a different project`,
         ),
       );
     }
@@ -267,6 +287,18 @@ async function startSession(
     channel: "chromium",
     contextMode,
   });
+
+  // The launch is the long await in this function, and shutdown can begin
+  // inside it. A Chromium registered after the drain has already run is one
+  // nothing is left to reap: it outlives the inspector holding the profile
+  // lock, and the next run cannot open that profile at all.
+  if (shuttingDown) {
+    await context.close().catch(() => {});
+    throw new LocalBrowserUnavailableError(
+      "disabled",
+      "the inspector is shutting down",
+    );
+  }
 
   const lease = new HandoffLease();
   const driver = new ChromiumDriver(context, { lease });
@@ -386,14 +418,24 @@ export async function sweepLocalBrowserSessions(
     // A person holding the browser IS using it, even though no command has
     // come through for ten minutes — that is what taking control means. Reaping
     // here would close the window they are typing a password into.
-    if (expired && session.lease.isBlocking()) {
+    //
+    // Only while there is still a browser to hold, though: a Chromium that has
+    // gone away cannot be handed back, and a lease left held on a dead session
+    // would otherwise refresh `lastUsedAt` on every sweep and keep the corpse
+    // for the life of the process.
+    if (expired && session.context.isConnected() && session.lease.isBlocking()) {
       session.lastUsedAt = now;
       continue;
     }
     logger.info("[local-browser] reaping an idle browser", {
       reason: session.context.isConnected() ? "idle" : "disconnected",
     });
-    await disposeSession(session).catch(() => {});
+    // Under the SAME per-key lock `ensureLocalBrowserSession` takes, so a turn
+    // arriving mid-teardown waits for the profile lock to be released instead
+    // of racing the dying Chromium for it and getting `profile_in_use`.
+    await withKeyedLock(`local-browser:${session.key}`, () =>
+      disposeSession(session),
+    ).catch(() => {});
   }
   if (sessions.size === 0 && sweepTimer) {
     clearInterval(sweepTimer);
@@ -410,20 +452,33 @@ export async function sweepLocalBrowserSessions(
  * the lock behind and make the next launch on that profile fail — the exact
  * failure `probeSingletonOwner` then has to reason about.
  */
-async function disposeSession(session: LocalSession): Promise<void> {
+function disposeSession(session: LocalSession): Promise<void> {
+  // One teardown per session, however many callers ask for it: the sweep and
+  // an `ensure` that found the entry dead can arrive together.
+  if (session.disposal) return session.disposal;
   session.disposing = true;
-  sessions.delete(session.key);
-  session.stack.server.close();
-  await Promise.race([
-    session.driver.close(),
-    new Promise((r) => setTimeout(r, 5_000)),
-  ]).catch(() => {});
+  session.disposal = (async () => {
+    session.stack.server.close();
+    await Promise.race([
+      session.driver.close(),
+      new Promise((r) => setTimeout(r, 5_000)),
+    ]).catch(() => {});
+    // Dropped AFTER the close, not before: closing the context is what makes
+    // Chromium release the profile's singleton lock, and a caller who found no
+    // entry would launch straight into the lock the dying process still holds.
+    if (sessions.get(session.key) === session) sessions.delete(session.key);
+  })();
+  return session.disposal;
 }
 
 /** Close every local browser. Non-latching: the app may start another. */
 export async function killLocalBrowserSessions(): Promise<void> {
   await Promise.all(
-    [...sessions.values()].map((s) => disposeSession(s).catch(() => {})),
+    [...sessions.values()].map((s) =>
+      withKeyedLock(`local-browser:${s.key}`, () => disposeSession(s)).catch(
+        () => {},
+      ),
+    ),
   );
   if (sweepTimer) {
     clearInterval(sweepTimer);

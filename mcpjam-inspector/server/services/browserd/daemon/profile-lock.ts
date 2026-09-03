@@ -75,16 +75,24 @@ function isNotFound(err: unknown): boolean {
  * corrupts a profile someone is using.
  *
  * Chromium writes `SingletonLock` as a symlink whose TARGET is `host-pid`. A
- * target naming this host with a pid that still exists is a live owner; a
- * missing link, a foreign host (a shared home directory over NFS), or a dead
- * pid is not. Unreadable or unparseable is reported as NOT live — the lock is
- * then cleared, which is the behaviour that existed before this probe and is
- * still the right default for a directory this process is about to own.
+ * target naming this host with a pid that still exists is a live owner.
+ *
+ * So is a target naming ANOTHER host. A profile on a shared home directory
+ * (NFS, a roaming profile) can be held by a Chromium on a machine whose
+ * process table this one cannot see, and "I cannot check" is not "nobody is
+ * there": clearing it launches a second browser into a profile already in use,
+ * which is how a profile gets corrupted. Foreign ownership is therefore
+ * reported as live and named, so the refusal can say whose it is.
+ *
+ * A missing link or a dead local pid is debris. Unreadable or unparseable is
+ * reported as NOT live — the lock is then cleared, which is the behaviour that
+ * existed before this probe and is still the right default for a directory
+ * this process is about to own.
  */
 export async function probeSingletonOwner(
   userDataDir: string,
   isAlive: (pid: number) => boolean = defaultIsAlive,
-): Promise<{ live: boolean; pid?: number }> {
+): Promise<{ live: boolean; pid?: number; host?: string }> {
   let target: string;
   try {
     target = await readlink(join(userDataDir, "SingletonLock"));
@@ -97,7 +105,9 @@ export async function probeSingletonOwner(
   const host = target.slice(0, separator);
   const pid = Number(target.slice(separator + 1));
   if (!Number.isInteger(pid) || pid <= 0) return { live: false };
-  if (host !== hostname()) return { live: false };
+  // Another machine's lock, on a profile both machines can see. Not ours to
+  // reason about, and certainly not ours to clear.
+  if (host !== hostname()) return { live: true, pid, host };
   return isAlive(pid) ? { live: true, pid } : { live: false, pid };
 }
 

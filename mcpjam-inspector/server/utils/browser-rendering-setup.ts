@@ -39,13 +39,20 @@ export type ChromiumInstallState =
   | { status: "failed"; error: string };
 
 let explicitInstallState: ChromiumInstallState = { status: "idle" };
-let explicitInstallPromise: Promise<boolean> | null = null;
+/**
+ * The ONE install in flight, whichever path started it.
+ *
+ * Both entry points write the same Playwright browser cache, so two concurrent
+ * `playwright install chromium` runs are a corrupted install — and they were
+ * reachable: the startup auto-install and a click on the consent screen each
+ * kept their own promise and neither could see the other.
+ */
+let activeInstall: Promise<boolean> | null = null;
 
 export function getChromiumInstallState(): ChromiumInstallState {
   return explicitInstallState;
 }
 
-let installPromise: Promise<boolean> | null = null;
 let lastInstallFailureAt = 0;
 
 function defaultLogger(_env: NodeJS.ProcessEnv): BrowserRenderingSetupLogger {
@@ -187,16 +194,40 @@ export async function startChromiumInstall(options: {
   isInstalled?: () => Promise<boolean>;
   runInstall?: (onProgress: (percent: number) => void) => Promise<void>;
 } = {}): Promise<ChromiumInstallState> {
-  const isInstalled = options.isInstalled ?? isChromiumInstalled;
-  if (explicitInstallPromise) return explicitInstallState;
-  if (await isInstalled()) {
-    explicitInstallState = { status: "ready" };
+  // Whoever is already installing owns it, including the startup auto-install.
+  if (activeInstall) {
+    if (explicitInstallState.status === "idle") {
+      explicitInstallState = { status: "installing" };
+    }
     return explicitInstallState;
   }
-
+  const isInstalled = options.isInstalled ?? isChromiumInstalled;
   const runInstall = options.runInstall ?? installPlaywrightChromiumWithProgress;
+
+  // The reservation is made SYNCHRONOUSLY and the "is it already there?" probe
+  // happens inside it. Probing first meant two clicks, or a click and the
+  // startup path, could both get past the check — `isInstalled()` is a
+  // filesystem round trip — and each spawn an installer over one cache.
+  let probed: (already: boolean) => void = () => {};
+  const probe = new Promise<void>((resolve) => {
+    probed = () => resolve();
+  });
   explicitInstallState = { status: "installing" };
-  explicitInstallPromise = (async () => {
+  activeInstall = (async () => {
+    let already = false;
+    try {
+      already = await isInstalled();
+    } catch {
+      already = false;
+    }
+    if (already) {
+      // Reported from INSIDE the reservation, so the answer the caller gets
+      // back is as fresh as the probe that produced it.
+      explicitInstallState = { status: "ready" };
+      probed(true);
+      return true;
+    }
+    probed(false);
     try {
       await runInstall((percent) => {
         explicitInstallState = { status: "installing", percent };
@@ -218,16 +249,20 @@ export async function startChromiumInstall(options: {
       return false;
     }
   })().finally(() => {
-    explicitInstallPromise = null;
+    activeInstall = null;
   });
 
+  // Resolves as soon as the probe has answered, so an already-installed
+  // machine still reports `ready` on the first call rather than making the
+  // consent screen poll for something that was true before it asked.
+  await probe;
   return explicitInstallState;
 }
 
 /** Test seam: install state is process-wide by design. */
 export function resetChromiumInstallStateForTests(): void {
   explicitInstallState = { status: "idle" };
-  explicitInstallPromise = null;
+  activeInstall = null;
 }
 
 export async function ensureLocalChromiumInstalled(
@@ -241,52 +276,61 @@ export async function ensureLocalChromiumInstalled(
     return false;
   }
 
-  if (await isInstalled()) {
-    return true;
-  }
+  // Joins whatever is already running, including a user-triggered install
+  // started from the consent screen.
+  if (activeInstall) return activeInstall;
 
-  const now = Date.now();
-  if (
-    lastInstallFailureAt > 0 &&
-    now - lastInstallFailureAt < INSTALL_RETRY_COOLDOWN_MS
-  ) {
-    return false;
-  }
+  const runInstall = options.runInstall ?? installPlaywrightChromium;
+  const reason = options.reason ?? "render";
 
-  if (!installPromise) {
-    const runInstall = options.runInstall ?? installPlaywrightChromium;
-    const reason = options.reason ?? "render";
+  // Reserved SYNCHRONOUSLY, with the "is it there already?" probe and the
+  // failure cooldown moved inside. Both are awaits, and a second caller
+  // getting past them starts a second `playwright install` over the same
+  // browser cache.
+  activeInstall = (async () => {
+    if (await isInstalled()) return true;
 
-    installPromise = (async () => {
-      log.info(
-        `[browser-rendering] Chromium missing; setting up Playwright Chromium (${reason})`
-      );
-      try {
-        await runInstall();
-        const ready = await isInstalled();
-        if (!ready) {
-          throw new Error(
-            "Playwright Chromium install finished, but no launchable Chromium was found"
-          );
-        }
-        lastInstallFailureAt = 0;
-        log.info("[browser-rendering] Playwright Chromium is ready");
-        return true;
-      } catch (error) {
-        lastInstallFailureAt = Date.now();
-        log.warn(
-          `[browser-rendering] Failed to set up Playwright Chromium: ${
-            error instanceof Error ? error.message : String(error)
-          }`
+    const now = Date.now();
+    if (
+      lastInstallFailureAt > 0 &&
+      now - lastInstallFailureAt < INSTALL_RETRY_COOLDOWN_MS
+    ) {
+      return false;
+    }
+
+    log.info(
+      `[browser-rendering] Chromium missing; setting up Playwright Chromium (${reason})`
+    );
+    try {
+      await runInstall();
+      const ready = await isInstalled();
+      if (!ready) {
+        throw new Error(
+          "Playwright Chromium install finished, but no launchable Chromium was found"
         );
-        return false;
       }
-    })().finally(() => {
-      installPromise = null;
-    });
-  }
+      lastInstallFailureAt = 0;
+      // One install, one reported state: a consent screen that JOINED this run
+      // rather than starting it still has to see it finish.
+      explicitInstallState = { status: "ready" };
+      log.info("[browser-rendering] Playwright Chromium is ready");
+      return true;
+    } catch (error) {
+      lastInstallFailureAt = Date.now();
+      const message = error instanceof Error ? error.message : String(error);
+      if (explicitInstallState.status === "installing") {
+        explicitInstallState = { status: "failed", error: message };
+      }
+      log.warn(
+        `[browser-rendering] Failed to set up Playwright Chromium: ${message}`
+      );
+      return false;
+    }
+  })().finally(() => {
+    activeInstall = null;
+  });
 
-  return installPromise;
+  return activeInstall;
 }
 
 export function startLocalBrowserRenderingSetupInBackground(): void {
@@ -298,6 +342,6 @@ export function startLocalBrowserRenderingSetupInBackground(): void {
 }
 
 export function resetBrowserRenderingSetupForTests(): void {
-  installPromise = null;
+  activeInstall = null;
   lastInstallFailureAt = 0;
 }

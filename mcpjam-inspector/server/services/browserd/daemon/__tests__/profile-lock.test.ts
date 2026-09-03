@@ -63,13 +63,20 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
     });
   });
 
-  it("does not claim a pid on ANOTHER host is ours to judge", async () => {
-    // A shared home directory over NFS: the pid is real, on a machine we
-    // cannot see, and `process.kill` here would be asking about a local
-    // process that happens to share the number.
+  it("treats ANOTHER host's lock as in use, not as debris", async () => {
+    // A shared home directory over NFS: the pid is real, on a machine whose
+    // process table this one cannot see. `process.kill` here would be asking
+    // about a local process that happens to share the number — so the honest
+    // answer is "held", and clearing it would launch a second browser into a
+    // profile already open elsewhere.
     const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
     await symlink("some-other-box-4242", join(dir, "SingletonLock"));
-    expect(await probeSingletonOwner(dir, () => true)).toEqual({ live: false });
+    // The local liveness probe is not even consulted.
+    expect(await probeSingletonOwner(dir, () => false)).toEqual({
+      live: true,
+      pid: 4242,
+      host: "some-other-box",
+    });
   });
 
   it("treats a missing or unreadable lock as free", async () => {

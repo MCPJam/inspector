@@ -8,6 +8,7 @@ import {
   LOCAL_BROWSER_MAX_LIFETIME_MS,
   LocalBrowserUnavailableError,
   resetLocalBrowserSessionsForTests,
+  shutdownLocalBrowserSessions,
   sweepLocalBrowserSessions,
   touchLocalBrowserSession,
   type LocalBrowserDeps,
@@ -231,5 +232,68 @@ describe("local browser session", () => {
 
   it("rejects a project key that would escape the profile root", async () => {
     expect(() => getLocalBrowserProfileDir("../../etc")).toThrow();
+  });
+});
+
+describe("local browser session — shutdown does not leave a browser behind", () => {
+  it("refuses a new session once shutdown has been latched", async () => {
+    const { deps, launched } = makeDeps();
+    await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    await shutdownLocalBrowserSessions();
+
+    await expect(
+      ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
+    ).rejects.toMatchObject({ code: "disabled" });
+    expect(launched).toHaveLength(1);
+  });
+
+  it("closes a browser whose launch finished after the drain", async () => {
+    // The launch is the long await, and shutdown can begin inside it. A
+    // Chromium registered after the drain is one nothing is left to reap — it
+    // outlives the inspector still holding the profile lock.
+    const closed: boolean[] = [];
+    const { deps } = makeDeps({
+      async launch() {
+        // Shutdown begins while this browser is still starting — the one
+        // ordering the latches before the launch cannot catch.
+        await shutdownLocalBrowserSessions();
+        const { context } = fakeContext();
+        const original = context.close.bind(context);
+        context.close = async () => {
+          closed.push(true);
+          await original();
+        };
+        return context;
+      },
+    });
+
+    await expect(
+      ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
+    ).rejects.toMatchObject({ code: "disabled" });
+    expect(closed).toEqual([true]);
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("keeps a DISCONNECTED browser out of the lease deferral", async () => {
+    // Holding the browser defers the reap — but only while there is a browser
+    // to hold. A dead session whose lease was never released used to refresh
+    // its own timestamp on every sweep and never be collected.
+    const { deps, contexts, advance, at } = makeDeps();
+    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const session = listLocalBrowserSessions().find(
+      (s) => s.handle.bootId === handle.bootId,
+    );
+    expect(session).toBeDefined();
+
+    await handle.client.leaseAction?.({
+      action: "acquire",
+      holder: "rail-1",
+      ttlMs: 60 * 60_000,
+    });
+    contexts[0]?.setConnected(false);
+    advance(LOCAL_BROWSER_IDLE_MS + 1);
+    await sweepLocalBrowserSessions(at());
+
+    expect(listLocalBrowserSessions()).toHaveLength(0);
   });
 });
