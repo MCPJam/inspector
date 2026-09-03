@@ -4056,7 +4056,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "--font-heading-xl-size": "36px",
           "--font-heading-xs-line-height": "1.25",
           "--font-heading-xs-size": "18px",
-          "--font-mono": ""Monaco", "Menlo", "Consolas", "Courier New", monospace",
+          "--font-mono": ""Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace",
           "--font-sans": ""Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif",
           "--font-text-lg-line-height": "1.5",
           "--font-text-lg-size": "18px",

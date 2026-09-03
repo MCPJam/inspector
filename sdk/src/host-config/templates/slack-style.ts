@@ -4,9 +4,9 @@
  * Captured from Slackbot's `ui/initialize.hostContext.styles` on 2026-06-24.
  * Light and dark maps are both real Slackbot captures from the same probe app.
  *
- * Dark was re-probed 2026-09-03 and `--font-mono` moved, so it left the shared
- * map. Light still carries the 2026-06-24 stack — the split is a gap in
- * evidence, not a theme-dependent font.
+ * Both themes re-probed 2026-09-03: `--font-mono` gained "Slack-Roboto-Mono"
+ * at the front in each, so it stays shared. Every other key is byte-identical
+ * to the 2026-06-24 capture.
  */
 
 const SLACK_SHARED_STYLE_VARIABLES: Record<string, string> = {
@@ -14,6 +14,8 @@ const SLACK_SHARED_STYLE_VARIABLES: Record<string, string> = {
   "--color-text-ghost": "transparent",
   "--color-border-ghost": "transparent",
   "--font-sans": '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
+  "--font-mono":
+    '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
   "--font-weight-normal": "400",
   "--font-weight-medium": "500",
   "--font-weight-semibold": "600",
@@ -54,9 +56,6 @@ const SLACK_SHARED_STYLE_VARIABLES: Record<string, string> = {
 };
 
 export const SLACK_LIGHT_STYLE_VARIABLES: Record<string, string> = {
-  // Light was NOT re-probed on 2026-09-03; this is still the 2026-06-24
-  // stack. The themes differ here on evidence, not on a measured difference.
-  "--font-mono": '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
   "--color-background-primary": "#fff",
   "--color-background-secondary": "#f8f8f8",
   "--color-background-tertiary": "#eaeaea",
@@ -95,9 +94,6 @@ export const SLACK_LIGHT_STYLE_VARIABLES: Record<string, string> = {
 };
 
 export const SLACK_DARK_STYLE_VARIABLES: Record<string, string> = {
-  // Re-probed 2026-09-03: Slackbot now names its own mono face first.
-  "--font-mono":
-    '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
   "--color-background-primary": "#1a1d21",
   "--color-background-secondary": "#1a1d21",
   "--color-background-tertiary": "#212428",

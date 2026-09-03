@@ -1801,7 +1801,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--font-sans":
             '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
           "--font-mono":
-            '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+            '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
           "--font-weight-normal": "400",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
