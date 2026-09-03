@@ -87,6 +87,7 @@ async function post<T>(
   path: string,
   body: unknown,
   consentToken: string | null,
+  options?: { keepalive?: boolean },
 ): Promise<T> {
   assertSecureLocalOrigin();
   const response = await authFetch(`/api/mcp/computers/local-browser/${path}`, {
@@ -96,6 +97,7 @@ async function post<T>(
       ...(consentToken ? { [LOCAL_CONSENT_HEADER]: consentToken } : {}),
     },
     body: JSON.stringify(body),
+    ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
     | (T & { error?: string })
@@ -146,8 +148,10 @@ export function actOnLocalBrowserLease(
     holder: string;
   },
   consentToken: string | null,
+  /** `keepalive` lets a hand-back outlive the page that sent it. */
+  options?: { keepalive?: boolean },
 ): Promise<{ lease: LocalBrowserLease }> {
-  return post("lease", args, consentToken);
+  return post("lease", args, consentToken, options);
 }
 
 export function sendLocalBrowserInput(

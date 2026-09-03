@@ -84,6 +84,7 @@ beforeEach(() => {
   api.inputs = [];
   api.ensures = [];
   api.socket = null;
+  window.sessionStorage.clear();
 });
 
 /** Push one frame down the pane's socket so the picture renders. */
@@ -252,5 +253,44 @@ describe("the agent browser pane — driving it", () => {
       expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
     );
     expect(api.ensures).toEqual(["proj-1"]);
+  });
+});
+
+describe("the agent browser pane — a hold you can get back", () => {
+  it("keeps its lease identity across a reload", async () => {
+    // A hold that runs out PARKS, and only its holder may hand it back. With
+    // an identity minted per mount, reloading while holding left the lease
+    // parked under a holder that no longer existed: the agent blocked, every
+    // new pane refused, and only restarting the server cleared it.
+    const first = renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /take control/i }),
+    );
+    expect(api.lease.holder).toBeTruthy();
+
+    // A reload is a fresh mount against the same tab's sessionStorage.
+    first.unmount();
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+
+    // Recognised as the same hands: control, not a refusal.
+    expect(await screen.findByText(/you have control/i)).toBeTruthy();
+  });
+
+  it("does not adopt a hold belonging to a different tab", async () => {
+    // The identity is per tab, so it still tells two panes apart — the whole
+    // reason it exists.
+    api.lease = { state: "held", holder: "rail-someone-else" };
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    expect(await screen.findByText(/has control/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /hand back/i })).toBeNull();
   });
 });

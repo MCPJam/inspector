@@ -13,6 +13,7 @@
  * So: one decoder, two transports. Everything a caller can observe about a
  * daemon reply is decided here.
  */
+import { parseBrowserdErrorCode } from "./protocol";
 import type { BrowserCommandResult } from "./protocol";
 
 /** The daemon's reply, reconstructed from the HTTP status + body. Distinct from
@@ -109,6 +110,28 @@ function bootIdOf(body: Record<string, unknown>): string {
 
 function holderKindOf(value: unknown): BrowserdLeaseHolderKind {
   return value === "script" ? "script" : "human";
+}
+
+/**
+ * Which of the four 423s this is.
+ *
+ * `held` is the fallback rather than a fifth state: an unrecognised refusal
+ * still means a person has the browser, and "wait" is the right answer to all
+ * of them. Only the pane's prose depends on telling them apart.
+ */
+function leaseKindOf(
+  code: string | undefined,
+): "held" | "parked" | "required" | "other_holder" {
+  switch (code) {
+    case "lease_parked":
+      return "parked";
+    case "lease_required":
+      return "required";
+    case "lease_held_by_other":
+      return "other_holder";
+    default:
+      return "held";
+  }
 }
 
 export function decodeHealth(reply: DecodableReply): BrowserdHealth {
@@ -228,16 +251,17 @@ export function decodeCommandResponse(
       // live lease. They are one outcome to a model (wait) and four different
       // bugs to a pane (take the lease first / you are not the holder), so the
       // distinction is kept rather than flattened at the boundary.
+      // Read as a CODE, not compared as a whole string: the same refusals
+      // arrive bare from the request gate and as `"<code>: <detail>"` from the
+      // dequeue guard (`formatBrowserdError`), and an equality test silently
+      // classifies every detailed one as a plain held lease.
       return {
         status: "lease_blocked",
-        lease:
-          body.error === "lease_parked"
-            ? "parked"
-            : body.error === "lease_required"
-              ? "required"
-              : body.error === "lease_held_by_other"
-                ? "other_holder"
-                : "held",
+        lease: leaseKindOf(
+          parseBrowserdErrorCode(
+            typeof body.error === "string" ? body.error : undefined,
+          ) ?? (typeof body.error === "string" ? body.error : undefined),
+        ),
         holder: typeof body.holder === "string" ? body.holder : undefined,
         holderKind:
           body.holderKind === undefined

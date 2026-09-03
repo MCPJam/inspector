@@ -671,6 +671,27 @@ describe("buildBrowserTools — the origin allowlist binds the RESULT", () => {
     expect(commands.map((c) => c.action.kind)).toEqual(["navigate", "back"]);
   });
 
+  it("does not call a blank tab an off-allowlist page", async () => {
+    // `about:blank` is every tab's first history entry, so a `back` out of the
+    // one page a run visited lands on it — and its origin is the opaque string
+    // "null", which matches nothing. Judged a violation, the run was told the
+    // page "moved somewhere this policy does not permit" about the blank page
+    // its own recovery had just sent it to, and was sent back again.
+    const commands: any[] = [];
+    const { result } = build({ approvalDelivery: policy }, async (command) => {
+      commands.push(command);
+      return {
+        status: "ok",
+        result: { ok: true, output: { url: "about:blank" } },
+      };
+    });
+
+    const out = await run(result!.tools, "browser_navigate", { action: "back" });
+
+    expect(out.error).toBeUndefined();
+    expect(commands.map((c) => c.action.kind)).toEqual(["back"]);
+  });
+
   it("does not walk history when the recovery lands somewhere also disallowed", async () => {
     const commands: any[] = [];
     const { result } = build({ approvalDelivery: policy }, async (command) => {

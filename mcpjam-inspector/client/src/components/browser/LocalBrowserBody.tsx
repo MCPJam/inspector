@@ -19,6 +19,45 @@ import {
   type LocalBrowserStatus,
 } from "@/lib/local-browser/client";
 
+/**
+ * The frame socket's close codes, mirroring `routes/web/local-browser-frames`.
+ *
+ * Named here rather than left as bare numbers because the pane's behaviour
+ * differs per code: one is worth waiting out, the other never will be.
+ */
+const CLOSE_UNAUTHORIZED = 4401;
+const CLOSE_LEASE_HELD = 4409;
+
+/** The `sessionStorage` key holding this tab's lease identity. */
+const HOLDER_STORAGE_KEY = "mcpjam.localBrowser.holder";
+
+/**
+ * A lease identity that survives a reload but not the tab.
+ *
+ * `sessionStorage` can throw (a private window, blocked site data) and can
+ * come back empty, so every path falls back to a fresh in-memory id: losing
+ * stability costs a wedged lease until it expires, while throwing here would
+ * take the whole pane down.
+ */
+function usePaneHolderId(): string {
+  const ref = useRef<string | null>(null);
+  if (ref.current === null) {
+    const minted = `rail-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      const stored = window.sessionStorage.getItem(HOLDER_STORAGE_KEY);
+      if (stored) {
+        ref.current = stored;
+      } else {
+        window.sessionStorage.setItem(HOLDER_STORAGE_KEY, minted);
+        ref.current = minted;
+      }
+    } catch {
+      ref.current = minted;
+    }
+  }
+  return ref.current;
+}
+
 /** The DOM's button numbering, in the daemon's names. */
 function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
   if (event.button === 1) return "middle";
@@ -77,15 +116,21 @@ export function LocalBrowserBody({
   /**
    * This pane's identity as a lease holder.
    *
-   * Per MOUNT, not per user: it only has to tell one pane from another so two
-   * tabs cannot each believe they have control. On a single-user machine the
-   * boundary is device consent, and nothing downstream treats this as proof of
-   * who anybody is.
+   * Per TAB and stable across reloads, not per mount. It only has to tell one
+   * pane from another so two tabs cannot each believe they have control — on a
+   * single-user machine the boundary is device consent, and nothing downstream
+   * treats this as proof of who anybody is.
+   *
+   * Stability is what makes it safe, though. A hold that runs out PARKS rather
+   * than freeing (a timer expiring is not evidence the private moment is
+   * over), and only its holder may hand it back. Minted per mount, reloading
+   * while holding left the lease parked under a holder that no longer existed:
+   * the agent blocked, every new pane refused, and nothing but restarting the
+   * server could clear it. Kept in `sessionStorage` — per tab, surviving a
+   * reload, gone when the tab is — the returning pane is recognised as the
+   * same hands it was before.
    */
-  const holderRef = useRef<string>(
-    `rail-${Math.random().toString(36).slice(2, 10)}`,
-  );
-  const holder = holderRef.current;
+  const holder = usePaneHolderId();
   const holding = lease.state !== "free" && lease.holder === holder;
   // Read inside the heartbeat interval, which must not be torn down and
   // rebuilt (and the socket with it) every time the user changes tab.
@@ -209,19 +254,33 @@ export function LocalBrowserBody({
           }
         };
         opened.socket.onclose = (event) => {
-          if (closed || event.code !== 4401) return;
-          // Somebody else holds the browser — including, now, a handoff that
-          // happened while this socket was open, which the daemon revokes
-          // mid-stream. Not a terminal state: the view has to come back when
-          // they hand it back, so keep asking rather than latching an error
-          // nothing will ever clear.
-          setError(
-            "Somebody else has taken control of this browser. The view will resume when they hand it back.",
-          );
-          setFrame(null);
-          retry = setTimeout(() => {
-            if (!closed) setStreamAttempt((n) => n + 1);
-          }, 3_000);
+          if (closed) return;
+          if (event.code === CLOSE_LEASE_HELD) {
+            // Somebody else holds the browser — including a handoff that
+            // happened while this socket was open, which the daemon revokes
+            // mid-stream. Not a terminal state: the view has to come back when
+            // they hand it back, so keep asking rather than latching an error
+            // nothing will ever clear.
+            setError(
+              "Somebody else has taken control of this browser. The view will resume when they hand it back.",
+            );
+            setFrame(null);
+            retry = setTimeout(() => {
+              if (!closed) setStreamAttempt((n) => n + 1);
+            }, 3_000);
+            return;
+          }
+          if (event.code === CLOSE_UNAUTHORIZED) {
+            // TERMINAL, and told apart from the refusal above by its own code.
+            // The nonce is spent or consent moved underneath us; retrying on a
+            // timer would burn credentials against the same answer forever and
+            // report it as somebody else's handoff the whole time.
+            setError(
+              event.reason ||
+                "This machine's authorization changed. Reopen the pane to watch again.",
+            );
+            setFrame(null);
+          }
         };
         opened.socket.onopen = () => {
           // Whatever refused the last attempt is over.
@@ -279,6 +338,27 @@ export function LocalBrowserBody({
       ).catch(() => {});
     }, 60_000);
     return () => clearInterval(timer);
+  }, [holding, session, holder, consentToken]);
+
+  // Hand the browser back when this tab goes away.
+  //
+  // Best-effort, and deliberately not the only defence: `keepalive` lets the
+  // request outlive the page, but a hard crash or a dropped connection sends
+  // nothing — which is why the holder identity is stable across reloads too.
+  // Releasing here is the difference between the agent carrying on at once and
+  // it waiting out a hold nobody is on the other end of.
+  useEffect(() => {
+    if (!holding || !session) return;
+    const bootId = session.bootId;
+    const release = () => {
+      void actOnLocalBrowserLease(
+        { bootId, action: "resume", holder },
+        consentToken,
+        { keepalive: true },
+      ).catch(() => {});
+    };
+    window.addEventListener("pagehide", release);
+    return () => window.removeEventListener("pagehide", release);
   }, [holding, session, holder, consentToken]);
 
   // One POST in flight, the rest queued and consecutive moves collapsed. A

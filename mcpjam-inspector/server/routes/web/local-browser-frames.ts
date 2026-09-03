@@ -34,6 +34,20 @@ import type { ViewportFrame } from "../../services/browserd/daemon/viewport.js";
 
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
+/**
+ * Somebody else holds the browser.
+ *
+ * Its OWN code, distinct from `CLOSE_UNAUTHORIZED`, because the two mean
+ * opposite things to the pane. An auth failure is terminal — the nonce is
+ * spent, the consent fingerprint moved — and retrying only burns credentials.
+ * A lease refusal is temporary by definition: the holder will hand back, and
+ * the pane that keeps its place is the one that comes alive again when they
+ * do. Sharing one code forced a single response on both, and the pane picked
+ * the wrong one — a consent change was reported as "somebody took control",
+ * and a watcher who lost the race stayed dark forever after, because nothing
+ * reconnected.
+ */
+const CLOSE_LEASE_HELD = 4409;
 const CLOSE_UNAVAILABLE = 4503;
 
 /** Every open frame socket, so shutdown can close them. */
@@ -184,7 +198,7 @@ export function createLocalBrowserFramesWsHandler(
             // as a broken stream, and the pane can offer "wait for them to
             // hand it back" only if it knows that is what happened.
             try {
-              ws.close(CLOSE_UNAUTHORIZED, reason);
+              ws.close(CLOSE_LEASE_HELD, reason);
             } catch {
               // Already gone.
             }
@@ -206,9 +220,16 @@ export function createLocalBrowserFramesWsHandler(
         });
 
         if (!subscription.ok) {
-          // The lease is held by someone else. Not an error state to retry
-          // into — the pane says who has it and waits.
-          ws.close(CLOSE_UNAUTHORIZED, subscription.error);
+          // Somebody else holds the browser, or the tab named does not exist.
+          // Neither is an auth failure, and the first resolves on its own —
+          // the pane reconnects and picks the picture back up when the holder
+          // hands it back.
+          ws.close(
+            subscription.error === "unknown_tab"
+              ? CLOSE_NOT_FOUND
+              : CLOSE_LEASE_HELD,
+            subscription.error,
+          );
           return;
         }
         // Every race the await above opens: the client hung up, a latching

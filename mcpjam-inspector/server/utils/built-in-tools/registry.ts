@@ -46,7 +46,7 @@
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
-import { hostedBrowserEnabled } from "../../config.js";
+import { LOCAL_BROWSER_ENABLED, hostedBrowserEnabled } from "../../config.js";
 import { isHostedBrowserExposable } from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
@@ -497,6 +497,27 @@ export function resolveHostTools(
         continue;
       }
       const isLocalBrowser = resolvedEngine === "local";
+
+      // The local engine's own kill switch, read HERE and not only where a
+      // session is started. Every other layer already honors it — the routes
+      // 404, `ensureLocalBrowserSession` refuses — and that is exactly what
+      // made the gap easy to miss. A tool that is advertised and then throws
+      // on its first call is worse than one never offered: the model spends a
+      // turn discovering a capability the operator turned off, and the failure
+      // reads as a broken page rather than a closed door.
+      if (isLocalBrowser && !LOCAL_BROWSER_ENABLED) {
+        logger.warn(
+          "[built-in-tools] browser suppressed: the local browser engine is switched off",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not available: the browser on this machine is switched " +
+            "off on this server (MCPJAM_LOCAL_BROWSER_ENABLED).",
+        });
+        continue;
+      }
 
       // The three HOSTED gates. A local browser is not a hosted resource: it
       // boots no desktop, reserves nothing, and costs no credits, so gating it

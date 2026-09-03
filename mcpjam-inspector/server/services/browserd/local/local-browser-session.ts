@@ -424,7 +424,7 @@ export async function sweepLocalBrowserSessions(
     const expired =
       idle >= LOCAL_BROWSER_IDLE_MS || age >= LOCAL_BROWSER_MAX_LIFETIME_MS;
     if (!expired && session.context.isConnected()) continue;
-    // A person holding the browser IS using it, even though no command has
+    // A person HOLDING the browser is using it, even though no command has
     // come through for ten minutes — that is what taking control means. Reaping
     // here would close the window they are typing a password into.
     //
@@ -432,7 +432,19 @@ export async function sweepLocalBrowserSessions(
     // gone away cannot be handed back, and a lease left held on a dead session
     // would otherwise refresh `lastUsedAt` on every sweep and keep the corpse
     // for the life of the process.
-    if (expired && session.context.isConnected() && session.lease.isBlocking()) {
+    //
+    // And only a HELD lease, not any blocking one. Parking is what an expired
+    // hold becomes, so it means the pane stopped its heartbeat: the tab was
+    // closed, or reloaded, or the machine slept. Deferring for that too made
+    // every abandoned hold immortal on a LIVE session — a Chromium and its
+    // profile pinned open past the hard lifetime with nobody on either end,
+    // because `isBlocking()` is true for both states. Parking still blocks the
+    // AGENT, which is all it is for.
+    if (
+      expired &&
+      session.context.isConnected() &&
+      session.lease.state().state === "held"
+    ) {
       session.lastUsedAt = now;
       continue;
     }

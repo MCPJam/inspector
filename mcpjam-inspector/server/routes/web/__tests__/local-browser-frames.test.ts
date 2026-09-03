@@ -250,7 +250,9 @@ describe("the agent browser's frame socket", () => {
     const closed = waitForClose(ws);
     sessionState.subscriptions[0]?.onRevoked?.("lease_held");
 
-    expect((await closed).code).toBe(4401);
+    // 4409, NOT the 4401 the auth failures use: this one passes when they hand
+    // back, and the pane has to be able to tell the difference to reconnect.
+    expect((await closed).code).toBe(4409);
     expect(sessionState.subscriptions[0]?.unsubscribed).toBe(true);
   });
 
@@ -272,8 +274,36 @@ describe("the agent browser's frame socket", () => {
     const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
 
     const closed = await waitForClose(ws);
-    expect(closed.code).toBe(4401);
+    expect(closed.code).toBe(4409);
     expect(closed.reason).toBe("lease_held");
+  });
+
+  it("tells a lease refusal apart from every auth failure", async () => {
+    // They used to share 4401, so the pane had one response for both. It chose
+    // "somebody took control", which reported a consent change as a handoff
+    // and — since it retried on a timer — kept saying so forever.
+    sessionState.refuse = "lease_held";
+    const refused = await waitForClose(
+      connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") }),
+    );
+    sessionState.refuse = null;
+
+    consentState.fingerprint = "b".repeat(64);
+    const unauthorized = await waitForClose(
+      connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") }),
+    );
+
+    expect(refused.code).toBe(4409);
+    expect(unauthorized.code).toBe(4401);
+    expect(refused.code).not.toBe(unauthorized.code);
+  });
+
+  it("closes 4404, not a lease refusal, for a tab that does not exist", async () => {
+    sessionState.refuse = "unknown_tab";
+    const closed = await waitForClose(
+      connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") }),
+    );
+    expect(closed.code).toBe(4404);
   });
 });
 
@@ -290,7 +320,7 @@ describe("the agent browser's frame socket — losing the right to watch", () =>
     const closed = waitForClose(ws);
     ws.send(JSON.stringify({ type: "ping" }));
 
-    expect((await closed).code).toBe(4401);
+    expect((await closed).code).toBe(4409);
     expect(sessionState.subscriptions[0]?.revalidated).toBeGreaterThan(0);
   });
 

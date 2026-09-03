@@ -14,6 +14,7 @@
  * missing file is success (nothing to clear), and a lock we cannot remove is
  * surfaced, not thrown — the caller decides whether to proceed.
  */
+import { execFileSync } from "node:child_process";
 import { readlink, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -121,6 +122,7 @@ function isNotFound(err: unknown): boolean {
 export async function probeSingletonOwner(
   userDataDir: string,
   isAlive: (pid: number) => boolean = defaultIsAlive,
+  describeProcess: (pid: number) => string | undefined = defaultDescribeProcess,
 ): Promise<{ live: boolean; pid?: number; host?: string }> {
   let target: string;
   try {
@@ -137,7 +139,49 @@ export async function probeSingletonOwner(
   // Another machine's lock, on a profile both machines can see. Not ours to
   // reason about, and certainly not ours to clear.
   if (host !== hostname()) return { live: true, pid, host };
-  return isAlive(pid) ? { live: true, pid } : { live: false, pid };
+  if (!isAlive(pid)) return { live: false, pid };
+  // A live pid is not yet an owner. Pids are RECYCLED, and a lock left by an
+  // ungraceful exit outlives the process that wrote it — after a reboot the
+  // number in it routinely belongs to something unrelated. Treating that as
+  // the owner wedges the profile on every launch, with no way out but deleting
+  // the symlink by hand. So ask what the process actually is: only a browser
+  // can be holding a browser profile.
+  const command = describeProcess(pid);
+  if (command !== undefined && !looksLikeBrowser(command)) {
+    return { live: false, pid };
+  }
+  return { live: true, pid };
+}
+
+/** Chromium's own binaries, under the names each platform reports. */
+function looksLikeBrowser(command: string): boolean {
+  return /chrom|headless_shell/i.test(command);
+}
+
+/**
+ * What is running as `pid`, or `undefined` when we cannot tell.
+ *
+ * `undefined` is deliberately distinct from "not a browser": on a platform
+ * where this cannot be answered the pid check stands alone, which is the
+ * behaviour that existed before. Only a POSITIVE identification of something
+ * that is not a browser clears the lock — learning nothing must never become
+ * permission to delete somebody's profile.
+ */
+function defaultDescribeProcess(pid: number): string | undefined {
+  if (process.platform === "win32") return undefined;
+  try {
+    // `comm` is the executable name alone: enough to tell Chromium from a
+    // recycled pid, and it cannot carry a user's command-line arguments.
+    return execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // No `ps`, or the process vanished between the two calls. Either way we
+    // learned nothing, and `undefined` says exactly that.
+    return undefined;
+  }
 }
 
 function defaultIsAlive(pid: number): boolean {

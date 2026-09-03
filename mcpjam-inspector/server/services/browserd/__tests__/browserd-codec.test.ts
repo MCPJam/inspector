@@ -93,3 +93,29 @@ describe("browserd reply codec", () => {
     ).toBe("expired");
   });
 });
+
+describe("decodeCommandResponse — a 423 carries a CODE, not a fixed string", () => {
+  it("classifies a DETAILED refusal, not only the bare code", () => {
+    // The two refusal paths speak differently: the request gate sends the bare
+    // code, while the dequeue guard formats `"<code>: <detail>"` through
+    // `formatBrowserdError`. Comparing whole strings matched only the bare
+    // form, so every detailed refusal fell through to a plain held lease — and
+    // the pane told a person to wait for a holder who was themselves.
+    expect(
+      decodeCommandResponse({
+        status: 423,
+        body: {
+          error: "lease_parked: somebody stepped away mid-login",
+          bootId: "boot-1",
+        },
+      }),
+    ).toMatchObject({ status: "lease_blocked", lease: "parked" });
+
+    expect(
+      decodeCommandResponse({
+        status: 423,
+        body: { error: "lease_held_by_other: rail-2 has it", bootId: "b" },
+      }),
+    ).toMatchObject({ status: "lease_blocked", lease: "other_holder" });
+  });
+});

@@ -209,6 +209,36 @@ describe("local browser session", () => {
     expect(listLocalBrowserSessions()).toHaveLength(1);
   });
 
+  it("reaps a browser whose hold was ABANDONED", async () => {
+    // A hold that runs out PARKS rather than freeing, which is right: a timer
+    // expiring is not evidence the private moment is over, so the agent stays
+    // blocked. But deferring the reap for a parked lease too made any
+    // abandoned hold immortal on a LIVE session — close the tab mid-login and
+    // a Chromium sat pinned open past the hard lifetime with nobody on either
+    // end, because `isBlocking()` is true for both states. Parking blocks the
+    // AGENT; it is not a person at the keyboard.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-02T00:00:00Z"));
+      const { deps, advance, at } = makeDeps();
+      const handle = await ensureLocalBrowserSession(
+        { projectId: "proj-a" },
+        deps,
+      );
+      await handle.client.leaseAction!({ action: "acquire", holder: "rail-1" });
+
+      // The pane went away: no heartbeat, so the hold expires into `parked`.
+      vi.setSystemTime(new Date("2026-09-02T00:31:00Z"));
+      expect((await handle.client.lease!()).state).toBe("parked");
+
+      advance(LOCAL_BROWSER_IDLE_MS + 1);
+      await sweepLocalBrowserSessions(at());
+      expect(listLocalBrowserSessions()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reaps once the person hands it back", async () => {
     const { deps, advance, at } = makeDeps();
     const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);

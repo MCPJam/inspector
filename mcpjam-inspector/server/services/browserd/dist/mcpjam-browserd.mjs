@@ -2383,6 +2383,7 @@ function buildBrowserdLaunchArgs(extra = []) {
 }
 
 // server/services/browserd/daemon/profile-lock.ts
+import { execFileSync } from "node:child_process";
 import { readlink, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -2421,7 +2422,7 @@ async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner)
 function isNotFound(err) {
   return typeof err === "object" && err !== null && err.code === "ENOENT";
 }
-async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive) {
+async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, describeProcess = defaultDescribeProcess) {
   let target;
   try {
     target = await readlink(join(userDataDir, "SingletonLock"));
@@ -2434,7 +2435,27 @@ async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive) {
   const pid = Number(target.slice(separator + 1));
   if (!Number.isInteger(pid) || pid <= 0) return { live: false };
   if (host !== hostname()) return { live: true, pid, host };
-  return isAlive(pid) ? { live: true, pid } : { live: false, pid };
+  if (!isAlive(pid)) return { live: false, pid };
+  const command = describeProcess(pid);
+  if (command !== void 0 && !looksLikeBrowser(command)) {
+    return { live: false, pid };
+  }
+  return { live: true, pid };
+}
+function looksLikeBrowser(command) {
+  return /chrom|headless_shell/i.test(command);
+}
+function defaultDescribeProcess(pid) {
+  if (process.platform === "win32") return void 0;
+  try {
+    return execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
+      encoding: "utf8",
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return void 0;
+  }
 }
 function defaultIsAlive(pid) {
   try {

@@ -319,11 +319,25 @@ class BrowserTurnState {
   }
 }
 
+/**
+ * Pages that are not anywhere.
+ *
+ * `about:blank` is every tab's first history entry, so a `back` out of the one
+ * page a run visited lands on it — and its origin is the opaque string
+ * `"null"`, which matches no allowlist entry and cannot be parsed as a URL.
+ * Judged as a violation it produces the worst possible answer: the run is told
+ * "the page moved somewhere this policy does not permit" about a blank page it
+ * was sent to by its own recovery, and is sent back again. It carries no
+ * content and no cookies, so there is nothing an allowlist could protect.
+ */
+const NEUTRAL_URLS = new Set(["about:blank", "about:srcdoc", ""]);
+
 function isOriginAllowed(
   url: string,
   allowlist: readonly string[] | undefined,
 ): boolean {
   if (!allowlist || allowlist.length === 0) return true;
+  if (NEUTRAL_URLS.has(url)) return true;
   let origin: string;
   try {
     origin = new URL(url).origin;
