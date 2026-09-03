@@ -264,34 +264,20 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     // visual rhythm; Done is a ghost chip, not a heavy outline button.
     return (
       <div className="mb-1 flex w-full max-w-2xl items-center justify-between gap-4 px-6 pt-8 mx-auto min-w-0">
+        {/* READ-ONLY in the settings sheet. Renaming lives in the sheet's own
+            Name row now, and leaving the inline editor here too gave one field
+            two writers: this one commits on blur, immediately, with no review,
+            no note and no revision precondition. Using it while a draft held an
+            unsaved name marked the sheet as "changed elsewhere" for the
+            person's own action, and the next save overwrote the rename with the
+            stale draft. */}
         <div className="min-w-0 flex-1 pr-2">
-          {isEditingName && !readOnlyConfig ? (
-            <input
-              type="text"
-              value={editedName}
-              onChange={(e) => setEditedName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={handleNameKeyDown}
-              autoFocus
-              className="w-full min-w-0 max-w-full -ml-2 px-2 py-1 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
-            />
-          ) : readOnlyConfig ? (
-            <h1
-              className="truncate text-lg font-semibold tracking-tight"
-              title={suite.name}
-            >
-              {suite.name}
-            </h1>
-          ) : (
-            <Button
-              variant="ghost"
-              onClick={handleNameClick}
-              className="h-auto max-w-full min-w-0 justify-start -ml-2 rounded-md px-2 py-1 text-left text-lg font-semibold tracking-tight hover:bg-accent/40"
-              title={suite.name}
-            >
-              <span className="min-w-0 truncate text-left">{suite.name}</span>
-            </Button>
-          )}
+          <h1
+            className="truncate text-lg font-semibold tracking-tight"
+            title={suite.name}
+          >
+            {suite.name}
+          </h1>
         </div>
         <Button
           variant="ghost"

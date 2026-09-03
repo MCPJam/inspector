@@ -48,6 +48,11 @@ export type EvalSuiteSettingRow = {
 
 export const EVAL_SUITE_SETTINGS_MANIFEST = [
   {
+    key: "name",
+    label: "Name",
+    api: "name",
+  },
+  {
     key: "minimumAccuracy",
     label: "Minimum accuracy",
     api: "settings.minimumAccuracy",

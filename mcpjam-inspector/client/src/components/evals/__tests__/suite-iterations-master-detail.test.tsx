@@ -1,4 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
+import { withDataRouter } from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteIterationsView } from "../suite-iterations-view";
@@ -178,6 +179,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("does not mount TestCasesOverview when case index is in the parent sidebar", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -205,7 +207,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={noopNav}
         caseListInSidebar
-      />,
+      />,)
     );
 
     expect(screen.queryByTestId("test-cases-overview")).toBeNull();
@@ -217,6 +219,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("replaces run-oriented overview chrome when run actions are hidden", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -245,7 +248,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         navigation={noopNav}
         caseListInSidebar
         hideRunActions
-      />,
+      />,)
     );
 
     expect(screen.queryByTestId("suite-hero-stats")).toBeNull();
@@ -254,6 +257,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("still mounts TestCasesOverview without caseListInSidebar", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -280,7 +284,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
           view: "test-cases",
         }}
         navigation={noopNav}
-      />,
+      />,)
     );
 
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
@@ -294,6 +298,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     };
 
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[
@@ -332,7 +337,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={navigation}
         hideRunActions
-      />,
+      />,)
     );
 
     await user.click(screen.getByTestId("test-cases-overview"));
@@ -348,6 +353,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     };
 
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[
@@ -386,7 +392,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={navigation}
         hideRunActions
-      />,
+      />,)
     );
 
     await user.click(screen.getByTestId("test-cases-open-last-run"));
@@ -399,6 +405,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -426,7 +433,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={noopNav}
         readOnlyConfig
-      />,
+      />,)
     );
 
     expect(mocks.runOverview).toHaveBeenCalledWith(
@@ -448,6 +455,7 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
 
   function renderView(suite: EvalSuite, projectId?: string) {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={suite}
         {...(projectId ? { projectId } : {})}
@@ -475,7 +483,7 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
           view: "test-cases",
         }}
         navigation={noopNav}
-      />,
+      />,)
     );
   }
 
@@ -545,6 +553,7 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     navigation = noopNav,
   ) =>
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={{ ...baseSuite, name: "checkout-flow" }}
         cases={[detailCase as any]}
@@ -573,7 +582,7 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
         navigation={navigation}
         hideRunActions
         {...(props as any)}
-      />,
+      />,)
     );
 
   it("keeps the unified dashboard when the flag-gated tab has not opted in", () => {

@@ -174,6 +174,23 @@ export {
   stageResultRowSchema,
 } from "./stage-derivation.js";
 
+// ── grader → stage map (B7) ──────────────────────────────────────────────────
+/**
+ * Which stage of the chain each grader measures.
+ *
+ * Exported so a settings surface can group graders by what they MEASURE
+ * instead of by how they happen to be implemented, and so it does that from
+ * the same table the analyzer routes with rather than a second copy of it.
+ */
+export {
+  GRADER_PRESENTATION_GROUP,
+  GRADER_STAGE,
+  PREDICATE_KINDS,
+  PREDICATE_STAGE,
+  isSelectionStagePredicateKind,
+  type PredicateKind,
+} from "./grader-stage.js";
+
 // ── stage analytics (D5) ─────────────────────────────────────────────────────
 /**
  * Contract and runtime wiring for the D5/B5 eval analytics fields.
