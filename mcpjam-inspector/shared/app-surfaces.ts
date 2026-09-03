@@ -137,7 +137,11 @@ export const APP_SURFACES = [
     id: "servers",
     scope: "project",
     canonicalPath: "/servers",
-    routePatterns: ["servers", "servers/plugins/:pluginId", "servers/:serverId"],
+    routePatterns: [
+      "servers",
+      "servers/plugins/:pluginId",
+      "servers/:serverId",
+    ],
     // `client-config` renders nothing of its own (it redirects here), but it
     // IS still a tab segment that resolves to this surface, so it stays a
     // valid `ui_navigate` target and a valid `pathnameToActiveTab` result.
@@ -710,6 +714,10 @@ export const APP_SURFACES = [
       // Discord agent settings — same reasoning as Slack directly above,
       // including staying out of `userActivities` while `discord-agent` is off.
       "organizations/:orgId/discord",
+      // Trace destinations — where this org's traces are streamed. Same
+      // reasoning again: listed for route coverage, kept out of
+      // `userActivities` while `trace-destinations` is off.
+      "organizations/:orgId/observability",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -800,7 +808,7 @@ export function listAppSurfaces(): readonly AppSurfaceManifest[] {
 }
 
 const surfacesById = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().map((s) => [s.id, s])
+  listAppSurfaces().map((s) => [s.id, s]),
 );
 
 export function getAppSurface(id: string): AppSurfaceManifest | undefined {
@@ -812,7 +820,7 @@ export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
 }
 
 const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s]))
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
 );
 
 /**
@@ -821,7 +829,7 @@ const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
  * the coverage test asserts no segment is claimed by two surfaces.
  */
 export function getAppSurfaceByNavSegment(
-  segment: string
+  segment: string,
 ): AppSurfaceManifest | undefined {
   return surfacesByNavSegment.get(segment);
 }
@@ -864,7 +872,7 @@ export function listHostedBlockedNavSegments(): string[] {
  */
 export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   const surfaces = listAppSurfaces().filter(
-    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked)
+    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked),
   );
   return [
     "## The MCPJam inspector, screen by screen",
@@ -880,7 +888,7 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
         `### ${s.title} (${s.navSegments[0]})`,
         s.purpose,
         ...s.userActivities.map((a) => `- ${a}`),
-      ].join("\n")
+      ].join("\n"),
     ),
   ].join("\n");
 }
