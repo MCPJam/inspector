@@ -112,7 +112,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
-import { attributeToServer } from "@/lib/server-error-copy";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
@@ -4791,11 +4791,10 @@ export function useServerState({
         if (suppressErrors) return;
         // Reconnect is the path a user takes right AFTER changing the protocol
         // version, so it is the likeliest place to meet a pin the server
-        // doesn't offer — and its toast carries the bare message, with no
-        // action of its own. Matched on the message because that is all this
+        // doesn't offer. Matched on the message because that is all this
         // helper receives; the clause is MCPJam's own wording.
         if (isProtocolVersionPinFailure(undefined, errorMessage)) {
-          toast.error(errorMessage, {
+          toastServerConnectionFailure(serverName, errorMessage, {
             action: {
               label: "Change protocol version",
               onClick: () => {
@@ -4811,15 +4810,10 @@ export function useServerState({
           });
           return;
         }
-        // Name the server for everything else. The route stopped prefixing its
-        // payload with "Connection failed for server X:" — that preamble
-        // buried the sentence and repeated the name against errors that
-        // already carry it — but a generic failure ("Connection refused") then
-        // says nothing about WHICH server, and several can fail at once.
-        //
-        // So it is added here, in the copy layer, and only when the message
-        // does not already name the server: attribution without the stutter.
-        toast.error(attributeToServer(serverName, errorMessage));
+        // Everything else names the server in the toast title: a generic
+        // failure ("Connection refused") says nothing about WHICH one, and
+        // several can fail at once.
+        toastServerConnectionFailure(serverName, errorMessage);
       };
 
       if (isClientConfigSyncPending) {
