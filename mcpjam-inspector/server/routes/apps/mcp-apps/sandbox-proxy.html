@@ -904,6 +904,21 @@ document.addEventListener('securitypolicyviolation', function(e) {
         inner = next;
         next.style.colorScheme = applyColorScheme(colorScheme);
         lastMount = { html, sandboxValue, allowValue, colorScheme, mountMode };
+        // Tell the host where the view actually landed. `document.URL` is this
+        // proxy's URL, which the written document adopts (see above), so this
+        // is the origin a developer allowlists with a third party that keys on
+        // the page URL — a referrer-restricted API key, an OAuth redirect. The
+        // srcdoc branch has no URL of its own and says so. Posted from here
+        // rather than the call sites so a remount reports too.
+        // targetOrigin is "*" until host-origin pinning narrows it.
+        window.parent.postMessage(
+          {
+            type: "mcpjam:view-mode",
+            mode,
+            url: mode === "url" ? document.URL : "about:srcdoc",
+          },
+          "*",
+        );
         return mode;
       }
 

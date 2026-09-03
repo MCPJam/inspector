@@ -455,11 +455,17 @@ function mapLogToLifecycle(
     "debug/bridge-connect-error": "bridge-connect-error",
     "debug/bridge-connect-skipped": "bridge-connect-skipped",
     "debug/app-initialized": "app-initialized",
+    "debug/view-mounted": "view-mounted",
   };
   const kind = kindByMethod[method];
   if (!kind) return null;
   let status: WidgetLifecycleEvent["status"];
-  if (
+  if (method === "debug/view-mounted") {
+    // No -ready/-error suffix to read: the mount mode IS the status. A srcdoc
+    // mount means the view has no real URL, which is the degraded outcome
+    // this event exists to make visible.
+    status = details.mode === "url" ? "ok" : "error";
+  } else if (
     method.endsWith("-error") ||
     method === "debug/widget-content-invalid-mimetype"
   ) {
@@ -478,6 +484,8 @@ function mapLogToLifecycle(
       ? details.error
       : typeof details.reason === "string"
       ? details.reason
+      : method === "debug/view-mounted" && typeof details.url === "string"
+      ? details.url
       : undefined;
   return { kind, status, message, timestamp: Date.now() };
 }
@@ -1220,6 +1228,12 @@ export function MCPAppsRendererSurface({
     string | null
   >(null);
   const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
+  // Where the proxy mounted the view, reported once per mount. Surfaced as the
+  // Sandbox Stack "View origin" chip.
+  const [viewMount, setViewMount] = useState<{
+    mode: "url" | "srcdoc" | "srcdoc-fallback";
+    url: string;
+  } | null>(null);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
   const explicitOpenInAppBaseUrl = useMemo(
     () => resolveExplicitBaseUrl(widgetHtml, resourceUri),
@@ -3054,6 +3068,17 @@ export function MCPAppsRendererSurface({
     [resolvedBridgeHostInfo]
   );
 
+  // Origin of the view's document URL — what a developer allowlists with a
+  // third party that keys on the page URL. The srcdoc paths have none.
+  const viewAssignedOrigin = useMemo(() => {
+    if (!viewMount || viewMount.mode !== "url") return undefined;
+    try {
+      return new URL(viewMount.url).origin;
+    } catch {
+      return undefined;
+    }
+  }, [viewMount]);
+
   useEffect(() => {
     if (!toolCallId) return;
     setSandboxAppliedStore(
@@ -3068,6 +3093,9 @@ export function MCPAppsRendererSurface({
         restrictTo: sandboxCspPolicy?.restrictTo,
         cspMode: sandboxCspPolicy?.mode,
         permissions: effectiveSandbox.permissions,
+        viewMode: viewMount?.mode,
+        viewUrl: viewMount?.url,
+        assignedOrigin: viewAssignedOrigin,
       },
       undefined,
       sandboxHostInfo
@@ -3078,6 +3106,8 @@ export function MCPAppsRendererSurface({
     sandboxCspPolicy,
     sandboxHostInfo,
     setSandboxAppliedStore,
+    viewMount,
+    viewAssignedOrigin,
   ]);
 
   // Keep bridge callbacks in sync before ResizeObserver/rAF-driven widget
@@ -3829,6 +3859,19 @@ export function MCPAppsRendererSurface({
       return;
     }
 
+    // Where the proxy mounted the view. `url` is the view's real document URL
+    // when it was written into a blank frame; "about:srcdoc" on the srcdoc
+    // paths, which have no origin to allowlist.
+    if (data.type === "mcpjam:view-mode") {
+      const mode = data.mode;
+      if (mode === "url" || mode === "srcdoc" || mode === "srcdoc-fallback") {
+        const url = typeof data.url === "string" ? data.url : "";
+        setViewMount({ mode, url });
+        logWidgetDebug("ui-to-host", "debug/view-mounted", { mode, url });
+      }
+      return;
+    }
+
     // Tier 2 recorder: forward captured steps + readiness to the host.
     if (data.type === "recorder:step") {
       recorderDebug("step from sandbox", {
@@ -4214,6 +4257,7 @@ export function MCPAppsRendererSurface({
       title={`MCP App: ${toolName}`}
       hostedMode={host.surface.hostedMode}
       sandboxOrigin={host.surface.sandboxOrigin}
+      mountMode={host.surface.viewMountMode}
       className={`bg-transparent overflow-hidden ${
         isFullscreen
           ? "flex-1 border-0 rounded-none"

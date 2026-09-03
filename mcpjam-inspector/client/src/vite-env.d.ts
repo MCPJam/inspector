@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_RUNTIME?: string;
   readonly VITE_MCPJAM_HOSTED_MODE?: string;
   readonly VITE_MCPJAM_SANDBOX_ORIGIN?: string;
+  readonly VITE_MCPJAM_VIEW_MOUNT?: string;
   readonly VITE_ENVIRONMENT?: string;
   // more env variables...
 }

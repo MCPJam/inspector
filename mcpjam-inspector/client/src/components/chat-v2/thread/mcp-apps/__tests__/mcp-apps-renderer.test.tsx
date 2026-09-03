@@ -2581,6 +2581,87 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("records the view mount reported by the sandbox proxy", async () => {
+    // The proxy posts `mcpjam:view-mode` once per mount. It has to land in
+    // two places: the lifecycle list (so the panel shows the view came up)
+    // and `applied` (so the Sandbox Stack chip can show the origin a
+    // developer allowlists with a referrer-restricted third party). The
+    // status is derived from the mode, not a method suffix.
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-mode",
+          mode: "url",
+          url: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+        },
+      } as MessageEvent);
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({ kind: "view-mounted", status: "ok" }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          viewMode: "url",
+          viewUrl: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+          assignedOrigin: "http://127.0.0.1:6274",
+        }),
+        undefined,
+        null,
+      );
+    });
+  });
+
+  it("marks a srcdoc mount as a degraded view (no origin to allowlist)", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-mode",
+          mode: "srcdoc-fallback",
+          url: "about:srcdoc",
+        },
+      } as MessageEvent);
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({ kind: "view-mounted", status: "error" }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          viewMode: "srcdoc-fallback",
+          // `about:srcdoc` has no origin — the chip must not offer one.
+          assignedOrigin: undefined,
+        }),
+        undefined,
+        null,
+      );
+    });
+  });
+
   it("sends partial tool input during input-streaming", async () => {
     const partialInput = { elements: '[{"type":"rectangle"' };
     render(

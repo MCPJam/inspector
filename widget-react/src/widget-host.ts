@@ -212,6 +212,11 @@ export interface WidgetSurfaceInfo {
   /** SANDBOX_ORIGIN (VITE_MCPJAM_SANDBOX_ORIGIN); "" when unset. */
   sandboxOrigin: string;
   /**
+   * VIEW_MOUNT_MODE (VITE_MCPJAM_VIEW_MOUNT) — how the sandbox proxy mounts
+   * the view. Absent means `"write"`, which is what gives the view a real URL.
+   */
+  viewMountMode?: "write" | "srcdoc";
+  /**
    * Playground CSP-mode selection (useUIPlaygroundStore.mcpAppsCspMode) — an
    * INPUT, not the effective mode. The renderer derives the effective sandbox
    * CSP mode from `kind` + this + the per-widget `minimalMode` prop (kept as an
@@ -254,7 +259,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-ready"
     | "bridge-connect-error"
     | "bridge-connect-skipped"
-    | "app-initialized";
+    | "app-initialized"
+    | "view-mounted";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -280,6 +286,20 @@ export interface WidgetSandboxApplied {
     geolocation?: {};
     clipboardWrite?: {};
   };
+  /**
+   * How the proxy mounted the view. `"url"` means it was written into a blank
+   * same-origin frame and runs at the proxy's URL; the srcdoc values mean it
+   * has no URL of its own (`"srcdoc"` was asked for, `"srcdoc-fallback"` was
+   * forced because the frame's document was unreachable).
+   */
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** The view's document URL as reported by the proxy. */
+  viewUrl?: string;
+  /**
+   * Origin of `viewUrl` — what a developer allowlists with a third party that
+   * keys on the page URL. Absent on the srcdoc paths, which have no origin.
+   */
+  assignedOrigin?: string;
 }
 
 export interface WidgetSandboxInfo {

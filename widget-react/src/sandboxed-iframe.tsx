@@ -241,6 +241,15 @@ interface SandboxedIframeProps {
    * (`host.surface.sandboxOrigin`).
    */
   sandboxOrigin?: string;
+  /**
+   * How the proxy mounts the view: `"write"` (default) writes the HTML into a
+   * blank same-origin iframe so the view runs at the proxy's URL; `"srcdoc"`
+   * restores the legacy `iframe.srcdoc` mount, where the view has no URL of
+   * its own. Supplied by the host (`host.surface.viewMountMode`); build-time
+   * only, so it exists to exercise the srcdoc branch rather than to switch
+   * behaviour at runtime.
+   */
+  mountMode?: "write" | "srcdoc";
 }
 
 /**
@@ -275,6 +284,7 @@ export const SandboxedIframe = forwardRef<
     title = "Sandboxed Content",
     hostedMode = false,
     sandboxOrigin = "",
+    mountMode,
   },
   ref
 ) {
@@ -333,6 +343,14 @@ export const SandboxedIframe = forwardRef<
         event.data?.type === "openai:setWidgetState" ||
         event.data?.type === "openai:setOpenInAppUrl"
       ) {
+        onMessageRef.current(event);
+        return;
+      }
+
+      // Where the proxy mounted the view (not JSON-RPC) — carries the view's
+      // real document URL, which the Sandbox Stack panel surfaces so a
+      // developer can allowlist it with a referrer-restricted third party.
+      if (event.data?.type === "mcpjam:view-mode") {
         onMessageRef.current(event);
         return;
       }
@@ -431,6 +449,9 @@ export const SandboxedIframe = forwardRef<
         // Include recordMode so record-capable surfaces receive the recorder
         // shim, and stale/non-recordable surfaces reload without it.
         recordMode: recordMode ?? null,
+        // Part of the render recipe: it decides how the proxy mounts the HTML,
+        // so a change must re-send rather than leave the previous mount up.
+        mountMode: mountMode ?? null,
       }),
     [
       csp,
@@ -443,6 +464,7 @@ export const SandboxedIframe = forwardRef<
       sandbox,
       sandboxAttrs,
       recordMode,
+      mountMode,
     ]
   );
 
@@ -481,6 +503,7 @@ export const SandboxedIframe = forwardRef<
           colorScheme,
           recordMode,
           recorderDebug: isRecorderDebugEnabled(),
+          mountMode,
         },
       },
       sandboxProxyOrigin
