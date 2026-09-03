@@ -1030,11 +1030,12 @@ export class MCPClientManager {
               return settle(this.readResource(id, { uri }, requestOptions));
             },
             callTool: async ({ name, args, options: callOptions }) => {
-              const { requestOptions, settle } = this.applyCancellationPolicy(
-                id,
-                callOptions?.abortSignal,
-                options.toolCallCancellation
-              );
+              const { requestOptions, readRequestOptions, settle } =
+                this.applyCancellationPolicy(
+                  id,
+                  callOptions?.abortSignal,
+                  options.toolCallCancellation
+                );
               const toolArgs = (args ?? {}) as ExecuteToolArguments;
               if (!options.tasks) {
                 const result = await settle(
@@ -1065,7 +1066,7 @@ export class MCPClientManager {
                       }),
                     getTask: async (taskId) =>
                       extensionTaskToObservation(
-                        await this.getTaskExt(id, taskId, requestOptions)
+                        await this.getTaskExt(id, taskId, readRequestOptions)
                       ),
                     updateTask: async (taskId, inputResponses) => {
                       // The await driver is wire-neutral and types responses as
@@ -1076,7 +1077,7 @@ export class MCPClientManager {
                         id,
                         taskId,
                         inputResponses as TaskExtInputResponses,
-                        requestOptions
+                        readRequestOptions
                       );
                     },
                   },
@@ -4190,7 +4191,21 @@ export class MCPClientManager {
      */
     override?: { legacy?: boolean; modern?: boolean }
   ): {
+    /** For the leg that carries the TOOL CALL itself. */
     requestOptions: { signal?: AbortSignal; timeout?: number } | undefined;
+    /**
+     * For the seam's read legs (`tasks/get` polls, `tasks/update`).
+     *
+     * Separate from `requestOptions` because the suppression is about the tool
+     * call, not about every request made while awaiting it. Cancelling a
+     * `tasks/get` does not cancel the task, so a poll can keep the connection's
+     * ordinary timeout — and must, or a hung poll would sit on the suppressed
+     * call's day-long timer with nothing to end it: the await driver's own
+     * deadline abandons the in-flight promise rather than aborting its request.
+     */
+    readRequestOptions:
+      | { signal?: AbortSignal; timeout?: number }
+      | undefined;
     settle: <T>(promise: Promise<T>) => Promise<T>;
   } {
     // Resolve the era from what the connection actually negotiated — the same
@@ -4212,11 +4227,17 @@ export class MCPClientManager {
 
 
     if (abortSignal === undefined) {
-      return { requestOptions: undefined, settle: (promise) => promise };
+      return {
+        requestOptions: undefined,
+        readRequestOptions: undefined,
+        settle: (promise) => promise,
+      };
     }
     if (!suppressed) {
+      const passThrough = { signal: abortSignal };
       return {
-        requestOptions: { signal: abortSignal },
+        requestOptions: passThrough,
+        readRequestOptions: passThrough,
         settle: (promise) => promise,
       };
     }
@@ -4234,6 +4255,10 @@ export class MCPClientManager {
       // Bounded rather than infinite so a server that never replies cannot
       // leak the entry forever.
       requestOptions: { timeout: SUPPRESSED_CANCELLATION_TIMEOUT_MS },
+      // Reads keep the connection's own timeout (`withTimeout` fills it in for
+      // an absent one) and, like the call, are given no signal — the silence
+      // being simulated is silence about the tool call, and the poll is not it.
+      readRequestOptions: undefined,
       settle: (promise) => this.awaitWithAbort(promise, abortSignal),
     };
   }

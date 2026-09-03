@@ -3,6 +3,18 @@ import { MCPClientManager } from "../src/mcp-client-manager/index.js";
 import { serveMultiPageFixtureOnPort, type ServedMultiPageFixture } from "./support/multi-page-fixture.js";
 import { getWireField } from "./support/raw-capture.js";
 
+/**
+ * READING THESE ASSERTIONS: an absent `tools/call` means the call is still
+ * RUNNING, not that it was never dispatched.
+ *
+ * `served.exchanges` records COMPLETED request/response pairs, and `slow-tool`
+ * is held open — so a suppressed call, which the server keeps working on,
+ * never lands there, while a cancelled one does: the abort (or the timeout)
+ * closes the stream, the exchange terminates, and only then is it logged.
+ * Dispatch is proven separately by `waitForToolCall`, which every case awaits
+ * before asserting anything.
+ */
+
 describe("on -> off -> on, one manager, reconnect between saves", () => {
   const fixtures: ServedMultiPageFixture[] = [];
   let manager: MCPClientManager | undefined;
