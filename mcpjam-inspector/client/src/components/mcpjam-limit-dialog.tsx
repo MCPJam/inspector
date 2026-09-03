@@ -9,7 +9,11 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useActiveFeatureFlags, useFeatureFlagVariantKey } from "posthog-js/react";
+import {
+  useActiveFeatureFlags,
+  useFeatureFlagVariantKey,
+  usePostHog,
+} from "posthog-js/react";
 import { useEffect, useRef, useState } from "react";
 import {
   canManageOrgCredits,
@@ -45,6 +49,15 @@ const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.png";
 // The hero art's intrinsic size, used to reserve its box before the PNG decodes.
 const GUEST_WALL_ILLUSTRATION_SIZE = 582;
 
+// If PostHog's /flags never resolves (commonly: an ad blocker, and this is a
+// developer-tool audience), commit control after this wait so the wall still
+// shows and still logs an impression rather than hanging silently.
+const GUEST_WALL_FLAG_WAIT_MS = 2000;
+
+const normalizeGuestVariant = (
+  raw: string | boolean | undefined
+): "control" | "treatment" => (raw === "treatment" ? "treatment" : "control");
+
 /**
  * The guest out-of-credits wall. Rendered ONLY while the wall is actually shown
  * (see the caller's `showGuestDialog` guard), so the flag read here — and the
@@ -56,58 +69,68 @@ const GUEST_WALL_ILLUSTRATION_SIZE = 582;
 function GuestCreditWall() {
   const { signIn, signUp } = useAuth();
   const close = useMCPJamLimitDialogStore((s) => s.close);
+  const posthog = usePostHog();
   // Reading the variant fires the PostHog exposure ($feature_flag_called).
   const rawVariant = useFeatureFlagVariantKey(GUEST_WALL_FLAG);
-  // Subscribe to flag *resolution* separately: when our flag is absent (the
-  // pre-experiment state), `useFeatureFlagVariantKey` stays undefined and never
-  // re-renders on load, so a render-time `hasLoadedFlags` read would never
-  // update and pin the wall to the control fallback. `useActiveFeatureFlags`
-  // returns undefined until flags load, then an array, and re-renders on that.
-  const activeFlags = useActiveFeatureFlags();
-  const flagsLoaded = activeFlags !== undefined;
+  // `useActiveFeatureFlags` is here purely for its `onFeatureFlags`
+  // subscription: it re-renders when flags resolve even if our flag is absent
+  // (the pre-experiment state), which a render-time `hasLoadedFlags` read needs
+  // in order to update. It returns string[] (seeded to [] synchronously) and
+  // never undefined, so it can't answer "have flags loaded?" — hasLoadedFlags
+  // can, and is public on the client.
+  useActiveFeatureFlags();
+  const flagsLoaded = posthog?.featureFlags?.hasLoadedFlags ?? false;
 
-  // Distinguish "flags still loading" from "flag resolved to control": both read
-  // as undefined from the variant hook, but treating a still-loading flag as
-  // control would bucket a slow-network guest to control while PostHog's
-  // exposure already enrolled them in treatment. Wait for load before committing.
-  const resolvedVariant: "control" | "treatment" | null = !flagsLoaded
-    ? null
-    : rawVariant === "treatment"
-    ? "treatment"
-    : "control";
+  // Commit the variant once per opening. Initialize synchronously when flags are
+  // already loaded (the common case — the wall shows after the guest has used
+  // the app) to avoid a control→treatment flicker; otherwise hold null until
+  // flags resolve so we never bake in control while PostHog's exposure has
+  // already enrolled a slow guest in treatment.
+  const [committedVariant, setCommittedVariant] = useState<
+    "control" | "treatment" | null
+  >(() => (flagsLoaded ? normalizeGuestVariant(rawVariant) : null));
 
-  // Freeze the variant for this opening so a mid-open flag change can't swap the
-  // copy under the user or desync the recorded variant from what was shown. The
-  // component unmounts on close, so the next opening resolves fresh.
-  const [variant, setVariant] = useState<"control" | "treatment" | null>(null);
+  // Flags resolved after mount (slow /flags): commit the real value now.
   useEffect(() => {
-    if (resolvedVariant !== null) setVariant((prev) => prev ?? resolvedVariant);
-  }, [resolvedVariant]);
+    if (committedVariant !== null || !flagsLoaded) return;
+    setCommittedVariant(normalizeGuestVariant(rawVariant));
+  }, [committedVariant, flagsLoaded, rawVariant]);
 
-  // One impression per opening, and only once the variant is real — reporting
-  // the control fallback below would misattribute a treatment guest.
+  // Flags never resolved (blocked): fall back to control after a bounded wait so
+  // the wall still shows and the impression still fires, as control does today.
+  useEffect(() => {
+    if (committedVariant !== null) return;
+    const timer = window.setTimeout(
+      () => setCommittedVariant((prev) => prev ?? "control"),
+      GUEST_WALL_FLAG_WAIT_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [committedVariant]);
+
+  // One impression per opening, and only once a variant is committed — reporting
+  // the control fallback below early would misattribute a treatment guest.
   const impressionTrackedRef = useRef(false);
   useEffect(() => {
-    if (variant === null || impressionTrackedRef.current) return;
+    if (committedVariant === null || impressionTrackedRef.current) return;
     impressionTrackedRef.current = true;
-    const isTreatment = variant === "treatment";
+    const isTreatment = committedVariant === "treatment";
     track("plan_limit_dialog_shown", {
       location: "plan_limit_dialog",
       wall_kind: "guest_credits",
       limit_kind: "credits",
       origin: "credits",
       audience: "guest",
-      variant,
+      variant: committedVariant,
       primary_action: isTreatment ? "create_account" : "sign_in",
       secondary_action: isTreatment ? "see_plans" : null,
       is_identified: false,
     });
-  }, [variant]);
+  }, [committedVariant]);
 
-  // Show control until the flag resolves so the guest never sees an empty
-  // dialog; the impression above holds until the real value arrives.
-  const isTreatment = variant === "treatment";
-  const trackedVariant = variant ?? "control";
+  // Show control until a variant is committed so the guest never sees an empty
+  // dialog; the impression above holds until then.
+  const isTreatment = committedVariant === "treatment";
+  const trackedVariant = committedVariant ?? "control";
 
   const handleDismiss = () => {
     close();

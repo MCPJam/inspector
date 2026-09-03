@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MCPJamLimitDialog } from "../mcpjam-limit-dialog";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -91,9 +91,13 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagVariantKey: (...args: unknown[]) => guestVariantMock(...args),
-  // The guest wall waits for flags to load before committing a variant.
-  // undefined = still loading; an array = loaded. Tests default to loaded.
-  useActiveFeatureFlags: () => (flagsLoadedMock.value ? [] : undefined),
+  // Matches the real contract: useActiveFeatureFlags always returns string[]
+  // (the component uses it only for its re-render subscription). The load gate
+  // reads hasLoadedFlags off the client, which flagsLoadedMock drives.
+  useActiveFeatureFlags: () => [],
+  usePostHog: () => ({
+    featureFlags: { hasLoadedFlags: flagsLoadedMock.value },
+  }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -428,6 +432,41 @@ describe("MCPJamLimitDialog", () => {
     expect(impressions[0]?.[1]).toEqual(
       expect.objectContaining({ variant: "treatment" })
     );
+  });
+
+  it("commits control after a timeout when flags never load (e.g. blocked)", () => {
+    vi.useFakeTimers();
+    try {
+      flagsLoadedMock.value = false;
+      // Even a treatment-bucketed guest must fall back to control if /flags
+      // never resolves — and the impression must still fire.
+      guestVariantMock.mockReturnValue("treatment");
+      useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+      render(<MCPJamLimitDialog />);
+
+      // Before the timeout: control is shown, nothing recorded yet.
+      expect(
+        screen.getByRole("button", { name: /^sign in$/i })
+      ).toBeInTheDocument();
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_dialog_shown",
+        expect.anything()
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      const impressions = trackMock.mock.calls.filter(
+        ([event]) => event === "plan_limit_dialog_shown"
+      );
+      expect(impressions).toHaveLength(1);
+      expect(impressions[0]?.[1]).toEqual(
+        expect.objectContaining({ variant: "control" })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("orders the primary CTA first in the DOM so it takes opening focus", () => {
