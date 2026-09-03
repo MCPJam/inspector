@@ -916,6 +916,24 @@ describe("web auth manager batching", () => {
     expect(parsed.dropToolListChanged).toBe(true);
   });
 
+  // The same hop had eaten `toolCallCancellation` since that knob shipped:
+  // the extractor read it and every pin site carried it, but this schema
+  // never declared it, so it was stripped before the extractor ran. Chat was
+  // unaffected (it extracts from the pre-parse raw body); every other hosted
+  // surface cancelled normally no matter what the host was configured to do.
+  it("projectServerSchema keeps the per-era cancellation record", async () => {
+    const { projectServerSchema } = await import("../auth.js");
+    const parsed = projectServerSchema.parse({
+      projectId: "project-1",
+      serverId: "server-1",
+      toolCallCancellation: { legacy: false, modern: false },
+    });
+    expect(parsed.toolCallCancellation).toEqual({
+      legacy: false,
+      modern: false,
+    });
+  });
+
   it("extractMcpInitializeOptions pins the toolListChanged knobs from the body", async () => {
     const { extractMcpInitializeOptions } = await import("../auth.js");
     expect(

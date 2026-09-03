@@ -39,8 +39,30 @@ Both switches now travel the same path their siblings do on both surfaces: only
 the non-conforming value reaches the wire, the boundary declares it, the
 extractor or parser reads it, and it lands on the SDK config. An absent field
 still means the conforming behavior, so a host with no `toolListChanged`
-opinion sends nothing and behaves exactly as before, and a server-side host
-config stays authoritative over the body.
+opinion sends nothing and behaves exactly as before.
+
+**The wire declaration is now written once.** Chasing this bug turned up two
+more instances of it, both the same shape and neither about `toolListChanged`:
+`projectServerSchema` had never declared `toolCallCancellation`, so that knob
+was stripped on every hosted surface except chat (which extracts from the
+pre-parse raw body) since the day it shipped; and `hostedBatchSchema` — the
+schema every hosted **eval** body is parsed through — declared none of the
+conformance knobs at all. Three knobs, three schemas, one failure mode: Zod
+strips what a schema does not name, and the result is not an error but a
+silently conforming session. The six fields now live in one exported
+`conformanceKnobWireShape` that both schemas spread, so a new knob reaches
+every body-built surface by being added in one place.
+
+The hosted local-runtime **stdio** divert was dropping `toolCallCancellation`
+for the same reason at a different hop: it forwarded the sibling knobs to
+`resolveLocalStdioServerConfig`, which has always accepted cancellation and
+writes it onto the child config, but the hand-off never passed it. Cancellation
+is era-scoped, not transport-scoped, so a stdio connection has to honor it too.
+
+One thing this does **not** change: on the body-built surfaces a server-side
+host config is not re-derived over the request body. Only chat turns do that
+(`applyHostConformanceKnobs`); everywhere else the body is the source, exactly
+as it already was for the sibling knobs.
 
 One asymmetry is deliberate. `dropToolListChanged` edits an inbound JSON-RPC
 frame, so it is forwarded on stdio as well as HTTP; `suppressListenChannel`

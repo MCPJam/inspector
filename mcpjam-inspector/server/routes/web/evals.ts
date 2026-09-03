@@ -16,6 +16,7 @@ import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
   callerContextFromHono,
+  conformanceKnobWireShape,
   createManualHostedConnection,
   handleRoute,
   parseWithSchema,
@@ -60,6 +61,12 @@ const hostedBatchSchema = z.object({
     .optional(),
   supportedProtocolVersions: z.array(z.string().min(1)).optional(),
   mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
+  // The client-conformance knobs, spread from their one declaration rather
+  // than re-listed here. This schema strips what it does not name, and every
+  // hosted eval body is parsed through it BEFORE
+  // `extractMcpInitializeOptions` reads the pins — so an eval run against a
+  // non-conforming host was executing as a fully conforming client.
+  ...conformanceKnobWireShape,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   scenarioId: z.string().min(1).optional(),
