@@ -82,7 +82,8 @@ export function PassCriteriaSelector({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
-      commit();
+      // Just leave the field — the blur below IS the commit. Calling `commit`
+      // here as well reported the same edit twice, once from each path.
       (e.target as HTMLInputElement).blur();
     } else if (e.key === "Escape") {
       cancelled.current = true;
