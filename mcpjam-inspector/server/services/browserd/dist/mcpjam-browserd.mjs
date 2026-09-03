@@ -55,6 +55,8 @@ var BROWSERD_ERROR_CODES = [
   "dialog_pending",
   /** A download exceeded the per-file or per-session cap and was cancelled. */
   "download_over_cap",
+  /** The browser is being torn down; nothing new is opened on it. */
+  "driver_closed",
   // --- session establishment (never reaches the daemon) ------------------
   /** This engine needs a Chromium that is not installed on this machine. */
   "chromium_not_installed",
@@ -567,7 +569,11 @@ var BrowserdRequestHandler = class {
     if (!viewport) return { ok: false, error: "unknown_tab" };
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
-    await viewport.dispatchInput(args.events, () => stillTheirs() === void 0);
+    await viewport.dispatchInput(
+      args.events,
+      () => stillTheirs() === void 0,
+      args.holder
+    );
     return { ok: true };
   }
   /** May this watcher see frames right now? */
@@ -1423,6 +1429,8 @@ function createTabViewport(cdp, options) {
   let streamGeneration = 0;
   let disposed = false;
   let buttonMask = 0;
+  let inputChain = Promise.resolve();
+  let inputHolder;
   let lastData;
   let seq = 0;
   const publish = (frame) => {
@@ -1496,24 +1504,40 @@ function createTabViewport(cdp, options) {
       };
     },
     subscriberCount: () => listeners.size,
-    async dispatchInput(events, stillPermitted) {
-      for (const event of events) {
-        if (stillPermitted && !stillPermitted()) return;
-        if (event.type === "mouse_down") {
-          buttonMask |= BUTTON_MASK[event.button] ?? 1;
-        } else if (event.type === "mouse_up") {
-          buttonMask &= ~(BUTTON_MASK[event.button] ?? 1);
-        }
-        await dispatchOne(cdp, event, buttonMask).catch(() => {
-        });
-      }
+    async dispatchInput(events, stillPermitted, holder) {
+      const run = inputChain.then(
+        () => dispatchBatch(events, stillPermitted, holder)
+      );
+      inputChain = run.catch(() => {
+      });
+      return run;
     },
     async dispose() {
       disposed = true;
+      buttonMask = 0;
       listeners.clear();
       await stop();
     }
   };
+  async function dispatchBatch(events, stillPermitted, holder) {
+    if (holder !== inputHolder) {
+      buttonMask = 0;
+      inputHolder = holder;
+    }
+    if (disposed) return;
+    for (const event of events) {
+      if (stillPermitted && !stillPermitted()) {
+        buttonMask = 0;
+        return;
+      }
+      const next = event.type === "mouse_down" ? buttonMask | (BUTTON_MASK[event.button] ?? 1) : event.type === "mouse_up" ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1) : buttonMask;
+      try {
+        await dispatchOne(cdp, event, next);
+        buttonMask = next;
+      } catch {
+      }
+    }
+  }
 }
 function measure(base64, surface) {
   const dimensions = readJpegDimensions(decodeBase64(base64));
@@ -1637,6 +1661,7 @@ function parsePoint(value) {
   return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
 }
 var DEFAULT_SCROLL_STEP = 600;
+var CLOSE_PENDING_TAB_GRACE_MS = 2e3;
 function parseScrollDelta(value) {
   const point = parsePoint(value);
   if (point) return [point.x, point.y];
@@ -1674,6 +1699,15 @@ var ChromiumDriver = class {
    * drive again.
    */
   pendingTabs = /* @__PURE__ */ new Map();
+  /**
+   * Teardown has begun; no new page is opened on this browser.
+   *
+   * `close()` can only settle the creations it can SEE. Without a latch, a
+   * caller arriving one tick later opens a page after the sweep has run and
+   * leaves a renderer nobody will ever close — the exact leak `pendingTabs`
+   * was added to prevent, moved one step later.
+   */
+  closing = false;
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -1709,9 +1743,19 @@ var ChromiumDriver = class {
             };
           }
         }
+        const entry = await this.getOrCreateTab(tabId);
+        if (!entry) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "driver_closed",
+              "this browser is shutting down; no new tab was opened"
+            )
+          };
+        }
         return this.navigateVerb(
           tabId,
-          await this.getOrCreateTab(tabId),
+          entry,
           (page) => page.goto(action.url),
           permit
         );
@@ -2128,6 +2172,14 @@ var ChromiumDriver = class {
     return this.context.isConnected() ? { ok: true } : { ok: false, detail: "browser context disconnected" };
   }
   async close() {
+    this.closing = true;
+    await Promise.race([
+      Promise.allSettled([...this.pendingTabs.values()]),
+      new Promise((resolve) => {
+        const timer = setTimeout(resolve, CLOSE_PENDING_TAB_GRACE_MS);
+        timer.unref?.();
+      })
+    ]);
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {
       });
@@ -2256,14 +2308,21 @@ var ChromiumDriver = class {
     const { settled } = await settlePage(steps, this.settleOptions);
     return settled;
   }
+  /** `null` means teardown has begun and no new page will be opened. */
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
+    if (this.closing) return null;
     const creating = (async () => {
       await this.dropTab(tabId);
       const page = await this.context.newPage();
+      if (this.closing) {
+        await page.close().catch(() => {
+        });
+        return null;
+      }
       const entry = { page, navCounter: 0 };
       this.tabs.set(tabId, entry);
       return entry;

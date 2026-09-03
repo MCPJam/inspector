@@ -315,3 +315,158 @@ describe("createTabViewport — a stale start must not silence the new stream", 
     expect(frames.length).toBeGreaterThan(0);
   });
 });
+
+describe("createTabViewport — the mask does not outlive the hand that set it", () => {
+  function recorder(fail?: (method: string, n: number) => boolean) {
+    const sent: Array<{ method: string; params?: any }> = [];
+    let n = 0;
+    const cdp: CdpLike = {
+      async send(method, params) {
+        n += 1;
+        sent.push({ method, ...(params ? { params } : {}) });
+        if (fail?.(method, n)) throw new Error("target closed");
+        return {};
+      },
+      on() {},
+    };
+    return { cdp, sent };
+  }
+  const masks = (sent: Array<{ method: string; params?: any }>) =>
+    sent
+      .filter((s) => s.method === "Input.dispatchMouseEvent")
+      .map((s) => s.params?.buttons);
+
+  it("forgets a held button when the batch is refused mid-gesture", async () => {
+    // The release will never arrive. A bit left set is the NEXT holder's first
+    // hover reaching Chromium as a drag.
+    const { cdp, sent } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+    let permitted = true;
+
+    await viewport.dispatchInput(
+      [
+        { type: "mouse_down", x: 1, y: 1, button: "left" },
+        { type: "mouse_move", x: 2, y: 2 },
+      ],
+      () => permitted,
+    );
+    expect(masks(sent)).toEqual([1, 1]);
+
+    // Control changes. The rest of the drag is refused...
+    permitted = false;
+    await viewport.dispatchInput([{ type: "mouse_move", x: 3, y: 3 }], () => permitted);
+
+    // ...and the next holder's first move is a hover, not a drag.
+    permitted = true;
+    await viewport.dispatchInput([{ type: "mouse_move", x: 9, y: 9 }], () => permitted);
+    expect(masks(sent).at(-1)).toBe(0);
+  });
+
+  it("does not record a button whose press Chromium never accepted", async () => {
+    // `dispatchOne`'s rejection is swallowed. Committing the mask first would
+    // leave us claiming a button the page is not holding.
+    const { cdp, sent } = recorder((method) => method === "Input.dispatchMouseEvent" && sent.length === 1);
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+      { type: "mouse_move", x: 2, y: 2 },
+    ]);
+
+    expect(masks(sent).at(-1)).toBe(0);
+  });
+
+  it("does not let a refused batch clear the NEXT holder's button", async () => {
+    // The handoff makes this the common case, not an exotic one: the outgoing
+    // holder's batch is still in flight when the incoming holder's first click
+    // arrives. Interleaved, the old batch's refusal — or just its own stale
+    // mask, committed after the await it was computed before — lands between
+    // the new holder's press and their drag, and the person actually at the
+    // keyboard watches their drag turn into a hover. Batches run one after
+    // another instead, so a refusal can only clear a mask nobody has set
+    // since.
+    const { cdp, sent } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    // Three moves from the outgoing holder; the lease goes on the third.
+    let asked = 0;
+    const outgoing = viewport.dispatchInput(
+      [
+        { type: "mouse_move", x: 1, y: 1 },
+        { type: "mouse_move", x: 2, y: 2 },
+        { type: "mouse_move", x: 3, y: 3 },
+      ],
+      () => {
+        asked += 1;
+        return asked <= 2;
+      },
+    );
+
+    // The incoming holder presses, then drags, while that batch is still
+    // running — two requests, as the pane sends them.
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 9, y: 9, button: "left" },
+    ]);
+    await viewport.dispatchInput([{ type: "mouse_move", x: 10, y: 10 }]);
+    await outgoing;
+
+    // Their drag carries the button they are holding.
+    expect(masks(sent).at(-1)).toBe(1);
+  });
+
+  it("does not hand the next person a button the last one never released", async () => {
+    // The handoff that is NOT interrupted, which is the ordinary one: the
+    // outgoing holder presses, the lease changes hands, and the release never
+    // arrives because their pane stopped sending. Nothing was refused, so the
+    // refusal path above never runs — and the bit sits in the mask until
+    // somebody happens to press and release that same button. The next
+    // holder's first hover reaches Chromium as a drag over a page they have
+    // not touched.
+    const { cdp, sent } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    await viewport.dispatchInput(
+      [{ type: "mouse_down", x: 1, y: 1, button: "left" }],
+      undefined,
+      "rail-1",
+    );
+    expect(masks(sent)).toEqual([1]);
+
+    await viewport.dispatchInput(
+      [{ type: "mouse_move", x: 5, y: 5 }],
+      undefined,
+      "rail-2",
+    );
+
+    expect(masks(sent).at(-1)).toBe(0);
+  });
+
+  it("dispatches nothing once it has been disposed", async () => {
+    // The earlier version of this test asserted on a BRAND-NEW viewport, whose
+    // mask starts at 0 whether or not dispose clears anything — it passed with
+    // the fix reverted. What actually needs pinning is this viewport: its page
+    // is gone, its mask has been dropped, and a `mouse_move` arriving late
+    // must not reach a CDP session that no longer speaks for anything.
+    const { cdp, sent } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+    ]);
+    expect(masks(sent)).toEqual([1]);
+
+    await viewport.dispose();
+    await viewport.dispatchInput([{ type: "mouse_move", x: 2, y: 2 }]);
+
+    expect(masks(sent)).toEqual([1]);
+  });
+});

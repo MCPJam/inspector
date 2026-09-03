@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ChromiumDriver } from "../chromium-driver";
 import { shortHash } from "../state-token";
 import type { BrowserCommand } from "../../protocol";
+import type { DriverContext } from "../browser-page";
 import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
-import { fakeContext, fakePage } from "./fake-page";
+import { fakeContext, fakePage, type FakePage } from "./fake-page";
 
 function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
   return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };
@@ -1108,5 +1109,96 @@ describe("ChromiumDriver — the viewport follows its page, not its name", () =>
     ]);
 
     expect(created).toHaveLength(1);
+  });
+});
+
+describe("ChromiumDriver — teardown is bounded, and nothing opens behind it", () => {
+  /** A context whose `newPage()` resolves only when the test says so. */
+  function stallingContext() {
+    const { context: base, created } = fakeContext();
+    let release: ((page: FakePage) => void) | undefined;
+    const context: DriverContext = {
+      ...base,
+      newPage: () =>
+        new Promise<FakePage>((resolve) => {
+          release = resolve;
+        }),
+    };
+    return {
+      context,
+      created,
+      /** Let the in-flight creation finish, returning the page it produced. */
+      async land() {
+        const page = fakePage({ url: "https://late.test/" });
+        release?.(page);
+        await Promise.resolve();
+        await Promise.resolve();
+        return page;
+      },
+    };
+  }
+
+  it("gives up on a tab creation that never lands rather than hanging shutdown", async () => {
+    // A `newPage()` against a browser that has stopped answering never
+    // settles. Waiting on it forever is not caution: `close()` runs on the
+    // server's shutdown path, so the process never exits and the Chromium it
+    // was trying to close is orphaned — the exact outcome the wait was added
+    // to prevent.
+    vi.useFakeTimers();
+    try {
+      const { context } = stallingContext();
+      const driver = new ChromiumDriver(context);
+      void driver.viewport().catch(() => {});
+      await Promise.resolve();
+      await Promise.resolve();
+
+      let settled = false;
+      const closing = driver.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await closing;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a page that lands after teardown instead of adopting it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { context, land } = stallingContext();
+      const driver = new ChromiumDriver(context);
+      void driver.viewport().catch(() => {});
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const closing = driver.close();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+
+      const late = await land();
+      // Registering it would leave a renderer nobody will ever close, which is
+      // the leak `pendingTabs` exists to prevent — moved one tick later.
+      expect(late.isClosed()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses to open a tab once teardown has begun", async () => {
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    await driver.close();
+
+    const result = await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/^driver_closed:/);
+    expect(created).toHaveLength(0);
   });
 });

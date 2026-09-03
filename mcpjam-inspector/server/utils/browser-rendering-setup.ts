@@ -288,19 +288,39 @@ export async function ensureLocalChromiumInstalled(
   // getting past them starts a second `playwright install` over the same
   // browser cache.
   activeInstall = (async () => {
-    if (await isInstalled()) return true;
+    // Every terminal path of this runner publishes a state, because the
+    // consent screen can JOIN this install rather than start one — and a join
+    // that never sees an answer leaves the pane reading "Downloading
+    // Chromium" forever, with no way to ask again.
+    if (await isInstalled()) {
+      explicitInstallState = { status: "ready" };
+      return true;
+    }
 
     const now = Date.now();
     if (
       lastInstallFailureAt > 0 &&
       now - lastInstallFailureAt < INSTALL_RETRY_COOLDOWN_MS
     ) {
+      // Still inside the cooldown from an earlier failure. Report THAT rather
+      // than a fresh attempt nobody made.
+      explicitInstallState = {
+        status: "failed",
+        error:
+          "the last Chromium install failed; the inspector will try again shortly",
+      };
       return false;
     }
 
     log.info(
       `[browser-rendering] Chromium missing; setting up Playwright Chromium (${reason})`
     );
+    // An install is genuinely starting NOW, so say so — this is the last of
+    // the runner's states to be published and the one it was missing. Without
+    // it, a retry that follows an earlier failure runs with the pane still
+    // reading "install failed": the button appears dead, because the consent
+    // screen's own call joins this run and is handed back the stale failure.
+    explicitInstallState = { status: "installing" };
     try {
       await runInstall();
       const ready = await isInstalled();
@@ -318,9 +338,10 @@ export async function ensureLocalChromiumInstalled(
     } catch (error) {
       lastInstallFailureAt = Date.now();
       const message = error instanceof Error ? error.message : String(error);
-      if (explicitInstallState.status === "installing") {
-        explicitInstallState = { status: "failed", error: message };
-      }
+      // Unconditional now that the `installing` above is this runner's own:
+      // the state to replace is the one it just published, whatever a joiner
+      // did with it meanwhile.
+      explicitInstallState = { status: "failed", error: message };
       log.warn(
         `[browser-rendering] Failed to set up Playwright Chromium: ${message}`
       );

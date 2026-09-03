@@ -48,6 +48,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
+  collectHostAttentionIssues,
   hasBlockingErrors,
   saveDisabledReason as computeSaveDisabledReason,
   useHostDraftValidation,
@@ -144,6 +145,7 @@ export function HostBuilderViewRedesigned({
     null
   );
   const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
   const [focusState, setFocusState] = useState<HostFocusState>({
@@ -434,24 +436,44 @@ export function HostBuilderViewRedesigned({
     [openFocus]
   );
 
-  const handleSave = useCallback(async () => {
-    if (!draftConfig) return;
+  const persistClient = useCallback(async (
+    name: string,
+    config: HostConfigInputV2,
+    showSuccessToast: boolean
+  ): Promise<boolean> => {
+    if (!host || host.hostId !== hostId || saveInFlightRef.current) {
+      return false;
+    }
+    const nextAttention = collectHostAttentionIssues(config, name, {
+      savedModelId: savedConfig?.modelId,
+    });
+    if (hasBlockingErrors(nextAttention)) {
+      toast.error(
+        computeSaveDisabledReason({
+          isDirty: true,
+          isSaving: false,
+          issues: nextAttention,
+        }) ?? "Fix validation errors before saving"
+      );
+      return false;
+    }
+    saveInFlightRef.current = true;
     setIsSaving(true);
     try {
       // Compare the same persisted and draft snapshots used by save telemetry.
       const cancellationChanged = toolCallCancellationChanged(
         savedConfig,
-        draftConfig
+        config
       );
       const { hostConfigId } = await updateHost({
         hostId,
-        name: draftName,
-        input: draftConfig,
+        name,
+        input: config,
       });
       // The freshly persisted config id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
       // because `host?.config?.id` is still the *previous* saved config here.
-      toast.success("Client saved");
+      if (showSuccessToast) toast.success("Client saved");
       // Tool cancellation is read from the connection's config at CONNECT
       // time, so a saved toggle would otherwise sit inert until the user
       // happened to reconnect — which reads as the switch doing nothing.
@@ -473,24 +495,37 @@ export function HostBuilderViewRedesigned({
           clientId: hostId,
           clientConfigId: hostConfigId,
           savedName: host.name,
-          draftName,
+          draftName: name,
           savedConfig,
-          draftConfig,
+          draftConfig: config,
         });
       }
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save client");
+      return false;
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }, [
     hostId,
-    draftName,
-    draftConfig,
     savedConfig,
     host,
     updateHost,
+    onReconnect,
   ]);
+
+  const handleSave = useCallback(async () => {
+    if (!draftConfig) return;
+    await persistClient(draftName, draftConfig, true);
+  }, [draftName, draftConfig, persistClient]);
+
+  const handleSaveLatest = useCallback(
+    (name: string, config: HostConfigInputV2) =>
+      persistClient(name, config, false),
+    [persistClient]
+  );
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {
@@ -715,6 +750,9 @@ export function HostBuilderViewRedesigned({
                     onDraftChange={(updater) =>
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))
                     }
+                    onSaveLatest={handleSaveLatest}
+                    hostLoaded={host !== null}
+                    saveInFlight={isSaving}
                     attention={attention}
                     onClose={closeFocus}
                   />

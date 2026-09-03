@@ -18,6 +18,9 @@ const ctx = {
 // truthy instance. Execute paths live in mcpjam-built-in-tools.test.ts.
 const stubClient = {} as PlatformApiClient;
 
+import { coercePersonalEngineForActor } from "../computers/engine";
+import type { ExecutionScope } from "../execution-scope";
+
 const computer = { kind: "personal", workdir: "/srv" };
 
 describe("resolveHostTools — builtInToolIds", () => {
@@ -739,20 +742,37 @@ describe("resolveHostTools — browser engines", () => {
     });
   });
 
-  for (const [label, actor] of [
+  // Every actor for whom `local` is not legal: not a signed-in member driving
+  // their own turn. Typed rather than `as const` so each entry can be read
+  // both as ctx fields and as coercion arguments.
+  const coercedActors: Array<
+    [
+      string,
+      {
+        isGuest?: boolean;
+        isScenarioSession?: boolean;
+        isJourneySession?: boolean;
+        executionScope?: ExecutionScope;
+      },
+    ]
+  > = [
     ["a guest", { isGuest: true }],
     ["a scenario session", { isScenarioSession: true }],
     ["a journey session", { isJourneySession: true }],
-    ["a host-funded swarm scope", {
-      executionScope: {
-        kind: "swarm" as const,
-        swarmId: "swarm-1",
-        accessVersion: 1,
-        projectId: "project-1",
-        workspaceId: "ws-1",
+    [
+      "a host-funded swarm scope",
+      {
+        executionScope: {
+          kind: "swarm",
+          swarmId: "swarm-1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws-1",
+        },
       },
-    }],
-  ] as const) {
+    ],
+  ];
+  for (const [label, actor] of coercedActors) {
     it(`never gives ${label} the user's own browser`, () => {
       withHostedFlag(undefined, () => {
         // Coerced off `local` at the chokepoint, and then refused by the
@@ -766,27 +786,21 @@ describe("resolveHostTools — browser engines", () => {
       });
     });
 
-    it(`refuses ${label} even when the request explicitly asked for this machine`, () => {
-      // With the rollout flag OFF, "no browser" can be true for the wrong
-      // reason — the flag, not the coercion. Run it ON, with the turn having
-      // explicitly asked for the local engine: the coercion downgrades it, the
-      // downgrade cannot be honored, and the answer must be "no browser"
-      // rather than a silent fall-through to the hosted one.
-      withHostedFlag("1", () => {
-        const suppressed: Array<{ id: string; reason: string }> = [];
-        const tools = resolveHostTools(
-          { builtInToolIds: ["browser"], computer },
-          {
-            ...localCtx,
-            ...actor,
-            localComputerRequested: true,
-            onToolSuppressed: (i: { id: string; reason: string }) =>
-              suppressed.push(i),
-          },
-        );
-        expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
-        expect(suppressed.some((s) => s.id === "browser")).toBe(true);
-      });
+    it(`downgrades ${label} off the local engine at the chokepoint`, () => {
+      // Asserted on the COERCION itself, not through the registry. Through the
+      // registry the answer depends on what the cloud family resolves to in
+      // this environment — with no data plane configured it happens to be
+      // `unavailable`, so a registry-level assertion would pass for a reason
+      // that has nothing to do with the actor. What must be true of the actor
+      // is only this: whatever they get, it is never the member's own machine.
+      expect(
+        coercePersonalEngineForActor("local", {
+          isGuest: Boolean(actor.isGuest),
+          isScenarioSession: Boolean(actor.isScenarioSession),
+          isJourneySession: Boolean(actor.isJourneySession),
+          executionScopeKind: actor.executionScope?.kind,
+        }),
+      ).not.toBe("local");
     });
   }
 });

@@ -39,7 +39,7 @@ import {
 import {
   ensureBrowserSession,
   type BrowserSessionDeps,
-  type BrowserSessionHandle,
+  type HostedBrowserSessionHandle,
   type EnsureBrowserSessionArgs,
   type SessionSandbox,
 } from "./browser-session.js";
@@ -269,9 +269,16 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
   };
 }
 
-/** Ensure a live browser session with the production seams. */
+/**
+ * Ensure a live HOSTED browser session with the production seams.
+ *
+ * Narrower than `BrowserSessionHandle` on purpose: this door only ever reaches
+ * the E2B desktop, so widening it to the union told every caller to handle a
+ * local handle that cannot arrive — and cost the WebMCP inspector, which needs
+ * the hosted fields, the type that says so.
+ */
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs,
-): Promise<BrowserSessionHandle> {
+): Promise<HostedBrowserSessionHandle> {
   return ensureBrowserSession(liveBrowserSessionDeps(), args);
 }
