@@ -9,6 +9,12 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-03
+
+#### Fixed
+
+- **"Tool list changed" host simulation now works on all surfaces** — The two `mcpProfile.toolListChanged` switches (`listens: false` / `refetches: false`) were silently ignored on every hosted and local surface except hosted chat turns. Every connection opened the listen channel and refetched the tool list on `notifications/tools/list_changed` regardless of how the host was configured, so the inspector reported conforming behavior that the real host does not have. Both switches now reach the connection on hosted and local surfaces, matching how the sibling knobs (`firstPageOnly`, `supportsMrtr`, `toolCallCancellation`) already behaved.
+
 ### 2026-09-02
 
 #### Added
