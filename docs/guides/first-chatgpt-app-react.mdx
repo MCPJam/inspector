@@ -182,6 +182,14 @@ Both formats support the same domain categories:
 Without declaring a domain in your CSP, the sandbox will block the request. Only declare the domains you actually need.
 </Note>
 
+#### Third-party APIs with referrer or origin restrictions
+
+Some APIs (such as Google Maps with a referrer-restricted key) validate the page URL before serving a response. Widgets run at a real sandbox URL — `http://localhost:*` locally and `https://sandbox.mcpjam.com` when hosted — so you can allowlist those origins in your API provider's dashboard.
+
+You still need to declare the API's domains in `_meta.ui.csp`:
+- Add script and asset CDN domains to `resourceDomains`
+- Add any XHR/fetch endpoints to `connectDomains`
+
 ## A note on authentication and monetization
 
 To keep this guide focused on building your first ChatGPT App, we've skipped authentication and monetization. For production apps, check out [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth) and [monetization docs](https://developers.openai.com/apps-sdk/build/monetization).
