@@ -748,7 +748,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Claude Code",
       provenance: "probe",
       rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+      supportedProtocolVersions: [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+      ],
       verifiedAt: 1788393600000,
       modelVisibleMcpToolResults: {
         directContent: {
