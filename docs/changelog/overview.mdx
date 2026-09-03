@@ -9,6 +9,14 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-03
+
+#### Fixed
+
+- **"Update to latest" now saves the client** — clicking **Update to latest** in the client focus panel now persists the catalog changes immediately, the same way the **Save** button does. Previously the button only updated the local draft without writing to the backend, so the update was lost on refresh. If the save fails, the draft stays unsaved and no success toast is shown. The button and editor are locked while the save is in flight; the **Close** button stays interactive throughout.
+
+- **"Last checked" stamp next to Update to latest** — a timestamp now appears beside the **Update to latest** button showing when the client profile was last verified against the catalog. The Host Compare stale-cell tooltip also shows the exact date on hover.
+
 ### 2026-09-02
 
 #### Added
