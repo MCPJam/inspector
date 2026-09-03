@@ -121,6 +121,27 @@ let serverPort: number = 0;
 let localHarnessSessionToken: string | null = null;
 let shutdownLocalTerminals: (() => void) | null = null;
 let killLocalTerminals: (() => void) | null = null;
+/**
+ * The agent's own browser, held for teardown for the same reason as the PTYs:
+ * it is a real Chromium this process started, and nothing else closes it.
+ * Async, unlike the PTY pair — closing the browser context is what makes
+ * Chromium release the profile's singleton lock.
+ */
+let shutdownLocalBrowsers: (() => Promise<void>) | null = null;
+let killLocalBrowsers: (() => Promise<void>) | null = null;
+/**
+ * The browser teardown currently running, if any.
+ *
+ * Closing Chromium is what makes it write out and RELEASE the profile's
+ * singleton lock, and that close is asynchronous. Whoever needs the profile
+ * next — a dock re-activation, or the quit itself — has to wait for this
+ * rather than racing the dying process for the lock and being told the profile
+ * is in use.
+ */
+let browserTeardown: Promise<void> | null = null;
+let quittingAfterBrowserTeardown = false;
+let shutdownLocalBrowserFrames: (() => void) | null = null;
+let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
@@ -443,6 +464,10 @@ async function startHonoServer(): Promise<number> {
       killLocalComputerTerminals,
       shutdownWebMcpFrameSockets,
       killWebMcpFrameSockets,
+      shutdownLocalBrowserSessions,
+      killLocalBrowserSessions,
+      shutdownLocalBrowserFrameSockets,
+      killLocalBrowserFrameSockets,
     } = await createHonoApp();
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
@@ -455,6 +480,15 @@ async function startHonoServer(): Promise<number> {
     // and a non-latching one for `window-all-closed`.
     shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
     killWebMcpFrames = killWebMcpFrameSockets;
+    // The agent's browser is a real Chromium this process started. Quitting the
+    // app without closing it leaves an orphan holding the profile lock, which
+    // the next launch then has to refuse.
+    shutdownLocalBrowsers = shutdownLocalBrowserSessions;
+    killLocalBrowsers = killLocalBrowserSessions;
+    // The viewport sockets are established WebSockets that `server.close()`
+    // leaves attached, with the same latching/non-latching split.
+    shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
+    killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -948,6 +982,14 @@ app.on("window-all-closed", () => {
   // does it anyway; this makes it unconditional) but do NOT latch shutdown, or
   // every terminal handshake after reopening would be refused.
   killLocalTerminals?.();
+  // Same non-latching kill for the agent's browser: on macOS this is not a
+  // quit, and latching would refuse every browser the user opened after
+  // reopening the window from the dock. Kept rather than dropped, because
+  // `activate` may need to wait for it.
+  browserTeardown = (killLocalBrowsers?.() ?? Promise.resolve()).catch(
+    () => {},
+  );
+  killLocalBrowserFrames?.();
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
@@ -965,6 +1007,14 @@ app.on("window-all-closed", () => {
 app.on("activate", async () => {
   // On macOS, re-create window when the dock icon is clicked
   if (BrowserWindow.getAllWindows().length === 0) {
+    // A quick reopen can arrive while the browser closed by
+    // `window-all-closed` is still shutting down. Starting the server (and
+    // with it the next browser) now would hit the profile lock the dying
+    // Chromium has not released yet.
+    if (browserTeardown) {
+      await browserTeardown;
+      browserTeardown = null;
+    }
     if (serverPort > 0) {
       mainWindow = createMainWindow(getServerUrl());
       setTrustedUpdateWindow(mainWindow);
@@ -1074,8 +1124,23 @@ app.on("before-quit", (event) => {
   }
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
+  shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();
+  }
+  // The one asynchronous step in quitting. Electron will exit as soon as this
+  // handler returns, so a fire-and-forget teardown loses the race with the
+  // process: Chromium never releases the profile's singleton lock, and the
+  // NEXT launch refuses the profile as in use. Hold the quit for exactly one
+  // teardown — the re-fired `before-quit` falls through this branch.
+  if (!quittingAfterBrowserTeardown && shutdownLocalBrowsers) {
+    event.preventDefault();
+    quittingAfterBrowserTeardown = true;
+    browserTeardown = (browserTeardown ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => shutdownLocalBrowsers?.())
+      .catch(() => {});
+    void browserTeardown.finally(() => app.quit());
   }
 });
 

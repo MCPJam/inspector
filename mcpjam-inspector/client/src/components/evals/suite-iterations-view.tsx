@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { useMemo, useState, useEffect, useCallback, useReducer } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
@@ -77,6 +77,18 @@ import type {
 } from "./types";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  canCommit,
+  committedSuiteSettingsValues,
+  describeDraft,
+  initSuiteSettingsDraft,
+  readSuiteSettingsValues,
+  suiteSettingsReducer,
+} from "./suite-settings-draft";
+import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
+import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
+import { ReviewAndSaveDialog } from "./review-and-save-dialog";
+import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
@@ -466,15 +478,133 @@ export function SuiteIterationsView({
   const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
-  const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
-  // Local in-progress state for the suite-default checks editor. Mirrors the
-  // case editor's `editForm.predicates.list` mediation: `ChecksSection` fires
-  // onChange on every keystroke (including the blank-template insertion from
-  // `Add check`), so we keep edits local and only persist when every check
-  // is valid. See `areAllChecksValid` and `test-template-editor.tsx`.
-  const [draftDefaultPredicates, setDraftDefaultPredicates] = useState<
-    Predicate[]
-  >(suite.defaultPredicates ?? []);
+  // ── The settings draft (S1) ─────────────────────────────────────────────
+  //
+  // One piece of state for every drafted setting, replacing the per-control
+  // local state each writer used to keep. The controls still fire on every
+  // keystroke — `ChecksSection` inserts a blank template on `Add check` — but
+  // now those keystrokes land in a draft that is saved deliberately rather
+  // than in a debounce racing its own previous write.
+  const [draft, dispatchDraft] = useReducer(
+    suiteSettingsReducer,
+    suite,
+    // Lazy: this ran on every render and threw the result away, and it is not
+    // free — it rebuilds the whole settings envelope for a suite document that
+    // changes identity on every run-progress tick.
+    (initial) =>
+      initSuiteSettingsDraft({
+        suiteId: initial._id,
+        values: readSuiteSettingsValues(initial),
+      }),
+  );
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const { commit, isCommitting } = useSuiteSettingsCommit();
+  const draftDefaultPredicates = draft.current.defaultPredicates;
+  const setDraftDefaultPredicates = useCallback(
+    // Both forms, matching the `useState` setter this replaced — `AddCheckMenu`
+    // passes an updater, and the reducer resolves it against the authoritative
+    // draft rather than whatever this render closed over.
+    (next: Predicate[] | ((previous: Predicate[]) => Predicate[])) =>
+      dispatchDraft({ type: "edit", key: "defaultPredicates", value: next }),
+    [],
+  );
+  const defaultMinimumPassRate =
+    draft.current.defaultPassCriteria?.minimumPassRate ?? 100;
+  const draftChanges = useMemo(() => describeDraft(draft), [draft]);
+  // Memoized with the changes: `canCommit` re-runs `dirtyKeys` (a stringify per
+  // key) and a zod parse over every default check, and this component re-renders
+  // on every run-progress tick of every suite in the project.
+  const draftCanCommit = useMemo(
+    () => canCommit(draft, areAllChecksValid),
+    [draft],
+  );
+  const hasUnsavedSettings = draftChanges.length > 0;
+  // Discarding is what the person just agreed to when they confirmed the
+  // prompt. Without it the draft outlives the sheet: the guard re-prompts on
+  // every later navigation, ⌘S opens the review dialog from the run list, and
+  // the edits they were told they were leaving behind are still there.
+  useUnsavedChangesGuard(hasUnsavedSettings, () =>
+    dispatchDraft({ type: "discard" }),
+  );
+
+  // The suite moved under us. An untouched row simply refreshes; a row the
+  // person has edited AND someone else changed is marked rather than merged,
+  // because that is the one case an automatic answer would get wrong for one
+  // of the two people involved. A different suite id resets the draft outright
+  // — see the reducer.
+  const liveSettingsKey = useMemo(
+    () => `${suite._id}:${JSON.stringify(readSuiteSettingsValues(suite))}`,
+    [suite],
+  );
+  useEffect(() => {
+    dispatchDraft({
+      type: "rebase",
+      suiteId: suite._id,
+      live: readSuiteSettingsValues(suite),
+    });
+    // Keyed on the serialized live values so this fires when the SUITE moves,
+    // not on every render that produces a new object identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSettingsKey]);
+
+  const handleCommitSettings = useCallback(
+    async (note: string) => {
+      const outcome = await commit({
+        draft,
+        suiteId: suite._id,
+        note: note.trim() || undefined,
+        expectedRevisionNumber: suite.revisionNumber,
+        liveEnvironment: suite.environment,
+      });
+      if (outcome.status === "saved") {
+        setReviewOpen(false);
+        // What the save actually WROTE: the normalized form of the keys it
+        // carried, and the untouched keys exactly as they were. `toUpdateArgs`
+        // trims a dirty name, so rebasing onto the raw draft would leave the
+        // person looking at their own whitespace — and normalizing a name this
+        // save never sent would make the draft disagree with the database.
+        //
+        // `retained` keeps the keys a legacy deployment could not carry dirty,
+        // so the toast's promise that they are still there to save holds.
+        // `suiteId` is the save's OWN suite, so a mutation that resolves after
+        // the person navigated cannot land on the suite they moved to.
+        dispatchDraft({
+          type: "commitSucceeded",
+          suiteId: suite._id,
+          live: committedSuiteSettingsValues(draft),
+          retained: outcome.droppedKeys,
+        });
+      } else if (outcome.status === "conflict") {
+        // The draft SURVIVES. Throwing away someone's edits because a
+        // colleague saved first is the outcome the precondition exists to
+        // prevent, not one to implement on its refusal.
+        setReviewOpen(false);
+        toast.error(
+          "This suite changed since you opened it. Your edits are still here — review them against the new values and save again.",
+        );
+        // No rebase here on purpose. `suite` is still the document we already
+        // had — the one the server just told us is stale — so rebasing onto it
+        // would compare the draft against the same values and mark nothing.
+        // The subscription delivers the newer document a moment later, and the
+        // rebase effect above does the real comparison then.
+      }
+    },
+    [commit, draft, suite],
+  );
+
+  // ⌘S opens the review rather than saving: the shortcut means "commit what I
+  // did", and in a sheet with a review step the honest response is to show
+  // them what that is.
+  useEffect(() => {
+    if (!hasUnsavedSettings) return;
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== "s") return;
+      event.preventDefault();
+      if (draftCanCommit) setReviewOpen(true);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [hasUnsavedSettings, draftCanCommit]);
   const suiteScenarioMigrationCount = useMemo(
     () =>
       splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
@@ -684,113 +814,13 @@ export function SuiteIterationsView({
     }
   };
 
-  // Sync local draft of default checks when the suite identity or its
-  // persisted value changes. `suite._id` is included so navigating to a
-  // different suite with the same persisted value (commonly
-  // `undefined → undefined`) still resets the draft — otherwise the old
-  // suite's in-progress edits would be saved into the new one on the next
-  // valid keystroke.
-  useEffect(() => {
-    setDraftDefaultPredicates(suite.defaultPredicates ?? []);
-  }, [suite._id, suite.defaultPredicates]);
-
-  // Debounced commit of the default-checks draft. Earlier this was fired
-  // directly inside ChecksSection's onChange, which kicked off one
-  // unsynchronized `updateSuite` per keystroke — out-of-order responses
-  // could land in the wrong order and persist stale predicate text, and
-  // the toast spammed once per character.
-  //
-  // The debounce alone is not enough: if a user pauses (timer fires →
-  // updateSuite A starts) and then keeps editing (timer fires again →
-  // updateSuite B starts before A resolves), Convex's "last write wins"
-  // means whichever request lands second persists, which can roll the
-  // draft back to A's stale snapshot. We serialize: the next save waits
-  // for any in-flight one to settle, then reads the latest draft and
-  // fires exactly one write.
-  const persistedDefaultPredicatesKey = useMemo(
-    () => JSON.stringify(suite.defaultPredicates ?? []),
-    [suite.defaultPredicates],
-  );
-  const draftDefaultPredicatesKey = useMemo(
-    () => JSON.stringify(draftDefaultPredicates),
-    [draftDefaultPredicates],
-  );
-  const defaultChecksInFlightRef = useRef<Promise<unknown> | null>(null);
-  useEffect(() => {
-    if (draftDefaultPredicatesKey === persistedDefaultPredicatesKey) return;
-    if (!areAllChecksValid(draftDefaultPredicates)) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        // Wait for any in-flight save to settle before starting the next
-        // one. The pending one captured an earlier draft; if we raced it
-        // and lost, Convex would persist the stale snapshot.
-        while (defaultChecksInFlightRef.current) {
-          try {
-            await defaultChecksInFlightRef.current;
-          } catch {
-            // Errors are surfaced by the call site that started the
-            // in-flight promise; we just need it to settle.
-          }
-        }
-        if (cancelled) return;
-        const snapshot = draftDefaultPredicates;
-        const promise = updateSuite({
-          suiteId: suite._id,
-          defaultPredicates: snapshot.length === 0 ? null : snapshot,
-        });
-        defaultChecksInFlightRef.current = promise as Promise<unknown>;
-        try {
-          await promise;
-          toast.success("Default checks updated");
-        } catch (error) {
-          toast.error(getBillingErrorMessage(error, "Failed to update suite"));
-          console.error("Failed to update default checks:", error);
-        } finally {
-          if (defaultChecksInFlightRef.current === promise) {
-            defaultChecksInFlightRef.current = null;
-          }
-        }
-      })();
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    draftDefaultPredicatesKey,
-    persistedDefaultPredicatesKey,
-    draftDefaultPredicates,
-    suite._id,
-    updateSuite,
-  ]);
-
-  // Load default pass criteria from suite
-  useEffect(() => {
-    if (suite.defaultPassCriteria?.minimumPassRate !== undefined) {
-      setDefaultMinimumPassRate(suite.defaultPassCriteria.minimumPassRate);
-      if (typeof window !== "undefined") {
-        try {
-          localStorage.setItem(
-            `suite-${suite._id}-criteria-rate`,
-            String(suite.defaultPassCriteria.minimumPassRate),
-          );
-        } catch (error) {
-          console.warn(
-            "Failed to sync default pass criteria to localStorage",
-            error,
-          );
-        }
-      }
-    } else if (typeof window !== "undefined") {
-      try {
-        const rate = localStorage.getItem(`suite-${suite._id}-criteria-rate`);
-        if (rate) setDefaultMinimumPassRate(Number(rate));
-      } catch (error) {
-        console.warn("Failed to load default pass criteria", error);
-      }
-    }
-  }, [suite._id, suite.defaultPassCriteria]);
+  // The debounced default-checks committer, the localStorage pass-criteria
+  // mirror and the per-suite draft-reset effect all lived here. All three
+  // were machinery for saving on every keystroke: a debounce that serialized
+  // its own writes so an out-of-order response could not persist stale text,
+  // and a local mirror so a value the server had not accepted yet survived a
+  // reload. The draft makes them unnecessary — nothing is written until the
+  // person says so, and `rebase` handles a suite that moves underneath.
 
   const handleUpdateHostAttachments = async (
     attachments: Array<{
@@ -1652,6 +1682,31 @@ export function SuiteIterationsView({
                   pass — surface lives elsewhere when the user wants context
                   on the suite. */}
 
+              {/* ── Name ─────────────────────────────────────────────── */}
+              {/* First, and moved here from the header: renaming used to be an
+                  inline edit that saved on blur, which meant a stray click
+                  committed a half-typed name to a suite other people watch. */}
+              <SettingsSection
+                settingKey="name"
+                label="Name"
+                layout="inline"
+                inlineSlot={
+                  <input
+                    className="h-8 w-64 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                    value={draft.current.name}
+                    aria-label="Suite name"
+                    disabled={readOnlyConfig}
+                    onChange={(e) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "name",
+                        value: e.target.value,
+                      })
+                    }
+                  />
+                }
+              />
+
               {/* ── Minimum accuracy (one row) ───────────────────────── */}
               <SettingsSection
                 settingKey="minimumAccuracy"
@@ -1661,31 +1716,13 @@ export function SuiteIterationsView({
                   <PassCriteriaSelector
                     hideLabel
                     minimumPassRate={defaultMinimumPassRate}
-                    onMinimumPassRateChange={async (rate) => {
-                      setDefaultMinimumPassRate(rate);
-                      localStorage.setItem(
-                        `suite-${suite._id}-criteria-rate`,
-                        String(rate),
-                      );
-                      try {
-                        await updateSuite({
-                          suiteId: suite._id,
-                          defaultPassCriteria: { minimumPassRate: rate },
-                        });
-                        toast.success("Suite updated successfully");
-                      } catch (error) {
-                        toast.error(
-                          getBillingErrorMessage(
-                            error,
-                            "Failed to update suite",
-                          ),
-                        );
-                        console.error("Failed to update suite:", error);
-                        setDefaultMinimumPassRate(
-                          suite.defaultPassCriteria?.minimumPassRate ?? 100,
-                        );
-                      }
-                    }}
+                    onMinimumPassRateChange={(rate) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "defaultPassCriteria",
+                        value: { minimumPassRate: rate },
+                      })
+                    }
                   />
                 }
               />
@@ -1698,33 +1735,15 @@ export function SuiteIterationsView({
                 inlineSlot={
                   <select
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                    value={suite.minIterations ?? ""}
+                    value={draft.current.minIterations ?? ""}
                     aria-label="Minimum iterations per case for every run"
-                    onChange={async (e) => {
+                    onChange={(e) => {
                       const raw = e.target.value;
-                      const next = raw === "" ? null : Number(raw);
-                      try {
-                        await updateSuite({
-                          suiteId: suite._id,
-                          minIterations: next,
-                        });
-                        toast.success(
-                          next == null
-                            ? "Minimum iterations cleared"
-                            : "Minimum iterations updated",
-                        );
-                      } catch (error) {
-                        toast.error(
-                          getBillingErrorMessage(
-                            error,
-                            "Failed to update suite",
-                          ),
-                        );
-                        console.error(
-                          "Failed to update minimum iterations:",
-                          error,
-                        );
-                      }
+                      dispatchDraft({
+                        type: "edit",
+                        key: "minIterations",
+                        value: raw === "" ? undefined : Number(raw),
+                      });
                     }}
                   >
                     <option value="">Off</option>
@@ -1760,37 +1779,15 @@ export function SuiteIterationsView({
                   inlineSlot={
                     <select
                       className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                      value={suite.environment?.computerEnvironmentId ?? ""}
+                      value={draft.current.computerEnvironmentId ?? ""}
                       aria-label="Reproducible computer environment for eval runs"
-                      onChange={async (e) => {
-                        const next = e.target.value || undefined;
-                        try {
-                          await updateSuite({
-                            suiteId: suite._id,
-                            environment: {
-                              servers: suite.environment?.servers ?? [],
-                              serverBindings: suite.environment?.serverBindings,
-                              ...(next ? { computerEnvironmentId: next } : {}),
-                            },
-                          });
-                          toast.success(
-                            next
-                              ? "Computer environment set"
-                              : "Computer environment cleared",
-                          );
-                        } catch (error) {
-                          toast.error(
-                            getBillingErrorMessage(
-                              error,
-                              "Failed to update suite",
-                            ),
-                          );
-                          console.error(
-                            "Failed to update computer environment:",
-                            error,
-                          );
-                        }
-                      }}
+                      onChange={(e) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "computerEnvironmentId",
+                          value: e.target.value || undefined,
+                        })
+                      }
                     >
                       <option value="">None (default image)</option>
                       {(computerEnvironments ?? []).map((env) => {
@@ -1863,25 +1860,15 @@ export function SuiteIterationsView({
               >
                 <ValidatorsSection
                   title=""
-                  value={suite.defaultMatchOptions}
+                  value={draft.current.defaultMatchOptions}
                   inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                  onChange={async (next: EvalMatchOptions | undefined) => {
-                    try {
-                      await updateSuite({
-                        suiteId: suite._id,
-                        defaultMatchOptions: next ?? null,
-                      });
-                      toast.success("Default validators updated");
-                    } catch (error) {
-                      toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite"),
-                      );
-                      console.error(
-                        "Failed to update default validators:",
-                        error,
-                      );
-                    }
-                  }}
+                  onChange={(next: EvalMatchOptions | undefined) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "defaultMatchOptions",
+                      value: next,
+                    })
+                  }
                 />
               </SettingsSection>
 
@@ -1967,22 +1954,15 @@ export function SuiteIterationsView({
               >
                 <JudgesSection
                   chrome="bare"
-                  value={suite.judgeConfig}
+                  value={draft.current.judgeConfig}
                   availableModels={availableModels}
-                  onChange={async (next) => {
-                    try {
-                      await updateSuite({
-                        suiteId: suite._id,
-                        judgeConfig: next ?? null,
-                      });
-                      toast.success("Judges updated");
-                    } catch (error) {
-                      toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite"),
-                      );
-                      console.error("Failed to update judges:", error);
-                    }
-                  }}
+                  onChange={(next) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "judgeConfig",
+                      value: next,
+                    })
+                  }
                 />
               </SettingsSection>
 
@@ -2022,9 +2002,33 @@ export function SuiteIterationsView({
                 </div>
               ) : null}
             </dl>
+            {/* The bar renders only when there is something to save, and a
+                read-only suite never drafts anything, so it never appears
+                there either. */}
+            {readOnlyConfig ? null : (
+              <SuiteSettingsCommitBar
+                changeCount={draftChanges.length}
+                conflictCount={draft.conflicts.length}
+                canCommit={draftCanCommit}
+                isCommitting={isCommitting}
+                onDiscard={() => dispatchDraft({ type: "discard" })}
+                onReview={() => setReviewOpen(true)}
+              />
+            )}
           </div>
         </div>
       )}
+      <ReviewAndSaveDialog
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+        changes={draftChanges}
+        conflicts={draft.conflicts.map(
+          (key) =>
+            draftChanges.find((change) => change.key === key)?.label ?? key,
+        )}
+        isCommitting={isCommitting}
+        onConfirm={handleCommitSettings}
+      />
       <EvalExportModal
         open={exportState !== null}
         onOpenChange={(open) => {

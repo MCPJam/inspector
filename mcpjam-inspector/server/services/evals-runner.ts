@@ -4438,6 +4438,10 @@ const runHostedIterationWithBrowser = async (
           authHeader: convexAuthToken,
           projectId: builtInTarget.projectId,
           ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+          // Names THIS iteration, so an unattended browser gets a profile no
+          // other iteration of this suite can reach. The suite's project is
+          // not enough: iterations run concurrently against it.
+          ...(iterationId ? { runKey: iterationId } : {}),
         }
       : null
   );

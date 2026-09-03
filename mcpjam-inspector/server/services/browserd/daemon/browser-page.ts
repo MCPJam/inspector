@@ -11,7 +11,7 @@
  */
 
 import type { A11yNode, ConsoleEntry } from "./observation-budget";
-import type { WebMcpBridge } from "./webmcp-bridge";
+import type { CdpLike, WebMcpBridge } from "./webmcp-bridge";
 
 /**
  * Where an act is aimed. Coordinates are in the canonical observation
@@ -76,6 +76,16 @@ export interface DriverPage {
    * Resolves `null` when this build cannot speak the domain at all.
    */
   webmcp(): Promise<WebMcpBridge | null>;
+  /**
+   * A raw CDP session on this page, or `null` where one cannot be had (a unit
+   * fake, a build without the plumbing).
+   *
+   * The viewport is written against this rather than against Playwright, so
+   * one screencast-and-input implementation serves the local engine's
+   * Playwright session, the hosted daemon's, and Electron's
+   * `webContents.debugger` — none of which share anything else.
+   */
+  cdp(): Promise<CdpLike | null>;
   /** Resolve after a brief window with no in-flight requests, or on abort. */
   waitForNetworkIdle(signal: AbortSignal): Promise<void>;
   /** Resolve after one rendered frame, or on abort. */

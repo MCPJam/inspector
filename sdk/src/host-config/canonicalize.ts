@@ -755,6 +755,22 @@ function canonicalizeMcpProfile(
     out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
   }
 
+  // Nested boolean record like `toolListChanged` below, one leaf per era: a
+  // host can cancel on 2025 and not on 2026. Absent per leaf is the conforming
+  // answer, so only an explicit `false` is emitted, and a malformed value is
+  // rejected rather than coerced — the backend validates this field the same
+  // way, and a coerced value would hash differently on the two sides.
+  if (input.toolCallCancellation !== undefined) {
+    const cancellation = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolCallCancellation",
+      input.toolCallCancellation,
+      ["legacy", "modern"]
+    );
+    if (Object.keys(cancellation).length > 0) {
+      out.toolCallCancellation = cancellation;
+    }
+  }
+
   // Client-conformance knobs (siblings of toolParamHeaderMirroring). Same
   // omit-when-absent discipline: absent → spec-conforming, hashes stable.
   // One validation loop; the top-level re-key below sorts every emitted

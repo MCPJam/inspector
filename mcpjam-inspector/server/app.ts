@@ -91,6 +91,15 @@ import {
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal.js";
 import {
+  createLocalBrowserFramesWsHandler,
+  killLocalBrowserFrameSockets,
+  shutdownLocalBrowserFrameSockets,
+} from "./routes/web/local-browser-frames.js";
+import {
+  killLocalBrowserSessions,
+  shutdownLocalBrowserSessions,
+} from "./services/browserd/local/local-browser-session.js";
+import {
   createWebMcpFramesWsHandler,
   killWebMcpFrameSockets,
   shutdownWebMcpFrameSockets,
@@ -352,6 +361,10 @@ export async function createHonoApp() {
     app.get(
       "/api/web/computers/local-terminal",
       createLocalComputerTerminalWsHandler(upgradeWebSocket)
+    );
+    app.get(
+      "/api/web/computers/local-browser/frames",
+      createLocalBrowserFramesWsHandler(upgradeWebSocket)
     );
   }
   // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
@@ -667,6 +680,14 @@ export async function createHonoApp() {
     injectWebSocket,
     shutdownLocalComputerTerminals,
     killLocalComputerTerminals,
+    // A local agent browser is a real Chromium this process started. Nothing
+    // else will close it: it is not a child of the request that opened it, and
+    // `server.close()` knows nothing about it. Same latching/non-latching pair
+    // and same reason as the PTYs above.
+    shutdownLocalBrowserSessions,
+    killLocalBrowserSessions,
+    shutdownLocalBrowserFrameSockets,
+    killLocalBrowserFrameSockets,
     // The frame sockets need the same pair for the same reason: an established
     // WebSocket outlives `server.close()`, and `window-all-closed` on macOS is
     // followed by a RESTART, so its variant must not latch.
