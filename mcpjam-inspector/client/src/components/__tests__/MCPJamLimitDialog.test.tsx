@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MCPJamLimitDialog } from "../mcpjam-limit-dialog";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -434,39 +434,27 @@ describe("MCPJamLimitDialog", () => {
     );
   });
 
-  it("commits control after a timeout when flags never load (e.g. blocked)", () => {
-    vi.useFakeTimers();
-    try {
-      flagsLoadedMock.value = false;
-      // Even a treatment-bucketed guest must fall back to control if /flags
-      // never resolves — and the impression must still fire.
-      guestVariantMock.mockReturnValue("treatment");
-      useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
-      render(<MCPJamLimitDialog />);
+  it("keeps a control fallback and records no impression while flags never load", () => {
+    flagsLoadedMock.value = false;
+    // A treatment-bucketed guest whose /flags never resolves (e.g. blocked)
+    // must not be committed to control.
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
 
-      // Before the timeout: control is shown, nothing recorded yet.
-      expect(
-        screen.getByRole("button", { name: /^sign in$/i })
-      ).toBeInTheDocument();
-      expect(trackMock).not.toHaveBeenCalledWith(
-        "plan_limit_dialog_shown",
-        expect.anything()
-      );
-
-      act(() => {
-        vi.advanceTimersByTime(2000);
-      });
-
-      const impressions = trackMock.mock.calls.filter(
-        ([event]) => event === "plan_limit_dialog_shown"
-      );
-      expect(impressions).toHaveLength(1);
-      expect(impressions[0]?.[1]).toEqual(
-        expect.objectContaining({ variant: "control" })
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+    // The guest still sees a usable control wall so they aren't stuck...
+    expect(
+      screen.getByRole("button", { name: /^sign in$/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^create free account$/i })
+    ).not.toBeInTheDocument();
+    // ...but nothing is recorded until the real variant resolves, so a late
+    // treatment guest is never misattributed to control.
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.anything()
+    );
   });
 
   it("orders the primary CTA first in the DOM so it takes opening focus", () => {

@@ -49,11 +49,6 @@ const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.png";
 // The hero art's intrinsic size, used to reserve its box before the PNG decodes.
 const GUEST_WALL_ILLUSTRATION_SIZE = 582;
 
-// If PostHog's /flags never resolves (commonly: an ad blocker, and this is a
-// developer-tool audience), commit control after this wait so the wall still
-// shows and still logs an impression rather than hanging silently.
-const GUEST_WALL_FLAG_WAIT_MS = 2000;
-
 const normalizeGuestVariant = (
   raw: string | boolean | undefined
 ): "control" | "treatment" => (raw === "treatment" ? "treatment" : "control");
@@ -90,22 +85,18 @@ function GuestCreditWall() {
     "control" | "treatment" | null
   >(() => (flagsLoaded ? normalizeGuestVariant(rawVariant) : null));
 
-  // Flags resolved after mount (slow /flags): commit the real value now.
+  // Flags resolved after mount (slow /flags): commit the real value now. We
+  // never commit on a timeout — the control layout already renders as a visual
+  // fallback below while unresolved, so a timeout would add no UX, and pinning
+  // control after N seconds would misattribute a guest whose flag resolves late
+  // to treatment (both the shown copy and the recorded variant). If /flags never
+  // resolves (e.g. an ad blocker), the guest keeps the control fallback and no
+  // impression fires — and a blocked PostHog can't send events anyway, so there
+  // is no impression to lose.
   useEffect(() => {
     if (committedVariant !== null || !flagsLoaded) return;
     setCommittedVariant(normalizeGuestVariant(rawVariant));
   }, [committedVariant, flagsLoaded, rawVariant]);
-
-  // Flags never resolved (blocked): fall back to control after a bounded wait so
-  // the wall still shows and the impression still fires, as control does today.
-  useEffect(() => {
-    if (committedVariant !== null) return;
-    const timer = window.setTimeout(
-      () => setCommittedVariant((prev) => prev ?? "control"),
-      GUEST_WALL_FLAG_WAIT_MS
-    );
-    return () => window.clearTimeout(timer);
-  }, [committedVariant]);
 
   // One impression per opening, and only once a variant is committed — reporting
   // the control fallback below early would misattribute a treatment guest.
