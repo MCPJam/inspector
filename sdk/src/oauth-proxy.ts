@@ -479,14 +479,17 @@ async function requestPinnedOAuthHop(
   targetUrl: URL,
   requestInit: PreparedOAuthRequest,
   policy: EgressPolicy,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  onResolved?: (targetIsPrivate: boolean) => void
 ): Promise<RawPinnedOAuthResponse> {
-  const pinnedAddresses = await resolvePinnedAddresses(
-    targetUrl,
-    policy,
-    signal,
-    "OAuth proxy target"
-  );
+  const { addresses: pinnedAddresses, targetIsPrivate } =
+    await resolvePinnedAddresses(
+      targetUrl,
+      policy,
+      signal,
+      "OAuth proxy target"
+    );
+  onResolved?.(targetIsPrivate);
   const transport = targetUrl.protocol === "https:" ? https : http;
 
   return await new Promise<RawPinnedOAuthResponse>((resolve, reject) => {
@@ -537,14 +540,28 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
   const signal = requestTimeoutSignal(req.timeoutMs, req.signal);
   let currentUrl = initialUrl;
   let requestInit = prepareOAuthRequest(req);
+  // THE PRIVATE ALLOWANCE BELONGS TO THE CHAIN, and the chain's character is
+  // decided by where its FIRST hop actually landed — not by how the hostname
+  // looked, because a name that looks public and answers 127.0.0.1 is the case
+  // this allowance exists to serve. So: hop 1 may go anywhere the policy
+  // permits; a later hop may be private only if hop 1 was. Without this a
+  // public authorization server could answer `302 Location: http://192.168…`
+  // and have the local inspector fetch it.
+  let hopPolicy = policy;
+  const narrowAfterFirstHop = (targetIsPrivate: boolean) => {
+    hopPolicy = targetIsPrivate
+      ? hopPolicy
+      : { ...hopPolicy, allowPrivateNetwork: false };
+  };
 
   try {
     for (let redirectCount = 0; ; redirectCount += 1) {
       const response = await requestPinnedOAuthHop(
         currentUrl,
         requestInit,
-        policy,
-        signal
+        hopPolicy,
+        signal,
+        redirectCount === 0 ? narrowAfterFirstHop : undefined
       );
 
       if (!isFetchRedirectStatus(response.status)) {
@@ -858,13 +875,12 @@ interface RawOAuthMetadataResponse {
 async function requestPinnedOAuthMetadata(
   targetUrl: URL,
   policy: EgressPolicy,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  onResolved?: (targetIsPrivate: boolean) => void
 ): Promise<RawOAuthMetadataResponse> {
-  const pinnedAddresses = await resolvePinnedAddresses(
-    targetUrl,
-    policy,
-    signal
-  );
+  const { addresses: pinnedAddresses, targetIsPrivate } =
+    await resolvePinnedAddresses(targetUrl, policy, signal);
+  onResolved?.(targetIsPrivate);
   const transport = targetUrl.protocol === "https:" ? https : http;
 
   return await new Promise<RawOAuthMetadataResponse>((resolve, reject) => {
@@ -958,6 +974,19 @@ export async function fetchOAuthMetadata(
   const signal = requestTimeoutSignal(timeoutMs);
   let currentUrl = metadataUrl;
   let response: RawOAuthMetadataResponse | undefined;
+  // THE PRIVATE ALLOWANCE BELONGS TO THE CHAIN, and the chain's character is
+  // decided by where its FIRST hop actually landed — not by how the hostname
+  // looked, because a name that looks public and answers 127.0.0.1 is the case
+  // this allowance exists to serve. So: hop 1 may go anywhere the policy
+  // permits; a later hop may be private only if hop 1 was. Without this a
+  // public authorization server could answer `302 Location: http://192.168…`
+  // and have the local inspector fetch it.
+  let hopPolicy = policy;
+  const narrowAfterFirstHop = (targetIsPrivate: boolean) => {
+    hopPolicy = targetIsPrivate
+      ? hopPolicy
+      : { ...hopPolicy, allowPrivateNetwork: false };
+  };
 
   for (let redirectCount = 0; ; redirectCount += 1) {
     if (currentUrl.protocol !== "https:" && currentUrl.protocol !== "http:") {
@@ -974,7 +1003,12 @@ export async function fetchOAuthMetadata(
     }
 
     try {
-      response = await requestPinnedOAuthMetadata(currentUrl, policy, signal);
+      response = await requestPinnedOAuthMetadata(
+        currentUrl,
+        hopPolicy,
+        signal,
+        redirectCount === 0 ? narrowAfterFirstHop : undefined
+      );
     } catch (error) {
       if (signal?.aborted) {
         throw new OAuthProxyError(

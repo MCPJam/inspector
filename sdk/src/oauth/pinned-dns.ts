@@ -40,6 +40,20 @@ export interface PinnedAddress {
 }
 
 /**
+ * What one hop's resolution concluded.
+ *
+ * `addresses` is `null` for a numeric literal — there is no name to re-resolve,
+ * so there is nothing to pin. `targetIsPrivate` reports where the hop actually
+ * LANDED, which is the only honest basis for the chain rule below: a hostname
+ * that looks public and answers 127.0.0.1 is exactly the case this whole change
+ * exists to serve, so "did the chain start private" cannot be asked of the name.
+ */
+export interface ResolvedTarget {
+  addresses: PinnedAddress[] | null;
+  targetIsPrivate: boolean;
+}
+
+/**
  * What a chain is allowed to reach. Computed ONCE per chain by
  * {@link resolveEgressPolicy} and handed to every hop, so the three buffered
  * entry points and the streaming transport cannot drift apart on the question
@@ -110,7 +124,7 @@ export async function resolvePinnedAddresses(
   policy: EgressPolicy,
   signal: AbortSignal | undefined,
   targetLabel = "OAuth metadata target",
-): Promise<PinnedAddress[] | null> {
+): Promise<ResolvedTarget> {
   const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
 
   if (isNeverDialableHost(targetUrl.hostname)) {
@@ -135,7 +149,10 @@ export async function resolvePinnedAddresses(
     /^\d+\.\d+\.\d+\.\d+$/.test(targetUrl.hostname) ||
     targetUrl.hostname.includes(":")
   ) {
-    return null;
+    return {
+      addresses: null,
+      targetIsPrivate: isPrivateHost(targetUrl.hostname),
+    };
   }
 
   const addresses = await new Promise<PinnedAddress[]>((resolve, reject) => {
@@ -179,7 +196,13 @@ export async function resolvePinnedAddresses(
     );
   }
 
+  let targetIsPrivate = isPrivateHost(targetUrl.hostname);
   for (const { address } of addresses) {
+    if (isDisallowedIpAddress(address)) {
+      // Reported for the chain rule whatever the policy decides below: the
+      // question "may a later hop be private" is about where THIS one landed.
+      targetIsPrivate = true;
+    }
     if (isNeverDialableIpAddress(address)) {
       throw new OAuthProxyError(
         400,
@@ -206,7 +229,7 @@ export async function resolvePinnedAddresses(
     }
   }
 
-  return addresses;
+  return { addresses, targetIsPrivate };
 }
 
 /**

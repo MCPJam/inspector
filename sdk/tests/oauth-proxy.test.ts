@@ -1166,6 +1166,68 @@ describe("allowPrivateNetwork (local inspector)", () => {
     expect(httpRequestMock).not.toHaveBeenCalled();
   });
 
+  it("refuses a private redirect on a chain that started public", async () => {
+    // The one attack the local allowance must still stop: a public server
+    // answering `302 Location: http://10.0.0.5/…` to make the developer's own
+    // inspector fetch something on their LAN. The chain's character is decided
+    // by where hop 1 LANDED, so hop 2 is held to the strict policy.
+    dnsLookupMock
+      .mockImplementationOnce(
+        (
+          _hostname: string,
+          _options: unknown,
+          callback: (error: Error | null, addresses: unknown) => void
+        ) => callback(null, [{ address: "93.184.216.34", family: 4 }])
+      )
+      .mockImplementation(
+        (
+          _hostname: string,
+          _options: unknown,
+          callback: (error: Error | null, addresses: unknown) => void
+        ) => callback(null, [{ address: "10.0.0.5", family: 4 }])
+      );
+    queueMetadataResponses(httpsRequestMock, [
+      {
+        status: 302,
+        statusText: "Found",
+        headers: { location: "http://internal.example/secrets" },
+      },
+    ]);
+
+    await expect(
+      executeOAuthProxy({
+        url: "https://auth.example.com/oauth/token",
+        allowPrivateNetwork: true,
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("private/reserved IP address"),
+    });
+    expect(httpRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("follows a private redirect on a chain that started private", async () => {
+    // The legitimate counterpart: a local authorization server bouncing
+    // between its own ports, reached through a hostname that answers 127.0.0.1.
+    resolveTo("127.0.0.1");
+    queueMetadataResponses(httpRequestMock, [
+      {
+        status: 302,
+        statusText: "Found",
+        headers: { location: "http://auth.localtest.me:9401/token" },
+      },
+      { body: JSON.stringify({ access_token: "ok" }) },
+    ]);
+
+    const result = await executeOAuthProxy({
+      url: "http://auth.localtest.me:9400/token",
+      allowPrivateNetwork: true,
+    });
+
+    expect(result).toMatchObject({ status: 200 });
+    expect(httpRequestMock).toHaveBeenCalledTimes(2);
+  });
+
   it("is overridden by httpsOnly, so hosted mode cannot be talked out of it", async () => {
     await expect(
       executeOAuthProxy({

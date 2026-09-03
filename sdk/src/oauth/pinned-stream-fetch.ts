@@ -289,7 +289,7 @@ async function openPinnedHop(
   signal: AbortSignal,
   targetLabel: string,
 ): Promise<HopResult> {
-  const pinnedAddresses = await resolvePinnedAddresses(
+  const { addresses: pinnedAddresses } = await resolvePinnedAddresses(
     targetUrl,
     policy,
     signal,
