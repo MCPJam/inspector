@@ -68,6 +68,15 @@ export interface LocalBrowserSession {
   lease: LocalBrowserLease;
 }
 
+/**
+ * The most events one input request may carry.
+ *
+ * Mirrors `INPUT_BATCH_LIMIT` in `routes/mcp/computers.ts`, which slices
+ * anything longer. Kept in step by hand — the client cannot import a server
+ * module — and pinned by a test on each side.
+ */
+export const INPUT_BATCH_LIMIT = 64;
+
 /** A pointer or key event, in the browser's own CSS-pixel space. */
 export type LocalBrowserInputEvent =
   | { type: "mouse_move"; x: number; y: number; modifiers?: number }
@@ -271,17 +280,28 @@ export function toPageCoordinates(
  * queue, and consecutive moves in the queue collapse — an intermediate
  * position nobody saw is not worth a round trip, but the one they stopped at
  * always is.
+ *
+ * A queue is also a way to send input under a permission that has since gone.
+ * `cancel()` is what the pane calls when the lease is handed back or the
+ * project changes: whatever is still queued belonged to the hold that just
+ * ended, and delivering it afterwards types into somebody else's page.
  */
 export function createInputForwarder(
   send: (events: LocalBrowserInputEvent[]) => Promise<unknown>,
 ) {
   let queue: LocalBrowserInputEvent[] = [];
   let inFlight = false;
+  let cancelled = false;
 
   const flush = () => {
-    if (inFlight || queue.length === 0) return;
-    const batch = coalesceInput(queue);
-    queue = [];
+    if (inFlight || cancelled || queue.length === 0) return;
+    // Chunked at the server's own batch limit. A slow POST can leave more than
+    // this queued, and the route SLICES what it will accept — so a single
+    // oversized request silently drops its tail, which for key and button
+    // events means a page left holding a key nobody is pressing.
+    const coalesced = coalesceInput(queue);
+    const batch = coalesced.splice(0, INPUT_BATCH_LIMIT);
+    queue = coalesced;
     inFlight = true;
     void send(batch)
       .catch(() => {
@@ -295,9 +315,14 @@ export function createInputForwarder(
 
   return {
     push(events: LocalBrowserInputEvent[]) {
-      if (events.length === 0) return;
+      if (cancelled || events.length === 0) return;
       queue.push(...events);
       flush();
+    },
+    /** Drop what is queued and refuse more. Not reusable afterwards. */
+    cancel() {
+      cancelled = true;
+      queue = [];
     },
   };
 }
