@@ -29,13 +29,16 @@ export function HostVerifiedAtStamp({
   className,
 }: HostVerifiedAtStampProps) {
   const catalogState = useHostCatalog();
-  const catalogHost =
-    catalogState.status === "live"
-      ? getCatalogHost(catalogState.catalog, hostStyle)
-      : undefined;
-  // No catalog row (still loading, degraded, or a style we don't track) means
-  // no claim to make — including for MCPJam, whose deploy stamp would
-  // otherwise print a date for a profile we can't read.
+  // Whichever catalog we ended up with, live or bundled fallback — Host
+  // Compare reads it the same way, and a date that disagrees with the table
+  // is worse than a date from the fallback. `catalog` is null only while
+  // loading or after a hard failure.
+  const catalogHost = catalogState.catalog
+    ? getCatalogHost(catalogState.catalog, hostStyle)
+    : undefined;
+  // No catalog row (still loading, or a style we don't track) means no claim
+  // to make — including for MCPJam, whose deploy stamp would otherwise print
+  // a date for a profile we can't read.
   if (!catalogHost) return null;
   const verifiedAt = resolveVerifiedAt(
     hostStyle,

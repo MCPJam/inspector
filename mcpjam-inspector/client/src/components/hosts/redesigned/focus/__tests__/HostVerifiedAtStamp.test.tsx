@@ -4,13 +4,24 @@ import { HostVerifiedAtStamp } from "../HostVerifiedAtStamp";
 
 const CATALOG_VERIFIED_AT = Date.UTC(2026, 8, 2); // 2026-09-02
 
-vi.mock("@/lib/host-compat/use-host-catalog", () => ({
-  useHostCatalog: () => ({
+const LIVE_STATE = {
+  status: "live",
+  catalog: {},
+  version: 1,
+  source: "live",
+};
+
+const catalogState = vi.hoisted(() => ({
+  current: {
     status: "live",
-    catalog: {},
+    catalog: {} as unknown,
     version: 1,
     source: "live",
-  }),
+  },
+}));
+
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => catalogState.current,
 }));
 
 // "mcpjam" and "missing" are deliberately absent: a client can name a style
@@ -32,6 +43,7 @@ vi.mock("@/generated/mcpjam-web-deployed-at", () => ({
 
 afterEach(() => {
   vi.useRealTimers();
+  catalogState.current = { ...LIVE_STATE };
 });
 
 function renderAt(now: number, hostStyle = "cursor") {
@@ -63,6 +75,32 @@ describe("HostVerifiedAtStamp", () => {
 
   it("renders nothing for a client with no catalog row", () => {
     renderAt(CATALOG_VERIFIED_AT, "missing");
+    expect(screen.queryByTestId("host-verified-at-stamp")).toBeNull();
+  });
+
+  it("still shows the date when the proxy served the bundled fallback catalog", () => {
+    // Host Compare reads the fallback catalog too — the header must not go
+    // blank while the table shows a date.
+    catalogState.current = {
+      status: "fallback",
+      catalog: {},
+      version: 1,
+      source: "bundled",
+    };
+    renderAt(CATALOG_VERIFIED_AT + 5 * 24 * 60 * 60 * 1000);
+    expect(screen.getByTestId("host-verified-at-stamp")).toHaveTextContent(
+      "Last checked 2026-09-02",
+    );
+  });
+
+  it("renders nothing while no catalog has loaded", () => {
+    catalogState.current = {
+      status: "loading",
+      catalog: null,
+      version: 1,
+      source: "live",
+    };
+    renderAt(CATALOG_VERIFIED_AT);
     expect(screen.queryByTestId("host-verified-at-stamp")).toBeNull();
   });
 
