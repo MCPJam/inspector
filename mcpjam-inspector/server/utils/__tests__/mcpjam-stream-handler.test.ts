@@ -622,6 +622,119 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  // BB-111 regression guard. Persistence is covered by the test above; this
+  // pins the OTHER half — that reasoning reaches the live UI stream. The bug
+  // that shipped was invisible precisely because nothing errored: after the
+  // OpenRouter → AI Gateway migration the backend simply stopped sending
+  // reasoning deltas and the feature disappeared with no failing test.
+  it("forwards reasoning chunks verbatim to the client stream", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "reasoning-start", id: "reasoning-1" },
+        {
+          type: "reasoning-delta",
+          id: "reasoning-1",
+          delta: "The user wants the server list.",
+        },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Here they are:" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ])
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "List my servers" }] as any,
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onConversationComplete: vi.fn(),
+    });
+
+    await lastExecution;
+
+    const reasoningChunks = writtenChunks.filter((chunk) =>
+      String(chunk?.type).startsWith("reasoning")
+    );
+    expect(reasoningChunks).toEqual([
+      { type: "reasoning-start", id: "reasoning-1" },
+      {
+        type: "reasoning-delta",
+        id: "reasoning-1",
+        delta: "The user wants the server list.",
+      },
+      { type: "reasoning-end", id: "reasoning-1" },
+    ]);
+
+    // Reasoning must precede the answer, or the client renders the summary
+    // below the text it was supposed to explain. Assert on the LAST reasoning
+    // chunk, not the first: "first reasoning before first text" still holds if
+    // a stray delta or the reasoning-end leaks out after text-start, which is
+    // exactly the interleaving that would misorder the UI.
+    const reasoningIndexes = writtenChunks
+      .map((chunk, index) =>
+        String(chunk?.type).startsWith("reasoning") ? index : -1
+      )
+      .filter((index) => index >= 0);
+    const firstTextIndex = writtenChunks.findIndex(
+      (chunk) => chunk?.type === "text-start"
+    );
+    expect(reasoningIndexes.length).toBeGreaterThan(0);
+    expect(Math.max(...reasoningIndexes)).toBeLessThan(firstTextIndex);
+  });
+
+  // The pre-fix production shape, pinned. This is what the AI Gateway sent
+  // before the backend started asking for a reasoning summary: a balanced
+  // reasoning block with NO deltas. It must stay a no-op — an empty reasoning
+  // part would render as a stray "Reasoning" header with nothing inside it.
+  it("persists no reasoning part when the block carries no deltas", async () => {
+    const onConversationComplete = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "reasoning-start", id: "reasoning-1" },
+        // No reasoning-delta at all, plus an explicitly empty one — the
+        // handler coalesces `delta ?? ""`, so neither may create a part.
+        { type: "reasoning-delta", id: "reasoning-1", delta: "" },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Here they are:" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ])
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "List my servers" }] as any,
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onConversationComplete,
+    });
+
+    await lastExecution;
+
+    const fullHistory = onConversationComplete.mock.calls[0]?.[0];
+    expect(fullHistory[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "Here they are:" }],
+    });
+  });
+
   it("emits ordered live trace events for a text-only streamed turn", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       createSseResponse([

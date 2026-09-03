@@ -44,6 +44,7 @@ import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
+import { LIVE_CHAT_REASONING_DISPLAY_MODE } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
@@ -4662,6 +4663,11 @@ export function PlaygroundMain({
                 onFullscreenChange={setIsWidgetFullscreen}
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
+                // Single-host thread. The compare cards set this too — both
+                // live paths must agree, or reasoning renders as a collapsed
+                // block when comparing models and as raw inline text with one
+                // client selected (the reported inconsistency).
+                reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                 mcpToolResultImageRendering={
                   effectiveMcpToolResultImageRendering
                 }
@@ -5040,6 +5046,11 @@ export function PlaygroundMain({
                           compareKind="host"
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
+                          // Passed explicitly even though the card defaults to
+                          // the same constant: a default silently loses to any
+                          // caller that supplies the prop, so every live
+                          // surface drives the mode the same way (BB-111).
+                          reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                           comparisonSummaries={Object.values(compareSummaries)}
                           selectedServers={selectedServers}
                           broadcastRequest={broadcastRequest}
@@ -5124,6 +5135,8 @@ export function PlaygroundMain({
                             compareLabel={model.name}
                             compareKind="model"
                             model={model}
+                            // Same explicit pass as the host-mode card above.
+                            reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                             comparisonSummaries={Object.values(
                               compareSummaries,
                             )}

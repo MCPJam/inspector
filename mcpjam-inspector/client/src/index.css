@@ -474,6 +474,70 @@
   will-change: transform;
 }
 
+/* MCPJam "Thinking…" shimmer label (`thread/parts/reasoning-part.tsx`).
+   Same background-clip: text technique as the Le Chat / Notion ports below,
+   but driven by our own theme tokens instead of another host's brand colors.
+
+   The resting tone is `currentcolor` — literally the colour the header label
+   already renders in (the button sets `text-muted-foreground/90`, and this span
+   inherits it). Using the token directly would be a near-match that silently
+   drifts if the header's class changes; inheriting makes the equivalence exact,
+   so the label never reads worse at rest than the finished `Reasoning` label
+   does. Only the travelling band changes.
+
+   The band cannot be `--foreground` in both themes. In light that is much
+   darker than the resting tone (L .344 vs .606) and reads clearly, but in dark
+   the two tokens are nearly the same lightness (L .807 vs .771) and the sweep
+   all but disappears. Dark therefore brightens past `--foreground` instead —
+   the contrast direction flips with the theme, so the band has to as well. */
+.reasoning-shimmer-text {
+  --reasoning-shimmer-band: var(--foreground);
+
+  background-image: linear-gradient(
+    90deg,
+    currentcolor 0%,
+    currentcolor 40%,
+    var(--reasoning-shimmer-band) 50%,
+    currentcolor 60%,
+    currentcolor 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: reasoning-shimmer-text 2s linear infinite;
+  will-change: background-position;
+}
+
+/* Dark: `--foreground` is only L .807 against a resting L .771, so the band
+   has to go brighter than any text token to register. Matches `.dark` because
+   that is how the app applies the theme (`@custom-variant dark (&:is(.dark *))`
+   in the design system) — the `[data-theme]` overrides on the Le Chat / Notion
+   shimmers below are a different mechanism (per-host client styles). */
+.dark .reasoning-shimmer-text {
+  --reasoning-shimmer-band: oklch(0.98 0.005 95);
+}
+
+@keyframes reasoning-shimmer-text {
+  from {
+    background-position: 150% 0;
+  }
+
+  to {
+    background-position: -50% 0;
+  }
+}
+
+/* Reduced motion: drop the sweep AND the text-fill trick, or the label would
+   be left painted transparent with a frozen gradient behind it. */
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-shimmer-text {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentcolor;
+  }
+}
+
 /* MCPJam thinking indicator — three primary dots in a staggered bounce
    wave. Uses `--primary` for fill/glow so light/dark themes stay on-brand. */
 @keyframes mcpjam-mark-dot-wave {

@@ -15,7 +15,10 @@ import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
-import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
+import {
+  LIVE_CHAT_REASONING_DISPLAY_MODE,
+  type ReasoningDisplayMode,
+} from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { useChangeProtocolVersionAction } from "@/hooks/use-change-protocol-version-action";
 import {
@@ -229,7 +232,10 @@ export function MultiModelPlaygroundCard({
   broadcastRequest,
   deterministicExecutionRequest,
   stopRequestId,
-  reasoningDisplayMode = "inline",
+  // Live-chat default (BB-111). Shared with the single-host thread in
+  // PlaygroundMain so both paths render reasoning identically — see the
+  // constant's doc for why they must not drift.
+  reasoningDisplayMode = LIVE_CHAT_REASONING_DISPLAY_MODE,
   executionConfig,
   hostedContext,
   hostedOrgModelConfig,
