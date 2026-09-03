@@ -742,7 +742,7 @@ function countActivePatterns(
 /**
  * Top-level Run insights summary — same {@link InsightBannerShell} chrome as
  * the suite dashboard. Pattern findings live in
- * {@link RunInsightsRecommendations} beside the scorecard.
+ * {@link RunInsightsRecommendations} in the Findings rail.
  */
 export function RunInsightsBanner() {
   const {
@@ -827,8 +827,8 @@ export function RunInsightsBanner() {
 }
 
 /**
- * Scorecard-adjacent Recommendations: pattern findings as expandable rows.
- * Card chrome lives on Findings; this is a subsection, not a second card.
+ * Recommendations: pattern findings as expandable rows. Card chrome lives on
+ * Findings; this is a subsection, not a second card.
  */
 export function RunInsightsRecommendations() {
   const {
@@ -943,7 +943,7 @@ export function RunInsightsRecommendations() {
   );
 }
 
-/** Scorecard-shaped expandable pattern row. */
+/** Expandable pattern row. */
 function RecommendationRow({
   row,
   cohort,

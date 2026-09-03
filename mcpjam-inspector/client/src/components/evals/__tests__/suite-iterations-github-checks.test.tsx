@@ -60,6 +60,12 @@ vi.mock("../suite-header", () => ({
   SuiteHeader: () => <div data-testid="suite-header" />,
 }));
 
+vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
+  SuiteEnvironmentComposerBar: () => (
+    <div data-testid="suite-environment-bar">composer</div>
+  ),
+}));
+
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 
 vi.mock("@/state/app-state-context", () => ({

@@ -1,11 +1,4 @@
-import {
-  useMemo,
-  useState,
-  useEffect,
-  useCallback,
-  useReducer,
-  useRef,
-} from "react";
+import { useMemo, useState, useEffect, useCallback, useReducer } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
@@ -19,7 +12,7 @@ import {
   EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
 } from "@/components/computer/CloudUnreachableNotice";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
-import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
+import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
@@ -58,6 +51,8 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
+import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
+import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
@@ -372,7 +367,9 @@ export function SuiteIterationsView({
   omitSuiteHeader?: boolean;
   /**
    * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
-   * history, cases — instead of the unified dashboard on suite overview.
+   * history, cases — instead of the unified dashboard on suite overview, and
+   * {@link EvaluateRunPage} instead of the SuiteResultsSplit rail on run
+   * detail.
    *
    * OFF by default on purpose. This is a shared component: the shipped
    * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
@@ -822,6 +819,22 @@ export function SuiteIterationsView({
     }
   };
 
+  const handleServerAttachmentUpdate = async (serverAttachmentId: string) => {
+    // Picker calls this synchronously inside onClick — don't rethrow,
+    // or the unawaited promise becomes an unhandled rejection.
+    try {
+      await updateSuite({
+        suiteId: suite._id,
+        serverAttachmentId,
+      });
+      toast.success("Server group updated");
+    } catch (error) {
+      toast.error(
+        getBillingErrorMessage(error, "Failed to update server group"),
+      );
+    }
+  };
+
   const handleRunClick = (runId: string) => {
     navigation.toRunDetail(suite._id, runId, undefined, {
       insightsFocus: true,
@@ -904,14 +917,13 @@ export function SuiteIterationsView({
   ]);
 
   // Evaluate (New) suite overview uses the checkout-flow identity + run
-  // history + cases layout. Run detail still folds into SuiteDashboard.
+  // history + cases layout. Run detail uses EvaluateRunPage (this run +
+  // Compare), not the SuiteResultsSplit rail.
   //
   // `viewMode` falls through to "overview" for the suite-edit route, so edit
   // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
-  // edit-mode chrome lives (the name editor and Done), and the only mount
-  // point for SuiteEnvironmentComposerBar. Suppressing it there would leave
-  // the settings sheet headerless and the suite's client/model/server
-  // composer unreachable from both routes.
+  // edit-mode chrome lives (the name editor and Done). The environment
+  // composer lives on the settings sheet, not the overview header.
   const showEvaluateSuiteDetail =
     suiteDetailOverview &&
     hideRunActions &&
@@ -919,15 +931,27 @@ export function SuiteIterationsView({
     !isEditMode &&
     viewMode === "overview";
 
+  const showEvaluateRunPage =
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "run-detail" &&
+    Boolean(selectedRunDetails) &&
+    !selectedCompareBaseRunId &&
+    !selectedRunTestCaseId;
+
   const showSuiteHeader =
     !showEvaluateSuiteDetail &&
+    !showEvaluateRunPage &&
     (!omitSuiteHeader || viewMode !== "run-detail" || isEditMode);
 
   // The unified results split (run-group rail + scoped right pane) is the
   // default suite surface; the single-run detail folds into its right pane
   // wherever the dashboard renders (same guard as the overview SuiteDashboard
   // branch so the two surfaces switch together).
-  const foldRunDetail = hideRunActions && !caseListInSidebar;
+  const foldRunDetail =
+    hideRunActions && !caseListInSidebar && !suiteDetailOverview;
 
   // Keep suite chrome (name, Run all, Generate) visible in run detail — run
   // identity belongs in the body. CI opts out via omitSuiteHeader.
@@ -1071,7 +1095,7 @@ export function SuiteIterationsView({
           : "body"
       }
       hideReplayLineage
-      hideRecentRuns={foldRunDetail}
+      hideRecentRuns={foldRunDetail || showEvaluateRunPage}
       hideKpiStrip={foldRunDetail}
       hideAccuracyHero={foldRunDetail}
       caseTableSlot={runMatrixPane}
@@ -1186,9 +1210,6 @@ export function SuiteIterationsView({
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
-            onSuiteHostAttachmentsUpdate={
-              readOnlyConfig ? undefined : handleUpdateHostAttachments
-            }
             omitRunDetailIdentity={omitRunDetailIdentity}
           />
         </div>
@@ -1295,6 +1316,65 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showEvaluateRunPage && selectedRunDetails ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <EvaluateRunPage
+                  run={selectedRunDetails}
+                  hostNamesById={hostNamesById}
+                  iterations={caseGroupsForSelectedRun}
+                  otherRuns={runs.filter(
+                    (candidate) =>
+                      candidate._id !== selectedRunDetails._id &&
+                      candidate.result !== "inconclusive",
+                  )}
+                  defaultCompareRunId={
+                    previousCompletedRunForSelectedRun?._id ?? null
+                  }
+                  onCompareWithRun={(baseRunId) =>
+                    handleCompareRuns(baseRunId, selectedRunDetails._id)
+                  }
+                  onExport={
+                    projectId ? () => setTracesExportOpen(true) : undefined
+                  }
+                >
+                  {projectId ? (
+                    <EvaluateRunContent
+                      projectId={projectId}
+                      run={selectedRunDetails}
+                      iterations={caseGroupsForSelectedRun}
+                      allIterations={allIterations}
+                      previousRunId={
+                        previousCompletedRunForSelectedRun?._id ?? null
+                      }
+                      decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                      onOpenIteration={({ testCaseId, iterationId }) =>
+                        // Same routing rule the decision card follows: an
+                        // iteration id is only consumed by the case editor, so
+                        // sending a reader to run detail would land them on the
+                        // page they are already looking at with nothing opened.
+                        navigation.toTestEdit(suite._id, testCaseId, {
+                          iteration: iterationId,
+                        })
+                      }
+                      {...(onEditTestCase
+                        ? { onEditCase: onEditTestCase }
+                        : {})}
+                      fallbackBody={runDetailView}
+                    />
+                  ) : (
+                    runDetailView
+                  )}
+                </EvaluateRunPage>
+              </motion.div>
             ) : showEvaluateSuiteDetail ? (
               <motion.div
                 key={contentKey}
@@ -1722,23 +1802,22 @@ export function SuiteIterationsView({
                 </SettingsSection>
               ) : null}
 
-              {/* ── Environments (project environments, flag-gated) ────
-                  Attach-ordered bundles of one client + optional server
-                  group + pinned skills. Run all fires one run per attached
-                  environment; the backend resolves each at launch. */}
-              {projectEnvironmentsEnabled && projectId ? (
-                <SettingsSection
-                  settingKey="environments"
-                  label="Environments"
-                  layout="inline"
-                  inlineSlot={
-                    <SuiteProjectEnvironmentsPicker
-                      suiteId={suite._id}
-                      projectId={projectId}
-                      environmentIds={suite.environmentIds}
-                    />
-                  }
-                >
+              {/* ── Environments (where this runs) ─────────────────────
+                  Full composer: named environments plus clients, models,
+                  servers, and skills. Replaces the header strip so this
+                  axis is edited here rather than on the overview. A
+                  suite without project environments still gets the
+                  legacy clients/servers pills through the same bar. */}
+              <SettingsSection settingKey="environments" label="Environments">
+                <SuiteEnvironmentComposerBar
+                  containerVariant="panel"
+                  className="bg-transparent py-0"
+                  suite={suite}
+                  onUpdate={handleUpdateHostAttachments}
+                  onUpdateServerAttachment={handleServerAttachmentUpdate}
+                  omitComputers={computersEnabled && Boolean(projectId)}
+                />
+                {projectEnvironmentsEnabled && projectId ? (
                   <p className="text-[11px] text-muted-foreground/60">
                     Run all fires one run per environment, in this order. An
                     environment bundles one client, an optional server group,
@@ -1746,8 +1825,8 @@ export function SuiteIterationsView({
                     skills always apply on top; a suite skills
                     &quot;exclude&quot; override wins over both.
                   </p>
-                </SettingsSection>
-              ) : null}
+                ) : null}
+              </SettingsSection>
 
               {/* ── Tool calls ───────────────────────────────────────── */}
               <SettingsSection

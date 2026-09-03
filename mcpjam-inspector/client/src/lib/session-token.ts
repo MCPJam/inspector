@@ -39,14 +39,14 @@ const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
 };
 
 function resolveAuthFetchSurface(
-  input: RequestInfo | URL
+  input: RequestInfo | URL,
 ): AuthFetchSurface | null {
   const rawUrl =
     input instanceof URL
       ? input.toString()
       : typeof Request !== "undefined" && input instanceof Request
-      ? input.url
-      : String(input);
+        ? input.url
+        : String(input);
   const baseOrigin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
@@ -98,14 +98,14 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
   }
 
   return Object.keys(headers).some(
-    (key) => key.toLowerCase() === "authorization"
+    (key) => key.toLowerCase() === "authorization",
   );
 }
 
 function buildAuthFetchInit(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
-  hostedAuthorizationHeader: string | null
+  hostedAuthorizationHeader: string | null,
 ): RequestInit {
   const sessionHeaders = shouldAttachSessionHeaders(input)
     ? getAuthHeaders()
@@ -255,8 +255,8 @@ function resolveRequestUrl(input: RequestInfo | URL): URL | null {
     return input instanceof URL
       ? input
       : typeof Request !== "undefined" && input instanceof Request
-      ? new URL(input.url, baseOrigin)
-      : new URL(String(input), baseOrigin);
+        ? new URL(input.url, baseOrigin)
+        : new URL(String(input), baseOrigin);
   } catch {
     return null;
   }
@@ -423,6 +423,10 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // own auth, and a pattern that swallowed them would be the blanket prefix
   // this list exists to avoid. The eval-chain test pins all three.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
+  // What changed since the previous run. Same grant, same reason as the reads
+  // above, and anchored the same way: `compare` is one segment and nothing
+  // hangs beneath it.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/compare$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {
@@ -504,7 +508,7 @@ export function addTokenToUrl(url: string): string {
  */
 export async function authFetch(
   input: RequestInfo | URL,
-  init?: RequestInit
+  init?: RequestInit,
 ): Promise<Response> {
   const surface = resolveAuthFetchSurface(input);
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
@@ -586,7 +590,7 @@ export async function authFetch(
   const retryInit = buildAuthFetchInit(
     input,
     init,
-    `Bearer ${refreshedGuestToken}`
+    `Bearer ${refreshedGuestToken}`,
   );
   return fetch(input, retryInit);
 }

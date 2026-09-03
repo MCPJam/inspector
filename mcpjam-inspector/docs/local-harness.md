@@ -325,6 +325,16 @@ refusing win32, and the leg keeps reporting — which is the point of running it
       not match what is committed. The table is committed rather than injected
       at build time so the digest a release trusts is reviewed in a diff —
       which is the property the whole verification chain rests on.
+
+      Committing that table is also what **turns the pack build on**:
+      `release.yml` reads `EXPECTED_PACK_VERSION` out of it and skips
+      `build-local-harness-pack` entirely while it is `""`. That is not a
+      convenience — a build carrying no digests refuses every network-sourced
+      pack anyway, so publishing packs alongside it would attach assets nothing
+      can ask for, and the enforcement step above would fail by construction.
+      There is deliberately no separate switch: a release cannot ship digests
+      without building the packs they name, and cannot build packs the shipped
+      build would not accept.
 - [ ] Conformance green on `ubuntu-latest` and `macos-latest`, and
       `lifecycleConformanceVersion` stamped from that run. Empty ⇒ every
       platform refuses, by design.

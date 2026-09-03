@@ -476,6 +476,7 @@ describe("SuiteHeader", () => {
     expect(setupSdk.compareDocumentPosition(generate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(generate.compareDocumentPosition(newCase) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(newCase.compareDocumentPosition(runAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId("suite-environment-bar")).toBeNull();
   });
 
   it("does not show Compare clients in the suite overview header", () => {
