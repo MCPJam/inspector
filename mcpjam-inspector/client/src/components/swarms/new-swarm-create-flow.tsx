@@ -1739,6 +1739,7 @@ export function NewSwarmCreateFlow({
             runs={launchedRuns}
             fallbackColumns={runningFallbackColumns}
             environments={envList}
+            hosts={hosts}
             onLeave={leaveRunning}
             onOpenSession={openRunningSession}
           />

@@ -702,6 +702,7 @@ export function RunDetailView({
         error={serverQualityError}
         onRetry={() => requestServerQuality(true)}
         source={source}
+        hostNamesById={hostNamesById}
         embedded={embeddedInResultsSplit}
       />
     ) : null;

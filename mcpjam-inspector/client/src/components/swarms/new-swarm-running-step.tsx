@@ -50,6 +50,8 @@ import {
 } from "@/lib/swarm-api";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
+import type { HostListItem } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 export type SwarmLaunchedRun = {
   runId: string;
@@ -659,10 +661,10 @@ function FirstFindingPing({
 }
 
 export function NewSwarmRunningStep({
-  projectId,
   runs,
   fallbackColumns,
   environments = [],
+  hosts = [],
   onLeave,
   onOpenSession,
 }: {
@@ -672,6 +674,7 @@ export function NewSwarmRunningStep({
   fallbackColumns: SwarmRunningColumn[];
   /** Used to label columns by client (host) instead of env nickname. */
   environments?: ProjectEnvironmentView[];
+  hosts?: HostListItem[];
   /**
    * Leave the watch surface for the swarm's Findings page. Does not cancel
    * the run — "Stop" used to imply that and was a lie.
@@ -683,16 +686,9 @@ export function NewSwarmRunningStep({
    */
   onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
-  const hosts = useQuery(
-    SWARM_QUERIES.listHosts as any,
-    {
-      projectId,
-    } as any
-  ) as { hostId: string; name: string }[] | undefined;
-
   const hostName = useMemo(() => {
     const map = new Map(
-      (hosts ?? []).map((host) => [host.hostId, host.name] as const)
+      hosts.map((host) => [host.hostId, clientDisplayName(host)] as const)
     );
     return (hostId: string) => map.get(hostId);
   }, [hosts]);

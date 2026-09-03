@@ -7,6 +7,7 @@ import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 export type HostAttachmentDraft = {
   namedHostId: string;
@@ -79,7 +80,11 @@ export function ClientAttachmentsEditor({
             <HostAttachmentRow
               key={attachment.namedHostId}
               attachment={attachment}
-              hostName={hostsById.get(attachment.namedHostId)?.name}
+              hostName={
+                hostsById.get(attachment.namedHostId)
+                  ? clientDisplayName(hostsById.get(attachment.namedHostId)!)
+                  : undefined
+              }
               onRemove={() => handleRemoveAttachment(index)}
               disabled={disabled}
             />

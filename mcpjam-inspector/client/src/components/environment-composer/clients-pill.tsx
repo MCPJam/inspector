@@ -22,6 +22,7 @@ import {
 import { useHostList } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { clientDisplayName } from "@/lib/client-display-name";
 import { cn } from "@/lib/utils";
 
 export function ClientsPill({
@@ -62,8 +63,10 @@ export function ClientsPill({
       ? single
         ? "No client · pick one"
         : "No clients · pick some"
-      : (hosts.find((h) => h.hostId === selected[0])?.name ??
-        selected[0].slice(0, 8));
+      : (() => {
+          const host = hosts.find((item) => item.hostId === selected[0]);
+          return host ? clientDisplayName(host) : selected[0].slice(0, 8);
+        })();
   const extra = selected.length > 1 ? selected.length - 1 : 0;
   const logo =
     selected.length > 0 ? resolveHostLogoByDisplayName(triggerLabel) : null;
@@ -179,10 +182,10 @@ export function ClientsPill({
                       toggle(host.hostId, next === true)
                     }
                     disabled={capBlocked || disabled}
-                    aria-label={host.name}
+                    aria-label={clientDisplayName(host)}
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {host.name}
+                    {clientDisplayName(host)}
                   </span>
                 </Label>
               );

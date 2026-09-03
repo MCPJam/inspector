@@ -12,6 +12,7 @@ import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -340,11 +341,13 @@ export function buildHostNamesById(
   attachments:
     | Array<{ namedHostId: string; hostName: string | null }>
     | undefined,
-  projectHosts: Array<{ hostId: string; name: string }> | undefined
+  projectHosts:
+    | Array<{ hostId: string; name: string; displayName?: string }>
+    | undefined
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
   for (const host of projectHosts ?? []) {
-    map.set(host.hostId, host.name);
+    map.set(host.hostId, clientDisplayName(host));
   }
   for (const attachment of attachments ?? []) {
     map.set(

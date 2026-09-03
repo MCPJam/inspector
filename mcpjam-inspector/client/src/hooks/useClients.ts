@@ -5,6 +5,15 @@ import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2"
 import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
+import {
+  bundledHostCompatCatalog,
+  getCatalogHosts,
+} from "@mcpjam/sdk/host-compat";
+import { resolveClientDisplayNames } from "@/lib/client-display-name";
+
+const PRESET_CLIENT_NAMES = getCatalogHosts(bundledHostCompatCatalog()).map(
+  (host) => host.label,
+);
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -18,6 +27,8 @@ import type { HostOwnerScope } from "@/lib/host-owner-scope";
 export interface HostListItem {
   hostId: string;
   name: string;
+  /** Presentation-only unique name; never persisted or sent to mutations. */
+  displayName?: string;
   hostConfigId: string;
   modelId: string;
   serverCount: number;
@@ -82,9 +93,18 @@ export function useHostList({
 
   const hosts = useMemo(() => {
     const all = result ?? [];
+    const visible = withoutPrivateScenarioBackingHosts(all);
+    const displayNames = resolveClientDisplayNames(
+      visible,
+      PRESET_CLIENT_NAMES,
+    );
+    const decorated = all.map((host) => ({
+      ...host,
+      displayName: displayNames.get(host.hostId) ?? host.name,
+    }));
     return includePrivateBacking
-      ? all
-      : withoutPrivateScenarioBackingHosts(all);
+      ? decorated
+      : withoutPrivateScenarioBackingHosts(decorated);
   }, [result, includePrivateBacking]);
 
   return {

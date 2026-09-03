@@ -83,6 +83,33 @@ describe("useHostList private-backing filter", () => {
     ]);
   });
 
+  it("adds display names without letting hidden clients consume suffixes", () => {
+    mockUseQuery.mockReturnValue([
+      {
+        hostId: "hidden-acme",
+        name: "Acme",
+        createdAt: 1,
+        ownerScope: { type: "user_testing" },
+      },
+      { hostId: "visible-acme", name: "Acme", createdAt: 2 },
+      { hostId: "saved-cursor", name: "Cursor", createdAt: 3 },
+    ]);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(
+      result.current.hosts.map(({ hostId, displayName }) => ({
+        hostId,
+        displayName,
+      })),
+    ).toEqual([
+      { hostId: "visible-acme", displayName: "Acme" },
+      { hostId: "saved-cursor", displayName: "Cursor #2" },
+    ]);
+  });
+
   it("reports loading (not an empty list) while the query is in flight", () => {
     mockUseQuery.mockReturnValue(undefined);
 

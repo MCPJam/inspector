@@ -23,6 +23,7 @@ import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
 import type { SupportFilterMode } from "./support-level";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 const INITIAL_INLINE_CHIP_LIMIT = 6;
 
@@ -362,7 +363,7 @@ function HostCompareChip({
       ) : (
         <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
       )}
-      <span className="truncate">{host.name}</span>
+      <span className="truncate">{clientDisplayName(host)}</span>
     </motion.button>
   );
 }
@@ -426,7 +427,9 @@ function HostCompareOverflowMenu({
               return (
                 <CommandItem
                   key={host.hostId}
-                  value={`${host.name} ${host.hostId}`}
+                  value={`${clientDisplayName(host)} ${host.name} ${
+                    host.hostId
+                  }`}
                   onSelect={() => onToggleHost(host.hostId)}
                   data-testid={`host-compare-overflow-${host.hostId}`}
                 >
@@ -443,7 +446,7 @@ function HostCompareOverflowMenu({
                         className="size-3.5 shrink-0 rounded-full bg-muted"
                       />
                     )}
-                    <span className="truncate">{host.name}</span>
+                    <span className="truncate">{clientDisplayName(host)}</span>
                   </span>
                   <span
                     className={cn(

@@ -26,6 +26,7 @@ import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogHosts } from "@mcpjam/sdk/host-compat";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 // Quick-add priority. These templates surface first in the Add-host strip;
 // everything else follows in template order and spills into the overflow (⋯).
@@ -209,7 +210,7 @@ export function ClientSelector({
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
   const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
-  const leadHostName = leadHost?.name ?? "Select host";
+  const leadHostName = leadHost ? clientDisplayName(leadHost) : "Select host";
   const leadHostLogo = leadHost?.name
     ? resolveHostLogoByDisplayName(leadHost.name, themeMode)
     : null;
@@ -218,9 +219,10 @@ export function ClientSelector({
   const limitReached = effectiveSelectedHostIds.length >= maxSelectedHosts;
   const triggerLabel = isComparing
     ? effectiveSelectedHostIds
-        .map((hostId) =>
-          compactHostLabel(hostsById.get(hostId)?.name ?? hostId)
-        )
+        .map((hostId) => {
+          const host = hostsById.get(hostId);
+          return compactHostLabel(host ? clientDisplayName(host) : hostId);
+        })
         .join(", ")
     : compactHostLabel(leadHostName);
   const clientListMaxHeight = isComparing ? 160 : 220;
@@ -295,9 +297,11 @@ export function ClientSelector({
                   <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
                     {effectiveSelectedHostIds.map((hostId, index) => {
                       const host = hostsById.get(hostId);
-                      const name = compactHostLabel(host?.name ?? hostId);
+                      const name = compactHostLabel(
+                        host ? clientDisplayName(host) : hostId
+                      );
                       const logo = resolveHostLogoByDisplayName(
-                        name,
+                        host?.name ?? name,
                         themeMode
                       );
                       return (
@@ -391,9 +395,9 @@ export function ClientSelector({
                 {effectiveSelectedHostIds.map((hostId, index) => {
                   const host = hostsById.get(hostId);
                   const isLead = index === 0;
-                  const name = host?.name ?? hostId;
+                  const name = host ? clientDisplayName(host) : hostId;
                   const logo = resolveHostLogoByDisplayName(
-                    name,
+                    host?.name ?? name,
                     modalThemeMode
                   );
                   return (
@@ -472,7 +476,9 @@ export function ClientSelector({
                 const row = (
                   <CommandItem
                     key={host.hostId}
-                    value={`${host.name} ${host.hostId}`}
+                    value={`${clientDisplayName(host)} ${host.name} ${
+                      host.hostId
+                    }`}
                     onSelect={() =>
                       checklistMode
                         ? handleMultiSelect(host.hostId)
@@ -495,7 +501,7 @@ export function ClientSelector({
                       />
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm">
-                      {host.name}
+                      {clientDisplayName(host)}
                     </span>
                     {isComparing && host.hostId === leadHostId ? (
                       <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-primary">
