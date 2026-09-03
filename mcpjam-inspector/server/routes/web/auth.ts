@@ -1575,6 +1575,9 @@ export async function createAuthorizedManager(
               effectiveInitializePins?.supportedProtocolVersions,
             firstPageOnly: effectiveInitializePins?.firstPageOnly,
             supportsMrtr: effectiveInitializePins?.supportsMrtr,
+            // Only the drop half reaches a stdio child: there is no GET
+            // listen stream on stdio for `suppressListenChannel` to refuse.
+            dropToolListChanged: effectiveInitializePins?.dropToolListChanged,
             xaaPolicy: options?.xaaPolicy,
             // The local reread + secret reveal must carry the same scope and
             // delegated identity as the hosted mint path below — a harness
