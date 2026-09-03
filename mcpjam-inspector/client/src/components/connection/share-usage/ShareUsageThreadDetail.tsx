@@ -18,6 +18,7 @@ import {
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
+import { hydrateTurnTraceSpans } from "@/components/evals/turn-trace-spans";
 import {
   ChatTraceViewModeHeaderBar,
   type TraceViewMode,
@@ -291,28 +292,6 @@ interface ShareUsageThreadDetailProps {
  */
 const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
 
-/**
- * Fetch span blobs from turn trace URLs and flatten into a single span array.
- */
-async function hydrateSpans(
-  traces: SharedChatTurnTrace[]
-): Promise<EvalTraceSpan[]> {
-  const results = await Promise.all(
-    traces.map(async (trace) => {
-      if (!trace.spansBlobUrl) return [];
-      try {
-        const response = await fetch(trace.spansBlobUrl);
-        if (!response.ok) return [];
-        const parsed = await response.json();
-        return Array.isArray(parsed) ? (parsed as EvalTraceSpan[]) : [];
-      } catch {
-        return [];
-      }
-    })
-  );
-  return results.flat();
-}
-
 export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
@@ -387,13 +366,24 @@ export function ShareUsageThreadDetail({
     }
 
     let isActive = true;
-    void hydrateSpans(turnTraces).then((spans) => {
+    // Eval blobs are anchored at the RUN start by `drive-local-eval-turn`,
+    // while their per-turn rows carry a persist-time `turnStartedAt`. Rebasing
+    // those would displace every span by the persist round-trip, so this
+    // thread keeps the offsets its blobs already carry.
+    // Compared as a string on purpose: `SharedChatSourceType` is
+    // `"scenario" | "swarm"`, so TS calls this branch dead — but the sessions
+    // feed types the same field as `"direct" | "scenario" | "eval" | "swarm"`
+    // and `SessionsPanel` renders this component for every row without a
+    // gate. The narrow type is the thing that is wrong here, not the check.
+    const sessionAnchored =
+      (thread?.sourceType as string | undefined) === "eval";
+    void hydrateTurnTraceSpans(turnTraces, { sessionAnchored }).then((spans) => {
       if (isActive) setHydratedSpans(spans);
     });
     return () => {
       isActive = false;
     };
-  }, [turnTraces]);
+  }, [turnTraces, thread?.sourceType]);
 
   // Transform snapshots to TraceWidgetSnapshot format
   const widgetSnapshots: TraceWidgetSnapshot[] = useMemo(() => {
@@ -470,14 +460,23 @@ export function ShareUsageThreadDetail({
   );
 
   // Compute trace timing from turn traces
+  // Non-finite rows are filtered before the reduce, matching
+  // `hydrateTurnTraceSpans`. Without it a single garbage `startedAt` gave the
+  // axis a NaN anchor while the spans kept a finite base — labels and
+  // positions measured from two different origins. `null` when nothing usable
+  // is left, which is the same answer as having no traces at all.
   const traceStartedAtMs = useMemo(() => {
-    if (!turnTraces || turnTraces.length === 0) return null;
-    return Math.min(...turnTraces.map((t: SharedChatTurnTrace) => t.startedAt));
+    const starts = (turnTraces ?? [])
+      .map((t: SharedChatTurnTrace) => t.startedAt)
+      .filter((value: number) => Number.isFinite(value));
+    return starts.length > 0 ? Math.min(...starts) : null;
   }, [turnTraces]);
 
   const traceEndedAtMs = useMemo(() => {
-    if (!turnTraces || turnTraces.length === 0) return null;
-    return Math.max(...turnTraces.map((t: SharedChatTurnTrace) => t.endedAt));
+    const ends = (turnTraces ?? [])
+      .map((t: SharedChatTurnTrace) => t.endedAt)
+      .filter((value: number) => Number.isFinite(value));
+    return ends.length > 0 ? Math.max(...ends) : null;
   }, [turnTraces]);
 
   const canPromoteThread = Boolean(
