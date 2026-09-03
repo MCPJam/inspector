@@ -135,10 +135,11 @@ describe("ServerSelectionList", () => {
         onToggle={vi.fn()}
       />,
     );
-    expect(screen.getByTestId("server-status-s_bad")).toHaveAttribute(
-      "title",
-      "Failed",
-    );
+    const dot = screen.getByTestId("server-status-s_bad");
+    expect(dot).toHaveAttribute("title", "Failed");
+    // A role token, not a literal colour — the dot has to track the theme.
+    expect(dot).toHaveClass("bg-destructive");
+    expect(dot.getAttribute("style")).toBeNull();
     expect(
       screen.getByRole("checkbox", { name: "test-bad-url (Failed)" }),
     ).toBeInTheDocument();

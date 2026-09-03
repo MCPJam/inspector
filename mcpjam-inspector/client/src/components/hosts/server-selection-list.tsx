@@ -99,8 +99,10 @@ export function ServerSelectionList({
             {statusMeta ? (
               <span
                 data-testid={`server-status-${server.id}`}
-                className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: statusMeta.indicatorColor }}
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  statusMeta.indicatorClassName,
+                )}
                 title={statusMeta.label}
                 aria-hidden
               />
