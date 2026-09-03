@@ -2,37 +2,46 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { HostVerifiedAtStamp } from "../HostVerifiedAtStamp";
 
-const CATALOG_VERIFIED_AT = Date.UTC(2026, 8, 2); // 2026-09-02
+const { CATALOG_VERIFIED_AT, CATALOG, catalogState } = vi.hoisted(() => {
+  const verifiedAt = Date.UTC(2026, 8, 2); // 2026-09-02
+  const catalog = {
+    hostsById: {
+      cursor: { id: "cursor", verifiedAt },
+      unverified: { id: "unverified" },
+    },
+  };
+  return {
+    CATALOG_VERIFIED_AT: verifiedAt,
+    CATALOG: catalog,
+    catalogState: {
+      current: {
+        status: "live",
+        catalog: catalog as unknown,
+        version: 1,
+        source: "live",
+      },
+    },
+  };
+});
 
 const LIVE_STATE = {
   status: "live",
-  catalog: {},
+  catalog: CATALOG,
   version: 1,
   source: "live",
 };
-
-const catalogState = vi.hoisted(() => ({
-  current: {
-    status: "live",
-    catalog: {} as unknown,
-    version: 1,
-    source: "live",
-  },
-}));
 
 vi.mock("@/lib/host-compat/use-host-catalog", () => ({
   useHostCatalog: () => catalogState.current,
 }));
 
-// "mcpjam" and "missing" are deliberately absent: a client can name a style
-// the catalog we fetched doesn't carry.
-const CATALOG_HOSTS: Record<string, { id: string; verifiedAt?: number }> = {
-  cursor: { id: "cursor", verifiedAt: CATALOG_VERIFIED_AT },
-  unverified: { id: "unverified" },
-};
-
 vi.mock("@mcpjam/sdk/host-compat", () => ({
-  getCatalogHost: (_catalog: unknown, hostId: string) => CATALOG_HOSTS[hostId],
+  getCatalogHost: (
+    catalog: {
+      hostsById: Record<string, { id: string; verifiedAt?: number }>;
+    },
+    hostId: string,
+  ) => catalog.hostsById[hostId],
 }));
 
 // Production web stamps this with the deploy time, which only ever applies to
@@ -83,7 +92,7 @@ describe("HostVerifiedAtStamp", () => {
     // blank while the table shows a date.
     catalogState.current = {
       status: "fallback",
-      catalog: {},
+      catalog: CATALOG,
       version: 1,
       source: "bundled",
     };
