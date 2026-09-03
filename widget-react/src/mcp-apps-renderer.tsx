@@ -1769,6 +1769,7 @@ export function MCPAppsRendererSurface({
         mimeTypeWarning: warning,
         mimeTypeValid: valid,
         prefersBorder,
+        declaredDomain: serverDeclaredDomain,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           serverInjectedOpenAiCompatCapabilities,
@@ -1877,9 +1878,15 @@ export function MCPAppsRendererSurface({
         resolvedInjectedOpenAiCompatCapabilities
       );
 
-      // Update the widget debug store with CSP and permissions info
-      if (csp || permissions || !permissive) {
+
+      // Update the widget debug store with CSP and permissions info. A
+      // declared domain alone is enough to open the Workbench: the origin
+      // card is the only place a developer learns their declaration does not
+      // match what MCPJam serves, and a permissive widget would otherwise
+      // never render the panel at all.
+      if (csp || permissions || !permissive || serverDeclaredDomain) {
         setWidgetCspStore(toolCallIdRef.current, {
+          declaredDomain: serverDeclaredDomain ?? null,
           mode: permissive ? "permissive" : "widget-declared",
           connectDomains: csp?.connectDomains || [],
           resourceDomains: csp?.resourceDomains || [],

@@ -72,6 +72,12 @@ export interface FetchMcpAppsWidgetContentResponse {
   mimeTypeValid?: boolean;
   prefersBorder?: boolean;
   /**
+   * `_meta.ui.domain` — the dedicated origin the server ASKED for. Advisory:
+   * MCPJam derives the origin it serves the view from, and reports this only
+   * so the Workbench can say whether the declaration matches.
+   */
+  declaredDomain?: string;
+  /**
    * Server-confirmed compat-runtime flag — echoes what the route
    * decided after applying its `injectOpenAiCompat === true` gate.
    * Caller can persist this alongside cached HTML to remove ambiguity

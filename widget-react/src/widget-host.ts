@@ -324,6 +324,13 @@ export interface WidgetSandboxInfo {
     frameDomains?: string[];
     baseUriDomains?: string[];
   } | null;
+  /**
+   * `_meta.ui.domain` as declared by the server, or null when it declared
+   * none. Compared against the origin MCPJam actually serves the view from;
+   * a mismatch is informational, since each host's domain format differs and
+   * a server can only declare one string.
+   */
+  declaredDomain?: string | null;
 }
 
 export interface WidgetGlobals {
@@ -611,6 +618,12 @@ export interface FetchWidgetContentResponse {
   mimeTypeWarning?: string;
   mimeTypeValid?: boolean;
   prefersBorder?: boolean;
+  /**
+   * `_meta.ui.domain` — the dedicated origin the server ASKED for. Advisory:
+   * MCPJam derives the origin it serves the view from, and reports this only
+   * so the Workbench can say whether the declaration matches.
+   */
+  declaredDomain?: string;
   injectedOpenAiCompat?: boolean;
   injectedOpenAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
 }
