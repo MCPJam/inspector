@@ -478,6 +478,25 @@ describe("HostConfigCompareView public mode", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows only caniuse rows plus protocol version in the full app", async () => {
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView projectId="abc123" isAuthenticated />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("Protocol version")).toBeInTheDocument();
+    expect(screen.getByText("Roots")).toBeInTheDocument();
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
+    expect(screen.queryByText("Temperature")).not.toBeInTheDocument();
+    expect(screen.queryByText("System prompt")).not.toBeInTheDocument();
+    expect(screen.queryByText("Render tool images")).not.toBeInTheDocument();
+    expect(screen.queryByText("Request timeout")).not.toBeInTheDocument();
+    expect(screen.queryByText("Default headers")).not.toBeInTheDocument();
+    expect(screen.queryByText("CSP mode")).not.toBeInTheDocument();
+    expect(screen.queryByText("Permissions mode")).not.toBeInTheDocument();
+  });
+
   it("prevents list mode and descriptions from being active together", async () => {
     const user = userEvent.setup();
 
