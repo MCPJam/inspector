@@ -5,16 +5,17 @@ import {
   type SupportLevel,
 } from "@/lib/host-config-field-schema";
 import type { HostListItem } from "@/hooks/useClients";
-import {
-  getSupportLevel,
-  isSupportField,
-} from "./support-level";
+import { getSupportLevel, isSupportField } from "./support-level";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
 
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
   "preset:claude",
+  // `claude-desktop` is deliberately NOT here. This list is the preferred top
+  // chip row and it renders a fixed six — adding a seventh pushes VS Code out.
+  // The host still appears on the comparison page (the columns are built from
+  // the catalog, not from this list); it just sorts after the ranked six.
   "preset:chatgpt",
   "preset:copilot",
   "preset:cursor",
@@ -156,8 +157,7 @@ export function clientCompareFieldsWithData(
 ): ReadonlyArray<HostConfigFieldDef> {
   const publicFields = new Set(publicCaniuseFieldsWithData(subjects));
   return CLIENT_COMPARE_FIELDS.filter(
-    (field) =>
-      field.id === "mcpProtocolVersion" || publicFields.has(field),
+    (field) => field.id === "mcpProtocolVersion" || publicFields.has(field),
   );
 }
 

@@ -25,6 +25,12 @@ export const UNKNOWN_HOST_LOGO = "/mcp.svg";
 const LOGO_BY_HOST_ID: Record<string, string> = {
   mcpjam: mcpjamLogo,
   claude: claudeLogo,
+  // PLACEHOLDER: points at the web app's mark until Claude Desktop's own
+  // asset lands. Deliberately not left absent — an id missing from this record
+  // falls back to the anonymous MCP mark, which is the worse failure. While it
+  // shares a path with `claude`, the Appearance-tab swatch grid keys on the
+  // path and will highlight both swatches together.
+  "claude-desktop": claudeLogo,
   "claude-code": claudeCodeLogo,
   chatgpt: openaiLogo,
   mistral: mistralLogo,
