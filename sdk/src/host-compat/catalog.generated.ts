@@ -743,6 +743,339 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
     },
+    "claude-desktop": {
+      id: "claude-desktop",
+      label: "Claude Desktop",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+      ],
+      verifiedAt: 1788393600000,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      hostStyle: "claude-desktop",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: {
+          width: 768,
+          maxHeight: 5000,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+        platform: "desktop",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+        styles: {
+          variables: {
+            "--color-background-primary":
+              "light-dark(rgba(255, 255, 255, 1), rgba(48, 48, 46, 1))",
+            "--color-background-secondary":
+              "light-dark(rgba(245, 244, 237, 1), rgba(38, 38, 36, 1))",
+            "--color-background-tertiary":
+              "light-dark(rgba(250, 249, 245, 1), rgba(20, 20, 19, 1))",
+            "--color-background-inverse":
+              "light-dark(rgba(20, 20, 19, 1), rgba(250, 249, 245, 1))",
+            "--color-background-ghost":
+              "light-dark(rgba(255, 255, 255, 0), rgba(48, 48, 46, 0))",
+            "--color-background-info":
+              "light-dark(rgba(214, 228, 246, 1), rgba(37, 62, 95, 1))",
+            "--color-background-danger":
+              "light-dark(rgba(247, 236, 236, 1), rgba(96, 42, 40, 1))",
+            "--color-background-success":
+              "light-dark(rgba(233, 241, 220, 1), rgba(27, 70, 20, 1))",
+            "--color-background-warning":
+              "light-dark(rgba(246, 238, 223, 1), rgba(72, 58, 15, 1))",
+            "--color-background-disabled":
+              "light-dark(rgba(255, 255, 255, 0.5), rgba(48, 48, 46, 0.5))",
+            "--color-text-primary":
+              "light-dark(rgba(20, 20, 19, 1), rgba(250, 249, 245, 1))",
+            "--color-text-secondary":
+              "light-dark(rgba(61, 61, 58, 1), rgba(194, 192, 182, 1))",
+            "--color-text-tertiary":
+              "light-dark(rgba(115, 114, 108, 1), rgba(156, 154, 146, 1))",
+            "--color-text-inverse":
+              "light-dark(rgba(255, 255, 255, 1), rgba(20, 20, 19, 1))",
+            "--color-text-ghost":
+              "light-dark(rgba(115, 114, 108, 0.5), rgba(156, 154, 146, 0.5))",
+            "--color-text-info":
+              "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))",
+            "--color-text-danger":
+              "light-dark(rgba(127, 44, 40, 1), rgba(238, 136, 132, 1))",
+            "--color-text-success":
+              "light-dark(rgba(38, 91, 25, 1), rgba(122, 185, 72, 1))",
+            "--color-text-warning":
+              "light-dark(rgba(90, 72, 21, 1), rgba(209, 160, 65, 1))",
+            "--color-text-disabled":
+              "light-dark(rgba(20, 20, 19, 0.5), rgba(250, 249, 245, 0.5))",
+            "--color-border-primary":
+              "light-dark(rgba(31, 30, 29, 0.4), rgba(222, 220, 209, 0.4))",
+            "--color-border-secondary":
+              "light-dark(rgba(31, 30, 29, 0.3), rgba(222, 220, 209, 0.3))",
+            "--color-border-tertiary":
+              "light-dark(rgba(31, 30, 29, 0.15), rgba(222, 220, 209, 0.15))",
+            "--color-border-inverse":
+              "light-dark(rgba(255, 255, 255, 0.3), rgba(20, 20, 19, 0.15))",
+            "--color-border-ghost":
+              "light-dark(rgba(31, 30, 29, 0), rgba(222, 220, 209, 0))",
+            "--color-border-info":
+              "light-dark(rgba(70, 130, 213, 1), rgba(70, 130, 213, 1))",
+            "--color-border-danger":
+              "light-dark(rgba(167, 61, 57, 1), rgba(205, 92, 88, 1))",
+            "--color-border-success":
+              "light-dark(rgba(67, 116, 38, 1), rgba(89, 145, 48, 1))",
+            "--color-border-warning":
+              "light-dark(rgba(128, 92, 31, 1), rgba(168, 120, 41, 1))",
+            "--color-border-disabled":
+              "light-dark(rgba(31, 30, 29, 0.1), rgba(222, 220, 209, 0.1))",
+            "--color-ring-primary":
+              "light-dark(rgba(20, 20, 19, 0.7), rgba(250, 249, 245, 0.7))",
+            "--color-ring-secondary":
+              "light-dark(rgba(61, 61, 58, 0.7), rgba(194, 192, 182, 0.7))",
+            "--color-ring-inverse":
+              "light-dark(rgba(255, 255, 255, 0.7), rgba(20, 20, 19, 0.7))",
+            "--color-ring-info":
+              "light-dark(rgba(50, 102, 173, 0.5), rgba(128, 170, 221, 0.5))",
+            "--color-ring-danger":
+              "light-dark(rgba(167, 61, 57, 0.5), rgba(205, 92, 88, 0.5))",
+            "--color-ring-success":
+              "light-dark(rgba(67, 116, 38, 0.5), rgba(89, 145, 48, 0.5))",
+            "--color-ring-warning":
+              "light-dark(rgba(128, 92, 31, 0.5), rgba(168, 120, 41, 0.5))",
+            "--font-sans": '"anthropic-sans", sans-serif',
+            "--font-mono": "ui-monospace, monospace",
+            "--font-weight-normal": "400",
+            "--font-weight-medium": "500",
+            "--font-weight-semibold": "600",
+            "--font-weight-bold": "700",
+            "--font-text-xs-size": "12px",
+            "--font-text-sm-size": "14px",
+            "--font-text-md-size": "16px",
+            "--font-text-lg-size": "20px",
+            "--font-heading-xs-size": "12px",
+            "--font-heading-sm-size": "14px",
+            "--font-heading-md-size": "16px",
+            "--font-heading-lg-size": "20px",
+            "--font-heading-xl-size": "24px",
+            "--font-heading-2xl-size": "28px",
+            "--font-heading-3xl-size": "36px",
+            "--font-text-xs-line-height": "1.4",
+            "--font-text-sm-line-height": "1.4",
+            "--font-text-md-line-height": "1.4",
+            "--font-text-lg-line-height": "1.25",
+            "--font-heading-xs-line-height": "1.4",
+            "--font-heading-sm-line-height": "1.4",
+            "--font-heading-md-line-height": "1.4",
+            "--font-heading-lg-line-height": "1.25",
+            "--font-heading-xl-line-height": "1.25",
+            "--font-heading-2xl-line-height": "1.1",
+            "--font-heading-3xl-line-height": "1",
+            "--border-radius-xs": "4px",
+            "--border-radius-sm": "6px",
+            "--border-radius-md": "8px",
+            "--border-radius-lg": "10px",
+            "--border-radius-xl": "12px",
+            "--border-radius-full": "9999px",
+            "--border-width-regular": "0.5px",
+            "--shadow-hairline": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+            "--shadow-sm":
+              "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)",
+            "--shadow-md":
+              "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
+            "--shadow-lg":
+              "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
+          },
+          css: {
+            fonts:
+              '\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-RegularItalic-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-MediumItalic-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-SemiboldItalic-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-BoldItalic-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: italic;\n  font-display: swap;\n}\n',
+          },
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        paginationTraversal: "full",
+        initialize: {
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          clientInfo: {
+            name: "claude-ai",
+            version: "0.1.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Claude",
+              version: "1.0.0",
+            },
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-eval'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "style-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "img-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "connect-src": ["'self'", "https://esm.sh"],
+                "font-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "media-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "frame-src": ["'self'"],
+                "base-uri": ["'self'"],
+                "form-action": ["'self'"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                clipboardWrite: true,
+              },
+            },
+            sandboxAttrs: ["allow-forms"],
+            allowFeatures: {
+              fullscreen: "*",
+            },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
     "claude-code": {
       id: "claude-code",
       label: "Claude Code",

@@ -235,6 +235,7 @@ const CLAUDE_FONTS_CSS = `
 export const HOST_TEMPLATE_IDS = [
   "mcpjam",
   "claude",
+  "claude-desktop",
   "claude-code",
   "chatgpt",
   "mistral",
@@ -722,6 +723,265 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostContextChanged: true,
             resourceTeardown: true,
             toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            // Claude advertises frameDomains and baseUriDomains and then
+            // blocks the origins it declared there (2026-08-19 probe), so
+            // neither is usable.
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            resourceCacheTtl: true,
+            // A widget-initiated tools/call came back with all five
+            // ContentBlock kinds unchanged and `structuredContent` intact.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      };
+      return base;
+    },
+  },
+  // Claude Desktop — the Electron app. Distinct from the `claude` entry above,
+  // which is claude.ai in a browser. Probed 2026-09-03; everything matched the
+  // web app except display modes, toolInfo, safe-area insets, platform, width
+  // and user agent. Style variables and fonts are shared verbatim.
+  {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    description: "Anthropic-style host, Electron desktop app.",
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "claude-desktop",
+        // Canonical id (anthropic/<slug>) so the chat-composer model
+        // picker resolves it. Bare "claude-sonnet-4-5" never matched a
+        // SUPPORTED_MODELS entry → silently fell back to default.
+        // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
+        // pick it without an Anthropic key.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+      // clientCapabilities: Real claude.ai publishes only the SDK-default
+      // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
+      // already seeds that, so no override needed here — distinct from
+      // the ChatGPT template, which adds `experimental.openai/visibility`.
+      //
+      // Override the preset advertise to match what real claude.ai
+      // publishes in ui/initialize. `sandbox` is intentionally omitted —
+      // the canonicalizer strips it from the override (sandbox is per-
+      // resource at runtime per SEP-1865; see mcpProfile.apps.sandbox).
+      // listChanged is advertised here even though the inspector's
+      // renderer doesn't currently forward those notifications (see
+      // host-styles/built-ins.ts:33–37) — kept faithful to real Claude
+      // so apps that gate on it can detect the host. Resolving the
+      // renderer gap is a separate enforcement-side fix.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        downloadFile: {},
+        serverTools: { listChanged: true },
+        serverResources: { listChanged: true },
+        logging: {},
+        updateModelContext: { text: {}, image: {} },
+        message: { text: {} },
+      };
+      // Per-resource environment context claude.ai exposes to MCP apps.
+      // Skips `toolInfo` (per-invocation, fills at runtime).
+      // `containerDimensions` is verbatim from claude.ai — clean policy
+      // values (720px wide chat column, 5000px height cap). Per SEP-1865,
+      // Views interpret `width: 768` as "fill your container with width:
+      // 100vw" intent, not a literal claim about the inspector's iframe
+      // width; widgets render at whatever the iframe is, the value
+      // communicates Claude's layout policy.
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        // Desktop advertises inline alone; the web app offers both.
+        availableDisplayModes: ["inline"],
+        containerDimensions: { width: 768, maxHeight: 5000 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+        platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        // The 2026-09-02 capture reports a uniform 12px inset on every edge;
+        // the widget iframe is inset from its card rather than flush to it.
+        // Zero on every edge, unlike the web app's uniform 12px.
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        // SEP-1865 hostContext.styles. Anthropic Sans @font-face URLs
+        // require `assets.claude.ai` in apps.sandbox.csp.resourceDomains
+        // (set below). Variables use CSS `light-dark()` so they pick the
+        // right side based on the iframe's `color-scheme` — no JS-side
+        // theme threading required here.
+        styles: {
+          variables: CLAUDE_HOST_STYLE_VARIABLES,
+          css: { fonts: CLAUDE_FONTS_CSS },
+        },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        // Probed 2026-08-26 on the 2026-07-28 `server/discover` lane: Claude
+        // followed `nextCursor` and fetched page two of tools/list.
+        paginationTraversal: "full",
+        // No `toolListChanged` here: that capture came back `not-deliverable`
+        // (the prober deployment holds no `subscriptions/listen` stream to
+        // publish on), so neither half of the pair was actually asked.
+        mcpProtocolVersion: "auto",
+        mrtrModes: {
+          requestState: false,
+          elicitation: false,
+        },
+        initialize: {
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          // Base MCP protocol: clientInfo sent to MCP servers during
+          // `initialize`. Matches what real claude.ai publishes.
+          clientInfo: { name: "claude-ai", version: "0.1.0" },
+        },
+        apps: {
+          // MCP Apps extension: hostInfo sent to the View iframe in
+          // `ui/initialize`. Apps that branch on `hostInfo.name === "Claude"`
+          // need this to take that path.
+          uiInitialize: {
+            hostInfo: { name: "Claude", version: "1.0.0" },
+          },
+          sandbox: {
+            csp: {
+              // Honor the view's declared `_meta.ui.csp` as-is — no
+              // host-side `restrictTo`. SEP-1865 makes restrictTo an
+              // intersection with what the view declares, so any
+              // hardcoded allowlist here can only narrow widgets, never
+              // help them. Production hosts (real claude.ai) DO publish
+              // a captured set (anthropic / openai / jsdelivr) — but
+              // mirroring that here propagates a widget-breaking default
+              // (e.g. esm.sh-loading views go silent) without giving
+              // users any protection MCPJam itself owns. Users who want
+              // to model the production allowlist can add it explicitly
+              // in the editor; absence here means "trust the view".
+              mode: "declared",
+              // cspDirectives — verbatim from a live claude.ai inner-iframe
+              // response CSP header (captured 2026-05-18 via DevTools →
+              // Network → Response Headers). These layer on top of
+              // SEP-1865's restrictive baseline via the union merge in
+              // buildCSP (sandbox-proxy.html). Tokens already in the
+              // baseline (`'unsafe-inline'` for script-src/style-src,
+              // `data:`/`blob:` for img/font/media) are omitted to keep
+              // the data set minimal — the merge dedupes regardless.
+              //
+              // 'unsafe-eval' enables `eval()` / `new Function()` — real
+              // Claude allows this; widgets relying on runtime-compiled
+              // templating (Handlebars, Vue full build, etc.) work here
+              // but break in hosts that don't grant it.
+              //
+              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
+              // adds at the proxy layer (NOT in advertised metadata).
+              // Including them here is safe under the union merge rule
+              // (PR 2142) — they can only grant capabilities, never
+              // narrow what a widget declared.
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-eval'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "style-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "img-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "connect-src": ["'self'", "https://esm.sh"],
+                "font-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "media-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "frame-src": ["'self'"],
+                "base-uri": ["'self'"],
+                "form-action": ["'self'"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+            // sandboxAttrs — from live capture of real claude.ai's outer
+            // and inner iframes (both carry `allow-scripts allow-same-origin
+            // allow-forms`). The first two are spec-mandated; `allow-forms`
+            // is the host's addition so `<form>` POSTs work inside widgets.
+            sandboxAttrs: ["allow-forms"],
+            // allowFeatures — non-spec Permissions Policy entries on the
+            // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
+            // write *`; clipboard-write is the spec permission (lives in
+            // `permissions.allow` above), fullscreen is the non-spec extra
+            // captured here. The inner iframe trims fullscreen out (see
+            // sandbox-proxy.html: inner gets spec-4 only), matching real
+            // claude.ai's outer-grants / inner-trims pattern.
+            allowFeatures: { fullscreen: "*" },
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox. Not an MCP concept — the MCP Apps
+            // spec says nothing about storage.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            // `toolInputPartial` is deliberately absent, not false: the
+            // capture carried no `tool-input-partial`, but that notification
+            // only fires while arguments stream and the probe tool takes none.
+            hostContextChanged: true,
+            resourceTeardown: true,
+            // Absent from `hostContext` in a payload received whole, so the
+            // absence is a real observation. The web row carries it.
+            toolInfo: false,
             openLinks: true,
             serverTools: true,
             serverResources: true,
