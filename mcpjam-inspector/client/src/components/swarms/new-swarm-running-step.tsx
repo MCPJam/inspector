@@ -40,7 +40,11 @@ import {
   type SwarmTargetColumn,
 } from "@/components/swarms/swarm-targets";
 import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
-import { humanizeSwarmAttemptError } from "@/shared/swarm-attempt-error";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+} from "@/shared/swarm-attempt-error";
+import { providerLabelForModelId } from "./session-rate-limit";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
@@ -889,6 +893,59 @@ export function NewSwarmRunningStep({
     );
   }, [selection, snapshots]);
 
+  // The pane resolves its own outcome, so it needs the attempt row for the same
+  // reason the chip does: the chat-session lifecycle can complete while the
+  // attempt holds a refusal. Same join order as the cells.
+  const selectedAttempt = useMemo(() => {
+    if (!selection) return null;
+    const snap = snapshots[selection.runId];
+    if (!snap) return null;
+    return (
+      snap.attempts.find(
+        (entry) => entry.chatSessionId === selection.chatSessionId
+      ) ??
+      snap.attempts.find(
+        (entry) =>
+          entry.hostId === selection.hostId &&
+          entry.sessionIdx === selection.sessionIndex
+      ) ??
+      null
+    );
+  }, [selection, snapshots]);
+
+  // Three of twelve sessions can be throttled while the swarm keeps working.
+  // The chips go amber, but nobody finds the reason by clicking each one, and
+  // the run banner below only speaks when NO session ran at all.
+  const providerRateLimit = useMemo(() => {
+    let count = 0;
+    let label: string | null = null;
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited") continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        if (isAccountLimit(info.message, info.code)) continue;
+        count += 1;
+        if (label) continue;
+        // "The host's configured provider", per the ticket — joined on the
+        // attempt's own chatSessionId. Two environments can share a host and
+        // pin different models, so matching on hostId would let the banner name
+        // a provider that throttled nothing. An attempt we cannot tie to a
+        // session row has no model we can trust, and falls back to the generic
+        // label rather than a guess.
+        const session = attempt.chatSessionId
+          ? snap.sessions.find(
+              (row) => row.chatSessionId === attempt.chatSessionId,
+            )
+          : undefined;
+        label = providerLabelForModelId(session?.modelId);
+      }
+    }
+    return count > 0 ? { count, label: label ?? "Your provider" } : null;
+  }, [snapshots]);
+
   const selectedRunStatus = selection
     ? snapshots[selection.runId]?.status ?? "running"
     : "running";
@@ -987,6 +1044,24 @@ export function NewSwarmRunningStep({
                 launch the swarm again to include it.
               </p>
             ) : null}
+            {providerRateLimit ? (
+              <div
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
+                data-testid="new-swarm-running-rate-limit"
+                role="status"
+              >
+                <p className="font-medium">
+                  {providerRateLimit.label} rate-limited this key.
+                </p>
+                <p className="mt-0.5">
+                  {providerRateLimit.count === 1
+                    ? "1 session stopped."
+                    : `${providerRateLimit.count} sessions stopped.`}{" "}
+                  Retry again later or switch models.
+                </p>
+              </div>
+            ) : null}
+
             {runFailure ? (
               <div
                 className={cn(
@@ -1196,6 +1271,7 @@ export function NewSwarmRunningStep({
           selection={selection}
           stream={mergedStream}
           convexSession={selectedConvex}
+          attempt={selectedAttempt}
           fallbackTrace={fallbackTrace}
           runStatus={selectedRunStatus}
           // The session, not just "somewhere else". This used to hand the pane

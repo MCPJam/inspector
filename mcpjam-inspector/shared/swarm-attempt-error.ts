@@ -219,3 +219,30 @@ export function humanizeSwarmAttemptErrorMessage(
 ): string {
   return humanizeSwarmAttemptError(raw).message;
 }
+
+/**
+ * Backend denial codes whose limit belongs to the ACCOUNT rather than to one
+ * host's own provider key. `spend_cap_exceeded` is the runner's own whole-run
+ * finalize code; the rest mirror `USER_OWNED_DENIAL_CODES` in
+ * `server/utils/mcpjam-stream-handler.ts`.
+ */
+const ACCOUNT_LIMIT_CODE =
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|wallet_locked|billing_feature_not_included|spend_cap_exceeded)\b/i;
+
+/**
+ * True when a rate-limited attempt was stopped by MCPJam's account-wide limit
+ * rather than by the user's own provider throttling their key.
+ *
+ * The two are indistinguishable on screen and need opposite advice: an account
+ * limit is lifted by credit or BYOK, a provider limit only by waiting or
+ * switching model — MCPJam cannot raise someone else's rate limit. Pass the
+ * code alongside the message: {@link humanizeSwarmAttemptError} lifts it out of
+ * the JSON envelope, so the cleaned sentence no longer carries it.
+ */
+export function isAccountLimit(
+  message?: string | null,
+  code?: string | null,
+): boolean {
+  if (code && ACCOUNT_LIMIT_CODE.test(code)) return true;
+  return !!message && ACCOUNT_LIMIT_CODE.test(message);
+}
