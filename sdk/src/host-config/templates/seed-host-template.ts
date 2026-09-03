@@ -1411,7 +1411,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // 2026-08-26 capture never saw a `tools/list` from Slack, and
         // probe-list-changed was never run against it.
         initialize: {
-          supportedProtocolVersions: ["2025-06-18"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // "Slackbot" is the product name this catalog uses throughout. The
           // 2026-08-26 capture reports "Slack MCP Client" / "Slack" on the
           // wire; the established name is kept here deliberately.
@@ -1990,7 +1990,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           // Measured on the wire 2026-08-26: Copilot proposes 2024-11-05, the
           // oldest MCP revision, not the 2025-11-25 previously assumed.
-          supportedProtocolVersions: ["2024-11-05"],
+          supportedProtocolVersions: [
+            "2024-11-05",
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25",
+          ],
           // The real handshake sends `name: "mcs"` plus Copilot's routing
           // fields. `agentName`, `appId` and `cdsBotId` are in the capture too
           // and are deliberately omitted: they identify one tenant's agent.
@@ -2164,7 +2169,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // "supported" instead of the em dash an absent knob renders as.
         toolListChanged: { listens: true, refetches: true },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
         },
         apps: {

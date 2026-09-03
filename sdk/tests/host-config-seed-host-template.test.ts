@@ -422,7 +422,9 @@ describe("seedHostTemplate", () => {
       ]
     ).toBe("#ffffff");
     expect(profile?.initialize).toEqual({
-      supportedProtocolVersions: ["2025-11-25"],
+      // Widened beyond the single version VS Code negotiates by default: it
+      // accepts all three 2025 revisions.
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({

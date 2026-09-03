@@ -1930,7 +1930,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--shadow-lg": "0 4px 6px -4px #00000019, 0 10px 15px -3px #00000019",
         },
       },
-      supportedProtocolVersions: ["2025-06-18"],
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       verifiedAt: 1788393600000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -2092,7 +2092,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         initialize: {
-          supportedProtocolVersions: ["2025-06-18"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "Slackbot MCP Client",
             version: "1.0.0",
@@ -2867,7 +2867,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Copilot",
       provenance: "vendor-doc",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2024-11-05"],
+      supportedProtocolVersions: [
+        "2024-11-05",
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+      ],
       verifiedAt: 1787702400000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
@@ -3218,7 +3223,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           refetches: true,
         },
         initialize: {
-          supportedProtocolVersions: ["2024-11-05"],
+          supportedProtocolVersions: [
+            "2024-11-05",
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25",
+          ],
           clientInfo: {
             name: "mcs",
             version: "1.0.0",
@@ -3448,7 +3458,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--shadow-sm": "0 1px 2px 0 rgba(0, 0, 0, 0.36)",
         },
       },
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -3643,7 +3653,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           refetches: true,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "Visual Studio Code",
             version: "1.134.0",
