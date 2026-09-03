@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CANIUSE_CAPABILITIES,
   CANIUSE_LAST_VERIFIED_DATE,
+  CLIENT_COMPARE_FIELDS,
   PUBLIC_CAN_I_USE_FIELDS,
   buildCaniuseCapabilityPath,
   getCaniuseCapabilityForField,
@@ -105,6 +106,17 @@ describe("caniuse capability catalog", () => {
     expect(ids).not.toContain("clientInfo.name");
     expect(ids).not.toContain("connectionDefaults.headers");
     expect(ids).not.toContain("connectionDefaults.requestTimeout");
+  });
+
+  it("keeps client compare aligned with caniuse except for protocol version", () => {
+    const publicIds = new Set(
+      PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id)
+    );
+    const compareOnlyIds = CLIENT_COMPARE_FIELDS.filter(
+      (field) => !publicIds.has(field.id)
+    ).map((field) => field.id);
+
+    expect(compareOnlyIds).toEqual(["mcpProtocolVersion"]);
   });
 
   it("keeps slugs unique and path-safe", () => {

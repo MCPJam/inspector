@@ -106,6 +106,18 @@ export function isPublicCaniuseCapabilityField(
 export const PUBLIC_CAN_I_USE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
   HOST_CONFIG_FIELDS.filter(isPublicCaniuseCapabilityField);
 
+/**
+ * Keep the signed-in client comparison focused on the public compatibility
+ * rows too. Protocol version remains temporarily because removing that setting
+ * from Compare is being handled separately.
+ */
+export const CLIENT_COMPARE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  HOST_CONFIG_FIELDS.filter(
+    (field) =>
+      field.id === "mcpProtocolVersion" ||
+      isPublicCaniuseCapabilityField(field)
+  );
+
 export const CANIUSE_CAPABILITIES: ReadonlyArray<CaniuseCapability> =
   PUBLIC_CAN_I_USE_FIELDS.map((field) => ({
     slug: slugForField(field),

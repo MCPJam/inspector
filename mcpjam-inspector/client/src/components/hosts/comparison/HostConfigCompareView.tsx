@@ -73,6 +73,7 @@ import {
 } from "./host-compare-selection";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
+  CLIENT_COMPARE_FIELDS,
   PUBLIC_CAN_I_USE_FIELDS,
   getCaniuseCapabilityBySlug,
   getCaniuseCapabilityForField,
@@ -84,10 +85,7 @@ import {
   fieldMatchesQuery,
   type SupportFilterMode,
 } from "./support-level";
-import {
-  groupHostConfigFields,
-  HOST_CONFIG_FIELDS,
-} from "@/lib/host-config-field-schema";
+import { groupHostConfigFields } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
@@ -330,7 +328,7 @@ export function HostConfigCompareView({
   // against this so a chosen preset column survives a reload.
   const knownHostIds = useMemo(() => hosts.map((host) => host.hostId), [hosts]);
   const compareFields = useMemo(
-    () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : HOST_CONFIG_FIELDS),
+    () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : CLIENT_COMPARE_FIELDS),
     [presetOnly]
   );
   // Base for the per-column "Verify against your server" deep-link. In dev the
