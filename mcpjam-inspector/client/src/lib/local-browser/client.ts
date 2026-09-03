@@ -49,8 +49,21 @@ function assertSecureLocalOrigin(): void {
 
 /** What the pane knows about this machine's browser. */
 export interface LocalBrowserStatus {
+  /**
+   * Which Chromium this machine's browser is.
+   *
+   * The pane does not branch on it — `installed` and `install` already say
+   * everything it needs, and the desktop app reports `ready` because Electron
+   * IS the browser. It is here so the rail can SAY which one is running, and
+   * so a bug report names it without anyone having to guess.
+   */
+  runtime?: "playwright" | "electron";
   installed: boolean;
-  install: { status: "idle" | "installing" | "ready" | "failed"; percent?: number; error?: string };
+  install: {
+    status: "idle" | "installing" | "ready" | "failed";
+    percent?: number;
+    error?: string;
+  };
   running: boolean;
   leaseHeld: boolean;
 }
@@ -88,8 +101,20 @@ export type LocalBrowserInputEvent =
       clickCount?: number;
       modifiers?: number;
     }
-  | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number; modifiers?: number }
-  | { type: "key_down" | "key_up"; key: string; code?: string; modifiers?: number }
+  | {
+      type: "wheel";
+      x: number;
+      y: number;
+      deltaX: number;
+      deltaY: number;
+      modifiers?: number;
+    }
+  | {
+      type: "key_down" | "key_up";
+      key: string;
+      code?: string;
+      modifiers?: number;
+    }
   | { type: "text"; text: string };
 
 async function post<T>(
@@ -109,8 +134,7 @@ async function post<T>(
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    | (T & { error?: string })
-    | null;
+    (T & { error?: string }) | null;
   if (!response.ok) {
     throw new Error(
       typeof json?.error === "string"
@@ -122,10 +146,9 @@ async function post<T>(
 }
 
 export async function fetchLocalBrowserStatus(): Promise<LocalBrowserStatus> {
-  const response = await authFetch(
-    "/api/mcp/computers/local-browser/status",
-    { method: "GET" },
-  );
+  const response = await authFetch("/api/mcp/computers/local-browser/status", {
+    method: "GET",
+  });
   if (!response.ok) throw new Error("The local browser is not available here.");
   return (await response.json()) as LocalBrowserStatus;
 }

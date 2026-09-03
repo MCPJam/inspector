@@ -126,6 +126,30 @@ describe("browserd bundle freshness", () => {
     ).toEqual([]);
   });
 
+  it("the bundle never reaches the Electron engine", () => {
+    // `browserd/electron/**` drives hidden `BrowserWindow`s through
+    // `webContents.debugger`. This bundle is UPLOADED TO AN E2B BOX, which has
+    // no Electron: one import edge from the daemon into that directory and
+    // every hosted session fails to boot, with a module-resolution error
+    // hundreds of megabytes and one upload away from where it was introduced.
+    //
+    // The edge would be easy to add by accident — the two engines share the
+    // CDP adapter, the viewport and the driver — so the graph is asserted
+    // rather than trusted.
+    const leaked = MCPJAM_BROWSERD_SOURCE_FILES.filter((file) =>
+      file.includes("services/browserd/electron/"),
+    );
+    expect(
+      leaked,
+      "the daemon bundle now imports the Electron engine; it is uploaded to a " +
+        "box with no Electron, so every hosted session would fail to boot",
+    ).toEqual([]);
+    // Belt and braces on the artifact itself: a dynamic `import("electron")`
+    // that esbuild kept as a bare specifier would not appear in the input list
+    // at all, and would fail only at runtime on the box.
+    expect(readFileSync(bundleFile, "utf8")).not.toContain('"electron"');
+  });
+
   it("the embedded base64 is byte-identical to the checked-in .mjs", () => {
     const embedded = Buffer.from(MCPJAM_BROWSERD_BUNDLE_BASE64, "base64");
     const artifact = readFileSync(bundleFile);

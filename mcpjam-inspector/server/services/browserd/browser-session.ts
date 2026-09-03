@@ -182,8 +182,7 @@ export interface EnsureBrowserSessionArgs {
  * return the hosted member specifically, so hosted call sites need no narrow.
  */
 export type BrowserSessionHandle =
-  | HostedBrowserSessionHandle
-  | LocalBrowserSessionHandle;
+  HostedBrowserSessionHandle | LocalBrowserSessionHandle;
 
 export interface HostedBrowserSessionHandle {
   engine: "hosted";
@@ -205,6 +204,13 @@ export interface HostedBrowserSessionHandle {
  */
 export interface LocalBrowserSessionHandle {
   engine: "local";
+  /**
+   * Which Chromium this is: one Playwright downloaded, or the desktop app's
+   * own. `engine` stays `"local"` for both — the tools, the lease, the pane
+   * and the approval rules are identical — and this exists so the consent
+   * screen knows whether there is anything to install.
+   */
+  runtime: "playwright" | "electron";
   bootId: string;
   client: SessionClient;
   contextMode: BrowserContextMode;

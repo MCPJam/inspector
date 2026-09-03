@@ -45,6 +45,7 @@ import {
   findLocalBrowserSession,
   listLocalBrowserSessions,
   LocalBrowserUnavailableError,
+  resolveLocalBrowserRuntime,
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
@@ -81,7 +82,7 @@ computers.use("/local-consent/*", async (c, next) => {
 computers.use(
   "/local-terminal-token",
   bearerAuthMiddleware,
-  requireVerifiedAuth()
+  requireVerifiedAuth(),
 );
 computers.use("/local-terminal-token", async (c, next) => {
   if (!LOCAL_COMPUTER_ENABLED) {
@@ -142,7 +143,7 @@ computers.post("/local-terminal-token", async (c) => {
   // still open a shell. The WS handler re-checks the fingerprint against the
   // live capability, so revoke AND rotation both invalidate outstanding nonces.
   const consentFingerprint = await verifyAndFingerprintLocalConsent(
-    c.req.header(LOCAL_CONSENT_HEADER)
+    c.req.header(LOCAL_CONSENT_HEADER),
   );
   if (!consentFingerprint) {
     return c.json({ error: "Local computer consent is required" }, 403);
@@ -156,7 +157,7 @@ computers.post("/local-terminal-token", async (c) => {
     // segment) — an invalid key never reaches the WS handler.
     const { nonce, expiresAtMs } = issueLocalTerminalNonce(
       projectId,
-      consentFingerprint
+      consentFingerprint,
     );
     return c.json({ nonce, expiresAtMs });
   } catch {
@@ -169,11 +170,7 @@ computers.post("/local-terminal-token", async (c) => {
  * separate in substance: `MCPJAM_LOCAL_BROWSER_ENABLED` is its own switch, so
  * an operator can allow a browser without a shell or the reverse.
  */
-computers.use(
-  "/local-browser/*",
-  bearerAuthMiddleware,
-  requireVerifiedAuth(),
-);
+computers.use("/local-browser/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-browser/*", async (c, next) => {
   if (!LOCAL_BROWSER_ENABLED) {
     return c.json({ error: "Not found" }, 404);
@@ -195,10 +192,18 @@ computers.use("/local-browser/*", async (c, next) => {
  * paths, no profile directories, no process ids.
  */
 computers.get("/local-browser/status", async (c) => {
-  const install = getChromiumInstallState();
+  const runtime = resolveLocalBrowserRuntime();
+  // The desktop app IS a Chromium. Probing for a downloaded one would report
+  // `installed: false` on a machine that has a browser open, and the consent
+  // screen would offer a hundreds-of-megabyte download for nothing.
+  const electron = runtime === "electron";
+  const install = electron
+    ? ({ status: "ready" } as const)
+    : getChromiumInstallState();
   const sessions = listLocalBrowserSessions();
   return c.json({
-    installed: await isChromiumInstalled(),
+    runtime,
+    installed: electron ? true : await isChromiumInstalled(),
     install,
     running: sessions.length > 0,
     // Whether a person currently holds any local browser. The rail shows this
@@ -238,9 +243,9 @@ computers.post("/local-browser/install", async (c) => {
  * the frames nonce is bound to it — a nonce must not outlive the consent that
  * authorized it.
  */
-async function requireConsent(
-  c: { req: { header(name: string): string | undefined } },
-): Promise<string | null> {
+async function requireConsent(c: {
+  req: { header(name: string): string | undefined };
+}): Promise<string | null> {
   return verifyAndFingerprintLocalConsent(c.req.header(LOCAL_CONSENT_HEADER));
 }
 
@@ -383,7 +388,10 @@ computers.post("/local-browser/input", async (c) => {
     ? (body.events as ViewportInputEvent[]).slice(0, INPUT_BATCH_LIMIT)
     : [];
   if (!holder || events.length === 0) {
-    return c.json({ error: "A holder and at least one event are required" }, 400);
+    return c.json(
+      { error: "A holder and at least one event are required" },
+      400,
+    );
   }
   const session = findLocalBrowserSession(bootId);
   if (!session) return c.json({ error: "No such local browser" }, 404);
@@ -395,7 +403,10 @@ computers.post("/local-browser/input", async (c) => {
   if (!result.ok) {
     // 423, matching the daemon's own refusal for the same reason: somebody
     // else has the browser, or nobody has taken it yet.
-    return c.json({ error: result.error }, result.error === "unknown_tab" ? 404 : 423);
+    return c.json(
+      { error: result.error },
+      result.error === "unknown_tab" ? 404 : 423,
+    );
   }
   touchLocalBrowserSession(session.handle);
   return c.json({ ok: true });

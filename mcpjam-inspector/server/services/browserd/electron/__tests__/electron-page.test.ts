@@ -1,0 +1,288 @@
+import { describe, expect, it, vi } from "vitest";
+import { createElectronPage } from "../electron-page";
+import {
+  elementAt,
+  FakeBrowserWebContents,
+  noElement,
+} from "./fake-electron-browser";
+
+function makePage(
+  contents = new FakeBrowserWebContents(),
+  deps: { onClose?: () => void; onBringToFront?: () => void } = {},
+) {
+  const page = createElectronPage(contents, {
+    onClose: deps.onClose ?? (() => {}),
+    ...(deps.onBringToFront ? { onBringToFront: deps.onBringToFront } : {}),
+  });
+  return { page, contents, dbg: contents.debugger };
+}
+
+/** Mouse events the page dispatched, in order. */
+function mouseEvents(dbg: FakeBrowserWebContents["debugger"]) {
+  return dbg.calls
+    .filter((c) => c.method === "Input.dispatchMouseEvent")
+    .map((c) => c.params as Record<string, unknown>);
+}
+
+function keyEvents(dbg: FakeBrowserWebContents["debugger"]) {
+  return dbg.calls
+    .filter((c) => c.method === "Input.dispatchKeyEvent")
+    .map((c) => c.params as Record<string, unknown>);
+}
+
+describe("electron page — clicking", () => {
+  it("moves before it presses, and releases the button it pressed", async () => {
+    // Hover handlers and menus that open on mouseover both need the pointer to
+    // have been there first; a bare press lands on a page that never opened.
+    const { page, dbg } = makePage();
+    await page.clickAt({ x: 10, y: 20 });
+
+    expect(mouseEvents(dbg).map((e) => [e.type, e.button, e.buttons])).toEqual([
+      ["mouseMoved", "none", 0],
+      ["mousePressed", "left", 1],
+      ["mouseReleased", "left", 0],
+    ]);
+  });
+
+  it("sends a right-click as a right-click", async () => {
+    const { page, dbg } = makePage();
+    await page.clickAt({ x: 1, y: 2 }, { button: "right" });
+    const pressed = mouseEvents(dbg).find((e) => e.type === "mousePressed");
+    expect(pressed).toMatchObject({ button: "right", buttons: 2 });
+  });
+
+  it("aims at the middle of the element a selector names", async () => {
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(50, 60)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await page.clickSelector("#go");
+
+    expect(mouseEvents(dbg)[0]).toMatchObject({ x: 50, y: 60 });
+    // Off-screen elements are the common case on a long page, and a click at
+    // unscrolled coordinates lands on whatever happens to be there instead.
+    expect(dbg.methods()).toContain("DOM.scrollIntoViewIfNeeded");
+  });
+
+  it("says the element is not there, rather than failing the daemon", async () => {
+    // `chromium-driver.ts` classifies on the message: matching means the model
+    // is told "the button isn't there" and can act on it.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of noElement()) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page } = makePage(contents);
+
+    await expect(page.clickSelector("#gone")).rejects.toThrow(
+      /timeout|not found|no element|strict mode/i,
+    );
+  });
+
+  it("treats a matched element with no box as nothing to click", async () => {
+    const contents = new FakeBrowserWebContents();
+    contents.debugger.replies.set("DOM.getDocument", { root: { nodeId: 1 } });
+    contents.debugger.replies.set("DOM.querySelector", { nodeId: 42 });
+    contents.debugger.replies.set("DOM.getBoxModel", {});
+    const { page } = makePage(contents);
+
+    // display:none, or zero-sized. "not found" is the truthful answer to
+    // "click this": there is nothing there to aim at.
+    await expect(page.clickSelector("#hidden")).rejects.toThrow(
+      /timeout|not found|no element|strict mode/i,
+    );
+  });
+});
+
+describe("electron page — the keyboard", () => {
+  it("types through insertText rather than a key event per letter", async () => {
+    const { page, dbg } = makePage();
+    await page.typeText("hello");
+    expect(
+      dbg.calls.filter((c) => c.method === "Input.insertText"),
+    ).toHaveLength(1);
+    expect(keyEvents(dbg)).toHaveLength(0);
+  });
+
+  it("presses a key with the text it inserts", async () => {
+    const { page, dbg } = makePage();
+    await page.press("Enter");
+    const events = keyEvents(dbg);
+    expect(events.map((e) => e.type)).toEqual(["keyDown", "keyUp"]);
+    expect(events[0]).toMatchObject({
+      key: "Enter",
+      code: "Enter",
+      text: "\r",
+    });
+  });
+
+  it("does not type the letter of a shortcut", async () => {
+    // Ctrl+A with `text` set selects the document and then REPLACES it with
+    // "a": CDP fires the shortcut and inserts the character independently.
+    const { page, dbg } = makePage();
+    await page.press("Control+a");
+    const events = keyEvents(dbg);
+    expect(events.map((e) => e.type)).toEqual([
+      "rawKeyDown",
+      "rawKeyDown",
+      "keyUp",
+      "keyUp",
+    ]);
+    expect(events.some((e) => "text" in e)).toBe(false);
+  });
+
+  it("refuses a key it cannot send instead of dropping it silently", async () => {
+    const { page } = makePage();
+    await expect(page.press("Frobnicate")).rejects.toThrow(
+      /timeout|not found|no element|strict mode/i,
+    );
+  });
+
+  it("replaces a field's value rather than appending to it", async () => {
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await page.fillSelector("#name", "Ada");
+
+    // Click to focus, select-all, then insert. Without the select-all this
+    // appends, and `fill`'s contract is REPLACE.
+    const keys = keyEvents(dbg);
+    expect(keys.some((e) => e.code === "KeyA")).toBe(true);
+    const inserted = dbg.calls.filter((c) => c.method === "Input.insertText");
+    expect(inserted.at(-1)?.params).toMatchObject({ text: "Ada" });
+  });
+});
+
+describe("electron page — observation", () => {
+  it("screenshots through CDP, because a hidden window has no pixels on screen", async () => {
+    const contents = new FakeBrowserWebContents();
+    contents.debugger.replies.set("Page.captureScreenshot", { data: "aGk=" });
+    const { page, dbg } = makePage(contents);
+
+    expect(await page.screenshotBase64()).toBe("aGk=");
+    const shot = dbg.calls.find((c) => c.method === "Page.captureScreenshot");
+    expect(shot?.params).toMatchObject({ format: "jpeg" });
+  });
+
+  it("keeps the console from before anything asked for it", async () => {
+    const contents = new FakeBrowserWebContents();
+    const { page } = makePage(contents);
+    contents.logConsole("warning", "a page logs while it loads");
+    contents.logConsoleLegacy(3, "and older builds pass it positionally");
+
+    expect(page.consoleEntries().map((e) => [e.type, e.text])).toEqual([
+      ["warning", "a page logs while it loads"],
+      ["error", "and older builds pass it positionally"],
+    ]);
+  });
+
+  it("drops the console window a person's session filled", async () => {
+    // The ring fills from an eager listener that knows nothing about the
+    // lease, so what someone typed during a login would otherwise be readable
+    // the instant they hand control back.
+    const contents = new FakeBrowserWebContents();
+    const { page } = makePage(contents);
+    contents.logConsole("info", "before");
+    const handoff = Date.now() + 1;
+    vi.setSystemTime(new Date(handoff + 10));
+    contents.logConsole("info", "during their session");
+
+    page.dropConsoleSince(handoff);
+
+    expect(page.consoleEntries().map((e) => e.text)).toEqual(["before"]);
+    vi.useRealTimers();
+  });
+
+  it("reports the same DOM signal shape the Playwright engine does", async () => {
+    // The L3 token is compared against one the model was handed. Two engines
+    // that describe a page differently make a token minted on one meaningless.
+    const contents = new FakeBrowserWebContents({
+      evaluate: (code) =>
+        code.includes("parts.join") ? "0BODY>1DIV" : undefined,
+    });
+    const { page } = makePage(contents);
+    expect(await page.domStructureSignal()).toBe("0BODY>1DIV");
+  });
+
+  it("answers an empty signal rather than undefined when the page cannot say", async () => {
+    const { page } = makePage(new FakeBrowserWebContents());
+    expect(await page.domStructureSignal()).toBe("");
+  });
+});
+
+describe("electron page — navigation", () => {
+  it("tracks the URL it navigated to", async () => {
+    const { page, contents } = makePage();
+    await page.goto("https://example.test/one");
+    expect(page.url()).toBe("https://example.test/one");
+    expect(contents.navigations).toEqual(["https://example.test/one"]);
+  });
+
+  it("waits for a reload to commit, not just to start", async () => {
+    // `reload()` returns void: without the wait the driver settles and
+    // captures the OLD page, and reports it as the result of the reload.
+    const { page, contents } = makePage();
+    await page.goto("https://example.test/");
+    await page.reload();
+    expect(contents.navigations).toContain("reload:https://example.test/");
+  });
+
+  it("says there is nowhere to go back to, rather than hanging", async () => {
+    const { page } = makePage();
+    await expect(page.goBack()).rejects.toThrow(
+      /timeout|not found|no element|strict mode/i,
+    );
+  });
+
+  it("reports a failed navigation as something the model can act on", async () => {
+    const contents = new FakeBrowserWebContents({
+      loadError: new Error("ERR_NAME_NOT_RESOLVED"),
+    });
+    const { page } = makePage(contents);
+    await expect(page.goto("https://nope.invalid/")).rejects.toThrow();
+  });
+});
+
+describe("electron page — lifecycle", () => {
+  it("detaches the debugger and tells the context to drop its window", async () => {
+    const onClose = vi.fn();
+    const { page, dbg } = makePage(new FakeBrowserWebContents(), { onClose });
+    await page.cdp();
+    expect(dbg.isAttached()).toBe(true);
+
+    await page.close();
+
+    expect(dbg.isAttached()).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(page.isClosed()).toBe(true);
+  });
+
+  it("closes once, however many times it is asked", async () => {
+    const onClose = vi.fn();
+    const { page } = makePage(new FakeBrowserWebContents(), { onClose });
+    await page.close();
+    await page.close();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is closed when its surface was destroyed underneath it", async () => {
+    const contents = new FakeBrowserWebContents();
+    const { page } = makePage(contents);
+    expect(page.isClosed()).toBe(false);
+    contents.destroyed = true;
+    expect(page.isClosed()).toBe(true);
+  });
+
+  it("shares ONE debugger attach across everything that needs CDP", async () => {
+    // Two attaches is two of everything the CDP domains keep per session, for
+    // one page's worth of truth — and the second attach throws in real Electron.
+    const { page, dbg } = makePage();
+    const [a, b] = await Promise.all([page.cdp(), page.cdp()]);
+    expect(a).toBe(b);
+    expect(dbg.methods().filter((m) => m === "DOM.enable")).toHaveLength(1);
+  });
+});
