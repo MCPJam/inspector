@@ -57,6 +57,7 @@ import {
 import {
   HARNESS_IDS,
   HOST_CONFIG_INPUT_V2_WIRE_KEYS,
+  type HostConfigMcpProfileV1,
 } from "@mcpjam/sdk/host-config/internal";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -483,18 +484,28 @@ const WRITABLE_CONFIG_KEYS: ReadonlySet<string> = new Set(
 // A Map, not an object literal: the lookup key is caller-supplied, and a plain
 // object would answer `toString` or `constructor` from the prototype chain and
 // interpolate a function into the message.
+//
+// Keys are checked against the SDK's profile type, so an entry naming a field
+// `mcpProfile` does not have stops compiling. `mrtrModes` was exactly that — it
+// exists on the BACKEND's hand-mirrored copy of the type but not on the SDK's,
+// and since `mcpProfile` reaches Convex as `v.any()`, a caller who followed that
+// hint would have had the field silently dropped by the canonicalizer rather
+// than refused.
+//
+// `extensions` is deliberately absent despite being a real profile field: the
+// name is ambiguous (`clientCapabilities.extensions` is also real, and is what
+// the payload behind CONVEX-1ZM carried), so there is no single home to point at.
 const NESTED_CONFIG_FIELD_HOMES = new Map<string, string>([
   ["apps", "mcpProfile.apps"],
   ["initialize", "mcpProfile.initialize"],
   ["mcpProtocolVersion", "mcpProfile.mcpProtocolVersion"],
-  ["mrtrModes", "mcpProfile.mrtrModes"],
   ["mrtrSupport", "mcpProfile.mrtrSupport"],
   ["paginationTraversal", "mcpProfile.paginationTraversal"],
   ["profileVersion", "mcpProfile.profileVersion"],
   ["toolCallCancellation", "mcpProfile.toolCallCancellation"],
   ["toolListChanged", "mcpProfile.toolListChanged"],
   ["toolParamHeaderMirroring", "mcpProfile.toolParamHeaderMirroring"],
-]);
+] satisfies ReadonlyArray<readonly [keyof HostConfigMcpProfileV1, string]>);
 
 /**
  * Refuse a caller-supplied config carrying a key no write accepts.

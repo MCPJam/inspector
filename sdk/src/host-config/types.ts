@@ -1035,25 +1035,28 @@ type HostConfigInputV2WireKey = (typeof HOST_CONFIG_INPUT_V2_WIRE_KEYS)[number];
  */
 type HostConfigKeyNotOnTheWire = "oauthProfile";
 
-// Both directions are load-bearing. A key on the type but missing from the list
-// is one the routes would reject on a VALID config; a key in the list but not on
-// the type is one nothing validates. So adding a field to `HostConfigInputV2`
-// stops this compiling until the field is either accepted on the wire or named
-// as a known gap above.
-const _wireKeysMatchTheType: [
+// Every way the three lists can disagree, each a real bug:
+//   1. a field on the type that is neither on the wire nor a declared gap — the
+//      write boundary would reject it on a VALID config;
+//   2. a wire key that is not on the type — nothing validates it;
+//   3. a declared gap whose field no longer exists — stale bookkeeping;
+//   4. a declared gap that IS on the wire — the gap closed and the note lies.
+// (3) and (4) are why the gap is not just a comment: closing `oauthProfile`
+// means moving one key between two lists, and a half-done move must not compile.
+type HostConfigWireKeyDrift =
   | Exclude<
       keyof HostConfigInputV2,
       HostConfigInputV2WireKey | HostConfigKeyNotOnTheWire
     >
   | Exclude<HostConfigInputV2WireKey, keyof HostConfigInputV2>
-] extends [never]
+  | Exclude<HostConfigKeyNotOnTheWire, keyof HostConfigInputV2>
+  | Extract<HostConfigKeyNotOnTheWire, HostConfigInputV2WireKey>;
+
+const _wireKeysMatchTheType: [HostConfigWireKeyDrift] extends [never]
   ? true
   : [
       "HOST_CONFIG_INPUT_V2_WIRE_KEYS is out of sync with HostConfigInputV2",
-      Exclude<
-        keyof HostConfigInputV2,
-        HostConfigInputV2WireKey | HostConfigKeyNotOnTheWire
-      >
+      HostConfigWireKeyDrift,
     ] = true;
 void _wireKeysMatchTheType;
 
