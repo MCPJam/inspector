@@ -205,7 +205,7 @@ export function ConvertSessionDialogCore({
       isAuthenticated: attachmentPickersEnabled,
       projectId: attachmentPickersEnabled ? effectiveProjectId : null,
     });
-  const { hosts: projectHosts } = useHostList({
+  const { hosts: projectHosts, isLoading: projectHostsLoading } = useHostList({
     isAuthenticated: attachmentPickersEnabled,
     projectId: attachmentPickersEnabled ? effectiveProjectId : null,
   });
@@ -316,16 +316,21 @@ export function ConvertSessionDialogCore({
     });
   }, [knownServerNames, selectedSuiteEntry, serversById]);
 
+  /**
+   * Until `useProjectServers` answers, `knownServerNames` is empty, so every
+   * session ref resolves to its raw id and matches nothing. Every comparison
+   * between the session's servers and a suite's is therefore unanswerable —
+   * not empty — for that window.
+   *
+   * Named once because it governs three things that must agree: both server
+   * comparisons below AND `canSubmit`. Returning `[]` without blocking submit
+   * would trade a false "missing servers" for a silent one, and let a case
+   * through that cannot run.
+   */
+  const serverComparisonPending = projectServersLoading;
+
   const missingServers = useMemo(() => {
-    if (!selectedSuiteEntry) {
-      return [];
-    }
-    // A loading race read as data: until `useProjectServers` answers,
-    // `knownServerNames` is empty, so every session ref resolves to itself and
-    // EVERY server looks missing. The chip row used to carry this flag; the
-    // check needs it more, because a spurious "missing servers" blocks submit
-    // behind an opt-in that patches a suite which was never short.
-    if (projectServersLoading) {
+    if (!selectedSuiteEntry || serverComparisonPending) {
       return [];
     }
 
@@ -342,7 +347,7 @@ export function ConvertSessionDialogCore({
     selectedSuiteEntry,
     selectedSuiteServerDisplay,
     sessionServerDisplay.items,
-    projectServersLoading,
+    serverComparisonPending,
   ]);
   /**
    * The standalone server group the suite pins, if any. When one is pinned,
@@ -407,7 +412,7 @@ export function ConvertSessionDialogCore({
    * satisfy the gate and still import a case that runs without the server.
    */
   const unreachableServers = useMemo(() => {
-    if (!selectedSuiteEntry || !hasPinnedGroup) {
+    if (!selectedSuiteEntry || !hasPinnedGroup || serverComparisonPending) {
       // No pinned group: run time and the gate read the same list, so
       // `missingServers` already covers it and the opt-in genuinely fixes it.
       return [];
@@ -418,7 +423,13 @@ export function ConvertSessionDialogCore({
     return sessionServerDisplay.items
       .filter((item) => !reachable.has(item.label.toLowerCase()))
       .map((item) => item.label);
-  }, [pinnedGroupServers, selectedSuiteEntry, sessionServerDisplay.items]);
+  }, [
+    hasPinnedGroup,
+    pinnedGroupServers,
+    selectedSuiteEntry,
+    serverComparisonPending,
+    sessionServerDisplay.items,
+  ]);
 
   const suiteChoiceAvailable = availableSuites.length > 0;
   // Guards the case where the mode outlives the suites it was picked for (a
@@ -598,6 +609,10 @@ export function ConvertSessionDialogCore({
     (detail.requiresContentTransferAcknowledgement !== true ||
       contentTransferAcknowledged) &&
     !attachmentPickersPending &&
+    // Suppressing the comparison (above) without suppressing SUBMIT would let
+    // a session server slip past the opt-in entirely and write a case that
+    // cannot run — a silent wrong answer in place of a noisy wrong one.
+    !serverComparisonPending &&
     !detail.loading &&
     !detail.error &&
     // The branch itself is still unknown until the suite list lands, so there
@@ -860,8 +875,11 @@ export function ConvertSessionDialogCore({
                 this replaced carried both an empty state and an inline create;
                 `ServerGroupPicker` still does, so the asymmetry was an
                 oversight, not a decision. */}
-            {projectHosts.length === 0 ? (
+            {!projectHostsLoading && projectHosts.length === 0 ? (
               <div className="space-y-1.5">
+                {/* Gated on the query, not just on the array: an empty list
+                    mid-flight is indistinguishable from a project with no
+                    clients, and offering Create there invites a duplicate. */}
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   This project has no clients yet. A new suite needs one to run
                   against.

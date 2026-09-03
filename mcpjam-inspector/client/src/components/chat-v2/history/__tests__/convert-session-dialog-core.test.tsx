@@ -13,6 +13,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const importAction = vi.fn();
 const mocks = vi.hoisted(() => ({
   isUserReady: true,
+  hosts: [{ hostId: "host-first" }, { hostId: "host-swarm" }] as Array<{
+    hostId: string;
+  }>,
+  hostsLoading: false,
+  serversLoading: false,
   // The real `useQuery` returns `undefined` BOTH while loading and while
   // skipped. A mock that always hands back an array makes
   // `suitesOverview === undefined` unreachable, which is exactly why the two
@@ -34,9 +39,11 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({
-    servers: [{ name: "Excalidraw" }],
-    serversById: new Map([["srv-excalidraw", "Excalidraw"]]),
-    isLoading: false,
+    servers: mocks.serversLoading ? [] : [{ name: "Excalidraw" }],
+    serversById: mocks.serversLoading
+      ? new Map()
+      : new Map([["srv-excalidraw", "Excalidraw"]]),
+    isLoading: mocks.serversLoading,
   }),
   useProjectServerAttachments: () => ({
     serverAttachments: [{ _id: "attachment-1" }],
@@ -45,7 +52,8 @@ vi.mock("@/hooks/useViews", () => ({
 
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
-    hosts: [{ hostId: "host-first" }, { hostId: "host-swarm" }],
+    hosts: mocks.hosts,
+    isLoading: mocks.hostsLoading,
   }),
 }));
 
@@ -152,6 +160,9 @@ function renderCore(
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.isUserReady = true;
+  mocks.hosts = [{ hostId: "host-first" }, { hostId: "host-swarm" }];
+  mocks.hostsLoading = false;
+  mocks.serversLoading = false;
   mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
     args === "skip" ? undefined : []
   );
@@ -360,6 +371,88 @@ describe("ConvertSessionDialogCore", () => {
     expect(
       screen.getByTestId("client-picker").getAttribute("data-host")
     ).toBe("host-swarm");
+  });
+
+  it("offers an inline create when the project has no clients", async () => {
+    // Otherwise a dead end: the seeding effect needs a host to attach, so
+    // `newSuiteRequirementsMet` stays false and submit is dead behind an empty
+    // dropdown that explains nothing.
+    mocks.hosts = [];
+    renderCore();
+
+    expect(screen.getByTestId("promote-create-client")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("promote-create-client"));
+    // The mock dialog reports a created host; it must land in the field
+    // rather than dropping the user back at the empty dropdown.
+    fireEvent.click(screen.getByTestId("create-host-dialog"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("client-picker").getAttribute("data-host")).toBe(
+        "host-created"
+      )
+    );
+  });
+
+  it("does not offer to create a client while the host list is still loading", () => {
+    // An empty array mid-flight is not a project without clients, and
+    // offering Create there invites a duplicate on first render.
+    mocks.hosts = [];
+    mocks.hostsLoading = true;
+    renderCore();
+
+    expect(screen.queryByTestId("promote-create-client")).toBeNull();
+  });
+
+  it("blocks submit while the project's server names are still loading", async () => {
+    // Suppressing the missing-servers comparison during that window is right;
+    // leaving submit enabled through it is not — a session server would slip
+    // past the opt-in and write a case that cannot run.
+    mocks.serversLoading = true;
+    const entries = [
+      suiteEntry({
+        _id: "suite-billing",
+        name: "Billing evals",
+        environment: { servers: ["Excalidraw"] },
+        hostAttachments: [hostAttachment("Claude")],
+      }),
+    ];
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : entries
+    );
+    renderCore();
+
+    await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled")
+    ).toBe(true);
+    // ...and it does not accuse the suite in the meantime.
+    expect(screen.queryByText(/missing these servers/i)).toBeNull();
+  });
+
+  it("does not accuse a pinned group while the server names are loading", async () => {
+    // The sibling of the check above, and the one I left unguarded: an
+    // unresolved session ref can never match a NAME in the group, so every
+    // server read as unreachable and the fixed-group warning fired on a suite
+    // that covers the session perfectly.
+    mocks.serversLoading = true;
+    const entries = [
+      suiteEntry({
+        _id: "suite-grouped",
+        name: "Billing evals",
+        environment: { servers: [] },
+        serverAttachment: serverGroup("Excalidraw"),
+        hostAttachments: [hostAttachment("Claude")],
+      }),
+    ];
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : entries
+    );
+    renderCore();
+
+    await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
+    expect(screen.queryByText(/server group is missing servers/i)).toBeNull();
   });
 
   it("shows only the new-suite fields when the project has no suites", () => {
@@ -593,8 +686,10 @@ describe("ConvertSessionDialogCore — Add to", () => {
         onImported={vi.fn()}
       />
     );
-    // Nothing decided yet — a spinner, not a branch.
+    // Nothing decided yet — a SPINNER, not a branch and not a blank area,
+    // which "no radiogroup" alone would have accepted.
     expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByText(/loading this project's suites/i)).toBeTruthy();
 
     mocks.isUserReady = true;
     rerender(
