@@ -89,8 +89,13 @@ describe("which servers get reconnected", () => {
     ).toEqual(["live"]);
   });
 
-  it("ignores servers this host does not use", () => {
-    expect(serversNeedingCancellationReconnect([], status)).toEqual([]);
+  it("covers every connected server, not just a host's serverIds list", () => {
+    // Under the "all project servers attach" rule a server the host talks to
+    // need not appear in `serverIds`. Filtering by that list skipped the
+    // reconnect entirely, so a saved toggle kept being ignored.
+    expect(
+      serversNeedingCancellationReconnect(Object.keys(status), status)
+    ).toEqual(["live"]);
   });
 
   it("ignores a server with no runtime state at all", () => {

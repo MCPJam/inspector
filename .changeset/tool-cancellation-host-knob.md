@@ -62,10 +62,29 @@ question dressed as an answer. The two eras gate independently, so a 2025-only
 measurement never publishes a 2026 row nobody has probed. No host values ship
 here, so neither row is visible yet.
 
-Saving the toggle also reconnects the host's connected servers, because the
-setting is read from a connection's config when it connects — without this a
-saved change sat inert until the user happened to reconnect, which reads as the
-switch doing nothing. Same reason the per-server protocol pin reconnects after
-its save. Narrow by construction: only when the setting actually changed, only
-for servers that are already connected, never interactive (a save must not open
-an OAuth prompt), and a failed reconnect warns rather than failing the save.
+The saved value has to reach a connection that is already up, and it does so
+twice over:
+
+- **Per turn.** The chat routes (local and hosted) resolve the host config
+  server-side on every turn and pass its cancellation record to
+  `getToolsForAiSdk` as a per-turn override that takes precedence over the
+  connection's connect-time copy. It is authoritative whenever a host config
+  resolved: a host that cancels normally sends an *empty* record, not nothing,
+  because `undefined` would fall through to the stale connection copy and a
+  toggle switched back on would keep suppressing.
+- **On save.** The host's connected servers are reconnected so the connection's
+  own copy is refreshed too — the same reason the per-server protocol pin
+  reconnects after its save. The reconnect is deferred until the app's view of
+  the host shows the just-saved config: it builds its connection defaults from
+  the active host's profile, and right after the mutation resolves that
+  subscription still holds the previous config, so an immediate reconnect
+  applied the value the user had just replaced — one save behind, every time.
+  Narrow by construction: only when the setting actually changed, only for
+  servers already connected, never interactive, and a failed reconnect warns
+  rather than failing the save.
+
+A suppressed call also outlives the default request timeout. The protocol layer
+runs the same cancellation on a timeout as on an abort — closing the stream on a
+modern connection — so with the 60s timer left in place a host configured never
+to cancel still cancelled, a minute later, which read as the knob being flaky
+rather than off. Suppressed requests now carry a long bounded timeout instead.

@@ -18,6 +18,7 @@ import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { WEBMCP_INSPECTOR_ENABLED } from "../../config";
@@ -1326,6 +1327,24 @@ chatV2.post("/", async (c) => {
       prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
+        // Read from the SERVER-resolved host config, never the body, and per
+        // turn rather than per connection: the connection's copy is captured
+        // when it connects, so a toggle saved mid-session would not reach it
+        // until something reconnected.
+        //
+        // Authoritative whenever a host config resolved: a host that cancels
+        // normally must send an EMPTY record, not nothing. `undefined` would
+        // fall through to the connection's connect-time copy — which is the
+        // stale value this exists to override — so switching the toggle back
+        // on would keep suppressing.
+        ...(hostRuntimeConfig
+          ? {
+              toolCallCancellation:
+                toolCallCancellationFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                ) ?? {},
+            }
+          : {}),
         modelDefinition,
         systemPrompt: effectiveSystemPrompt,
         temperature,

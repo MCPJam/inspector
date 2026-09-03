@@ -62,6 +62,15 @@ export interface McpToolOptionsInput {
   /** Resolved task seam, or absent for tasks-off. Never re-derived here: the
    *  surface owns its own row in the policy matrix (`task-seam.ts`). */
   tasks?: ToolTaskSeamOptions | undefined;
+  /**
+   * The host's tool-cancellation setting, resolved for THIS turn.
+   *
+   * Carried per turn rather than read off the connection: the connection's
+   * copy is captured when it connects, so a setting saved mid-session does
+   * not reach it until something reconnects — which reads as the toggle
+   * doing nothing.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean } | undefined;
 }
 
 /**
@@ -78,5 +87,8 @@ export function mcpToolOptionsFor(
     options.modelVisibleMcpToolResults = input.modelVisibleMcpToolResults;
   }
   if (input.tasks !== undefined) options.tasks = input.tasks;
+  if (input.toolCallCancellation !== undefined) {
+    options.toolCallCancellation = input.toolCallCancellation;
+  }
   return Object.keys(options).length > 0 ? options : undefined;
 }

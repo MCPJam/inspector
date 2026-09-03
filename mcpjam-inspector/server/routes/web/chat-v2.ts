@@ -77,6 +77,7 @@ import {
   parseXaaPolicyValue,
   conformanceKnobsFromMcpProfile,
   mirrorToolParamHeadersFromMcpProfile,
+  toolCallCancellationFromMcpProfile,
   xaaPolicyFromMcpProfile,
 } from "../../utils/effective-auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
@@ -1489,6 +1490,18 @@ chatV2.post("/", async (c) => {
           requireToolApproval,
           respectToolVisibility,
           modelVisibleMcpToolResults,
+          // Server-resolved, never from the body, and authoritative whenever a
+          // host config resolved: an EMPTY record means "cancels normally" and
+          // must still be sent, or the connection's stale connect-time copy
+          // would win and a toggle switched back on would keep suppressing.
+          ...(hostRuntimeConfig
+            ? {
+                toolCallCancellation:
+                  toolCallCancellationFromMcpProfile(
+                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                  ) ?? {},
+              }
+            : {}),
           customProviders: body.customProviders,
           uiMessages: messages,
           ...(resolvedExecution.harness

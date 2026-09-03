@@ -306,6 +306,15 @@ type UpstreamToolDefinition = NonNullable<
   NonNullable<Parameters<ManagedMcpClient["callTool"]>[1]>["toolDefinition"]
 >;
 
+/**
+ * How long a request whose cancellation is suppressed may run.
+ *
+ * Far beyond any real tool call, because the simulated host never cancels and
+ * the only honest stopping point is the server's own response — but bounded,
+ * so a server that never replies cannot leak the entry forever.
+ */
+const SUPPRESSED_CANCELLATION_TIMEOUT_MS = 86_400_000;
+
 export class MCPClientManager {
   // State management
   private readonly registeredServers = new Map<string, RegisteredServerState>();
@@ -976,6 +985,15 @@ export class MCPClientManager {
       /** Host policy for model visibility of MCP tool-result content/resources. */
       modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
       /**
+       * Per-turn override of the host's tool-cancellation setting.
+       *
+       * The connection's own copy is read at CONNECT time, so a host config
+       * saved mid-session does not reach it until something reconnects. This
+       * carries the freshly-resolved value with the turn instead, which is the
+       * only source guaranteed to match what the user just saved.
+       */
+      toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+      /**
        * Task policy for the tool calls this set produces. Omit (the default)
        * and every call takes the pre-existing path, byte-for-byte: no `_meta`,
        * no declaration, no extra request field. See `tool-task-seam.ts`.
@@ -1006,14 +1024,16 @@ export class MCPClientManager {
             readResource: async ({ uri, options: readOptions }) => {
               const { requestOptions, settle } = this.applyCancellationPolicy(
                 id,
-                readOptions?.abortSignal
+                readOptions?.abortSignal,
+                options.toolCallCancellation
               );
               return settle(this.readResource(id, { uri }, requestOptions));
             },
             callTool: async ({ name, args, options: callOptions }) => {
               const { requestOptions, settle } = this.applyCancellationPolicy(
                 id,
-                callOptions?.abortSignal
+                callOptions?.abortSignal,
+                options.toolCallCancellation
               );
               const toolArgs = (args ?? {}) as ExecuteToolArguments;
               if (!options.tasks) {
@@ -4162,9 +4182,15 @@ export class MCPClientManager {
    */
   private applyCancellationPolicy(
     serverId: string,
-    abortSignal: AbortSignal | undefined
+    abortSignal: AbortSignal | undefined,
+    /**
+     * Freshly-resolved value for this turn. Takes precedence over the
+     * connection's connect-time copy, which goes stale the moment the host
+     * config is saved without a reconnect.
+     */
+    override?: { legacy?: boolean; modern?: boolean }
   ): {
-    requestOptions: { signal: AbortSignal } | undefined;
+    requestOptions: { signal?: AbortSignal; timeout?: number } | undefined;
     settle: <T>(promise: Promise<T>) => Promise<T>;
   } {
     // Resolve the era from what the connection actually negotiated — the same
@@ -4180,9 +4206,10 @@ export class MCPClientManager {
     const negotiated: string | undefined =
       this.getNegotiatedProtocolVersion(serverId) ??
       (typeof configPin === "string" ? configPin : undefined);
-    const leaves = config?.toolCallCancellation;
+    const leaves = override ?? config?.toolCallCancellation;
     const suppressed =
       leaves?.[cancellationLeafForVersion(negotiated)] === false;
+
 
     if (abortSignal === undefined) {
       return { requestOptions: undefined, settle: (promise) => promise };
@@ -4194,7 +4221,19 @@ export class MCPClientManager {
       };
     }
     return {
-      requestOptions: undefined,
+      // The request must also outlive its own timeout. The protocol layer runs
+      // the SAME cancellation on a timeout as on an abort — closing the
+      // response stream on a modern connection — so leaving the default 60s
+      // timer in place means a host configured never to cancel still cancels,
+      // just a minute later. That is indistinguishable from the knob not
+      // working, and it is why this read as flaky rather than off.
+      //
+      // A host that never tells the server also never times out and tells it.
+      // The call runs to completion instead, which is the behavior being
+      // simulated: the server keeps working on a tool nobody awaits any more.
+      // Bounded rather than infinite so a server that never replies cannot
+      // leak the entry forever.
+      requestOptions: { timeout: SUPPRESSED_CANCELLATION_TIMEOUT_MS },
       settle: (promise) => this.awaitWithAbort(promise, abortSignal),
     };
   }

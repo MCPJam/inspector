@@ -338,6 +338,42 @@ export function HostBuilderViewRedesigned({
   if (liveSnapshotId) lastSnapshotIdRef.current = liveSnapshotId;
   const savedSnapshotId = liveSnapshotId || lastSnapshotIdRef.current;
 
+  // Runs the save-triggered cancellation reconnect once the app's view of the
+  // host has caught up with the save — see `handleSave`. Deliberately narrow:
+  // only connected servers, never interactive (a save must not open an OAuth
+  // prompt), and best-effort (the config is already persisted, so a failed
+  // reconnect is a warning, never a failed save).
+  const [pendingCancellationReconnect, setPendingCancellationReconnect] =
+    useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingCancellationReconnect || !onReconnect) return;
+    if (liveSnapshotId !== pendingCancellationReconnect) return;
+    setPendingCancellationReconnect(null);
+    // Every connected server, not just `serverIds`: under the "all project
+    // servers attach" rule a server the host actually talks to need not
+    // appear in that list.
+    const connectedNames = serversNeedingCancellationReconnect(
+      Object.keys(connectionStatusByName),
+      connectionStatusByName
+    );
+    void (async () => {
+      for (const name of connectedNames) {
+        try {
+          await onReconnect(name, { allowInteractiveOAuthFlow: false });
+        } catch {
+          toast.warning(
+            `Saved, but "${name}" did not reconnect — its tool-cancellation setting still reflects the previous connection.`
+          );
+        }
+      }
+    })();
+  }, [
+    pendingCancellationReconnect,
+    liveSnapshotId,
+    onReconnect,
+    connectionStatusByName,
+  ]);
+
   const viewModel = useMemo(() => {
     const draft = draftConfig ?? emptyHostConfigInputV2();
     return buildRedesignedHostCanvas(
@@ -430,27 +466,14 @@ export function HostBuilderViewRedesigned({
       // them, the same reason the per-server protocol pin reconnects after
       // its save (`ServersTab`).
       //
-      // Deliberately narrow: only when this setting actually changed, and
-      // only for servers that are currently connected. A disconnected server
-      // picks the value up on its next connect, and reconnecting it here
-      // would be a surprise. Never interactive — a save must not open an
-      // OAuth prompt.
+      // DEFERRED, not run here. The reconnect builds its connection defaults
+      // from the active host's profile as the app currently sees it, and at
+      // this point the Convex subscription still holds the PREVIOUS config
+      // (see the toast note above). Reconnecting now would apply the value
+      // the user just replaced — one save behind, every time. The effect
+      // below waits until the saved config id is the one the app is showing.
       if (cancellationChanged && onReconnect) {
-        const connectedNames = serversNeedingCancellationReconnect(
-          requiredServerNames,
-          connectionStatusByName
-        );
-        // Best-effort, like the telemetry below: the config is already
-        // persisted, so a failed reconnect is a warning, never a failed save.
-        for (const name of connectedNames) {
-          try {
-            await onReconnect(name, { allowInteractiveOAuthFlow: false });
-          } catch {
-            toast.warning(
-              `Saved, but "${name}" did not reconnect — its tool-cancellation setting still reflects the previous connection.`
-            );
-          }
-        }
+        setPendingCancellationReconnect(hostConfigId);
       }
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface "Failed to save host" after the config
@@ -477,9 +500,6 @@ export function HostBuilderViewRedesigned({
     draftConfig,
     savedConfig,
     updateHost,
-    onReconnect,
-    requiredServerNames,
-    connectionStatusByName,
   ]);
 
   const handleAddServer = useCallback(

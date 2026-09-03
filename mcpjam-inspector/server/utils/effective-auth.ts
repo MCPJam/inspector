@@ -240,6 +240,26 @@ export function applyHostParamMirroring<
  * cancels normally on both eras. Absent leaves are the conforming answer, so a
  * fully cancelling host must contribute no field at all.
  */
+/**
+ * The host's tool-cancellation setting as a TURN carries it: only the degraded
+ * (`false`) leaves, or `undefined` when the profile is missing or conforming.
+ *
+ * Callers that resolved a host config should treat `undefined` as an EMPTY
+ * record (`?? {}`) so the turn's value stays authoritative over the
+ * connection's connect-time copy — that copy is exactly the stale value a
+ * mid-session save has to override.
+ */
+export function toolCallCancellationFromMcpProfile(
+  mcpProfile: unknown
+): { legacy?: boolean; modern?: boolean } | undefined {
+  if (!mcpProfile || typeof mcpProfile !== "object") return undefined;
+  const raw = (mcpProfile as { toolCallCancellation?: unknown })
+    .toolCallCancellation;
+  return raw && typeof raw === "object"
+    ? degradedCancellationLeaves(raw as { legacy?: unknown; modern?: unknown })
+    : undefined;
+}
+
 function degradedCancellationLeaves(
   raw: { legacy?: unknown; modern?: unknown } | undefined
 ): { legacy?: boolean; modern?: boolean } | undefined {
