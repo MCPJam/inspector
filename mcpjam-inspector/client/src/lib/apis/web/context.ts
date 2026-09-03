@@ -50,6 +50,7 @@ export interface ApiContext {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
@@ -453,6 +454,7 @@ function conformanceWireFields(apiContext: ApiContext): {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
 } {
   return {
     ...(apiContext.mirrorToolParamHeaders === false
@@ -466,6 +468,9 @@ function conformanceWireFields(apiContext: ApiContext): {
       : {}),
     ...(apiContext.dropToolListChanged === true
       ? { dropToolListChanged: true as const }
+      : {}),
+    ...(apiContext.toolCallCancellation
+      ? { toolCallCancellation: apiContext.toolCallCancellation }
       : {}),
     ...(apiContext.supportsMrtr === false
       ? { supportsMrtr: false as const }
@@ -539,6 +544,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -618,6 +624,7 @@ export function buildResolvedServerBatchRequest(input: {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -665,6 +672,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
