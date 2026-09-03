@@ -24,6 +24,12 @@ describe("Sandbox proxy routes", () => {
     expect(body).toContain('(guardScript || "") +');
     expect(body).toContain("cspMeta +");
     expect(body).toContain("violationListener;");
+    // The view is mounted by document.write into a fresh frame, never by
+    // assigning the processed HTML to srcdoc (that path is the opaque-origin
+    // fallback inside mountInner only).
+    expect(body).toContain("function mountInner");
+    expect(body).toContain("function createInnerFrame");
+    expect(body).not.toContain("inner.srcdoc = processedHtml");
     expect(body).not.toContain("recorder:proxy-status");
     expect(body).not.toContain(
       'const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";'

@@ -3,11 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="color-scheme" content="light dark" />
-    <!-- Permissive CSP so nested srcdoc content is not constrained by host CSP.
+    <!-- Permissive CSP so the inner view is not constrained by host CSP.
          The actual security enforcement is done by the dynamically-generated CSP
-         injected into the inner srcdoc iframe based on widget declarations (SEP-1865).
-         This outer CSP must allow external scripts since srcdoc network requests
-         are subject to the parent document's CSP. -->
+         injected into the inner view's HTML based on widget declarations (SEP-1865).
+         The view is written into a blank same-origin iframe (see mountInner), so
+         it inherits this document's policy container — this outer CSP must
+         therefore allow everything the widget-declared CSP might allow. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src * 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data:; style-src * blob: data: 'unsafe-inline'; connect-src * data: blob: about:; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*;"
@@ -47,10 +48,13 @@
        * Host Page → Sandbox Proxy (this page, different origin) → Guest UI
        *
        * This proxy:
-       * 1. Creates inner iframe immediately
+       * 1. Creates a placeholder inner iframe immediately
        * 2. Waits for HTML content via ui/notifications/sandbox-resource-ready
        * 3. Builds CSP from metadata and injects into HTML
-       * 4. Loads HTML via srcdoc with configurable sandbox attributes
+       * 4. Mounts the HTML into a FRESH inner iframe by writing it into the
+       *    frame's blank document (document.open/write/close) so the view
+       *    runs at a real URL — this proxy's URL — instead of about:srcdoc.
+       *    `srcdoc` is kept only as the opaque-origin fallback. See mountInner.
        * 5. Forwards all non-sandbox messages between host and guest
        *
        * Reference: https://gist.github.com/ochafik/a9603ba2d6757d6038ce066eded4c354
@@ -74,8 +78,10 @@
        * @param {Object} permissions - Permissions metadata (camera, microphone, geolocation, clipboardWrite)
        * @returns {string} Permission Policy allow attribute string
        *
-       * Note: For srcdoc iframes, we use '*' allowlist since they don't have a defined origin.
-       * This allows the sandboxed content to request these permissions.
+       * Note: the '*' allowlist predates the document.write mount, when the
+       * inner frame had no defined origin. The view now runs at this proxy's
+       * origin, so the list could be scoped to it; '*' is kept so behavior is
+       * unchanged for every host profile that pins these permissions.
        */
       function buildAllowAttribute(permissions) {
         if (!permissions) return "";
@@ -153,8 +159,10 @@
         }
 
         // Per SEP-1865: If no CSP declared, use restrictive defaults
-        // Note: 'self' doesn't work in srcdoc iframes (refers to about:srcdoc)
-        // So we use 'unsafe-inline' for scripts/styles since all widget code is inline
+        // Note: 'self' names this proxy's origin (the view is written into a
+        // same-origin frame, see mountInner), which is never where widget
+        // assets live — so 'unsafe-inline' carries scripts/styles, since all
+        // widget code is inline.
         let directives;
         if (!csp) {
           // Two baselines for the no-csp branch:
@@ -439,10 +447,11 @@ document.addEventListener('securitypolicyviolation', function(e) {
     }
     catch (_) { return null; }
   }
-  // Scheme/origin of the document the emulated policy protects. A srcdoc frame's
-  // location is about:srcdoc, but its baseURI inherits the embedding proxy
-  // document; that is the origin CSP would evaluate against. Falling back to
-  // "" makes schemeless expressions match nothing, which fails closed.
+  // Scheme/origin of the document the emulated policy protects. The view is
+  // written into a same-origin frame, so its baseURI is the proxy URL (the
+  // srcdoc fallback inherits the same baseURI); that is the origin CSP would
+  // evaluate against. Falling back to "" makes schemeless expressions match
+  // nothing, which fails closed.
   var protectedScheme = protectedBaseUrl
     ? protectedBaseUrl.protocol.slice(0, -1).toLowerCase()
     : "";
@@ -788,15 +797,144 @@ document.addEventListener('securitypolicyviolation', function(e) {
         return colorScheme;
       }
 
-      // Create inner iframe immediately (before HTML arrives)
-      const inner = document.createElement("iframe");
-      inner.style =
+      const INNER_STYLE =
         "width:100%; height:100%; border:none; background-color:transparent; color-scheme:light dark;";
+
+      /**
+       * Build the inner view iframe with its final `sandbox=` / `allow=`
+       * attributes, NOT yet appended. Both attributes are fixed when the
+       * frame's document is created (on insertion), and document.open()
+       * reuses that document without re-evaluating either — so a frame can
+       * never be re-attributed in place, only replaced. See mountInner.
+       * @param {string} sandboxValue - Space-separated sandbox tokens
+       * @param {string} allowValue - Permission Policy allow attribute ("" for none)
+       * @returns {HTMLIFrameElement}
+       */
+      function createInnerFrame(sandboxValue, allowValue) {
+        const frame = document.createElement("iframe");
+        frame.style = INNER_STYLE;
+        frame.setAttribute("sandbox", sandboxValue);
+        if (allowValue) {
+          frame.setAttribute("allow", allowValue);
+        }
+        return frame;
+      }
+
+      /**
+       * Mount processed widget HTML into a fresh inner iframe.
+       *
+       * The HTML is written into the new frame's initial about:blank document
+       * (document.open/write/close) rather than assigned to `srcdoc`. Per the
+       * HTML spec's document-open steps the written document takes the ENTRY
+       * document's URL — this proxy's — so the view has a real URL and origin:
+       * `location.href`, `document.URL`, canvas taint rules and third-party
+       * referrer allowlists (Google Maps, OAuth redirect matching) all see the
+       * sandbox origin instead of `about:srcdoc`. This is how claude.ai's proxy
+       * mounts views; our eval browser harness already does the same.
+       *
+       * A new frame per mount (old one removed afterwards) means a re-send is
+       * a clean restart — old Window, timers and listeners are gone — and the
+       * `sandbox=` / `allow=` attributes are genuinely applied (see
+       * createInnerFrame). Late messages from the removed frame fail the
+       * `event.source === inner.contentWindow` check and are dropped.
+       *
+       * `srcdoc` remains for two cases: the frame's document is unreachable
+       * (opaque origin — cannot happen while `allow-same-origin` is force-added
+       * above, kept as defense in depth), or the host asked for it via
+       * `mountMode: "srcdoc"` (a build-time test hook for this branch).
+       *
+       * Note: a document written this way is parsed like any navigated HTML
+       * document — without a `<!DOCTYPE html>` it renders in quirks mode,
+       * whereas a srcdoc document never does. That matches claude.ai.
+       *
+       * @param {string} html - Processed widget HTML (CSP + shims injected)
+       * @param {string} sandboxValue - Final inner `sandbox=` value
+       * @param {string} allowValue - Final inner `allow=` value ("" for none)
+       * @param {unknown} colorScheme - Host theme for applyColorScheme
+       * @param {"write" | "srcdoc" | undefined} mountMode - Mount strategy
+       * @returns {"url" | "srcdoc" | "srcdoc-fallback"} How the view was mounted
+       */
+      function mountInner(
+        html,
+        sandboxValue,
+        allowValue,
+        colorScheme,
+        mountMode,
+      ) {
+        const next = createInnerFrame(sandboxValue, allowValue);
+        // Appending creates the frame's initial about:blank document
+        // synchronously, same-origin with this proxy.
+        document.body.appendChild(next);
+        const doc = mountMode === "srcdoc" ? null : next.contentDocument;
+        let mode;
+        if (doc) {
+          doc.open();
+          doc.write(html);
+          doc.close();
+          mode = "url";
+          // Chromium answers location.reload() in a written document by
+          // reloading the frame's history entry — the initial about:blank —
+          // which leaves a blank frame and tells nobody. Remount when the
+          // frame comes back blank. (Engines that reload the document URL
+          // instead land on a nested copy of this proxy; that case is
+          // caught by the sandbox-proxy-ready guard in the relay.) Any
+          // other navigation the widget made — a real href, cross-origin
+          // (location unreadable) — is the widget's own business.
+          // Attached after the write so the frame's own load events only
+          // ever observe the written document, never the pre-write blank.
+          next.addEventListener("load", function () {
+            if (inner !== next || !lastMount) return;
+            let href;
+            try {
+              href = next.contentWindow.location.href;
+            } catch (error) {
+              return;
+            }
+            if (href === "about:blank") {
+              remountLast();
+            }
+          });
+        } else {
+          next.srcdoc = html;
+          mode = mountMode === "srcdoc" ? "srcdoc" : "srcdoc-fallback";
+        }
+        if (inner && inner !== next) {
+          inner.remove();
+        }
+        inner = next;
+        next.style.colorScheme = applyColorScheme(colorScheme);
+        lastMount = { html, sandboxValue, allowValue, colorScheme, mountMode };
+        return mode;
+      }
+
+      /**
+       * Mount the most recent view again (a widget reloaded itself).
+       * @returns {"url" | "srcdoc" | "srcdoc-fallback" | "none"}
+       */
+      function remountLast() {
+        if (!lastMount) return "none";
+        return mountInner(
+          lastMount.html,
+          lastMount.sandboxValue,
+          lastMount.allowValue,
+          lastMount.colorScheme,
+          lastMount.mountMode,
+        );
+      }
+
+      // The current inner view frame. Replaced on every mount (see mountInner);
+      // the message relay below reads this binding live.
+      let inner = null;
+      // Arguments of the most recent mount, replayed when a widget reloads
+      // itself (see the nested sandbox-proxy-ready guard in the relay).
+      let lastMount = null;
+
+      // Placeholder frame before HTML arrives, so layout and color-scheme
+      // behave as they always have. Replaced by the first mount.
       applyColorScheme("light dark");
-      // Default minimal sandbox before HTML arrives
-      inner.setAttribute(
-        "sandbox",
-        "allow-scripts allow-same-origin allow-forms"
+      inner = createInnerFrame(
+        "allow-scripts allow-same-origin allow-forms",
+        "",
       );
       document.body.appendChild(inner);
 
@@ -830,6 +968,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               colorScheme,
               recordMode,
               recorderDebug: nextRecorderDebug,
+              mountMode,
             } = event.data.params || {};
             recorderDebugEnabled = !!nextRecorderDebug;
             try {
@@ -841,7 +980,6 @@ document.addEventListener('securitypolicyviolation', function(e) {
             } catch (error) {
               // debug flag propagation is best-effort
             }
-            inner.style.colorScheme = applyColorScheme(colorScheme);
             // Tier 2: inject the recorder shim into the guest when recording.
             const recorderScript = buildRecorderScript(recordMode);
             const connectGuardScript = buildConnectGuardScript(
@@ -897,10 +1035,8 @@ document.addEventListener('securitypolicyviolation', function(e) {
               sandboxTokens.add("allow-scripts");
               sandboxTokens.add("allow-same-origin");
             }
-            inner.setAttribute(
-              "sandbox",
-              Array.from(sandboxTokens).sort().join(" ")
-            );
+            // Applied by createInnerFrame on the fresh frame (never in place).
+            const sandboxValue = Array.from(sandboxTokens).sort().join(" ");
 
             // Set Permission Policy `allow=` attribute for the inner iframe
             // from the requested spec-4 permissions only (SEP-1865:
@@ -912,14 +1048,12 @@ document.addEventListener('securitypolicyviolation', function(e) {
             // pattern: outer grants extras for the wrapper, inner trims to
             // spec so the widget only experiences what's documented.
             const baseAllow = buildAllowAttribute(permissions);
-            if (baseAllow) {
-              inner.setAttribute("allow", baseAllow);
-            }
 
             if (typeof html === "string") {
               if (permissive) {
                 // Permissive mode: inject maximally permissive CSP
-                // Must explicitly allow everything since srcdoc inherits parent CSP
+                // Must explicitly allow everything since the view inherits this
+                // document's policy container (see mountInner).
                 const permissiveCsp = [
                   "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem: about:",
                   "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",
@@ -939,7 +1073,14 @@ document.addEventListener('securitypolicyviolation', function(e) {
                   recorderScript,
                   browserStorageGuardScript
                 );
-                inner.srcdoc = processedHtml;
+                const mode = mountInner(
+                  processedHtml,
+                  sandboxValue,
+                  baseAllow,
+                  colorScheme,
+                  mountMode,
+                );
+                recorderDebug("view mounted", { mode });
               } else {
                 // Build CSP and inject into HTML (SEP-1865). cspDirectives
                 // is the inspector-only per-directive source-expression
@@ -951,7 +1092,14 @@ document.addEventListener('securitypolicyviolation', function(e) {
                   recorderScript,
                   connectGuardScript + browserStorageGuardScript
                 );
-                inner.srcdoc = processedHtml;
+                const mode = mountInner(
+                  processedHtml,
+                  sandboxValue,
+                  baseAllow,
+                  colorScheme,
+                  mountMode,
+                );
+                recorderDebug("view mounted", { mode });
               }
             }
           } else if (
@@ -961,6 +1109,9 @@ document.addEventListener('securitypolicyviolation', function(e) {
           ) {
             const { colorScheme } = event.data.params || {};
             inner.style.colorScheme = applyColorScheme(colorScheme);
+            if (lastMount) {
+              lastMount.colorScheme = colorScheme;
+            }
           } else {
             // Forward other messages to inner iframe (guest UI)
             if (inner && inner.contentWindow) {
@@ -974,6 +1125,21 @@ document.addEventListener('securitypolicyviolation', function(e) {
           // from reaching PostMessageTransport and causing parse errors.
           var data = event.data;
           if (data && typeof data === "object") {
+            if (
+              data.jsonrpc === "2.0" &&
+              data.method === "ui/notifications/sandbox-proxy-ready"
+            ) {
+              // The view lives at this proxy's URL, so an engine that
+              // answers a widget's location.reload() by reloading the
+              // document URL loads THIS proxy inside the inner frame, and
+              // that nested proxy announces itself here. The host has
+              // nothing to do with it (relaying would leave a blank frame)
+              // — remount the last view instead, which is the restart a
+              // widget author expects. Chromium reloads about:blank
+              // instead; see the load listener in mountInner.
+              remountLast();
+              return;
+            }
             if (
               data.jsonrpc === "2.0" ||
               data.type === "mcp-apps:csp-violation" ||
