@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
 /**
  * The failure message an admin can act on, out of a Convex error.
@@ -77,7 +77,13 @@ export function useOrgScopedWrite(organizationId: string | null): {
    */
   const generationRef = useRef(0);
 
-  useEffect(() => {
+  // LAYOUT, not passive. A passive effect runs after the browser paints, and a
+  // write for the previous org can settle in the window between the commit for
+  // the new one and that flush — reading a `currentOrgRef` that still says the
+  // OLD org, and so reporting its result onto the new org's page. Running
+  // before paint closes the window. Nothing here measures the DOM, so the
+  // synchronous slot costs nothing.
+  useLayoutEffect(() => {
     currentOrgRef.current = organizationId;
     // Retire every write in flight: a completion from the previous org must
     // not land on this one, whatever order the round trips finish in.

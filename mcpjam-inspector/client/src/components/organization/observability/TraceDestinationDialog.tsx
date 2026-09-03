@@ -36,6 +36,21 @@ import {
 const DEFAULT_CORALOGIX_REGION = "eu2";
 
 /**
+ * The origin of a URL, or null when it does not parse.
+ *
+ * Used to decide whether an edit is pointing STORED credentials somewhere new.
+ * A path or query change keeps the same origin and is harmless; a host change
+ * would hand the vendor's key to whoever answers at the new one.
+ */
+function originOf(url: string): string | null {
+  try {
+    return new URL(url.trim()).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The region a stored Coralogix endpoint is in.
  *
  * Without this, editing a us1 destination shows the picker sitting on the
@@ -274,6 +289,30 @@ export function TraceDestinationDialog({
       );
     const anyValueTyped = namedRows.some((row) => row.value.length > 0);
     const replacingHeaders = anyValueTyped || namesChanged;
+
+    // MOVING THE ENDPOINT MOVES THE CREDENTIALS WITH IT. Header values are
+    // write-only, so an admin who never knew the stored key could otherwise
+    // repoint this destination at a collector they control and read it off
+    // the next delivery — which is exactly the thing write-only exists to
+    // prevent. Changing the ORIGIN therefore requires re-entering the
+    // headers, or clearing them by emptying every row. A path or query change
+    // keeps the same origin and is left alone. The server enforces the same
+    // rule; this is here so the form says so before the round trip.
+    if (
+      isEdit &&
+      destination &&
+      storedHeaderNames.length > 0 &&
+      !replacingHeaders
+    ) {
+      const before = originOf(destination.endpointUrl);
+      const after = originOf(endpointUrl);
+      if (before && after && before !== after) {
+        setLocalError(
+          `This endpoint is moving to ${after}, and the stored headers would go with it. Re-enter them for the new endpoint, or remove them, before saving.`,
+        );
+        return;
+      }
+    }
 
     let headers: Record<string, string> | undefined;
     if (replacingHeaders) {
