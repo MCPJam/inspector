@@ -155,12 +155,16 @@ describe("committing and abandoning", () => {
     expect(onChange).toHaveBeenCalledWith(70);
   });
 
-  it("Enter commits", () => {
+  it("Enter commits exactly once", () => {
     const { input, onChange } = renderSelector(80);
 
+    input.focus();
     fireEvent.change(input, { target: { value: "70" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
+    // Enter leaves the field by blurring it, and blurring is what commits.
+    // Committing before the blur as well reported the same edit twice.
+    expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith(70);
   });
 });
