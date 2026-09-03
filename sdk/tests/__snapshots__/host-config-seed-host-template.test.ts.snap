@@ -217,6 +217,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
           "permissions": {
             "allow": {
+              "clipboardWrite": true,
               "microphone": true,
             },
             "mode": "custom",
@@ -397,6 +398,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
           "permissions": {
             "allow": {
+              "clipboardWrite": true,
               "microphone": true,
             },
             "mode": "custom",

@@ -1030,16 +1030,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               // Per ui/initialize hostCapabilities only `microphone` is
               // advertised. Per the outer iframe `allow=` attribute,
-              // 2026-09-02: ChatGPT advertises `microphone` alone.
-              // `permissions.allow` is the SEP-1865 declaration, so it
-              // mirrors that. The earlier note here kept `clipboardWrite`
-              // to reproduce a `clipboard-write` grant seen in the
-              // production iframe's `allow=` attribute — but that is the
-              // raw Permissions Policy axis, which belongs in
-              // `allowFeatures` under the kebab token, not in a spec
-              // permission key. The 2026-09-02 capture does not report
-              // `allow=`, so nothing was written there either.
-              allow: { microphone: true },
+              // `clipboard-write` is ALSO emitted at runtime even though
+              // it's not in the advertised metadata. Include both so a
+              // widget testing in MCPJam-as-ChatGPT actually gets what
+              // the production iframe grants.
+              allow: { microphone: true, clipboardWrite: true },
             },
             // The 2026-08-24 capture read and wrote all three browser
             // storage APIs from inside the widget sandbox — every one

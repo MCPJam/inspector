@@ -1246,6 +1246,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               mode: "custom",
               allow: {
                 microphone: true,
+                clipboardWrite: true,
               },
             },
             browserStorage: {
