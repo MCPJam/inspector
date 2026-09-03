@@ -68,6 +68,23 @@ export const VIEW_MOUNT_MODE: "write" | "srcdoc" =
   import.meta.env.VITE_MCPJAM_VIEW_MOUNT === "srcdoc" ? "srcdoc" : "write";
 
 /**
+ * Whether each MCP server's views get their own origin
+ * (`<label>.sandbox.mcpjam.com`) instead of sharing the sandbox origin.
+ *
+ * What it buys: cookie and storage isolation BETWEEN apps, and a stable
+ * per-server origin for an OAuth redirect URI or a third-party API-key
+ * allowlist — the same shape Claude and ChatGPT use.
+ *
+ * Off by default because it is an infrastructure commitment, not a code one:
+ * it needs wildcard DNS and a certificate covering `*.sandbox.mcpjam.com`,
+ * and with those absent every widget would fail to load rather than degrade.
+ * Set via `VITE_MCPJAM_VIEW_SUBDOMAINS` at build time (see the Dockerfile ARG
+ * — a service variable alone never reaches the bundle).
+ */
+export const VIEW_SUBDOMAINS_ENABLED =
+  import.meta.env.VITE_MCPJAM_VIEW_SUBDOMAINS === "true";
+
+/**
  * The Discord application the agent bot runs as, used to build the "add to
  * server" URL on the Integrations page.
  *

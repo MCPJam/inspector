@@ -1322,6 +1322,12 @@ export function MCPAppsRendererSurface({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(
     isCachedReplay ? true : initialWidgetPermissive ?? false
   );
+  // Per-server label for a dedicated view origin, from the widget-content
+  // response. Changing it re-navigates the sandbox iframe, so it is state
+  // rather than a ref.
+  const [viewOriginLabel, setViewOriginLabel] = useState<string | undefined>(
+    undefined
+  );
   const [prefersBorder, setPrefersBorder] = useState<boolean>(
     initialPrefersBorder ?? true
   );
@@ -1770,6 +1776,7 @@ export function MCPAppsRendererSurface({
         mimeTypeValid: valid,
         prefersBorder,
         declaredDomain: serverDeclaredDomain,
+        viewOriginLabel: serverViewOriginLabel,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           serverInjectedOpenAiCompatCapabilities,
@@ -1878,6 +1885,8 @@ export function MCPAppsRendererSurface({
         resolvedInjectedOpenAiCompatCapabilities
       );
 
+
+      setViewOriginLabel(serverViewOriginLabel);
 
       // Update the widget debug store with CSP and permissions info. A
       // declared domain alone is enough to open the Workbench: the origin
@@ -4265,6 +4274,8 @@ export function MCPAppsRendererSurface({
       hostedMode={host.surface.hostedMode}
       sandboxOrigin={host.surface.sandboxOrigin}
       mountMode={host.surface.viewMountMode}
+      viewOriginLabel={viewOriginLabel}
+      viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
       className={`bg-transparent overflow-hidden ${
         isFullscreen
           ? "flex-1 border-0 rounded-none"

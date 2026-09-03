@@ -12,6 +12,7 @@ import {
   findListingMetaForUri,
   resolveUiResourceMeta,
 } from "../../utils/ui-resource-meta.js";
+import { viewOriginLabelForConfig } from "../../utils/view-origin-label.js";
 import {
   projectServerSchema,
   withEphemeralConnection,
@@ -221,6 +222,9 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         cspMode: effectiveCspMode,
         prefersBorder: prefersBorderFromMeta,
         declaredDomain,
+        viewOriginLabel: viewOriginLabelForConfig(
+          manager.getServerConfig?.(body.serverId),
+        ),
         injectedOpenAiCompat: shouldInjectOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           shouldInjectOpenAiCompat &&

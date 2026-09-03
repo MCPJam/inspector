@@ -88,6 +88,7 @@ import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { resolveUiResourceMeta } from "../../utils/ui-resource-meta.js";
+import { viewOriginLabel } from "../../utils/view-origin-label.js";
 import { logger } from "../../utils/logger.js";
 import { resolvePlatformMcpUrl } from "../../utils/platform-mcp-url.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../shared/mcpjam-agent-widgets";
@@ -642,6 +643,10 @@ mcpjamAgent.post("/widget-content", async (c) => {
         cspMode: effectiveCspMode,
         prefersBorder: uiMeta.prefersBorder,
         declaredDomain: uiMeta.domain,
+        // A fixed label of its own rather than none: with per-app origins on,
+        // "no label" means the bare sandbox origin, and MCPJam's own widgets
+        // should not be the one thing still rendering there.
+        viewOriginLabel: viewOriginLabel("mcpjam:platform"),
         injectedOpenAiCompat: body.injectOpenAiCompat === true,
         injectedOpenAiCompatCapabilities:
           body.injectOpenAiCompat === true &&

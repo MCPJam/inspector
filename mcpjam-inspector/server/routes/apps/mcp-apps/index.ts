@@ -22,6 +22,7 @@ import {
   findListingMetaForUri,
   resolveUiResourceMeta,
 } from "../../../utils/ui-resource-meta";
+import { viewOriginLabelForConfig } from "../../../utils/view-origin-label";
 
 const apps = new Hono();
 
@@ -348,6 +349,12 @@ apps.post("/widget-content", async (c) => {
       cspMode: effectiveCspMode,
       prefersBorder,
       declaredDomain,
+      // The subdomain this server's views get once per-app origins are on.
+      // Optional-called: the route tests stand up managers that expose no
+      // config accessor, and an absent label just means the default origin.
+      viewOriginLabel: viewOriginLabelForConfig(
+        mcpClientManager.getServerConfig?.(serverId)
+      ),
       // Echoed for trace clarity. The renderer's reload-key already
       // uses the flag it sent (not this echoed value), but persisting
       // the server-confirmed value alongside cached HTML makes saved
