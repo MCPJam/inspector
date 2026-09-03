@@ -1337,7 +1337,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--color-border-tertiary": "#ffffff40",
         },
       },
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       verifiedAt: 1788307200000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -1436,7 +1436,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         paginationTraversal: "full",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "mcp",
             version: "0.1.0",

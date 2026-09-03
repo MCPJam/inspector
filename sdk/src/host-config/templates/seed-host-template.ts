@@ -1134,7 +1134,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // No `toolListChanged`: probe-list-changed was never run against this
         // client (verdict `not-sent`), so `refetches` was never asked.
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: { name: "mcp", version: "0.1.0" },
         },
         apps: {
