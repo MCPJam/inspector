@@ -84,6 +84,50 @@ export function compatPresetForHostStyle(
     : undefined;
 }
 
+/**
+ * Per-method `window.openai.*` surface a host declares, if any.
+ *
+ * Sibling of {@link readOpenAiCompatOverride}: that one answers "inject the
+ * shim at all", this one answers "which methods does it expose". Same key set
+ * as `OpenAiAppsCapabilities`; the canonicalizer has already rejected unknown
+ * keys and bad types, so this only has to find the record.
+ */
+export function readOpenAiAppsOverrides(
+  value: unknown
+): Record<string, unknown> | undefined {
+  const profile = readMcpProfileOrMcp(value);
+  const apps = isRecord(profile?.apps) ? profile.apps : undefined;
+  const compatRuntime = isRecord(apps?.compatRuntime)
+    ? apps.compatRuntime
+    : undefined;
+  return isRecord(compatRuntime?.openaiAppsOverrides)
+    ? compatRuntime.openaiAppsOverrides
+    : undefined;
+}
+
+/**
+ * Resolve the per-method capability surface for a host.
+ *
+ * `openaiAppsOverrides` is sparse — an absent key means "use the runtime's
+ * default", which is the full ChatGPT surface. Only turn-OFFs are written, so
+ * a shallow merge of base then override is the whole resolution.
+ *
+ * Returns `undefined` when neither side declares anything. That is not the
+ * same as `{}`: the injector omits the field entirely for `undefined`, keeping
+ * the serialized runtime config byte-identical for every host that declares no
+ * overrides. Hosts that do declare them (ChatGPT, Copilot) are the only
+ * snapshots that change.
+ */
+export function resolveOpenAiCompatCapabilitiesForHostConfig(
+  hostConfig: unknown,
+  hostConfigOverride?: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const base = readOpenAiAppsOverrides(hostConfig);
+  const override = readOpenAiAppsOverrides(hostConfigOverride);
+  if (base === undefined && override === undefined) return undefined;
+  return { ...(base ?? {}), ...(override ?? {}) };
+}
+
 export function resolveOpenAiCompatForHostConfig(
   hostConfig: unknown,
   hostConfigOverride?: Record<string, unknown>
