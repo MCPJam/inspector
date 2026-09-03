@@ -31,6 +31,7 @@ import {
   createPinnedStreamingFetch,
   executeOAuthProxy,
   isLoopbackOAuthUrl,
+  isPrivateHost,
   OAuthProxyError,
 } from "@mcpjam/sdk/oauth/node";
 import { HOSTED_MODE } from "../config.js";
@@ -46,6 +47,21 @@ export interface PinnedFetchOptions {
    * documentation, NAT64-private, or IPv4-mapped-private addresses.
    */
   allowLoopback?: boolean;
+  /**
+   * Permit private destinations for the whole chain: loopback, RFC 1918,
+   * CGNAT, unique-local, and any hostname resolving to one.
+   *
+   * DEFAULTS TO `!HOSTED_MODE`, mirroring the `hosted ?? HOSTED_MODE` gate on
+   * this module's streaming sibling. On a developer's machine reaching their
+   * own network is the product; on our nodes it is the thing this guard
+   * exists to stop. Callers that must never reach a private target whatever
+   * the deployment (registry derive, benchmark scorecards) pass `false`
+   * explicitly.
+   *
+   * Link-local and cloud-metadata addresses stay refused either way — the SDK
+   * enforces that floor and no option here can lift it.
+   */
+  allowPrivateNetwork?: boolean;
   /** Bounds DNS, connection setup, redirects, and the body read together. */
   timeoutMs?: number;
 }
@@ -84,6 +100,10 @@ const REFUSAL_PATTERNS: readonly RegExp[] = [
   // because in hosted mode "loopback" and "not publicly routable" are the same
   // statement; the refusals below are not.
   /refusing a connection to loopback/i,
+  // The floor under the local-network allowance: link-local and cloud metadata
+  // are refused in every mode, so their refusal must classify as a verdict
+  // about the target rather than as a retryable outage.
+  /link-local or cloud-metadata/i,
 ];
 
 /**
@@ -200,9 +220,16 @@ function remainingTimeout(
  * It is not a blanket permission to speak plaintext, so a dev-mode probe that
  * redirects off to a public http host is refused exactly like a hosted one.
  */
-function assertSchemeAllowed(url: string, allowLoopback: boolean): void {
+function assertSchemeAllowed(
+  url: string,
+  allowLoopback: boolean,
+  allowPrivateNetwork: boolean
+): void {
   if (isHttps(url)) return;
   if (allowLoopback && isLoopbackOAuthUrl(url)) return;
+  // A private hop on a private chain may be plaintext for the same reason a
+  // loopback hop may: the developer's own LAN server is routinely http.
+  if (allowPrivateNetwork && isPrivateHost(new URL(url).hostname)) return;
   throw new BlockedEgressTargetError(
     `Refusing a plaintext connection to "${safeHost(url)}".`
   );
@@ -244,6 +271,7 @@ function toBodyInit(status: number, body: unknown): string | null {
 export function createPinnedFetch(
   options: PinnedFetchOptions = {}
 ): typeof fetch {
+  const allowPrivateNetwork = options.allowPrivateNetwork ?? !HOSTED_MODE;
   const pinnedFetch = async (
     input: RequestInfo | URL,
     init?: RequestInit
@@ -279,7 +307,11 @@ export function createPinnedFetch(
     // loopback dev target is plaintext by nature, and that alone made
     // `http://127.0.0.1:…` reachable in production: the `allowLoopback` option
     // below was declared, documented, and enforced by nobody.
-    if (options.allowLoopback !== true && isLoopbackOAuthUrl(url)) {
+    if (
+      !allowPrivateNetwork &&
+      options.allowLoopback !== true &&
+      isLoopbackOAuthUrl(url)
+    ) {
       throw new BlockedEgressTargetError(
         `Refusing a connection to loopback address "${new URL(url).hostname}".`
       );
@@ -296,6 +328,10 @@ export function createPinnedFetch(
     // started public may not arrive there.
     const chainAllowsLoopback =
       options.allowLoopback === true && isLoopbackOAuthUrl(url);
+    // Same chain rule for the wider allowance: a chain that started public may
+    // not redirect onto the caller's LAN, even in local mode.
+    const chainAllowsPrivate =
+      allowPrivateNetwork && isPrivateHost(new URL(url).hostname);
 
     try {
       // REDIRECTS ARE FOLLOWED HERE, ONE HOP AT A TIME, so every hop's scheme
@@ -332,7 +368,9 @@ export function createPinnedFetch(
         signal?.throwIfAborted();
         const hopAllowsLoopback =
           chainAllowsLoopback && isLoopbackOAuthUrl(currentUrl);
-        assertSchemeAllowed(currentUrl, chainAllowsLoopback);
+        const hopAllowsPrivate =
+          chainAllowsPrivate && isPrivateHost(new URL(currentUrl).hostname);
+        assertSchemeAllowed(currentUrl, chainAllowsLoopback, chainAllowsPrivate);
 
         result = await executeOAuthProxy({
           url: currentUrl,
@@ -347,7 +385,8 @@ export function createPinnedFetch(
           // transport permit it because that HOP is loopback. The permission
           // is the CHAIN's (see `chainAllowsLoopback` above) re-checked
           // against the hop being dialled.
-          httpsOnly: !hopAllowsLoopback,
+          httpsOnly: !hopAllowsLoopback && !hopAllowsPrivate,
+          allowPrivateNetwork: hopAllowsPrivate,
           redirect: "manual",
           timeoutMs: remainingTimeout(options.timeoutMs, startedAt),
           signal,

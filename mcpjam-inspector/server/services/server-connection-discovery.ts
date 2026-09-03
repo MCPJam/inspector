@@ -32,6 +32,7 @@
 import {
   assertOutboundOAuthUrlAllowed,
   isLoopbackOAuthUrl,
+  isPrivateHost,
   OAuthOutboundUrlBlockedError,
 } from "@mcpjam/sdk/oauth/node";
 import { probeMcpServer } from "@mcpjam/sdk";
@@ -41,6 +42,19 @@ import {
   EgressResolutionError,
 } from "../utils/hosted-egress-guard.js";
 import { createPinnedFetch } from "../utils/pinned-fetch.js";
+import { HOSTED_MODE } from "../config.js";
+
+/**
+ * Whether this preflight may reach a private destination.
+ *
+ * One helper rather than three copies of the `??`, so the pre-flight guard,
+ * the plaintext rule, the transport, and the probe cannot disagree about a
+ * single request — the shape of bug where discovery succeeds and the probe it
+ * authorized is then refused.
+ */
+function allowsPrivateNetwork(input: RunDiscoveryPreflightInput): boolean {
+  return input.allowPrivateNetwork ?? !HOSTED_MODE;
+}
 
 /** The three values the backend's `reportDiscovery` accepts. */
 export type DiscoveredAuthMethod = "none" | "oauth" | "unsupported";
@@ -58,6 +72,7 @@ function createDefaultDiscoveryFetch(
 ): typeof fetch {
   return createPinnedFetch({
     allowLoopback: input.allowLoopback === true,
+    allowPrivateNetwork: allowsPrivateNetwork(input),
     timeoutMs: clampTimeout(input.timeoutMs),
   });
 }
@@ -258,6 +273,13 @@ export interface RunDiscoveryPreflightInput {
    * NAT64-private, or IPv4-mapped-private targets.
    */
   allowLoopback?: boolean;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local).
+   * Defaults to `!HOSTED_MODE`: locally, probing a server on the developer's
+   * own network is the product. Callers for whom a private target is never
+   * evidence — registry derive, benchmark scorecards — pass `false`.
+   */
+  allowPrivateNetwork?: boolean;
   timeoutMs?: number;
 }
 
@@ -373,6 +395,7 @@ export async function probeThroughEgressGuard(
   try {
     const url = assertOutboundOAuthUrlAllowed(input.serverUrl, {
       allowLoopback: input.allowLoopback === true,
+      allowPrivateNetwork: allowsPrivateNetwork(input),
     });
     // The classifier accepts http AND https — it judges addresses, not
     // transport. Hosted targets are HTTPS-only, so that has to be enforced
@@ -382,7 +405,13 @@ export async function probeThroughEgressGuard(
     //
     // Loopback keeps its plaintext exception, and only when the caller opted
     // in: `http://127.0.0.1:3000/mcp` IS the local-development product.
-    if (url.protocol !== "https:" && !isLoopbackOAuthUrl(input.serverUrl)) {
+    if (
+      url.protocol !== "https:" &&
+      !isLoopbackOAuthUrl(input.serverUrl) &&
+      // Same exception one range wider in local mode: a LAN MCP server is
+      // plaintext as routinely as a loopback one.
+      !(allowsPrivateNetwork(input) && isPrivateHost(url.hostname))
+    ) {
       return {
         kind: "refused",
         errorCode: "URL_NOT_ALLOWED",
@@ -460,6 +489,7 @@ export async function probeThroughEgressGuard(
         url: input.serverUrl,
         timeoutMs: clampTimeout(input.timeoutMs),
         fetchFn,
+        allowPrivateNetwork: allowsPrivateNetwork(input),
       }),
       deadline,
     ]);

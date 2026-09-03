@@ -296,8 +296,11 @@ describe("runDiscoveryPreflight", () => {
   it("refuses loopback unless the local-dev opt-in is set", async () => {
     const probeServer = vi.fn();
 
+    // `allowPrivateNetwork: false` is what a HOSTED deployment resolves to;
+    // it is spelled out because the default now follows `!HOSTED_MODE`, and
+    // this test is about the hosted policy rather than the local one.
     const blocked = await runDiscoveryPreflight(
-      { serverUrl: "http://127.0.0.1:3000/mcp" },
+      { serverUrl: "http://127.0.0.1:3000/mcp", allowPrivateNetwork: false },
       { probeServer: probeServer as never },
     );
 
@@ -326,7 +329,54 @@ describe("runDiscoveryPreflight", () => {
     // A LAN address is not loopback. The opt-in exists for local development
     // against 127.0.0.1, not as a general private-network escape hatch.
     const outcome = await runDiscoveryPreflight(
-      { serverUrl: "http://192.168.1.10/mcp", allowLoopback: true },
+      {
+        serverUrl: "http://192.168.1.10/mcp",
+        allowLoopback: true,
+        allowPrivateNetwork: false,
+      },
+      { probeServer: probeServer as never },
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "terminal",
+      errorCode: "URL_NOT_ALLOWED",
+    });
+    expect(probeServer).not.toHaveBeenCalled();
+  });
+
+  it("probes a loopback server by default, the way a local inspector does", async () => {
+    // The local default. Testing a server on the developer's own machine is
+    // the inspector's whole job, so the preflight must not stand in its way.
+    const probeServer = ready();
+
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "http://127.0.0.1:3000/mcp" },
+      { probeServer },
+    );
+
+    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "none" });
+    expect(probeServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("probes a LAN server by default too", async () => {
+    const probeServer = ready();
+
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "http://192.168.1.10/mcp" },
+      { probeServer },
+    );
+
+    expect(outcome).toMatchObject({ kind: "discovered", authMethod: "none" });
+    expect(probeServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses cloud metadata even by default", async () => {
+    // The floor under the local allowance: no opt-in reaches it, and the
+    // probe must never run.
+    const probeServer = vi.fn();
+
+    const outcome = await runDiscoveryPreflight(
+      { serverUrl: "http://169.254.169.254/latest/meta-data/" },
       { probeServer: probeServer as never },
     );
 

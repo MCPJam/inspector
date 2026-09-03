@@ -382,6 +382,11 @@ export function createInspectorOAuthStateMachine(
     // when the debugged server URL is loopback; the guard still blocks
     // LAN/link-local/reserved destinations regardless.
     allowLoopbackMetadataFetch: isLoopbackOAuthUrl(machineConfig.serverUrl),
+    // Outside hosted mode the backend proxy behind this adapter runs on the
+    // developer's machine, so the whole private range is in scope — including
+    // an authorization server on a custom hostname that answers 127.0.0.1,
+    // which the loopback-literal test above cannot recognise.
+    allowPrivateMetadataFetch: !HOSTED_MODE,
     // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
     // provided. The SDK state machines call it via optional chaining, so when
     // it is absent each `proceedToNextStep()` stops at the next step instead of

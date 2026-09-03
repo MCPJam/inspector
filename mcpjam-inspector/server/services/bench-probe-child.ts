@@ -322,6 +322,10 @@ export async function runBenchmarkAuthProbe(
     {
       serverUrl: args.serverUrl,
       ...(args.allowLoopback ? { allowLoopback: true } : {}),
+      // Explicitly strict whatever the deployment: the preflight's local
+      // default permits private targets, and a scorecard about a server
+      // nobody else can reach is still not evidence.
+      allowPrivateNetwork: args.allowLoopback === true,
       ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
     },
     dependencies,
