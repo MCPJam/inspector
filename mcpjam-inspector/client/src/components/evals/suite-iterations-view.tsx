@@ -487,8 +487,15 @@ export function SuiteIterationsView({
   // than in a debounce racing its own previous write.
   const [draft, dispatchDraft] = useReducer(
     suiteSettingsReducer,
-    readSuiteSettingsValues(suite),
-    initSuiteSettingsDraft,
+    suite,
+    // Lazy: this ran on every render and threw the result away, and it is not
+    // free — it rebuilds the whole settings envelope for a suite document that
+    // changes identity on every run-progress tick.
+    (initial) =>
+      initSuiteSettingsDraft({
+        suiteId: initial._id,
+        values: readSuiteSettingsValues(initial),
+      }),
   );
   const [reviewOpen, setReviewOpen] = useState(false);
   const { commit, isCommitting } = useSuiteSettingsCommit();
@@ -504,21 +511,35 @@ export function SuiteIterationsView({
   const defaultMinimumPassRate =
     draft.current.defaultPassCriteria?.minimumPassRate ?? 100;
   const draftChanges = useMemo(() => describeDraft(draft), [draft]);
-  const draftCanCommit = canCommit(draft, areAllChecksValid);
+  // Memoized with the changes: `canCommit` re-runs `dirtyKeys` (a stringify per
+  // key) and a zod parse over every default check, and this component re-renders
+  // on every run-progress tick of every suite in the project.
+  const draftCanCommit = useMemo(
+    () => canCommit(draft, areAllChecksValid),
+    [draft],
+  );
   const hasUnsavedSettings = draftChanges.length > 0;
-  useUnsavedChangesGuard(hasUnsavedSettings);
+  // Discarding is what the person just agreed to when they confirmed the
+  // prompt. Without it the draft outlives the sheet: the guard re-prompts on
+  // every later navigation, ⌘S opens the review dialog from the run list, and
+  // the edits they were told they were leaving behind are still there.
+  useUnsavedChangesGuard(hasUnsavedSettings, () =>
+    dispatchDraft({ type: "discard" }),
+  );
 
   // The suite moved under us. An untouched row simply refreshes; a row the
   // person has edited AND someone else changed is marked rather than merged,
   // because that is the one case an automatic answer would get wrong for one
-  // of the two people involved.
+  // of the two people involved. A different suite id resets the draft outright
+  // — see the reducer.
   const liveSettingsKey = useMemo(
-    () => JSON.stringify(readSuiteSettingsValues(suite)),
+    () => `${suite._id}:${JSON.stringify(readSuiteSettingsValues(suite))}`,
     [suite],
   );
   useEffect(() => {
     dispatchDraft({
       type: "rebase",
+      suiteId: suite._id,
       live: readSuiteSettingsValues(suite),
     });
     // Keyed on the serialized live values so this fires when the SUITE moves,

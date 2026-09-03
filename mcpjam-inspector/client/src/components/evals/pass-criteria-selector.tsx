@@ -1,6 +1,6 @@
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface PassCriteriaSelectorProps {
   minimumPassRate: number;
@@ -20,10 +20,30 @@ export function PassCriteriaSelector({
 }: PassCriteriaSelectorProps) {
   const [editedValue, setEditedValue] = useState(minimumPassRate.toString());
 
+  // Follow the prop when it moves for a reason OTHER than this input.
+  //
+  // The value used to be write-on-change, so the prop only ever moved because
+  // this field had just moved it. Under a draft it also moves when the person
+  // hits Discard, or when the suite changes underneath them — and without this
+  // the input kept displaying a number the draft no longer holds, which is the
+  // worst possible failure for a settings control: it says the setting is one
+  // thing while the thing that gets saved is another. Re-blurring would then
+  // re-commit the stale number as a fresh edit.
+  //
+  // Guarded on the value the field itself last reported, so an in-flight edit
+  // is never yanked out from under someone mid-typing.
+  const lastReported = useRef(minimumPassRate);
+  useEffect(() => {
+    if (minimumPassRate === lastReported.current) return;
+    lastReported.current = minimumPassRate;
+    setEditedValue(minimumPassRate.toString());
+  }, [minimumPassRate]);
+
   const handleBlur = () => {
     const numValue = Number(editedValue);
     if (!isNaN(numValue)) {
       const clampedValue = Math.max(0, Math.min(100, numValue));
+      lastReported.current = clampedValue;
       onMinimumPassRateChange(clampedValue);
       setEditedValue(clampedValue.toString());
     } else {

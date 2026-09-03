@@ -63,6 +63,16 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
 ];
 
 export type SuiteSettingsDraft = {
+  /**
+   * The suite these edits belong to.
+   *
+   * A draft is not a property of the sheet, it is a property of one SUITE, and
+   * the two come apart the moment someone navigates: this component stays
+   * mounted across suites, so without an identity the reducer happily carries
+   * one suite's unsaved name onto the next one and the save writes it there.
+   * `rebase` refuses to reconcile across a change of identity for that reason.
+   */
+  suiteId: string;
   /** What the server had when this draft was last rebased or committed. */
   base: SuiteSettingsValues;
   /** What the person has now. */
@@ -90,7 +100,7 @@ export type SuiteSettingsAction =
    */
   | { type: "edit"; key: SuiteSettingsKey; value: unknown }
   | { type: "discard" }
-  | { type: "rebase"; live: SuiteSettingsValues }
+  | { type: "rebase"; suiteId: string; live: SuiteSettingsValues }
   | { type: "commitSucceeded"; live: SuiteSettingsValues };
 
 /** Structural equality over draft values. Order-sensitive for lists, deliberately. */
@@ -129,10 +139,16 @@ export function readSuiteSettingsValues(suite: {
   };
 }
 
-export function initSuiteSettingsDraft(
-  values: SuiteSettingsValues,
-): SuiteSettingsDraft {
-  return { base: values, current: values, conflicts: [] };
+export function initSuiteSettingsDraft(args: {
+  suiteId: string;
+  values: SuiteSettingsValues;
+}): SuiteSettingsDraft {
+  return {
+    suiteId: args.suiteId,
+    base: args.values,
+    current: args.values,
+    conflicts: [],
+  };
 }
 
 export function suiteSettingsReducer(
@@ -163,14 +179,39 @@ export function suiteSettingsReducer(
       };
     }
     case "discard":
-      return { base: state.base, current: state.base, conflicts: [] };
+      return {
+        suiteId: state.suiteId,
+        base: state.base,
+        current: state.base,
+        conflicts: [],
+      };
     case "rebase": {
+      // A DIFFERENT SUITE is not a rebase, it is a new draft.
+      //
+      // Reconciling across suites is how one suite's unsaved name ends up
+      // proposed, and then written, onto another: every key the person edited
+      // survives a rebase by design, and the identity is the only thing that
+      // says those edits are not about this suite at all.
+      if (action.suiteId !== state.suiteId) {
+        return initSuiteSettingsDraft({
+          suiteId: action.suiteId,
+          values: action.live,
+        });
+      }
       // The server moved. Keys the person has NOT touched simply take the new
       // value — that is not a conflict, it is a refresh. Keys they have
       // touched, where the server's value also moved away from the base they
       // started from, are the real disagreements.
       const next = { ...state.current } as SuiteSettingsValues;
-      const conflicts: SuiteSettingsKey[] = [];
+      // Carried forward: a conflict is unresolved until the PERSON resolves
+      // it, by editing the key or discarding. Recomputing the whole set from
+      // the new base drops a marker as soon as any unrelated field moves —
+      // a colleague renaming the suite would clear the warning about the
+      // threshold you both changed, and the next save would overwrite theirs
+      // with no notice at all.
+      const conflicts: SuiteSettingsKey[] = state.conflicts.filter((key) =>
+        SUITE_SETTINGS_KEYS.includes(key),
+      );
       for (const key of SUITE_SETTINGS_KEYS) {
         const edited = !sameValue(state.current[key], state.base[key]);
         const serverMoved = !sameValue(action.live[key], state.base[key]);
@@ -178,14 +219,23 @@ export function suiteSettingsReducer(
           (next as Record<string, unknown>)[key] = action.live[key];
           continue;
         }
-        if (serverMoved && !sameValue(action.live[key], state.current[key])) {
+        if (
+          serverMoved &&
+          !sameValue(action.live[key], state.current[key]) &&
+          !conflicts.includes(key)
+        ) {
           conflicts.push(key);
         }
       }
-      return { base: action.live, current: next, conflicts };
+      return { ...state, base: action.live, current: next, conflicts };
     }
     case "commitSucceeded":
-      return { base: action.live, current: action.live, conflicts: [] };
+      return {
+        suiteId: state.suiteId,
+        base: action.live,
+        current: action.live,
+        conflicts: [],
+      };
     default:
       return state;
   }
@@ -276,7 +326,12 @@ export function toUpdateArgs(
         args.name = normalized.name;
         break;
       case "defaultPassCriteria":
-        args.defaultPassCriteria = value ?? null;
+        // OMITTED when absent, never `null`: the mutation's validator is
+        // `v.optional(passCriteriaValidator)` with no null member, so a `null`
+        // here is an ArgumentValidationError that fails the whole batched save
+        // — including the other settings in it. There is no control that
+        // clears this today, which is the only reason the bug was unreachable.
+        if (value !== undefined) args.defaultPassCriteria = value;
         break;
       case "minIterations":
         args.minIterations = value ?? null;
@@ -358,7 +413,13 @@ function describePredicates(list: Predicate[]): string {
 
 function describeJudge(value: EvalJudgeConfig | undefined): string {
   const goal = value?.goalCompletion;
-  if (!goal || goal.enabled === false) return "Off";
+  // An ABSENT config is not an off judge: `GOAL_COMPLETION_DEFAULTS` resolves
+  // an unset `enabled` to true, so a suite with no judgeConfig is running an
+  // advisory judge that simply never auto-runs. Rendering it as "Off" made the
+  // review dialog claim a change ("Off -> Advisory") that was not the change
+  // being made.
+  if (!goal) return "Not configured";
+  if (goal.enabled === false) return "Off";
   const bits = [goal.role === "gating" ? "Gating" : "Advisory"];
   if (goal.autoRun) bits.push("runs automatically");
   if (goal.judgeModel) bits.push(goal.judgeModel);

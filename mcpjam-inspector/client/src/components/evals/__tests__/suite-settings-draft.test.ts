@@ -42,8 +42,13 @@ const BASE: SuiteSettingsValues = {
   judgeRubric: undefined,
 };
 
+const SUITE_ID = "suite-a";
+
 const draftOf = (values: Partial<SuiteSettingsValues> = {}) =>
-  initSuiteSettingsDraft({ ...BASE, ...values });
+  initSuiteSettingsDraft({
+    suiteId: SUITE_ID,
+    values: { ...BASE, ...values },
+  });
 
 const edit = (
   draft: SuiteSettingsDraft,
@@ -200,6 +205,7 @@ describe("a concurrent edit is marked, never merged", () => {
     draft = edit(draft, "name", "Mine");
     draft = suiteSettingsReducer(draft, {
       type: "rebase",
+      suiteId: SUITE_ID,
       live: { ...BASE, minIterations: 9 },
     });
     // Not a conflict: nobody disagreed about iterations, so refreshing it is
@@ -214,6 +220,7 @@ describe("a concurrent edit is marked, never merged", () => {
     draft = edit(draft, "name", "Mine");
     draft = suiteSettingsReducer(draft, {
       type: "rebase",
+      suiteId: SUITE_ID,
       live: { ...BASE, name: "Theirs" },
     });
     // The one thing an automatic resolution cannot choose between. Keeping the
@@ -229,6 +236,7 @@ describe("a concurrent edit is marked, never merged", () => {
     draft = edit(draft, "name", "Agreed");
     draft = suiteSettingsReducer(draft, {
       type: "rebase",
+      suiteId: SUITE_ID,
       live: { ...BASE, name: "Agreed" },
     });
     expect(draft.conflicts).toEqual([]);
@@ -240,6 +248,7 @@ describe("a concurrent edit is marked, never merged", () => {
     draft = edit(draft, "name", "Mine");
     draft = suiteSettingsReducer(draft, {
       type: "rebase",
+      suiteId: SUITE_ID,
       live: { ...BASE, name: "Theirs" },
     });
     draft = edit(draft, "name", "Decided");
@@ -335,7 +344,10 @@ describe("every change can be read", () => {
     const accuracy = rows.find((row) => row.key === "defaultPassCriteria");
     expect(accuracy).toMatchObject({ before: "80%", after: "90%" });
     const judge = rows.find((row) => row.key === "judgeConfig");
-    expect(judge!.before).toBe("Off");
+    // "Not configured", not "Off": an absent judgeConfig resolves through
+    // GOAL_COMPLETION_DEFAULTS to an ENABLED advisory judge that never
+    // auto-runs, so calling it off described a change that was not happening.
+    expect(judge!.before).toBe("Not configured");
     expect(judge!.after).toContain("Advisory");
     expect(judge!.after).toContain("80%");
   });
@@ -364,13 +376,81 @@ describe("reading a suite into the draft", () => {
     // Two spellings of "no checks" is how one of them ends up rendering as an
     // unsaved change the person never made.
     expect(readSuiteSettingsValues({}).defaultPredicates).toEqual([]);
-    const draft = initSuiteSettingsDraft(
-      readSuiteSettingsValues({ defaultPredicates: [] }),
-    );
+    const draft = initSuiteSettingsDraft({
+      suiteId: SUITE_ID,
+      values: readSuiteSettingsValues({ defaultPredicates: [] }),
+    });
     expect(dirtyKeys(draft)).toEqual([]);
   });
 
   test("a missing name reads as empty rather than undefined", () => {
     expect(readSuiteSettingsValues({}).name).toBe("");
+  });
+});
+
+// =============================================================================
+// Review follow-ups.
+//
+// A draft is state about ONE suite, and every test here is a way that stopped
+// being true — by navigation, by a second rebase, or by a save that carried a
+// field the deployment does not have.
+// =============================================================================
+
+describe("a draft belongs to one suite", () => {
+  test("rebasing onto a different suite starts a new draft", () => {
+    let draft = draftOf();
+    draft = edit(draft, "name", "Suite A's unsaved name");
+
+    draft = suiteSettingsReducer(draft, {
+      type: "rebase",
+      suiteId: "suite-b",
+      live: { ...BASE, name: "Suite B" },
+    });
+
+    // The failure this prevents: the component is not remounted between
+    // suites, so without an identity check A's unsaved name survives, renders
+    // as an unsaved change on B, and Save writes it to B.
+    expect(draft.suiteId).toBe("suite-b");
+    expect(draft.current.name).toBe("Suite B");
+    expect(dirtyKeys(draft)).toEqual([]);
+    expect(draft.conflicts).toEqual([]);
+  });
+});
+
+describe("a conflict survives until someone resolves it", () => {
+  test("an unrelated later change does not clear the marker", () => {
+    let draft = draftOf();
+    draft = edit(draft, "minIterations", 5);
+    // A colleague sets it to 7 — a real disagreement (BASE is 3).
+    draft = suiteSettingsReducer(draft, {
+      type: "rebase",
+      suiteId: SUITE_ID,
+      live: { ...BASE, minIterations: 7 },
+    });
+    expect(draft.conflicts).toEqual(["minIterations"]);
+
+    // The same colleague then renames the suite. Recomputing conflicts from
+    // the new base would find iterations unchanged BETWEEN the two rebases and
+    // silently drop the warning — and the next save would overwrite their 7
+    // with no notice at all.
+    draft = suiteSettingsReducer(draft, {
+      type: "rebase",
+      suiteId: SUITE_ID,
+      live: { ...BASE, minIterations: 7, name: "Renamed by them" },
+    });
+
+    expect(draft.conflicts).toEqual(["minIterations"]);
+    expect(draft.current.minIterations).toBe(5);
+  });
+});
+
+describe("a clear is spelled the way the mutation accepts", () => {
+  test("pass criteria is omitted rather than nulled", () => {
+    let draft = draftOf({ defaultPassCriteria: { minimumPassRate: 80 } });
+    draft = edit(draft, "defaultPassCriteria", undefined);
+    const args = toUpdateArgs(draft, "suite-1");
+    // `v.optional(passCriteriaValidator)` has no null member, so sending null
+    // rejects the whole batched save — every other setting in it included.
+    expect("defaultPassCriteria" in args).toBe(false);
   });
 });
