@@ -18,6 +18,7 @@
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
+  formatBrowserdError,
   isPointInViewport,
   type BrowserAction,
   type BrowserCommand,
@@ -36,7 +37,8 @@ import {
   type ConsoleBudget,
 } from "./observation-budget";
 import { WebMcpBridgeError } from "./webmcp-bridge";
-import { RESUMED_AFTER_HANDOFF_NOTE, type HandoffLease } from "./lease";
+import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
+import { createTabViewport, type TabViewport } from "./viewport";
 import {
   DEFAULT_SETTLE_OPTIONS,
   settlePage,
@@ -74,11 +76,18 @@ interface FrameSnapshot {
 export interface ChromiumDriverOptions {
   settle?: SettleOptions;
   /**
-   * The human-handoff lease, shared with the request handler. The driver only
-   * READS it, to make the first observation after a handoff loud (L6) — the
-   * blocking itself happens at the handler, before anything is captured.
+   * The human-handoff lease, shared with the request handler.
+   *
+   * The driver READS it for two things: to make the first observation after a
+   * handoff loud (L6), and to refuse a capture the moment someone takes the
+   * browser mid-command. The handler's 423 covers commands that ARRIVE during
+   * a hold; it cannot cover the one already executing, whose screenshot would
+   * otherwise be taken a beat after a person started typing a password.
    */
-  lease?: Pick<HandoffLease, "consumeResumedDirty" | "consumeResumedHeldSince">;
+  lease?: Pick<
+    HandoffLease,
+    "consumeResumedDirty" | "consumeResumedHeldSince" | "resumedFromKind" | "state"
+  >;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
@@ -123,9 +132,32 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
   private readonly lease:
-    | Pick<HandoffLease, "consumeResumedDirty" | "consumeResumedHeldSince">
+    | Pick<
+        HandoffLease,
+        | "consumeResumedDirty"
+        | "consumeResumedHeldSince"
+        | "resumedFromKind"
+        | "state"
+      >
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
+  /**
+   * One viewport per tab, created on first watch.
+   *
+   * Lazy for the same reason the WebMCP bridge is: attaching a CDP session and
+   * encoding JPEGs for a tab nobody is looking at is work done for nobody.
+   */
+  private readonly viewports = new Map<string, Promise<TabViewport | null>>();
+  /**
+   * Tab creations already under way, by tabId.
+   *
+   * `context.newPage()` is awaited, so without this two callers arriving
+   * together — a navigate and the pane opening, say — each open a page and the
+   * second overwrites the first in `tabs`. The result is an orphaned renderer
+   * and subscribers split across two pages, one of which nothing will ever
+   * drive again.
+   */
+  private readonly pendingTabs = new Map<string, Promise<TabEntry>>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
@@ -145,6 +177,15 @@ export class ChromiumDriver implements BrowserDriver {
     // in would otherwise be readable the instant they hand back. Doing it here
     // rather than in the console branch covers every future reader too.
     this.purgeHandoffConsole();
+    // The third and last gate (handler → dequeue → here). A command that got
+    // this far while a person holds the browser must not run: `execute` is
+    // where the page is actually touched.
+    const permit = this.permitFor(command);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed",
+      );
+    }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
@@ -170,8 +211,11 @@ export class ChromiumDriver implements BrowserDriver {
             };
           }
         }
-        return this.navigateVerb(tabId, await this.getOrCreateTab(tabId), (page) =>
-          page.goto(action.url),
+        return this.navigateVerb(
+          tabId,
+          await this.getOrCreateTab(tabId),
+          (page) => page.goto(action.url),
+          permit,
         );
       }
       case "back":
@@ -182,18 +226,21 @@ export class ChromiumDriver implements BrowserDriver {
         if (!entry || entry.page.isClosed()) {
           return { ok: false, error: `unknown_tab: ${tabId}` };
         }
-        return this.navigateVerb(tabId, entry, (page) =>
-          action.kind === "back" ? page.goBack() : page.reload(),
+        return this.navigateVerb(
+          tabId,
+          entry,
+          (page) => (action.kind === "back" ? page.goBack() : page.reload()),
+          permit,
         );
       }
       case "observe":
-        return this.observe(tabId, action);
+        return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action);
+        return this.act(tabId, action, permit);
       case "webmcp_invoke":
-        return this.webmcpInvoke(tabId, action);
+        return this.webmcpInvoke(tabId, action, permit);
       case "webmcp_cancel":
-        return this.webmcpCancel(tabId, action);
+        return this.webmcpCancel(tabId, action, permit);
     }
   }
 
@@ -209,6 +256,7 @@ export class ChromiumDriver implements BrowserDriver {
   private async act(
     tabId: string,
     action: Extract<BrowserAction, { kind: "act" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -219,13 +267,13 @@ export class ChromiumDriver implements BrowserDriver {
     // Tab lifecycle verbs do not produce an observation of their own tab.
     if (action.verb === "close_tab") {
       await page.close().catch(() => {});
-      this.tabs.delete(tabId);
+      await this.dropTab(tabId);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
       const frame = await this.snapshot(page);
-      return this.observation(tabId, entry, { url: frame.url }, frame);
+      return this.observation(tabId, entry, { url: frame.url }, frame, permit);
     }
 
     try {
@@ -238,7 +286,15 @@ export class ChromiumDriver implements BrowserDriver {
       const kind = /timeout|not found|no element|strict mode/i.test(message)
         ? "target_not_found"
         : "act_failed";
-      const frame = await this.snapshot(page).catch(() => null);
+      // Same rule as the success path: the act may have failed, but the page
+      // it failed on can still be someone's now. `permit()` decides whether we
+      // may say anything about it beyond "it failed" — asked before the read
+      // to avoid making it, and again after, because the read is an await and
+      // a handoff can land inside it.
+      const before = permit()
+        ? await this.snapshot(page).catch(() => null)
+        : null;
+      const frame = permit() ? before : null;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -257,6 +313,14 @@ export class ChromiumDriver implements BrowserDriver {
     }
 
     const settled = await this.settle(page);
+    // The act RAN. If a person took the browser while the page settled, we
+    // still owe the caller an honest answer — but not a picture of whatever
+    // they are doing now. Say what happened and hand back nothing else.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
+      );
+    }
     const frame = await this.snapshot(page);
     const screenshot = await page.screenshotBase64().catch(() => undefined);
     return {
@@ -265,6 +329,8 @@ export class ChromiumDriver implements BrowserDriver {
         entry,
         { url: frame.url, ...(screenshot ? { screenshot } : {}) },
         frame,
+        permit,
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
       ),
       settled,
     };
@@ -362,6 +428,7 @@ export class ChromiumDriver implements BrowserDriver {
   private async webmcpInvoke(
     tabId: string,
     action: Extract<BrowserAction, { kind: "webmcp_invoke" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -374,6 +441,15 @@ export class ChromiumDriver implements BrowserDriver {
         error:
           "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools",
       };
+    }
+    // Before the CALL, not only before its result: resolving the bridge is an
+    // await, and a page's own tool changes the page — running one under
+    // somebody else's hands is the agent acting during a handoff, whatever we
+    // then decide to return.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the page's tool could be called; nothing was run",
+      );
     }
     try {
       const { invocationId, output } = await bridge.invoke({
@@ -391,6 +467,8 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           { invocationId, result: capped, ...(omitted ? { omitted } : {}) },
           frame,
+          permit,
+          "the page's tool ran, but a person took control of this browser before its result could be read; re-run it after they hand it back",
         ),
       };
     } catch (error) {
@@ -407,6 +485,7 @@ export class ChromiumDriver implements BrowserDriver {
   private async webmcpCancel(
     tabId: string,
     action: Extract<BrowserAction, { kind: "webmcp_cancel" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
@@ -415,6 +494,14 @@ export class ChromiumDriver implements BrowserDriver {
     const bridge = await entry.page.webmcp();
     if (!bridge) {
       return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    // Cancelling reaches into the page, and `bridge.webmcp()` above was an
+    // await — so the permit is re-asked here even though this verb returns no
+    // observation of its own.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the cancellation could be delivered",
+      );
     }
     const known = await bridge.cancel(action.invocationId);
     return { ok: true, output: { cancelled: known } };
@@ -430,13 +517,26 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     entry: TabEntry,
     navigate: (page: DriverPage) => Promise<void>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
+      );
+    }
     const frame = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { url: frame.url }, frame),
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url },
+        frame,
+        permit,
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
+      ),
       settled,
     };
   }
@@ -444,7 +544,13 @@ export class ChromiumDriver implements BrowserDriver {
   private async observe(
     tabId: string,
     action: Extract<BrowserAction, { kind: "observe" }>,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -452,16 +558,22 @@ export class ChromiumDriver implements BrowserDriver {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame);
+        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
       }
       case "dom": {
         // The token is computed from the SAME snapshot returned as output, so
         // they cannot disagree.
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
+        return this.observation(
+          tabId,
+          entry,
+          { dom: frame.domSignal },
+          frame,
+          permit,
+        );
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry);
+        return this.observeScreenshot(tabId, entry, permit);
       case "a11y": {
         // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
         // a marker naming the retrieval verb), never by cutting one open.
@@ -492,6 +604,7 @@ export class ChromiumDriver implements BrowserDriver {
             ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
           },
           frame,
+          permit,
         );
       }
       case "console": {
@@ -505,6 +618,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           { console: entries, ...(omitted > 0 ? { omitted } : {}) },
           frame,
+          permit,
         );
       }
       case "webmcp_tools": {
@@ -519,6 +633,7 @@ export class ChromiumDriver implements BrowserDriver {
             entry,
             { webmcpSupported: false, tools: [] },
             frame,
+            permit,
           );
         }
         return this.observation(
@@ -526,6 +641,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           { webmcpSupported: true, tools: bridge.list() },
           frame,
+          permit,
         );
       }
     }
@@ -543,9 +659,17 @@ export class ChromiumDriver implements BrowserDriver {
   private async observeScreenshot(
     tabId: string,
     entry: TabEntry,
+    permit: () => boolean,
   ): Promise<BrowserCommandResult> {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
+      // Re-checked per attempt: this loop captures more than once, and a
+      // handoff between attempts must stop the next one.
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person has taken control of this browser; nothing was observed",
+        );
+      }
       const before = await this.snapshot(entry.page);
       const screenshot = await entry.page.screenshotBase64();
       const after = await this.snapshot(entry.page);
@@ -553,15 +677,23 @@ export class ChromiumDriver implements BrowserDriver {
       // route change moves the URL while `domSignal` holds, and would otherwise
       // bind a new-route token to an old-route image (P1).
       if (before.url === after.url && before.domSignal === after.domSignal) {
-        return this.observation(tabId, entry, { screenshot }, after);
+        return this.observation(tabId, entry, { screenshot }, after, permit);
       }
     }
     // Would not stabilise within budget: hand back the frame but flag it unsettled
     // so nothing pins an act to a possibly-stale image.
+    // The one capture in this method that is NOT inside the loop, and so was
+    // the one the per-attempt check above could not cover: a handoff landing
+    // during the final attempt would otherwise be photographed here.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
     const screenshot = await entry.page.screenshotBase64();
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { screenshot }, after),
+      ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false,
     };
   }
@@ -577,6 +709,55 @@ export class ChromiumDriver implements BrowserDriver {
     });
   }
 
+  /**
+   * The live picture of a tab.
+   *
+   * Deliberately NOT routed through the command queue. Input arrives as
+   * pointer batches at up to twenty a second while someone drags a scrollbar,
+   * and every command consumes an idempotency slot from a per-boot ledger that
+   * refuses new ids once exhausted — a person scrolling for a few minutes
+   * would rotate the daemon. The lease is the gate on this path instead, which
+   * is the right one: it is the person's own hands, and the lease is what says
+   * the hands are theirs.
+   */
+  async viewport(tabId?: string): Promise<TabViewport | null> {
+    const key = tabId ?? DEFAULT_TAB;
+    const live = this.tabs.get(key);
+    if (live && !live.page.isClosed()) {
+      const cached = this.viewports.get(key);
+      if (cached) return cached;
+    } else {
+      // The page this viewport watched is gone. Retire it here as well as at
+      // `close_tab`, because a page can also close itself (`window.close()`,
+      // a crashed renderer) with nothing routed through the driver.
+      await this.dropViewport(key);
+    }
+    // OPENS the tab when it does not exist yet, unlike every model-facing
+    // verb but `navigate`. Someone opening the pane before the agent has done
+    // anything should see the browser's blank startup page, not an error —
+    // and they need a page to exist before they can take control and type a
+    // URL into it. An explicit tabId that names no tab is still unknown.
+    const entry =
+      tabId === undefined || key === DEFAULT_TAB
+        ? await this.getOrCreateTab(key)
+        : this.tabs.get(key);
+    if (!entry || entry.page.isClosed()) return null;
+    // Re-read after the await: a concurrent caller resuming from the same
+    // `getOrCreateTab` promise may already have attached one, and two
+    // screencasts on one page is two encoders for one picture.
+    const raced = this.viewports.get(key);
+    if (raced) return raced;
+    const created = (async () => {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return null;
+      return createTabViewport(cdp, {
+        surface: BROWSERD_OBSERVATION_VIEWPORT,
+      });
+    })();
+    this.viewports.set(key, created);
+    return created;
+  }
+
   async health(): Promise<DriverHealth> {
     return this.context.isConnected()
       ? { ok: true }
@@ -584,6 +765,10 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async close(): Promise<void> {
+    for (const viewport of this.viewports.values()) {
+      await viewport.then((v) => v?.dispose()).catch(() => {});
+    }
+    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {});
     }
@@ -597,15 +782,37 @@ export class ChromiumDriver implements BrowserDriver {
    * in, never re-read here — so the token can never describe a different state
    * than the returned output (P1).
    */
+  /**
+   * The ONE funnel every page-derived result leaves through — which is why the
+   * last permit check lives here rather than at each caller.
+   *
+   * Every observation is read from the page across at least one `await`, and a
+   * check made before that await can only say the lease was free when the read
+   * STARTED. Asking again here, on the result's way out, is what makes "while a
+   * person holds the browser the agent observes nothing" true rather than
+   * nearly true: whatever was read is dropped instead of returned. Callers
+   * keep their own earlier checks — those refuse cheaply, before the read —
+   * and pass the prose that fits what already happened.
+   */
   private observation(
     tabId: string,
     entry: TabEntry,
     output: Record<string, unknown>,
     frame: FrameSnapshot,
+    permit: () => boolean,
+    blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed",
   ): BrowserCommandResult {
+    if (!permit()) return this.leaseBlockedResult(blockedDetail);
     return {
       ok: true,
-      output: this.withHandoffNote(output),
+      // WHERE this came from, on every observation without exception. The
+      // unattended origin allowlist is enforced against the result's `url`
+      // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
+      // carrying none fails that check OPEN — a screenshot of an off-allowlist
+      // page would reach the model unfiltered. Stamped at the funnel so no
+      // future observation mode can forget it. An explicit `url` in `output`
+      // still wins; today it is the same value.
+      output: this.withHandoffNote({ url: frame.url, ...output }),
       stateToken: this.tokenFor(tabId, entry, frame),
     };
   }
@@ -619,8 +826,40 @@ export class ChromiumDriver implements BrowserDriver {
    */
   private withHandoffNote(output: Record<string, unknown>) {
     return this.lease?.consumeResumedDirty()
-      ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE }
+      ? {
+          ...output,
+          handoffNote: handoffNoteFor(this.lease.resumedFromKind()),
+        }
       : output;
+  }
+
+  /**
+   * May THIS command look at the page right now?
+   *
+   * Bound to the command rather than read globally, because "a lease is held"
+   * is not the same as "you may not look": the holder's own `manual` commands
+   * are exactly what a lease is for. It is the same predicate the handler and
+   * the dequeue guard ask, asked a third time — and passed down as a closure
+   * rather than stored on the instance, because two tabs run concurrently and
+   * a shared field would answer one command's question with another's.
+   *
+   * Asked immediately before EVERY capture rather than once per command: a
+   * command can take seconds (a navigation settles for up to ten), and the
+   * handoff it must respect is the one happening NOW.
+   */
+  private permitFor(command: BrowserCommand): () => boolean {
+    const lease = this.lease;
+    if (!lease) return () => true;
+    return () => leaseRefusalFor(lease.state(), command) === undefined;
+  }
+
+  /** The result a capture-time handoff produces: no output, no token, no frame. */
+  private leaseBlockedResult(detail: string): BrowserCommandResult {
+    return {
+      ok: false,
+      leaseBlocked: true,
+      error: formatBrowserdError("lease_held", detail),
+    };
   }
 
   /**
@@ -673,9 +912,43 @@ export class ChromiumDriver implements BrowserDriver {
   private async getOrCreateTab(tabId: string): Promise<TabEntry> {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
-    const page = await this.context.newPage();
-    const entry: TabEntry = { page, navCounter: 0 };
-    this.tabs.set(tabId, entry);
-    return entry;
+    const inFlight = this.pendingTabs.get(tabId);
+    if (inFlight) return inFlight;
+    const creating = (async () => {
+      // Replacing a closed tab retires everything attached to the old page —
+      // its viewport is bound to a CDP session that will never speak again.
+      await this.dropTab(tabId);
+      const page = await this.context.newPage();
+      const entry: TabEntry = { page, navCounter: 0 };
+      this.tabs.set(tabId, entry);
+      return entry;
+    })();
+    this.pendingTabs.set(tabId, creating);
+    try {
+      return await creating;
+    } finally {
+      this.pendingTabs.delete(tabId);
+    }
+  }
+
+  /** Forget a tab and everything attached to it. */
+  private async dropTab(tabId: string): Promise<void> {
+    this.tabs.delete(tabId);
+    await this.dropViewport(tabId);
+  }
+
+  /**
+   * Retire a tab's viewport.
+   *
+   * The cache is keyed by tabId but its contents belong to a PAGE. A closed or
+   * replaced tab left its viewport in place, still holding the dead page's CDP
+   * session: it published no more frames and swallowed the new page's input,
+   * so the recreated tab could be neither watched nor driven.
+   */
+  private async dropViewport(tabId: string): Promise<void> {
+    const viewport = this.viewports.get(tabId);
+    if (!viewport) return;
+    this.viewports.delete(tabId);
+    await viewport.then((v) => v?.dispose()).catch(() => {});
   }
 }

@@ -20,6 +20,60 @@ var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   perQueueDepthCap: 8,
   maxCommandsPerBoot: 5e4
 };
+var BROWSERD_ERROR_CODES = [
+  // --- transport / control plane (HTTP envelope) -------------------------
+  "cross_origin_forbidden",
+  "invalid_json",
+  "invalid_command",
+  "invalid_lease_action",
+  "holder_required",
+  "command_unknown_boot",
+  "command_expired",
+  "daemon_at_capacity",
+  "stale_observation",
+  /** A person holds the browser; nothing ran and nothing was observed. */
+  "lease_held",
+  /** Their lease ran out mid-flow; still blocked until they hand it back. */
+  "lease_parked",
+  /** A `manual` command arrived while nobody holds the lease. */
+  "lease_required",
+  /** A `manual` command named a holder who is not the one holding it. */
+  "lease_held_by_other",
+  // --- driver (result `error`, `"<code>: <detail>"`) ---------------------
+  "unknown_tab",
+  "tab_exists",
+  "unknown_selector",
+  "target_not_found",
+  "act_failed",
+  "out_of_viewport",
+  "unsupported_target",
+  /** An `a11yRef` whose node has left the page — distinct from not found. */
+  "stale_ref",
+  "webmcp_unsupported",
+  "webmcp_error",
+  /** A dialog is open and waiting for the person who holds the lease. */
+  "dialog_pending",
+  /** A download exceeded the per-file or per-session cap and was cancelled. */
+  "download_over_cap",
+  // --- session establishment (never reaches the daemon) ------------------
+  /** This engine needs a Chromium that is not installed on this machine. */
+  "chromium_not_installed",
+  /** Another live process owns this profile directory. */
+  "profile_in_use",
+  /** A result's URL is outside an unattended run's origin allowlist. */
+  "origin_not_allowed"
+];
+var BROWSERD_ERROR_CODE_SET = new Set(
+  BROWSERD_ERROR_CODES
+);
+function formatBrowserdError(code, detail) {
+  return detail ? `${code}: ${detail}` : code;
+}
+function parseBrowserdErrorCode(error) {
+  if (!error) return void 0;
+  const head = error.split(":", 1)[0]?.trim() ?? "";
+  return BROWSERD_ERROR_CODE_SET.has(head) ? head : void 0;
+}
 
 // server/services/browserd/daemon/command-queue.ts
 function queueKeyFor(command) {
@@ -204,6 +258,10 @@ var HandoffLease = class {
    * window and leave the earliest (most sensitive) entries readable.
    */
   heldSince;
+  /** The kind of the current (or just-ended) hold; see `LeaseHolderKind`. */
+  holderKind = "human";
+  /** The kind of the hold the pending resume note describes. */
+  resumedHolderKind;
   /**
    * Start of the EARLIEST hold that has ended without its console being purged
    * yet, consumed alongside the flag.
@@ -231,7 +289,11 @@ var HandoffLease = class {
    */
   state() {
     if (this.current.state === "held" && this.now() >= this.current.expiresAt) {
-      this.current = { state: "parked", holder: this.current.holder };
+      this.current = {
+        state: "parked",
+        holder: this.current.holder,
+        holderKind: this.current.holderKind
+      };
     }
     return this.current;
   }
@@ -239,7 +301,7 @@ var HandoffLease = class {
   isBlocking() {
     return this.state().state !== "free";
   }
-  acquire(holder, ttlMs) {
+  acquire(holder, ttlMs, kind = "human") {
     const state = this.state();
     if (state.state !== "free" && state.holder !== holder) {
       return state;
@@ -248,10 +310,14 @@ var HandoffLease = class {
       Math.max(1e3, ttlMs ?? this.defaultTtlMs),
       this.maxTtlMs
     );
-    if (state.state === "free") this.heldSince = this.now();
+    if (state.state === "free") {
+      this.heldSince = this.now();
+      this.holderKind = kind;
+    }
     this.current = {
       state: "held",
       holder,
+      holderKind: this.holderKind,
       expiresAt: this.now() + ttl
     };
     return this.current;
@@ -260,7 +326,7 @@ var HandoffLease = class {
   heartbeat(holder, ttlMs) {
     const state = this.state();
     if (state.state !== "held" || state.holder !== holder) return state;
-    return this.acquire(holder, ttlMs);
+    return this.acquire(holder, ttlMs, state.holderKind);
   }
   /**
    * Hand control back. Only the holder may — including from `parked`, which
@@ -275,6 +341,7 @@ var HandoffLease = class {
     this.resumedDirty = true;
     if (this.resumedHeldSince === void 0) {
       this.resumedHeldSince = this.heldSince;
+      this.resumedHolderKind = this.holderKind;
     }
     this.heldSince = void 0;
     return this.current;
@@ -308,8 +375,32 @@ var HandoffLease = class {
     this.resumedHeldSince = void 0;
     return since;
   }
+  /**
+   * What held the browser across the handoff the next observation describes.
+   * Read (not consumed) alongside `consumeResumedDirty`, which owns the
+   * once-only semantics — two independent consume flags would let the note and
+   * its subject come apart.
+   */
+  resumedFromKind() {
+    return this.resumedHolderKind ?? this.holderKind;
+  }
 };
+function leaseRefusalFor(lease, command) {
+  if (command.source !== "manual") {
+    if (lease.state === "free") return void 0;
+    return lease.state === "held" ? "lease_held" : "lease_parked";
+  }
+  if (lease.state === "free") return "lease_required";
+  if (!command.holder || command.holder !== lease.holder) {
+    return "lease_held_by_other";
+  }
+  return void 0;
+}
 var RESUMED_AFTER_HANDOFF_NOTE = "A person took control of this browser and has handed it back. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before the handoff.";
+var RESUMED_AFTER_SCRIPT_NOTE = "A script took control of this browser over its debugging endpoint and has released it. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before it ran.";
+function handoffNoteFor(kind) {
+  return kind === "script" ? RESUMED_AFTER_SCRIPT_NOTE : RESUMED_AFTER_HANDOFF_NOTE;
+}
 
 // server/services/browserd/daemon/request-handler.ts
 var BrowserdRequestHandler = class {
@@ -377,12 +468,19 @@ var BrowserdRequestHandler = class {
       };
     }
     const leaseState = this.lease.state();
-    if (leaseState.state !== "free" && parsed.command.source !== "manual") {
+    const refusal = leaseRefusalFor(
+      leaseState,
+      parsed.command
+    );
+    if (refusal) {
       return {
         status: 423,
         body: {
-          error: leaseState.state === "held" ? "lease_held" : "lease_parked",
-          holder: leaseState.holder,
+          error: refusal,
+          ...leaseState.state === "free" ? {} : {
+            holder: leaseState.holder,
+            holderKind: leaseState.holderKind
+          },
           bootId: this.bootId
         }
       };
@@ -395,6 +493,88 @@ var BrowserdRequestHandler = class {
     }
     const outcome = await this.queue.submit(parsed.command);
     return this.mapOutcome(outcome);
+  }
+  /**
+   * Watch a tab.
+   *
+   * Not an HTTP route: frames are a stream, and the local engine's transport
+   * is a function call rather than a socket. It lives on the handler anyway,
+   * beside the command gate, because the daemon is where the lease is
+   * ENFORCED — "any future path that reads the browser must go through the
+   * daemon to inherit that" (the rollout doc's own words). A viewport that
+   * subscribed straight to the driver would be exactly the reader that
+   * bypasses it.
+   *
+   * While someone holds the browser, only THEY may watch: a second pane
+   * showing a person's password field as they type it is the same leak as an
+   * agent screenshotting it, and the lease is the only thing that knows whose
+   * hands are on the page.
+   */
+  async subscribeFrames(args) {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    const afterAwait = this.watcherRefusal(args.holder);
+    if (afterAwait) return { ok: false, error: afterAwait };
+    let live = true;
+    let unsubscribe;
+    const revoke = (reason) => {
+      if (!live) return;
+      live = false;
+      unsubscribe?.();
+      args.onRevoked?.(reason);
+    };
+    unsubscribe = viewport.subscribe((frame) => {
+      if (!live) return;
+      const lost = this.watcherRefusal(args.holder);
+      if (lost) {
+        revoke(lost);
+        return;
+      }
+      args.listener(frame);
+    });
+    if (!live) unsubscribe();
+    return {
+      ok: true,
+      unsubscribe: () => {
+        live = false;
+        unsubscribe?.();
+      },
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (lost) revoke(lost);
+      }
+    };
+  }
+  /**
+   * Forward a person's input.
+   *
+   * Requires the lease, and requires it to be THEIRS — this is the one path
+   * that puts keystrokes into the page without a per-action approval, so the
+   * question "who is typing" has to have an answer that is not "whoever
+   * reached the endpoint".
+   */
+  async dispatchInput(args) {
+    const stillTheirs = () => leaseRefusalFor(this.lease.state(), {
+      source: "manual",
+      holder: args.holder
+    });
+    const refusal = stillTheirs();
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    const afterAwait = stillTheirs();
+    if (afterAwait) return { ok: false, error: afterAwait };
+    await viewport.dispatchInput(args.events, () => stillTheirs() === void 0);
+    return { ok: true };
+  }
+  /** May this watcher see frames right now? */
+  watcherRefusal(holder) {
+    const lease = this.lease.state();
+    if (lease.state === "free") return void 0;
+    return holder && holder === lease.holder ? void 0 : lease.state === "held" ? "lease_held" : "lease_parked";
   }
   /**
    * Lease control. Every action names its `holder` so one person's lease
@@ -415,10 +595,11 @@ var BrowserdRequestHandler = class {
       return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
     }
     const ttlMs = typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs) ? parsed.ttlMs : void 0;
+    const kind = parsed?.kind === "script" ? "script" : "human";
     let state;
     switch (parsed?.action) {
       case "acquire":
-        state = this.lease.acquire(holder, ttlMs);
+        state = this.lease.acquire(holder, ttlMs, kind);
         break;
       case "heartbeat":
         state = this.lease.heartbeat(holder, ttlMs);
@@ -449,6 +630,19 @@ var BrowserdRequestHandler = class {
   mapOutcome(outcome) {
     switch (outcome.status) {
       case "ok":
+        if (outcome.result.leaseBlocked) {
+          const lease = this.lease.state();
+          const code = parseBrowserdErrorCode(outcome.result.error) ?? "lease_held";
+          return {
+            status: 423,
+            body: {
+              error: code,
+              ...outcome.result.error && outcome.result.error !== code ? { detail: outcome.result.error } : {},
+              ...lease.state === "free" ? {} : { holder: lease.holder, holderKind: lease.holderKind },
+              bootId: outcome.bootId
+            }
+          };
+        }
         if (outcome.result.staleObservation) {
           return {
             status: 409,
@@ -484,20 +678,22 @@ var BrowserdRequestHandler = class {
 function isValidCommand(value) {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value;
-  return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string");
+  return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
 
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
   return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
 }
-function guardStaleness(driver) {
+function guardStaleness(driver, lease) {
   return async (command) => {
     const { action } = command;
     if (action.kind !== "act" || action.expectedState === void 0) {
       return driver.execute(command);
     }
     const current = await driver.currentStateToken(command.tabId);
+    const refusal = lease && leaseRefusalFor(lease.state(), command);
+    if (refusal) return leaseBlockedResult(refusal);
     if (current !== void 0 && !stateTokensMatch(current, action.expectedState)) {
       return {
         ok: false,
@@ -507,6 +703,23 @@ function guardStaleness(driver) {
       };
     }
     return driver.execute(command);
+  };
+}
+function leaseBlockedResult(refusal) {
+  return {
+    ok: false,
+    leaseBlocked: true,
+    error: formatBrowserdError(
+      refusal,
+      "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+    )
+  };
+}
+function guardLease(lease, executor) {
+  return async (command) => {
+    const refusal = leaseRefusalFor(lease.state(), command);
+    if (refusal) return leaseBlockedResult(refusal);
+    return executor(command);
   };
 }
 
@@ -592,8 +805,11 @@ function headerValue(value) {
 }
 function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID();
-  const queue = new CommandQueue(guardStaleness(driver), bootId);
   const lease = config.lease ?? new HandoffLease();
+  const queue = new CommandQueue(
+    guardLease(lease, guardStaleness(driver, lease)),
+    bootId
+  );
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
@@ -1085,6 +1301,311 @@ var WebMcpBridge = class {
   }
 };
 
+// server/services/webmcp-inspector/frame-throttle.ts
+function createFrameThrottle(options) {
+  const now = options.now ?? Date.now;
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  let lastEmitAt = Number.NEGATIVE_INFINITY;
+  let trailing;
+  let timer;
+  let boostUntil = Number.NEGATIVE_INFINITY;
+  let boostIntervalMs = options.minIntervalMs;
+  const interval = () => now() < boostUntil ? boostIntervalMs : options.minIntervalMs;
+  const flush = () => {
+    timer = void 0;
+    if (!trailing) return;
+    const remaining = interval() - (now() - lastEmitAt);
+    if (remaining > 0) {
+      timer = setTimer(flush, remaining);
+      return;
+    }
+    const { value } = trailing;
+    trailing = void 0;
+    lastEmitAt = now();
+    options.emit(value);
+  };
+  return {
+    push(value) {
+      const elapsed = now() - lastEmitAt;
+      const minIntervalMs = interval();
+      if (elapsed >= minIntervalMs) {
+        trailing = void 0;
+        if (timer !== void 0) {
+          clearTimer(timer);
+          timer = void 0;
+        }
+        lastEmitAt = now();
+        options.emit(value);
+        return;
+      }
+      trailing = { value };
+      if (timer === void 0) {
+        timer = setTimer(flush, minIntervalMs - elapsed);
+      }
+    },
+    boost(intervalMs, windowMs) {
+      boostIntervalMs = intervalMs;
+      boostUntil = now() + windowMs;
+      if (trailing === void 0 || timer === void 0) return;
+      const remaining = intervalMs - (now() - lastEmitAt);
+      clearTimer(timer);
+      timer = void 0;
+      if (remaining <= 0) {
+        flush();
+        return;
+      }
+      timer = setTimer(flush, remaining);
+    },
+    reset() {
+      trailing = void 0;
+      if (timer !== void 0) {
+        clearTimer(timer);
+        timer = void 0;
+      }
+      lastEmitAt = Number.NEGATIVE_INFINITY;
+      boostUntil = Number.NEGATIVE_INFINITY;
+      boostIntervalMs = options.minIntervalMs;
+    }
+  };
+}
+
+// shared/jpeg-dimensions.ts
+function isStandalone(marker) {
+  return marker >= 208 && marker <= 215 || marker === 1;
+}
+function isStartOfFrame(marker) {
+  if (marker < 192 || marker > 207) return false;
+  return marker !== 196 && marker !== 200 && marker !== 204;
+}
+function readJpegDimensions(bytes) {
+  if (bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216) {
+    return void 0;
+  }
+  let offset = 2;
+  while (offset + 1 < bytes.length) {
+    if (bytes[offset] !== 255) return void 0;
+    let marker = bytes[offset + 1];
+    while (marker === 255 && offset + 2 < bytes.length) {
+      offset += 1;
+      marker = bytes[offset + 1];
+    }
+    if (marker === 217 || marker === 218) return void 0;
+    if (isStandalone(marker)) {
+      offset += 2;
+      continue;
+    }
+    if (offset + 3 >= bytes.length) return void 0;
+    const length = bytes[offset + 2] << 8 | bytes[offset + 3];
+    if (length < 2) return void 0;
+    if (isStartOfFrame(marker)) {
+      if (length < 8 || offset + 8 >= bytes.length) return void 0;
+      const height = bytes[offset + 5] << 8 | bytes[offset + 6];
+      const width = bytes[offset + 7] << 8 | bytes[offset + 8];
+      if (width <= 0 || height <= 0) return void 0;
+      return { width, height };
+    }
+    offset += 2 + length;
+  }
+  return void 0;
+}
+
+// server/services/browserd/daemon/viewport.ts
+var DEFAULT_QUALITY = 75;
+var DEFAULT_MIN_INTERVAL_MS = 100;
+var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+function createTabViewport(cdp, options) {
+  const quality = options.quality ?? DEFAULT_QUALITY;
+  const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+  const now = options.now ?? Date.now;
+  const listeners = /* @__PURE__ */ new Set();
+  let streaming = false;
+  let streamGeneration = 0;
+  let disposed = false;
+  let buttonMask = 0;
+  let lastData;
+  let seq = 0;
+  const publish = (frame) => {
+    for (const listener of listeners) {
+      try {
+        listener(frame);
+      } catch {
+      }
+    }
+  };
+  const throttle = createFrameThrottle({
+    minIntervalMs: options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS,
+    emit: publish,
+    ...options.now ? { now: options.now } : {},
+    ...options.setTimer ? { setTimer: options.setTimer } : {},
+    ...options.clearTimer ? { clearTimer: options.clearTimer } : {}
+  });
+  cdp.on("Page.screencastFrame", (payload) => {
+    const frame = payload;
+    if (frame.sessionId !== void 0) {
+      void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {
+      });
+    }
+    if (!streaming || disposed || !frame.data) return;
+    if (frame.data === lastData) return;
+    lastData = frame.data;
+    const bytes = Math.floor(frame.data.length * 3 / 4);
+    if (bytes > maxBytes) return;
+    const measured = measure(frame.data, options.surface);
+    throttle.push({
+      data: frame.data,
+      deviceWidth: measured.width,
+      deviceHeight: measured.height,
+      scale: measured.scale,
+      ts: now(),
+      seq: seq += 1
+    });
+  });
+  const start = async () => {
+    if (streaming || disposed) return;
+    streaming = true;
+    const generation = ++streamGeneration;
+    lastData = void 0;
+    await cdp.send("Page.startScreencast", {
+      format: "jpeg",
+      quality,
+      // Not multiplied by any device scale: Chromium clamps a screencast to
+      // the CSS size of the surface, so asking for more is a no-op that only
+      // makes this line look like a promise.
+      maxWidth: options.surface.width,
+      maxHeight: options.surface.height
+    }).catch(() => {
+      if (generation === streamGeneration) streaming = false;
+    });
+  };
+  const stop = async () => {
+    if (!streaming) return;
+    streaming = false;
+    streamGeneration += 1;
+    throttle.reset();
+    await cdp.send("Page.stopScreencast").catch(() => {
+    });
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      if (listeners.size === 1) void start();
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) void stop();
+      };
+    },
+    subscriberCount: () => listeners.size,
+    async dispatchInput(events, stillPermitted) {
+      for (const event of events) {
+        if (stillPermitted && !stillPermitted()) return;
+        if (event.type === "mouse_down") {
+          buttonMask |= BUTTON_MASK[event.button] ?? 1;
+        } else if (event.type === "mouse_up") {
+          buttonMask &= ~(BUTTON_MASK[event.button] ?? 1);
+        }
+        await dispatchOne(cdp, event, buttonMask).catch(() => {
+        });
+      }
+    },
+    async dispose() {
+      disposed = true;
+      listeners.clear();
+      await stop();
+    }
+  };
+}
+function measure(base64, surface) {
+  const dimensions = readJpegDimensions(decodeBase64(base64));
+  if (!dimensions) {
+    return { width: surface.width, height: surface.height, scale: 1 };
+  }
+  const scale = dimensions.width > 0 ? dimensions.width / surface.width : 1;
+  return {
+    width: dimensions.width,
+    height: dimensions.height,
+    scale: Number.isFinite(scale) && scale > 0 ? scale : 1
+  };
+}
+function decodeBase64(value) {
+  const prefix = value.slice(0, 4096);
+  const binary = Buffer.from(prefix, "base64");
+  return new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength);
+}
+var BUTTON_MASK = { left: 1, middle: 4, right: 2 };
+async function dispatchOne(cdp, event, buttons) {
+  switch (event.type) {
+    case "mouse_move":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: event.x,
+        y: event.y,
+        // Carried on MOVES too: this is how Chromium tells a drag from a
+        // hover, and a drag with no buttons held moves nothing.
+        buttons,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "mouse_down":
+    case "mouse_up":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: event.type === "mouse_down" ? "mousePressed" : "mouseReleased",
+        x: event.x,
+        y: event.y,
+        button: event.button,
+        buttons,
+        clickCount: event.clickCount ?? 1,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "wheel":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: event.x,
+        y: event.y,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        buttons,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "text":
+      await cdp.send("Input.insertText", { text: event.text });
+      return;
+    case "key_down":
+    case "key_up": {
+      const descriptor = describeKey(event.key, event.code);
+      await cdp.send("Input.dispatchKeyEvent", {
+        type: event.type === "key_down" ? "keyDown" : "keyUp",
+        modifiers: event.modifiers ?? 0,
+        key: event.key,
+        ...descriptor
+      });
+      return;
+    }
+  }
+}
+var KEY_CODES = {
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+  Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
+  Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
+  Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
+  ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38 },
+  ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+  ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
+  Home: { code: "Home", windowsVirtualKeyCode: 36 },
+  End: { code: "End", windowsVirtualKeyCode: 35 },
+  PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
+  PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 }
+};
+function describeKey(key, code) {
+  const known = KEY_CODES[key];
+  if (known) return known;
+  return code ? { code } : {};
+}
+
 // server/services/browserd/daemon/settle.ts
 var DEFAULT_SETTLE_OPTIONS = { maxWaitMs: 1e4 };
 async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
@@ -1136,6 +1657,23 @@ var ChromiumDriver = class {
   webmcpOutputBudgetBytes;
   lease;
   tabs = /* @__PURE__ */ new Map();
+  /**
+   * One viewport per tab, created on first watch.
+   *
+   * Lazy for the same reason the WebMCP bridge is: attaching a CDP session and
+   * encoding JPEGs for a tab nobody is looking at is work done for nobody.
+   */
+  viewports = /* @__PURE__ */ new Map();
+  /**
+   * Tab creations already under way, by tabId.
+   *
+   * `context.newPage()` is awaited, so without this two callers arriving
+   * together — a navigate and the pane opening, say — each open a page and the
+   * second overwrites the first in `tabs`. The result is an orphaned renderer
+   * and subscribers split across two pages, one of which nothing will ever
+   * drive again.
+   */
+  pendingTabs = /* @__PURE__ */ new Map();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -1146,6 +1684,12 @@ var ChromiumDriver = class {
   }
   async execute(command) {
     this.purgeHandoffConsole();
+    const permit = this.permitFor(command);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+      );
+    }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
@@ -1168,7 +1712,8 @@ var ChromiumDriver = class {
         return this.navigateVerb(
           tabId,
           await this.getOrCreateTab(tabId),
-          (page) => page.goto(action.url)
+          (page) => page.goto(action.url),
+          permit
         );
       }
       case "back":
@@ -1180,17 +1725,18 @@ var ChromiumDriver = class {
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => action.kind === "back" ? page.goBack() : page.reload()
+          (page) => action.kind === "back" ? page.goBack() : page.reload(),
+          permit
         );
       }
       case "observe":
-        return this.observe(tabId, action);
+        return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action);
+        return this.act(tabId, action, permit);
       case "webmcp_invoke":
-        return this.webmcpInvoke(tabId, action);
+        return this.webmcpInvoke(tabId, action, permit);
       case "webmcp_cancel":
-        return this.webmcpCancel(tabId, action);
+        return this.webmcpCancel(tabId, action, permit);
     }
   }
   /**
@@ -1202,7 +1748,7 @@ var ChromiumDriver = class {
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
    */
-  async act(tabId, action) {
+  async act(tabId, action, permit) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1211,20 +1757,21 @@ var ChromiumDriver = class {
     if (action.verb === "close_tab") {
       await page.close().catch(() => {
       });
-      this.tabs.delete(tabId);
+      await this.dropTab(tabId);
       return { ok: true, output: { closed: tabId } };
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
       const frame2 = await this.snapshot(page);
-      return this.observation(tabId, entry, { url: frame2.url }, frame2);
+      return this.observation(tabId, entry, { url: frame2.url }, frame2, permit);
     }
     try {
       await this.dispatchVerb(page, action);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const frame2 = await this.snapshot(page).catch(() => null);
+      const before = permit() ? await this.snapshot(page).catch(() => null) : null;
+      const frame2 = permit() ? before : null;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -1240,6 +1787,11 @@ var ChromiumDriver = class {
       };
     }
     const settled = await this.settle(page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+      );
+    }
     const frame = await this.snapshot(page);
     const screenshot = await page.screenshotBase64().catch(() => void 0);
     return {
@@ -1247,7 +1799,9 @@ var ChromiumDriver = class {
         tabId,
         entry,
         { url: frame.url, ...screenshot ? { screenshot } : {} },
-        frame
+        frame,
+        permit,
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
       ),
       settled
     };
@@ -1314,7 +1868,7 @@ var ChromiumDriver = class {
         return;
     }
   }
-  async webmcpInvoke(tabId, action) {
+  async webmcpInvoke(tabId, action, permit) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1325,6 +1879,11 @@ var ChromiumDriver = class {
         ok: false,
         error: "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools"
       };
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the page's tool could be called; nothing was run"
+      );
     }
     try {
       const { invocationId, output } = await bridge.invoke({
@@ -1341,7 +1900,9 @@ var ChromiumDriver = class {
           tabId,
           entry,
           { invocationId, result: capped, ...omitted ? { omitted } : {} },
-          frame
+          frame,
+          permit,
+          "the page's tool ran, but a person took control of this browser before its result could be read; re-run it after they hand it back"
         )
       };
     } catch (error) {
@@ -1351,7 +1912,7 @@ var ChromiumDriver = class {
       };
     }
   }
-  async webmcpCancel(tabId, action) {
+  async webmcpCancel(tabId, action, permit) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1359,6 +1920,11 @@ var ChromiumDriver = class {
     const bridge = await entry.page.webmcp();
     if (!bridge) {
       return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the cancellation could be delivered"
+      );
     }
     const known = await bridge.cancel(action.invocationId);
     return { ok: true, output: { cancelled: known } };
@@ -1369,17 +1935,34 @@ var ChromiumDriver = class {
    * (L3). Every W1 navigating verb funnels through here so settle + token are
    * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
-  async navigateVerb(tabId, entry, navigate) {
+  async navigateVerb(tabId, entry, navigate, permit) {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
+      );
+    }
     const frame = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { url: frame.url }, frame),
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url },
+        frame,
+        permit,
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
+      ),
       settled
     };
   }
-  async observe(tabId, action) {
+  async observe(tabId, action, permit) {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
+    }
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -1387,14 +1970,20 @@ var ChromiumDriver = class {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame);
+        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
       }
       case "dom": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
+        return this.observation(
+          tabId,
+          entry,
+          { dom: frame.domSignal },
+          frame,
+          permit
+        );
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry);
+        return this.observeScreenshot(tabId, entry, permit);
       case "a11y": {
         const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
         if (action.rootSelector && snapshot === null) {
@@ -1415,7 +2004,8 @@ var ChromiumDriver = class {
             a11y: tree,
             ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
           },
-          frame
+          frame,
+          permit
         );
       }
       case "console": {
@@ -1428,7 +2018,8 @@ var ChromiumDriver = class {
           tabId,
           entry,
           { console: entries, ...omitted > 0 ? { omitted } : {} },
-          frame
+          frame,
+          permit
         );
       }
       case "webmcp_tools": {
@@ -1439,14 +2030,16 @@ var ChromiumDriver = class {
             tabId,
             entry,
             { webmcpSupported: false, tools: [] },
-            frame
+            frame,
+            permit
           );
         }
         return this.observation(
           tabId,
           entry,
           { webmcpSupported: true, tools: bridge.list() },
-          frame
+          frame,
+          permit
         );
       }
     }
@@ -1460,20 +2053,30 @@ var ChromiumDriver = class {
    * `settled: false` (its token from the post-capture read) so the caller
    * re-observes rather than pinning an act to it.
    */
-  async observeScreenshot(tabId, entry) {
+  async observeScreenshot(tabId, entry, permit) {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person has taken control of this browser; nothing was observed"
+        );
+      }
       const before = await this.snapshot(entry.page);
       const screenshot2 = await entry.page.screenshotBase64();
       const after2 = await this.snapshot(entry.page);
       if (before.url === after2.url && before.domSignal === after2.domSignal) {
-        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2);
+        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2, permit);
       }
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
     }
     const screenshot = await entry.page.screenshotBase64();
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { screenshot }, after),
+      ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false
     };
   }
@@ -1487,10 +2090,49 @@ var ChromiumDriver = class {
       domSignal: await entry.page.domStructureSignal()
     });
   }
+  /**
+   * The live picture of a tab.
+   *
+   * Deliberately NOT routed through the command queue. Input arrives as
+   * pointer batches at up to twenty a second while someone drags a scrollbar,
+   * and every command consumes an idempotency slot from a per-boot ledger that
+   * refuses new ids once exhausted — a person scrolling for a few minutes
+   * would rotate the daemon. The lease is the gate on this path instead, which
+   * is the right one: it is the person's own hands, and the lease is what says
+   * the hands are theirs.
+   */
+  async viewport(tabId) {
+    const key = tabId ?? DEFAULT_TAB;
+    const live = this.tabs.get(key);
+    if (live && !live.page.isClosed()) {
+      const cached = this.viewports.get(key);
+      if (cached) return cached;
+    } else {
+      await this.dropViewport(key);
+    }
+    const entry = tabId === void 0 || key === DEFAULT_TAB ? await this.getOrCreateTab(key) : this.tabs.get(key);
+    if (!entry || entry.page.isClosed()) return null;
+    const raced = this.viewports.get(key);
+    if (raced) return raced;
+    const created = (async () => {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return null;
+      return createTabViewport(cdp, {
+        surface: BROWSERD_OBSERVATION_VIEWPORT
+      });
+    })();
+    this.viewports.set(key, created);
+    return created;
+  }
   async health() {
     return this.context.isConnected() ? { ok: true } : { ok: false, detail: "browser context disconnected" };
   }
   async close() {
+    for (const viewport of this.viewports.values()) {
+      await viewport.then((v) => v?.dispose()).catch(() => {
+      });
+    }
+    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {
       });
@@ -1505,10 +2147,30 @@ var ChromiumDriver = class {
    * in, never re-read here — so the token can never describe a different state
    * than the returned output (P1).
    */
-  observation(tabId, entry, output, frame) {
+  /**
+   * The ONE funnel every page-derived result leaves through — which is why the
+   * last permit check lives here rather than at each caller.
+   *
+   * Every observation is read from the page across at least one `await`, and a
+   * check made before that await can only say the lease was free when the read
+   * STARTED. Asking again here, on the result's way out, is what makes "while a
+   * person holds the browser the agent observes nothing" true rather than
+   * nearly true: whatever was read is dropped instead of returned. Callers
+   * keep their own earlier checks — those refuse cheaply, before the read —
+   * and pass the prose that fits what already happened.
+   */
+  observation(tabId, entry, output, frame, permit, blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed") {
+    if (!permit()) return this.leaseBlockedResult(blockedDetail);
     return {
       ok: true,
-      output: this.withHandoffNote(output),
+      // WHERE this came from, on every observation without exception. The
+      // unattended origin allowlist is enforced against the result's `url`
+      // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
+      // carrying none fails that check OPEN — a screenshot of an off-allowlist
+      // page would reach the model unfiltered. Stamped at the funnel so no
+      // future observation mode can forget it. An explicit `url` in `output`
+      // still wins; today it is the same value.
+      output: this.withHandoffNote({ url: frame.url, ...output }),
       stateToken: this.tokenFor(tabId, entry, frame)
     };
   }
@@ -1520,7 +2182,37 @@ var ChromiumDriver = class {
    * actually crossed the handoff rather than every later one.
    */
   withHandoffNote(output) {
-    return this.lease?.consumeResumedDirty() ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE } : output;
+    return this.lease?.consumeResumedDirty() ? {
+      ...output,
+      handoffNote: handoffNoteFor(this.lease.resumedFromKind())
+    } : output;
+  }
+  /**
+   * May THIS command look at the page right now?
+   *
+   * Bound to the command rather than read globally, because "a lease is held"
+   * is not the same as "you may not look": the holder's own `manual` commands
+   * are exactly what a lease is for. It is the same predicate the handler and
+   * the dequeue guard ask, asked a third time — and passed down as a closure
+   * rather than stored on the instance, because two tabs run concurrently and
+   * a shared field would answer one command's question with another's.
+   *
+   * Asked immediately before EVERY capture rather than once per command: a
+   * command can take seconds (a navigation settles for up to ten), and the
+   * handoff it must respect is the one happening NOW.
+   */
+  permitFor(command) {
+    const lease = this.lease;
+    if (!lease) return () => true;
+    return () => leaseRefusalFor(lease.state(), command) === void 0;
+  }
+  /** The result a capture-time handoff produces: no output, no token, no frame. */
+  leaseBlockedResult(detail) {
+    return {
+      ok: false,
+      leaseBlocked: true,
+      error: formatBrowserdError("lease_held", detail)
+    };
   }
   /**
    * Drop console captured while a person held the browser, across EVERY tab —
@@ -1567,10 +2259,41 @@ var ChromiumDriver = class {
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
-    const page = await this.context.newPage();
-    const entry = { page, navCounter: 0 };
-    this.tabs.set(tabId, entry);
-    return entry;
+    const inFlight = this.pendingTabs.get(tabId);
+    if (inFlight) return inFlight;
+    const creating = (async () => {
+      await this.dropTab(tabId);
+      const page = await this.context.newPage();
+      const entry = { page, navCounter: 0 };
+      this.tabs.set(tabId, entry);
+      return entry;
+    })();
+    this.pendingTabs.set(tabId, creating);
+    try {
+      return await creating;
+    } finally {
+      this.pendingTabs.delete(tabId);
+    }
+  }
+  /** Forget a tab and everything attached to it. */
+  async dropTab(tabId) {
+    this.tabs.delete(tabId);
+    await this.dropViewport(tabId);
+  }
+  /**
+   * Retire a tab's viewport.
+   *
+   * The cache is keyed by tabId but its contents belong to a PAGE. A closed or
+   * replaced tab left its viewport in place, still holding the dead page's CDP
+   * session: it published no more frames and swallowed the new page's input,
+   * so the recreated tab could be neither watched nor driven.
+   */
+  async dropViewport(tabId) {
+    const viewport = this.viewports.get(tabId);
+    if (!viewport) return;
+    this.viewports.delete(tabId);
+    await viewport.then((v) => v?.dispose()).catch(() => {
+    });
   }
 };
 
@@ -1660,14 +2383,27 @@ function buildBrowserdLaunchArgs(extra = []) {
 }
 
 // server/services/browserd/daemon/profile-lock.ts
-import { unlink } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readlink, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
   "SingletonSocket",
   "SingletonCookie"
 ];
-async function clearStaleSingletonLock(userDataDir) {
+async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner) {
+  const owner = await probe(userDataDir);
+  if (owner.live) {
+    return {
+      removed: [],
+      failed: [],
+      heldBy: {
+        ...owner.pid !== void 0 ? { pid: owner.pid } : {},
+        ...owner.host !== void 0 ? { host: owner.host } : {}
+      }
+    };
+  }
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
@@ -1685,6 +2421,49 @@ async function clearStaleSingletonLock(userDataDir) {
 }
 function isNotFound(err) {
   return typeof err === "object" && err !== null && err.code === "ENOENT";
+}
+async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, describeProcess = defaultDescribeProcess) {
+  let target;
+  try {
+    target = await readlink(join(userDataDir, "SingletonLock"));
+  } catch {
+    return { live: false };
+  }
+  const separator = target.lastIndexOf("-");
+  if (separator <= 0) return { live: false };
+  const host = target.slice(0, separator);
+  const pid = Number(target.slice(separator + 1));
+  if (!Number.isInteger(pid) || pid <= 0) return { live: false };
+  if (host !== hostname()) return { live: true, pid, host };
+  if (!isAlive(pid)) return { live: false, pid };
+  const command = describeProcess(pid);
+  if (command !== void 0 && !looksLikeBrowser(command)) {
+    return { live: false, pid };
+  }
+  return { live: true, pid };
+}
+function looksLikeBrowser(command) {
+  return /chrom|headless_shell/i.test(command);
+}
+function defaultDescribeProcess(pid) {
+  if (process.platform === "win32") return void 0;
+  try {
+    return execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
+      encoding: "utf8",
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return void 0;
+  }
+}
+function defaultIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
 }
 
 // server/services/browserd/daemon/aria-snapshot.ts
@@ -1865,7 +2644,8 @@ function wrapPage(page) {
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
   let webmcpPromise = null;
-  return {
+  let cdpPromise = null;
+  const adapted = {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
@@ -1943,16 +2723,25 @@ function wrapPage(page) {
       consoleRing.length = keep;
     },
     webmcp() {
-      webmcpPromise ??= attachWebMcp(page);
+      webmcpPromise ??= (async () => {
+        const session = await adapted.cdp();
+        return session ? attachWebMcp(page, session) : null;
+      })();
       return webmcpPromise;
+    },
+    cdp() {
+      cdpPromise ??= (async () => {
+        const attach = cdpAttachers.get(page);
+        if (!attach) return null;
+        return attach().catch(() => null);
+      })();
+      return cdpPromise;
     }
   };
+  return adapted;
 }
-async function attachWebMcp(page) {
-  const attach = cdpAttachers.get(page);
-  if (!attach) return null;
+async function attachWebMcp(page, session) {
   try {
-    const session = await attach();
     const bridge = new WebMcpBridge(session);
     await bridge.start(async () => {
       const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
@@ -1971,6 +2760,8 @@ async function launchBrowserdContext(options) {
   const { chromium } = await import("playwright");
   const launchArgs = {
     headless: options.headless ?? false,
+    ...options.channel ? { channel: options.channel } : {},
+    ...options.executablePath ? { executablePath: options.executablePath } : {},
     // Chromium cannot start its renderer sandbox as uid 0 (the image builds
     // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
@@ -1996,7 +2787,12 @@ async function launchBrowserdContext(options) {
       onClose: () => browser.close()
     });
   }
-  await clearStaleSingletonLock(options.userDataDir);
+  const cleared = await clearStaleSingletonLock(options.userDataDir);
+  if (cleared.heldBy) {
+    throw new Error(
+      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+    );
+  }
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     ...launchArgs,
     acceptDownloads: false,

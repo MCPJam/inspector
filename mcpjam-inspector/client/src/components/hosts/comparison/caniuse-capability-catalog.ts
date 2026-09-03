@@ -108,6 +108,18 @@ export const PUBLIC_CAN_I_USE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
   HOST_CONFIG_FIELDS.filter(isPublicCaniuseCapabilityField);
 
 /**
+ * Keep the signed-in client comparison focused on the public compatibility
+ * rows too. Protocol version remains temporarily because removing that setting
+ * from Compare is being handled separately.
+ */
+export const CLIENT_COMPARE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  HOST_CONFIG_FIELDS.filter(
+    (field) =>
+      field.id === "mcpProtocolVersion" ||
+      isPublicCaniuseCapabilityField(field),
+  );
+
+/**
  * Whether any published host actually carries a value for this field.
  *
  * A row whose every column reads "Not yet tested" answers nothing — it
@@ -135,6 +147,17 @@ export function publicCaniuseFieldsWithData(
 ): ReadonlyArray<HostConfigFieldDef> {
   return PUBLIC_CAN_I_USE_FIELDS.filter((field) =>
     caniuseFieldHasPresetData(field, subjects),
+  );
+}
+
+/** Client Compare uses the measured public rows plus protocol version. */
+export function clientCompareFieldsWithData(
+  subjects: Record<string, HostComparisonSubject>,
+): ReadonlyArray<HostConfigFieldDef> {
+  const publicFields = new Set(publicCaniuseFieldsWithData(subjects));
+  return CLIENT_COMPARE_FIELDS.filter(
+    (field) =>
+      field.id === "mcpProtocolVersion" || publicFields.has(field),
   );
 }
 

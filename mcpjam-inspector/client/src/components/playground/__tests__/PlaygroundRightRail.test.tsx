@@ -94,6 +94,14 @@ vi.mock("@/stores/harness-workdir-store", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// The pane itself is exercised in its own suite; here it only has to say
+// whether the rail considers it the visible tab.
+vi.mock("@/components/browser/LocalBrowserBody", () => ({
+  LocalBrowserBody: ({ active }: { active?: boolean }) => (
+    <div data-testid="browser-pane" data-active={String(active)} />
+  ),
+}));
+
 import { PlaygroundRightRail } from "../PlaygroundRightRail";
 
 const hostConfig = { computer: { workdir: "/home/user" } } as any;
@@ -304,5 +312,64 @@ describe("PlaygroundRightRail — no computer attached", () => {
     );
     expect(screen.getByTestId("logger-view")).toBeInTheDocument();
     expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlaygroundRightRail — the Browser tab", () => {
+  const browserHost = {
+    computer: { workdir: "/home/user" },
+    builtInToolIds: ["browser"],
+  } as any;
+
+  function renderWithBrowser() {
+    return render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+  }
+
+  it("tells the pane whether it is the tab being looked at", () => {
+    // Mounted-hidden is not "being watched": the pane heartbeats to defer the
+    // browser's idle reap, and one behind the Logs tab must stop claiming
+    // somebody is looking at it.
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderWithBrowser();
+
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
+  });
+
+  it("falls back to Logs when the Browser tab disappears under it", () => {
+    // Switching the engine to cloud hid the Browser body and left `activeTab`
+    // on it, so all three panes were hidden and the rail looked broken.
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    const { rerender } = renderWithBrowser();
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
+
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    rerender(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+
+    expect(screen.queryByTestId("browser-pane")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cloud-terminal-pane")).toBeInTheDocument();
   });
 });

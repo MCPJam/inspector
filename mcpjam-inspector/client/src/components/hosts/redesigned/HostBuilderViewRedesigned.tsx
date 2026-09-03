@@ -41,6 +41,7 @@ import { HostCanvasSelector } from "./HostCanvasSelector";
 import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
+import { emitClientSaveTelemetry } from "./client-save-telemetry";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { HOSTED_MODE } from "@/lib/config";
@@ -459,15 +460,7 @@ export function HostBuilderViewRedesigned({
     saveInFlightRef.current = true;
     setIsSaving(true);
     try {
-      const changedFields = savedConfig
-        ? (Object.keys(config) as Array<keyof HostConfigInputV2>).filter(
-            (key) =>
-              JSON.stringify(config[key]) !==
-              JSON.stringify(savedConfig[key])
-          )
-        : [];
-      // Reuse the same draft-vs-saved comparison the telemetry diff uses,
-      // rather than introducing a second notion of "changed".
+      // Compare the same persisted and draft snapshots used by save telemetry.
       const cancellationChanged = toolCallCancellationChanged(
         savedConfig,
         config
@@ -497,19 +490,15 @@ export function HostBuilderViewRedesigned({
       if (cancellationChanged && onReconnect) {
         setPendingCancellationReconnect(hostConfigId);
       }
-      // Telemetry is best-effort: a posthog throw must not bubble into the
-      // shared catch and surface "Failed to save host" after the config
-      // has already been persisted.
-      try {
-        track("client_config_saved", {
-          location: "client_builder",
-          client_id: hostId,
-          client_config_id: hostConfigId,
-          server_count: config.serverIds?.length ?? 0,
-          changed_fields: changedFields,
+      if (host && savedConfig) {
+        emitClientSaveTelemetry(track, {
+          clientId: hostId,
+          clientConfigId: hostConfigId,
+          savedName: host.name,
+          draftName: name,
+          savedConfig,
+          draftConfig: config,
         });
-      } catch {
-        // swallow — analytics must not block the success path
       }
       return true;
     } catch (err) {

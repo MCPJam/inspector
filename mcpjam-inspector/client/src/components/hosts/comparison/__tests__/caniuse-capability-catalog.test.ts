@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CANIUSE_CAPABILITIES,
   CANIUSE_LAST_VERIFIED_DATE,
+  CLIENT_COMPARE_FIELDS,
   PUBLIC_CAN_I_USE_FIELDS,
   buildCaniuseCapabilityPath,
   getCaniuseCapabilityForField,
@@ -9,6 +10,7 @@ import {
   getCaniuseSupportLabel,
   getCaniuseSupportLevel,
   caniuseFieldHasPresetData,
+  clientCompareFieldsWithData,
   publicCaniuseFieldsWithData,
 } from "../caniuse-capability-catalog";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
@@ -112,6 +114,16 @@ describe("caniuse capability catalog", () => {
     expect(ids).not.toContain("connectionDefaults.requestTimeout");
   });
 
+  it("keeps client compare aligned with caniuse except for protocol version", () => {
+    const expectedIds = [
+      ...PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id),
+      "mcpProtocolVersion"
+    ].sort();
+    const compareIds = CLIENT_COMPARE_FIELDS.map((field) => field.id).sort();
+
+    expect(compareIds).toEqual(expectedIds);
+  });
+
   it("keeps slugs unique and path-safe", () => {
     const slugs = CANIUSE_CAPABILITIES.map((capability) => capability.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
@@ -155,6 +167,7 @@ describe("unmeasured rows stay off the public surface", () => {
     for (const field of [legacyField, modernField]) {
       expect(caniuseFieldHasPresetData(field, subjectWith())).toBe(false);
       expect(publicCaniuseFieldsWithData(subjectWith())).not.toContain(field);
+      expect(clientCompareFieldsWithData(subjectWith())).not.toContain(field);
     }
   });
 

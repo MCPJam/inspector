@@ -73,6 +73,7 @@ import {
 } from "./host-compare-selection";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
+  clientCompareFieldsWithData,
   getCaniuseCapabilityBySlug,
   getCaniuseCapabilityForField,
   publicCaniuseFieldsWithData,
@@ -84,10 +85,7 @@ import {
   fieldMatchesQuery,
   type SupportFilterMode,
 } from "./support-level";
-import {
-  groupHostConfigFields,
-  HOST_CONFIG_FIELDS,
-} from "@/lib/host-config-field-schema";
+import { groupHostConfigFields } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
@@ -329,15 +327,14 @@ export function HostConfigCompareView({
   // Every selectable id (real + preset). URL / stored selections reconcile
   // against this so a chosen preset column survives a reload.
   const knownHostIds = useMemo(() => hosts.map((host) => host.hostId), [hosts]);
-  // The public surface hides rows no published host has been measured for
-  // yet — a column of "Not yet tested" answers nothing. The internal matrix
-  // shows every field regardless, because that is where a value gets filled
-  // in, and a row you cannot see is a row you cannot populate.
+  // A column of "Not yet tested" answers nothing, so both surfaces hide rows
+  // no published host has measured. The signed-in matrix adds only the
+  // temporarily retained protocol-version row.
   const compareFields = useMemo(
     () =>
       presetOnly
         ? publicCaniuseFieldsWithData(presets.subjects)
-        : HOST_CONFIG_FIELDS,
+        : clientCompareFieldsWithData(presets.subjects),
     [presetOnly, presets.subjects]
   );
   // Base for the per-column "Verify against your server" deep-link. In dev the

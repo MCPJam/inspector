@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withDataRouter } from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
@@ -93,6 +94,7 @@ const baseSuite: EvalSuite = {
 
 function renderSettingsSheet() {
   return render(
+      withDataRouter(
     <SuiteIterationsView
       suite={baseSuite}
       cases={[]}
@@ -117,8 +119,8 @@ function renderSettingsSheet() {
       projectId="project-1"
       route={{ type: "suite-edit", suiteId: "suite-1" }}
       navigation={noopNav}
-    />
-  );
+    />)
+    );
 }
 
 describe("SuiteIterationsView GitHub Checks gate", () => {
