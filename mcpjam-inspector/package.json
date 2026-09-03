@@ -102,6 +102,7 @@
     "test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:oauth-debugger": "npm run sdk:build && playwright test -c playwright.oauth-debugger.config.ts",
+    "test:e2e:mcp-apps": "npm run predev && playwright test -c playwright.mcp-apps.config.ts",
     "ship": "bash scripts/ship.sh"
   },
   "dependencies": {

@@ -503,6 +503,15 @@ export function createAppRouter(): AppRouter {
               return { Component: OAuthDebuggerE2EHarness };
             },
           },
+          {
+            path: "__e2e/mcp-app-view",
+            lazy: async () => {
+              const { McpAppViewE2EHarness } = await import(
+                "./components/e2e/McpAppViewE2EHarness"
+              );
+              return { Component: McpAppViewE2EHarness };
+            },
+          },
         ]
       : []),
     {
