@@ -1570,7 +1570,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // dash an absent knob renders as.
         toolListChanged: { listens: true, refetches: true },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches Cursor's outer-IDE identity.
           clientInfo: { name: "cursor-vscode", version: "1.0.0" },

@@ -2165,7 +2165,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Cursor",
       provenance: "probe",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -2246,7 +2246,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           refetches: true,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "cursor-vscode",
             version: "1.0.0",
