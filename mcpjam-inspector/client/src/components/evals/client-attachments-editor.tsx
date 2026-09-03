@@ -85,6 +85,7 @@ export function ClientAttachmentsEditor({
                   ? clientDisplayName(hostsById.get(attachment.namedHostId)!)
                   : undefined
               }
+              hostRawName={hostsById.get(attachment.namedHostId)?.name}
               onRemove={() => handleRemoveAttachment(index)}
               disabled={disabled}
             />
@@ -140,6 +141,7 @@ export function ClientAttachmentsEditor({
 type HostAttachmentRowProps = {
   attachment: HostAttachmentDraft;
   hostName: string | undefined;
+  hostRawName: string | undefined;
   onRemove: () => void;
   disabled: boolean;
 };
@@ -147,11 +149,12 @@ type HostAttachmentRowProps = {
 function HostAttachmentRow({
   attachment,
   hostName,
+  hostRawName,
   onRemove,
   disabled,
 }: HostAttachmentRowProps) {
   const displayName = hostName ?? attachment.namedHostId;
-  const logoSrc = resolveHostLogoByDisplayName(displayName);
+  const logoSrc = resolveHostLogoByDisplayName(hostRawName ?? displayName);
 
   return (
     <div className="rounded-xl border bg-card/60">

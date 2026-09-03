@@ -58,18 +58,20 @@ export function ClientsPill({
 
   const single = max === 1;
   const selected = value;
+  const selectedHost = hosts.find((item) => item.hostId === selected[0]);
   const triggerLabel =
     selected.length === 0
       ? single
         ? "No client · pick one"
         : "No clients · pick some"
-      : (() => {
-          const host = hosts.find((item) => item.hostId === selected[0]);
-          return host ? clientDisplayName(host) : selected[0].slice(0, 8);
-        })();
+      : selectedHost
+        ? clientDisplayName(selectedHost)
+        : selected[0].slice(0, 8);
   const extra = selected.length > 1 ? selected.length - 1 : 0;
   const logo =
-    selected.length > 0 ? resolveHostLogoByDisplayName(triggerLabel) : null;
+    selected.length > 0
+      ? resolveHostLogoByDisplayName(selectedHost?.name ?? triggerLabel)
+      : null;
 
   const toggle = (hostId: string, checked: boolean) => {
     if (single) {

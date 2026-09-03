@@ -346,13 +346,23 @@ export function buildHostNamesById(
     | undefined
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
+  const projectHostById = new Map(
+    (projectHosts ?? []).map((host) => [host.hostId, host]),
+  );
   for (const host of projectHosts ?? []) {
     map.set(host.hostId, clientDisplayName(host));
   }
   for (const attachment of attachments ?? []) {
+    const projectHost = projectHostById.get(attachment.namedHostId);
+    const attachmentMatchesRawName =
+      projectHost !== undefined &&
+      attachment.hostName?.trim().toLowerCase() ===
+        projectHost.name.trim().toLowerCase();
     map.set(
       attachment.namedHostId,
-      attachment.hostName ?? map.get(attachment.namedHostId) ?? null
+      projectHost && (attachment.hostName === null || attachmentMatchesRawName)
+        ? clientDisplayName(projectHost)
+        : attachment.hostName ?? map.get(attachment.namedHostId) ?? null
     );
   }
   return map;

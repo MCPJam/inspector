@@ -12,11 +12,20 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHostList } from "../useClients";
+import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 
-const { mockUseMutation, mockUseQuery, mockDbUserReady } = vi.hoisted(() => ({
+const { mockUseMutation, mockUseQuery, mockDbUserReady, mockCatalogState } = vi.hoisted(() => ({
   mockUseMutation: vi.fn(),
   mockUseQuery: vi.fn(),
   mockDbUserReady: { value: true },
+  mockCatalogState: {
+    value: {
+      status: "loading",
+      catalog: null,
+      version: null,
+      source: null,
+    } as any,
+  },
 }));
 
 vi.mock("convex/react", () => ({
@@ -26,6 +35,10 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => mockDbUserReady.value,
+}));
+
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => mockCatalogState.value,
 }));
 
 const PROJECT_ID = "m17b6q9xw2tv4kz8p3r5s0dc";
@@ -39,6 +52,12 @@ const HOSTS = [
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbUserReady.value = true;
+  mockCatalogState.value = {
+    status: "loading",
+    catalog: null,
+    version: null,
+    source: null,
+  };
 });
 
 describe("useHostList private-backing filter", () => {
@@ -108,6 +127,31 @@ describe("useHostList private-backing filter", () => {
       { hostId: "visible-acme", displayName: "Acme" },
       { hostId: "saved-cursor", displayName: "Cursor #2" },
     ]);
+  });
+
+  it("reserves labels added by the live catalog", () => {
+    const bundled = bundledHostCompatCatalog();
+    const template = Object.values(bundled.hostsById)[0];
+    mockCatalogState.value = {
+      status: "live",
+      catalog: {
+        hostsById: {
+          ...bundled.hostsById,
+          future: { ...template, id: "future", label: "Future Client" },
+        },
+      },
+      version: 2,
+      source: "backend",
+    } as any;
+    mockUseQuery.mockReturnValue([
+      { hostId: "saved-future", name: "Future Client", createdAt: 1 },
+    ]);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(result.current.hosts[0]?.displayName).toBe("Future Client #2");
   });
 
   it("reports loading (not an empty list) while the query is in flight", () => {

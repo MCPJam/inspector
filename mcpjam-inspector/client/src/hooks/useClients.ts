@@ -10,10 +10,11 @@ import {
   getCatalogHosts,
 } from "@mcpjam/sdk/host-compat";
 import { resolveClientDisplayNames } from "@/lib/client-display-name";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 
-const PRESET_CLIENT_NAMES = getCatalogHosts(bundledHostCompatCatalog()).map(
-  (host) => host.label,
-);
+const BUNDLED_PRESET_CLIENT_NAMES = getCatalogHosts(
+  bundledHostCompatCatalog(),
+).map((host) => host.label);
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -76,6 +77,14 @@ export function useHostList({
   isLoading: boolean;
 } {
   const isUserReady = useDbUserReady();
+  const catalogState = useHostCatalog();
+  const presetClientNames = useMemo(
+    () =>
+      catalogState.catalog
+        ? getCatalogHosts(catalogState.catalog).map((host) => host.label)
+        : BUNDLED_PRESET_CLIENT_NAMES,
+    [catalogState.catalog],
+  );
   const queryProjectId = projectId?.trim() ?? "";
   const hasQueryableProjectId = shouldQueryProjectId(queryProjectId);
   const shouldQuery =
@@ -96,7 +105,7 @@ export function useHostList({
     const visible = withoutPrivateScenarioBackingHosts(all);
     const displayNames = resolveClientDisplayNames(
       visible,
-      PRESET_CLIENT_NAMES,
+      presetClientNames,
     );
     const decorated = all.map((host) => ({
       ...host,
@@ -105,7 +114,7 @@ export function useHostList({
     return includePrivateBacking
       ? decorated
       : withoutPrivateScenarioBackingHosts(decorated);
-  }, [result, includePrivateBacking]);
+  }, [result, includePrivateBacking, presetClientNames]);
 
   return {
     hosts,

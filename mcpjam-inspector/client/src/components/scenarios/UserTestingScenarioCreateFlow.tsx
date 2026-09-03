@@ -22,7 +22,6 @@ import {
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useHostList } from "@/hooks/useClients";
-import { clientDisplayName } from "@/lib/client-display-name";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
@@ -231,7 +230,7 @@ export function UserTestingScenarioCreateFlow({
     }
     const hostId = next.stack.hostIds[0];
     const client = hostId ? hosts.find((h) => h.hostId === hostId) : undefined;
-    setName(client ? clientDisplayName(client) : "");
+    setName(client?.name ?? "");
   };
 
   const handleCreateEnvironment = () => {

@@ -686,12 +686,16 @@ export function NewSwarmRunningStep({
    */
   onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
-  const hostName = useMemo(() => {
-    const map = new Map(
-      hosts.map((host) => [host.hostId, clientDisplayName(host)] as const)
-    );
-    return (hostId: string) => map.get(hostId);
+  const hostById = useMemo(() => {
+    return new Map(hosts.map((host) => [host.hostId, host] as const));
   }, [hosts]);
+  const hostName = useMemo(
+    () => (hostId: string) => {
+      const host = hostById.get(hostId);
+      return host ? clientDisplayName(host) : undefined;
+    },
+    [hostById]
+  );
 
   const clientLabel = useMemo(() => {
     const envById = new Map(
@@ -701,12 +705,25 @@ export function NewSwarmRunningStep({
       if (key.startsWith("environment:")) {
         const env = envById.get(key.slice("environment:".length));
         if (env) {
-          return hostName(env.hostId) ?? env.name ?? fallback;
+          const host = hostById.get(env.hostId);
+          return (host ? clientDisplayName(host) : null) ?? env.name ?? fallback;
         }
       }
       return hostName(key) ?? fallback;
     };
-  }, [environments, hostName]);
+  }, [environments, hostById, hostName]);
+
+  const clientLogoLabel = useMemo(() => {
+    const envById = new Map(
+      environments.map((env) => [env.environmentId, env] as const)
+    );
+    return (key: string): string | undefined => {
+      const hostId = key.startsWith("environment:")
+        ? envById.get(key.slice("environment:".length))?.hostId
+        : key;
+      return hostId ? hostById.get(hostId)?.name : undefined;
+    };
+  }, [environments, hostById]);
 
   const [snapshots, setSnapshots] = useState<Record<string, RunLiveSnapshot>>(
     {}
@@ -1040,7 +1057,9 @@ export function NewSwarmRunningStep({
                       className="min-w-[7.5rem] px-2 py-2.5 text-center text-xs font-medium text-muted-foreground"
                     >
                       <span className="inline-flex items-center justify-center gap-1.5">
-                        <JourneyHostLogoMark label={column.label} />
+                        <JourneyHostLogoMark
+                          label={clientLogoLabel(column.key) ?? column.label}
+                        />
                         <span className="truncate">{column.label}</span>
                       </span>
                     </th>

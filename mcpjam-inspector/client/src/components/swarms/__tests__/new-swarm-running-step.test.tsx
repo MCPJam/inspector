@@ -169,6 +169,18 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               revision: 1,
             },
           ]}
+          hosts={[
+            {
+              hostId: "host-1",
+              name: "MCPJam",
+              displayName: "MCPJam #2",
+              hostConfigId: "config-1",
+              modelId: "model-1",
+              serverCount: 0,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ]}
           onLeave={vi.fn()}
           onOpenSession={vi.fn()}
         />
@@ -195,6 +207,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(screen.getByTestId("new-swarm-running-stream")).toBeInTheDocument();
     expect(screen.getByTestId("swarm-live-pane-empty")).toBeInTheDocument();
     expect(screen.getByTestId("swarm-running-hero")).toBeInTheDocument();
+    const derivedLabel = await screen.findByText("MCPJam #2");
+    expect(derivedLabel.closest("th")?.querySelector("img")).not.toBeNull();
     expect(
       screen.getByTestId("swarm-running-hero").querySelectorAll("img"),
     ).toHaveLength(3);
