@@ -7,7 +7,7 @@
  * `server-selection-list.test.tsx` the mark — this covers that the picker
  * actually feeds them the status.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "@/state/app-types";
@@ -149,8 +149,19 @@ describe("ServerGroupPicker — connection status on a saved group's servers", (
     ];
   });
 
-  it("marks each server in an expanded group with the status it has", async () => {
-    statusRef.current = { excalidraw: "connected", "test-bad-url": "failed" };
+  /**
+   * The row a server's name sits in. Statuses are asserted against this rather
+   * than the document: the group holds one failed server and one connected
+   * one, so "both words appear somewhere" is equally true of the mapping read
+   * backwards.
+   */
+  const rowFor = (name: string): HTMLElement => {
+    const row = screen.getByText(name).closest("li");
+    if (!row) throw new Error(`No row rendered for ${name}`);
+    return row;
+  };
+
+  async function expandTheGroup() {
     const user = userEvent.setup();
     render(
       <ServerGroupPicker
@@ -164,30 +175,42 @@ describe("ServerGroupPicker — connection status on a saved group's servers", (
     await user.click(
       screen.getByRole("button", { name: /show servers in excalidraw \+ 1/i }),
     );
+  }
 
-    expect(screen.getByText("excalidraw")).toBeInTheDocument();
-    expect(screen.getByText("test-bad-url")).toBeInTheDocument();
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getByText("Connected")).toBeInTheDocument();
+  it("marks each server in an expanded group with the status it has", async () => {
+    statusRef.current = { excalidraw: "connected", "test-bad-url": "failed" };
+    await expandTheGroup();
+
+    const bad = within(rowFor("test-bad-url"));
+    const good = within(rowFor("excalidraw"));
+    expect(bad.getByText("Failed")).toBeInTheDocument();
+    expect(good.getByText("Connected")).toBeInTheDocument();
+    // Both directions, so reading the map by position instead of by name
+    // cannot satisfy this.
+    expect(bad.queryByText("Connected")).not.toBeInTheDocument();
+    expect(good.queryByText("Failed")).not.toBeInTheDocument();
+  });
+
+  it("marks only the server it has a status for", async () => {
+    statusRef.current = { "test-bad-url": "failed" };
+    await expandTheGroup();
+
+    expect(
+      within(rowFor("test-bad-url")).getByText("Failed"),
+    ).toBeInTheDocument();
+    // Unknown is not disconnected, so the other row claims nothing at all.
+    const untouched = rowFor("excalidraw");
+    expect(untouched).toHaveTextContent("excalidraw");
+    expect(
+      within(untouched).queryByText(/connected|disconnected|failed/i),
+    ).not.toBeInTheDocument();
   });
 
   it("says nothing about a server app state has no status for", async () => {
-    const user = userEvent.setup();
-    render(
-      <ServerGroupPicker
-        projectId="p-1"
-        value={null}
-        onChange={onChangeMock}
-        triggerTestId="picker"
-      />,
-    );
-    await user.click(screen.getByTestId("picker"));
-    await user.click(
-      screen.getByRole("button", { name: /show servers in excalidraw \+ 1/i }),
-    );
+    await expandTheGroup();
 
-    expect(screen.getByText("test-bad-url")).toBeInTheDocument();
-    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
-    expect(screen.queryByText("Disconnected")).not.toBeInTheDocument();
+    const row = within(rowFor("test-bad-url"));
+    expect(row.queryByText("Failed")).not.toBeInTheDocument();
+    expect(row.queryByText("Disconnected")).not.toBeInTheDocument();
   });
 });
