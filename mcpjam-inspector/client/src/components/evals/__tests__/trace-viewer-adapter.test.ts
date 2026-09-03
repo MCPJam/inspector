@@ -544,7 +544,62 @@ describe("adaptTraceToUiMessages", () => {
     );
   });
 
-  it("appends fenced JSON when tool output has only structured data", () => {
+  it("renders JSON text-block output as a structured result", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-json-text",
+              toolName: "list_searches",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-json-text",
+              toolName: "list_searches",
+              output: {
+                type: "json",
+                value: {
+                  content: [
+                    {
+                      type: "text",
+                      text: '{"searches":[{"id":"admissions-community"}],"nextCursor":null}',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({ trace });
+    expect(result.messages[0].parts).toContainEqual({
+      type: "data-result",
+      data: {
+        searches: [{ id: "admissions-community" }],
+        nextCursor: null,
+      },
+    });
+    expect(
+      result.messages[0].parts.some(
+        (part) =>
+          part.type === "text" &&
+          (part as { text?: string }).text?.startsWith('{"searches"'),
+      ),
+    ).toBe(false);
+  });
+
+  it("renders structured tool output as a structured result", () => {
     const trace: TraceEnvelope = {
       messages: [
         {
@@ -576,11 +631,59 @@ describe("adaptTraceToUiMessages", () => {
     };
 
     const result = adaptTraceToUiMessages({ trace });
-    const textParts = result.messages[0].parts.filter((p) => p.type === "text");
-    const jsonFallback = textParts.find((p) =>
-      (p as any).text?.startsWith("```json"),
-    );
-    expect(jsonFallback).toBeDefined();
+    expect(result.messages[0].parts).toContainEqual({
+      type: "data-result",
+      data: { count: 5, items: ["a", "b"] },
+    });
+  });
+
+  it("formats JSON text output alongside a replayed widget", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-widget-json",
+              toolName: "create_view",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-widget-json",
+              toolName: "create_view",
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text: '{"team":"Barcelona","teams":["Arsenal","Barcelona"]}',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      widgetSnapshots: [
+        makeWidgetSnapshot({
+          toolCallId: "call-widget-json",
+          widgetHtmlUrl: "https://storage.example.com/widget.html",
+        }),
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({ trace });
+    expect(result.toolRenderOverrides["call-widget-json"]).toBeDefined();
+    expect(result.messages[0].parts).toContainEqual({
+      type: "data-result",
+      data: { team: "Barcelona", teams: ["Arsenal", "Barcelona"] },
+    });
   });
 
   // --- Test 9: Reasoning parts with no state ---
