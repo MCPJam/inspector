@@ -213,6 +213,7 @@ export type {
   ServerSkillsLogger,
   VerifiedServerSkill,
 } from "./server-skills.js";
+export { cancellationLeafForVersion } from "./host-config/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,

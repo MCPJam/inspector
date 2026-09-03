@@ -1465,6 +1465,17 @@ export function useServerState({
       if (mcpProfile?.toolListChanged?.refetches === false) {
         defaults.dropToolListChanged = true;
       }
+      // Tool cancellation: forward the degraded leaves and let the SDK pick
+      // which one applies once the connection has negotiated. Resolving here
+      // cannot work for an unpinned host — the era does not exist yet.
+      const cancellationLeaves = Object.fromEntries(
+        (["legacy", "modern"] as const)
+          .filter((key) => mcpProfile?.toolCallCancellation?.[key] === false)
+          .map((key) => [key, false])
+      );
+      if (Object.keys(cancellationLeaves).length > 0) {
+        defaults.toolCallCancellation = cancellationLeaves;
+      }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
       // fails the connect client-side with an actionable message instead of

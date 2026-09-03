@@ -145,6 +145,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "apps": {
         "compatRuntime": {
           "openaiApps": true,
+          "openaiAppsOverrides": {
+            "notifyIntrinsicHeight": false,
+          },
         },
         "mcpAppsOverrides": {
           "cspBaseUriDomains": true,
@@ -323,6 +326,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "apps": {
         "compatRuntime": {
           "openaiApps": true,
+          "openaiAppsOverrides": {
+            "notifyIntrinsicHeight": false,
+          },
         },
         "mcpAppsOverrides": {
           "cspBaseUriDomains": true,
@@ -462,7 +468,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.237",
+          "version": "2.1.246",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -471,7 +477,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+      },
     },
     "modelId": "anthropic/claude-haiku-4.5",
     "optionalServerIds": [],
@@ -507,7 +517,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.237",
+          "version": "2.1.246",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -516,7 +526,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+      },
     },
     "modelId": "anthropic/claude-haiku-4.5",
     "optionalServerIds": [],
@@ -581,10 +595,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "locale": "en-US",
       "platform": "web",
       "safeAreaInsets": {
-        "bottom": 0,
-        "left": 0,
-        "right": 0,
-        "top": 0,
+        "bottom": 12,
+        "left": 12,
+        "right": 12,
+        "top": 12,
       },
       "styles": {
         "css": {
@@ -937,10 +951,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "locale": "en-US",
       "platform": "web",
       "safeAreaInsets": {
-        "bottom": 0,
-        "left": 0,
-        "right": 0,
-        "top": 0,
+        "bottom": 12,
+        "left": 12,
+        "right": 12,
+        "top": 12,
       },
       "styles": {
         "css": {
@@ -1469,7 +1483,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.148.0-alpha.15",
+          "version": "0.150.0-alpha.12.2",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
@@ -1653,7 +1667,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.148.0-alpha.15",
+          "version": "0.150.0-alpha.12.2",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
@@ -1784,6 +1798,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "supportedProtocolVersions": [
           "2024-11-05",
+          "2025-03-26",
+          "2025-06-18",
+          "2025-11-25",
         ],
       },
       "paginationTraversal": "full",
@@ -1909,6 +1926,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "supportedProtocolVersions": [
           "2024-11-05",
+          "2025-03-26",
+          "2025-06-18",
+          "2025-11-25",
         ],
       },
       "paginationTraversal": "full",
@@ -2120,6 +2140,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -2246,6 +2268,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -3198,25 +3222,21 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "styles": {
         "variables": {
-          "--bg-badge-orange": "#53330f",
-          "--bg-basic-orange-strong": "#ff8a00",
-          "--bg-brand-500": "#fa500f",
           "--color-background-inverse": "#fff",
-          "--color-background-primary": "#111115",
-          "--color-background-secondary": "#18181b",
-          "--color-background-tertiary": "#09090b",
-          "--color-border-primary": "#ffffff19",
+          "--color-background-primary": "#101013",
+          "--color-background-secondary": "#1a1a1e",
+          "--color-background-tertiary": "#27272b",
+          "--color-border-primary": "#ffffff1a",
           "--color-border-secondary": "#ffffff26",
-          "--color-border-tertiary": "#ffffff3f",
-          "--color-text-danger": "#ff5d59",
-          "--color-text-info": "#48bfff",
-          "--color-text-inverse": "#111115",
+          "--color-border-tertiary": "#ffffff40",
+          "--color-text-danger": "#f66c60",
+          "--color-text-info": "#55b3fb",
+          "--color-text-inverse": "#101013",
           "--color-text-primary": "#fff",
-          "--color-text-secondary": "#ffffffb2",
-          "--color-text-success": "#7af526",
-          "--color-text-tertiary": "#ffffff7f",
-          "--color-text-warning": "#fc783b",
-          "--text-white-default": "#fff",
+          "--color-text-secondary": "#ccccd1",
+          "--color-text-success": "#44ba82",
+          "--color-text-tertiary": "#a1a1aa",
+          "--color-text-warning": "#ff6529",
         },
       },
       "theme": "dark",
@@ -3307,6 +3327,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "0.1.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -3377,25 +3399,21 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "styles": {
         "variables": {
-          "--bg-badge-orange": "#faeee7",
-          "--bg-basic-orange-strong": "#c4290a",
-          "--bg-brand-500": "#fa500e",
-          "--color-background-inverse": "#111115",
+          "--color-background-inverse": "#1a1a1e",
           "--color-background-primary": "#fff",
-          "--color-background-secondary": "#f7f7f8",
-          "--color-background-tertiary": "#f0f0f2",
-          "--color-border-primary": "#00000019",
+          "--color-background-secondary": "#fbfbf8",
+          "--color-background-tertiary": "#f5f4ef",
+          "--color-border-primary": "#0000001a",
           "--color-border-secondary": "#00000026",
-          "--color-border-tertiary": "#0000003f",
-          "--color-text-danger": "#d92d20",
-          "--color-text-info": "#0072ce",
+          "--color-border-tertiary": "#00000040",
+          "--color-text-danger": "#e51300",
+          "--color-text-info": "#0082e6",
           "--color-text-inverse": "#fff",
-          "--color-text-primary": "#111115",
-          "--color-text-secondary": "#4f4f57",
-          "--color-text-success": "#2e7d32",
-          "--color-text-tertiary": "#6f6f78",
-          "--color-text-warning": "#b85c00",
-          "--text-white-default": "#fff",
+          "--color-text-primary": "#201f1c",
+          "--color-text-secondary": "#615f57",
+          "--color-text-success": "#3aa475",
+          "--color-text-tertiary": "#928f86",
+          "--color-text-warning": "#de4408",
         },
       },
       "theme": "light",
@@ -3486,6 +3504,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "0.1.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -3822,7 +3842,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "--font-heading-xl-size": "36px",
           "--font-heading-xs-line-height": "1.25",
           "--font-heading-xs-size": "18px",
-          "--font-mono": ""Monaco", "Menlo", "Consolas", "Courier New", monospace",
+          "--font-mono": ""Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace",
           "--font-sans": ""Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif",
           "--font-text-lg-line-height": "1.5",
           "--font-text-lg-size": "18px",
@@ -3927,7 +3947,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
           "2025-06-18",
+          "2025-11-25",
         ],
       },
       "profileVersion": 1,
@@ -4052,7 +4074,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "--font-heading-xl-size": "36px",
           "--font-heading-xs-line-height": "1.25",
           "--font-heading-xs-size": "18px",
-          "--font-mono": ""Monaco", "Menlo", "Consolas", "Courier New", monospace",
+          "--font-mono": ""Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace",
           "--font-sans": ""Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif",
           "--font-text-lg-line-height": "1.5",
           "--font-text-lg-size": "18px",
@@ -4157,7 +4179,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
           "2025-06-18",
+          "2025-11-25",
         ],
       },
       "profileVersion": 1,
@@ -4416,6 +4440,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.134.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -4680,6 +4706,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.134.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
