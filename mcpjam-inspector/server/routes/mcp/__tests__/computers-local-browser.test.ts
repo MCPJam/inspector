@@ -411,6 +411,21 @@ describe("POST /local-browser/install", () => {
     expect(chromiumState.installs).toBe(1);
   });
 
+  it("does not try to download a browser the desktop app already has", async () => {
+    // The packaged app has no `node_modules` for the Playwright CLI to live
+    // in, so starting an install here does not merely waste a download — it
+    // fails. The status route already answers `ready`; this must not
+    // contradict it.
+    browserState.runtime = "electron";
+    const token = await grantConsent();
+
+    const res = await install({ [LOCAL_CONSENT_HEADER]: token });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ install: { status: "ready" } });
+    expect(chromiumState.installs).toBe(0);
+  });
+
   it("refuses a consent token that is not this machine's", async () => {
     await grantConsent();
     const res = await install({ [LOCAL_CONSENT_HEADER]: "not-the-capability" });

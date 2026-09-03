@@ -231,6 +231,13 @@ computers.post("/local-browser/install", async (c) => {
   if (!consent) {
     return c.json({ error: "Local computer consent is required" }, 403);
   }
+  // Electron BRINGS its Chromium, and the packaged app has no `node_modules`
+  // for the Playwright CLI to live in — so starting an install here does not
+  // merely waste a download, it fails. The status route already answers
+  // `ready` for this runtime; say the same thing rather than contradicting it.
+  if (resolveLocalBrowserRuntime() === "electron") {
+    return c.json({ install: { status: "ready" as const } });
+  }
   return c.json({ install: await startChromiumInstall() });
 });
 

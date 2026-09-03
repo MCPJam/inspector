@@ -64,6 +64,14 @@ import {
 // `will-attach-webview` guard, and the server provider's ownership check all
 // have to agree on exactly. Three literals would drift; one constant cannot.
 import { WEBMCP_WEBVIEW_PARTITION } from "../shared/webmcp-inspector-protocol.js";
+// Safe to import statically, unlike the server graph below: this module is
+// deliberately import-free — reaching it through `electron-context.ts` would
+// drag in `utils/logger.ts`, which initialises Sentry and Axiom as a side
+// effect of being loaded. See that file's header.
+import {
+  agentBrowserWindowCount,
+  isAgentBrowserWindow,
+} from "../server/services/browserd/electron/agent-windows.js";
 
 // Configure logging
 log.transports.file.level = "info";
@@ -231,13 +239,13 @@ function createElectronHostedAuthNavigationUrl(url: string): string {
             [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
           }
         : parsedState === undefined
-        ? {
-            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-          }
-        : {
-            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-            originalState: parsedState,
-          };
+          ? {
+              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+            }
+          : {
+              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+              originalState: parsedState,
+            };
 
     urlObj.searchParams.set("state", JSON.stringify(nextState));
     return urlObj.toString();
@@ -248,12 +256,12 @@ function createElectronHostedAuthNavigationUrl(url: string): string {
 
 function installSafeOAuthCallbackRouting(
   authWindow: BrowserWindow,
-  source: string
+  source: string,
 ): void {
   const routeIfOAuthCallback = (
     event: { preventDefault: () => void },
     url: string,
-    isMainFrame?: boolean
+    isMainFrame?: boolean,
   ) => {
     if (isMainFrame === false) {
       return;
@@ -261,7 +269,7 @@ function installSafeOAuthCallbackRouting(
 
     const protocolCallbackUrl = buildProtocolOAuthCallbackUrl(
       url,
-      getRendererBaseUrl()
+      getRendererBaseUrl(),
     );
     if (!protocolCallbackUrl) {
       return;
@@ -280,14 +288,14 @@ function installSafeOAuthCallbackRouting(
     "will-navigate",
     (event, url, _isInPlace, isMainFrame) => {
       routeIfOAuthCallback(event, url, isMainFrame);
-    }
+    },
   );
 
   authWindow.webContents.on(
     "will-redirect",
     (event, url, _isInPlace, isMainFrame) => {
       routeIfOAuthCallback(event, url, isMainFrame);
-    }
+    },
   );
 }
 
@@ -309,14 +317,14 @@ function installSafeOAuthCallbackRouting(
 function lockDownWebviewPartition(): void {
   const guestSession = session.fromPartition(WEBMCP_WEBVIEW_PARTITION);
   guestSession.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false)
+    callback(false),
   );
   guestSession.setPermissionCheckHandler(() => false);
 }
 
 function createSafeOAuthWindow(
   options: BrowserWindowConstructorOptions = {},
-  source = "Electron fallback"
+  source = "Electron fallback",
 ): BrowserWindow {
   const { webPreferences: _unsafeWebPreferences, ...safeOptions } = options;
   const authWindow = new BrowserWindow({
@@ -345,13 +353,13 @@ function createSafeOAuthWindow(
 function openSafeOAuthWindow(
   url: string,
   parent: BrowserWindow | null,
-  source: string
+  source: string,
 ): void {
   const authWindow = createSafeOAuthWindow(
     {
       parent: parent ?? undefined,
     },
-    source
+    source,
   );
 
   void authWindow.loadURL(url).catch((error) => {
@@ -414,10 +422,10 @@ async function startHonoServer(): Promise<number> {
             log.warn(
               `Port ${failedPort} unavailable (${
                 err.code ?? err.message
-              }); trying next port`
+              }); trying next port`,
             );
           },
-        }
+        },
       );
       process.env.SERVER_PORT = String(port);
       cachedProbedPort = port;
@@ -430,7 +438,7 @@ async function startHonoServer(): Promise<number> {
     process.env.MCPJAM_RUNTIME_ROOT = path.join(
       app.getPath("userData"),
       "local-harness",
-      "runtime"
+      "runtime",
     );
 
     // Dynamic import so server/config.ts evaluates with the env var we just
@@ -443,9 +451,8 @@ async function startHonoServer(): Promise<number> {
     // workspace grant through the server's own route. Read here, after the
     // server module has generated it, and re-read on every restart.
     try {
-      const { getSessionToken } = await import(
-        "../server/services/session-token.js"
-      );
+      const { getSessionToken } =
+        await import("../server/services/session-token.js");
       localHarnessSessionToken = getSessionToken();
     } catch {
       localHarnessSessionToken = null;
@@ -455,14 +462,13 @@ async function startHonoServer(): Promise<number> {
     // rather than imported by the server, which has to stay loadable under
     // `npx` where there is no Electron and no keychain at all.
     try {
-      const { setInstanceKeyStore } = await import(
-        "../server/utils/harness/local/instance-key.js"
-      );
+      const { setInstanceKeyStore } =
+        await import("../server/utils/harness/local/instance-key.js");
       setInstanceKeyStore(createSafeStorageKeyStore());
     } catch (err) {
       log.warn(
         "Local harness instance key will fall back to an owner-only file",
-        err
+        err,
       );
     }
     const {
@@ -509,7 +515,7 @@ async function startHonoServer(): Promise<number> {
 
     if (port !== DEFAULT_SERVER_PORT) {
       log.warn(
-        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`
+        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`,
       );
     } else {
       log.info(`🚀 MCPJam Server started on port ${port}`);
@@ -560,7 +566,7 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   const maybeOpenExternalNavigation = (
     event: { preventDefault: () => void },
     url: string,
-    isMainFrame: boolean
+    isMainFrame: boolean,
   ) => {
     if (!isMainFrame) {
       return;
@@ -572,14 +578,14 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       const hostedAuthUrl = createElectronHostedAuthNavigationUrl(url);
       const openExternalPromise = shouldForceElectronOAuthFallback()
         ? Promise.reject(
-            new Error("Forced open-external failure for OAuth fallback test")
+            new Error("Forced open-external failure for OAuth fallback test"),
           )
         : shell.openExternal(hostedAuthUrl);
 
       void openExternalPromise.catch((error) => {
         log.warn(
           "Failed to open hosted auth in system browser; continuing in a safe Electron auth window:",
-          error
+          error,
         );
         openSafeOAuthWindow(hostedAuthUrl, window, "hosted auth");
       });
@@ -600,14 +606,14 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     event.preventDefault();
     const openExternalPromise = shouldForceElectronOAuthFallback()
       ? Promise.reject(
-          new Error("Forced open-external failure for OAuth fallback test")
+          new Error("Forced open-external failure for OAuth fallback test"),
         )
       : shell.openExternal(url);
 
     void openExternalPromise.catch((error) => {
       log.warn(
         "Failed to open external navigation in system browser; continuing in a safe Electron window:",
-        error
+        error,
       );
       openSafeOAuthWindow(url, window, "external navigation");
     });
@@ -617,14 +623,14 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     "will-navigate",
     (event, url, _isInPlace, isMainFrame) => {
       maybeOpenExternalNavigation(event, url, isMainFrame);
-    }
+    },
   );
 
   window.webContents.on(
     "will-redirect",
     (event, url, _isInPlace, isMainFrame) => {
       maybeOpenExternalNavigation(event, url, isMainFrame);
-    }
+    },
   );
 
   // Show window when ready
@@ -639,6 +645,16 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   // Handle window closed
   window.on("closed", () => {
     mainWindow = null;
+    // The agent's hidden windows are windows too, so leaving them open means
+    // `window-all-closed` never fires: on Windows and Linux the app would
+    // never quit, and on macOS the server would never be torn down. Close them
+    // with the UI that was watching them — the pane is gone either way, and on
+    // macOS `window-all-closed` will kill them a moment later regardless.
+    if (agentBrowserWindowCount() > 0) {
+      browserTeardown = (killLocalBrowsers?.() ?? Promise.resolve()).catch(
+        () => {},
+      );
+    }
   });
 
   return window;
@@ -811,7 +827,7 @@ function pruneStaleCachesOnVersionChange(): void {
   log.info(
     `App version changed (${
       previousVersion ?? "<none>"
-    } → ${currentVersion}); pruning stale GPU/HTTP caches`
+    } → ${currentVersion}); pruning stale GPU/HTTP caches`,
   );
 
   for (const sub of ["Cache", "Code Cache", "GPUCache"]) {
@@ -889,7 +905,7 @@ function showStartupFailureDialog(error: unknown): void {
     } catch (rmErr) {
       log.warn(
         "Failed to remove .last-launched-version during recovery reset:",
-        rmErr
+        rmErr,
       );
     }
     app.relaunch();
@@ -909,7 +925,7 @@ function showStartupFailureDialog(error: unknown): void {
       .then((result) => {
         if (result) {
           log.warn(
-            `shell.openPath reported error opening logs folder: ${result}`
+            `shell.openPath reported error opening logs folder: ${result}`,
           );
         }
       })
@@ -976,7 +992,7 @@ app.whenReady().then(async () => {
     } catch (dialogErr) {
       log.error(
         "Failed to show startup failure dialog; quitting silently:",
-        dialogErr
+        dialogErr,
       );
       app.quit();
     }
@@ -1027,9 +1043,23 @@ app.on("activate", () => {
     });
 });
 
+/**
+ * Windows a PERSON has, ignoring the agent's hidden ones.
+ *
+ * The agent browser opens real `BrowserWindow`s — hidden, but windows all the
+ * same — so `getAllWindows()` counts them. An open agent tab therefore made the
+ * dock click below find a non-zero count and rebuild nothing: the app was
+ * running, in the tray, with no way to get its UI back.
+ */
+function visibleWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter(
+    (window) => !isAgentBrowserWindow(window),
+  );
+}
+
 async function handleActivate(): Promise<void> {
   // On macOS, re-create window when the dock icon is clicked
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (visibleWindows().length === 0) {
     // A quick reopen can arrive while the browser closed by
     // `window-all-closed` is still shutting down. Starting the server (and
     // with it the next browser) now would hit the profile lock the dying
@@ -1040,7 +1070,7 @@ async function handleActivate(): Promise<void> {
     }
     // Re-asked after the await: the teardown is long enough for a window to
     // have appeared, and building a second one is worse than doing nothing.
-    if (BrowserWindow.getAllWindows().length > 0) return;
+    if (visibleWindows().length > 0) return;
     if (serverPort > 0) {
       mainWindow = createMainWindow(getServerUrl());
       setTrustedUpdateWindow(mainWindow);
@@ -1086,9 +1116,7 @@ app.on("web-contents-created", (_, contents) => {
    */
   contents.on("will-attach-webview", (event, webPreferences, params) => {
     if (params.partition !== WEBMCP_WEBVIEW_PARTITION) {
-      log.warn(
-        `Refusing a <webview> on partition ${String(params.partition)}`
-      );
+      log.warn(`Refusing a <webview> on partition ${String(params.partition)}`);
       event.preventDefault();
       return;
     }
@@ -1116,7 +1144,7 @@ app.on("web-contents-created", (_, contents) => {
                 ...options,
                 parent: mainWindow || undefined,
               },
-              "OAuth popup"
+              "OAuth popup",
             );
 
             return popup.webContents;

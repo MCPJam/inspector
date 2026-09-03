@@ -63,6 +63,8 @@ export interface FakeBrowserWebContentsOptions {
   evaluate?: (code: string) => Promise<unknown> | unknown;
   /** Makes `loadURL` reject, the way a dead host does. */
   loadError?: Error;
+  /** Replaces `loadURL` entirely — a load that never settles, say. */
+  loadURL?: (url: string) => Promise<void>;
 }
 
 export class FakeBrowserWebContents extends EventEmitter {
@@ -73,6 +75,8 @@ export class FakeBrowserWebContents extends EventEmitter {
   readonly evaluations: string[] = [];
   destroyed = false;
   focused = 0;
+  /** How many times a load was called off. */
+  stopped = 0;
   windowOpenHandler: ((details: { url: string }) => unknown) | undefined;
   private url: string;
   private readonly options: FakeBrowserWebContentsOptions;
@@ -86,11 +90,16 @@ export class FakeBrowserWebContents extends EventEmitter {
 
   async loadURL(url: string): Promise<void> {
     this.navigations.push(url);
+    if (this.options.loadURL) return this.options.loadURL(url);
     if (this.options.loadError) throw this.options.loadError;
     this.url = url;
     this.historyDepth += 1;
     this.emit("did-navigate", { preventDefault() {} }, url);
     return undefined;
+  }
+
+  stop(): void {
+    this.stopped += 1;
   }
 
   reload(): void {
@@ -141,8 +150,12 @@ export class FakeBrowserWebContents extends EventEmitter {
   }
 }
 
+let nextWindowId = 1;
+
 export class FakeBrowserWindow implements ElectronWindowLike {
   readonly webContents: FakeBrowserWebContents;
+  /** Real `BrowserWindow`s have one, and the agent-window registry keys on it. */
+  readonly id: number;
   destroyed = false;
   focusCount = 0;
 
@@ -150,6 +163,7 @@ export class FakeBrowserWindow implements ElectronWindowLike {
     readonly options: Record<string, unknown>,
     contents?: FakeBrowserWebContents,
   ) {
+    this.id = nextWindowId++;
     this.webContents = contents ?? new FakeBrowserWebContents();
   }
 

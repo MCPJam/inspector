@@ -144,10 +144,22 @@ describe("browserd bundle freshness", () => {
       "the daemon bundle now imports the Electron engine; it is uploaded to a " +
         "box with no Electron, so every hosted session would fail to boot",
     ).toEqual([]);
-    // Belt and braces on the artifact itself: a dynamic `import("electron")`
-    // that esbuild kept as a bare specifier would not appear in the input list
-    // at all, and would fail only at runtime on the box.
-    expect(readFileSync(bundleFile, "utf8")).not.toContain('"electron"');
+    // Belt and braces on the artifact itself, because the input list above
+    // cannot see everything: esbuild keeps an EXTERNAL specifier as a literal
+    // import rather than following it, so a stray `import("electron")` would
+    // leave no trace in the graph and fail only at runtime, on the box.
+    //
+    // Matched as an import edge rather than as the bare word: the daemon may
+    // one day legitimately mention "electron" in a user-agent string, an
+    // engine name or a flag, and a test that trips on prose is a test people
+    // learn to edit rather than to read.
+    const artifact = readFileSync(bundleFile, "utf8");
+    const importEdge =
+      /(?:^|[^\w$])(?:import|require)\s*\(\s*["']electron["']\s*\)|from\s*["']electron["']/;
+    expect(
+      importEdge.test(artifact),
+      "the daemon bundle imports `electron` directly",
+    ).toBe(false);
   });
 
   it("the embedded base64 is byte-identical to the checked-in .mjs", () => {

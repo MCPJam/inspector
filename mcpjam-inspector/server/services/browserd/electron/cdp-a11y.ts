@@ -42,6 +42,11 @@ interface AxValue {
   value?: unknown;
 }
 
+interface AxProperty {
+  name?: string;
+  value?: AxValue;
+}
+
 interface AxNode {
   nodeId: string;
   ignored?: boolean;
@@ -49,9 +54,37 @@ interface AxNode {
   name?: AxValue;
   value?: AxValue;
   description?: AxValue;
+  properties?: AxProperty[];
   childIds?: string[];
   backendDOMNodeId?: number;
 }
+
+/**
+ * AX properties worth carrying up, and what to call them.
+ *
+ * Not decoration: these are what let the model tell a ticked box from an empty
+ * one, an open menu from a closed one, a disabled button from a live one, and
+ * a second-level heading from a top-level one. `ariaSnapshot` renders them
+ * inline (`checkbox "Remember me" [checked]`), so dropping them here would
+ * have made the Electron engine's tree read the same shape while saying
+ * strictly less — the kind of gap nobody notices until an agent confidently
+ * clicks a checkbox that was already ticked.
+ */
+const CARRIED_PROPERTIES: Record<string, string> = {
+  checked: "checked",
+  disabled: "disabled",
+  expanded: "expanded",
+  focused: "focused",
+  level: "level",
+  pressed: "pressed",
+  readonly: "readonly",
+  required: "required",
+  selected: "selected",
+  url: "url",
+  valuemin: "valueMin",
+  valuemax: "valueMax",
+  valuetext: "valueText",
+};
 
 /** An AX property's value, when it is a string or number worth carrying. */
 function scalar(value: AxValue | undefined): string | number | undefined {
@@ -147,6 +180,17 @@ function build(
   if (value !== undefined) built.value = value;
   const description = scalar(node.description);
   if (description !== undefined) built.description = String(description);
+  for (const property of node.properties ?? []) {
+    const key = property.name && CARRIED_PROPERTIES[property.name];
+    if (!key) continue;
+    const raw = property.value?.value;
+    // `false` and `0` are answers, so only absence is skipped. A `false` on
+    // `checked` is the difference between "not ticked" and "not a checkbox".
+    if (raw === undefined || raw === null || raw === "") continue;
+    // CDP reports tristate `checked` as "true" / "false" / "mixed" strings;
+    // the booleans stay booleans so a consumer need not parse prose.
+    built[key] = raw;
+  }
   if (children.length > 0) built.children = children;
   return [built];
 }

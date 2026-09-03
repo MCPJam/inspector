@@ -29,6 +29,9 @@
 import type { DriverContext, DriverPage } from "../daemon/browser-page";
 import { BROWSERD_OBSERVATION_VIEWPORT } from "../protocol";
 import { createElectronPage, type PageWebContents } from "./electron-page";
+// A separate, import-free module because `src/main.ts` reads the same registry
+// and must not pull the server graph in at module-load time. See its header.
+import { forgetAgentWindow, rememberAgentWindow } from "./agent-windows";
 
 /**
  * How many hidden windows one context may hold.
@@ -68,6 +71,8 @@ export interface ElectronLike {
 }
 
 export interface ElectronWindowLike {
+  /** `BrowserWindow.id`, so the app can tell an agent window from a real one. */
+  id?: number;
   webContents: PageWebContents & {
     setWindowOpenHandler?(
       handler: (details: { url: string }) => { action: "deny" | "allow" },
@@ -123,6 +128,11 @@ export async function launchElectronContext(
       show: false,
       width: BROWSERD_OBSERVATION_VIEWPORT.width,
       height: BROWSERD_OBSERVATION_VIEWPORT.height,
+      // The CONTENT is 1024×768, not the frame around it. Without this, a
+      // framed platform makes the viewport smaller than the surface the model
+      // was told about (L5), so every coordinate it was handed from a
+      // screenshot lands somewhere other than where it aimed.
+      useContentSize: true,
       webPreferences: {
         // The agent browses the open web. Every one of these is what keeps a
         // page it lands on from reaching the user's machine through the
@@ -139,13 +149,20 @@ export async function launchElectronContext(
       },
     });
     windows.add(window);
+    rememberAgentWindow(window.id);
     return window;
+  }
+
+  /** Forget a window, in both the context's set and the process-wide one. */
+  function forget(window: ElectronWindowLike): void {
+    windows.delete(window);
+    forgetAgentWindow(window.id);
   }
 
   async function adopt(window: ElectronWindowLike): Promise<DriverPage> {
     const page = createElectronPage(window.webContents, {
       onClose() {
-        windows.delete(window);
+        forget(window);
         if (!window.isDestroyed()) window.destroy();
       },
       onBringToFront: () => window.focus?.(),
@@ -179,7 +196,7 @@ export async function launchElectronContext(
     async close() {
       closed = true;
       for (const window of [...windows]) {
-        windows.delete(window);
+        forget(window);
         try {
           if (!window.isDestroyed()) window.destroy();
         } catch {

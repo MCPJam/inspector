@@ -77,6 +77,54 @@ describe("key-events — chords", () => {
     expect(resolveKeyPress("+").key.code).toBe("Equal");
   });
 
+  it("treats a trailing + as the key, not a dangling separator", () => {
+    // "+" is both the separator AND a key. Dropping every empty segment turned
+    // "Control++" into a lone Control press, so a page waiting for zoom-in saw
+    // nothing at all.
+    const zoomIn = resolveKeyPress("Control++");
+    expect(zoomIn.key.code).toBe("Equal");
+    expect(zoomIn.chord.map((k) => k.key)).toEqual(["Control"]);
+    expect(zoomIn.modifiers).toBe(MODIFIER_BITS.Control);
+  });
+
+  it("types the SHIFTED character when Shift is held", () => {
+    // Playwright's `press("Shift+a")` types "A". Sending the unshifted key
+    // with the Shift bit set fires the right modifier but inserts "a", so the
+    // field ends up with the wrong character while the page's own handlers
+    // saw a capital.
+    expect(resolveKeyPress("Shift+a").key).toMatchObject({
+      key: "A",
+      text: "A",
+      // ...and still the same PHYSICAL key, which is what `code` is for.
+      code: "KeyA",
+    });
+    expect(resolveKeyPress("Shift+1").key).toMatchObject({
+      key: "!",
+      text: "!",
+      code: "Digit1",
+    });
+    // A key with no character to shift is left exactly as it is.
+    expect(resolveKeyPress("Shift+Tab").key).toMatchObject({
+      key: "Tab",
+      code: "Tab",
+    });
+  });
+
+  it("knows the numpad is a different key from the number row", () => {
+    // A page reading `code` tells `Numpad1` from `Digit1`, and a calculator or
+    // a game acts on exactly that difference.
+    expect(describeKey("Numpad1")).toMatchObject({
+      key: "1",
+      code: "Numpad1",
+      keyCode: 97,
+    });
+    expect(describeKey("NumpadAdd")).toMatchObject({
+      key: "+",
+      code: "NumpadAdd",
+    });
+    expect(describeKey("CapsLock")).toMatchObject({ code: "CapsLock" });
+  });
+
   it("refuses a chord whose held segment is not a modifier", () => {
     expect(() => resolveKeyPress("q+a")).toThrow(/not a modifier/);
   });

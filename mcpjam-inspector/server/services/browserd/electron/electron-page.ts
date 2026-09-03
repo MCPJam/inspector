@@ -74,14 +74,33 @@ function abortPromise(signal: AbortSignal): Promise<never> {
   });
 }
 
-/** Reject after `ms` with prose the driver reads as `target_not_found`. */
-function deadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+/**
+ * Reject after `ms` with prose the driver reads as `target_not_found`.
+ *
+ * `onTimeout` is how the abandoned work is actually STOPPED. Without it a
+ * navigation that blew its budget keeps loading: the command that started it
+ * has already been answered and the queue has moved on, so the page commits
+ * underneath whatever runs next, and that command's observation describes a
+ * page nobody asked for. Electron gives us `webContents.stop()` for exactly
+ * this; a CDP round trip has nothing to cancel and passes nothing.
+ */
+function deadline<T>(
+  work: Promise<T>,
+  ms: number,
+  what: string,
+  onTimeout?: () => void,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expiry = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`timeout: ${what} did not finish in ${ms}ms`)),
-      ms,
-    );
+    timer = setTimeout(() => {
+      try {
+        onTimeout?.();
+      } catch {
+        // A surface already gone cannot be stopped, and the timeout still has
+        // to be reported.
+      }
+      reject(new Error(`timeout: ${what} did not finish in ${ms}ms`));
+    }, ms);
     (timer as { unref?: () => void }).unref?.();
   });
   return Promise.race([work, expiry]).finally(() => {
@@ -100,6 +119,8 @@ function deadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
 export interface PageWebContents {
   loadURL(url: string): Promise<void>;
   reload(): void;
+  /** Abort whatever is loading — how a timed-out navigation is called off. */
+  stop?(): void;
   executeJavaScript(code: string): Promise<unknown>;
   isDestroyed(): boolean;
   focus(): void;
@@ -154,6 +175,23 @@ export function createElectronPage(
   let cdpPromise: Promise<CdpLike | null> | undefined;
   let webmcpPromise: Promise<WebMcpBridge | null> | undefined;
   let adapter: DebuggerCdpAdapter | undefined;
+  /**
+   * Requests this page has in flight, counted from session setup onwards.
+   *
+   * Counting inside `waitForNetworkIdle` was wrong twice over. `Network.enable`
+   * does not replay: requests already running when it is called are invisible
+   * to that session forever, and `goto()` starts its requests before any wait
+   * begins — so the wait armed from ZERO, saw nothing, and reported a loading
+   * page as settled after half a second. And `CdpLike` has no `off`, so each
+   * wait left three more handlers on the adapter, three per observe, for the
+   * life of the page.
+   *
+   * One monitor, enabled with the other domains before anything navigates.
+   */
+  let inFlightRequests = 0;
+  /** Resolvers waiting for the page to go quiet. */
+  const quietWaiters = new Set<() => void>();
+  let quietTimer: ReturnType<typeof setTimeout> | undefined;
 
   // The console ring fills eagerly, from before any observation asks for it —
   // which is the point: a page logs while it loads, not when it is read. The
@@ -174,12 +212,21 @@ export function createElectronPage(
   // Both events, because a single-page app changes its URL without a
   // navigation — and an observation stamped with the URL from before the route
   // change describes a page the model is not looking at.
-  const trackUrl = (...args: unknown[]) => {
+  //
+  // MAIN FRAME ONLY on the in-page one, whose signature is
+  // `(event, url, isMainFrame, …)`. An ad iframe routing itself would
+  // otherwise become the tab's URL — and this URL is not decoration: the
+  // unattended origin allowlist is enforced against `url` on every
+  // observation, so a third-party frame's address landing here decides
+  // whether the page's content is returned or stripped.
+  wc.on("did-navigate", (...args: unknown[]) => {
     const url = args[1];
     if (typeof url === "string") currentUrl = url;
-  };
-  wc.on("did-navigate", trackUrl);
-  wc.on("did-navigate-in-page", trackUrl);
+  });
+  wc.on("did-navigate-in-page", (...args: unknown[]) => {
+    const [, url, isMainFrame] = args;
+    if (isMainFrame === true && typeof url === "string") currentUrl = url;
+  });
 
   /** The CDP session, attached once and shared by everything that needs one. */
   function session(): Promise<CdpLike | null> {
@@ -193,6 +240,21 @@ export function createElectronPage(
         await adapter.send("DOM.enable").catch(() => {});
         await adapter.send("Page.enable").catch(() => {});
         await adapter.send("Runtime.enable").catch(() => {});
+        // Before anything navigates, for the reason in `inFlightRequests`.
+        adapter.on("Network.requestWillBeSent", () => {
+          inFlightRequests += 1;
+          if (quietTimer) {
+            clearTimeout(quietTimer);
+            quietTimer = undefined;
+          }
+        });
+        const settled = () => {
+          inFlightRequests = Math.max(0, inFlightRequests - 1);
+          armQuiet();
+        };
+        adapter.on("Network.loadingFinished", settled);
+        adapter.on("Network.loadingFailed", settled);
+        await adapter.send("Network.enable").catch(() => {});
         return adapter;
       } catch {
         // A debugger another tool already owns, or a destroyed surface. The
@@ -202,6 +264,19 @@ export function createElectronPage(
       }
     })();
     return cdpPromise;
+  }
+
+  /** Start (or restart) the quiet countdown, and release waiters when it ends. */
+  function armQuiet(): void {
+    if (quietTimer) clearTimeout(quietTimer);
+    quietTimer = undefined;
+    if (inFlightRequests > 0 || quietWaiters.size === 0) return;
+    quietTimer = setTimeout(() => {
+      quietTimer = undefined;
+      for (const release of [...quietWaiters]) release();
+      quietWaiters.clear();
+    }, NETWORK_QUIET_MS);
+    (quietTimer as { unref?: () => void }).unref?.();
   }
 
   /** The CDP session or a throw the driver reads as a real failure. */
@@ -221,10 +296,17 @@ export function createElectronPage(
     if (rootNodeId === undefined)
       throw new Error("no element: the document has no root");
 
-    const found = (await cdp.send("DOM.querySelector", {
-      nodeId: rootNodeId,
-      selector,
-    })) as { nodeId?: number };
+    // A malformed selector makes `DOM.querySelector` reject with protocol
+    // prose the driver would classify as `act_failed` — a daemon fault. It is
+    // not: the model wrote a selector the page cannot parse, which is exactly
+    // the kind of thing it can fix on its next turn if we say so.
+    const found = (await cdp
+      .send("DOM.querySelector", { nodeId: rootNodeId, selector })
+      .catch(() => {
+        throw new Error(
+          `no element: ${selector} is not a selector this page can resolve`,
+        );
+      })) as { nodeId?: number };
     if (!found?.nodeId)
       throw new Error(`no element: ${selector} matched nothing`);
 
@@ -335,11 +417,21 @@ export function createElectronPage(
     async goto(url) {
       await deadline(
         (async () => {
+          // `did-navigate` has already recorded the COMMITTED url by the time
+          // this resolves, and after a redirect that is a different address
+          // from the one asked for. Assigning the requested url here — which
+          // this used to do — hands the origin allowlist the address that was
+          // requested rather than the one that answered, which is a security
+          // control reading the wrong value. Only fall back to the request
+          // when no navigation event arrived at all (a fake, a same-document
+          // load), never overwrite one that did.
+          const before = currentUrl;
           await wc.loadURL(url);
-          currentUrl = url;
+          if (currentUrl === before) currentUrl = url;
         })(),
         NAV_TIMEOUT_MS,
         `navigating to ${url}`,
+        () => wc.stop?.(),
       );
     },
     async reload() {
@@ -347,6 +439,7 @@ export function createElectronPage(
         navigationSettled(wc, () => wc.reload()),
         NAV_TIMEOUT_MS,
         "reloading",
+        () => wc.stop?.(),
       );
     },
     async goBack() {
@@ -357,6 +450,7 @@ export function createElectronPage(
         navigationSettled(wc, () => history.goBack()),
         NAV_TIMEOUT_MS,
         "going back",
+        () => wc.stop?.(),
       );
     },
 
@@ -507,11 +601,25 @@ export function createElectronPage(
     cdp: () => session(),
 
     async waitForNetworkIdle(signal) {
+      // No inner timeout, deliberately: settle's abort signal is the sole
+      // budget. Giving this one of its own would report a never-quiet page as
+      // quiet — the exact P1 the Playwright engine had.
       const cdp = await session();
       if (!cdp) return;
-      await Promise.race([networkQuiet(cdp), abortPromise(signal)]).catch(
-        () => {},
-      );
+      let release: (() => void) | undefined;
+      const quiet = new Promise<void>((resolve) => {
+        release = resolve;
+        quietWaiters.add(resolve);
+        armQuiet();
+      });
+      try {
+        await Promise.race([quiet, abortPromise(signal)]);
+      } catch {
+        // Aborted. Drop this waiter so the set does not grow across settles
+        // that timed out.
+      } finally {
+        if (release) quietWaiters.delete(release);
+      }
     },
     async requestAnimationFrame(signal) {
       await Promise.race([
@@ -603,43 +711,5 @@ function navigationSettled(
     } catch (error) {
       finish(error instanceof Error ? error : new Error(String(error)));
     }
-  });
-}
-
-/**
- * Resolve once the page has had `NETWORK_QUIET_MS` with nothing in flight.
- *
- * There is no `waitForLoadState("networkidle")` here, so the requests are
- * counted directly. No inner timeout, deliberately: settle's abort signal is
- * the sole budget, and giving this its own would report a never-quiet page as
- * quiet — the exact P1 the Playwright engine had.
- */
-function networkQuiet(cdp: CdpLike): Promise<void> {
-  return new Promise<void>((resolve) => {
-    let inFlight = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const arm = () => {
-      if (timer) clearTimeout(timer);
-      if (inFlight > 0) return;
-      timer = setTimeout(resolve, NETWORK_QUIET_MS);
-      (timer as { unref?: () => void }).unref?.();
-    };
-
-    cdp.on("Network.requestWillBeSent", () => {
-      inFlight += 1;
-      if (timer) clearTimeout(timer);
-    });
-    const settle = () => {
-      inFlight = Math.max(0, inFlight - 1);
-      arm();
-    };
-    cdp.on("Network.loadingFinished", settle);
-    cdp.on("Network.loadingFailed", settle);
-
-    void cdp.send("Network.enable").catch(() => {});
-    // Armed immediately: a page that was already idle when asked must not wait
-    // for a request that is never coming.
-    arm();
   });
 }

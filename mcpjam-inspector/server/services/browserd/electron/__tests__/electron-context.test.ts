@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ELECTRON_TAB_CAP, launchElectronContext } from "../electron-context";
 import { fakeElectron, FakeBrowserWebContents } from "./fake-electron-browser";
+import {
+  agentBrowserWindowCount,
+  isAgentBrowserWindow,
+  resetAgentWindowsForTests,
+} from "../agent-windows";
+
+beforeEach(() => resetAgentWindowsForTests());
 
 describe("electron context — the windows it opens", () => {
   it("opens them hidden, so the agent does not steal the user's screen", async () => {
@@ -24,6 +31,21 @@ describe("electron context — the windows it opens", () => {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
+    });
+  });
+
+  it("sizes the CONTENT to the observation viewport, not the frame", async () => {
+    // Without this, a framed platform makes the content smaller than the
+    // 1024x768 surface the model was told about (L5) — so every coordinate it
+    // was handed from a screenshot lands somewhere other than where it aimed.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    await context.newPage();
+
+    expect(electron.windows[0]?.options).toMatchObject({
+      useContentSize: true,
+      width: 1024,
+      height: 768,
     });
   });
 
@@ -182,6 +204,38 @@ describe("electron context — the page it hands back", () => {
 
     expect(electron.windows[0]?.focusCount).toBe(1);
     expect(contents.focused).toBe(1);
+  });
+});
+
+describe("electron context — the app's own windows still work", () => {
+  it("marks its windows so the app can tell them from a person's", async () => {
+    // These are real `BrowserWindow`s, so Electron counts them. An open agent
+    // tab therefore stopped `window-all-closed` firing — on Windows and Linux
+    // the app never quit — and stopped `activate`'s zero-window check passing,
+    // so a dock click on macOS rebuilt nothing and left the app running with
+    // no way to reach its UI.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    await context.newPage();
+    await context.newPage();
+
+    expect(agentBrowserWindowCount()).toBe(2);
+    expect(isAgentBrowserWindow(electron.windows[0]!)).toBe(true);
+    // A window with an id nothing registered is a person's.
+    expect(isAgentBrowserWindow({ id: 99_999 })).toBe(false);
+  });
+
+  it("stops counting a window once it is gone", async () => {
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    const page = await context.newPage();
+    await context.newPage();
+
+    await page.close();
+    expect(agentBrowserWindowCount()).toBe(1);
+
+    await context.close();
+    expect(agentBrowserWindowCount()).toBe(0);
   });
 });
 

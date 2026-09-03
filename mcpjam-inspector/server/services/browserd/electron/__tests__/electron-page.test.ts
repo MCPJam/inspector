@@ -238,12 +238,87 @@ describe("electron page — navigation", () => {
     );
   });
 
+  it("calls off a navigation that blew its budget", async () => {
+    // The command that started it has already been answered and the queue has
+    // moved on. A load left running commits underneath whatever runs NEXT, and
+    // that command's observation then describes a page nobody asked for.
+    vi.useFakeTimers();
+    try {
+      const contents = new FakeBrowserWebContents({
+        loadURL: () => new Promise<void>(() => {}),
+      });
+      const { page } = makePage(contents);
+
+      const navigating = page.goto("https://slow.test/");
+      const assertion = expect(navigating).rejects.toThrow(/timeout/);
+      await vi.advanceTimersByTimeAsync(31_000);
+      await assertion;
+
+      expect(contents.stopped).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports a failed navigation as something the model can act on", async () => {
     const contents = new FakeBrowserWebContents({
       loadError: new Error("ERR_NAME_NOT_RESOLVED"),
     });
     const { page } = makePage(contents);
     await expect(page.goto("https://nope.invalid/")).rejects.toThrow();
+  });
+});
+
+describe("electron page — settling", () => {
+  it("counts requests that started before the wait did", async () => {
+    // `Network.enable` does not replay: anything already running when it is
+    // called is invisible to that session forever. Enabling it inside the wait
+    // meant `goto()`'s own requests were never counted, so the wait armed from
+    // ZERO and reported a still-loading page as settled half a second later.
+    const contents = new FakeBrowserWebContents();
+    const { page, dbg } = makePage(contents);
+    await page.cdp();
+
+    // Enabled with the other domains, before anything navigates.
+    expect(dbg.methods()).toContain("Network.enable");
+    const order = dbg.methods();
+    expect(order.indexOf("Network.enable")).toBeLessThan(order.length);
+
+    // A request in flight, then the wait: it must not resolve until the
+    // request finishes.
+    dbg.emitCdp("Network.requestWillBeSent", {});
+    let settled = false;
+    const waiting = page
+      .waitForNetworkIdle(new AbortController().signal)
+      .then(() => {
+        settled = true;
+      });
+    await new Promise((r) => setTimeout(r, 700));
+    expect(settled).toBe(false);
+
+    dbg.emitCdp("Network.loadingFinished", {});
+    await waiting;
+    expect(settled).toBe(true);
+  }, 10_000);
+
+  it("does not add three CDP listeners per observation", async () => {
+    // `CdpLike` has deliberately no `off`, and `settle()` runs a wait on every
+    // observe and every act. Registering handlers per wait grew the adapter's
+    // map by three entries forever on a long session.
+    const contents = new FakeBrowserWebContents();
+    const { page } = makePage(contents);
+    await page.cdp();
+
+    for (let i = 0; i < 5; i += 1) {
+      const controller = new AbortController();
+      const waiting = page.waitForNetworkIdle(controller.signal);
+      controller.abort();
+      await waiting;
+    }
+
+    // One registration each, made once at session setup.
+    const registered = contents.debugger.listenerCount("message");
+    expect(registered).toBe(1);
   });
 });
 

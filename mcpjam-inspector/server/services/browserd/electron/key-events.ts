@@ -87,7 +87,30 @@ const NAMED_KEYS: Record<string, CdpKey> = {
   End: { key: "End", code: "End", keyCode: 35 },
   PageUp: { key: "PageUp", code: "PageUp", keyCode: 33 },
   PageDown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+  CapsLock: { key: "CapsLock", code: "CapsLock", keyCode: 20 },
+  NumLock: { key: "NumLock", code: "NumLock", keyCode: 144 },
+  ScrollLock: { key: "ScrollLock", code: "ScrollLock", keyCode: 145 },
+  ContextMenu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
+
+  // The numpad, which is a DIFFERENT physical key from the one on the main
+  // row: a page listening for `code` tells `Numpad1` from `Digit1`, and a
+  // calculator or a game will act on exactly that difference.
+  NumpadEnter: { key: "Enter", code: "NumpadEnter", keyCode: 13, text: "\r" },
+  NumpadAdd: { key: "+", code: "NumpadAdd", keyCode: 107, text: "+" },
+  NumpadSubtract: { key: "-", code: "NumpadSubtract", keyCode: 109, text: "-" },
+  NumpadMultiply: { key: "*", code: "NumpadMultiply", keyCode: 106, text: "*" },
+  NumpadDivide: { key: "/", code: "NumpadDivide", keyCode: 111, text: "/" },
+  NumpadDecimal: { key: ".", code: "NumpadDecimal", keyCode: 110, text: "." },
 };
+
+for (let n = 0; n <= 9; n += 1) {
+  NAMED_KEYS[`Numpad${n}`] = {
+    key: String(n),
+    code: `Numpad${n}`,
+    keyCode: 96 + n,
+    text: String(n),
+  };
+}
 
 for (let n = 1; n <= 12; n += 1) {
   NAMED_KEYS[`F${n}`] = { key: `F${n}`, code: `F${n}`, keyCode: 111 + n };
@@ -219,9 +242,18 @@ export function describeKey(name: string): CdpKey | null {
  * something it can act on, rather than a page that quietly ignored it.
  */
 export function resolveKeyPress(chord: string): ResolvedKeyPress {
-  const parts = chord.split("+").filter((part) => part.length > 0);
-  // A bare "+" splits to nothing; it is a key, not a separator, in that case.
-  const segments = parts.length > 0 ? parts : ["+"];
+  // "+" is both the separator AND a key, so an empty last segment means the
+  // key IS a plus: "Control++" is Control plus Equal, not a lone Control.
+  // Dropping every empty part — which this used to do — silently turned that
+  // into a bare modifier press, and a page waiting for zoom-in saw nothing.
+  const raw = chord.split("+");
+  const segments: string[] = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const part = raw[i]!;
+    if (part.length > 0) segments.push(part);
+    else if (i === raw.length - 1 && segments.length > 0) segments.push("+");
+  }
+  if (segments.length === 0) segments.push("+");
   const last = segments[segments.length - 1]!;
 
   const key = describeKey(last);
@@ -253,8 +285,39 @@ export function resolveKeyPress(chord: string): ResolvedKeyPress {
   // A key that IS a modifier contributes its own bit while it is down.
   if (key.modifier) modifiers |= MODIFIER_BITS[key.modifier];
 
-  return { key, modifiers, chord: held };
+  // Shift held means the SHIFTED character: Playwright's `press("Shift+a")`
+  // types "A", and `press("Shift+1")` types "!". Sending the unshifted key
+  // with the Shift bit set does fire the right modifier, but the text CDP
+  // inserts is still "a" — so the field ends up with the wrong character
+  // while the page's own handlers saw a capital.
+  const shifted =
+    (modifiers & MODIFIER_BITS.Shift) !== 0 ? shiftedKey(key) : key;
+
+  return { key: shifted, modifiers, chord: held };
 }
+
+/**
+ * The same physical key, as Shift makes it.
+ *
+ * Only the character changes: `code` and `keyCode` are the key you pressed,
+ * which is the whole point of `code`.
+ */
+function shiftedKey(key: CdpKey): CdpKey {
+  if (key.text === undefined || key.modifier) return key;
+  const upper = key.text.toUpperCase();
+  if (upper !== key.text) return { ...key, key: upper, text: upper };
+  const shiftedChar = SHIFTED_BY_BASE[key.text];
+  if (!shiftedChar) return key;
+  return { ...key, key: shiftedChar, text: shiftedChar };
+}
+
+/** `SHIFTED_FROM` the other way round: unshifted character → shifted one. */
+const SHIFTED_BY_BASE: Record<string, string> = Object.fromEntries(
+  Object.entries(SHIFTED_FROM).map(([shiftedChar, base]) => [
+    base,
+    shiftedChar,
+  ]),
+);
 
 /**
  * Should this press insert text?
