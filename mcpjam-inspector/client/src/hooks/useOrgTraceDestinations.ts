@@ -77,12 +77,14 @@ export interface TraceDestination {
 export interface TraceDestinationBackfillJob {
   _id: string;
   destinationId: string;
-  status: "pending" | "running" | "completed" | "failed";
+  organizationId: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   sinceMs: number;
-  sessionsScanned: number;
-  sessionsQueued: number;
+  scanned: number;
+  enqueued: number;
   error?: string;
   createdAt: number;
+  updatedAt: number;
   finishedAt?: number;
 }
 

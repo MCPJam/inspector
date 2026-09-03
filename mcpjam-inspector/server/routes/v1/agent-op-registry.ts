@@ -420,8 +420,8 @@ function describeComposeEvalSuiteRun(
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-      ? "ephemeral when supported; otherwise attached"
-      : "without attaching them to the suite";
+        ? "ephemeral when supported; otherwise attached"
+        : "without attaching them to the suite";
   if (n <= 1) {
     return (
       `Run eval suite ${suite} on a composed setup${hostNote}` +
@@ -2363,6 +2363,42 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Same as create_secret: a rotation carries the new plaintext as an argument. Available on REST/SDK/CLI.",
   delete_secret:
     "Hard-revokes a credential — the row and the encrypted value both go, and nothing here can put it back; the agent proposes authoring, never destruction.",
+  // TRACE DESTINATIONS — all ten, and the reasons split into three groups.
+  //
+  // The two credential-carrying writes are excluded on the same argument as
+  // `create_secret` above: the header values are ARGUMENTS, so they would
+  // transit model context and this turn's transcript before an approval card
+  // could render, and an approval that fires after the value is already
+  // logged is not an approval.
+  create_trace_destination:
+    "The vendor credentials are arguments, so they would reach model context and the turn transcript before any approval could run. Available on REST/SDK/CLI, where the caller controls where the values come from.",
+  update_trace_destination:
+    "Same as create_trace_destination: rotating a credential carries it as an argument, with the same pre-approval exposure.",
+  // The rest are excluded because observability wiring is an org-admin task
+  // with consequences outside MCPJam entirely — traces land in a third
+  // party's system and cannot be retracted from there. That is a decision for
+  // someone who knows what that vendor holds and who can read it, which is
+  // not a thing a turn can establish.
+  delete_trace_destination:
+    "Discards a live export and its stored credentials; the agent proposes authoring, never destruction.",
+  resume_trace_destination:
+    "Restarts an export a human stopped, usually because something was wrong with it. Restarting before the cause is fixed sends traces to a third party again.",
+  pause_trace_destination:
+    "Stopping an export silently drops the window: nothing is queued while paused, so an unattended pause becomes a permanent gap in a customer's observability.",
+  test_trace_destination:
+    "Sends traffic to a third party's intake. Harmless once, but it is an outbound call to someone else's system on the organization's credentials.",
+  backfill_trace_destination:
+    "Can queue a month of an organization's history at a vendor that bills on ingest — a spend decision whose size the agent cannot see from here.",
+  // The three reads are excluded for the same reason `list_secrets` is: the
+  // surface is org administration, and an agent turn that pages through an
+  // organization's vendor bindings is doing an admin's job with an admin's
+  // visibility. Available on REST/SDK/CLI, where the caller asked.
+  list_trace_destinations:
+    "Organization observability configuration is an admin surface, not a turn concern. Available on REST/SDK/CLI.",
+  get_trace_destination:
+    "Same as list_trace_destinations: admin configuration, available on REST/SDK/CLI.",
+  list_trace_destination_backfills:
+    "Backfill history is operational detail for an admin diagnosing an export. Available on REST/SDK/CLI.",
   archive_journey:
     "Removes a journey from the roster; the agent proposes authoring, never destruction.",
   archive_swarm:
