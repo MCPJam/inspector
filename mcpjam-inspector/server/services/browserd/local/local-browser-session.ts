@@ -80,6 +80,14 @@ export interface LocalBrowserDeps {
   probeProfileOwner(
     dir: string,
   ): Promise<{ live: boolean; pid?: number; host?: string }>;
+  /**
+   * Where a project's persistent profile lives.
+   *
+   * Injected so a test can be hermetic: the profile directory is CREATED (and
+   * chmod'ed) before anything is launched, so a suite with a faked browser was
+   * still writing into the developer's own `~/.mcpjam` tree.
+   */
+  profileDirFor(projectId: string): string;
   now(): number;
   env: NodeJS.ProcessEnv;
 }
@@ -88,6 +96,7 @@ const liveDeps = (): LocalBrowserDeps => ({
   launch: launchBrowserdContext,
   chromiumInstalled: isChromiumInstalled,
   probeProfileOwner: probeSingletonOwner,
+  profileDirFor: getLocalBrowserProfileDir,
   now: Date.now,
   env: process.env,
 });
@@ -252,7 +261,7 @@ async function startSession(
   const contextMode: BrowserContextMode = args.contextMode ?? "persistent";
   const persistent = contextMode === "persistent";
   const profileDir = persistent
-    ? getLocalBrowserProfileDir(args.projectId)
+    ? deps.profileDirFor(args.projectId)
     : undefined;
 
   if (profileDir) {

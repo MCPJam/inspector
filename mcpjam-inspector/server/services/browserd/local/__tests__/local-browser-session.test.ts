@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   ensureLocalBrowserSession,
   getLocalBrowserProfileDir,
@@ -15,6 +15,25 @@ import {
 } from "../local-browser-session";
 import { fakeContext } from "../../daemon/__tests__/fake-page";
 import type { DriverContext } from "../../daemon/browser-page";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+/**
+ * A profile root per test run.
+ *
+ * `startSession` CREATES (and chmods) the profile directory before it launches
+ * anything, so a suite with a faked browser was still writing into the
+ * developer's own `~/.mcpjam` tree — and a `chmod` there is not something a
+ * unit test gets to do.
+ */
+let profileRoot = "";
+beforeAll(async () => {
+  profileRoot = await mkdtemp(join(tmpdir(), "mcpjam-browser-profiles-"));
+});
+afterAll(async () => {
+  if (profileRoot) await rm(profileRoot, { recursive: true, force: true });
+});
 
 function makeDeps(over: Partial<LocalBrowserDeps> = {}) {
   const launched: Array<Record<string, unknown>> = [];
@@ -30,6 +49,7 @@ function makeDeps(over: Partial<LocalBrowserDeps> = {}) {
     },
     chromiumInstalled: async () => true,
     probeProfileOwner: async () => ({ live: false }),
+    profileDirFor: (projectId: string) => join(profileRoot, projectId, "profile"),
     now: () => now,
     env: {},
     ...over,
@@ -61,7 +81,7 @@ describe("local browser session", () => {
     // The persistent profile is the point: a login must survive the turn that
     // made it.
     expect(first.contextMode).toBe("persistent");
-    expect(first.profileDir).toBe(getLocalBrowserProfileDir("proj-a"));
+    expect(first.profileDir).toBe(join(profileRoot, "proj-a", "profile"));
   });
 
   it("gives each project its own profile", async () => {

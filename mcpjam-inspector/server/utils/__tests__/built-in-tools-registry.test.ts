@@ -742,6 +742,16 @@ describe("resolveHostTools — browser engines", () => {
   for (const [label, actor] of [
     ["a guest", { isGuest: true }],
     ["a scenario session", { isScenarioSession: true }],
+    ["a journey session", { isJourneySession: true }],
+    ["a host-funded swarm scope", {
+      executionScope: {
+        kind: "swarm" as const,
+        swarmId: "swarm-1",
+        accessVersion: 1,
+        projectId: "project-1",
+        workspaceId: "ws-1",
+      },
+    }],
   ] as const) {
     it(`never gives ${label} the user's own browser`, () => {
       withHostedFlag(undefined, () => {
@@ -753,6 +763,29 @@ describe("resolveHostTools — browser engines", () => {
           { ...localCtx, ...actor },
         );
         expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
+      });
+    });
+
+    it(`refuses ${label} even when the request explicitly asked for this machine`, () => {
+      // With the rollout flag OFF, "no browser" can be true for the wrong
+      // reason — the flag, not the coercion. Run it ON, with the turn having
+      // explicitly asked for the local engine: the coercion downgrades it, the
+      // downgrade cannot be honored, and the answer must be "no browser"
+      // rather than a silent fall-through to the hosted one.
+      withHostedFlag("1", () => {
+        const suppressed: Array<{ id: string; reason: string }> = [];
+        const tools = resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          {
+            ...localCtx,
+            ...actor,
+            localComputerRequested: true,
+            onToolSuppressed: (i: { id: string; reason: string }) =>
+              suppressed.push(i),
+          },
+        );
+        expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
+        expect(suppressed.some((s) => s.id === "browser")).toBe(true);
       });
     });
   }

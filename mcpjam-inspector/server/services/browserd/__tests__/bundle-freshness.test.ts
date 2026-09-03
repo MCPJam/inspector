@@ -83,6 +83,21 @@ const TYPE_ONLY_DAEMON_MODULES = new Set([
   "server/services/browserd/daemon/browser-page.ts",
 ]);
 
+/**
+ * Modules OUTSIDE `daemon/` that the bundle nevertheless ships.
+ *
+ * The daemon walk cannot find these, so without naming them the coverage
+ * assertion would keep passing while the graph quietly stopped reaching them —
+ * and an edit to the launch flags or the JPEG geometry reader would ship
+ * unguarded. Adding a new one here is the deliberate act it should be.
+ */
+const REQUIRED_NON_DAEMON_INPUTS = [
+  "server/services/browserd/protocol.ts",
+  "server/services/webmcp-inspector/launch-args.ts",
+  "server/services/webmcp-inspector/frame-throttle.ts",
+  "shared/jpeg-dimensions.ts",
+];
+
 describe("browserd bundle freshness", () => {
   it("the checked-in bundle was generated from the current daemon sources", () => {
     expect(
@@ -98,15 +113,17 @@ describe("browserd bundle freshness", () => {
     // imported drops out of the list, and its edits stop being guarded. This
     // asserts the graph still reaches everything that is supposed to ship.
     const recorded = new Set(MCPJAM_BROWSERD_SOURCE_FILES);
-    const missing = daemonSourceFiles().filter(
+    const missing = [
+      ...daemonSourceFiles(),
+      ...REQUIRED_NON_DAEMON_INPUTS,
+    ].filter(
       (file) => !recorded.has(file) && !TYPE_ONLY_DAEMON_MODULES.has(file),
     );
     expect(
       missing,
-      "these daemon modules are no longer reached by the bundle's import " +
-        "graph, so changes to them would no longer be guarded",
+      "these modules are no longer reached by the bundle's import graph, so " +
+        "changes to them would no longer be guarded",
     ).toEqual([]);
-    expect(recorded.has("server/services/browserd/protocol.ts")).toBe(true);
   });
 
   it("the embedded base64 is byte-identical to the checked-in .mjs", () => {
