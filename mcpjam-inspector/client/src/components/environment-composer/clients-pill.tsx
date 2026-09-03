@@ -131,7 +131,7 @@ export function ClientsPill({
         portalled={!inModal}
       >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {single ? "Client" : "Clients · fan-out"}
+          {single ? "Client" : "Clients"}
         </div>
         {isLoading ? (
           <p className="px-2 py-1.5 text-xs text-muted-foreground">

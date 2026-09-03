@@ -21,6 +21,7 @@ import {
   mapInternalCode,
   type V1ErrorCode,
 } from "./contract.js";
+import { translateStructuredConvexRefusal } from "./convex-errors.js";
 
 /** Canonical error response. */
 export function v1Error(
@@ -169,7 +170,32 @@ export function mapErrorToV1(
       slug: decision.slug,
     };
   }
-  const routeError = mapRuntimeError(error, options);
+  // A DELIBERATE backend refusal — `ConvexError({ code, message })` — is
+  // translated BEFORE the runtime classifier sees it.
+  //
+  // The classifier has nothing to key on for one of these: a `ConvexError`
+  // is not a transport failure, not an MCP error, and its `error.message` is
+  // Convex's own framing wrapped around the JSON of its data. So it fell to
+  // `internal/unknown`, and a refusal the backend wrote a remedy for reached
+  // the caller as `500 INTERNAL_ERROR: "[Request ID: …] Server Error"` — the
+  // production failure that motivated this branch, where the actual cause
+  // (`ENV_MATERIALIZED_SECRETS_UNSUPPORTED`, naming the fix in its message)
+  // was visible only in `convex logs --prod`.
+  //
+  // Routes that call `translateConvexWriteError` themselves are unaffected:
+  // they throw a `WebRouteError`, which the helper declines. This is the
+  // backstop for the ones that do not, and it is scoped to the boundary
+  // rather than sprayed across every route.
+  //
+  // The translated error goes THROUGH `mapRuntimeError` rather than around
+  // it so the capture decision, the origin stamp and the `normalized` block
+  // are made exactly once, in the one place that makes them — and so a
+  // deliberate 4xx is not paged for, like every other 4xx a v1 handler
+  // throws.
+  const routeError = mapRuntimeError(
+    translateStructuredConvexRefusal(error) ?? error,
+    options,
+  );
   if (
     routeError.code === ErrorCode.UNAUTHORIZED &&
     routeError.details?.oauthRequired === true

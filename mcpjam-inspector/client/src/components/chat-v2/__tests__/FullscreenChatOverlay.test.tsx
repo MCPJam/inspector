@@ -664,4 +664,50 @@ describe("FullscreenChatOverlay", () => {
     );
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
+
+  describe("notice slot", () => {
+    // The overlay REPLACES the docked composer, so anything that disables Send
+    // has to be able to state its case — and offer its way out — here. Without
+    // this slot a gate whose control lives in the docked composer leaves the
+    // user unable to send AND unable to un-disable sending.
+    it("renders the notice above the composer", () => {
+      renderWithProviders(
+        <FullscreenChatOverlay
+          {...defaultProps}
+          notice={<div data-testid="test-notice">Continue here?</div>}
+        />
+      );
+
+      const notice = screen.getByTestId("test-notice");
+      expect(notice).toBeInTheDocument();
+      // Interactive, not decoration: it sits inside the pinned, clickable
+      // shell rather than under the `pointer-events-none` backdrop.
+      expect(screen.getByTestId("fullscreen-composer-notice")).toContainElement(
+        notice,
+      );
+    });
+
+    it("keeps the notice visible when the thread is collapsed", () => {
+      // Collapsed is exactly the state in which the composer is all there is,
+      // so a notice that lived inside the message list would vanish.
+      renderWithProviders(
+        <FullscreenChatOverlay
+          {...defaultProps}
+          open={false}
+          messages={[createMessage()]}
+          notice={<div data-testid="test-notice">Continue here?</div>}
+        />
+      );
+
+      expect(screen.getByTestId("test-notice")).toBeInTheDocument();
+    });
+
+    it("renders nothing extra when there is no notice", () => {
+      renderWithProviders(<FullscreenChatOverlay {...defaultProps} />);
+
+      expect(
+        screen.queryByTestId("fullscreen-composer-notice"),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

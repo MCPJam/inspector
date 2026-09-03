@@ -68,14 +68,14 @@ const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
 };
 
 function resolveAuthFetchSurface(
-  input: RequestInfo | URL
+  input: RequestInfo | URL,
 ): AuthFetchSurface | null {
   const rawUrl =
     input instanceof URL
       ? input.toString()
       : typeof Request !== "undefined" && input instanceof Request
-      ? input.url
-      : String(input);
+        ? input.url
+        : String(input);
   const baseOrigin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
@@ -127,14 +127,14 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
   }
 
   return Object.keys(headers).some(
-    (key) => key.toLowerCase() === "authorization"
+    (key) => key.toLowerCase() === "authorization",
   );
 }
 
 function buildAuthFetchInit(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
-  hostedAuthorizationHeader: string | null
+  hostedAuthorizationHeader: string | null,
 ): RequestInit {
   const sessionHeaders = shouldAttachSessionHeaders(input)
     ? getAuthHeaders()
@@ -284,8 +284,8 @@ function resolveRequestUrl(input: RequestInfo | URL): URL | null {
     return input instanceof URL
       ? input
       : typeof Request !== "undefined" && input instanceof Request
-      ? new URL(input.url, baseOrigin)
-      : new URL(String(input), baseOrigin);
+        ? new URL(input.url, baseOrigin)
+        : new URL(String(input), baseOrigin);
   } catch {
     return null;
   }
@@ -334,6 +334,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",
+  // Local-harness control routes. These are `requireVerifiedAuth()`-gated and
+  // one of them (consent grant) forwards the bearer to Convex to register this
+  // installation's instance key — so without this entry a signed-in user gets a
+  // 401 on every one of them, which is the exact bug PR #4515 shipped once.
+  "/api/mcp/local-harness",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
@@ -362,6 +367,12 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // via authFetch (not a manual header) keeps the on-401 session-token refresh
   // so a dev-server restart doesn't strand consent at 401 until a page reload.
   "/api/mcp/computers/local-consent",
+  // The local-terminal nonce mint mounts the same bearerAuthMiddleware +
+  // `requireVerifiedAuth` stack as the consent routes, so it needs the user's
+  // bearer for the same reason — without it the mint 401s on the missing
+  // bearer before the consent check ever runs, and the terminal can never
+  // open on a WorkOS-signed-in inspector.
+  "/api/mcp/computers/local-terminal-token",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
   // Registry catalog/star routes are Convex HTTP actions called via absolute
@@ -416,6 +427,35 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // directory-readiness run.
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
+  // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
+  // change: without this entry the UI's hint would silently 401, since
+  // `/api/v1/projects/` is not a prefix this list grants wholesale — see the
+  // module header on why a pattern, not a prefix, is what keeps the grant as
+  // narrow as the id segments in the middle.
+  /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+  // The Evaluate (New) chain reads: D9's decision summary and D5c's stage
+  // analytics, suite-paged and run-scoped. Same anchored bearer-scope grant as
+  // the disclosure above, and needed for the same reason — both go out through
+  // `authFetch`, so without an entry here they ship no `Authorization` at all
+  // and the route answers "Bearer token required". That 401 surfaces as
+  // `requestFailed`/service copy ("could not be loaded"), which reads as a
+  // backend outage rather than a missing header, so the panels look broken
+  // while the API is fine.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics)$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
+  // One page of a run's iterations, each carrying its own stage rows — the
+  // only read that covers a PASSING trial's chain, which D9's diagnostics
+  // exclude by contract.
+  //
+  // Anchored at `iterations` on purpose: the trace and the per-iteration
+  // resource beneath it are a transcript and a row, read elsewhere with their
+  // own auth, and a pattern that swallowed them would be the blanket prefix
+  // this list exists to avoid. The eval-chain test pins all three.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
+  // What changed since the previous run. Same grant, same reason as the reads
+  // above, and anchored the same way: `compare` is one segment and nothing
+  // hangs beneath it.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/compare$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {
@@ -497,7 +537,7 @@ export function addTokenToUrl(url: string): string {
  */
 export async function authFetch(
   input: RequestInfo | URL,
-  init?: RequestInit
+  init?: RequestInit,
 ): Promise<Response> {
   const surface = resolveAuthFetchSurface(input);
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
@@ -579,7 +619,7 @@ export async function authFetch(
   const retryInit = buildAuthFetchInit(
     input,
     init,
-    `Bearer ${refreshedGuestToken}`
+    `Bearer ${refreshedGuestToken}`,
   );
   return fetch(input, retryInit);
 }

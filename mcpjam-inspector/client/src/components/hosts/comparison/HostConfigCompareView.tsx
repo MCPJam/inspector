@@ -50,7 +50,12 @@ import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import {
+  excludedFlagGatedHostIds,
+  FLAG_GATED_HOST_IDS,
+} from "@/lib/host-compat/feature-visibility";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import type {
@@ -68,9 +73,10 @@ import {
 } from "./host-compare-selection";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
-  PUBLIC_CAN_I_USE_FIELDS,
+  clientCompareFieldsWithData,
   getCaniuseCapabilityBySlug,
   getCaniuseCapabilityForField,
+  publicCaniuseFieldsWithData,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
@@ -79,10 +85,7 @@ import {
   fieldMatchesQuery,
   type SupportFilterMode,
 } from "./support-level";
-import {
-  groupHostConfigFields,
-  HOST_CONFIG_FIELDS,
-} from "@/lib/host-config-field-schema";
+import { groupHostConfigFields } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
@@ -237,6 +240,7 @@ export function HostConfigCompareView({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
   // The flags gate the New Host template picker, not this matrix — so they
   // apply only to the signed-in surface, where a preset column sits next to
   // hosts you can actually create. In public (caniuse) mode the matrix is
@@ -244,21 +248,30 @@ export function HostConfigCompareView({
   // gating it there hid Claude Code and Codex from every anonymous visitor,
   // since the hooks read an unresolved flag as off and the flags are scoped
   // to @mcpjam.com users.
+  //
+  // DERIVED from the shared FLAG_GATED_HOSTS map, not typed out per host: the
+  // hand-written version gated each id with its own `if`, so a newly gated host
+  // was hidden on the five surfaces that share the map and silently offered
+  // here.
   const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<string>();
-    if (presetOnly) return excluded;
-    if (!claudeCodeEnabled) excluded.add("claude-code");
-    if (!codexEnabled) excluded.add("codex");
-    return excluded;
-  }, [claudeCodeEnabled, codexEnabled, presetOnly]);
-  // Public caniuse still displays flag-gated hosts as reference data, but
-  // must not offer their verify links because those links auto-create a host.
-  const disabledVerifyTemplateIds = useMemo(() => {
-    const disabled = new Set<string>();
-    if (presetOnly || !claudeCodeEnabled) disabled.add("claude-code");
-    if (presetOnly || !codexEnabled) disabled.add("codex");
-    return disabled;
-  }, [claudeCodeEnabled, codexEnabled, presetOnly]);
+    if (presetOnly) return new Set<string>();
+    return excludedFlagGatedHostIds({
+      claudeCode: claudeCodeEnabled,
+      codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
+    });
+  }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, presetOnly]);
+  // Public caniuse still displays flag-gated hosts as reference data, but must
+  // not offer their verify links because those links auto-create a host, and
+  // the app refuses to create one until the rollout flag is on. The flags
+  // cannot govern this decision: as the comment above says, they are scoped to
+  // @mcpjam.com users and read as off for every anonymous visitor. So the hide
+  // is unconditional here — drop an id from `FLAG_GATED_HOST_IDS` when it ships
+  // and its verify link comes back with it. Verify links exist only in this
+  // mode (`verifyBaseUrl` is undefined otherwise), so no set is needed there.
+  const disabledVerifyTemplateIds = presetOnly
+    ? FLAG_GATED_HOST_IDS
+    : undefined;
   const presets = useMemo(() => {
     if (!compareCatalog) {
       return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
@@ -314,9 +327,15 @@ export function HostConfigCompareView({
   // Every selectable id (real + preset). URL / stored selections reconcile
   // against this so a chosen preset column survives a reload.
   const knownHostIds = useMemo(() => hosts.map((host) => host.hostId), [hosts]);
+  // A column of "Not yet tested" answers nothing, so both surfaces hide rows
+  // no published host has measured. The signed-in matrix adds only the
+  // temporarily retained protocol-version row.
   const compareFields = useMemo(
-    () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : HOST_CONFIG_FIELDS),
-    [presetOnly]
+    () =>
+      presetOnly
+        ? publicCaniuseFieldsWithData(presets.subjects)
+        : clientCompareFieldsWithData(presets.subjects),
+    [presetOnly, presets.subjects]
   );
   // Base for the per-column "Verify against your server" deep-link. In dev the
   // caniuse surface and the hosted app share an origin, so stay on it (localhost)

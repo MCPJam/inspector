@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
-import { SuiteIterationsView } from "../suite-iterations-view";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   EVAL_SUITE_SETTING_KEYS,
 } from "@/shared/eval-suite-settings-manifest";
-import type { EvalSuite } from "../types";
+import { renderSettingsSheet } from "./settings-sheet-harness";
 
 /**
  * The RENDER half of the settings-parity ratchet.
@@ -82,61 +80,18 @@ vi.mock("../suite-header", () => ({
   SuiteHeader: () => <div data-testid="suite-header" />,
 }));
 
+vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
+  SuiteEnvironmentComposerBar: () => (
+    <div data-testid="suite-environment-bar">composer</div>
+  ),
+}));
+
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
 }));
 
-const noopNav = {
-  toSuiteOverview: vi.fn(),
-  toRunDetail: vi.fn(),
-  toTestDetail: vi.fn(),
-  toTestEdit: vi.fn(),
-  toSuiteEdit: vi.fn(),
-};
-
-const baseSuite: EvalSuite = {
-  _id: "suite-1",
-  createdBy: "u",
-  name: "Test Suite",
-  description: "",
-  configRevision: "r",
-  environment: { servers: [] },
-  createdAt: 1,
-  updatedAt: 1,
-  source: "ui",
-};
-
-function renderSettingsSheet() {
-  return render(
-    <SuiteIterationsView
-      suite={baseSuite}
-      cases={[]}
-      iterations={[]}
-      allIterations={[]}
-      runs={[]}
-      runsLoading={false}
-      aggregate={null}
-      onRerun={vi.fn()}
-      onCancelRun={vi.fn()}
-      onDelete={vi.fn()}
-      onDeleteRun={vi.fn()}
-      onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
-      connectedServerNames={new Set()}
-      canDeleteSuite
-      rerunningSuiteId={null}
-      cancellingRunId={null}
-      deletingSuiteId={null}
-      deletingRunId={null}
-      availableModels={[]}
-      organizationId="org-1"
-      projectId="project-1"
-      route={{ type: "suite-edit", suiteId: "suite-1" }}
-      navigation={noopNav}
-    />
-  );
-}
 
 function renderedSettingKeys(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll("[data-setting-key]")).map(
@@ -202,5 +157,12 @@ describe("eval suite settings manifest — render parity", () => {
       expect(node, `no rendered row for ${row.key}`).toBeTruthy();
       expect(node?.textContent ?? "").toContain(row.label);
     }
+  });
+
+  it("puts the environment composer on the Environments row", () => {
+    const { container } = renderSettingsSheet();
+    const row = container.querySelector('[data-setting-key="environments"]');
+    expect(row).toBeTruthy();
+    expect(row?.querySelector('[data-testid="suite-environment-bar"]')).toBeTruthy();
   });
 });

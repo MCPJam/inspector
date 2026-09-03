@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
   FileText,
   FolderTree,
+  Globe,
   Laptop,
   Loader2,
   PanelRightClose,
@@ -13,6 +14,7 @@ import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { LoggerView } from "@/components/logger-view";
 import { ComputerStatusChip } from "@/components/computer/ComputerStatusChip";
+import { ComputerTerminal } from "@/components/computer/ComputerTerminal";
 import { ComputerTerminalPane } from "@/components/computer/ComputerTerminalPane";
 import { PaneMessage } from "@/components/computer/PaneMessage";
 import { useComputerTerminal } from "@/components/computer/useComputerTerminal";
@@ -22,6 +24,10 @@ import {
   type ComputerEngineState,
 } from "@/hooks/useComputerEngine";
 import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
+import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
+import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -64,7 +70,7 @@ export function PlaygroundRightRail({
   );
 }
 
-type RightRailTab = "logs" | "shell";
+type RightRailTab = "logs" | "shell" | "browser";
 
 function RightRailTabbed({
   onClose,
@@ -93,6 +99,20 @@ function RightRailTabbed({
   // ask for. The CHIP follows the resolved `engine`, so it can never claim
   // "This machine" while commands actually run in the cloud.
   const isLocalShell = engine.selectedEngine === "local";
+  // The Browser tab follows the HOST's attached capability, not the engine:
+  // a host without `browser` has no browser for the model to drive, so a pane
+  // for one would be showing something nothing can use.
+  const hasBrowser = Boolean(
+    hostConfig?.builtInToolIds?.includes("browser") &&
+      engine.selectedEngine === "local",
+  );
+
+  // A tab that disappears cannot stay selected: switching the engine to cloud
+  // with Browser open used to hide the Browser body AND leave `activeTab` on
+  // it, so all three panes were hidden and the rail looked broken.
+  useEffect(() => {
+    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
+  }, [hasBrowser, activeTab]);
 
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
@@ -122,6 +142,17 @@ function RightRailTabbed({
           isActive={activeTab === "shell"}
           onClick={() => handleTabClick("shell")}
         />
+        {/* Only when this host actually has the browser capability: a tab
+            offering a browser the model cannot use would be a promise the
+            host config does not keep. */}
+        {hasBrowser ? (
+          <TabButton
+            icon={Globe}
+            label="Browser"
+            isActive={activeTab === "browser"}
+            onClick={() => handleTabClick("browser")}
+          />
+        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -141,6 +172,27 @@ function RightRailTabbed({
       >
         <LoggerView isCollapsable={false} />
       </div>
+      {hasBrowser ? (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            activeTab === "browser" ? "flex" : "hidden",
+          )}
+        >
+          {/* Mounted-hidden like the others: switching tabs must not drop the
+              frame socket, which would stop the screencast and make the agent's
+              browser go dark every time somebody glanced at the logs. */}
+          <LocalBrowserBody
+            projectId={projectId}
+            consentGranted={engine.consent.granted}
+            consentToken={engine.consent.token}
+            // Mounted-hidden is not "being watched": the pane heartbeats to
+            // defer the browser's idle reap, and a pane behind the Logs tab
+            // must stop claiming somebody is looking at it.
+            active={activeTab === "browser"}
+          />
+        </div>
+      ) : null}
       <div
         className={cn(
           "min-h-0 flex-1 flex-col",
@@ -155,7 +207,7 @@ function RightRailTabbed({
             until the idle sweep, and switching back reconnects with a fresh
             token mint. */}
         {isLocalShell ? (
-          <LocalShellBody engine={engine} />
+          <LocalShellBody engine={engine} projectId={projectId} />
         ) : (
           <CloudShellBody
             engine={engine}
@@ -186,16 +238,64 @@ function RailEngineChip({ engine }: { engine: "local" | "cloud" }) {
   );
 }
 
-/** The Shell body for the local engine: no cloud controller, no reserve. */
-function LocalShellBody({ engine }: { engine: ComputerEngineState }) {
+/**
+ * The Shell body for the local engine: no cloud controller, no reserve — the
+ * same bare `ComputerTerminal` the Computer tab's local face mounts, behind
+ * the same explicit "Open terminal" gesture the cloud body uses. Explicit
+ * because a PTY is a real shell on the user's machine: both rail bodies stay
+ * mounted across Logs ⇄ Shell toggles, so mounting eagerly would open a shell
+ * the moment the Playground loads, without the user asking for one.
+ */
+function LocalShellBody({
+  engine,
+  projectId,
+}: {
+  engine: ComputerEngineState;
+  projectId: string | null;
+}) {
   const { consent, localTerminalAvailable } = engine;
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+
+  // A fresh nonce per (re)connect — single-use by construction, so the
+  // reconnect button in `ComputerTerminal` must mint again rather than replay.
+  const consentToken = consent.token;
+  const mintToken = useCallback(
+    () => mintLocalTerminalNonce({ projectId: projectId ?? "", consentToken }),
+    [projectId, consentToken],
+  );
+
+  const canOpenTerminal =
+    consent.granted && localTerminalAvailable && !!projectId;
+  const showTerminal = terminalOpen && canOpenTerminal;
+
+  // One `computer_terminal_opened` per opened SESSION, keyed like the Computer
+  // tab's local face: a project switch remounts the terminal (new shell, new
+  // workspace) and must be counted even though this component didn't remount.
+  const lastReportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = showTerminal ? `open:${projectId}` : null;
+    if (lastReportedRef.current === key) return;
+    lastReportedRef.current = key;
+    if (key === null) return;
+    track("computer_terminal_opened", { location: "playground_rail_local" });
+  }, [showTerminal, projectId]);
+
   return (
     <>
       <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
         {/* Same `toggleVisible` gate as the cloud body: with only one engine
             available there is no choice to indicate, and the body copy below
             already names the machine. */}
-        {engine.toggleVisible ? <RailEngineChip engine={engine.engine} /> : null}
+        {engine.toggleVisible ? (
+          <RailEngineChip engine={engine.engine} />
+        ) : null}
+        {!terminalOpen && canOpenTerminal ? (
+          <Button size="sm" onClick={() => setTerminalOpen(true)}>
+            <TerminalSquare className="mr-1.5 h-3.5 w-3.5" />
+            Open terminal
+          </Button>
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 px-3 pb-3">
         {!consent.granted ? (
@@ -207,10 +307,26 @@ function LocalShellBody({ engine }: { engine: ComputerEngineState }) {
               allow agent commands here.
             </span>
           </PaneMessage>
-        ) : localTerminalAvailable ? (
+        ) : showTerminal ? (
+          // `uploadEnabled={false}` for the same reason as the Computer tab's
+          // local pane: the drag-and-drop upload posts to the CLOUD box's
+          // upload route, and writing dropped files onto the user's real
+          // filesystem is a separate consent question.
+          <ComputerTerminal
+            // Keyed by project: `ComputerTerminal` connects from a MOUNT-ONLY
+            // effect, so a project switch must remount into the new project's
+            // workspace (and journal under it).
+            key={projectId}
+            mintToken={mintToken}
+            themeMode={themeMode === "dark" ? "dark" : "light"}
+            wsPath={LOCAL_TERMINAL_WS_PATH}
+            uploadEnabled={false}
+            className="h-full"
+          />
+        ) : canOpenTerminal ? (
           <PaneMessage dashed>
             <span data-testid="rail-local-terminal-pointer">
-              Open the terminal for this machine from the Computer tab.
+              Open the terminal to use a shell on this machine.
             </span>
           </PaneMessage>
         ) : (

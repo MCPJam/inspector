@@ -4,8 +4,11 @@
 // its optional `bufferutil` dep. See the file for the full story (#4208).
 import "./ws-native-fallback.js";
 import * as Sentry from "@sentry/electron/main";
-import { app, BrowserWindow, shell, Menu, dialog } from "electron";
-import { buildElectronSentryConfig } from "../shared/sentry-config.js";
+import { app, BrowserWindow, shell, Menu, dialog, session } from "electron";
+import {
+  buildElectronSentryConfig,
+  electronBuildSurface,
+} from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
   registerMainProcessCrashHandlers,
@@ -18,6 +21,10 @@ Sentry.init({
   ...buildElectronSentryConfig({
     environment: app.isPackaged ? "prod" : "dev",
     release: app.getVersion(),
+    // Matches the `--dist` forge uploads `.vite/build` under. mac and Windows
+    // publish separately compiled main bundles under the same release, so
+    // without this they share one artifact namespace.
+    dist: electronBuildSurface(process.platform),
     deployment: "self_hosted",
   }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
@@ -41,6 +48,7 @@ import { probeFreePort } from "./server-port-fallback.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
+import { createSafeStorageKeyStore } from "./ipc/local-harness/local-harness-listeners.js";
 import {
   installUpdateOnQuit,
   setTrustedUpdateWindow,
@@ -52,6 +60,10 @@ import {
   ELECTRON_HOSTED_AUTH_STATE_KEY,
   isElectronMcpCallbackUrl,
 } from "./oauth-callback-routing.js";
+// The one string the renderer's `<webview partition>`, this process's
+// `will-attach-webview` guard, and the server provider's ownership check all
+// have to agree on exactly. Three literals would drift; one constant cannot.
+import { WEBMCP_WEBVIEW_PARTITION } from "../shared/webmcp-inspector-protocol.js";
 
 // Configure logging
 log.transports.file.level = "info";
@@ -77,6 +89,26 @@ if (process.platform === "win32") {
   app.setAppUserModelId("com.mcpjam.inspector");
 }
 
+/**
+ * Make `document.modelContext` exist in this app's renderers.
+ *
+ * UNCONDITIONAL, and it has to be: command-line switches are frozen before
+ * `whenReady`, so there is no later moment at which a user opening the WebMCP
+ * tab could turn this on. The flag lives in the RENDERER — a page cannot
+ * register a WebMCP tool in a Chromium where the feature is off — so gating it
+ * on anything would mean the embedded surface silently discovers no tools.
+ *
+ * Inert in our own UI renderer. The switch only makes the page API EXIST; the
+ * only code we load there is first-party, and the CDP domain that reads the
+ * registry is reachable only through a debugger something deliberately
+ * attaches. Nothing here opens the app's own renderer to third-party content.
+ *
+ * `appendSwitch` REPLACES the value for a key rather than appending to it — a
+ * second `appendSwitch("enable-features", …)` anywhere in this file would drop
+ * WebMCP on the floor. A future feature must comma-join it into this one call.
+ */
+app.commandLine.appendSwitch("enable-features", "WebMCP");
+
 // Register custom protocol for OAuth callbacks
 if (!app.isDefaultProtocolClient("mcpjam")) {
   app.setAsDefaultProtocolClient("mcpjam");
@@ -85,8 +117,33 @@ if (!app.isDefaultProtocolClient("mcpjam")) {
 let mainWindow: BrowserWindow | null = null;
 let server: any = null;
 let serverPort: number = 0;
+/** Session token for the local-harness IPC picker; re-read on every server start. */
+let localHarnessSessionToken: string | null = null;
 let shutdownLocalTerminals: (() => void) | null = null;
 let killLocalTerminals: (() => void) | null = null;
+/**
+ * The agent's own browser, held for teardown for the same reason as the PTYs:
+ * it is a real Chromium this process started, and nothing else closes it.
+ * Async, unlike the PTY pair — closing the browser context is what makes
+ * Chromium release the profile's singleton lock.
+ */
+let shutdownLocalBrowsers: (() => Promise<void>) | null = null;
+let killLocalBrowsers: (() => Promise<void>) | null = null;
+/**
+ * The browser teardown currently running, if any.
+ *
+ * Closing Chromium is what makes it write out and RELEASE the profile's
+ * singleton lock, and that close is asynchronous. Whoever needs the profile
+ * next — a dock re-activation, or the quit itself — has to wait for this
+ * rather than racing the dying process for the lock and being told the profile
+ * is in use.
+ */
+let browserTeardown: Promise<void> | null = null;
+let quittingAfterBrowserTeardown = false;
+let shutdownLocalBrowserFrames: (() => void) | null = null;
+let killLocalBrowserFrames: (() => void) | null = null;
+let shutdownWebMcpFrames: (() => void) | null = null;
+let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
 
@@ -226,6 +283,29 @@ function installSafeOAuthCallbackRouting(
   );
 }
 
+/**
+ * Deny every permission the embedded WebMCP surface can ask for.
+ *
+ * DENY-ALL in v1, deliberately. The guest renders a developer's own page, but
+ * "their own page" is not a security boundary — it navigates, it embeds
+ * third-party frames, and an inspector that granted the camera because the
+ * first page seemed trustworthy would grant it to whatever the page navigated
+ * to next. Loosening any single permission (clipboard read is the obvious
+ * candidate) is a deliberate follow-up with its own reasoning, not a default.
+ *
+ * Both handlers, because they answer different questions: `Request` is "the
+ * page is asking now", `Check` is "does the page already have it" — a page that
+ * only consults `navigator.permissions` would otherwise be told yes by the
+ * default handler and go on to use an API it never actually got.
+ */
+function lockDownWebviewPartition(): void {
+  const guestSession = session.fromPartition(WEBMCP_WEBVIEW_PARTITION);
+  guestSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+    callback(false)
+  );
+  guestSession.setPermissionCheckHandler(() => false);
+}
+
 function createSafeOAuthWindow(
   options: BrowserWindowConstructorOptions = {},
   source = "Electron fallback"
@@ -335,16 +415,59 @@ async function startHonoServer(): Promise<number> {
       cachedProbedPort = port;
     }
 
+    // Where the local-harness runtime pack installs. A packaged app keeps its
+    // runtime with the rest of its own state rather than in `~/.mcpjam`, which
+    // is where the npx server falls back to. Set BEFORE the server module
+    // loads, for the same reason SERVER_PORT is.
+    process.env.MCPJAM_RUNTIME_ROOT = path.join(
+      app.getPath("userData"),
+      "local-harness",
+      "runtime"
+    );
+
     // Dynamic import so server/config.ts evaluates with the env var we just
     // set, not the build-time default. After the first call the module is in
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
+
+    // The session token the local-harness picker presents when it registers a
+    // workspace grant through the server's own route. Read here, after the
+    // server module has generated it, and re-read on every restart.
+    try {
+      const { getSessionToken } = await import(
+        "../server/services/session-token.js"
+      );
+      localHarnessSessionToken = getSessionToken();
+    } catch {
+      localHarnessSessionToken = null;
+    }
+
+    // Seal the local-harness instance key with the OS keychain. Injected
+    // rather than imported by the server, which has to stay loadable under
+    // `npx` where there is no Electron and no keychain at all.
+    try {
+      const { setInstanceKeyStore } = await import(
+        "../server/utils/harness/local/instance-key.js"
+      );
+      setInstanceKeyStore(createSafeStorageKeyStore());
+    } catch (err) {
+      log.warn(
+        "Local harness instance key will fall back to an owner-only file",
+        err
+      );
+    }
     const {
       app: honoApp,
       injectWebSocket,
       shutdownLocalComputerTerminals,
       killLocalComputerTerminals,
+      shutdownWebMcpFrameSockets,
+      killWebMcpFrameSockets,
+      shutdownLocalBrowserSessions,
+      killLocalBrowserSessions,
+      shutdownLocalBrowserFrameSockets,
+      killLocalBrowserFrameSockets,
     } = await createHonoApp();
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
@@ -352,6 +475,20 @@ async function startHonoServer(): Promise<number> {
     // `window-all-closed`, after which macOS may restart this same server.
     shutdownLocalTerminals = shutdownLocalComputerTerminals;
     killLocalTerminals = killLocalComputerTerminals;
+    // The WebMCP frame sockets are the same story: established WebSockets that
+    // `server.close()` leaves attached, with a latching variant for a real quit
+    // and a non-latching one for `window-all-closed`.
+    shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
+    killWebMcpFrames = killWebMcpFrameSockets;
+    // The agent's browser is a real Chromium this process started. Quitting the
+    // app without closing it leaves an orphan holding the profile lock, which
+    // the next launch then has to refuse.
+    shutdownLocalBrowsers = shutdownLocalBrowserSessions;
+    killLocalBrowsers = killLocalBrowserSessions;
+    // The viewport sockets are established WebSockets that `server.close()`
+    // leaves attached, with the same latching/non-latching split.
+    shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
+    killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -388,6 +525,19 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       contextIsolation: true,
       // Vite plugin outputs main.js and preload.js into the same directory (.vite/build)
       preload: path.join(__dirname, "preload.js"),
+      // Lets the WebMCP tab mount a real Chromium surface for the page it is
+      // inspecting. Opt-in per window, and this is the only window that gets
+      // it; `will-attach-webview` below is what makes that permission narrow —
+      // only a guest on our own partition, with no preload and no node access,
+      // is allowed to attach at all.
+      webviewTag: true,
+      // Read from `process.argv` by the sandboxed preload, which cannot see
+      // `process.env` or call into the main process synchronously. The renderer
+      // needs to know it is PACKAGED, not merely in Electron: `isElectron` is
+      // true in dev too, and the two differ on whether a Playwright browser can
+      // be launched at all (forge packages `.vite` only, so `import("playwright")`
+      // always rejects in the shipped app).
+      additionalArguments: app.isPackaged ? ["--mcpjam-packaged"] : [],
     },
     show: false, // Don't show until ready
   });
@@ -775,6 +925,10 @@ app.whenReady().then(async () => {
       log.warn("pruneStaleCachesOnVersionChange threw; continuing:", err);
     }
 
+    // Before any guest can exist. The partition's session is created on first
+    // reference, so this both makes it and locks it down in one step.
+    lockDownWebviewPartition();
+
     // Start the embedded Hono server
     serverPort = await startHonoServer();
     const serverUrl = getServerUrl();
@@ -783,8 +937,13 @@ app.whenReady().then(async () => {
     createAppMenu();
     mainWindow = createMainWindow(serverUrl);
 
-    // Register IPC listeners
-    registerListeners(mainWindow, () => mainWindow);
+    // Register IPC listeners. The local-harness accessors are read at CALL
+    // time, not captured: both the bound port and the session token change
+    // across a server restart.
+    registerListeners(mainWindow, () => mainWindow, {
+      getServerOrigin: () => (serverPort === null ? null : getServerUrl()),
+      getSessionToken: () => localHarnessSessionToken,
+    });
 
     appBootstrapped = true;
 
@@ -823,6 +982,17 @@ app.on("window-all-closed", () => {
   // does it anyway; this makes it unconditional) but do NOT latch shutdown, or
   // every terminal handshake after reopening would be refused.
   killLocalTerminals?.();
+  // Same non-latching kill for the agent's browser: on macOS this is not a
+  // quit, and latching would refuse every browser the user opened after
+  // reopening the window from the dock. Kept rather than dropped, because
+  // `activate` may need to wait for it.
+  browserTeardown = (killLocalBrowsers?.() ?? Promise.resolve()).catch(
+    () => {},
+  );
+  killLocalBrowserFrames?.();
+  // Same non-latching kill: latching here would 4503 every frame handshake
+  // after the user reopened the window from the dock.
+  killWebMcpFrames?.();
   if (server) {
     server.close?.();
     serverPort = 0;
@@ -837,6 +1007,14 @@ app.on("window-all-closed", () => {
 app.on("activate", async () => {
   // On macOS, re-create window when the dock icon is clicked
   if (BrowserWindow.getAllWindows().length === 0) {
+    // A quick reopen can arrive while the browser closed by
+    // `window-all-closed` is still shutting down. Starting the server (and
+    // with it the next browser) now would hit the profile lock the dying
+    // Chromium has not released yet.
+    if (browserTeardown) {
+      await browserTeardown;
+      browserTeardown = null;
+    }
     if (serverPort > 0) {
       mainWindow = createMainWindow(getServerUrl());
       setTrustedUpdateWindow(mainWindow);
@@ -861,6 +1039,44 @@ app.on("open-url", (event, url) => {
 
 // Security: Prevent new window creation, but allow OAuth popups
 app.on("web-contents-created", (_, contents) => {
+  /**
+   * The only `<webview>` this app will ever attach, on our terms rather than
+   * the DOM's.
+   *
+   * The attributes come from the renderer, so they are a REQUEST, not a fact:
+   * anything that can write into that document can ask for a guest with node
+   * integration and a preload of its choosing. This is the one place that can
+   * refuse, and it refuses by default — a guest that is not on the WebMCP
+   * partition does not attach at all.
+   *
+   * Every reset matters individually. A guest `preload` would run privileged
+   * code inside a page we do not control; `nodeIntegration` would hand that
+   * page `require`; `contextIsolation: false` would put our world and the
+   * page's in one place; `sandbox: true` is the backstop for all of it. And
+   * `webSecurity: false` — what the element's `disablewebsecurity` attribute
+   * asks for — would drop the same-origin policy inside the guest, so a page
+   * the provider navigates to could read this app's own local server
+   * cross-origin with no CORS to stop it.
+   */
+  contents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (params.partition !== WEBMCP_WEBVIEW_PARTITION) {
+      log.warn(
+        `Refusing a <webview> on partition ${String(params.partition)}`
+      );
+      event.preventDefault();
+      return;
+    }
+    // `preloadURL` is the legacy spelling and is still honoured; deleting only
+    // one of the pair leaves the other as the way in.
+    delete webPreferences.preload;
+    delete (webPreferences as { preloadURL?: string }).preloadURL;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+  });
+
   contents.setWindowOpenHandler(({ url, frameName }) => {
     try {
       // The OAuth debugger popup explicitly names its window with the
@@ -907,8 +1123,24 @@ app.on("before-quit", (event) => {
     return;
   }
   shutdownLocalTerminals?.();
+  shutdownWebMcpFrames?.();
+  shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();
+  }
+  // The one asynchronous step in quitting. Electron will exit as soon as this
+  // handler returns, so a fire-and-forget teardown loses the race with the
+  // process: Chromium never releases the profile's singleton lock, and the
+  // NEXT launch refuses the profile as in use. Hold the quit for exactly one
+  // teardown — the re-fired `before-quit` falls through this branch.
+  if (!quittingAfterBrowserTeardown && shutdownLocalBrowsers) {
+    event.preventDefault();
+    quittingAfterBrowserTeardown = true;
+    browserTeardown = (browserTeardown ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => shutdownLocalBrowsers?.())
+      .catch(() => {});
+    void browserTeardown.finally(() => app.quit());
   }
 });
 

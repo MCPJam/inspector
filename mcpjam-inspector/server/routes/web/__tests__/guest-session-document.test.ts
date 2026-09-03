@@ -57,7 +57,6 @@ async function buildDocumentApp() {
 
     if (
       process.env.NODE_ENV === "production" &&
-      process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
       mayServeGuestBootstrap({
         host,
         forwardedHost,
@@ -102,25 +101,19 @@ function get(
 
 describe("guest-session document bootstrap", () => {
   const originalNodeEnv = process.env.NODE_ENV;
-  const originalLockdown = process.env.MCPJAM_NONPROD_LOCKDOWN;
   const originalHosted = process.env.VITE_MCPJAM_HOSTED_MODE;
 
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
     process.env.NODE_ENV = "production";
-    delete process.env.MCPJAM_NONPROD_LOCKDOWN;
     // Force the Convex source branch (shouldFetchGuestSessionFromConvex()).
     process.env.VITE_MCPJAM_HOSTED_MODE = "true";
   });
 
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
-    if (originalLockdown === undefined)
-      delete process.env.MCPJAM_NONPROD_LOCKDOWN;
-    else process.env.MCPJAM_NONPROD_LOCKDOWN = originalLockdown;
-    if (originalHosted === undefined)
-      delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    if (originalHosted === undefined) delete process.env.VITE_MCPJAM_HOSTED_MODE;
     else process.env.VITE_MCPJAM_HOSTED_MODE = originalHosted;
   });
 
@@ -190,23 +183,6 @@ describe("guest-session document bootstrap", () => {
     });
     const body = await res.text();
 
-    expect(body).not.toContain("__MCP_GUEST_BOOTSTRAP__");
-    expect(mockFetchConvexGuestSession).not.toHaveBeenCalled();
-  });
-
-  it("injects nothing under lockdown (no-op)", async () => {
-    process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
-    mockFetchConvexGuestSession.mockResolvedValue({
-      kind: "session",
-      session: { guestId: "g", token: "t", expiresAt: Date.now() + 60_000 },
-      setCookies: [],
-    });
-
-    const app = await buildDocumentApp();
-    const res = await get(app);
-    const body = await res.text();
-
-    expect(res.status).toBe(200);
     expect(body).not.toContain("__MCP_GUEST_BOOTSTRAP__");
     expect(mockFetchConvexGuestSession).not.toHaveBeenCalled();
   });

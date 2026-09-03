@@ -30,14 +30,14 @@ function createTestApp(): Hono {
 describe("originValidationMiddleware", () => {
   let app: Hono;
   const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
-  const originalNonprodLockdown = process.env.MCPJAM_NONPROD_LOCKDOWN;
+  const originalAllowWildcardOrigins = process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
   const originalAllowedHosts = process.env.MCPJAM_ALLOWED_HOSTS;
 
   beforeEach(() => {
     app = createTestApp();
     // Clear any custom allowed origins
     delete process.env.ALLOWED_ORIGINS;
-    delete process.env.MCPJAM_NONPROD_LOCKDOWN;
+    delete process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
     delete process.env.MCPJAM_ALLOWED_HOSTS;
   });
 
@@ -48,10 +48,10 @@ describe("originValidationMiddleware", () => {
     } else {
       delete process.env.ALLOWED_ORIGINS;
     }
-    if (originalNonprodLockdown) {
-      process.env.MCPJAM_NONPROD_LOCKDOWN = originalNonprodLockdown;
+    if (originalAllowWildcardOrigins) {
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = originalAllowWildcardOrigins;
     } else {
-      delete process.env.MCPJAM_NONPROD_LOCKDOWN;
+      delete process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
     }
     if (originalAllowedHosts) {
       process.env.MCPJAM_ALLOWED_HOSTS = originalAllowedHosts;
@@ -247,7 +247,7 @@ describe("originValidationMiddleware", () => {
     it("supports wildcard origins like https://*.up.railway.app", async () => {
       process.env.ALLOWED_ORIGINS =
         "https://*.up.railway.app,https://staging.mcpjam.com";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -265,7 +265,7 @@ describe("originValidationMiddleware", () => {
       // origin validation.
       process.env.ALLOWED_ORIGINS =
         "https://staging.mcpjam.com,https://mcp-inspector-pr-*.up.railway.app";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -292,7 +292,7 @@ describe("originValidationMiddleware", () => {
 
     it("blocks origins that don't match wildcard pattern", async () => {
       process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -304,7 +304,7 @@ describe("originValidationMiddleware", () => {
 
     it("rejects wildcard origin when scheme mismatches (http vs https)", async () => {
       process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
-      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
 
       app = createTestApp();
 
@@ -317,7 +317,7 @@ describe("originValidationMiddleware", () => {
     it("strips wildcard origins outside non-prod lockdown", async () => {
       process.env.ALLOWED_ORIGINS =
         "https://*.up.railway.app,https://staging.mcpjam.com";
-      // MCPJAM_NONPROD_LOCKDOWN is not set — simulates production
+      // MCPJAM_ALLOW_WILDCARD_ORIGINS is not set — simulates production
 
       app = createTestApp();
 

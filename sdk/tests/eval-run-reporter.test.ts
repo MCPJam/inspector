@@ -267,6 +267,139 @@ describe("createEvalRunReporter", () => {
     ]);
   });
 
+  describe("verdict policy 2 wire protocol", () => {
+    const verdictPolicy = {
+      verdictPolicyVersion: 2 as const,
+      defaults: {
+        repetitions: 3,
+        // A FRACTION. The legacy field on the same body is a 0-100 percent, so
+        // a test that used 60 here would pass against code that confused them.
+        passThreshold: 0.6,
+        validity: { minCompletionRate: 0.9 },
+      },
+      cases: [{ caseId: "case-1", repetitions: 2, passThreshold: 0.5 }],
+    };
+    const inconclusiveRun = {
+      suiteId: "suite_1",
+      runId: "run_1",
+      status: "completed",
+      result: "inconclusive",
+      summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+      verdictPolicyVersion: 2,
+      verdictSummary: {
+        policyVersion: 2,
+        verdict: "inconclusive",
+        reasons: ["insufficientCompletion"],
+      },
+    };
+
+    it("sends the policy on run START and explicit statuses on the chunks", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          okResponse({
+            suiteId: "suite_1",
+            runId: "run_1",
+            status: "running",
+            result: "pending",
+          })
+        )
+        .mockResolvedValueOnce(okResponse({ inserted: 3, skipped: 0, total: 3 }))
+        .mockResolvedValueOnce(okResponse(inconclusiveRun));
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "v2-chunked",
+        verdictPolicy,
+      });
+
+      // Three lifecycle statuses that CANNOT be derived from `passed`: a
+      // graded failure that ran fine, a setup abort, and a deliberate skip.
+      reporter.add({ caseTitle: "case-1", passed: false, status: "completed" });
+      reporter.add({
+        caseTitle: "case-1",
+        passed: false,
+        status: "setup_failed",
+        error: "server never started",
+      });
+      reporter.add({ caseTitle: "case-1", passed: false, status: "skipped" });
+      await reporter.flush();
+      const result = await reporter.finalize();
+
+      const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(startBody.verdictPolicy).toEqual(verdictPolicy);
+
+      const appendBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+      expect(appendBody.results.map((r: any) => r.status)).toEqual([
+        "completed",
+        "setup_failed",
+        "skipped",
+      ]);
+      // Policy rides the START call only: a chunk carries evidence, never a
+      // policy that could disagree with the frozen snapshot.
+      expect(appendBody.verdictPolicy).toBeUndefined();
+
+      // And the backend's decision comes back untouched — `inconclusive` is
+      // not collapsed into `failed`, and the decision travels with it.
+      expect(result.result).toBe("inconclusive");
+      expect(result.verdictPolicyVersion).toBe(2);
+      expect(result.verdictSummary).toEqual(inconclusiveRun.verdictSummary);
+    });
+
+    it("sends the policy on the one-shot body and preserves the decision", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(okResponse(inconclusiveRun));
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "v2-one-shot",
+        verdictPolicy,
+      });
+
+      reporter.add({ caseTitle: "case-1", passed: true, status: "completed" });
+      const result = await reporter.finalize();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.verdictPolicy).toEqual(verdictPolicy);
+      expect(body.results.map((r: any) => r.status)).toEqual(["completed"]);
+      expect(result.result).toBe("inconclusive");
+      expect(result.verdictSummary).toEqual(inconclusiveRun.verdictSummary);
+    });
+
+    it("omits the policy entirely for a legacy run", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "sk_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "legacy",
+        passCriteria: { minimumPassRate: 80 },
+      });
+      reporter.add({ caseTitle: "case-1", passed: true });
+      const result = await reporter.finalize();
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect("verdictPolicy" in body).toBe(false);
+      // The percent threshold is still a percent at the legacy boundary.
+      expect(body.passCriteria).toEqual({ minimumPassRate: 80 });
+      expect(result.verdictPolicyVersion).toBeUndefined();
+      expect(result.verdictSummary).toBeUndefined();
+    });
+  });
+
   it("resolves replay configs from mcpClientManager when starting a chunked run", async () => {
     const fetchMock = jest
       .fn()

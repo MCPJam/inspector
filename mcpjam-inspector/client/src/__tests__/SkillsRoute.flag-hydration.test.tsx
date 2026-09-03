@@ -1,13 +1,18 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { routePaths } from "../lib/app-navigation";
 
-// Controls the tri-state PostHog flag the route guard reads. `undefined`
-// models the pre-hydration window; the regression is that the guard must NOT
-// redirect during it (only on an explicit `false`).
+// Controls the tri-state PostHog flag. `undefined` models the pre-hydration
+// window. The flag gates the CLOUD half of the tab, never the route: Skills
+// over MCP is a protocol capability whose routes carry no product flag, so no
+// value of this may keep the page from rendering.
 let flagState: boolean | undefined = undefined;
 
-const { mockRouteContext, mockNavigate } = vi.hoisted(() => ({
+const { memberActor, mockRouteContext, mockNavigate } = vi.hoisted(() => ({
+  // The Convex actor behind the cloud half's other term. Held at a resolved
+  // member for this file so each case varies the FLAG alone; the actor's own
+  // tri-state is pinned in SkillsRoute.local-connect-chrome.test.tsx.
+  memberActor: { value: true as boolean | undefined },
   mockRouteContext: {
     convexProjectId: "project-1" as string | null,
     isAuthenticated: true,
@@ -16,13 +21,19 @@ const { mockRouteContext, mockNavigate } = vi.hoisted(() => ({
   mockNavigate: vi.fn(),
 }));
 
+vi.mock("../hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => memberActor.value,
+}));
+
 vi.mock("../hooks/useSkillsEnabled", () => ({
   SKILLS_FEATURE_FLAG: "skills-enabled",
   useSkillsEnabledState: () => flagState,
   useSkillsEnabled: () => flagState === true,
 }));
 
-// Skills renders the local/cloud toggle off the computers flag; irrelevant here.
+// The route no longer reads this flag — the Local/Cloud browse toggle moved to
+// `skills-enabled` with the rest of the project store. Mocked because App.tsx's
+// module graph still calls it elsewhere.
 vi.mock("../hooks/useComputersEnabled", () => ({
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
@@ -48,7 +59,12 @@ vi.mock("react-router", async (importOriginal) => {
 });
 
 vi.mock("../components/SkillsTab", () => ({
-  SkillsTab: () => <div data-testid="skills-view" />,
+  SkillsTab: ({ cloudSkillsEnabled }: { cloudSkillsEnabled?: boolean }) => (
+    <div
+      data-testid="skills-view"
+      data-cloud-skills={String(cloudSkillsEnabled)}
+    />
+  ),
 }));
 
 vi.mock("../components/hosts/ConnectViewHeader", () => ({
@@ -102,6 +118,7 @@ beforeEach(() => {
   mockRouteContext.convexProjectId = "project-1";
   mockRouteContext.isAuthenticated = true;
   mockRouteContext.isGuestProjectActor = false;
+  memberActor.value = true;
 });
 
 afterEach(() => {
@@ -109,42 +126,84 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("SkillsRoute — flag hydration + Connect chrome", () => {
-  it("does not redirect while the flag is still loading (undefined)", () => {
+/**
+ * The route's redirect goes through `ScopedNavigate`, which carries the active
+ * project into a project-owned target — so it needs a router context to read
+ * the current location from. Mounting inside a `MemoryRouter` gives it one;
+ * the `Navigate` marker mocked above still renders, and with no project in the
+ * URL the target is the plain logical path these assertions expect.
+ */
+function renderRoute(element: React.ReactElement) {
+  return render(<MemoryRouter>{element}</MemoryRouter>);
+}
+
+describe("SkillsRoute — cloud-skills flag + Connect chrome", () => {
+  it("renders the tab with the cloud half off while the flag loads", () => {
     flagState = undefined;
-    render(<SkillsRoute />);
+    renderRoute(<SkillsRoute />);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
-    // Nothing renders yet either — it waits for the flag to settle.
-    expect(screen.queryByTestId("skills-view")).not.toBeInTheDocument();
+    // The protocol half needs no flag, so the page paints immediately rather
+    // than holding every user behind PostHog.
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
   });
 
-  it("does not redirect across an undefined -> true transition", () => {
+  it("turns the cloud half on across an undefined -> true transition", () => {
     flagState = undefined;
-    const { rerender } = render(<SkillsRoute />);
-    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+    const { rerender } = renderRoute(<SkillsRoute />);
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
 
     // PostHog resolves the flag to enabled.
     flagState = true;
-    rerender(<SkillsRoute />);
+    // Re-rendered inside the same router: dropping the wrapper here would
+    // remount the route without a location, which is not what a flag
+    // resolving mid-session does.
+    rerender(
+      <MemoryRouter>
+        <SkillsRoute />
+      </MemoryRouter>
+    );
 
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
-    expect(screen.getByTestId("skills-view")).toBeInTheDocument();
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "true"
+    );
     expect(screen.getByTestId("connect-header")).toBeInTheDocument();
   });
 
-  it("redirects to servers only on an explicit false", () => {
+  it("keeps the route on an explicit false, with the cloud half hidden", () => {
     flagState = false;
-    render(<SkillsRoute />);
-    const nav = screen.getByTestId("navigate");
-    expect(nav).toBeInTheDocument();
-    expect(nav).toHaveAttribute("data-to", routePaths.servers);
+    renderRoute(<SkillsRoute />);
+    // The regression this guards: redirecting here would hold Skills over MCP
+    // hostage to Cloud Skills' rollout. They are separate features that happen
+    // to share a page.
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
+  });
+
+  it("renders nothing until the hosted project resolves", () => {
+    flagState = true;
+    mockRouteContext.convexProjectId = null;
+    renderRoute(<SkillsRoute />);
+    // Hosted has no local FS to fall back to, and the server-skills routes
+    // address their connection by project.
     expect(screen.queryByTestId("skills-view")).not.toBeInTheDocument();
   });
 
   it("renders the bare view without Connect chrome for a guest actor", () => {
     flagState = true;
     mockRouteContext.isGuestProjectActor = true;
-    render(<SkillsRoute />);
+    memberActor.value = false;
+    renderRoute(<SkillsRoute />);
     expect(screen.getByTestId("skills-view")).toBeInTheDocument();
     expect(screen.queryByTestId("connect-header")).not.toBeInTheDocument();
   });

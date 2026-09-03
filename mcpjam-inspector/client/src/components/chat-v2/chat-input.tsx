@@ -6,7 +6,6 @@ import {
   useMemo,
   useEffect,
 } from "react";
-import { HOSTED_MODE } from "@/lib/config";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
@@ -15,6 +14,7 @@ import type {
   DragEvent,
   FormEvent,
   KeyboardEvent,
+  ReactNode,
 } from "react";
 import { cn } from "@/lib/chat-utils";
 import { track } from "@/lib/analytics";
@@ -383,6 +383,17 @@ interface ChatInputProps {
    */
   environmentServersOverridden?: boolean;
   onResetEnvironmentServers?: () => void;
+  /**
+   * Banner rendered inside the composer, above everything else.
+   *
+   * Exists for statements the composer has to make ABOUT ITSELF — today, that
+   * a reopened conversation's as-run host/environment was never recorded, so
+   * these controls are the viewer's current selection rather than history (see
+   * `ConversationTargetNotice`). Rendered here rather than by each caller
+   * because there are six `<ChatInput>` sites and the notice must not be
+   * reachable from only some of them.
+   */
+  notice?: ReactNode;
 }
 
 export function ChatInput({
@@ -447,13 +458,21 @@ export function ChatInput({
   onEnvironmentServerToggle,
   environmentServersOverridden = false,
   onResetEnvironmentServers,
+  notice,
 }: ChatInputProps) {
-  // Cloud skill source for the `/` picker: in hosted mode, list/load skills
-  // from the project's Convex/Computer source (Playground carries projectId via
-  // `clientSelector`). Gated behind the `skills-enabled` flag until QA completes
-  // (flag off ⇒ no cloud source, so the picker lists no cloud skills). Local
-  // mode keeps the default (filesystem) path. Memoized so the popover's fetch
-  // effects don't re-run every render.
+  // The project LIBRARY half of the `/` picker: list/load skills from the
+  // project's Convex source (Playground carries the id via `clientSelector`).
+  //
+  // NOT gated on `HOSTED_MODE` any more. It was, back when the picker showed
+  // one source or the other and hosted was the only mode with a library to
+  // show — which meant a local user's own project skills were unreachable from
+  // chat, though they are exactly what the library exists for. The picker now
+  // merges both halves (see SkillsPopoverSection), so this is simply "is there
+  // a library to read": a Convex project id exists in both modes, and an
+  // unsynced project has none, which keeps the half off by itself.
+  //
+  // Still gated behind the `skills-enabled` flag until QA completes. Memoized
+  // so the popover's fetch effects don't re-run every render.
   const skillsEnabled = useSkillsEnabled();
   // Skills over MCP (SEP-2640): the selected servers ARE the candidate
   // providers. `connected: true` because a server only reaches
@@ -481,7 +500,7 @@ export function ChatInput({
 
   const skillsSource = useMemo<SkillsSource | undefined>(
     () =>
-      HOSTED_MODE && skillsEnabled && clientSelector?.cloudProjectId
+      skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
     [clientSelector?.cloudProjectId, skillsEnabled]
@@ -506,6 +525,7 @@ export function ChatInput({
   const recordingCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const fileErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingDurationSecondsRef = useRef<number>(0);
   const transcriptionRunRef = useRef(0);
@@ -610,12 +630,19 @@ export function ChatInput({
     recordingCapTimerRef.current = null;
   }, []);
 
+  const clearFileErrorTimer = useCallback(() => {
+    if (!fileErrorTimerRef.current) return;
+    clearTimeout(fileErrorTimerRef.current);
+    fileErrorTimerRef.current = null;
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       clearStopFallbackTimer();
       clearRecordingCapTimer();
+      clearFileErrorTimer();
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();
       }
@@ -623,7 +650,12 @@ export function ChatInput({
       transcriptionAbortRef.current = null;
       stopAudioStream();
     };
-  }, [clearRecordingCapTimer, clearStopFallbackTimer, stopAudioStream]);
+  }, [
+    clearRecordingCapTimer,
+    clearStopFallbackTimer,
+    clearFileErrorTimer,
+    stopAudioStream,
+  ]);
 
   useLayoutEffect(() => {
     if (moveCaretToEndTrigger === undefined) return;
@@ -691,12 +723,16 @@ export function ChatInput({
       if (errors.length > 0) {
         setFileError(errors.join("\n"));
         // Clear error after 5 seconds
-        setTimeout(() => setFileError(null), 5000);
+        clearFileErrorTimer();
+        fileErrorTimerRef.current = setTimeout(() => {
+          fileErrorTimerRef.current = null;
+          setFileError(null);
+        }, 5000);
       }
 
       return true;
     },
-    [fileAttachments, onChangeFileAttachments]
+    [fileAttachments, onChangeFileAttachments, clearFileErrorTimer]
   );
 
   const handleFileInputChange = useCallback(
@@ -1399,6 +1435,8 @@ export function ChatInput({
               {DROP_OVERLAY_TEXT}
             </div>
           )}
+
+          {notice}
 
           <PromptsPopover
             anchor={caret}

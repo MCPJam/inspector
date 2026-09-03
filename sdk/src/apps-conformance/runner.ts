@@ -11,6 +11,7 @@ import {
   type MCPResource,
   type MCPServerConfig,
 } from "../mcp-client-manager/index.js";
+import { deepJsonSafe } from "../json-safe.js";
 import { withEphemeralClient } from "../operations.js";
 import {
   MCP_APPS_CHECK_IDS,
@@ -130,7 +131,11 @@ function failedResult(
     durationMs,
     error: {
       message,
-      ...(rawError === undefined ? {} : { details: rawError }),
+      // Raw thrown values are often class instances (e.g. MCPAuthError), and
+      // the persistence layer rejects those wholesale — one live instance in
+      // `errorDetails` used to destroy the entire finished report at the
+      // Convex write. Reports carry plain JSON data only.
+      ...(rawError === undefined ? {} : { details: deepJsonSafe(rawError) }),
     },
     ...(details ? { details } : {}),
     ...(warnings && warnings.length > 0 ? { warnings } : {}),

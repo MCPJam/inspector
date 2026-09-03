@@ -50,7 +50,13 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    supportsSelectedMcpServers: true,
+    modelAccess: "broker",
+    mcpDelivery: "native",
+    // The mechanism, not just the mode: `deliverMcpServers` is only reached on
+    // the `sandbox-files` arm, so a double without this would silently exercise
+    // a path the real Claude Code adapter never takes.
+    mcpNativeDelivery: "sandbox-files",
+    deliverMcpServers: vi.fn(async () => {}),
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     // The real adapter's MCP tool names are `mcp__<key>__<tool>`; the turn only
@@ -190,7 +196,7 @@ describe("runHarnessTurn tool-policy accounting", () => {
     // Policied hosted runs refuse without a usable seal secret.
     vi.stubEnv(
       "COMPUTERS_TERMINAL_TOKEN_SECRET",
-      "test-harness-proxy-secret-32-chars"
+      "test-harness-proxy-secret-32-chars",
     );
     harnessState.finalText = "I could not delete the repo.";
     harnessState.session.stop.mockClear();
@@ -204,7 +210,7 @@ describe("runHarnessTurn tool-policy accounting", () => {
   it("records a block from the adapter's flattened block text, and keeps it off the tool paths", async () => {
     harnessState.streamParts = toolCallParts(
       "mcp__srv-a__delete_repo",
-      "Call blocked by tool policy: denyList"
+      "Call blocked by tool policy: denyList",
     );
     const blocks: HarnessPolicyBlockRecord[] = [];
     const onToolResult = vi.fn(async () => {});
@@ -216,7 +222,7 @@ describe("runHarnessTurn tool-policy accounting", () => {
           blocks.push(...records);
         },
       }) as any,
-      "none"
+      "none",
     );
 
     expect(blocks).toHaveLength(1);
@@ -232,14 +238,14 @@ describe("runHarnessTurn tool-policy accounting", () => {
     // `blockedByPolicy`.
     expect(onToolResult).not.toHaveBeenCalled();
     expect(
-      (result.trace?.spans ?? []).some((span) => span.category === "tool")
+      (result.trace?.spans ?? []).some((span) => span.category === "tool"),
     ).toBe(false);
   });
 
   it("leaves an ordinary result alone", async () => {
     harnessState.streamParts = toolCallParts(
       "mcp__srv-a__read_file",
-      "file contents"
+      "file contents",
     );
     const blocks: HarnessPolicyBlockRecord[] = [];
     const onToolResult = vi.fn(async () => {});
@@ -251,7 +257,7 @@ describe("runHarnessTurn tool-policy accounting", () => {
           blocks.push(...records);
         },
       }) as any,
-      "none"
+      "none",
     );
 
     expect(blocks).toEqual([]);
@@ -263,7 +269,7 @@ describe("runHarnessTurn tool-policy accounting", () => {
     // matcher: the verdict comes from the sealed snapshot, never the payload.
     harnessState.streamParts = toolCallParts(
       "mcp__srv-a__read_file",
-      "Call blocked by tool policy: denyList"
+      "Call blocked by tool policy: denyList",
     );
     const blocks: HarnessPolicyBlockRecord[] = [];
     const onToolResult = vi.fn(async () => {});
@@ -275,7 +281,7 @@ describe("runHarnessTurn tool-policy accounting", () => {
           blocks.push(...records);
         },
       }) as any,
-      "none"
+      "none",
     );
 
     expect(blocks).toEqual([]);

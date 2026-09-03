@@ -9,6 +9,7 @@
  * Uses SandboxedIframe for DRY double-iframe setup.
  */
 
+import type { BrowserStoragePolicy } from "@mcpjam/sdk/widget-runtime";
 import {
   useRef,
   useState,
@@ -2069,7 +2070,13 @@ export function MCPAppsRendererSurface({
           appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
           const tools: AppToolDescriptor[] = [];
           let cursor: string | undefined;
-          for (let page = 0; page < 8; page += 1) {
+          const APP_TOOLS_PAGE_CAP = 8;
+          // The page values cross the iframe boundary, so they are
+          // untrusted: a non-string `nextCursor` is not a cursor. A REPEATED
+          // one is still a cursor though — the value is opaque, and an app may
+          // legally reissue one constant token (`""` included) for every
+          // page — so the page cap is the only bound.
+          for (let page = 0; page < APP_TOOLS_PAGE_CAP; page += 1) {
             const result = await bridge.listTools(
               cursor === undefined ? {} : { cursor }
             );
@@ -2078,8 +2085,23 @@ export function MCPAppsRendererSurface({
                 Boolean(t && typeof t.name === "string" && t.name.length > 0)
               )
             );
-            cursor = result.nextCursor;
-            if (!cursor) break;
+            cursor =
+              typeof result.nextCursor === "string"
+                ? result.nextCursor
+                : undefined;
+            // Presence, not truthiness: MCP 2026-07-28
+            // `server/utilities/pagination` makes `""` a valid cursor that MUST
+            // NOT be read as the end of results.
+            if (cursor === undefined) break;
+            // Stopping at the cap is not the same as reaching the end, and the
+            // registered set is about to be treated as this app's whole tool
+            // surface. Say so rather than letting a truncated read pass as
+            // complete.
+            if (page === APP_TOOLS_PAGE_CAP - 1) {
+              console.warn(
+                `[MCP Apps] tools/list still had more pages after ${APP_TOOLS_PAGE_CAP}; registering a partial tool set for bridge ${bridgeId}.`
+              );
+            }
           }
 
           appToolsListedBridgeIdsRef.current.add(bridgeId);
@@ -2557,6 +2579,13 @@ export function MCPAppsRendererSurface({
     () => profileSandbox?.csp?.cspDirectives,
     [activeMcpProfileKey]
   );
+  // Browser storage availability, straight from the profile like the knobs
+  // above. Deliberately NOT folded into `cspSubtypePolicy`: storage is not a
+  // CSP concern, and its guard applies in permissive mode too.
+  const browserStoragePolicy = useMemo(
+    () => profileSandbox?.browserStorage,
+    [activeMcpProfileKey]
+  );
   // Hosted-mode clamp for cspDirectives. The resolver's
   // `hostedClampExtraDeny` strips MCPJam app/API origins from the
   // widget-declared CSP (`restrictTo` + resource declaration), but
@@ -2629,6 +2658,7 @@ export function MCPAppsRendererSurface({
     allowFeatures: Record<string, string> | undefined;
     cspDirectives: Record<string, string[]> | undefined;
     cspSubtypePolicy: CspSubtypePolicy | undefined;
+    browserStorage: BrowserStoragePolicy | undefined;
   }>(() => {
     const cspSubtypePolicy: CspSubtypePolicy | undefined =
       earlyEffectiveMcpAppsCapabilities.cspConnectDomains ||
@@ -2768,6 +2798,10 @@ export function MCPAppsRendererSurface({
         allowFeatures: allowFeaturesPolicy,
         cspDirectives: cspDirectivesEffective,
         cspSubtypePolicy: undefined,
+        // Unlike `cspSubtypePolicy` above, storage is NOT dropped in
+        // permissive mode: a host that serves no CSP can still deny storage,
+        // and the proxy arms the guard on both branches.
+        browserStorage: browserStoragePolicy,
       };
     }
 
@@ -2934,6 +2968,7 @@ export function MCPAppsRendererSurface({
       allowFeatures: allowFeaturesPolicy,
       cspDirectives: cspDirectivesEffective,
       cspSubtypePolicy: effectiveCspSubtypePolicy,
+      browserStorage: browserStoragePolicy,
     };
   }, [
     cspMode,
@@ -2948,6 +2983,7 @@ export function MCPAppsRendererSurface({
     sandboxAttrsPolicy,
     allowFeaturesPolicy,
     cspDirectivesEffective,
+    browserStoragePolicy,
     earlyEffectiveMcpAppsCapabilities.cspConnectDomains,
     earlyEffectiveMcpAppsCapabilities.cspResourceDomains,
   ]);
@@ -4164,6 +4200,7 @@ export function MCPAppsRendererSurface({
       allowFeatures={effectiveSandbox.allowFeatures}
       cspDirectives={effectiveSandbox.cspDirectives}
       cspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+      browserStorage={effectiveSandbox.browserStorage}
       colorScheme={resolvedTheme}
       recordMode={recordMode}
       onProxyReady={() => {
@@ -4354,6 +4391,8 @@ export function MCPAppsRendererSurface({
         widgetAllowFeatures={effectiveSandbox.allowFeatures}
         widgetCspDirectives={effectiveSandbox.cspDirectives}
         widgetCspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+        widgetBrowserStorage={effectiveSandbox.browserStorage}
+        widgetToolResult={earlyEffectiveMcpAppsCapabilities.toolResult}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}

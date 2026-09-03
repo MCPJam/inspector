@@ -5,6 +5,8 @@ import type {
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
+import { buildAppPermalink } from "./platform/permalinks.js";
+import { isEvalRunVerdict } from "./contract/verdict-policy.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 import {
@@ -47,7 +49,49 @@ type StartRunResponse = {
   status?: string;
   result?: string;
   summary?: ReportEvalResultsOutput["summary"];
+  /** v2 verdict fields, absent from a legacy run and a legacy backend. */
+  verdictPolicyVersion?: number;
+  verdictSummary?: ReportEvalResultsOutput["verdictSummary"];
+  verdictPolicyIntegrityError?: string;
 };
+
+/**
+ * Project a backend run response onto {@link ReportEvalResultsOutput}.
+ *
+ * The verdict is carried through as the backend spelled it — `inconclusive`
+ * included. Narrowing it to `passed | failed` (which is what a bare cast did)
+ * reports an unmeasurable run as a failing one, which points a gate at the
+ * server under test when the harness is what broke.
+ */
+export function projectRunVerdict(
+  run: Pick<
+    StartRunResponse,
+    | "result"
+    | "verdictPolicyVersion"
+    | "verdictSummary"
+    | "verdictPolicyIntegrityError"
+  >
+): Pick<
+  ReportEvalResultsOutput,
+  | "result"
+  | "verdictPolicyVersion"
+  | "verdictSummary"
+  | "verdictPolicyIntegrityError"
+> {
+  return {
+    result: isEvalRunVerdict(run.result) ? run.result : "failed",
+    ...(run.verdictPolicyVersion !== undefined
+      ? {
+          verdictPolicyVersion:
+            run.verdictPolicyVersion as ReportEvalResultsOutput["verdictPolicyVersion"],
+        }
+      : {}),
+    ...(run.verdictSummary ? { verdictSummary: run.verdictSummary } : {}),
+    ...(run.verdictPolicyIntegrityError
+      ? { verdictPolicyIntegrityError: run.verdictPolicyIntegrityError }
+      : {}),
+  };
+}
 
 type AppendIterationsResponse = {
   inserted: number;
@@ -171,10 +215,39 @@ export function printRunUrl(
     (config.project && config.project !== DEFAULT_MCPJAM_PROJECT
       ? config.project
       : "");
-  const query = projectId ? `?project=${encodeURIComponent(projectId)}` : "";
-  const url = `${config.baseUrl}/evals/suite/${encodeURIComponent(
-    suiteId
-  )}/runs/${encodeURIComponent(runId)}${query}`;
+  let url: string;
+  try {
+    // `baseUrl` is where CI REPORTS to, and every deployment serves the app
+    // from the same origin — so it is the right app origin here. Passed
+    // explicitly either way: the builder reads no configuration of its own.
+    const appOrigin = new URL(config.baseUrl).origin;
+    url = projectId
+      ? buildAppPermalink(
+          {
+            type: "eval_run",
+            id: runId,
+            parent: { type: "eval_suite", id: suiteId },
+            projectId,
+          },
+          { appOrigin }
+        ).url
+      : // NOT a permalink, and knowingly so: with no project id the link
+        // opens whichever project the reader's picker is parked on. It is
+        // still the right line to print for the CI author reading their own
+        // terminal — they are almost always on that project — and the
+        // alternative for a backend that does not echo `projectId` is no link
+        // at all. Built through `URL` rather than concatenation so it stays
+        // encoded and stays out of the string-building this module retired.
+        new URL(
+          `/evals/suite/${encodeURIComponent(
+            suiteId
+          )}/runs/${encodeURIComponent(runId)}`,
+          appOrigin
+        ).toString();
+  } catch {
+    // A convenience line may never fail a CI report that already succeeded.
+    return;
+  }
 
   console.log(`[mcpjam/sdk] View run: ${url}`);
 }
@@ -1023,6 +1096,11 @@ async function reportEvalResultsInternal(
         expectedIterations: input.expectedIterations,
         tags: input.tags,
         evaluationConfigHash: input.evaluationConfigHash,
+        // The v2 marker. Sent only when the caller declared a policy, so a
+        // legacy run's body is byte-identical to what it was: this is the field
+        // that decides which aggregation a run is graded under, and a default
+        // would silently re-grade every existing suite.
+        ...(input.verdictPolicy ? { verdictPolicy: input.verdictPolicy } : {}),
         results: resultsWithIterationIds,
         ...wireHostConfigBody,
       }
@@ -1044,6 +1122,10 @@ async function reportEvalResultsInternal(
     expectedIterations: input.expectedIterations,
     tags: input.tags,
     evaluationConfigHash: input.evaluationConfigHash,
+    // Resolved and FROZEN by the backend at run start — which is why it rides
+    // the start call rather than each chunk. Later chunks carry evidence, not
+    // policy.
+    ...(input.verdictPolicy ? { verdictPolicy: input.verdictPolicy } : {}),
     ...wireHostConfigBody,
   });
 
@@ -1061,7 +1143,7 @@ async function reportEvalResultsInternal(
       runId: start.runId,
       ...(start.projectId ? { projectId: start.projectId } : {}),
       status: start.status as "completed" | "failed",
-      result: start.result as "passed" | "failed",
+      ...projectRunVerdict(start),
       summary: start.summary,
     };
     printRunUrl(config, reused);

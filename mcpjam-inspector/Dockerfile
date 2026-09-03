@@ -82,10 +82,15 @@ COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 # here by hand. `bundle:plugin-shim` emits the in-VM plugin shim as a TS const
 # that `services/plugins/computer-stdio.ts` imports at top level: without it the
 # server bundle does not resolve and the image fails to build.
+# `bundle:codex-appserver-bridge` is the same story for the Codex app-server
+# transport: its bridge and the MCP server Codex spawns are uploaded into a
+# sandbox and executed there, so nothing in the import graph reaches them and
+# `codex-appserver-bootstrap.ts` imports the generated const at top level.
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
-    npm run bundle:plugin-shim -w @mcpjam/inspector
+    npm run bundle:plugin-shim -w @mcpjam/inspector && \
+    npm run bundle:codex-appserver-bridge -w @mcpjam/inspector
 
 # `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
 # which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
@@ -102,6 +107,11 @@ COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
+# MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
+# under. Hardcoded rather than an ARG: the web image is the only thing this
+# Dockerfile builds. Without it this bundle's events resolve against the npm or
+# desktop artifacts, which share the same bare `release`. See
+# SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
@@ -110,7 +120,7 @@ RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; f
     if [ -n "$VITE_WORKOS_CLIENT_ID" ]; then export VITE_WORKOS_CLIENT_ID; fi; \
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
-    npm run build:client -w @mcpjam/inspector
+    MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
 ################################################################################
 # Runtime image.

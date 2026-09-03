@@ -384,6 +384,12 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
           echo "Completed run $(jq -r '.runs[0].id' eval-result.json)"
 
       - name: Gate and write JUnit
+        # Always run this step, even if the run above exited 1 on a failed
+        # verdict: a default `if:` is `success()`, and skipping this step
+        # would lose the gate's configurable policy and its JUnit report
+        # exactly when the run failed. The job still ends up failed either
+        # way — the run step above already exited nonzero.
+        if: always()
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
         run: |
@@ -414,40 +420,110 @@ View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<project
 
 This line is only emitted in human format — `--format json` output is unchanged, so scripts that parse the JSON stream are unaffected.
 
-Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead. When `--reporter` is present, the same report is also written to stdout.
+Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead, or `--reporter html` for a self-contained HTML page (decision summary + failures only — traces, parity, and history are paid tiers not included here). When `--reporter` is present, the same report is also written to stdout.
 
 <Warning>
-**`eval run --wait` exits 0 even when the evals failed.** Waiting for a run is not the same as judging it: `--wait` keeps `eval run`'s existing exit codes, where `1` means a run never launched, not that a run came back red. The report it writes records the verdict faithfully (`passed: false`, and a JUnit `failures` count above zero), but the process still exits 0.
+**`eval run --wait` sets a verdict-based exit code.** `0` pass, `1` a completed run's verdict failed (the ONLY condition that produces `1`), `2` usage error or an invalid suite file, `3` auth failed (no credential, or the platform rejected it, at launch or mid-wait), `4` a connection/setup failure this CLI itself observed before evaluation ran (or a local `--out` write failure), `5` no valid verdict — `inconclusive`, a null/unrecognized result, a run status of failed/cancelled/timed-out, or a wait that hit its deadline. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`.
 
-So the `eval gate` step above is what fails the job — do not drop it and rely on the first step's exit code. If you only want the artifact and not the gate, assert on the verdict yourself: `[ "$(jq -r '.passed' eval-report.json)" = "true" ]`.
+Retry guidance: `4` and `5` mean infrastructure, or an absence of observation — nothing here says the server is wrong, so retrying the CI job is reasonable. But a bare re-run is not automatically safe: `eval run --suite` only dedupes against an in-flight or already-completed launch when you pass a **stable** `--idempotency-key`, and exit `5` can mean the run is still running (a wait that hit its deadline) — without that key, a retry can start a second paid run alongside the first rather than resuming it. Pass `--idempotency-key` (or poll/resume the run id already in the receipt) before retrying on `4` or `5`. `3` means fix the credential first; it poisons every other observation in the same launch. Never retry blindly on `1` — that code is reserved for a run the platform actually graded as failed.
+
+Either `eval run --wait` or `eval gate` already fails the job on its own — the `eval gate` step above adds a configurable pass/fail *policy* (thresholds, per-scorer gates) and baseline comparison on top of the same verdict, so keep it when you want more than "did this run's own verdict pass".
 </Warning>
 
 <Note>
-`eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
+`eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
-#### Decision summary in human format
+#### Waiving a gate
 
-When `eval status` runs in `--format human` and the run has finished with a failed result, it prints a decision summary block to stdout after the status payload. The block lists the overall pass rate and, for each failed case, the first stage that failed, the failure category, any recorded evidence (span IDs, prompt indexes, predicate reasons), and a suggested next action:
+A run whose gate failed can be overridden by an authorized user until an expiry
+they name, so a release is not blocked while a known regression is being fixed:
 
-```text
-Decision summary: failed — 0/3 cases passed (0%)
-  Fetch order (iteration-1, iteration 1)
-    first failed stage call
-    failure category arguments
-    expected tool calls: fetch_order
-    observed failure: server rejected arguments
-    evidence: span ids span-abc; reasons wrong argument type
-    next action: review the authored arguments against the tool input schema
-  Setup failure (iteration-2, iteration 2)
-    no first failed stage — did not reach the server's stages
-    failure category setup
-    next action: check the server connection and environment configuration
+```bash
+mcpjam cloud eval gate waive --run "$RUN_ID" --reason "hotfix ships today; tracked in ENG-4821" --expires-in 3d
 ```
 
-The block is only emitted in `--format human` — `--format json` output is byte-identical to before. If the iteration data cannot be fetched (for example, a network error), the block is silently omitted rather than failing the status read.
+`eval gate` then exits `0` and reports the outcome as `waived`. It is **not**
+reported as a pass: the run keeps its failed result, the failing verdicts stay
+in the report, and the waiver — who granted it, why, and until when — is named
+in every artifact the command writes, including the JUnit XML your CI job
+uploads (as a `<skipped>` element, so it neither fails the build nor renders as
+a clean green row).
 
-`eval gate` and `eval compare` also emit a decision summary in `--format human`, written to stderr alongside their existing gate report.
+Only a real verdict failure is waivable. A cancelled run, a `--wait` timeout, or
+a network failure still exits `3` with a waiver in place — those established
+nothing, and a waiver granted for a regression is not consent to ship on an
+infrastructure failure.
+
+Waivers expire, and expiry is enforced on both sides: the platform republishes
+the GitHub Check Run when the waiver lapses, and the CLI re-derives the expiry
+itself rather than trusting the platform's answer. `mcpjam cloud eval gate
+unwaive --run "$RUN_ID"` ends one early.
+
+<Warning>
+The waiver reason is stored **unredacted** and readable by anyone who can see
+the suite, for as long as the suite exists. Never put secrets, tokens, or
+customer data in it.
+</Warning>
+
+#### Decision summary
+
+`eval run --wait`, `eval status`, `eval gate` and `eval compare` all read one versioned object — the **run decision summary** — and every output format restates it. Where each command puts it:
+
+| Command | `--format json` | `--format human` | `--out` / `--reporter` |
+|---|---|---|---|
+| `eval run --wait` | `decisionSummary` on the stdout receipt | block on stdout, after the receipt | `decisionSummary` on the report |
+| `eval status` | `decisionSummary` on the stdout document | block on stdout, above the `View:` line | — |
+| `eval gate` | `decisionSummary` beside `gate` | block on **stderr**, under the gate report | `decisionSummary` on the report |
+| `eval compare` | `decisionSummary` beside `compare` | block on **stderr**, under the gate report | `decisionSummary` on the report |
+
+Two scoping rules that are easy to miss. `eval run --wait` attaches a summary only when the invocation launched **one** run: a fan-out has several, and labelling a receipt about N runs with the decision of one would be a false claim rather than a partial one. `eval compare` reports the **compare side's** decision only — the baseline's failures are a different run's diagnostics, and printing them here would read as this run's.
+
+```text
+Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 failed
+  Why: a case did not meet its pass threshold
+  Diagnostics: 2 non-passing of 9 trials examined (the complete set)
+  First break: Tool call — the call arguments did not match what the case expects (1 of 2 measured trials)
+  Fetch order (c_orders, iteration 2) — failed
+    First failed stage: Tool call — the call arguments did not match what the case expects
+    Failure category: call arguments
+    Expected tool calls: fetch_order
+    Observed failure: server rejected arguments
+    Evidence at Tool call: span ids span-call-2; reasons order_id must be a string
+    Trace: /projects/prj_1/eval-runs/run_7/iterations/it_2/trace
+    Next action: review the authored arguments against the tool input schema
+  Setup abort (c_setup, iteration 5) — failed
+    First failed stage: none was established — the run never reached the server's stages
+    Failure category: setup
+    Trace: /projects/prj_1/eval-runs/run_7/iterations/it_5/trace
+    Next action: check the server connection and environment configuration
+```
+
+Four things about it are worth knowing before you script against it.
+
+**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *trials inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
+
+**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-trial diagnostics sit *underneath* that: a case can pass with a failing trial in it, so tallying the diagnostics gives a different answer than the platform reached.
+
+**`notEstablished` is not a failure.** It is a fourth verdict meaning no verdict exists at all — the run is unfinished, it stopped before finishing, or its decision could not be read. `undecided.reason` says which. It is also not `inconclusive`, which *is* a decision: the validity phase ran and withheld a verdict because the run did not measure the server well enough.
+
+**A page of diagnostics says whether it is the whole story.** `diagnostics.complete` is true only when the listed trials are the run's entire non-passing set, and `scannedIterations` says how many were examined — so an empty list from a complete page ("nothing failed") is distinguishable from an empty list from a partial one ("we did not look").
+
+Evidence is scoped to the claim it supports: for a measured failure the span ids, prompt indexes and reasons come from the first failed stage's row alone, and a setup abort or evaluator error keeps a stage-less pointer rather than naming a stage nothing established.
+
+`eval status` prints the block only when a terminal run did not pass — a clean pass has nothing to diagnose. `--format json` stays exactly one parseable document in every case: the summary rides *inside* it, never as a second block appended after it. If the summary cannot be fetched, it is omitted rather than failing the command.
+
+**The human block leads with where the chain broke.** Under the diagnostics headline, before any per-trial detail, a non-passing run gets one line naming the earliest stage at which a readable trial stopped, why, and how many trials stopped there:
+
+```text
+  First break: Tool call — the call arguments did not match what the case expects (2 of 3 measured trials)
+```
+
+"First" means earliest in chain order — `connection → discovery → selection → call → response → userValue` — never "most common", so the count beside it is what tells you whether the run had one problem or several. When the breaks are spread the line says so (`earliest of 3 stages that broke`), and when some chains could not be read it says that too (`1 more had no readable chain`), because otherwise the denominator quietly shrinks to the trials that happened to validate. A run that reached no stage at all — a setup abort, an evaluator error — names its bucket instead of inventing a location.
+
+The line is **not** a diagnosis. A first failed stage is a location and a failure category is a bucket; neither on its own says what to change.
+
+`eval status --stages` expands each failing trial to all six chain rows with their states and reasons. It is off by default: six rows per trial is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
 
 Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
 
