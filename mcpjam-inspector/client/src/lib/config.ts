@@ -52,6 +52,22 @@ export const SANDBOX_ORIGIN: string | null = (() => {
 })();
 
 /**
+ * How the sandbox proxy mounts an MCP App view.
+ *
+ * `"write"` (the default) writes the widget HTML into a blank same-origin
+ * iframe, so the view runs at the proxy's URL and a third party that keys on
+ * the page URL — a referrer-restricted API key, an OAuth redirect URI — sees a
+ * real origin. `"srcdoc"` restores the legacy `iframe.srcdoc` mount, where the
+ * view's URL is `about:srcdoc` and no such allowlist can match.
+ *
+ * Set via `VITE_MCPJAM_VIEW_MOUNT` at build time. It exists to exercise the
+ * srcdoc branch (the e2e fallback case); being a build-time constant it is not
+ * an incident switch, since flipping it costs the same redeploy as a revert.
+ */
+export const VIEW_MOUNT_MODE: "write" | "srcdoc" =
+  import.meta.env.VITE_MCPJAM_VIEW_MOUNT === "srcdoc" ? "srcdoc" : "write";
+
+/**
  * The Discord application the agent bot runs as, used to build the "add to
  * server" URL on the Integrations page.
  *

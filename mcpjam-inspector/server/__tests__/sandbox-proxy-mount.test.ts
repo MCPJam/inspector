@@ -72,6 +72,8 @@ interface MountHarness {
   getInner: () => HTMLIFrameElement | null;
   getLastMount: () => Record<string, unknown> | null;
   setInner: (frame: HTMLIFrameElement | null) => void;
+  /** Every `window.parent.postMessage` the proxy made. */
+  posted: Array<[unknown, string]>;
 }
 
 /**
@@ -85,9 +87,18 @@ function harness(): { dom: JSDOM; h: MountHarness } {
       url: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
     },
   );
+  const posted: Array<[unknown, string]> = [];
+  const win = {
+    parent: {
+      postMessage: (data: unknown, targetOrigin: string) =>
+        posted.push([data, targetOrigin]),
+    },
+  };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const factory = new Function(
     "document",
+    "window",
+    "posted",
     `
     const INNER_STYLE = "width:100%; height:100%; border:none;";
     let inner = null;
@@ -102,10 +113,15 @@ function harness(): { dom: JSDOM; h: MountHarness } {
       getInner: () => inner,
       getLastMount: () => lastMount,
       setInner: (frame) => { inner = frame; },
+      posted,
     };
     `,
-  ) as (document: Document) => MountHarness;
-  return { dom, h: factory(dom.window.document) };
+  ) as (
+    document: Document,
+    window: unknown,
+    posted: Array<[unknown, string]>,
+  ) => MountHarness;
+  return { dom, h: factory(dom.window.document, win, posted) };
 }
 
 const WIDGET = "<!doctype html><html><body><p id='w'>hi</p></body></html>";
@@ -174,6 +190,35 @@ describe("sandbox-proxy mountInner", () => {
       colorScheme: "dark",
       mountMode: undefined,
     });
+  });
+
+  it("reports where the view landed so the host can show the origin", () => {
+    // The Inspector's "View origin" chip is fed by this message, and it is
+    // the answer to "what do I allowlist with my third-party API key" — a
+    // mount that reports nothing is a mount the developer cannot act on.
+    const { h } = harness();
+    h.mountInner(WIDGET, "allow-same-origin allow-scripts", "", "light");
+    expect(h.posted).toEqual([
+      [
+        {
+          type: "mcpjam:view-mode",
+          mode: "url",
+          // jsdom's document.open() does not adopt the entry document's URL
+          // (the browser e2e pins that); what matters here is that the proxy
+          // reports its own document URL rather than a hardcoded string.
+          url: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+        },
+        "*",
+      ],
+    ]);
+  });
+
+  it("reports about:srcdoc when the view has no URL of its own", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, "allow-scripts", "", "light", "srcdoc");
+    expect(h.posted).toEqual([
+      [{ type: "mcpjam:view-mode", mode: "srcdoc", url: "about:srcdoc" }, "*"],
+    ]);
   });
 
   it("removes the previous frame and repoints `inner` on every mount", () => {

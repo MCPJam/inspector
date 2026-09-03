@@ -109,6 +109,23 @@ export interface WidgetSandboxApplied {
     geolocation?: {};
     clipboardWrite?: {};
   };
+  /**
+   * How the sandbox proxy mounted the view. `"url"` means it was written into
+   * a blank same-origin frame and runs at the proxy's URL; the srcdoc values
+   * mean it has no URL of its own (`"srcdoc"` was asked for via the build-time
+   * mount switch, `"srcdoc-fallback"` was forced because the frame's document
+   * was unreachable). Twin of the same field in
+   * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
+   */
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** The view's document URL as reported by the proxy. */
+  viewUrl?: string;
+  /**
+   * Origin of `viewUrl` — the origin a developer allowlists with a third party
+   * that keys on the page URL (a referrer-restricted API key, an OAuth
+   * redirect URI). Absent on the srcdoc paths, which have no origin.
+   */
+  assignedOrigin?: string;
 }
 
 /**
@@ -146,7 +163,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-ready"
     | "bridge-connect-error"
     | "bridge-connect-skipped"
-    | "app-initialized";
+    | "app-initialized"
+    | "view-mounted";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
