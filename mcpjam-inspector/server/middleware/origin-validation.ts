@@ -82,13 +82,18 @@ function getConfiguredAllowedHosts(): string[] {
 function originHostIsAllowlisted(origin: string): boolean {
   const allowedHosts = getConfiguredAllowedHosts();
   if (allowedHosts.length === 0) return false;
-  let hostname: string;
+  let parsed: URL;
   try {
-    hostname = new URL(origin).hostname.toLowerCase();
+    parsed = new URL(origin);
   } catch {
     return false;
   }
-  return hostnameMatchesAllowlist(hostname, allowedHosts);
+  // A real browser `Origin` is a serialized origin: scheme://host[:port], with
+  // no path, query, fragment, or userinfo. Reject anything else so a value like
+  // `http://192.168.1.50:6274/evil` or `http://user@192.168.1.50:6274` can't
+  // smuggle an allowlisted host past the check via `hostname` extraction.
+  if (parsed.origin !== origin) return false;
+  return hostnameMatchesAllowlist(parsed.hostname.toLowerCase(), allowedHosts);
 }
 
 /**

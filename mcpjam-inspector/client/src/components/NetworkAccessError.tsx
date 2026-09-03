@@ -3,12 +3,11 @@ import { useState } from "react";
 /**
  * Shown when the session-token bootstrap is denied with a 403 because the
  * inspector is being reached over the network (a non-localhost host that isn't
- * in `MCPJAM_ALLOWED_HOSTS`).
+ * in `MCPJAM_ALLOWED_HOSTS`) — the self-hosted-over-the-network case (raw IP /
+ * Docker on a remote box).
  *
- * This is the self-hosted-over-the-network case (raw IP / Docker on a remote
- * box). The old screen told these users to "use localhost instead", which is
- * unreachable for them — a dead end. Instead, show the exact host they're on
- * and the one env var that unblocks it, so they can self-serve.
+ * Shows the exact host the user is on and the one env var that unblocks it, so
+ * they can self-serve rather than dead-end.
  *
  * Rendered from the bootstrap catch in `main.tsx` BEFORE the app/providers
  * mount, so it is intentionally self-contained: inline styles (no dependency

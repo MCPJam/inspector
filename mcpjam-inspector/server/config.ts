@@ -229,6 +229,12 @@ export const MCPJAM_HOSTED_ORIGIN =
 // session token / guest bootstrap and are accepted as request Origins: hosted
 // deployments set their canonical app host(s); self-hosted operators set their
 // own LAN host (e.g. 192.168.x.x) to reach the inspector off-localhost.
+//
+// Note the hosted nuance: `GET /api/session-token` short-circuits to 410 in
+// hosted mode (that endpoint is dev/self-hosted only), so an allowlisted hosted
+// host receives the session token via production HTML injection rather than the
+// endpoint, and the guest bearer via `mayServeGuestBootstrap`. Self-hosted
+// hosts use the `/api/session-token` endpoint. Both paths gate on this list.
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
   ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
       h.trim().toLowerCase()

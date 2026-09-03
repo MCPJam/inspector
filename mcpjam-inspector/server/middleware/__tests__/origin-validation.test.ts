@@ -415,6 +415,22 @@ describe("originValidationMiddleware", () => {
 
       expect(res.status).toBe(403);
     });
+
+    it("rejects a non-serialized Origin that embeds the allowlisted host", async () => {
+      // A real browser Origin is scheme://host[:port] only. A value carrying a
+      // path or userinfo must not smuggle the allowlisted host past the gate
+      // via hostname extraction.
+      process.env.MCPJAM_ALLOWED_HOSTS = "192.168.1.50";
+      app = createTestApp();
+
+      for (const origin of [
+        "http://192.168.1.50:6274/evil",
+        "http://attacker@192.168.1.50:6274",
+      ]) {
+        const res = await app.request("/api/test", { headers: { Origin: origin } });
+        expect(res.status).toBe(403);
+      }
+    });
   });
 
   describe("static asset exemption", () => {

@@ -77,4 +77,54 @@ describe("NetworkAccessError", () => {
       await screen.findByRole("button", { name: "Copied" })
     ).toBeInTheDocument();
   });
+
+  it("falls back to execCommand copy when the Clipboard API is unavailable", async () => {
+    // No navigator.clipboard — the insecure-context (plain-HTTP LAN) case this
+    // screen actually renders in.
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+
+    render(<NetworkAccessError />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(
+      await screen.findByRole("button", { name: "Copied" })
+    ).toBeInTheDocument();
+
+    delete (document as { execCommand?: unknown }).execCommand;
+  });
+
+  it("does not confirm when the execCommand copy fails", async () => {
+    const execCommand = vi.fn().mockReturnValue(false);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+
+    render(<NetworkAccessError />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    // Button label never flips to "Copied" — the value is still on screen to
+    // copy by hand.
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copied" })
+    ).not.toBeInTheDocument();
+
+    delete (document as { execCommand?: unknown }).execCommand;
+  });
+
+  it("reloads the page when Retry is clicked", () => {
+    vi.mocked(window.location.reload).mockClear();
+
+    render(<NetworkAccessError />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(window.location.reload).toHaveBeenCalledTimes(1);
+  });
 });
