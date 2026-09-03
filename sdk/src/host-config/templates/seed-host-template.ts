@@ -579,7 +579,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         platform: "web",
         deviceCapabilities: { touch: false, hover: true },
-        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        // The 2026-09-02 capture reports a uniform 12px inset on every edge;
+        // the widget iframe is inset from its card rather than flush to it.
+        safeAreaInsets: { top: 12, right: 12, bottom: 12, left: 12 },
         // SEP-1865 hostContext.styles. Anthropic Sans @font-face URLs
         // require `assets.claude.ai` in apps.sandbox.csp.resourceDomains
         // (set below). Variables use CSS `light-dark()` so they pick the
@@ -830,17 +832,25 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // documented catalogue of what that runtime exposes.
       base.mcpProfile = {
         profileVersion: 1,
+        // The 2026-09-03 capture, on the 2026-07-28 `server/discover` lane:
+        // followed `nextCursor` to page two of tools/list, and opened
+        // `subscriptions/listen` — which is how a client listens on that lane,
+        // so the absent standalone GET SSE stream is correct rather than a
+        // miss. `refetches` stays absent: probe-list-changed was never run
+        // against this client, so nothing was published for it to react to.
+        paginationTraversal: "full",
+        toolListChanged: { listens: true },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          // Capability provenance above is from the v2.1.176 probe; this
-          // newer version is identity metadata only until a fresh probe updates
-          // both the version and the capability snapshot. `title` /
+          // Capability provenance above is from the v2.1.176 probe. The
+          // 2026-09-03 capture refreshed the version and settled the two
+          // listing knobs above, but not the capability snapshot. `title` /
           // `description` / `websiteUrl` land in the pass-through
           // `Record<string, unknown>` per host-config-v2.
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.237",
+            version: "2.1.246",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -984,7 +994,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // JSON editor surfaces the field on day one — without this,
           // the field would only appear after a manual edit and the
           // injected-globals chip would read "(from preset)".
-          compatRuntime: { openaiApps: true },
+          compatRuntime: {
+            openaiApps: true,
+            // An omitted method is ON; only turn-OFFs belong here.
+            // 2026-09-02: `window.openai.notifyIntrinsicHeight` is gone from
+            // ChatGPT's shim. `notifyIntrinsicWidth` is present in its place,
+            // so this is a rename on ChatGPT's side rather than a dropped
+            // feature — but there is no catalog key for the width form, and a
+            // widget calling the height one now hits `undefined`.
+            openaiAppsOverrides: {
+              notifyIntrinsicHeight: false,
+            },
+          },
           sandbox: {
             csp: {
               mode: "declared",
@@ -1116,7 +1137,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // No `toolListChanged`: probe-list-changed was never run against this
         // client (verdict `not-sent`), so `refetches` was never asked.
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: { name: "mcp", version: "0.1.0" },
         },
         apps: {
@@ -1385,7 +1406,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // 2026-08-26 capture never saw a `tools/list` from Slack, and
         // probe-list-changed was never run against it.
         initialize: {
-          supportedProtocolVersions: ["2025-06-18"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // "Slackbot" is the product name this catalog uses throughout. The
           // 2026-08-26 capture reports "Slack MCP Client" / "Slack" on the
           // wire; the established name is kept here deliberately.
@@ -1552,7 +1573,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // dash an absent knob renders as.
         toolListChanged: { listens: true, refetches: true },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches Cursor's outer-IDE identity.
           clientInfo: { name: "cursor-vscode", version: "1.0.0" },
@@ -1681,7 +1702,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.148.0-alpha.15",
+            // Bumped with the 2026-09-02 re-probe, from 0.148.0-alpha.15.
+            version: "0.150.0-alpha.12.2",
           },
         },
         apps: {
@@ -1963,7 +1985,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           // Measured on the wire 2026-08-26: Copilot proposes 2024-11-05, the
           // oldest MCP revision, not the 2025-11-25 previously assumed.
-          supportedProtocolVersions: ["2024-11-05"],
+          supportedProtocolVersions: [
+            "2024-11-05",
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25",
+          ],
           // The real handshake sends `name: "mcs"` plus Copilot's routing
           // fields. `agentName`, `appId` and `cdsBotId` are in the capture too
           // and are deliberately omitted: they identify one tenant's agent.
@@ -2137,7 +2164,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // "supported" instead of the em dash an absent knob renders as.
         toolListChanged: { listens: true, refetches: true },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
         },
         apps: {

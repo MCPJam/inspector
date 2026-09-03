@@ -53,6 +53,33 @@ describe("EvaluateRunPage", () => {
     expect(screen.getByTestId("evaluate-run-compare-open")).toBeEnabled();
   });
 
+  it("labels the MCP server this run used", () => {
+    render(
+      <EvaluateRunPage
+        run={makeRun({
+          _id: "n57cvtk9tsmnbj5tpcvnmdgkwn8dnjeq",
+          configSnapshot: {
+            tests: [],
+            environment: { servers: ["Excalidraw (App)"] },
+          },
+        })}
+        hostNamesById={hostNamesById}
+        otherRuns={[makeRun({ _id: "other-run" })]}
+        defaultCompareRunId="other-run"
+        onCompareWithRun={vi.fn()}
+      >
+        <div>run body</div>
+      </EvaluateRunPage>,
+    );
+
+    expect(screen.getByTestId("evaluate-run-launch-context")).toHaveTextContent(
+      "Server",
+    );
+    expect(screen.getByTestId("evaluate-run-servers")).toHaveTextContent(
+      "Excalidraw (App)",
+    );
+  });
+
   it("disables Compare when there is no other run", () => {
     render(
       <EvaluateRunPage

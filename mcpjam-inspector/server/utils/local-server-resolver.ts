@@ -478,6 +478,16 @@ export function parseConnectionDefaults(
   if (input.supportsMrtr === false) {
     out.supportsMrtr = false;
   }
+  if (input.toolCallCancellation && typeof input.toolCallCancellation === "object") {
+    const raw = input.toolCallCancellation as {
+      legacy?: unknown;
+      modern?: unknown;
+    };
+    const leaves: { legacy?: boolean; modern?: boolean } = {};
+    if (raw.legacy === false) leaves.legacy = false;
+    if (raw.modern === false) leaves.modern = false;
+    if (Object.keys(leaves).length > 0) out.toolCallCancellation = leaves;
+  }
 
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
@@ -619,6 +629,7 @@ export function toMCPServerConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
@@ -694,6 +705,8 @@ export function toMCPServerConfig(
     // unlike the mirroring flag they are forwarded here as well as on HTTP.
     if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
     if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
+    if (options?.toolCallCancellation)
+      stdio.toolCallCancellation = options.toolCallCancellation;
     return stdio as MCPServerConfig;
   }
 
@@ -773,6 +786,8 @@ export function toMCPServerConfig(
     http.mirrorToolParamHeaders = false;
   if (options?.firstPageOnly === true) http.firstPageOnly = true;
   if (options?.supportsMrtr === false) http.supportsMrtr = false;
+  if (options?.toolCallCancellation)
+    http.toolCallCancellation = options.toolCallCancellation;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -1068,6 +1083,7 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions?: string[];
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     xaaPolicy?: XaaEnterprisePolicy;
     /**
      * Secret-reveal scope + delegated identity, threaded from
@@ -1127,6 +1143,7 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions: options?.supportedProtocolVersions,
     firstPageOnly: options?.firstPageOnly,
     supportsMrtr: options?.supportsMrtr,
+    toolCallCancellation: options?.toolCallCancellation,
     // Advertises the EMA extension host-wide on stdio too, matching the
     // /api/mcp path; stdio never gets OAuth/XAA hooks, so no
     // refreshContext / xaaUnauthorizedHandler here.
@@ -1409,6 +1426,7 @@ export async function resolveLocalServerForConnect(
     // Same path again for the sibling conformance knobs.
     firstPageOnly: options?.defaults?.firstPageOnly,
     supportsMrtr: options?.defaults?.supportsMrtr,
+    toolCallCancellation: options?.defaults?.toolCallCancellation,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,

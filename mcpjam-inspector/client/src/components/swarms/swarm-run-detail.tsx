@@ -453,6 +453,7 @@ export function SwarmRunDetail({
         title={
           <h1
             className="truncate text-xl font-bold tracking-tight text-foreground"
+            title={title}
             data-testid="swarm-run-detail-title"
           >
             {title}

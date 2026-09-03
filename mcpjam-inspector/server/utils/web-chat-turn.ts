@@ -338,6 +338,13 @@ export interface WebChatTurnPrepareInputs {
    */
   excludeMcpToolNames?: readonly string[];
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * The host's tool-cancellation setting, resolved for this turn from the
+   * server-side host config. Forwarded per turn because the connection's copy
+   * is captured at connect time; an empty record means "cancels normally" and
+   * must still be sent so it overrides the connection's stale value.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
@@ -660,6 +667,9 @@ export async function streamWebChatTurn(
         ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
         : {}),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      ...(prepare.toolCallCancellation !== undefined
+        ? { toolCallCancellation: prepare.toolCallCancellation }
+        : {}),
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),

@@ -213,6 +213,12 @@ export function swarmWaveRunStateLabel(state: SwarmWaveRunState): string {
 export type SwarmWave = {
   /** Anchor id for keys — the newest journey-run in the wave. */
   waveId: string;
+  /**
+   * The run `waveId` names. Every per-wave field a member could disagree on is
+   * read off this one run, so the id and the title can never come from
+   * different members.
+   */
+  anchor: SwarmOverviewRun;
   createdAt: number;
   runs: SwarmOverviewRun[];
 };
@@ -222,7 +228,7 @@ export type SwarmWave = {
  * stamped one, else the newest journey-run id (`waveId`).
  */
 export function swarmWaveRouteId(wave: SwarmWave): string {
-  return wave.runs[0]?.swarmRunGroupId ?? wave.waveId;
+  return wave.anchor.swarmRunGroupId ?? wave.waveId;
 }
 
 /** Find a wave by route id (`swarmRunGroupId` or any member `runId`). */
@@ -299,7 +305,12 @@ export function groupRunsIntoSwarmWaves(
       const anchor = members.reduce((newest, run) =>
         run.createdAt > newest.createdAt ? run : newest
       );
-      return { waveId: anchor.runId, createdAt: anchor.createdAt, runs: members };
+      return {
+        waveId: anchor.runId,
+        anchor,
+        createdAt: anchor.createdAt,
+        runs: members,
+      };
     }
   );
 
@@ -316,11 +327,18 @@ export function formatSwarmId(swarmId: string): string {
 }
 
 /**
- * ID-first title, matching evals (`Run n57bwtsk`): `Swarm` + short route id.
- * Scope (goals / personas) lives in the subtitle, not the title.
+ * The name its author gave the swarm, else the ID-first title matching evals
+ * (`Run n57bwtsk`): `Swarm` + short route id. Scope (goals / personas) lives in
+ * the subtitle, not the title.
  */
 export function swarmWaveTitle(wave: SwarmWave): string {
-  return `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
+  // Read off the anchor, never searched for. The backend resolves the name per
+  // WAVE, but legacy rows fall back to each journey's authoring swarm, so a
+  // wave that reused journeys can hold two names. Taking the first NAMED run
+  // would title such a wave after the reused journey's original swarm, which
+  // is the mislabel this helper exists to avoid.
+  const authored = wave.anchor.swarmName?.trim();
+  return authored || `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
 }
 
 /**

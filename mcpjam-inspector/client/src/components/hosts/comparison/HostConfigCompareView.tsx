@@ -73,9 +73,9 @@ import {
 } from "./host-compare-selection";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
-  PUBLIC_CAN_I_USE_FIELDS,
   getCaniuseCapabilityBySlug,
   getCaniuseCapabilityForField,
+  publicCaniuseFieldsWithData,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
@@ -329,9 +329,16 @@ export function HostConfigCompareView({
   // Every selectable id (real + preset). URL / stored selections reconcile
   // against this so a chosen preset column survives a reload.
   const knownHostIds = useMemo(() => hosts.map((host) => host.hostId), [hosts]);
+  // The public surface hides rows no published host has been measured for
+  // yet — a column of "Not yet tested" answers nothing. The internal matrix
+  // shows every field regardless, because that is where a value gets filled
+  // in, and a row you cannot see is a row you cannot populate.
   const compareFields = useMemo(
-    () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : HOST_CONFIG_FIELDS),
-    [presetOnly]
+    () =>
+      presetOnly
+        ? publicCaniuseFieldsWithData(presets.subjects)
+        : HOST_CONFIG_FIELDS,
+    [presetOnly, presets.subjects]
   );
   // Base for the per-column "Verify against your server" deep-link. In dev the
   // caniuse surface and the hosted app share an origin, so stay on it (localhost)
