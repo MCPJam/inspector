@@ -66,8 +66,25 @@ import { translateConvexReadError } from "./convex-read-errors.js";
 
 const traceDestinations = new Hono();
 
-function translateReadError(error: unknown): WebRouteError {
-  return translateConvexReadError(error, { scope: "v1.traceDestinations" });
+/**
+ * @param isScopingPreflight the read's job is to decide whether the caller may
+ * see a caller-supplied id, so a production-redacted refusal must answer 404
+ * rather than 502. Every function behind these routes refuses with a PLAIN
+ * `OrgAccessDeniedError`, which production Convex redacts to "Server Error" —
+ * indistinguishable from a crash unless the call site says which reading is
+ * safe. Answering 502 there paged on-call once per probe and made the pair
+ * (404 = no such organization, 502 = one you are not in) an existence oracle.
+ * The post-write re-read passes `false`: it runs only after a preflight has
+ * already succeeded, so a refusal at that point is a genuine anomaly.
+ */
+function translateReadError(
+  error: unknown,
+  isScopingPreflight = false
+): WebRouteError {
+  return translateConvexReadError(error, {
+    scope: "v1.traceDestinations",
+    redactedIsRefusal: isScopingPreflight,
+  });
 }
 
 /**
@@ -144,8 +161,10 @@ function toTraceDestinationDto(row: TraceDestinationRow) {
     preset: row.preset,
     /**
      * Non-null means nothing is being queued. `reason` is a machine name
-     * (`manual`, `auth_failed`, `secret_unreadable`, `redirect_required`,
-     * `permanent_failures`) so a client can map it to its own copy.
+     * (`manual`, `auth_failed`, `secret_unreadable`, `too_many_failures`,
+     * `endpoint_private`, `redirect_required`) so a client can map it to its
+     * own copy. Mirrors the backend's `pauseReasonValidator` exactly; a client
+     * mapping a name that is not in that union will never match.
      */
     paused: row.paused,
     health: row.health,
@@ -190,7 +209,19 @@ const headerNameSchema = z
  * sent produces a failure that presents as "the API key is wrong" with nothing
  * to look at.
  */
-const headerValueSchema = z.string().min(1).max(4096);
+const headerValueSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  // CR, LF and NUL split or terminate a header on some stack, so a value
+  // carrying one is a header-injection attempt rather than a credential. The
+  // backend refuses them too; refusing here as well means the caller gets a
+  // sentence about the header instead of one about a malformed record key,
+  // and the SDK and REST callers get the check the CLI already had.
+  .regex(
+    /^[^\r\n\0]*$/,
+    "Header values cannot contain a newline or a null byte.",
+  );
 
 const headersSchema = z.record(headerNameSchema, headerValueSchema);
 
@@ -207,7 +238,10 @@ const sourceTypesSchema = z
 const compressionSchema = z.enum(["gzip", "none"]);
 
 const createSchema = z.strictObject({
-  name: z.string().trim().min(1).max(120),
+  // 80, matching the backend's MAX_DESTINATION_NAME_CHARS. The point of
+  // stating a bound here is that the caller learns it at the boundary; a
+  // looser one just moves the refusal one hop later.
+  name: z.string().trim().min(1).max(80),
   /**
    * HTTPS only, and the backend appends `/v1/traces` if the path does not
    * already end there. Checked loosely here — the backend's normalizer is the
@@ -233,7 +267,7 @@ const createSchema = z.strictObject({
 
 const updateSchema = z
   .strictObject({
-    name: z.string().trim().min(1).max(120).optional(),
+    name: z.string().trim().min(1).max(80).optional(),
     endpointUrl: z.string().trim().min(1).max(2048).optional(),
     /** Present ⇒ REPLACES every header. Absent ⇒ the stored set is untouched. */
     headers: headersSchema.optional(),
@@ -304,6 +338,7 @@ async function readDestination(
   client: ReturnType<typeof createConvexClient>,
   destinationId: string,
   organizationId: string,
+  isScopingPreflight = false,
 ): Promise<TraceDestinationRow> {
   let row: TraceDestinationRow | null;
   try {
@@ -314,7 +349,7 @@ async function readDestination(
       } as never,
     )) as TraceDestinationRow | null;
   } catch (error) {
-    throw translateReadError(error);
+    throw translateReadError(error, isScopingPreflight);
   }
   if (!row) {
     throw new WebRouteError(
@@ -343,17 +378,18 @@ async function readDestination(
 /**
  * Refuse a destination that does not live in the organization the path names.
  *
- * For the routes that act WITHOUT reading the row back first (delete, test,
- * backfill, backfills). `readDestination` makes the same check for the rest;
- * both exist so the path segment means the same thing on every route rather
- * than on most of them.
+ * EVERY write calls this before it mutates. The routes that read the row back
+ * afterwards get the same check a second time from `readDestination`, which is
+ * redundant and deliberately so: the pre-check is what makes the path segment
+ * mean something, and the post-read is what makes the response describe the
+ * row that was actually written.
  */
 async function assertDestinationInOrg(
   client: ReturnType<typeof createConvexClient>,
   destinationId: string,
   organizationId: string,
 ): Promise<void> {
-  await readDestination(client, destinationId, organizationId);
+  await readDestination(client, destinationId, organizationId, true);
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
@@ -371,7 +407,9 @@ traceDestinations.get(
         { organizationId } as never,
       )) ?? []) as TraceDestinationRow[];
     } catch (error) {
-      throw translateReadError(error);
+      // The organization id is caller-supplied and this read is what decides
+      // whether they may see it, so a refusal here is a scoping answer.
+      throw translateReadError(error, true);
     }
     return v1PageJson(c, rows.map(toTraceDestinationDto));
   },
@@ -436,6 +474,16 @@ traceDestinations.patch(
     const destinationId = c.req.param("destinationId");
     const body = await parseBody(c, updateSchema);
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    // BEFORE the write, not after. The re-read below would catch a mismatch
+    // too, but only once the update had already landed — so a header rotation
+    // aimed at the wrong path would be written to a destination in an
+    // organization the URL never named, and the caller told 404. There is no
+    // worse answer to give someone rotating a credential.
+    await assertDestinationInOrg(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
 
     try {
       await client.action(
@@ -527,6 +575,12 @@ traceDestinations.post(
   async (c) => {
     const destinationId = c.req.param("destinationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    // Before the write, for the reason the update route states.
+    await assertDestinationInOrg(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
 
     try {
       await client.mutation(
@@ -559,6 +613,12 @@ traceDestinations.post(
   async (c) => {
     const destinationId = c.req.param("destinationId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    // Before the write, for the reason the update route states.
+    await assertDestinationInOrg(
+      client,
+      destinationId,
+      c.req.param("organizationId"),
+    );
 
     let result: { pausedSince: number | null };
     try {

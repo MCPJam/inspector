@@ -78,7 +78,19 @@ type HeaderOptions = {
   clearHeaders?: boolean;
 };
 
-/** `Name=rest` → `[Name, rest]`, splitting on the FIRST `=` only. */
+/** HTTP token, per RFC 7230. Mirrors the API's `headerNameSchema`. */
+const HEADER_NAME_PATTERN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+/**
+ * `Name=rest` → `[Name, rest]`, splitting on the FIRST separator only.
+ *
+ * THE MALFORMED ARGUMENT IS NEVER ECHOED. For `--header` the right-hand side
+ * IS the credential, and a forgotten separator is the likeliest typo on the
+ * flag — quoting the argument back would put the token in stderr, in CI logs
+ * and in scrollback, which is exactly what this file promises it cannot do.
+ * The flag name and the expected shape are enough to act on; the value the
+ * user typed tells them nothing they do not already know.
+ */
 function splitOnFirst(
   raw: string,
   separator: string,
@@ -87,7 +99,7 @@ function splitOnFirst(
   const index = raw.indexOf(separator);
   if (index <= 0) {
     throw usageError(
-      `${flag} expects "Name${separator}value" (got ${JSON.stringify(raw)}).`
+      `${flag} expects "Name${separator}value"; the argument had no "${separator}".`
     );
   }
   const name = raw.slice(0, index).trim();
@@ -139,6 +151,14 @@ export function resolveHeaders(
   }
 
   const put = (name: string, value: string, flag: string) => {
+    // Checked HERE and not only by the API: a name carrying a CRLF is a
+    // header-injection attempt, and it should not travel the wire to be
+    // refused as a malformed record key. Same pattern the route enforces.
+    if (!HEADER_NAME_PATTERN.test(name)) {
+      throw usageError(
+        `Header name "${name}" is not an HTTP token. Use letters, digits and !#$%&'*+.^_\`|~- only.`
+      );
+    }
     const key = name.toLowerCase();
     const previous = seen.get(key);
     if (previous !== undefined) {
@@ -146,10 +166,15 @@ export function resolveHeaders(
         `Header "${name}" was given twice (already set by ${previous}). HTTP header names are case-insensitive.`
       );
     }
-    if (/[\r\n]/.test(value)) {
+    // `\0` as well as CR/LF: all three terminate or split a header on some
+    // stack, and none of them can appear in a legitimate credential.
+    if (/[\r\n\0]/.test(value)) {
       throw usageError(
-        `Header "${name}" contains a newline. A header value cannot span lines.`
+        `Header "${name}" contains a newline or a null byte. A header value cannot span lines.`
       );
+    }
+    if (value === "") {
+      throw usageError(`The value for header "${name}" is empty.`);
     }
     seen.set(key, flag);
     headers[name] = value;

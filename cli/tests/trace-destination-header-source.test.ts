@@ -133,3 +133,41 @@ test("--source rejects an unknown value and de-duplicates the rest", () => {
   ]);
   assert.throws(() => resolveSourceTypes(["evals"]), /--source expects/);
 });
+
+test("a malformed --header never quotes the argument back", () => {
+  // The right-hand side IS the credential, and a forgotten colon is the
+  // likeliest typo on this flag. Echoing the argument put the token in stderr,
+  // in CI logs and in scrollback — the one thing this command promises it
+  // cannot do.
+  const secret = "sk-live-DO-NOT-PRINT-ME";
+  assert.throws(
+    () => resolveHeaders({ header: [`Authorization Bearer ${secret}`] }),
+    (error: Error) => {
+      assert.match(error.message, /--header expects/);
+      assert.doesNotMatch(error.message, /DO-NOT-PRINT-ME/);
+      return true;
+    }
+  );
+});
+
+test("a header NAME carrying a CRLF is refused locally", () => {
+  // Header-name injection should not travel the wire to be refused as a
+  // malformed record key; the API enforces the same HTTP-token rule.
+  assert.throws(
+    () => resolveHeaders({ header: ["X-Evil\r\nX-Injected: yes: value"] }),
+    /is not an HTTP token/
+  );
+  assert.throws(
+    () => resolveHeaders({ header: ["Content Type: text/plain"] }),
+    /is not an HTTP token/
+  );
+});
+
+test("a header VALUE carrying a null byte is refused", () => {
+  // CR and LF were already checked; NUL terminates a header on some stacks
+  // and cannot appear in a legitimate credential either.
+  assert.throws(
+    () => resolveHeaders({ header: ["Authorization: tok\u0000injected"] }),
+    /null byte/
+  );
+});
