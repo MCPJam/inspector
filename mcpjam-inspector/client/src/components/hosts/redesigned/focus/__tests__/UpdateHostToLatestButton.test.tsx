@@ -64,6 +64,8 @@ function renderButton(args: {
     name: string,
     draft: HostConfigInputV2
   ) => Promise<boolean>;
+  hostLoaded?: boolean;
+  saveInFlight?: boolean;
 }) {
   const draftRef: { current: HostConfigInputV2 } = {
     current: args.initialDraft,
@@ -102,6 +104,8 @@ function renderButton(args: {
           })
         }
         onSaveLatest={onSaveLatest}
+        hostLoaded={args.hostLoaded ?? true}
+        saveInFlight={args.saveInFlight ?? false}
       />
     );
   }
@@ -375,6 +379,37 @@ describe("UpdateHostToLatestButton", () => {
       screen.getByRole("button", {
         name: /update to latest/i,
       })
+    ).toBeDisabled();
+  });
+
+  it("disables while the host is unavailable or another save is in flight", () => {
+    const initialDraft = emptyHostConfigInputV2({
+      hostStyle: "mistral",
+      modelId: "old-model",
+    });
+    const { rerender } = renderButton({
+      initialDraft,
+      hostLoaded: false,
+    });
+    expect(
+      screen.getByRole("button", { name: /update to latest/i })
+    ).toBeDisabled();
+
+    rerender(
+      <UpdateHostToLatestButton
+        hostId="host-test"
+        draft={initialDraft}
+        hostDisplayName="Custom Host"
+        onHostDisplayNameChange={vi.fn()}
+        themeMode="light"
+        onDraftChange={vi.fn()}
+        onSaveLatest={vi.fn().mockResolvedValue(true)}
+        hostLoaded
+        saveInFlight
+      />
+    );
+    expect(
+      screen.getByRole("button", { name: /update to latest/i })
     ).toBeDisabled();
   });
 

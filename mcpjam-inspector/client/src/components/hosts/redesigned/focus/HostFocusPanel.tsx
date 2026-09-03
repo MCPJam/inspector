@@ -59,6 +59,8 @@ interface HostFocusPanelProps {
     name: string,
     draft: HostConfigInputV2,
   ) => Promise<boolean>;
+  hostLoaded: boolean;
+  saveInFlight: boolean;
   attention: ReadonlyArray<HostAttentionIssue>;
   onClose: () => void;
   // `availableServers`, `onAddServer`, and `initialSelectedServerId`
@@ -81,6 +83,8 @@ export function HostFocusPanel({
   savedDraft,
   onDraftChange,
   onSaveLatest,
+  hostLoaded,
+  saveInFlight,
   attention,
   onClose,
 }: HostFocusPanelProps) {
@@ -98,7 +102,11 @@ export function HostFocusPanel({
   const activeTab = activeHostFocusTab(tab, visibleTabs);
 
   return (
-    <div className={hostFocusShellRootClass}>
+    <div
+      className={hostFocusShellRootClass}
+      aria-busy={saveInFlight}
+      inert={saveInFlight || undefined}
+    >
       <HostIdentityRow
         className={cn(hostFocusShellHeaderRowClass, "py-2")}
         hostDisplayName={hostDisplayName}
@@ -120,6 +128,8 @@ export function HostFocusPanel({
               themeMode={themeMode}
               onDraftChange={onDraftChange}
               onSaveLatest={onSaveLatest}
+              hostLoaded={hostLoaded}
+              saveInFlight={saveInFlight}
             />
           </div>
         }

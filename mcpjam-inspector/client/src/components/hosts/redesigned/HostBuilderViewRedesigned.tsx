@@ -47,6 +47,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
+  collectHostAttentionIssues,
   hasBlockingErrors,
   saveDisabledReason as computeSaveDisabledReason,
   useHostDraftValidation,
@@ -143,6 +144,7 @@ export function HostBuilderViewRedesigned({
     null
   );
   const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
   const [focusState, setFocusState] = useState<HostFocusState>({
@@ -438,6 +440,23 @@ export function HostBuilderViewRedesigned({
     config: HostConfigInputV2,
     showSuccessToast: boolean
   ): Promise<boolean> => {
+    if (!host || host.hostId !== hostId || saveInFlightRef.current) {
+      return false;
+    }
+    const nextAttention = collectHostAttentionIssues(config, name, {
+      savedModelId: savedConfig?.modelId,
+    });
+    if (hasBlockingErrors(nextAttention)) {
+      toast.error(
+        computeSaveDisabledReason({
+          isDirty: true,
+          isSaving: false,
+          issues: nextAttention,
+        }) ?? "Fix validation errors before saving"
+      );
+      return false;
+    }
+    saveInFlightRef.current = true;
     setIsSaving(true);
     try {
       const changedFields = savedConfig
@@ -497,11 +516,13 @@ export function HostBuilderViewRedesigned({
       toast.error(err instanceof Error ? err.message : "Failed to save client");
       return false;
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }, [
     hostId,
     savedConfig,
+    host,
     updateHost,
     onReconnect,
   ]);
@@ -741,6 +762,8 @@ export function HostBuilderViewRedesigned({
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))
                     }
                     onSaveLatest={handleSaveLatest}
+                    hostLoaded={host !== null}
+                    saveInFlight={isSaving}
                     attention={attention}
                     onClose={closeFocus}
                   />

@@ -26,6 +26,8 @@ interface UpdateHostToLatestButtonProps {
     name: string,
     draft: HostConfigInputV2
   ) => Promise<boolean>;
+  hostLoaded: boolean;
+  saveInFlight: boolean;
 }
 
 const UPDATE_TOAST_ID = "client-update-available";
@@ -61,6 +63,8 @@ export function UpdateHostToLatestButton({
   themeMode,
   onDraftChange,
   onSaveLatest,
+  hostLoaded,
+  saveInFlight,
 }: UpdateHostToLatestButtonProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const catalogState = useHostCatalog();
@@ -121,6 +125,8 @@ export function UpdateHostToLatestButton({
 
   const disabled =
     isUpdating ||
+    saveInFlight ||
+    !hostLoaded ||
     catalogState.status !== "live" ||
     latestDraft === undefined ||
     alreadyCurrent;
