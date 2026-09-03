@@ -155,6 +155,16 @@ The **Servers** section on the scenario Publish tab shows which project servers 
 - If no servers are picked, the scenario displays an amber warning. Chat sessions started from that scenario will have no tools until at least one server is selected.
 - The server pick is sticky — editing the client's model or system prompt does not change it.
 
+## Client profile freshness
+
+The client editor header shows a **Last checked** stamp next to the **Update to latest** button so you can see how old the profile is right where you'd refresh it.
+
+- While the profile is fresh the stamp reads **Last checked YYYY-MM-DD** (UTC).
+- Once the profile is more than 30 days old it changes to **Last checked over 30 days ago** with a warning icon. Hovering the stamp still shows the exact date.
+- Clients that have never been verified, or whose catalog row hasn't loaded yet, show nothing instead of a placeholder.
+
+The same date and staleness wording appear in the **Verified at** row of the Host Compare matrix, so the two surfaces always agree.
+
 ## Managing Clients
 
 From the Clients index page:
