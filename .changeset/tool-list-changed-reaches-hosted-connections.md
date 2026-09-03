@@ -59,6 +59,14 @@ for the same reason at a different hop: it forwarded the sibling knobs to
 writes it onto the child config, but the hand-off never passed it. Cancellation
 is era-scoped, not transport-scoped, so a stdio connection has to honor it too.
 
+`/api/web/evals/stream-test-case` needed one more fix of the same family. It is
+the only eval route that builds its own manager instead of going through the
+wrappers that extract the body's `mcpProfile` pins, so it accepted every pin its
+schema declares — `clientInfo`, `supportedProtocolVersions`, the per-server
+version map, and now the conformance knobs — and connected as though none had
+been sent. It extracts them now, from the pre-parse raw body for the same reason
+`xaaPolicy` there does.
+
 One thing this does **not** change: on the body-built surfaces a server-side
 host config is not re-derived over the request body. Only chat turns do that
 (`applyHostConformanceKnobs`); everywhere else the body is the source, exactly
