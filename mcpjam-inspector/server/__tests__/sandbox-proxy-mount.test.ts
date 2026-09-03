@@ -55,6 +55,7 @@ function extract(name: string): string {
 const applyColorSchemeSrc = extract("applyColorScheme");
 const createInnerFrameSrc = extract("createInnerFrame");
 const mountInnerSrc = extract("mountInner");
+const remountLastSrc = extract("remountLast");
 
 interface MountHarness {
   mountInner: (
@@ -94,6 +95,7 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     ${applyColorSchemeSrc}
     ${createInnerFrameSrc}
     ${mountInnerSrc}
+    ${remountLastSrc}
     return {
       mountInner,
       createInnerFrame,
@@ -234,6 +236,66 @@ describe("sandbox-proxy mountInner", () => {
   });
 });
 
+describe("sandbox-proxy blank-reload remount", () => {
+  // Chromium answers location.reload() in a written document by reloading
+  // the initial about:blank entry. jsdom cannot reload a frame, so the
+  // frame's post-navigation state is stubbed and the `load` event fired
+  // by hand; the listener's decision rule is what is under test.
+  function loadWith(frame: HTMLIFrameElement, href: string | Error) {
+    Object.defineProperty(frame, "contentWindow", {
+      configurable: true,
+      get: () => ({
+        get location() {
+          if (href instanceof Error) throw href;
+          return { href };
+        },
+      }),
+    });
+    frame.dispatchEvent(new frame.ownerDocument.defaultView!.Event("load"));
+  }
+
+  it("remounts the last view when the frame comes back as about:blank", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, "allow-same-origin allow-scripts", "camera *", "dark");
+    const before = h.getInner()!;
+    loadWith(before, "about:blank");
+    const after = h.getInner()!;
+    expect(after).not.toBe(before);
+    expect(before.isConnected).toBe(false);
+    expect(after.getAttribute("allow")).toBe("camera *");
+    expect(after.contentDocument!.querySelector("#w")!.textContent).toBe("hi");
+  });
+
+  it("leaves the frame alone after its own write (href is the proxy URL)", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, "allow-same-origin allow-scripts", "", "light");
+    const frame = h.getInner()!;
+    loadWith(
+      frame,
+      "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+    );
+    expect(h.getInner()).toBe(frame);
+  });
+
+  it("leaves a widget's own cross-origin navigation alone", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, "allow-same-origin allow-scripts", "", "light");
+    const frame = h.getInner()!;
+    loadWith(frame, new Error("SecurityError"));
+    expect(h.getInner()).toBe(frame);
+  });
+
+  it("ignores a load from a frame that is no longer current", () => {
+    const { h } = harness();
+    h.mountInner(WIDGET, "allow-same-origin allow-scripts", "", "light");
+    const stale = h.getInner()!;
+    h.mountInner(WIDGET, "allow-same-origin allow-scripts", "", "light");
+    const current = h.getInner()!;
+    loadWith(stale, "about:blank");
+    expect(h.getInner()).toBe(current);
+  });
+});
+
 describe("sandbox-proxy nested sandbox-proxy-ready guard", () => {
   // The relay branch is inline in the listener (not a named function), so
   // pin the contract at the source level: the guard precedes the relay
@@ -246,8 +308,7 @@ describe("sandbox-proxy nested sandbox-proxy-ready guard", () => {
     expect(guardIdx).toBeGreaterThan(0);
     expect(relayIdx).toBeGreaterThan(guardIdx);
     const guard = html.slice(guardIdx, relayIdx);
-    expect(guard).toContain("mountInner(");
-    expect(guard).toContain("lastMount.html");
+    expect(guard).toContain("remountLast();");
     expect(guard).toContain("return;");
     expect(guard).not.toContain("window.parent.postMessage");
   });

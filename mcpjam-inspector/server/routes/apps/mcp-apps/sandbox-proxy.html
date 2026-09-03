@@ -872,6 +872,28 @@ document.addEventListener('securitypolicyviolation', function(e) {
           doc.write(html);
           doc.close();
           mode = "url";
+          // Chromium answers location.reload() in a written document by
+          // reloading the frame's history entry — the initial about:blank —
+          // which leaves a blank frame and tells nobody. Remount when the
+          // frame comes back blank. (Engines that reload the document URL
+          // instead land on a nested copy of this proxy; that case is
+          // caught by the sandbox-proxy-ready guard in the relay.) Any
+          // other navigation the widget made — a real href, cross-origin
+          // (location unreadable) — is the widget's own business.
+          // Attached after the write so the frame's own load events only
+          // ever observe the written document, never the pre-write blank.
+          next.addEventListener("load", function () {
+            if (inner !== next || !lastMount) return;
+            let href;
+            try {
+              href = next.contentWindow.location.href;
+            } catch (error) {
+              return;
+            }
+            if (href === "about:blank") {
+              remountLast();
+            }
+          });
         } else {
           next.srcdoc = html;
           mode = mountMode === "srcdoc" ? "srcdoc" : "srcdoc-fallback";
@@ -883,6 +905,21 @@ document.addEventListener('securitypolicyviolation', function(e) {
         next.style.colorScheme = applyColorScheme(colorScheme);
         lastMount = { html, sandboxValue, allowValue, colorScheme, mountMode };
         return mode;
+      }
+
+      /**
+       * Mount the most recent view again (a widget reloaded itself).
+       * @returns {"url" | "srcdoc" | "srcdoc-fallback" | "none"}
+       */
+      function remountLast() {
+        if (!lastMount) return "none";
+        return mountInner(
+          lastMount.html,
+          lastMount.sandboxValue,
+          lastMount.allowValue,
+          lastMount.colorScheme,
+          lastMount.mountMode,
+        );
       }
 
       // The current inner view frame. Replaced on every mount (see mountInner);
@@ -1092,21 +1129,15 @@ document.addEventListener('securitypolicyviolation', function(e) {
               data.jsonrpc === "2.0" &&
               data.method === "ui/notifications/sandbox-proxy-ready"
             ) {
-              // The view lives at this proxy's URL, so a widget calling
-              // location.reload() reloads THIS document inside the inner
-              // frame; that nested proxy announces itself here. The host
-              // has nothing to do with it (relaying would leave a blank
-              // frame) — remount the last view instead, which is the
-              // restart a widget author expects from reload().
-              if (lastMount) {
-                mountInner(
-                  lastMount.html,
-                  lastMount.sandboxValue,
-                  lastMount.allowValue,
-                  lastMount.colorScheme,
-                  lastMount.mountMode,
-                );
-              }
+              // The view lives at this proxy's URL, so an engine that
+              // answers a widget's location.reload() by reloading the
+              // document URL loads THIS proxy inside the inner frame, and
+              // that nested proxy announces itself here. The host has
+              // nothing to do with it (relaying would leave a blank frame)
+              // — remount the last view instead, which is the restart a
+              // widget author expects. Chromium reloads about:blank
+              // instead; see the load listener in mountInner.
+              remountLast();
               return;
             }
             if (
