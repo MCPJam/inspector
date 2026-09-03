@@ -765,6 +765,11 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async close(): Promise<void> {
+    // A tab creation already awaiting `newPage()` would otherwise register its
+    // page after this ran, leaving a renderer nobody closes for the life of
+    // the browser. Settle them first, then let the sweep below take whatever
+    // they added.
+    await Promise.allSettled([...this.pendingTabs.values()]);
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {});
     }

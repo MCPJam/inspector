@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   coalesceInput,
   createInputForwarder,
+  INPUT_BATCH_LIMIT,
   isSecureLocalOrigin,
   modifiersOf,
   toPageCoordinates,
@@ -189,5 +190,74 @@ describe("where the consent token may be sent", () => {
     expect(
       isSecureLocalOrigin({ protocol: "http:", hostname: "inspector.local" }),
     ).toBe(false);
+  });
+});
+
+describe("input the browser must not receive", () => {
+  it("drops what is queued when the hold ends", async () => {
+    // The queue is a way to send input under a permission that has since
+    // gone: delivering its tail types into whoever holds the browser next.
+    const batches: unknown[][] = [];
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sends = 0;
+    const forwarder = createInputForwarder(async (events) => {
+      batches.push([...events]);
+      sends += 1;
+      if (sends === 1) await first;
+    });
+
+    forwarder.push([{ type: "text", text: "a" }]);
+    forwarder.push([{ type: "text", text: "b" }]);
+    forwarder.cancel();
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The one already in flight went; the queued "b" did not.
+    expect(batches).toEqual([[{ type: "text", text: "a" }]]);
+  });
+
+  it("refuses anything pushed after cancel", async () => {
+    const batches: unknown[][] = [];
+    const forwarder = createInputForwarder(async (events) => {
+      batches.push([...events]);
+    });
+    forwarder.cancel();
+    forwarder.push([{ type: "text", text: "a" }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(batches).toEqual([]);
+  });
+
+  it("chunks at the server's batch limit instead of losing the tail", async () => {
+    // The route SLICES anything longer, so an oversized request silently drops
+    // its tail — for keys and buttons, a page left holding what nobody pressed.
+    const batches: LocalBrowserInputEvent[][] = [];
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sends = 0;
+    const forwarder = createInputForwarder(async (events) => {
+      batches.push([...events]);
+      sends += 1;
+      if (sends === 1) await first;
+    });
+
+    forwarder.push([{ type: "text", text: "first" }]);
+    // 100 non-coalescible events pile up behind the open request.
+    for (let i = 0; i < 100; i += 1) {
+      forwarder.push([{ type: "text", text: `k${i}` }]);
+    }
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(batches[0]).toEqual([{ type: "text", text: "first" }]);
+    expect(batches[1]).toHaveLength(INPUT_BATCH_LIMIT);
+    // Nothing lost: every queued event arrives, across as many requests as
+    // the limit needs.
+    expect(batches.flat()).toHaveLength(101);
   });
 });

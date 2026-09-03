@@ -288,13 +288,27 @@ export async function ensureLocalChromiumInstalled(
   // getting past them starts a second `playwright install` over the same
   // browser cache.
   activeInstall = (async () => {
-    if (await isInstalled()) return true;
+    // Every terminal path of this runner publishes a state, because the
+    // consent screen can JOIN this install rather than start one — and a join
+    // that never sees an answer leaves the pane reading "Downloading
+    // Chromium" forever, with no way to ask again.
+    if (await isInstalled()) {
+      explicitInstallState = { status: "ready" };
+      return true;
+    }
 
     const now = Date.now();
     if (
       lastInstallFailureAt > 0 &&
       now - lastInstallFailureAt < INSTALL_RETRY_COOLDOWN_MS
     ) {
+      // Still inside the cooldown from an earlier failure. Report THAT rather
+      // than a fresh attempt nobody made.
+      explicitInstallState = {
+        status: "failed",
+        error:
+          "the last Chromium install failed; the inspector will try again shortly",
+      };
       return false;
     }
 

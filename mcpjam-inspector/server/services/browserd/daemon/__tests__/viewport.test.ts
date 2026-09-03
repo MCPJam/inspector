@@ -315,3 +315,86 @@ describe("createTabViewport — a stale start must not silence the new stream", 
     expect(frames.length).toBeGreaterThan(0);
   });
 });
+
+describe("createTabViewport — the mask does not outlive the hand that set it", () => {
+  function recorder(fail?: (method: string, n: number) => boolean) {
+    const sent: Array<{ method: string; params?: any }> = [];
+    let n = 0;
+    const cdp: CdpLike = {
+      async send(method, params) {
+        n += 1;
+        sent.push({ method, ...(params ? { params } : {}) });
+        if (fail?.(method, n)) throw new Error("target closed");
+        return {};
+      },
+      on() {},
+    };
+    return { cdp, sent };
+  }
+  const masks = (sent: Array<{ method: string; params?: any }>) =>
+    sent
+      .filter((s) => s.method === "Input.dispatchMouseEvent")
+      .map((s) => s.params?.buttons);
+
+  it("forgets a held button when the batch is refused mid-gesture", async () => {
+    // The release will never arrive. A bit left set is the NEXT holder's first
+    // hover reaching Chromium as a drag.
+    const { cdp, sent } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+    let permitted = true;
+
+    await viewport.dispatchInput(
+      [
+        { type: "mouse_down", x: 1, y: 1, button: "left" },
+        { type: "mouse_move", x: 2, y: 2 },
+      ],
+      () => permitted,
+    );
+    expect(masks(sent)).toEqual([1, 1]);
+
+    // Control changes. The rest of the drag is refused...
+    permitted = false;
+    await viewport.dispatchInput([{ type: "mouse_move", x: 3, y: 3 }], () => permitted);
+
+    // ...and the next holder's first move is a hover, not a drag.
+    permitted = true;
+    await viewport.dispatchInput([{ type: "mouse_move", x: 9, y: 9 }], () => permitted);
+    expect(masks(sent).at(-1)).toBe(0);
+  });
+
+  it("does not record a button whose press Chromium never accepted", async () => {
+    // `dispatchOne`'s rejection is swallowed. Committing the mask first would
+    // leave us claiming a button the page is not holding.
+    const { cdp, sent } = recorder((method) => method === "Input.dispatchMouseEvent" && sent.length === 1);
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+      { type: "mouse_move", x: 2, y: 2 },
+    ]);
+
+    expect(masks(sent).at(-1)).toBe(0);
+  });
+
+  it("drops the mask on dispose", async () => {
+    const { cdp } = recorder();
+    const viewport = createTabViewport(cdp, {
+      surface: { width: 100, height: 100 },
+    });
+    await viewport.dispatchInput([
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+    ]);
+    await viewport.dispose();
+
+    const after = recorder();
+    const revived = createTabViewport(after.cdp, {
+      surface: { width: 100, height: 100 },
+    });
+    await revived.dispatchInput([{ type: "mouse_move", x: 1, y: 1 }]);
+    expect(masks(after.sent)).toEqual([0]);
+  });
+});

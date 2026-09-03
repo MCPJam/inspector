@@ -147,6 +147,16 @@ const SWEEP_INTERVAL_MS = 30_000;
 const sessions = new Map<string, LocalSession>();
 let sweepTimer: NodeJS.Timeout | undefined;
 let shuttingDown = false;
+/**
+ * Bumped by every sweep, latching or not.
+ *
+ * `shuttingDown` cannot answer "was this launch overtaken?" for the
+ * NON-latching kill — Electron's `window-all-closed`, which must not latch or
+ * every browser opened after reopening the window would be refused. A launch
+ * that began before that sweep would otherwise register its Chromium
+ * afterwards, holding the profile lock the next window needs.
+ */
+let killGeneration = 0;
 
 function sessionKey(args: EnsureLocalBrowserArgs): string {
   const project = validateLocalProjectKey(args.projectId);
@@ -258,6 +268,9 @@ async function startSession(
     );
   }
 
+  // Which sweep generation this launch belongs to, read before the first
+  // await so a kill that lands during it is detectable afterwards.
+  const bornAt = killGeneration;
   const contextMode: BrowserContextMode = args.contextMode ?? "persistent";
   const persistent = contextMode === "persistent";
   const profileDir = persistent
@@ -297,11 +310,11 @@ async function startSession(
     contextMode,
   });
 
-  // The launch is the long await in this function, and shutdown can begin
+  // The launch is the long await in this function, and a sweep can begin
   // inside it. A Chromium registered after the drain has already run is one
   // nothing is left to reap: it outlives the inspector holding the profile
   // lock, and the next run cannot open that profile at all.
-  if (shuttingDown) {
+  if (shuttingDown || killGeneration !== bornAt) {
     await context.close().catch(() => {});
     throw new LocalBrowserUnavailableError(
       "disabled",
@@ -414,16 +427,32 @@ function startSweep(deps: LocalBrowserDeps): void {
   sweepTimer.unref?.();
 }
 
+/**
+ * Is this session still one the reaper may take?
+ *
+ * Shared by the scan and the re-check inside the lock so the two can never
+ * disagree about what "expired" means.
+ */
+function stillReapable(session: LocalSession, now: number): boolean {
+  // A Chromium that has gone away cannot be handed back, whatever its clock or
+  // its lease say.
+  if (!session.context.isConnected()) return true;
+  const idle = now - session.lastUsedAt;
+  const age = now - session.startedAt;
+  const expired =
+    idle >= LOCAL_BROWSER_IDLE_MS || age >= LOCAL_BROWSER_MAX_LIFETIME_MS;
+  if (!expired) return false;
+  // Only a HELD lease is a person at the keyboard. A PARKED one is an expired
+  // hold — the pane stopped its heartbeat — and deferring for that would make
+  // every abandoned hold immortal. See the long note at the call site.
+  return session.lease.state().state !== "held";
+}
+
 export async function sweepLocalBrowserSessions(
   now: number = Date.now(),
 ): Promise<void> {
   for (const session of [...sessions.values()]) {
     if (session.disposing) continue;
-    const idle = now - session.lastUsedAt;
-    const age = now - session.startedAt;
-    const expired =
-      idle >= LOCAL_BROWSER_IDLE_MS || age >= LOCAL_BROWSER_MAX_LIFETIME_MS;
-    if (!expired && session.context.isConnected()) continue;
     // A person HOLDING the browser is using it, even though no command has
     // come through for ten minutes — that is what taking control means. Reaping
     // here would close the window they are typing a password into.
@@ -440,12 +469,10 @@ export async function sweepLocalBrowserSessions(
     // profile pinned open past the hard lifetime with nobody on either end,
     // because `isBlocking()` is true for both states. Parking still blocks the
     // AGENT, which is all it is for.
-    if (
-      expired &&
-      session.context.isConnected() &&
-      session.lease.state().state === "held"
-    ) {
-      session.lastUsedAt = now;
+    if (!stillReapable(session, now)) {
+      // Refresh the clock only for the one case that is genuinely in use, so a
+      // held browser is not reaped out from under somebody mid-login.
+      if (session.context.isConnected()) session.lastUsedAt = now;
       continue;
     }
     logger.info("[local-browser] reaping an idle browser", {
@@ -454,9 +481,18 @@ export async function sweepLocalBrowserSessions(
     // Under the SAME per-key lock `ensureLocalBrowserSession` takes, so a turn
     // arriving mid-teardown waits for the profile lock to be released instead
     // of racing the dying Chromium for it and getting `profile_in_use`.
-    await withKeyedLock(`local-browser:${session.key}`, () =>
-      disposeSession(session),
-    ).catch(() => {});
+    //
+    // And the decision is re-made INSIDE it. Everything above was read before
+    // queueing for the lock, and a turn that arrived meanwhile has already
+    // reused this session — closing it now would take the browser away from
+    // somebody who is using it, on the strength of a reading that is no longer
+    // true.
+    await withKeyedLock(`local-browser:${session.key}`, async () => {
+      const current = sessions.get(session.key);
+      if (current !== session || current.disposing) return;
+      if (!stillReapable(current, now)) return;
+      await disposeSession(current);
+    }).catch(() => {});
   }
   if (sessions.size === 0 && sweepTimer) {
     clearInterval(sweepTimer);
@@ -494,6 +530,7 @@ function disposeSession(session: LocalSession): Promise<void> {
 
 /** Close every local browser. Non-latching: the app may start another. */
 export async function killLocalBrowserSessions(): Promise<void> {
+  killGeneration += 1;
   await Promise.all(
     [...sessions.values()].map((s) =>
       withKeyedLock(`local-browser:${s.key}`, () => disposeSession(s)).catch(
@@ -516,5 +553,6 @@ export async function shutdownLocalBrowserSessions(): Promise<void> {
 /** Test seam: the module holds process-wide state by design. */
 export async function resetLocalBrowserSessionsForTests(): Promise<void> {
   shuttingDown = false;
+  killGeneration = 0;
   await killLocalBrowserSessions();
 }

@@ -4,6 +4,25 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearStaleSingletonLock, probeSingletonOwner } from "../profile-lock";
 
+/**
+ * A throwaway profile directory that is actually thrown away.
+ *
+ * Every block below needs one, and each `mkdtemp` left one behind — nine per
+ * run, forever. One recorder and one file-scope `afterEach` beats remembering
+ * to clean up in each new test.
+ */
+const scratchDirs: string[] = [];
+async function lockDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+  scratchDirs.push(dir);
+  return dir;
+}
+afterEach(async () => {
+  await Promise.all(
+    scratchDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+  );
+});
+
 describe("clearStaleSingletonLock (L8)", () => {
   let dir: string;
   beforeEach(async () => {
@@ -46,7 +65,7 @@ describe("clearStaleSingletonLock (L8)", () => {
 
 describe("probeSingletonOwner — is anyone actually using this profile?", () => {
   it("reports a live owner when the lock names this host and a running pid", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
     expect(await probeSingletonOwner(dir, () => true)).toEqual({
       live: true,
@@ -55,7 +74,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
   });
 
   it("reports a dead pid as clearable debris", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
     expect(await probeSingletonOwner(dir, () => false)).toEqual({
       live: false,
@@ -69,7 +88,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
     // about a local process that happens to share the number — so the honest
     // answer is "held", and clearing it would launch a second browser into a
     // profile already open elsewhere.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink("some-other-box-4242", join(dir, "SingletonLock"));
     // The local liveness probe is not even consulted.
     expect(await probeSingletonOwner(dir, () => false)).toEqual({
@@ -80,7 +99,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
   });
 
   it("treats a missing or unreadable lock as free", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     expect(await probeSingletonOwner(dir, () => true)).toEqual({ live: false });
   });
 });
@@ -90,7 +109,7 @@ describe("clearing a lock is not a licence to take a live profile", () => {
     // The window this closes: the session layer checked a moment ago and
     // decided to launch. A browser that took the profile in between would have
     // had its lock files removed out from under it.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     const cleared = await clearStaleSingletonLock(dir, async () => ({
@@ -105,7 +124,7 @@ describe("clearing a lock is not a licence to take a live profile", () => {
   });
 
   it("clears debris when the probe says nobody is there", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     const cleared = await clearStaleSingletonLock(dir, async () => ({
@@ -124,7 +143,7 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
     // after a reboot its pid routinely belongs to an unrelated process. Taken
     // as the owner, the profile refused every launch forever, and the only
     // recovery was deleting the symlink by hand.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     expect(
@@ -137,7 +156,7 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
   });
 
   it("keeps the lock when a browser really is holding it", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     for (const command of [
@@ -160,7 +179,7 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
     // No `ps`, Windows, or the process vanishing mid-probe. Learning nothing
     // must not become permission to delete somebody's profile, so the pid
     // check stands alone — the behaviour that existed before.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     expect(

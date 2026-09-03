@@ -1498,18 +1498,21 @@ function createTabViewport(cdp, options) {
     subscriberCount: () => listeners.size,
     async dispatchInput(events, stillPermitted) {
       for (const event of events) {
-        if (stillPermitted && !stillPermitted()) return;
-        if (event.type === "mouse_down") {
-          buttonMask |= BUTTON_MASK[event.button] ?? 1;
-        } else if (event.type === "mouse_up") {
-          buttonMask &= ~(BUTTON_MASK[event.button] ?? 1);
+        if (stillPermitted && !stillPermitted()) {
+          buttonMask = 0;
+          return;
         }
-        await dispatchOne(cdp, event, buttonMask).catch(() => {
-        });
+        const next = event.type === "mouse_down" ? buttonMask | (BUTTON_MASK[event.button] ?? 1) : event.type === "mouse_up" ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1) : buttonMask;
+        try {
+          await dispatchOne(cdp, event, next);
+          buttonMask = next;
+        } catch {
+        }
       }
     },
     async dispose() {
       disposed = true;
+      buttonMask = 0;
       listeners.clear();
       await stop();
     }
@@ -2128,6 +2131,7 @@ var ChromiumDriver = class {
     return this.context.isConnected() ? { ok: true } : { ok: false, detail: "browser context disconnected" };
   }
   async close() {
+    await Promise.allSettled([...this.pendingTabs.values()]);
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {
       });

@@ -230,6 +230,25 @@ describe("the agent browser pane — driving it", () => {
     expect(buttons.every((b: string) => b === "right")).toBe(true);
   });
 
+  it("releases the button the drag actually started with", async () => {
+    // A middle- or right-button drag that leaves the picture was released as
+    // LEFT, so the page kept holding the button it was really given.
+    await takeControl();
+    const image = await deliverFrame();
+    image.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+
+    fireEvent.mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
+    fireEvent.mouseLeave(image, { clientX: 10, clientY: 10 });
+
+    await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
+    const released = api.inputs
+      .flatMap((call: any) => call.events as any[])
+      .filter((e) => e.type === "mouse_up");
+    expect(released).toHaveLength(1);
+    expect(released[0].button).toBe("middle");
+  });
+
   it("drops the previous project's browser when the project changes", async () => {
     // Session, lease and frame all belong to ONE project's browser. Carrying
     // them across a switch shows one project's page in another's rail, and

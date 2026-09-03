@@ -347,3 +347,56 @@ describe("local browser session — shutdown does not leave a browser behind", (
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
 });
+
+describe("local browser session — the reaper decides on current facts", () => {
+  it("does not close a session that was used while the sweep queued for the lock", async () => {
+    // Everything the scan reads is read BEFORE queueing for the per-key lock.
+    // A turn that lands in that window has already been handed this browser,
+    // and closing it now acts on a reading that is no longer true.
+    const { deps, advance, at } = makeDeps();
+    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    advance(LOCAL_BROWSER_IDLE_MS + 1);
+
+    // The sweep decides synchronously, then awaits the lock. The use lands in
+    // between — which is exactly the ordering the re-check exists for.
+    const sweeping = sweepLocalBrowserSessions(at());
+    touchLocalBrowserSession(handle, at());
+    await sweeping;
+
+    expect(listLocalBrowserSessions()).toHaveLength(1);
+    expect(listLocalBrowserSessions()[0]?.handle.bootId).toBe(handle.bootId);
+  });
+
+  it("still reaps one nobody came back for", async () => {
+    const { deps, advance, at } = makeDeps();
+    await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    advance(LOCAL_BROWSER_IDLE_MS + 1);
+    await sweepLocalBrowserSessions(at());
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("closes a browser whose launch outlived a NON-latching kill", async () => {
+    // Electron's window-all-closed sweep must not latch, or every browser
+    // opened after reopening the window would be refused. So it cannot use
+    // `shuttingDown` to stop a launch already in flight — the generation can.
+    const closed: boolean[] = [];
+    const { deps } = makeDeps({
+      async launch() {
+        await killLocalBrowserSessions();
+        const { context } = fakeContext();
+        const original = context.close.bind(context);
+        context.close = async () => {
+          closed.push(true);
+          await original();
+        };
+        return context;
+      },
+    });
+
+    await expect(
+      ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
+    ).rejects.toMatchObject({ code: "disabled" });
+    expect(closed).toEqual([true]);
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+});

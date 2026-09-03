@@ -110,8 +110,14 @@ export function LocalBrowserBody({
   const [streamAttempt, setStreamAttempt] = useState(0);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
-  /** Buttons this pane is holding down, so a drag can be released honestly. */
-  const draggingRef = useRef(false);
+  /**
+   * Which button this pane is holding down, if any.
+   *
+   * The BUTTON, not a boolean: a drag started with the middle or right button
+   * has to be released with that same one, or the page is left holding it
+   * while a left-release it never saw goes somewhere else.
+   */
+  const draggingRef = useRef<"left" | "middle" | "right" | null>(null);
 
   /**
    * This pane's identity as a lease holder.
@@ -198,7 +204,7 @@ export function LocalBrowserBody({
     setLease({ state: "free" });
     setFrame(null);
     setError(null);
-    draggingRef.current = false;
+    draggingRef.current = null;
   }, [projectId]);
 
   const start = useCallback(async () => {
@@ -312,14 +318,20 @@ export function LocalBrowserBody({
   const setLeaseAction = useCallback(
     async (action: "acquire" | "resume") => {
       if (!session) return;
+      const project = projectRef.current;
       setError(null);
       try {
         const { lease: next } = await actOnLocalBrowserLease(
           { bootId: session.bootId, action, holder },
           consentToken,
         );
+        // A lease belongs to ONE browser. If the rail moved to another project
+        // while this was in flight, applying it would show control of a
+        // browser this pane is no longer looking at.
+        if (projectRef.current !== project) return;
         setLease(next);
       } catch (err) {
+        if (projectRef.current !== project) return;
         setError(err instanceof Error ? err.message : String(err));
       }
     },
@@ -364,13 +376,19 @@ export function LocalBrowserBody({
   // One POST in flight, the rest queued and consecutive moves collapsed. A
   // drag otherwise fires a request per animation frame, and requests that
   // overtake each other put the pointer somewhere it never went.
+  // One forwarder per HOLD, not per session. Whatever it has queued belonged
+  // to the hold that queued it, so a hand-back, an expiry or a project switch
+  // must retire it rather than let its tail arrive under whoever holds the
+  // browser next — which is what the cleanup below does, and why the identity
+  // includes `holding`.
   const forwarder = useMemo(() => {
-    if (!session) return null;
+    if (!session || !holding) return null;
     const bootId = session.bootId;
     return createInputForwarder((events) =>
       sendLocalBrowserInput({ bootId, holder, events }, consentToken),
     );
-  }, [session, holder, consentToken]);
+  }, [session, holding, holder, consentToken]);
+  useEffect(() => () => forwarder?.cancel(), [forwarder]);
 
   const send = useCallback(
     (events: LocalBrowserInputEvent[]) => {
@@ -459,7 +477,9 @@ export function LocalBrowserBody({
         onMouseMove={(event) => {
           // Mid-drag a move must still land, even over a letterbox bar: the
           // page is tracking the pointer and a gap reads as a jump.
-          const point = pointAt(event, { clampToPage: draggingRef.current });
+          const point = pointAt(event, {
+            clampToPage: draggingRef.current !== null,
+          });
           if (point) send([{ type: "mouse_move", ...point, modifiers: modifiersOf(event) }]);
         }}
         onMouseDown={(event) => {
@@ -467,7 +487,7 @@ export function LocalBrowserBody({
           // nothing there, and inventing a target clicks where nobody aimed.
           const point = pointAt(event);
           if (!point) return;
-          draggingRef.current = true;
+          draggingRef.current = buttonOf(event);
           send([
             {
               type: "mouse_down",
@@ -482,8 +502,10 @@ export function LocalBrowserBody({
           // The release always lands. Dropping it because the pointer drifted
           // onto a bar leaves the page holding the button down forever, stuck
           // mid-selection with no way for the person to let go.
-          const point = pointAt(event, { clampToPage: draggingRef.current });
-          draggingRef.current = false;
+          const point = pointAt(event, {
+            clampToPage: draggingRef.current !== null,
+          });
+          draggingRef.current = null;
           if (!point) return;
           send([
             {
@@ -496,16 +518,18 @@ export function LocalBrowserBody({
           ]);
         }}
         onMouseLeave={(event) => {
-          // Leaving the element mid-drag ends it, for the same reason.
-          if (!draggingRef.current) return;
+          // Leaving the element mid-drag ends it, for the same reason — with
+          // the button that was actually pressed, not always the left one.
+          const held = draggingRef.current;
+          if (!held) return;
           const point = pointAt(event, { clampToPage: true });
-          draggingRef.current = false;
+          draggingRef.current = null;
           if (point) {
             send([
               {
                 type: "mouse_up",
                 ...point,
-                button: "left",
+                button: held,
                 modifiers: modifiersOf(event),
               },
             ]);

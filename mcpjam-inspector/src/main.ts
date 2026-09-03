@@ -140,6 +140,14 @@ let killLocalBrowsers: (() => Promise<void>) | null = null;
  */
 let browserTeardown: Promise<void> | null = null;
 let quittingAfterBrowserTeardown = false;
+/**
+ * The activation currently being handled.
+ *
+ * `activate` now awaits the browser teardown, and two dock clicks can both
+ * pass the zero-window check before either has recreated the window — which
+ * would build two windows, or race two server starts. They queue instead.
+ */
+let activating: Promise<void> | null = null;
 let shutdownLocalBrowserFrames: (() => void) | null = null;
 let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
@@ -1004,7 +1012,16 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("activate", async () => {
+app.on("activate", () => {
+  // Serialized: the body awaits a teardown, and a second click arriving inside
+  // that await would otherwise pass the same zero-window check.
+  activating = (activating ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => handleActivate());
+  void activating;
+});
+
+async function handleActivate(): Promise<void> {
   // On macOS, re-create window when the dock icon is clicked
   if (BrowserWindow.getAllWindows().length === 0) {
     // A quick reopen can arrive while the browser closed by
@@ -1015,6 +1032,9 @@ app.on("activate", async () => {
       await browserTeardown;
       browserTeardown = null;
     }
+    // Re-asked after the await: the teardown is long enough for a window to
+    // have appeared, and building a second one is worse than doing nothing.
+    if (BrowserWindow.getAllWindows().length > 0) return;
     if (serverPort > 0) {
       mainWindow = createMainWindow(getServerUrl());
       setTrustedUpdateWindow(mainWindow);
@@ -1029,7 +1049,7 @@ app.on("activate", async () => {
       }
     }
   }
-});
+}
 
 // Handle OAuth callback URLs
 app.on("open-url", (event, url) => {

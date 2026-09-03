@@ -238,21 +238,37 @@ export function createTabViewport(
     subscriberCount: () => listeners.size,
     async dispatchInput(events, stillPermitted) {
       for (const event of events) {
-        if (stillPermitted && !stillPermitted()) return;
-        // Updated BEFORE dispatch so press and release both describe the state
-        // the page should see after this event.
-        if (event.type === "mouse_down") {
-          buttonMask |= BUTTON_MASK[event.button] ?? 1;
-        } else if (event.type === "mouse_up") {
-          buttonMask &= ~(BUTTON_MASK[event.button] ?? 1);
+        if (stillPermitted && !stillPermitted()) {
+          // The batch stops mid-gesture, so the release for anything held will
+          // never arrive. Forget it: the mask is shared by whoever holds the
+          // browser NEXT, and a bit left set means their first hover reaches
+          // Chromium as a drag, selecting text they never grabbed.
+          buttonMask = 0;
+          return;
         }
-        // Each event under its own catch: one exotic key must not swallow the
-        // click behind it.
-        await dispatchOne(cdp, event, buttonMask).catch(() => {});
+        // Computed, dispatched, and only THEN committed. `dispatchOne` can
+        // reject (a closed target, a detached session) and its rejection is
+        // swallowed here; committing first would leave the local mask claiming
+        // a button Chromium never received.
+        const next =
+          event.type === "mouse_down"
+            ? buttonMask | (BUTTON_MASK[event.button] ?? 1)
+            : event.type === "mouse_up"
+              ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1)
+              : buttonMask;
+        try {
+          // Each event under its own catch: one exotic key must not swallow
+          // the click behind it.
+          await dispatchOne(cdp, event, next);
+          buttonMask = next;
+        } catch {
+          // A failed event does not advance what we believe the page holds.
+        }
       }
     },
     async dispose() {
       disposed = true;
+      buttonMask = 0;
       listeners.clear();
       await stop();
     },
