@@ -261,10 +261,80 @@ describe("a concurrent edit is marked, never merged", () => {
     draft = edit(draft, "name", "Mine");
     draft = suiteSettingsReducer(draft, {
       type: "commitSucceeded",
+      suiteId: SUITE_ID,
       live: { ...BASE, name: "Mine" },
     });
     expect(dirtyKeys(draft)).toEqual([]);
     expect(draft.conflicts).toEqual([]);
+  });
+
+  test("a commit that lands after navigating away leaves the new draft alone", () => {
+    // Started on suite A, the person opened suite B before the mutation
+    // resolved. Without the guard, A's saved values land in B's draft and the
+    // next save writes them to B.
+    let onB = initSuiteSettingsDraft({
+      suiteId: "suite-b",
+      values: { ...BASE, name: "Suite B" },
+    });
+    onB = edit(onB, "name", "B renamed");
+
+    const after = suiteSettingsReducer(onB, {
+      type: "commitSucceeded",
+      suiteId: SUITE_ID,
+      live: { ...BASE, name: "A renamed" },
+    });
+
+    expect(after).toBe(onB);
+    expect(after.current.name).toBe("B renamed");
+    expect(after.base.name).toBe("Suite B");
+  });
+
+  test("a key the save could not carry stays dirty", () => {
+    // The legacy fallback drops fields the old mutation does not declare and
+    // says so in its toast. Rebasing them anyway would make that toast a lie:
+    // the edit stops being dirty, so there is nothing left to retry once the
+    // backend catches up.
+    let draft = draftOf();
+    draft = edit(draft, "name", "Renamed");
+    draft = edit(draft, "judgeRubric", {
+      criteria: [{ id: "crit_1", label: "Answers the question" }],
+    });
+
+    draft = suiteSettingsReducer(draft, {
+      type: "commitSucceeded",
+      suiteId: SUITE_ID,
+      // What the save actually wrote: the name travelled, the rubric did not.
+      live: { ...BASE, name: "Renamed" },
+      retained: ["judgeRubric"],
+    });
+
+    expect(dirtyKeys(draft)).toEqual(["judgeRubric"]);
+    expect(draft.current.name).toBe("Renamed");
+    expect(draft.current.judgeRubric).toEqual({
+      criteria: [{ id: "crit_1", label: "Answers the question" }],
+    });
+    // And the draft agrees with the server about what is stored, so a later
+    // save still sends the rubric as a change.
+    expect(draft.base.judgeRubric).toBeUndefined();
+  });
+
+  test("a retained key on the wrong suite is still ignored", () => {
+    // The `retained` branch is a second return path, and it needs the same
+    // guard as the first one.
+    let onB = initSuiteSettingsDraft({
+      suiteId: "suite-b",
+      values: { ...BASE, name: "Suite B" },
+    });
+    onB = edit(onB, "name", "B renamed");
+
+    const after = suiteSettingsReducer(onB, {
+      type: "commitSucceeded",
+      suiteId: SUITE_ID,
+      live: { ...BASE, name: "A renamed" },
+      retained: ["judgeRubric"],
+    });
+
+    expect(after).toBe(onB);
   });
 });
 
@@ -283,6 +353,7 @@ describe("what is saved is what the draft then holds", () => {
     let draft = edit(draftOf(), "name", "  Renamed  ");
     draft = suiteSettingsReducer(draft, {
       type: "commitSucceeded",
+      suiteId: SUITE_ID,
       live: committedSuiteSettingsValues(draft),
     });
     expect(dirtyKeys(draft)).toEqual([]);

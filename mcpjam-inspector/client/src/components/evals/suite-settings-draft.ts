@@ -101,7 +101,20 @@ export type SuiteSettingsAction =
   | { type: "edit"; key: SuiteSettingsKey; value: unknown }
   | { type: "discard" }
   | { type: "rebase"; suiteId: string; live: SuiteSettingsValues }
-  | { type: "commitSucceeded"; live: SuiteSettingsValues };
+  /**
+   * `live` is what the save actually WROTE. `retained` names keys the save
+   * could not carry (a legacy deployment that does not declare them); those
+   * stay dirty so the person can save them once the backend catches up, which
+   * is what the fallback's toast promises. `suiteId` guards the same hazard
+   * `rebase` guards: a mutation that resolves after the person navigated must
+   * not apply one suite's values to another's draft.
+   */
+  | {
+      type: "commitSucceeded";
+      suiteId: string;
+      live: SuiteSettingsValues;
+      retained?: SuiteSettingsKey[];
+    };
 
 /** Structural equality over draft values. Order-sensitive for lists, deliberately. */
 function sameValue(a: unknown, b: unknown): boolean {
@@ -229,13 +242,35 @@ export function suiteSettingsReducer(
       }
       return { ...state, base: action.live, current: next, conflicts };
     }
-    case "commitSucceeded":
+    case "commitSucceeded": {
+      // Same guard as `rebase`: an in-flight save that lands after a
+      // navigation belongs to the suite it was started for, not this one.
+      if (action.suiteId !== state.suiteId) return state;
+      const retained = action.retained ?? [];
+      if (retained.length === 0) {
+        return {
+          suiteId: state.suiteId,
+          base: action.live,
+          current: action.live,
+          conflicts: [],
+        };
+      }
+      // A retained key was never sent, so its SAVED value is still whatever it
+      // was before, and the person's edit stays in `current` — which is what
+      // keeps it dirty and retryable.
+      const base = { ...action.live } as SuiteSettingsValues;
+      const current = { ...action.live } as SuiteSettingsValues;
+      for (const key of retained) {
+        (base as Record<string, unknown>)[key] = state.base[key];
+        (current as Record<string, unknown>)[key] = state.current[key];
+      }
       return {
         suiteId: state.suiteId,
-        base: action.live,
-        current: action.live,
-        conflicts: [],
+        base,
+        current,
+        conflicts: state.conflicts.filter((key) => retained.includes(key)),
       };
+    }
     default:
       return state;
   }

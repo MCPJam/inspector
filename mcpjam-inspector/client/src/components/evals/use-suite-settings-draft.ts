@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   type SuiteSettingsDraft,
+  type SuiteSettingsKey,
   toUpdateArgs,
 } from "./suite-settings-draft";
 
@@ -28,16 +29,36 @@ import {
 export const EVAL_SUITE_REVISION_CONFLICT = "EVAL_SUITE_REVISION_CONFLICT";
 
 /**
- * Draft keys the pre-composite `updateTestSuite` does not declare.
+ * Arguments the pre-composite `updateTestSuite` does not declare, and the
+ * draft key each one carries.
  *
  * Convex validators are strict — one unrecognized key rejects the whole
  * mutation — so sending these to a backend that predates them turns a save of
  * five settings into an ArgumentValidationError that saves none of them.
+ *
+ * Argument name and draft key are both spelled out because they are not the
+ * same namespace: `toUpdateArgs` already renames one on its way out
+ * (`computerEnvironmentId` travels inside `environment`). The caller keeps the
+ * DRAFT key dirty, so guessing it from the argument name would leave the wrong
+ * field — or none — retryable.
  */
-const LEGACY_UNSUPPORTED_ARGS = new Set(["judgeRubric"]);
+const LEGACY_UNSUPPORTED_ARGS: ReadonlyMap<string, SuiteSettingsKey> = new Map<
+  string,
+  SuiteSettingsKey
+>([["judgeRubric", "judgeRubric"]]);
 
 export type CommitOutcome =
-  | { status: "saved"; revisionNumber: number | null }
+  /**
+   * `droppedKeys` names settings the save could NOT carry — a legacy
+   * deployment whose mutation does not declare them. The caller must keep
+   * those dirty: reporting a clean save for a field that never travelled is
+   * how an edit disappears while its own toast says it was kept.
+   */
+  | {
+      status: "saved";
+      revisionNumber: number | null;
+      droppedKeys: SuiteSettingsKey[];
+    }
   | { status: "conflict"; current: number | null }
   | { status: "failed"; message: string };
 
@@ -64,7 +85,7 @@ function isMissingFunctionError(error: unknown): boolean {
 
 export function useSuiteSettingsCommit() {
   const applySuiteSettings = useMutation(
-    "testSuites:applySuiteSettings" as never
+    "testSuites:applySuiteSettings" as never,
   );
   const updateTestSuite = useMutation("testSuites:updateTestSuite" as never);
   const [isCommitting, setIsCommitting] = useState(false);
@@ -84,7 +105,7 @@ export function useSuiteSettingsCommit() {
       const updateArgs = toUpdateArgs(
         args.draft,
         args.suiteId,
-        args.liveEnvironment
+        args.liveEnvironment,
       );
       setIsCommitting(true);
       try {
@@ -107,9 +128,9 @@ export function useSuiteSettingsCommit() {
             toast.success(
               revisionNumber === null
                 ? "Settings saved"
-                : `Settings saved · r${revisionNumber}`
+                : `Settings saved · r${revisionNumber}`,
             );
-            return { status: "saved", revisionNumber };
+            return { status: "saved", revisionNumber, droppedKeys: [] };
           } catch (error) {
             if (readConvexErrorCode(error) === EVAL_SUITE_REVISION_CONFLICT) {
               const data = (error as { data?: { current?: number } }).data;
@@ -131,10 +152,11 @@ export function useSuiteSettingsCommit() {
         // below names what did not travel, and the field is still in the draft
         // to save once the backend catches up.
         const legacyArgs: Record<string, unknown> = {};
-        const dropped: string[] = [];
+        const dropped: SuiteSettingsKey[] = [];
         for (const [key, value] of Object.entries(updateArgs)) {
-          if (LEGACY_UNSUPPORTED_ARGS.has(key)) {
-            dropped.push(key);
+          const droppedKey = LEGACY_UNSUPPORTED_ARGS.get(key);
+          if (droppedKey !== undefined) {
+            dropped.push(droppedKey);
             continue;
           }
           legacyArgs[key] = value;
@@ -143,13 +165,13 @@ export function useSuiteSettingsCommit() {
         toast.success(
           dropped.length === 0
             ? "Settings saved"
-            : `Settings saved, except ${dropped.join(" and ")} — this deployment does not support it yet`
+            : `Settings saved, except ${dropped.join(" and ")} — this deployment does not support it yet`,
         );
-        return { status: "saved", revisionNumber: null };
+        return { status: "saved", revisionNumber: null, droppedKeys: dropped };
       } catch (error) {
         const message = getBillingErrorMessage(
           error,
-          "Failed to save settings"
+          "Failed to save settings",
         );
         toast.error(message);
         console.error("Failed to save suite settings:", error);
@@ -158,7 +180,7 @@ export function useSuiteSettingsCommit() {
         setIsCommitting(false);
       }
     },
-    [applySuiteSettings, updateTestSuite]
+    [applySuiteSettings, updateTestSuite],
   );
 
   return { commit, isCommitting };

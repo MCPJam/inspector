@@ -20,6 +20,19 @@ export function PassCriteriaSelector({
 }: PassCriteriaSelectorProps) {
   const [editedValue, setEditedValue] = useState(minimumPassRate.toString());
 
+  // The last prop value this component has reconciled with — either because it
+  // arrived from outside, or because this field is about to report it. A move
+  // away from it is news from elsewhere; a move back to it is this field's own
+  // echo returning through the parent.
+  const lastSeenRate = useRef(minimumPassRate);
+
+  // True from the first keystroke until the edit is committed (blur, Enter) or
+  // abandoned (Escape). Focus alone is deliberately not enough: someone who
+  // tabs through the field without typing should still see an external change
+  // land, and their blur must not re-commit the number that happened to be
+  // sitting in the input.
+  const isEditing = useRef(false);
+
   // Follow the prop when it moves for a reason OTHER than this input.
   //
   // The value used to be write-on-change, so the prop only ever moved because
@@ -29,21 +42,23 @@ export function PassCriteriaSelector({
   // worst possible failure for a settings control: it says the setting is one
   // thing while the thing that gets saved is another. Re-blurring would then
   // re-commit the stale number as a fresh edit.
-  //
-  // Guarded on the value the field itself last reported, so an in-flight edit
-  // is never yanked out from under someone mid-typing.
-  const lastReported = useRef(minimumPassRate);
   useEffect(() => {
-    if (minimumPassRate === lastReported.current) return;
-    lastReported.current = minimumPassRate;
+    if (minimumPassRate === lastSeenRate.current) return;
+    // Record it either way, so a later move BACK to the old number still reads
+    // as news rather than as this field's echo.
+    lastSeenRate.current = minimumPassRate;
+    // Half-typed text belongs to the person, not to whatever just arrived. They
+    // are looking at the field, so their next blur wins over the new value.
+    if (isEditing.current) return;
     setEditedValue(minimumPassRate.toString());
   }, [minimumPassRate]);
 
-  const handleBlur = () => {
+  const commit = () => {
+    isEditing.current = false;
     const numValue = Number(editedValue);
     if (!isNaN(numValue)) {
       const clampedValue = Math.max(0, Math.min(100, numValue));
-      lastReported.current = clampedValue;
+      lastSeenRate.current = clampedValue;
       onMinimumPassRateChange(clampedValue);
       setEditedValue(clampedValue.toString());
     } else {
@@ -52,11 +67,26 @@ export function PassCriteriaSelector({
     }
   };
 
+  // Escape gets there by blurring, and blurring is what commits — so the cancel
+  // has to survive the blur event that fires synchronously inside the keydown,
+  // where `editedValue` still holds the abandoned text.
+  const cancelled = useRef(false);
+
+  const handleBlur = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
+    commit();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
-      handleBlur();
+      commit();
       (e.target as HTMLInputElement).blur();
     } else if (e.key === "Escape") {
+      cancelled.current = true;
+      isEditing.current = false;
       setEditedValue(minimumPassRate.toString());
       (e.target as HTMLInputElement).blur();
     }
@@ -78,7 +108,10 @@ export function PassCriteriaSelector({
         min={0}
         max={100}
         value={editedValue}
-        onChange={(e) => setEditedValue(e.target.value)}
+        onChange={(e) => {
+          isEditing.current = true;
+          setEditedValue(e.target.value);
+        }}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         className="w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
