@@ -7,6 +7,7 @@ import {
   type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
 import { MCPJAM_WEB_DEPLOYED_AT } from "@/generated/mcpjam-web-deployed-at";
+import { resolveVerifiedAt } from "../verified-at";
 
 /**
  * Static host profiles surfaced in Host Compare so a user can compare against
@@ -34,22 +35,6 @@ export interface PresetCompareEntries {
 interface PresetCompareOptions {
   excludedTemplateIds?: ReadonlySet<string>;
   mcpjamWebDeployedAt?: number | null;
-}
-
-function resolveVerifiedAt(
-  hostId: string,
-  catalogVerifiedAt: number | undefined,
-  mcpjamWebDeployedAt: number | null,
-): number | undefined {
-  if (
-    hostId !== "mcpjam" ||
-    mcpjamWebDeployedAt === null ||
-    !Number.isFinite(mcpjamWebDeployedAt) ||
-    mcpjamWebDeployedAt <= 0
-  ) {
-    return catalogVerifiedAt;
-  }
-  return mcpjamWebDeployedAt;
 }
 
 /**

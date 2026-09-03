@@ -36,14 +36,11 @@ import {
   type SupportFilterMode,
   type SupportLevel,
 } from "./support-level";
-
-const VERIFIED_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "UTC",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-const STALE_VERIFICATION_MS = 30 * 24 * 60 * 60 * 1000;
+import {
+  formatVerifiedAt,
+  isVerifiedAtStale,
+  STALE_VERIFIED_AT_LABEL,
+} from "../verified-at";
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
@@ -129,18 +126,18 @@ export function HostConfigComparisonMatrix({
       supportFilter,
       searchQuery,
       useCellSupportFilter,
-    ]
+    ],
   );
   const visibleFields = useMemo(
     () => fields.filter((field) => visibleFieldIds.has(field.id)),
-    [fields, visibleFieldIds]
+    [fields, visibleFieldIds],
   );
   const displaySubjects = useMemo(() => {
     if (!useCellSupportFilter) return subjects;
     return subjects.filter((subject) =>
       visibleFields.some((field) =>
-        cellPassesSupportFilter(field, subject.config, supportFilter)
-      )
+        cellPassesSupportFilter(field, subject.config, supportFilter),
+      ),
     );
   }, [subjects, supportFilter, useCellSupportFilter, visibleFields]);
 
@@ -197,7 +194,7 @@ export function HostConfigComparisonMatrix({
         // put the dead band back for a one- or two-row result. Nothing renders
         // here that needs a floor — every empty case returns above this.
         "flex max-h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
-        mobileOptimized && "max-w-full"
+        mobileOptimized && "max-w-full",
       )}
     >
       <div
@@ -208,13 +205,13 @@ export function HostConfigComparisonMatrix({
           // `overflow-auto` show a scrollbar only once the table actually
           // exceeds that height, not unconditionally.
           "min-h-0 overflow-auto",
-          mobileOptimized && "max-w-full [-webkit-overflow-scrolling:touch]"
+          mobileOptimized && "max-w-full [-webkit-overflow-scrolling:touch]",
         )}
       >
         <table
           className={cn(
             "border-collapse text-center text-[13px]",
-            mobileOptimized ? "w-max min-w-full" : "w-full"
+            mobileOptimized ? "w-max min-w-full" : "w-full",
           )}
         >
           <colgroup>
@@ -297,16 +294,6 @@ export function HostConfigComparisonMatrix({
   );
 }
 
-function formatVerifiedAt(verifiedAt: number | undefined): string {
-  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return "—";
-  return VERIFIED_DATE_FORMATTER.format(new Date(verifiedAt));
-}
-
-function isVerifiedAtStale(verifiedAt: number | undefined): boolean {
-  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return false;
-  return Date.now() - verifiedAt > STALE_VERIFICATION_MS;
-}
-
 function VerifiedAtRow({
   subjects,
   mobileOptimized,
@@ -319,7 +306,7 @@ function VerifiedAtRow({
       <td
         className={cn(
           "sticky left-0 z-10 bg-card px-3 py-1.5 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5",
-          mobileOptimized && "min-w-0"
+          mobileOptimized && "min-w-0",
         )}
       >
         <span className="text-[12px] font-medium leading-tight text-muted-foreground">
@@ -335,7 +322,7 @@ function VerifiedAtRow({
             {isVerifiedAtStale(subject.verifiedAt) ? (
               <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] leading-tight text-muted-foreground">
                 <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
-                Last checked over 30 days ago
+                {STALE_VERIFIED_AT_LABEL}
               </span>
             ) : (
               <span className="text-[12px] tabular-nums text-muted-foreground">
@@ -416,10 +403,7 @@ function SectionRows({
             )}
           </motion.div>
         </th>
-        <td
-          colSpan={colSpan - 1}
-          className="border-y border-border bg-muted"
-        />
+        <td colSpan={colSpan - 1} className="border-y border-border bg-muted" />
       </tr>
 
       {subsections.map((sub) => {
@@ -468,10 +452,7 @@ function SubsectionRows({
         <td className="sticky left-0 z-10 border-b border-border bg-card px-3 py-1.5 text-left text-[10px] uppercase tracking-wider text-muted-foreground after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
           {label}
         </td>
-        <td
-          colSpan={colSpan - 1}
-          className="border-b border-border bg-card"
-        />
+        <td colSpan={colSpan - 1} className="border-b border-border bg-card" />
       </tr>
       {fields.map((field) => (
         <FieldRow
@@ -508,12 +489,12 @@ function FieldRow({
     coverageSubjects.length >= 2
       ? rowCoverage(
           field,
-          coverageSubjects.map((s) => s.config)
+          coverageSubjects.map((s) => s.config),
         )
       : null;
   const labelClassName = cn(
     "text-[13px] font-medium leading-tight text-foreground",
-    mobileOptimized && "min-w-0 break-words"
+    mobileOptimized && "min-w-0 break-words",
   );
   return (
     <tr className="border-b border-border last:border-b-0">
@@ -537,7 +518,7 @@ function FieldRow({
         <div
           className={cn(
             "flex items-center gap-1.5",
-            mobileOptimized && "min-w-0"
+            mobileOptimized && "min-w-0",
           )}
         >
           <span className={labelClassName}>{field.label}</span>
@@ -686,7 +667,7 @@ function FieldCell({
         <span
           className={cn(
             "text-[13px] text-foreground",
-            mobileOptimized && "break-words"
+            mobileOptimized && "break-words",
           )}
         >
           {String(value)}
@@ -748,7 +729,10 @@ function FieldCell({
             // `items-center` centers the theme label over the swatch+value row
             // it names; the row itself keeps its own left edge, so the two
             // themes still line up with each other for reading down the cell.
-            <span key={theme} className="flex w-full flex-col items-center gap-0.5">
+            <span
+              key={theme}
+              className="flex w-full flex-col items-center gap-0.5"
+            >
               <span className="text-[10px] uppercase leading-none tracking-wide text-muted-foreground/60">
                 {theme}
               </span>
@@ -804,7 +788,7 @@ function FieldCell({
         <span
           className={cn(
             "text-[13px] leading-snug text-foreground",
-            mobileOptimized && "break-words"
+            mobileOptimized && "break-words",
           )}
         >
           {value.join(", ")}
@@ -918,13 +902,13 @@ function HostColumnHeader({
   const logoSrc = getScenarioHostLogo(
     subject.hostStyle,
     subject.config.chatUiOverride,
-    themeMode
+    themeMode,
   );
   const reduceMotion = useReducedMotion();
   const verifyHref = buildVerifyHref(
     verifyBaseUrl,
     subject.hostId,
-    disabledVerifyTemplateIds
+    disabledVerifyTemplateIds,
   );
 
   return (
@@ -933,7 +917,7 @@ function HostColumnHeader({
         key={subject.hostId}
         className={cn(
           "relative flex items-start justify-center gap-2",
-          onRemove && "pl-5"
+          onRemove && "pl-5",
         )}
         initial={reduceMotion ? false : { opacity: 0, x: -6 }}
         animate={{ opacity: 1, x: 0 }}
@@ -995,7 +979,7 @@ function HostColumnHeader({
 function buildVerifyHref(
   baseUrl: string | undefined,
   hostId: string,
-  disabledVerifyTemplateIds?: ReadonlySet<string>
+  disabledVerifyTemplateIds?: ReadonlySet<string>,
 ): string | null {
   if (!baseUrl) return null;
   if (!hostId.startsWith(PRESET_HOST_ID_PREFIX)) return baseUrl;
@@ -1036,7 +1020,7 @@ function ExpandablePreview({
           "max-h-[400px] overflow-auto p-3",
           mobileOptimized
             ? "max-w-[calc(100vw-24px)] sm:max-w-[520px]"
-            : "max-w-[520px]"
+            : "max-w-[520px]",
         )}
       >
         {children}
