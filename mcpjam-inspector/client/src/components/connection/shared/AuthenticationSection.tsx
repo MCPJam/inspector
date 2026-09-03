@@ -392,258 +392,6 @@ export function AuthenticationSection({
     oauthPlan != null &&
     (oauthPlanVisibleBlockers.length > 0 || oauthPlan.warnings.length > 0);
 
-  // Protocol, registration strategy and the client credentials that go with
-  // them. Rendered up front once the user picks OAuth explicitly; on "auto"
-  // the flow may never reach OAuth, so they stay inside Advanced Settings.
-  const oauthRegistrationFields = (
-    <>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-foreground">
-            Protocol
-          </label>
-          <Select
-            value={oauthProtocolMode}
-            onValueChange={(value: ServerFormOAuthProtocolMode) =>
-              onOauthProtocolModeChange(value)
-            }
-          >
-            <SelectTrigger className="w-full h-10">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PROTOCOL_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-foreground">
-            Registration Strategy
-          </label>
-          <Select
-            value={registrationMode}
-            onValueChange={(value: RegistrationMode) => {
-              onOauthRegistrationModeChange(value);
-              onUseCustomClientIdChange(value === "preregistered");
-            }}
-          >
-            <SelectTrigger className="w-full h-10">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {REGISTRATION_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {registrationMode === "cimd" && oauthPlan?.clientIdMetadataUrl && (
-            <p className="text-xs text-muted-foreground break-all">
-              SDK client metadata URL: {oauthPlan.clientIdMetadataUrl}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {showClientCredentials && (
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
-              Client ID
-              {registrationMode === "preregistered" ? (
-                <span className="text-destructive" aria-hidden="true">
-                  {" *"}
-                </span>
-              ) : null}
-            </label>
-            <Input
-              value={clientId}
-              onChange={(e) => onClientIdChange(e.target.value)}
-              placeholder="Your OAuth Client ID"
-              aria-required={
-                registrationMode === "preregistered" ? true : undefined
-              }
-              spellCheck={false}
-              autoComplete="off"
-              data-1p-ignore
-              data-lpignore="true"
-              data-form-type="other"
-              className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
-            />
-            {clientIdError && (
-              <p className="text-xs text-red-500">{clientIdError}</p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <label className="block text-sm font-medium text-foreground">
-                Client Secret (Optional)
-              </label>
-              <div className="flex items-center gap-1">
-                {canRevealClientSecret && !visibleRevealedClientSecret && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 px-2 text-xs"
-                    onClick={() => void handleRevealClientSecret()}
-                    disabled={isRevealingClientSecret}
-                  >
-                    {isRevealingClientSecret ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      "Reveal"
-                    )}
-                  </Button>
-                )}
-                {visibleRevealedClientSecret && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 px-2 text-xs"
-                    onClick={handleHideRevealedSecret}
-                  >
-                    Hide
-                  </Button>
-                )}
-                {hasStoredClientSecret && !clearClientSecret && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 px-2 text-xs"
-                    onClick={handleClearClientSecret}
-                  >
-                    Clear
-                  </Button>
-                )}
-                {hasStoredClientSecret && clearClientSecret && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 px-2 text-xs"
-                    onClick={onUndoClearClientSecret}
-                  >
-                    Undo
-                  </Button>
-                )}
-              </div>
-            </div>
-            {hasStoredClientSecret && clearClientSecret ? (
-              <p className="text-xs text-muted-foreground">
-                Saved client secret will be removed when you save.
-              </p>
-            ) : visibleRevealedClientSecret !== null ? (
-              <>
-                <div className="relative">
-                  <Input
-                    type={isRevealedSecretVisible ? "text" : "password"}
-                    value={secretFieldValue}
-                    onChange={(e) => {
-                      if (!isReplacingSecret) setIsReplacingSecret(true);
-                      onClientSecretChange(e.target.value);
-                    }}
-                    placeholder="Enter a new value to replace."
-                    data-testid="revealed-client-secret"
-                    spellCheck={false}
-                    autoComplete="off"
-                    data-1p-ignore
-                    data-lpignore="true"
-                    data-form-type="other"
-                    className={`h-10 pr-16 font-mono ${
-                      clientSecretError ? "border-red-500" : ""
-                    }`}
-                  />
-                  <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                    <button
-                      type="button"
-                      aria-label={
-                        isRevealedSecretVisible
-                          ? "Hide client secret"
-                          : "Show client secret"
-                      }
-                      title={
-                        isRevealedSecretVisible
-                          ? "Hide client secret"
-                          : "Show client secret"
-                      }
-                      onClick={() =>
-                        setIsRevealedSecretVisible((prev) => !prev)
-                      }
-                      className="p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
-                    >
-                      {isRevealedSecretVisible ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Copy client secret"
-                      title="Copy client secret"
-                      onClick={() =>
-                        void handleCopyRevealedSecret(secretFieldValue)
-                      }
-                      className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
-                    >
-                      {didCopyRevealedSecret ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                {!isReplacingSecret && (
-                  <p className="text-xs text-muted-foreground">
-                    Editing this replaces the saved secret when you save.
-                  </p>
-                )}
-              </>
-            ) : canRevealClientSecret ? (
-              <p className="text-xs text-muted-foreground">
-                A client secret is saved. Reveal it to view or replace it.
-              </p>
-            ) : (
-              <Input
-                type="password"
-                value={clientSecret}
-                onChange={(e) => onClientSecretChange(e.target.value)}
-                placeholder={
-                  hasStoredClientSecret
-                    ? "Enter a new value to replace."
-                    : "Your OAuth Client Secret"
-                }
-                spellCheck={false}
-                autoComplete="off"
-                data-1p-ignore
-                data-lpignore="true"
-                data-form-type="other"
-                className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
-              />
-            )}
-            {clientSecretError && (
-              <p className="text-xs text-red-500">{clientSecretError}</p>
-            )}
-            {revealError && (
-              <p className="text-xs text-red-500">{revealError}</p>
-            )}
-          </div>
-        </div>
-      )}
-    </>
-  );
-
   return (
     <div className="space-y-4">
       <div className="border border-border rounded-lg overflow-hidden">
@@ -779,11 +527,263 @@ export function AuthenticationSection({
               </div>
             )}
 
-            {authType === "oauth" && (
-              <div className="px-3 pt-3 pb-3 space-y-3">
-                {oauthRegistrationFields}
+            <div className="px-3 pt-3 pb-3 space-y-3">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    Protocol
+                  </label>
+                  <Select
+                    value={oauthProtocolMode}
+                    onValueChange={(value: ServerFormOAuthProtocolMode) =>
+                      onOauthProtocolModeChange(value)
+                    }
+                  >
+                    <SelectTrigger className="w-full h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROTOCOL_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    Registration Strategy
+                  </label>
+                  <Select
+                    value={registrationMode}
+                    onValueChange={(value: RegistrationMode) => {
+                      onOauthRegistrationModeChange(value);
+                      onUseCustomClientIdChange(value === "preregistered");
+                    }}
+                  >
+                    <SelectTrigger className="w-full h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REGISTRATION_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {registrationMode === "cimd" &&
+                    oauthPlan?.clientIdMetadataUrl && (
+                      <p className="text-xs text-muted-foreground break-all">
+                        SDK client metadata URL: {oauthPlan.clientIdMetadataUrl}
+                      </p>
+                    )}
+                </div>
               </div>
-            )}
+
+              {showClientCredentials && (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Client ID
+                      {registrationMode === "preregistered" ? (
+                        <span className="text-destructive" aria-hidden="true">
+                          {" *"}
+                        </span>
+                      ) : null}
+                    </label>
+                    <Input
+                      value={clientId}
+                      onChange={(e) => onClientIdChange(e.target.value)}
+                      placeholder="Your OAuth Client ID"
+                      aria-required={
+                        registrationMode === "preregistered" ? true : undefined
+                      }
+                      spellCheck={false}
+                      autoComplete="off"
+                      data-1p-ignore
+                      data-lpignore="true"
+                      data-form-type="other"
+                      className={`h-10 ${
+                        clientIdError ? "border-red-500" : ""
+                      }`}
+                    />
+                    {clientIdError && (
+                      <p className="text-xs text-red-500">{clientIdError}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="block text-sm font-medium text-foreground">
+                        Client Secret (Optional)
+                      </label>
+                      <div className="flex items-center gap-1">
+                        {canRevealClientSecret &&
+                          !visibleRevealedClientSecret && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs"
+                              onClick={() => void handleRevealClientSecret()}
+                              disabled={isRevealingClientSecret}
+                            >
+                              {isRevealingClientSecret ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                "Reveal"
+                              )}
+                            </Button>
+                          )}
+                        {visibleRevealedClientSecret && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={handleHideRevealedSecret}
+                          >
+                            Hide
+                          </Button>
+                        )}
+                        {hasStoredClientSecret && !clearClientSecret && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={handleClearClientSecret}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                        {hasStoredClientSecret && clearClientSecret && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={onUndoClearClientSecret}
+                          >
+                            Undo
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {hasStoredClientSecret && clearClientSecret ? (
+                      <p className="text-xs text-muted-foreground">
+                        Saved client secret will be removed when you save.
+                      </p>
+                    ) : visibleRevealedClientSecret !== null ? (
+                      <>
+                        <div className="relative">
+                          <Input
+                            type={isRevealedSecretVisible ? "text" : "password"}
+                            value={secretFieldValue}
+                            onChange={(e) => {
+                              if (!isReplacingSecret)
+                                setIsReplacingSecret(true);
+                              onClientSecretChange(e.target.value);
+                            }}
+                            placeholder="Enter a new value to replace."
+                            data-testid="revealed-client-secret"
+                            spellCheck={false}
+                            autoComplete="off"
+                            data-1p-ignore
+                            data-lpignore="true"
+                            data-form-type="other"
+                            className={`h-10 pr-16 font-mono ${
+                              clientSecretError ? "border-red-500" : ""
+                            }`}
+                          />
+                          <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                            <button
+                              type="button"
+                              aria-label={
+                                isRevealedSecretVisible
+                                  ? "Hide client secret"
+                                  : "Show client secret"
+                              }
+                              title={
+                                isRevealedSecretVisible
+                                  ? "Hide client secret"
+                                  : "Show client secret"
+                              }
+                              onClick={() =>
+                                setIsRevealedSecretVisible((prev) => !prev)
+                              }
+                              className="p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                            >
+                              {isRevealedSecretVisible ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Copy client secret"
+                              title="Copy client secret"
+                              onClick={() =>
+                                void handleCopyRevealedSecret(secretFieldValue)
+                              }
+                              className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+                            >
+                              {didCopyRevealedSecret ? (
+                                <Check className="h-4 w-4 text-green-500" />
+                              ) : (
+                                <Copy className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        {!isReplacingSecret && (
+                          <p className="text-xs text-muted-foreground">
+                            Editing this replaces the saved secret when you
+                            save.
+                          </p>
+                        )}
+                      </>
+                    ) : canRevealClientSecret ? (
+                      <p className="text-xs text-muted-foreground">
+                        A client secret is saved. Reveal it to view or replace
+                        it.
+                      </p>
+                    ) : (
+                      <Input
+                        type="password"
+                        value={clientSecret}
+                        onChange={(e) => onClientSecretChange(e.target.value)}
+                        placeholder={
+                          hasStoredClientSecret
+                            ? "Enter a new value to replace."
+                            : "Your OAuth Client Secret"
+                        }
+                        spellCheck={false}
+                        autoComplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
+                        className={`h-10 ${
+                          clientSecretError ? "border-red-500" : ""
+                        }`}
+                      />
+                    )}
+                    {clientSecretError && (
+                      <p className="text-xs text-red-500">
+                        {clientSecretError}
+                      </p>
+                    )}
+                    {revealError && (
+                      <p className="text-xs text-red-500">{revealError}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <button
               type="button"
@@ -802,8 +802,6 @@ export function AuthenticationSection({
 
             {showAdvancedOAuth && (
               <div className="px-3 pb-3 space-y-3">
-                {authType !== "oauth" && oauthRegistrationFields}
-
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-foreground">
                     Scope Override
