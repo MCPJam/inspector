@@ -337,7 +337,15 @@ export function TraceDestinationDialog({
       resourceAttributes: attributes,
       sourceTypes,
       includeContent,
-      ...(allProjects ? { allProjects: true } : { projectIds }),
+      // `allProjects` is an UPDATE-only argument, and Convex rejects an
+      // unrecognized one outright. On a create "every project" is expressed by
+      // sending no `projectIds` at all — there is no stored allowlist to
+      // clear, so a flag for clearing it has nothing to mean.
+      ...(allProjects
+        ? isEdit
+          ? { allProjects: true }
+          : {}
+        : { projectIds }),
       compression,
       preset,
       enabled,

@@ -258,4 +258,26 @@ describe("TraceDestinationsSection", () => {
       expect(screen.getByText(/cannot retract them/i)).toBeTruthy(),
     );
   });
+
+  it("creates without `allProjects`, which only the update argument accepts", async () => {
+    setDestinations([]);
+    render(<TraceDestinationsSection organizationId="org1" isAdmin />);
+    fireEvent.click(screen.getByRole("button", { name: /new destination/i }));
+
+    fireEvent.change(screen.getByLabelText(/^name$/i), {
+      target: { value: "Honeycomb" },
+    });
+    fireEvent.change(screen.getByLabelText(/endpoint/i), {
+      target: { value: "https://api.honeycomb.io/v1/traces" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^create$/i }));
+
+    await waitFor(() => expect(writes.createDestination).toHaveBeenCalled());
+    const payload = writes.createDestination.mock.calls[0][0];
+    // Convex rejects an unrecognized argument outright, so sending the
+    // update-only flag here failed every create the dialog made. "Every
+    // project" on a create is the ABSENCE of `projectIds`, not a flag.
+    expect(payload).not.toHaveProperty("allProjects");
+    expect(payload).not.toHaveProperty("projectIds");
+  });
 });

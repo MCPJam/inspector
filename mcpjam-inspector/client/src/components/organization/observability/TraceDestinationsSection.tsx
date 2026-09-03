@@ -180,7 +180,11 @@ export function TraceDestinationsSection({
           if (editing) {
             await updateDestination(editing.id, input);
           } else {
-            await createDestination(input as never);
+            // `allProjects` is update-only and the dialog does not emit it on
+            // a create. Destructured off rather than cast away, so the day it
+            // reappears here the compiler says so instead of Convex.
+            const { allProjects: _allProjects, ...createInput } = input;
+            await createDestination(createInput);
           }
           setDialogOpen(false);
         }}
