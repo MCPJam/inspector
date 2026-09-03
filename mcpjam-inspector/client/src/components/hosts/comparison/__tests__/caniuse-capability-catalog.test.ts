@@ -109,14 +109,13 @@ describe("caniuse capability catalog", () => {
   });
 
   it("keeps client compare aligned with caniuse except for protocol version", () => {
-    const publicIds = new Set(
-      PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id)
-    );
-    const compareOnlyIds = CLIENT_COMPARE_FIELDS.filter(
-      (field) => !publicIds.has(field.id)
-    ).map((field) => field.id);
+    const expectedIds = [
+      ...PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id),
+      "mcpProtocolVersion"
+    ].sort();
+    const compareIds = CLIENT_COMPARE_FIELDS.map((field) => field.id).sort();
 
-    expect(compareOnlyIds).toEqual(["mcpProtocolVersion"]);
+    expect(compareIds).toEqual(expectedIds);
   });
 
   it("keeps slugs unique and path-safe", () => {

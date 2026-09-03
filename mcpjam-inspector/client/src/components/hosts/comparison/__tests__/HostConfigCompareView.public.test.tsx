@@ -486,6 +486,7 @@ describe("HostConfigCompareView public mode", () => {
     );
 
     expect(await screen.findByText("Protocol version")).toBeInTheDocument();
+    expect(screen.getByText("Roots")).toBeInTheDocument();
     expect(screen.queryByText("Model")).not.toBeInTheDocument();
     expect(screen.queryByText("Temperature")).not.toBeInTheDocument();
     expect(screen.queryByText("System prompt")).not.toBeInTheDocument();
