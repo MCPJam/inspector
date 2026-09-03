@@ -320,7 +320,10 @@ function VerifiedAtRow({
         >
           <div className="flex min-h-5 items-center justify-center">
             {isVerifiedAtStale(subject.verifiedAt) ? (
-              <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] leading-tight text-muted-foreground">
+              <span
+                title={`Last checked ${formatVerifiedAt(subject.verifiedAt)}`}
+                className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] leading-tight text-muted-foreground"
+              >
                 <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
                 {STALE_VERIFIED_AT_LABEL}
               </span>

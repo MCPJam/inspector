@@ -13,13 +13,21 @@ vi.mock("@/lib/host-compat/use-host-catalog", () => ({
   }),
 }));
 
+// "mcpjam" and "missing" are deliberately absent: a client can name a style
+// the catalog we fetched doesn't carry.
+const CATALOG_HOSTS: Record<string, { id: string; verifiedAt?: number }> = {
+  cursor: { id: "cursor", verifiedAt: CATALOG_VERIFIED_AT },
+  unverified: { id: "unverified" },
+};
+
 vi.mock("@mcpjam/sdk/host-compat", () => ({
-  getCatalogHost: (_catalog: unknown, hostId: string) =>
-    hostId === "unverified"
-      ? { id: hostId }
-      : hostId === "missing"
-        ? undefined
-        : { id: hostId, verifiedAt: CATALOG_VERIFIED_AT },
+  getCatalogHost: (_catalog: unknown, hostId: string) => CATALOG_HOSTS[hostId],
+}));
+
+// Production web stamps this with the deploy time, which only ever applies to
+// the MCPJam profile.
+vi.mock("@/generated/mcpjam-web-deployed-at", () => ({
+  MCPJAM_WEB_DEPLOYED_AT: Date.UTC(2026, 8, 20),
 }));
 
 afterEach(() => {
@@ -55,6 +63,12 @@ describe("HostVerifiedAtStamp", () => {
 
   it("renders nothing for a client with no catalog row", () => {
     renderAt(CATALOG_VERIFIED_AT, "missing");
+    expect(screen.queryByTestId("host-verified-at-stamp")).toBeNull();
+  });
+
+  it("renders nothing for MCPJam when the catalog has no row for it", () => {
+    // The deploy stamp alone must not stand in for a profile we can't read.
+    renderAt(CATALOG_VERIFIED_AT, "mcpjam");
     expect(screen.queryByTestId("host-verified-at-stamp")).toBeNull();
   });
 });

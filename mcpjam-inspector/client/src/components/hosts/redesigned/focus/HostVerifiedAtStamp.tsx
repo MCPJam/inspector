@@ -33,9 +33,13 @@ export function HostVerifiedAtStamp({
     catalogState.status === "live"
       ? getCatalogHost(catalogState.catalog, hostStyle)
       : undefined;
+  // No catalog row (still loading, degraded, or a style we don't track) means
+  // no claim to make — including for MCPJam, whose deploy stamp would
+  // otherwise print a date for a profile we can't read.
+  if (!catalogHost) return null;
   const verifiedAt = resolveVerifiedAt(
     hostStyle,
-    catalogHost?.verifiedAt,
+    catalogHost.verifiedAt,
     MCPJAM_WEB_DEPLOYED_AT,
   );
   if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return null;
