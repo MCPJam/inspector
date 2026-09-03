@@ -12,14 +12,23 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "@/state/app-types";
 
-const { serversRef, statusRef, createMock, onChangeMock } = vi.hoisted(() => ({
-  serversRef: {
-    current: [] as Array<{ _id: string; name: string; url: string }>,
-  },
-  statusRef: { current: {} as Record<string, string> },
-  createMock: vi.fn(),
-  onChangeMock: vi.fn(),
-}));
+const { serversRef, attachmentsRef, statusRef, createMock, onChangeMock } =
+  vi.hoisted(() => ({
+    serversRef: {
+      current: [] as Array<{ _id: string; name: string; url: string }>,
+    },
+    attachmentsRef: {
+      current: [] as Array<{
+        _id: string;
+        name: string;
+        serverIds: string[];
+        resolvedServerNames?: string[];
+      }>,
+    },
+    statusRef: { current: {} as Record<string, string> },
+    createMock: vi.fn(),
+    onChangeMock: vi.fn(),
+  }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -29,7 +38,7 @@ vi.mock("convex/react", () => ({
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({ servers: serversRef.current, isLoading: false }),
   useProjectServerAttachments: () => ({
-    serverAttachments: [],
+    serverAttachments: attachmentsRef.current,
     isLoading: false,
   }),
 }));
@@ -78,6 +87,7 @@ describe("ServerGroupPicker — connection status in the create form", () => {
     vi.clearAllMocks();
     createMock.mockResolvedValue({ _id: "new-id" });
     statusRef.current = {};
+    attachmentsRef.current = [];
   });
 
   it("offers a failed server without ticking it, and names the group after the rest", async () => {
@@ -116,5 +126,68 @@ describe("ServerGroupPicker — connection status in the create form", () => {
 
     expect(screen.getByRole("checkbox", { name: "draw" })).toBeChecked();
     expect(screen.getByLabelText(/group name/i)).toHaveValue("draw");
+  });
+});
+
+/**
+ * Expanding a saved group is how you check what is inside it before picking
+ * it, and it is step 3 of the BB-49 repro ("open the Server dropdown"). The
+ * rows are not focusable, so the label is a visually-hidden node.
+ */
+describe("ServerGroupPicker — connection status on a saved group's servers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    statusRef.current = {};
+    serversRef.current = [];
+    attachmentsRef.current = [
+      {
+        _id: "a-1",
+        name: "excalidraw + 1",
+        serverIds: ["s-excalidraw", "s-test-bad-url"],
+        resolvedServerNames: ["excalidraw", "test-bad-url"],
+      },
+    ];
+  });
+
+  it("marks each server in an expanded group with the status it has", async () => {
+    statusRef.current = { excalidraw: "connected", "test-bad-url": "failed" };
+    const user = userEvent.setup();
+    render(
+      <ServerGroupPicker
+        projectId="p-1"
+        value={null}
+        onChange={onChangeMock}
+        triggerTestId="picker"
+      />,
+    );
+    await user.click(screen.getByTestId("picker"));
+    await user.click(
+      screen.getByRole("button", { name: /show servers in excalidraw \+ 1/i }),
+    );
+
+    expect(screen.getByText("excalidraw")).toBeInTheDocument();
+    expect(screen.getByText("test-bad-url")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+  });
+
+  it("says nothing about a server app state has no status for", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerGroupPicker
+        projectId="p-1"
+        value={null}
+        onChange={onChangeMock}
+        triggerTestId="picker"
+      />,
+    );
+    await user.click(screen.getByTestId("picker"));
+    await user.click(
+      screen.getByRole("button", { name: /show servers in excalidraw \+ 1/i }),
+    );
+
+    expect(screen.getByText("test-bad-url")).toBeInTheDocument();
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Disconnected")).not.toBeInTheDocument();
   });
 });
