@@ -39,9 +39,19 @@ const CLOSE_UNAVAILABLE = 4503;
 /** Every open frame socket, so shutdown can close them. */
 const liveSockets = new Set<{ close(): void }>();
 let shuttingDown = false;
+/**
+ * Bumped by every sweep, latching or not.
+ *
+ * `shuttingDown` alone cannot answer "was this socket's setup overtaken?" for
+ * the NON-latching kill Electron's `window-all-closed` runs: it does not latch,
+ * so a socket still inside `subscribeFrames` when the sweep ran would register
+ * itself afterwards and outlive the cleanup that was meant to take it.
+ */
+let killGeneration = 0;
 
 /** Close every frame socket WITHOUT latching — Electron's window-all-closed. */
 export function killLocalBrowserFrameSockets(): void {
+  killGeneration += 1;
   for (const socket of liveSockets) {
     try {
       socket.close();
@@ -61,6 +71,7 @@ export function shutdownLocalBrowserFrameSockets(): void {
 /** Test seam: the latch is module state for the process lifetime. */
 export function resetLocalBrowserFramesForTests(): void {
   shuttingDown = false;
+  killGeneration = 0;
   liveSockets.clear();
 }
 
@@ -124,12 +135,14 @@ export function createLocalBrowserFramesWsHandler(
     // late setup undo itself instead of leaving a viewport listener attached
     // to a socket nobody is reading.
     let unsubscribe: (() => void) | undefined;
+    let revalidate: (() => void) | undefined;
     let registered: { close(): void } | undefined;
     let closed = false;
     const detach = () => {
       closed = true;
       unsubscribe?.();
       unsubscribe = undefined;
+      revalidate = undefined;
       if (registered) {
         // Removed by IDENTITY, so a reconnect cannot retain the dead
         // `WSContext` of the connection it replaced: without this the set grows
@@ -149,6 +162,7 @@ export function createLocalBrowserFramesWsHandler(
           ws.close(CLOSE_UNAVAILABLE, "The inspector is shutting down.");
           return;
         }
+        const openedAt = killGeneration;
         const session = findLocalBrowserSession(bootId);
         if (!session) {
           ws.close(CLOSE_NOT_FOUND, "That browser is no longer running.");
@@ -197,15 +211,18 @@ export function createLocalBrowserFramesWsHandler(
           ws.close(CLOSE_UNAUTHORIZED, subscription.error);
           return;
         }
-        // Both races the await above opens: the client hung up, or shutdown
-        // swept `liveSockets` while we were subscribing. Either way this socket
-        // must not be registered — it would survive `server.close()`.
-        if (closed || shuttingDown) {
+        // Every race the await above opens: the client hung up, a latching
+        // shutdown began, or a NON-latching sweep ran (Electron closing its
+        // last window) — the last of which `shuttingDown` cannot see, which is
+        // what the generation is for. Registering now would leave this socket
+        // attached after the cleanup that was meant to take it.
+        if (closed || shuttingDown || killGeneration !== openedAt) {
           subscription.unsubscribe();
-          if (!closed) ws.close(CLOSE_UNAVAILABLE, "The inspector is shutting down.");
+          if (!closed) ws.close(CLOSE_UNAVAILABLE, "closed");
           return;
         }
         unsubscribe = subscription.unsubscribe;
+        revalidate = subscription.revalidate;
         registered = { close: () => ws.close(CLOSE_UNAVAILABLE, "closed") };
         liveSockets.add(registered);
         // Watching IS using it: a person with the pane open must not have the
@@ -219,6 +236,13 @@ export function createLocalBrowserFramesWsHandler(
         try {
           const parsed = JSON.parse(String(event.data)) as { type?: unknown };
           if (parsed?.type !== "ping") return;
+          // The heartbeat is also when a watcher's right to watch is re-asked
+          // out of band. Revocation otherwise rides frame delivery, and a
+          // STATIC page delivers none — so a pane that lost the lease would
+          // sit on a frozen picture, unable to tell that apart from a quiet
+          // page.
+          revalidate?.();
+          if (closed) return;
           const session = findLocalBrowserSession(bootId);
           if (session) touchLocalBrowserSession(session.handle);
           ws.send(JSON.stringify({ type: "pong" }));

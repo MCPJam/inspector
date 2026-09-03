@@ -23,6 +23,16 @@ vi.mock("../../../config.js", async () => {
     get LOCAL_HARNESS_ENABLED() {
       return configState.harnessEnabled;
     },
+    // Derived from the mocked HOSTED_MODE the same way the real constant is
+    // derived from the real one. Spreading `actual` would freeze whatever this
+    // machine computed at import time, so a hosted-mode case would assert
+    // `browserAvailable: true` where production forces it false.
+    get LOCAL_BROWSER_ENABLED() {
+      return (
+        !configState.hosted &&
+        process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false"
+      );
+    },
   };
 });
 

@@ -288,10 +288,13 @@ export class ChromiumDriver implements BrowserDriver {
         : "act_failed";
       // Same rule as the success path: the act may have failed, but the page
       // it failed on can still be someone's now. `permit()` decides whether we
-      // may say anything about it beyond "it failed".
-      const frame = permit()
+      // may say anything about it beyond "it failed" — asked before the read
+      // to avoid making it, and again after, because the read is an await and
+      // a handoff can land inside it.
+      const before = permit()
         ? await this.snapshot(page).catch(() => null)
         : null;
+      const frame = permit() ? before : null;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -438,6 +441,15 @@ export class ChromiumDriver implements BrowserDriver {
         error:
           "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools",
       };
+    }
+    // Before the CALL, not only before its result: resolving the bridge is an
+    // await, and a page's own tool changes the page — running one under
+    // somebody else's hands is the agent acting during a handoff, whatever we
+    // then decide to return.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the page's tool could be called; nothing was run",
+      );
     }
     try {
       const { invocationId, output } = await bridge.invoke({

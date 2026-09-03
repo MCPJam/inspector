@@ -113,6 +113,15 @@ export interface BuiltInToolContext {
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
   /**
+   * What THIS unattended run is — an eval iteration id, a simulated session
+   * id. Required for an unattended browser and ignored otherwise: the
+   * throwaway profile is keyed by it, and neither the project nor the swarm
+   * identifies a run (a swarm fans out many, a suite runs many iterations
+   * against one project), so without it two concurrent runs would share one
+   * Chromium and each other's logged-in state.
+   */
+  runKey?: string;
+  /**
    * True when the acting identity is a guest. Computer-backed tools are not
    * advertised to guests (the backend also omits `computer` from guest
    * runtime configs, and rejects guests at reserve — this is the middle of
@@ -588,6 +597,12 @@ export function resolveHostTools(
         projectId: ctx.projectId,
         engine: isLocalBrowser ? "local" : "hosted",
         ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
+        // The run's own identity, falling back to the chat session when a
+        // surface has one — both name a single run, which is all the ephemeral
+        // profile key needs. Unused on an interactive turn.
+        ...(ctx.runKey ?? ctx.chatSessionId
+          ? { runKey: ctx.runKey ?? ctx.chatSessionId }
+          : {}),
         // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
         // every surface which threads no approval safe without editing it.
         ...(ctx.browserApprovalDelivery

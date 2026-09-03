@@ -969,6 +969,61 @@ describe("ChromiumDriver — a handoff that lands DURING the read", () => {
     expect(result.output).toBeUndefined();
   });
 
+  it("does not CALL a page's tool once control has changed", async () => {
+    // Not just "withhold the result": a WebMCP tool changes the page. Running
+    // one under somebody else's hands is the agent acting during a handoff,
+    // whatever we then decide to return.
+    const lease = new HandoffLease();
+    const invocations: string[] = [];
+    const page = fakePage({
+      url: "https://example.com/",
+      onWebmcp: () => lease.acquire("rail-1", 60_000),
+      webmcp: {
+        isSupported: () => true,
+        list: () => [],
+        async invoke({ toolName }: { toolName: string }) {
+          invocations.push(toolName);
+          return { invocationId: "inv-1", output: "ok" };
+        },
+        async cancel() {
+          return true;
+        },
+      } as never,
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+
+    const result = await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "transfer_funds", input: {} }),
+    );
+
+    expect(result.leaseBlocked).toBe(true);
+    expect(invocations).toEqual([]);
+  });
+
+  it("withholds the page state a FAILED act would otherwise report", async () => {
+    // The failure branch hands back the current URL and a fresh token so the
+    // model can see what it hit. That is still a read of the page.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://example.com/",
+      actError: new Error("no element matches #pay"),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+
+    page.onAct = () => lease.acquire("rail-1", 60_000);
+    const result = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { selector: "#pay" } }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toBeUndefined();
+    expect(result.stateToken).toBeUndefined();
+  });
+
   it("says the ACT ran even though its result is withheld", async () => {
     const lease = new HandoffLease();
     const page = fakePage({ url: "https://example.com/" });

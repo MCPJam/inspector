@@ -847,3 +847,79 @@ describe("resolveHostTools — browser on a machine that cannot serve it", () =>
     });
   });
 });
+
+/**
+ * The plumbing an unattended browser needs, checked THROUGH the registry
+ * rather than by handing `buildBrowserTools` a key directly — a unit test that
+ * supplies one itself cannot notice that no real caller does.
+ */
+describe("resolveHostTools — an unattended run names itself", () => {
+  function withHostedBrowserFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  const unattended = {
+    kind: "unattended" as const,
+    policy: { mode: "allow_all" as const },
+  };
+
+  it("builds them for a run that carries an iteration id", () => {
+    withHostedBrowserFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          // What `evals-runner` threads: this iteration, not this suite.
+          runKey: "iteration-7",
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+    });
+  });
+
+  it("falls back to the simulated session id a journey already carries", () => {
+    withHostedBrowserFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          chatSessionId: "sim-session-1",
+          browserApprovalDelivery: unattended,
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+    });
+  });
+
+  it("advertises nothing when the run cannot name itself at all", () => {
+    // Fail-closed rather than share: two runs on one project would otherwise
+    // get one throwaway Chromium and each other's logged-in state.
+    withHostedBrowserFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          chatSessionId: undefined,
+          browserApprovalDelivery: unattended,
+          onToolSuppressed: (i: { id: string; reason: string }) =>
+            suppressed.push(i),
+        },
+      );
+      expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
+      expect(suppressed[0]?.reason).toContain("name the run");
+    });
+  });
+});

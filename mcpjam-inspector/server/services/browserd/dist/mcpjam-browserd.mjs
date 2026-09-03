@@ -540,6 +540,11 @@ var BrowserdRequestHandler = class {
       unsubscribe: () => {
         live = false;
         unsubscribe?.();
+      },
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (lost) revoke(lost);
       }
     };
   }
@@ -1765,7 +1770,8 @@ var ChromiumDriver = class {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const frame2 = permit() ? await this.snapshot(page).catch(() => null) : null;
+      const before = permit() ? await this.snapshot(page).catch(() => null) : null;
+      const frame2 = permit() ? before : null;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -1873,6 +1879,11 @@ var ChromiumDriver = class {
         ok: false,
         error: "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools"
       };
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the page's tool could be called; nothing was run"
+      );
     }
     try {
       const { invocationId, output } = await bridge.invoke({

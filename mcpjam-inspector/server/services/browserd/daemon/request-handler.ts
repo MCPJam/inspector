@@ -252,7 +252,20 @@ export class BrowserdRequestHandler {
      */
     onRevoked?: (reason: LeaseRefusal) => void;
   }): Promise<
-    { ok: true; unsubscribe: () => void } | { ok: false; error: string }
+    | {
+        ok: true;
+        unsubscribe: () => void;
+        /**
+         * Re-ask the lease question out of band.
+         *
+         * Revoking on frame delivery covers a page that is painting. A STATIC
+         * page paints nothing, so a watcher who lost the lease would sit on a
+         * frozen picture indefinitely with no way to tell that apart from a
+         * quiet page. The transport calls this on its own heartbeat.
+         */
+        revalidate: () => void;
+      }
+    | { ok: false; error: string }
   > {
     const refusal = this.watcherRefusal(args.holder);
     if (refusal) return { ok: false, error: refusal };
@@ -294,6 +307,11 @@ export class BrowserdRequestHandler {
       unsubscribe: () => {
         live = false;
         unsubscribe?.();
+      },
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (lost) revoke(lost);
       },
     };
   }

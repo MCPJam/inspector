@@ -45,9 +45,11 @@ const sessionState = vi.hoisted(() => ({
     listener: (frame: unknown) => void;
     onRevoked?: (reason: string) => void;
     unsubscribed: boolean;
+    revalidated: number;
   }>,
   touches: 0,
   refuse: null as string | null,
+  revokeOnRevalidate: false,
 }));
 
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
@@ -67,12 +69,18 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
           if (sessionState.refuse) {
             return { ok: false as const, error: sessionState.refuse };
           }
-          const entry = { ...args, unsubscribed: false };
+          const entry = { ...args, unsubscribed: false, revalidated: 0 };
           sessionState.subscriptions.push(entry);
           return {
             ok: true as const,
             unsubscribe: () => {
               entry.unsubscribed = true;
+            },
+            revalidate: () => {
+              entry.revalidated += 1;
+              if (sessionState.revokeOnRevalidate) {
+                entry.onRevoked?.("lease_held");
+              }
             },
           };
         },
@@ -157,6 +165,7 @@ beforeEach(async () => {
   sessionState.subscriptions = [];
   sessionState.touches = 0;
   sessionState.refuse = null;
+  sessionState.revokeOnRevalidate = false;
   server = await startServer();
 });
 
@@ -265,5 +274,41 @@ describe("the agent browser's frame socket", () => {
     const closed = await waitForClose(ws);
     expect(closed.code).toBe(4401);
     expect(closed.reason).toBe("lease_held");
+  });
+});
+
+describe("the agent browser's frame socket — losing the right to watch", () => {
+  it("closes a watcher whose lease moved even when the page paints nothing", async () => {
+    // Revocation rides frame delivery, and a STATIC page delivers none — so
+    // without this the pane sits on a frozen picture, unable to tell "somebody
+    // took control" apart from "the page is quiet".
+    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+
+    sessionState.revokeOnRevalidate = true;
+    const closed = waitForClose(ws);
+    ws.send(JSON.stringify({ type: "ping" }));
+
+    expect((await closed).code).toBe(4401);
+    expect(sessionState.subscriptions[0]?.revalidated).toBeGreaterThan(0);
+  });
+
+  it("re-asks on every heartbeat while the lease is still theirs", async () => {
+    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+
+    const pong = new Promise<void>((resolve) => {
+      ws.on("message", (data) => {
+        if (JSON.parse(String(data)).type === "pong") resolve();
+      });
+    });
+    ws.send(JSON.stringify({ type: "ping" }));
+    await pong;
+
+    expect(sessionState.subscriptions[0]?.revalidated).toBe(1);
+    expect(sessionState.subscriptions[0]?.unsubscribed).toBe(false);
+    ws.close();
   });
 });
