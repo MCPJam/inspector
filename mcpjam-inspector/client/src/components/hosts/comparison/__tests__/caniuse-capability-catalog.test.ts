@@ -2,12 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   CANIUSE_CAPABILITIES,
   CANIUSE_LAST_VERIFIED_DATE,
+  CLIENT_COMPARE_FIELDS,
   PUBLIC_CAN_I_USE_FIELDS,
   buildCaniuseCapabilityPath,
   getCaniuseCapabilityForField,
   getCaniuseCapabilityBySlug,
+  getCaniuseSupportLabel,
+  getCaniuseSupportLevel,
+  caniuseFieldHasPresetData,
+  clientCompareFieldsWithData,
+  publicCaniuseFieldsWithData,
 } from "../caniuse-capability-catalog";
-import { hostConfigField } from "@/lib/host-config-field-schema";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import {
+  hostConfigField,
+  type HostComparisonSubject,
+} from "@/lib/host-config-field-schema";
 
 describe("caniuse capability catalog", () => {
   it("includes stable public capability slugs", () => {
@@ -47,6 +57,53 @@ describe("caniuse capability catalog", () => {
     );
   });
 
+  it("includes the widget tool-result and sandbox storage probe rows", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "toolResult.structuredContent",
+        "toolResult.content.text",
+        "toolResult.content.resourceLink",
+        "sandbox.browserStorage.localStorage",
+        "sandbox.browserStorage.sessionStorage",
+        "sandbox.browserStorage.indexedDB",
+      ])
+    );
+
+    const config = emptyHostConfigInputV2() as never;
+    expect(
+      getCaniuseSupportLevel(
+        hostConfigField("toolResult.structuredContent"),
+        config
+      )
+    ).toBe("unknown");
+    expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
+  });
+
+  it("publishes pagination as a yes/no row, unknown until probed", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toContain("paginationTraversal");
+
+    const field = hostConfigField("paginationTraversal");
+    const withValue = (value: string) =>
+      ({
+        ...emptyHostConfigInputV2(),
+        mcpProfile: { profileVersion: 1, paginationTraversal: value },
+      }) as never;
+
+    // Binary by design: a client either follows nextCursor or stops at page
+    // one. There is no partial state to render.
+    expect(getCaniuseSupportLevel(field, withValue("full"))).toBe("supported");
+    expect(getCaniuseSupportLevel(field, withValue("firstPageOnly"))).toBe(
+      "unsupported"
+    );
+
+    // A host nobody probed must never be published as failing.
+    expect(
+      getCaniuseSupportLevel(field, emptyHostConfigInputV2() as never)
+    ).toBe("unknown");
+  });
+
   it("excludes config-only fields from public capability pages", () => {
     const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
     expect(ids).not.toContain("modelId");
@@ -55,6 +112,16 @@ describe("caniuse capability catalog", () => {
     expect(ids).not.toContain("clientInfo.name");
     expect(ids).not.toContain("connectionDefaults.headers");
     expect(ids).not.toContain("connectionDefaults.requestTimeout");
+  });
+
+  it("keeps client compare aligned with caniuse except for protocol version", () => {
+    const expectedIds = [
+      ...PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id),
+      "mcpProtocolVersion"
+    ].sort();
+    const compareIds = CLIENT_COMPARE_FIELDS.map((field) => field.id).sort();
+
+    expect(compareIds).toEqual(expectedIds);
   });
 
   it("keeps slugs unique and path-safe", () => {
@@ -70,5 +137,63 @@ describe("caniuse capability catalog", () => {
 
   it("uses a static latest verification date for v1", () => {
     expect(CANIUSE_LAST_VERIFIED_DATE).toBe("2026-08-14");
+  });
+});
+
+describe("unmeasured rows stay off the public surface", () => {
+  const legacyField = hostConfigField("toolCallCancellation.legacy");
+  const modernField = hostConfigField("toolCallCancellation.modern");
+
+  const subjectWith = (
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean }
+  ): Record<string, HostComparisonSubject> => ({
+    "preset:claude": {
+      hostName: "Claude",
+      config: {
+        ...emptyHostConfigInputV2(),
+        id: "preset:claude",
+        schemaVersion: 2,
+        mcpProfile: {
+          profileVersion: 1,
+          ...(toolCallCancellation !== undefined
+            ? { toolCallCancellation }
+            : {}),
+        },
+      },
+    } as HostComparisonSubject,
+  });
+
+  it("hides a field no published host carries a value for", () => {
+    for (const field of [legacyField, modernField]) {
+      expect(caniuseFieldHasPresetData(field, subjectWith())).toBe(false);
+      expect(publicCaniuseFieldsWithData(subjectWith())).not.toContain(field);
+      expect(clientCompareFieldsWithData(subjectWith())).not.toContain(field);
+    }
+  });
+
+  it("shows it as soon as one host has a value", () => {
+    // One real host is the whole bar — the row exists to be compared, and a
+    // single measured column already answers the question for that host.
+    const measured = subjectWith({ legacy: false });
+    expect(caniuseFieldHasPresetData(legacyField, measured)).toBe(true);
+    expect(publicCaniuseFieldsWithData(measured)).toContain(legacyField);
+  });
+
+  it("gates the two eras independently", () => {
+    // A 2025-only measurement must not publish a 2026 row nobody has probed:
+    // the eras are separate questions with separate evidence.
+    const legacyOnly = subjectWith({ legacy: false });
+    expect(caniuseFieldHasPresetData(modernField, legacyOnly)).toBe(false);
+    expect(publicCaniuseFieldsWithData(legacyOnly)).not.toContain(modernField);
+  });
+
+  it("reads an unmeasured host as not-yet-tested rather than unsupported", () => {
+    // The enum would otherwise resolve to "neutral", which renders as "Not
+    // supported" — publishing a claim about a host nobody probed.
+    const config = subjectWith()["preset:claude"]!.config;
+    for (const field of [legacyField, modernField]) {
+      expect(getCaniuseSupportLevel(field, config)).toBe("unknown");
+    }
+    expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
   });
 });

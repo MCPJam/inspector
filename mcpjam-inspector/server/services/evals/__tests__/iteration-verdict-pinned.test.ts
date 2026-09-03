@@ -5,14 +5,33 @@ import { describe, expect, test } from "vitest";
 import { buildEvalIterationVerdict } from "../iteration-verdict.js";
 
 // =============================================================================
-// `passed` is the SOLE authority, in every grading mode. B3a adds a score
-// projection and an advisory judge; neither is allowed anywhere near this
-// module, so the assertion is structural rather than behavioural:
+// AMENDED IN B3b, DELIBERATELY. Read this before the tests.
 //
-//   1. the module's import list is exactly what it was before B3a — no score
-//      contract, no grading mode, no judge, no second pass. A verdict that
-//      cannot see the score engine cannot be influenced by it.
-//   2. its output is unchanged for the same inputs.
+// B3a pinned "`passed` is the SOLE authority, in every grading mode". B3b is
+// the step that makes the versioned score contract authoritative, so that
+// claim is now scoped: it holds in every mode BELOW `enforce`, and at
+// `enforce` the iteration's result is derived from its gating score rows
+// instead (`allGatingScorersPassed`, in the SDK contract).
+//
+// The replacement pin ships in the SAME diff — see
+// `finalize-iteration-enforce.test.ts`, which asserts the derived result over
+// a corpus that includes error, skipped and advisory rows. A pin weakened in
+// one PR and replaced in another is a pin that was simply deleted, with a
+// promise attached.
+//
+// WHAT DOES NOT CHANGE, and is what this file still pins:
+//
+//   1. THE IMPORT SEAL. `iteration-verdict.ts` still cannot see the score
+//      contract, the grading mode, the judge or the second pass. This is the
+//      load-bearing half and it is UNTOUCHED: at `enforce` the score rows are
+//      a projection of what this module decided, so a module that could see
+//      them would be grading its own output. That is what would make a
+//      mismatch between the two impossible to detect — and detecting it is the
+//      entire safety mechanism of the cutover.
+//   2. THE OUTPUT SNAPSHOT. Same inputs, same verdict, byte for byte. The
+//      evaluation itself does not retire in B3b; the parallel verdict
+//      ARITHMETIC does. The matcher, the predicates and the gates all still
+//      decide, and the rows report what they decided.
 //
 // If a future change legitimately needs a new import here, that is a decision
 // to be made deliberately: update the allowlist AND explain why the verdict

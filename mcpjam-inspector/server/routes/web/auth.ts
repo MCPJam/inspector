@@ -4,6 +4,7 @@ import {
   MCPClientManager,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  withSkillsExtensionCapability,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import type {
@@ -824,6 +825,7 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   /**
    * A plugin stdio component that IS reachable: a live shim, recorded in
@@ -872,6 +874,9 @@ export function toHttpConfig(
           : {}),
         ...(initializePins?.supportsMrtr === false
           ? { supportsMrtr: false }
+          : {}),
+        ...(initializePins?.toolCallCancellation
+          ? { toolCallCancellation: initializePins.toolCallCancellation }
           : {}),
       };
     }
@@ -954,6 +959,9 @@ export function toHttpConfig(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.toolCallCancellation
+      ? { toolCallCancellation: initializePins.toolCallCancellation }
+      : {}),
   };
 }
 
@@ -974,6 +982,7 @@ function resolveEffectiveInitializePinsForServer(
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -987,6 +996,7 @@ function resolveEffectiveInitializePinsForServer(
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -1020,6 +1030,9 @@ function resolveEffectiveInitializePinsForServer(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.toolCallCancellation
+      ? { toolCallCancellation: initializePins.toolCallCancellation }
+      : {}),
   };
 
   return Object.keys(resolved).length > 0 ? resolved : undefined;
@@ -1035,6 +1048,25 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
+    /**
+     * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
+     *
+     * Opt-in, and deliberately not the norm. Most hosted connections EMULATE a
+     * third-party host, and the debugger's promise is that the wire shows what
+     * that host would send — advertising skills on an emulated Cursor persona
+     * would be a lie about Cursor. Surfaces that emulate no persona (MCPJam's
+     * own agent turn) pass this, because they ship the fulfiller: the verified
+     * read path in `server-skills.ts`, merged into the toolset by
+     * `withServerSkills`.
+     *
+     * Set on DEFAULTS rather than per-server `clientCapabilities` on purpose.
+     * The latter is advertised VERBATIM (see `MCPClientManager`'s exact-set
+     * branch), so putting the extension there would replace a connection's
+     * whole declaration — silently dropping elicitation — and would also
+     * override a host config that pinned its own set. Defaults merge, and a
+     * pinned exact set still wins.
+     */
+    advertiseSkillsExtension?: boolean;
     scenarioId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
@@ -1069,6 +1101,7 @@ export async function createAuthorizedManager(
       /** Client-conformance knobs; host-level, so batch-uniform. */
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
@@ -1815,6 +1848,9 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    ...(options?.advertiseSkillsExtension
+      ? { defaultCapabilities: withSkillsExtensionCapability({}) }
+      : {}),
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
@@ -1933,6 +1969,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -1968,13 +2005,22 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Same one-explicit-value rule for the sibling knobs.
   const truncatePagination = raw.firstPageOnly === true;
   const disableMrtr = raw.supportsMrtr === false;
+  const rawCancellation =
+    raw.toolCallCancellation && typeof raw.toolCallCancellation === "object"
+      ? (raw.toolCallCancellation as { legacy?: unknown; modern?: unknown })
+      : undefined;
+  const cancellationLeaves: { legacy?: boolean; modern?: boolean } = {};
+  if (rawCancellation?.legacy === false) cancellationLeaves.legacy = false;
+  if (rawCancellation?.modern === false) cancellationLeaves.modern = false;
+  const disableCancellation = Object.keys(cancellationLeaves).length > 0;
   const initializePins =
     initializeClientInfo ||
     initializeSupportedVersions ||
     initializeWireMode ||
     suppressParamMirroring ||
     truncatePagination ||
-    disableMrtr
+    disableMrtr ||
+    disableCancellation
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -1985,6 +2031,9 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
+          ...(disableCancellation
+            ? { toolCallCancellation: cancellationLeaves }
+            : {}),
           ...(suppressParamMirroring ? { mirrorToolParamHeaders: false } : {}),
         }
       : undefined;
@@ -2109,6 +2158,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     mrtrInputCollectorForServer?: (
       serverId: string
     ) => MrtrInputCollector | undefined;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    advertiseSkillsExtension?: boolean;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -2199,6 +2250,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       accessScope,
       scenarioId,
       accessVersion,
+      ...(options?.advertiseSkillsExtension
+        ? { advertiseSkillsExtension: true }
+        : {}),
       rpcLogger: options?.rpcLogger,
       httpLogger: options?.httpLogger,
       serverNames,
@@ -2308,7 +2362,16 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
+    // helper dials the caller's OWN MCP server, and a connection-class failure
+    // left as `502 SERVER_UNREACHABLE` / `504 TIMEOUT` is exactly what the
+    // hosted edge replaces with its own error page — discarding the JSON
+    // envelope that carries the reason, so the browser was left with a bare
+    // "Request failed (502)" and no way to learn why (BB-48). The downgrade to
+    // 424 still requires the message to positively name an MCP server, so this
+    // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
+    // Convex deployment — keeps its 5xx and keeps paging us.
+    const routeError = mapTargetServerError(error);
     return webErrorFromRoute(
       c,
       routeError,

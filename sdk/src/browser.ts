@@ -477,6 +477,10 @@ export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 // instead of re-typing the message — it is the server under test violating
 // RFC 8414, which a host may want to treat differently from its own errors.
 export { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./oauth/state-machines/shared/required-metadata.js";
+// The debug proxy's own failures use a different error shape. This classifier
+// lets browser hosts keep a target server's authenticated-request rejection in
+// the debugger without sending it to their own exception tracker.
+export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
 // OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
 // client-name-free — per-client profiles live in the private backend.
 export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
@@ -526,6 +530,17 @@ export {
   type InsufficientScopeChallenge,
   type StepUpAuthMode,
   type StepUpAction,
+} from "./oauth/state-machines/shared/challenges.js";
+// The unauthenticated probe's acceptance gate. Exported so the debugger UI
+// decides "is this exchange an expected challenge?" from the same rule the flow
+// advances on, rather than re-testing `status === 401` and painting an accepted
+// 403 as a failure.
+export {
+  classifyUnauthenticatedProbe,
+  hasBearerChallenge,
+  isUnauthenticatedProbeChallenge,
+  UNAUTHENTICATED_PROBE_STEP,
+  type UnauthenticatedProbeOutcome,
 } from "./oauth/state-machines/shared/challenges.js";
 export type {
   OAuthAuthorizationRequestResult,
@@ -819,6 +834,7 @@ export type {
 } from "./sandbox-policy.js";
 // MCP protocol-version constants + predicates. Browser-safe by
 // construction (pure data + pure functions, no Node deps).
+export { cancellationLeafForVersion } from "./host-config/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
@@ -1010,3 +1026,4 @@ export type {
   SkillsExtListResult,
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
+export { modelRejectsTemperature } from "./model-sampling-support.js";

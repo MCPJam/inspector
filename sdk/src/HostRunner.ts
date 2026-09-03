@@ -17,9 +17,10 @@ import type {
   StepResult,
 } from "ai";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
+import { modelRejectsTemperature } from "./model-sampling-support.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
@@ -48,6 +49,7 @@ import type { ModelVisibleMcpToolResults } from "./host-config/types.js";
 import type { HostJson } from "./host-config/public-types.js";
 import {
   extractHostExecutionPolicy,
+  resolveOpenAiCompatCapabilitiesForHostConfig,
   resolveOpenAiCompatForHostConfig,
   type HostExecutionPolicy,
 } from "./host-config/internal.js";
@@ -223,6 +225,16 @@ export class HostRunner implements HostExecutor {
     | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
   private readonly injectOpenAiCompat: boolean;
+  /**
+   * Per-method `window.openai.*` surface the injected shim should expose,
+   * from the host's `apps.compatRuntime.openaiAppsOverrides`. `undefined`
+   * when the host declares none — the injector then omits the field and the
+   * runtime keeps its full-surface default, so snapshots for those hosts are
+   * byte-identical to before this was wired up.
+   */
+  private readonly openAiCompatCapabilities:
+    | Record<string, unknown>
+    | undefined;
 
   /**
    * Immutable host snapshot driving this runner, if constructed with a
@@ -325,6 +337,9 @@ export class HostRunner implements HostExecutor {
       (this.hostSnapshot
         ? resolveOpenAiCompatForHostConfig(this.hostSnapshot) === true
         : false);
+    this.openAiCompatCapabilities = this.hostSnapshot
+      ? resolveOpenAiCompatCapabilitiesForHostConfig(this.hostSnapshot)
+      : undefined;
 
     // Parse the model string once to extract provider/model metadata
     try {
@@ -355,8 +370,8 @@ export class HostRunner implements HostExecutor {
       error instanceof Error
         ? `: ${error.message}`
         : error
-          ? `: ${String(error)}`
-          : "";
+        ? `: ${String(error)}`
+        : "";
     console.warn(
       `[mcpjam/sdk] skipped widget snapshot for "${toolName}"${
         suffix || `: ${message}`
@@ -413,20 +428,12 @@ export class HostRunner implements HostExecutor {
       return;
     }
 
-    // `getToolMetadata` returns the tool's `_meta` contents, so wrap it back
-    // into a `_meta` carrier for the SDK helper — which resolves the nested
-    // `_meta.ui.resourceUri` AND the deprecated flat `_meta["ui/resourceUri"]`
-    // key (legacy servers still emit the latter). The helper throws on a
-    // malformed URI; swallow that here so a misbehaving server can't crash the
-    // passive widget-snapshot capture.
-    let resourceUri: string | undefined;
-    try {
-      resourceUri = getToolUiResourceUri({
-        _meta: toolMetadata,
-      } as Parameters<typeof getToolUiResourceUri>[0]);
-    } catch {
-      return;
-    }
+    // `getToolMetadata` returns the tool's `_meta` contents, which the resolver
+    // takes directly — it reads the nested `_meta.ui.resourceUri` AND the
+    // deprecated flat `_meta["ui/resourceUri"]` key (legacy servers still emit
+    // the latter), and answers null on a malformed URI so a misbehaving server
+    // can't crash the passive widget-snapshot capture.
+    const resourceUri = resolveToolUiResourceUri(toolMetadata);
     if (!resourceUri) {
       return;
     }
@@ -476,6 +483,11 @@ export class HostRunner implements HostExecutor {
           theme: "dark",
           viewMode: "inline",
           viewParams: {},
+          // Omitted when the host declares no overrides, which keeps the
+          // runtime on its full-surface default and the config byte-identical.
+          ...(this.openAiCompatCapabilities
+            ? { capabilities: this.openAiCompatCapabilities }
+            : {}),
         });
       }
       snapshot.injectedOpenAiCompat = this.injectOpenAiCompat;
@@ -732,10 +744,13 @@ export class HostRunner implements HostExecutor {
         ...(contextMessages.length > 0
           ? { messages: [...contextMessages, userMessage] }
           : { prompt: message }),
-        // Only include temperature if explicitly set (some models like reasoning models don't support it)
-        ...(this.temperature !== undefined && {
-          temperature: this.temperature,
-        }),
+        // Only include temperature if explicitly set (some models like reasoning
+        // models don't support it), and never for a model that 400s on the field
+        // being present at all — the key has to be absent, not undefined.
+        ...(this.temperature !== undefined &&
+          !modelRejectsTemperature(this.model) && {
+            temperature: this.temperature,
+          }),
         ...(options?.abortSignal !== undefined && {
           abortSignal: options.abortSignal,
         }),
@@ -835,10 +850,10 @@ export class HostRunner implements HostExecutor {
         abortReason instanceof Error
           ? abortReason.message
           : abortReason != null
-            ? String(abortReason)
-            : error instanceof Error
-              ? error.message
-              : String(error);
+          ? String(abortReason)
+          : error instanceof Error
+          ? error.message
+          : String(error);
       spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },

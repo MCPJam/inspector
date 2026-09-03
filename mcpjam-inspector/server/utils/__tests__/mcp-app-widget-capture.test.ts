@@ -278,3 +278,64 @@ describe("captureMcpAppWidgetSnapshots — skipToolCallIds", () => {
     expect(snapshots?.[0]?.widgetHtmlBlobId).toBe("html-1");
   });
 });
+
+// INSPECTOR-CLIENT-227: tool `_meta` arrives verbatim from the connected
+// server, so one tool declaring a malformed resourceUri must drop out of the
+// batch rather than throw the whole capture away.
+describe("captureMcpAppWidgetSnapshots — malformed tool metadata", () => {
+  const toolMessages = (
+    toolCallId: string,
+    toolName: string,
+  ): ModelMessage[] =>
+    [
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId, toolName, input: {} }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId,
+            toolName,
+            serverId: "server-1",
+            output: { type: "json", value: {} },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+  test("skips the malformed tool and still captures the valid one", async () => {
+    const readResource = vi.fn(async () => ({
+      contents: [{ mimeType: "text/html", text: "<html>widget</html>" }],
+    }));
+    const manager = {
+      getAllToolsMetadata: vi.fn(() => ({
+        broken_widget: { ui: { resourceUri: "" } },
+        good_widget: { ui: { resourceUri: "ui://widget/main" } },
+      })),
+      readResource,
+    } as unknown as MCPClientManager;
+    const { client } = makeClient("https://convex.example/upload");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => okJson({ storageId: "html-1" })),
+    );
+
+    const snapshots = await captureMcpAppWidgetSnapshots({
+      messages: [
+        ...toolMessages("call-broken", "broken_widget"),
+        ...toolMessages("call-good", "good_widget"),
+      ],
+      mcpClientManager: manager,
+      convexClient: client,
+    });
+
+    expect(snapshots?.map((s) => s.toolCallId)).toEqual(["call-good"]);
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(readResource).toHaveBeenCalledWith("server-1", {
+      uri: "ui://widget/main",
+    });
+  });
+});

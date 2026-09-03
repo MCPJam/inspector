@@ -1,12 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 /**
  * The rail's Shell tab is engine-aware: the CLOUD controller
  * (`useComputerTerminal`, which reserves/wakes a real cloud box on open) must
  * never be mounted while the project's computer engine is local. These suites
  * pin exactly that — plus the indicator chip and the local body's three states
- * (unconsented / terminal available / terminal unavailable).
+ * (unconsented / open-terminal prompt / terminal unavailable).
  */
 
 const engineState = vi.hoisted(() => ({
@@ -74,11 +74,33 @@ vi.mock("@/components/computer/ComputerTerminalPane", () => ({
   ComputerTerminalPane: () => <div data-testid="cloud-terminal-pane" />,
 }));
 
+// The bare terminal the LOCAL body mounts (xterm won't run under jsdom).
+vi.mock("@/components/computer/ComputerTerminal", () => ({
+  ComputerTerminal: () => <div data-testid="local-terminal" />,
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (s: { themeMode: string }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
+
+vi.mock("@/lib/local-computer-consent", () => ({
+  mintLocalTerminalNonce: vi.fn(),
+}));
+
 vi.mock("@/stores/harness-workdir-store", () => ({
   useHarnessWorkdir: () => undefined,
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
+// The pane itself is exercised in its own suite; here it only has to say
+// whether the rail considers it the visible tab.
+vi.mock("@/components/browser/LocalBrowserBody", () => ({
+  LocalBrowserBody: ({ active }: { active?: boolean }) => (
+    <div data-testid="browser-pane" data-active={String(active)} />
+  ),
+}));
 
 import { PlaygroundRightRail } from "../PlaygroundRightRail";
 
@@ -200,14 +222,22 @@ describe("PlaygroundRightRail — local engine body", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("points at the Computer tab's terminal when one is available", () => {
+  it("offers Open terminal and mounts the LOCAL pane on click — never the cloud controller", () => {
     engineState.engine = "local";
     engineState.granted = true;
     engineState.localTerminalAvailable = true;
     renderRail();
+    // Idle until asked: a PTY is a real shell on the user's machine, and both
+    // rail bodies stay mounted, so nothing may spawn one on Playground load.
     expect(
       screen.getByTestId("rail-local-terminal-pointer"),
     ).toBeInTheDocument();
+    expect(screen.queryByTestId("local-terminal")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /open terminal/i }));
+    expect(screen.getByTestId("local-terminal")).toBeInTheDocument();
+    expect(screen.queryByTestId("cloud-terminal-pane")).not.toBeInTheDocument();
+    expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
   });
 
   it("degrades honestly when the local terminal isn't available", () => {
@@ -282,5 +312,64 @@ describe("PlaygroundRightRail — no computer attached", () => {
     );
     expect(screen.getByTestId("logger-view")).toBeInTheDocument();
     expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlaygroundRightRail — the Browser tab", () => {
+  const browserHost = {
+    computer: { workdir: "/home/user" },
+    builtInToolIds: ["browser"],
+  } as any;
+
+  function renderWithBrowser() {
+    return render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+  }
+
+  it("tells the pane whether it is the tab being looked at", () => {
+    // Mounted-hidden is not "being watched": the pane heartbeats to defer the
+    // browser's idle reap, and one behind the Logs tab must stop claiming
+    // somebody is looking at it.
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderWithBrowser();
+
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
+  });
+
+  it("falls back to Logs when the Browser tab disappears under it", () => {
+    // Switching the engine to cloud hid the Browser body and left `activeTab`
+    // on it, so all three panes were hidden and the rail looked broken.
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    const { rerender } = renderWithBrowser();
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
+
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    rerender(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+
+    expect(screen.queryByTestId("browser-pane")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cloud-terminal-pane")).toBeInTheDocument();
   });
 });

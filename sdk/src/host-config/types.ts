@@ -22,7 +22,10 @@
  * Pure + browser-safe: no `convex/values`, no `ctx.db`, no Node-only APIs.
  */
 
-import type { McpProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
+import {
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "../mcp-client-manager/mcp-protocol-version.js";
 
 export type { McpProtocolVersion };
 
@@ -61,15 +64,16 @@ export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
  * Adding a runtime is a one-line addition here + a registry adapter + tests —
  * never a schema migration (absent ⇒ emulated still hashes byte-identically).
  */
-export const HARNESS_IDS = ["claude-code", "codex"] as const;
+export const HARNESS_IDS = ["claude-code", "codex", "cursor"] as const;
 
 /**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
  * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
- * OpenAI Codex. Extensible to additional runtimes (e.g. `"pi"`) later without a
- * schema migration.
+ * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP.
+ * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
+ * migration.
  */
 export type Harness = (typeof HARNESS_IDS)[number];
 
@@ -241,6 +245,26 @@ export const MRTR_SUPPORT_MODES = [
   "none",
 ] as const satisfies readonly MrtrSupport[];
 
+
+/**
+ * Which cancellation leaf a connection on `version` is governed by.
+ *
+ * The two leaves are measured per era, but a CONNECTION only ever speaks one,
+ * so the leaf is resolved once — where the version is already known — and the
+ * client is handed a single yes/no. It never has to ask the live connection
+ * what era it landed on.
+ *
+ * An unresolved version (`"auto"`, or absent) reads as `"modern"`: auto
+ * negotiates newest-first, so that is the era such a connection lands on
+ * against any server that supports it.
+ */
+export function cancellationLeafForVersion(
+  version: string | undefined,
+): "legacy" | "modern" {
+  if (version === undefined || version === "auto") return "modern";
+  return isStatelessProtocolVersion(version) ? "modern" : "legacy";
+}
+
 /**
  * The conformance-knob keys shared verbatim between the public `HostMcp`
  * authoring shape and the internal `mcpProfile` (same names on both sides),
@@ -251,6 +275,7 @@ export const MRTR_SUPPORT_MODES = [
 export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
+  "toolCallCancellation",
 ] as const;
 
 export type CspDomainSet = {
@@ -285,6 +310,49 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
+  // Whether cancelling an in-flight tool call reaches the server, or only ends
+  // the turn locally while the server runs it to completion.
+  //
+  // Measured PER ERA, because a host really can be right on one and wrong on
+  // the other: MCPJam sent `notifications/cancelled` correctly on 2025 while
+  // never aborting the stream on 2026 (inspector#4474). Through the 2026
+  // migration that split is common, and one boolean cannot say it.
+  //
+  // A record of independently measured leaves, like `toolListChanged` — absent
+  // per leaf is the conforming answer, so a fully cancelling client writes
+  // nothing and only an explicit `false` is ever stored.
+  //
+  // The era selects the leaf, not the transport: a 2026 stdio connection is
+  // `modern` even though its mechanism is `notifications/cancelled`. What is
+  // modeled is whether the host cancels on that era's connections, not which
+  // message it sends.
+  toolCallCancellation?: {
+    /** Every 2025 revision. */
+    legacy?: boolean;
+    /** `2026-07-28`. */
+    modern?: boolean;
+  };
+  // How the client handles `notifications/tools/list_changed` (probe-measured;
+  // MCP spec "List Changed Notification" under server/tools, every revision
+  // since 2024-11-05). Two independently-measured facts, not one flag:
+  //
+  //   listens   — the client opens the server->client notification channel at
+  //               all (legacy: the standalone GET SSE stream; 2026-07-28:
+  //               `subscriptions/listen`).
+  //   refetches — after receiving the notification, the client re-issues
+  //               `tools/list`.
+  //
+  // The two are independent. `refetches` was originally documented as only
+  // measurable when `listens` is true; the 2026-08-26 Copilot capture
+  // disproved that — a server can publish the notification on an open
+  // `tools/call` response stream, reaching a client that never opened the
+  // standalone channel, so `listens: false, refetches: true` is real.
+  //
+  // Absent -> spec-conforming (listens and refetches), like every knob above.
+  toolListChanged?: {
+    listens?: boolean;
+    refetches?: boolean;
+  };
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -313,6 +381,26 @@ export type HostConfigMcpProfileV1 = {
         mode?: "resource-declared" | "deny-all" | "custom";
         allow?: Record<string, boolean>;
         extensions?: Record<string, unknown>;
+      };
+      // Whether the browser storage APIs work inside the widget iframe
+      // (probe-measured).
+      //
+      // NOT AN MCP CONCEPT. The MCP Apps spec (2026-01-26) says nothing about
+      // storage — its `sandbox` object defines only `permissions` and `csp`.
+      // This is an observed consequence of the sandboxed iframe the spec does
+      // mandate ("MCP App HTML runs in a sandboxed iframe with no same-origin
+      // server"), recorded because widgets that persist state break silently
+      // on a host that blocks it. Named `browserStorage`, with the literal
+      // browser API identifiers as keys, so nobody reads it as a capability
+      // MCP negotiates.
+      //
+      // Each API is measured separately because a host can block one and not
+      // the others (Safari private mode exposes `localStorage` and throws only
+      // on write). Absent -> available.
+      browserStorage?: {
+        localStorage?: boolean;
+        sessionStorage?: boolean;
+        indexedDB?: boolean;
       };
       // Extra outer/inner iframe `sandbox=` tokens unioned with the
       // mandatory `allow-scripts allow-same-origin`. Inspector-only.
@@ -403,6 +491,33 @@ export type McpAppsCapabilities = {
     media?: boolean;
   };
   resourceCacheTtl?: boolean;
+  // Whether the host forwards the `structuredContent` half of a tool result
+  // to the widget when the widget itself calls a tool (probe-measured; MCP
+  // spec "Tool Result" -> "Structured Content" under server/tools). A tool
+  // result has two halves - `content` blocks and `structuredContent` - and
+  // some hosts strip the JSON half on the way back (Cursor 3.4 does), so a
+  // widget reading it silently breaks. Absent -> forwarded (spec-conforming).
+  toolResult?: {
+    structuredContent?: boolean;
+    // Which `ContentBlock` kinds survive the host->widget relay, per the MCP
+    // spec "Tool Result" section under server/tools. Each kind names the
+    // revision it arrived in: `text`/`image`/`resource` since 2024-11-05,
+    // `audio` since 2025-03-26, `resource_link` since 2025-06-18.
+    //
+    // THIRD AXIS - do not merge with the two that already exist:
+    //   `modelVisibleMcpToolResults`   - what the MODEL sees
+    //   `mcpToolResultImageRendering`  - what mcpjam's own chat UI renders
+    //   this field                     - what a WIDGET receives when it calls
+    //                                    a tool itself
+    // Absent -> relayed (spec-conforming).
+    content?: {
+      text?: boolean;
+      image?: boolean;
+      audio?: boolean;
+      resource?: boolean;
+      resourceLink?: boolean;
+    };
+  };
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;

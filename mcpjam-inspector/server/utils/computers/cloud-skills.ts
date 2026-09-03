@@ -25,14 +25,19 @@ import {
   convexGetSkill,
   convexGetSkillByName,
   convexGetSkillFileUrl,
+  convexGetSkillVersion,
   convexListSkillFiles,
+  convexListSkillVersions,
   convexListSkills,
   convexPromoteSkill,
   convexRemoveSkillFile,
+  convexRestoreSkillVersion,
   convexUpdateSkill,
   type CloudSkillDetail,
   type CloudSkillFileMeta,
   type CloudSkillListItem,
+  type CloudSkillVersionDetail,
+  type CloudSkillVersionSummary,
   type SkillExtraFrontmatterInput,
   type SkillSharing,
 } from "./convex-skills-client.js";
@@ -69,14 +74,33 @@ const CODE_STATUS: Record<string, number> = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  // The backend's beta gate (`convex/lib/featureGates.ts`) refuses every skill
+  // AUTHORING write — create/update/adopt/upload/attach/promote — when the
+  // `skills-enabled` flag is off; reads and deletes stay ungated. Without this
+  // entry the code fell through to the regex fallback below, which does not
+  // match "… is not currently available for your organization", so a clean
+  // actionable refusal rendered as an opaque 500 `Server Error`.
+  //
+  // 403 to match `routes/v1/convex-errors.ts`, which documents why FORBIDDEN
+  // and not FEATURE_NOT_SUPPORTED: the latter maps to 422 (malformed request),
+  // and this is a well-formed request the server declines to authorize.
+  FEATURE_UNAVAILABLE: 403,
 };
 
-/** Read a `ConvexError`'s structured `{ code, message }` payload, if present. */
+/**
+ * Read a `ConvexError`'s structured payload, if present.
+ *
+ * Two shapes, both from the backend and both load-bearing: `code` is the
+ * `projectSkills` / feature-gate taxonomy mapped by `CODE_STATUS`, and `kind` is
+ * the actor-authorization marker (`'forbidden'`) that `requireUserActor` and the
+ * org-membership denials raise.
+ */
 function convexErrorData(
-  err: unknown
-): { code?: string; message?: string } | null {
+  err: unknown,
+): { code?: string; kind?: string; message?: string } | null {
   const data = (err as { data?: unknown })?.data;
-  if (data && typeof data === "object") return data as { code?: string };
+  if (data && typeof data === "object")
+    return data as { code?: string; kind?: string };
   return null;
 }
 
@@ -95,8 +119,21 @@ function mapConvexError(err: unknown): CloudSkillsError {
   if (data?.code && CODE_STATUS[data.code] !== undefined) {
     return new CloudSkillsError(
       data.message ?? "Skill request failed",
-      CODE_STATUS[data.code]
+      CODE_STATUS[data.code],
     );
+  }
+
+  // `kind: 'forbidden'` is the backend's authorization-refusal marker — a guest
+  // reaching a `signedIn*` function, or a caller who is not a project member.
+  // Without this branch it fell to the regex below, which does not match
+  // "Authenticated user required", so a pure authz refusal was booked as a 500
+  // and captured as an internal error (CONVEX-19R's inspector-side half).
+  //
+  // Requires the backend deploy that makes the refusal a `ConvexError`; until
+  // then the message is redacted to "Server Error" and this stays a 500, which
+  // is exactly today's behavior. No two-deploy hazard in either order.
+  if (data?.kind === "forbidden") {
+    return new CloudSkillsError(data.message ?? "Not authorized", 403);
   }
 
   const message = err instanceof Error ? err.message : String(err);
@@ -104,7 +141,7 @@ function mapConvexError(err: unknown): CloudSkillsError {
   let status = 500;
   if (
     /not authorized|requires project admin|owned by another|only the owner|requires project member/.test(
-      lower
+      lower,
     )
   ) {
     status = 403;
@@ -112,7 +149,7 @@ function mapConvexError(err: unknown): CloudSkillsError {
     status = 404;
   } else if (
     /already exists|already shared|already a personal|pick a different name|already have a skill/.test(
-      lower
+      lower,
     )
   ) {
     status = 409;
@@ -131,21 +168,21 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export function listCloudSkills(
-  ctx: CloudSkillsContext
+  ctx: CloudSkillsContext,
 ): Promise<CloudSkillListItem[]> {
   return run(() => convexListSkills(ctx.authHeader, ctx.projectId));
 }
 
 export function getCloudSkill(
   ctx: CloudSkillsContext,
-  skillId: string
+  skillId: string,
 ): Promise<CloudSkillDetail> {
   return run(() => convexGetSkill(ctx.authHeader, ctx.projectId, skillId));
 }
 
 export function getCloudSkillByName(
   ctx: CloudSkillsContext,
-  name: string
+  name: string,
 ): Promise<CloudSkillDetail | null> {
   return run(() => convexGetSkillByName(ctx.authHeader, ctx.projectId, name));
 }
@@ -159,10 +196,52 @@ export function createCloudSkill(
     sharing?: SkillSharing;
     /** Preserved spec frontmatter (backend re-validates + size-caps). */
     extraFrontmatter?: SkillExtraFrontmatterInput;
-  }
+    /** Folder import: create a hidden draft; the file attach commits its v1. */
+    importPending?: boolean;
+  },
 ): Promise<CloudSkillDetail> {
   return run(() =>
-    convexCreateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data })
+    convexCreateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data }),
+  );
+}
+
+/** A skill's revisions, newest first. */
+export function listCloudSkillVersions(
+  ctx: CloudSkillsContext,
+  skillId: string,
+): Promise<CloudSkillVersionSummary[]> {
+  return run(() =>
+    convexListSkillVersions(ctx.authHeader, ctx.projectId, skillId),
+  );
+}
+
+/** One revision in full: body, frontmatter, and the file manifest it froze. */
+export function getCloudSkillVersion(
+  ctx: CloudSkillsContext,
+  data: { skillId: string; versionId: string },
+): Promise<CloudSkillVersionDetail> {
+  return run(() =>
+    convexGetSkillVersion(ctx.authHeader, {
+      projectId: ctx.projectId,
+      ...data,
+    }),
+  );
+}
+
+/**
+ * Bring an older revision's bytes back as the live skill. A revert, not a
+ * rewind: the backend mints the restored content as the NEXT revision, so
+ * environments tracking Latest pick it up and exact-pinned ones do not.
+ */
+export function restoreCloudSkillVersion(
+  ctx: CloudSkillsContext,
+  data: { skillId: string; versionId: string },
+): Promise<CloudSkillDetail> {
+  return run(() =>
+    convexRestoreSkillVersion(ctx.authHeader, {
+      projectId: ctx.projectId,
+      ...data,
+    }),
   );
 }
 
@@ -173,23 +252,23 @@ export function updateCloudSkill(
     skillId: string;
     description?: string;
     content?: string;
-  }
+  },
 ): Promise<CloudSkillDetail> {
   return run(() =>
-    convexUpdateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data })
+    convexUpdateSkill(ctx.authHeader, { projectId: ctx.projectId, ...data }),
   );
 }
 
 export function deleteCloudSkill(
   ctx: CloudSkillsContext,
-  skillId: string
+  skillId: string,
 ): Promise<{ deleted: true }> {
   return run(() => convexDeleteSkill(ctx.authHeader, ctx.projectId, skillId));
 }
 
 export function promoteCloudSkill(
   ctx: CloudSkillsContext,
-  skillId: string
+  skillId: string,
 ): Promise<CloudSkillDetail> {
   return run(() => convexPromoteSkill(ctx.authHeader, ctx.projectId, skillId));
 }
@@ -200,39 +279,39 @@ export type { CloudSkillFileMeta };
 
 export function generateCloudSkillFileUploadUrl(
   ctx: CloudSkillsContext,
-  skillId: string
+  skillId: string,
 ): Promise<{ uploadUrl: string }> {
   return run(() =>
-    convexGenerateSkillFileUploadUrl(ctx.authHeader, ctx.projectId, skillId)
+    convexGenerateSkillFileUploadUrl(ctx.authHeader, ctx.projectId, skillId),
   );
 }
 
 export function attachCloudSkillFiles(
   ctx: CloudSkillsContext,
   skillId: string,
-  files: { path: string; storageId: string; contentHash: string }[]
+  files: { path: string; storageId: string; contentHash: string }[],
 ): Promise<{ files: CloudSkillFileMeta[] }> {
   return run(() =>
-    convexAttachSkillFiles(ctx.authHeader, ctx.projectId, skillId, files)
+    convexAttachSkillFiles(ctx.authHeader, ctx.projectId, skillId, files),
   );
 }
 
 export function removeCloudSkillFile(
   ctx: CloudSkillsContext,
   skillId: string,
-  path: string
+  path: string,
 ): Promise<{ removed: boolean }> {
   return run(() =>
-    convexRemoveSkillFile(ctx.authHeader, ctx.projectId, skillId, path)
+    convexRemoveSkillFile(ctx.authHeader, ctx.projectId, skillId, path),
   );
 }
 
 export function listCloudSkillFiles(
   ctx: CloudSkillsContext,
-  skillId: string
+  skillId: string,
 ): Promise<CloudSkillFileMeta[]> {
   return run(() =>
-    convexListSkillFiles(ctx.authHeader, ctx.projectId, skillId)
+    convexListSkillFiles(ctx.authHeader, ctx.projectId, skillId),
   );
 }
 
@@ -245,14 +324,14 @@ export function listCloudSkillFiles(
 export function readCloudSkillFile(
   ctx: CloudSkillsContext,
   skillId: string,
-  path: string
+  path: string,
 ): Promise<SkillFileContent> {
   return run(async () => {
     const { url, size } = await convexGetSkillFileUrl(
       ctx.authHeader,
       ctx.projectId,
       skillId,
-      path
+      path,
     );
     if (!url) throw new CloudSkillsError("Skill file not found", 404);
     // Guard on the server-verified size BEFORE fetching so a large blob can't
@@ -261,7 +340,7 @@ export function readCloudSkillFile(
     if (size > SKILL_FILE_MAX_READ_BYTES) {
       throw new CloudSkillsError(
         `Skill file too large to read (${size} bytes).`,
-        413
+        413,
       );
     }
     // Combine the caller's disconnect signal with an explicit timeout so a slow
@@ -274,7 +353,7 @@ export function readCloudSkillFile(
     if (!res.ok) {
       throw new CloudSkillsError(
         `Failed to read skill file (${res.status})`,
-        502
+        502,
       );
     }
     const bytes = new Uint8Array(await res.arrayBuffer());

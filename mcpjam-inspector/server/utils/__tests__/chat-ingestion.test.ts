@@ -110,6 +110,33 @@ describe("chat-ingestion", () => {
     expect(body.surface).toBe("share_link");
   });
 
+  it("keeps the sent prompt and the resume prompt as separate fields", async () => {
+    // Two different questions, and merging them breaks one of the two:
+    // `systemPrompt` is EVIDENCE of what the model was given (turn-injected
+    // sections included), `resumeConfig.systemPrompt` is what a resumed turn
+    // replays. Replaying turn-injected content — a skills catalog for servers
+    // that may no longer be connected, or a "your sandbox was reset" notice —
+    // is the confabulation the raw resume prompt exists to prevent.
+    await persistChatSessionToConvex({
+      chatSessionId: "session-2",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      origin: "playground",
+      systemPrompt: "HOST PROMPT\n\n## Skills from MCP servers\n\n- **acme/refunds**",
+      resumeConfig: { systemPrompt: "HOST PROMPT" },
+      startedAt: 1,
+      lastActivityAt: 2,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.systemPrompt).toContain("## Skills from MCP servers");
+    expect(body.resumeConfig.systemPrompt).toBe("HOST PROMPT");
+  });
+
   it("serializes rewind lineage for an edited branch", async () => {
     await persistChatSessionToConvex({
       chatSessionId: "branch-session",
@@ -800,6 +827,63 @@ describe("chat-ingestion", () => {
     );
     expect(body.turnId).toBe("turn-abc");
     expect(body.turnTrace.turnId).toBe("turn-abc");
+  });
+
+  it("carries the turn's skill/environment provenance on the wire", async () => {
+    // The provenance rides INSIDE `turnTrace`, which `buildIngestBody`
+    // serializes whole — so this reaches the backend with no edit to the body
+    // builder's field spread. If someone "fixes" that by adding the fields
+    // there too, this test still passes and the duplication is dead weight;
+    // what it guards is that the fields arrive at all.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+
+    const turnTrace = {
+      turnId: "turn-prov",
+      promptIndex: 0,
+      startedAt: 1,
+      endedAt: 2,
+      spans: [],
+      modelId: "openai/gpt-oss-120b",
+      skillsAtTurn: [
+        {
+          skillId: "sk_1",
+          projectSkillVersionNumber: 3,
+          versionPinned: true,
+          name: "refunds",
+          contentHash: "h1",
+          sharing: "project",
+          channels: ["environment"],
+        },
+      ],
+      environmentAtTurn: {
+        environmentId: "env_1",
+        name: "Pinned arm",
+        revision: 4,
+      },
+    };
+
+    await persistChatSessionToConvex({
+      chatSessionId: "prov-session",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      turnTrace,
+    });
+
+    const calls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock
+      .calls;
+    const body = JSON.parse(calls[0][1].body as string);
+    expect(body.turnTrace.skillsAtTurn).toEqual(turnTrace.skillsAtTurn);
+    expect(body.turnTrace.environmentAtTurn).toEqual(
+      turnTrace.environmentAtTurn
+    );
   });
 
   it("omits turnId for a traceless payload so the legacy path is unchanged", async () => {

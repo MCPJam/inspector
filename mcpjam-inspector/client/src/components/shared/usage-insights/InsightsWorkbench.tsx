@@ -29,7 +29,6 @@ import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOut
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
-import { CriterionScorecard } from "@/components/shared/usage-insights/CriterionScorecard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   Collapsible,
@@ -63,12 +62,10 @@ interface InsightsWorkbenchProps {
    */
   bannerSlot?: ReactNode;
   /**
-   * Pattern recommendations under the scorecard (expandable rows). Rendered
-   * as a distinct subsection inside Findings when present.
+   * Pattern recommendations (expandable rows). Rendered as a distinct
+   * subsection inside Findings when present.
    */
   recommendationsSlot?: ReactNode;
-  /** Extra content shown below the rubric scorecard section (e.g. findings). */
-  checksExtras?: ReactNode;
   /**
    * Queue one rebuild when the Clusters view opens on a completed run whose
    * topic map was never built. The server mutation dedupes in-flight runs; the
@@ -82,12 +79,6 @@ interface InsightsWorkbenchProps {
    * surface: Swarms want "sign in", User Testing wants "share the link".
    */
   emptyState?: ReactNode;
-  /**
-   * Fired when the workbench swaps between the empty state and the filled
-   * body. Owning pages use this to hide chrome that the empty panel already
-   * covers (e.g. User Testing's header share strip).
-   */
-  onEmptyChange?: (empty: boolean) => void;
   className?: string;
   /**
    * Prefix for every `data-testid` this renders, so each surface keeps the
@@ -97,14 +88,14 @@ interface InsightsWorkbenchProps {
 }
 
 /**
- * Collapsible parent for the scorecard and recommendations rail. Hidden when
+ * Collapsible parent for recommendations and supporting findings. Hidden when
  * both subsections render nothing, so a provided-but-empty slot does not
  * leave a Findings shell. Expanded by default; the trigger is a real button
  * (aria-expanded, focus ring) rather than hover-only.
  *
- * The body is one scrollable card. Subsections (scorecard, recommendations)
- * sit inside it and are separated by a divider — they must not bring their
- * own card chrome, or Findings reads as two stacked modules on the page.
+ * The body is one scrollable card. Subsections sit inside it and are separated
+ * by a divider — they must not bring their own card chrome, or Findings reads
+ * as two stacked modules on the page.
  */
 function InsightsFindings({
   testId,
@@ -153,8 +144,8 @@ function InsightsFindings({
  * The Insights workbench: one body for Swarms and User Testing.
  *
  * Exclusive toggle between Session flow (Sankey) and Clusters (topic map),
- * a Findings rail (scorecard + recommendations) above both, a chip row for
- * dismissible filters, and a session drill-down beside the flow chart.
+ * a Findings rail (recommendations + supporting findings) above both, a chip
+ * row for dismissible filters, and a session drill-down beside the flow chart.
  * Everything surface-specific arrives as a prop — the scope the queries
  * read, the slots Findings renders, the filter policy, the empty state,
  * and the testid prefix.
@@ -172,8 +163,8 @@ function InsightsFindings({
  *    version passed the raw filter, which on a surface with an augment would
  *    have shown rows the list beside it excludes.
  *  - Only the fill-viewport layout survives. The scroll-area path had no
- *    production caller. The rubric scorecard and Run insights banner are
- *    their own sections above the session flow (not chip popovers).
+ *    production caller. The Findings rail and Run insights banner are their
+ *    own sections above the session flow (not chip popovers).
  *  - A topic-map dot click clears the filter on BOTH surfaces before opening
  *    the session: an active cluster chip can otherwise hide the very session
  *    the click asked for.
@@ -190,10 +181,8 @@ export function InsightsWorkbench({
   onOpenSessionsTab,
   bannerSlot,
   recommendationsSlot,
-  checksExtras,
   autoBackfillTopicMap = false,
   emptyState,
-  onEmptyChange,
   className,
   testIdPrefix,
 }: InsightsWorkbenchProps) {
@@ -319,9 +308,6 @@ export function InsightsWorkbench({
   const nothingToShow =
     scope === null || (!userFiltered && breakdown?.totalSessions === 0);
   const showingEmpty = Boolean(emptyState && nothingToShow);
-  useEffect(() => {
-    onEmptyChange?.(showingEmpty);
-  }, [showingEmpty, onEmptyChange]);
   if (showingEmpty) {
     return (
       <div
@@ -442,9 +428,7 @@ export function InsightsWorkbench({
   );
 
   const selectionOpen = flow.flowSelection !== null;
-  const criterionFacets = breakdown?.criterionBreakdown ?? [];
-  const hasScorecard =
-    criterionFacets.length > 0 || Boolean(checksExtras);
+  const hasFindings = Boolean(recommendationsSlot);
 
   return (
     <div
@@ -459,21 +443,8 @@ export function InsightsWorkbench({
           {bannerSlot}
         </div>
       ) : null}
-      {hasScorecard || recommendationsSlot ? (
+      {hasFindings ? (
         <InsightsFindings testId={`${testIdPrefix}-findings`}>
-          {hasScorecard ? (
-            <div
-              data-testid={`${testIdPrefix}-scorecard`}
-              aria-label="Scorecard"
-            >
-              <CriterionScorecard
-                facets={criterionFacets}
-                filter={flow.filter}
-                onToggleChip={flow.handleToggleChip}
-              />
-              {checksExtras}
-            </div>
-          ) : null}
           {recommendationsSlot}
         </InsightsFindings>
       ) : null}

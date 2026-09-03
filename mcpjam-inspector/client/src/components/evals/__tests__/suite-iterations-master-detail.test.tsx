@@ -1,4 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
+import { withDataRouter } from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SuiteIterationsView } from "../suite-iterations-view";
@@ -33,6 +34,12 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
+}));
+
+// `SuiteDetailOverview` (Evaluate (New)) reads this; the shipped tab's
+// dashboard does not, so it is only exercised by the opt-in block below.
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
 }));
 
 vi.mock("../use-suite-data", () => ({
@@ -71,6 +78,44 @@ vi.mock("../run-overview", () => ({
 
 vi.mock("../suite-hero-stats", () => ({
   SuiteHeroStats: () => <div data-testid="suite-hero-stats" />,
+}));
+
+vi.mock("../suite-dashboard", () => ({
+  SuiteDashboard: ({
+    onTestCaseClick,
+    onOpenLastRun,
+    selectedRunId,
+  }: {
+    onTestCaseClick: (testCaseId: string) => void;
+    onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
+    selectedRunId?: string | null;
+  }) => (
+    <div data-testid="suite-dashboard">
+      All runs latest + trends per client
+      {selectedRunId ? null : (
+        <>
+          <button
+            type="button"
+            data-testid="test-cases-overview"
+            onClick={() => onTestCaseClick("case-1")}
+          >
+            Click on a case to view its run history and performance.
+          </button>
+          <button
+            type="button"
+            data-testid="test-cases-open-last-run"
+            onClick={() => onOpenLastRun?.("case-1", "iter-1")}
+          >
+            Open last run
+          </button>
+        </>
+      )}
+    </div>
+  ),
+}));
+
+vi.mock("../run-detail-view", () => ({
+  RunDetailView: () => <div data-testid="run-detail-view" />,
 }));
 
 vi.mock("../test-cases-overview", () => ({
@@ -134,6 +179,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("does not mount TestCasesOverview when case index is in the parent sidebar", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -161,7 +207,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={noopNav}
         caseListInSidebar
-      />,
+      />,)
     );
 
     expect(screen.queryByTestId("test-cases-overview")).toBeNull();
@@ -173,6 +219,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("replaces run-oriented overview chrome when run actions are hidden", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -201,7 +248,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         navigation={noopNav}
         caseListInSidebar
         hideRunActions
-      />,
+      />,)
     );
 
     expect(screen.queryByTestId("suite-hero-stats")).toBeNull();
@@ -210,6 +257,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("still mounts TestCasesOverview without caseListInSidebar", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -236,7 +284,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
           view: "test-cases",
         }}
         navigation={noopNav}
-      />,
+      />,)
     );
 
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
@@ -250,6 +298,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     };
 
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[
@@ -288,7 +337,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={navigation}
         hideRunActions
-      />,
+      />,)
     );
 
     await user.click(screen.getByTestId("test-cases-overview"));
@@ -304,6 +353,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     };
 
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[
@@ -342,7 +392,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={navigation}
         hideRunActions
-      />,
+      />,)
     );
 
     await user.click(screen.getByTestId("test-cases-open-last-run"));
@@ -355,6 +405,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
   it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={baseSuite}
         cases={[]}
@@ -382,7 +433,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         }}
         navigation={noopNav}
         readOnlyConfig
-      />,
+      />,)
     );
 
     expect(mocks.runOverview).toHaveBeenCalledWith(
@@ -404,6 +455,7 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
 
   function renderView(suite: EvalSuite, projectId?: string) {
     render(
+      withDataRouter(
       <SuiteIterationsView
         suite={suite}
         {...(projectId ? { projectId } : {})}
@@ -431,7 +483,7 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
           view: "test-cases",
         }}
         navigation={noopNav}
-      />,
+      />,)
     );
   }
 
@@ -476,5 +528,160 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
     expect(mocks.suiteHeader).toHaveBeenCalledWith(
       expect.objectContaining({ evalRunsDisabledReason: null }),
     );
+  });
+});
+
+/**
+ * `suiteDetailOverview` is the one opt-in the shipped Evaluate tab does NOT
+ * pass. These assert both halves of that: off is exactly the behaviour every
+ * current caller has, on is the Evaluate (New) suite page.
+ */
+describe("SuiteIterationsView suiteDetailOverview", () => {
+  const detailCase = {
+    _id: "case-1",
+    testSuiteId: "suite-1",
+    createdBy: "u",
+    title: "Case 1",
+    query: "Prompt",
+    models: [],
+    runs: 1,
+    expectedToolCalls: [],
+  };
+
+  const renderOverview = (
+    props: Partial<Record<string, unknown>> = {},
+    navigation = noopNav,
+  ) =>
+    render(
+      withDataRouter(
+      <SuiteIterationsView
+        suite={{ ...baseSuite, name: "checkout-flow" }}
+        cases={[detailCase as any]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
+        navigation={navigation}
+        hideRunActions
+        {...(props as any)}
+      />,)
+    );
+
+  it("keeps the unified dashboard when the flag-gated tab has not opted in", () => {
+    renderOverview();
+
+    expect(screen.queryByTestId("suite-detail-overview")).toBeNull();
+    expect(screen.getByTestId("suite-header")).toBeInTheDocument();
+  });
+
+  it("renders the Evaluate (New) suite-detail identity row when opted in", () => {
+    renderOverview({ suiteDetailOverview: true });
+
+    expect(screen.getByTestId("suite-detail-overview")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-detail-identity")).toHaveTextContent(
+      "checkout-flow",
+    );
+    expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it("opens test edit from the opted-in suite-detail case list", async () => {
+    const user = userEvent.setup();
+    const navigation = { ...noopNav, toTestEdit: vi.fn() };
+
+    renderOverview({ suiteDetailOverview: true }, navigation);
+
+    await user.click(screen.getByTestId("suite-test-case-row-case-1"));
+
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+  });
+
+  it("keeps the suite header on the edit route so rename and Done stay reachable", () => {
+    // `viewMode` falls through to "overview" for suite-edit, so the opt-in has
+    // to exclude edit mode explicitly. SuiteHeader is the ONLY mount point for
+    // the edit chrome (name editor + Done). The environment composer lives on
+    // the settings sheet, not the overview header.
+    renderOverview({
+      suiteDetailOverview: true,
+      route: { type: "suite-edit", suiteId: "suite-1" },
+    });
+
+    expect(screen.getByTestId("suite-header")).toBeInTheDocument();
+    expect(screen.queryByTestId("suite-detail-overview")).toBeNull();
+    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+      expect.objectContaining({ isEditMode: true }),
+    );
+  });
+
+  const detailRun = {
+    _id: "run-1",
+    suiteId: "suite-1",
+    createdBy: "u",
+    runNumber: 1,
+    configRevision: "r",
+    configSnapshot: { tests: [], environment: { servers: [] } },
+    status: "completed" as const,
+    result: "failed" as const,
+    createdAt: 2,
+    completedAt: 3,
+    source: "ui" as const,
+  };
+
+  const otherRun = {
+    ...detailRun,
+    _id: "run-0",
+    createdAt: 1,
+    completedAt: 2,
+  };
+
+  it("opens Evaluate (New) run page instead of the unified split", () => {
+    renderOverview({
+      suiteDetailOverview: true,
+      runs: [detailRun, otherRun],
+      route: {
+        type: "run-detail",
+        suiteId: "suite-1",
+        runId: "run-1",
+      },
+    });
+
+    expect(screen.getByTestId("evaluate-run-page")).toBeInTheDocument();
+    expect(screen.getByTestId("run-detail-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("suite-dashboard")).toBeNull();
+    expect(screen.queryByText(/All runs/i)).toBeNull();
+    expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it("keeps the unified split on run-detail when the opt-in is off", () => {
+    renderOverview({
+      hideRunActions: true,
+      runs: [detailRun, otherRun],
+      route: {
+        type: "run-detail",
+        suiteId: "suite-1",
+        runId: "run-1",
+      },
+    });
+
+    expect(screen.getByTestId("suite-dashboard")).toBeInTheDocument();
+    expect(screen.getByText(/All runs/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("evaluate-run-page")).toBeNull();
   });
 });
