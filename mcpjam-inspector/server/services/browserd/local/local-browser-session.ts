@@ -109,6 +109,13 @@ export interface EnsureLocalBrowserArgs {
 
 interface LocalSession {
   key: string;
+  /**
+   * The validated project this browser belongs to, kept alongside the key
+   * because the key is not parseable back into one (an ephemeral owner key may
+   * itself contain a colon). The frames socket compares it against the project
+   * its nonce was minted for.
+   */
+  projectKey: string;
   stack: BrowserdStack;
   driver: ChromiumDriver;
   lease: HandoffLease;
@@ -130,9 +137,20 @@ let shuttingDown = false;
 
 function sessionKey(args: EnsureLocalBrowserArgs): string {
   const project = validateLocalProjectKey(args.projectId);
-  return args.contextMode === "ephemeral"
-    ? `${project}:ephemeral:${args.ownerKey ?? "anonymous"}`
-    : `${project}:persistent`;
+  if (args.contextMode !== "ephemeral") return `${project}:persistent`;
+  // No fallback owner. An omitted key used to collapse to "anonymous", which
+  // silently gave two unattended runs on one project ONE browser and one
+  // cookie jar — the exact sharing an ephemeral context exists to prevent.
+  // A caller that cannot name the run has to say so and be refused.
+  const owner = args.ownerKey?.trim();
+  if (!owner) {
+    throw new LocalBrowserUnavailableError(
+      "owner_key_required",
+      "an ephemeral browser must name the run it belongs to; without an " +
+        "ownerKey two unattended runs would share one profile",
+    );
+  }
+  return `${project}:ephemeral:${owner}`;
 }
 
 /**
@@ -152,7 +170,11 @@ function wantsHeadedWindow(env: NodeJS.ProcessEnv): boolean {
 
 export class LocalBrowserUnavailableError extends Error {
   constructor(
-    readonly code: "chromium_not_installed" | "profile_in_use" | "disabled",
+    readonly code:
+      | "chromium_not_installed"
+      | "profile_in_use"
+      | "disabled"
+      | "owner_key_required",
     message: string,
   ) {
     super(message);
@@ -267,6 +289,7 @@ async function startSession(
   const now = deps.now();
   const session: LocalSession = {
     key,
+    projectKey: validateLocalProjectKey(args.projectId),
     stack,
     driver,
     lease,
@@ -309,6 +332,8 @@ export function findLocalBrowserSession(bootId: string):
       client: LocalBrowserSessionHandle["client"];
       handler: BrowserdStack["handler"];
       handle: LocalBrowserSessionHandle;
+      /** For callers that must prove the session is the one they may reach. */
+      projectKey: string;
     }
   | undefined {
   for (const session of sessions.values()) {
@@ -317,6 +342,7 @@ export function findLocalBrowserSession(bootId: string):
         client: session.handle.client,
         handler: session.stack.handler,
         handle: session.handle,
+        projectKey: session.projectKey,
       };
     }
   }

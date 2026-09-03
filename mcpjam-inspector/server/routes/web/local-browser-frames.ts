@@ -83,6 +83,17 @@ export function createLocalBrowserFramesWsHandler(
     // requested.
     let rejectCode: number | null = null;
     let rejectMessage = "";
+    /**
+     * The project the nonce was minted for.
+     *
+     * The socket names its target session by `bootId`, which the CLIENT
+     * supplies — so redeeming a valid nonce is not on its own proof that this
+     * caller may reach THIS browser. Without comparing the two, a nonce minted
+     * for project A opens project B's browser, whose persistent profile is
+     * signed in to whatever its owner signed in to. The check is in `onOpen`,
+     * where the session is resolved.
+     */
+    let nonceProject: string | undefined;
 
     if (shuttingDown) {
       rejectCode = CLOSE_UNAVAILABLE;
@@ -102,6 +113,8 @@ export function createLocalBrowserFramesWsHandler(
       ) {
         rejectCode = CLOSE_UNAUTHORIZED;
         rejectMessage = "Local computer consent changed; reconnect.";
+      } else {
+        nonceProject = claim.projectId;
       }
     }
 
@@ -139,6 +152,13 @@ export function createLocalBrowserFramesWsHandler(
         const session = findLocalBrowserSession(bootId);
         if (!session) {
           ws.close(CLOSE_NOT_FOUND, "That browser is no longer running.");
+          return;
+        }
+        // The nonce says which project this caller proved consent for; the
+        // bootId says which browser they are asking to watch. They have to be
+        // the same one.
+        if (!nonceProject || session.projectKey !== nonceProject) {
+          ws.close(CLOSE_UNAUTHORIZED, "That browser belongs to another project.");
           return;
         }
 

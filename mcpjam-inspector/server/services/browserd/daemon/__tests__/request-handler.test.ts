@@ -781,7 +781,9 @@ describe("BrowserdRequestHandler — the lease moves mid-stream", () => {
     });
     lease.acquire("rail-1", 60_000);
 
-    const events = ["h", "u", "n", "t"].map((text) => ({ type: "text", text }));
+    const events = ["h", "u", "n", "t"].map(
+      (text) => ({ type: "text", text }) as const,
+    );
     const result = await handler.dispatchInput({ holder: "rail-1", events });
 
     expect(result).toEqual({ ok: true });

@@ -95,6 +95,17 @@ export interface BrowserToolsOptions {
   projectId: string;
   executionScope?: ExecutionScope;
   /**
+   * What THIS unattended run is, for keying its throwaway browser.
+   *
+   * Required for an unattended turn and ignored otherwise. Neither the project
+   * nor the swarm identifies a run: a swarm fans out many, and an eval suite
+   * runs many iterations against one project — so keying on either hands two
+   * concurrent runs the same Chromium, the same cookie jar and each other's
+   * logged-in state. There is nothing at this layer that can invent it, so a
+   * caller that cannot name the run is refused rather than defaulted.
+   */
+  runKey?: string;
+  /**
    * WHERE the browser runs. Resolved by the registry exactly as bash's engine
    * is, and consumed here as the choice of ensure function — the one seam
    * between the three engines. Everything else in this file is engine-blind.
@@ -364,16 +375,29 @@ export function buildBrowserTools(
   // Letting these be set independently is how an eval ends up running against
   // whatever profile the last playground session left signed in.
   const contextMode: BrowserContextMode = unattended ? "ephemeral" : "persistent";
+  // Ephemeral browsers are keyed per RUN. Falling back to the project (or to
+  // the swarm, which fans out many runs) is what let two unattended runs share
+  // one browser and one cookie jar — so a run that cannot name itself gets no
+  // browser at all rather than somebody else's session.
+  const ownerKey = unattended ? unattendedOwnerKey(opts) : undefined;
+  if (unattended && !ownerKey) {
+    logger.warn(
+      "[built-in-tools] browser tools not advertised: unattended run did not name itself",
+      { projectId: opts.projectId },
+    );
+    opts.onToolSuppressed?.({
+      id: BROWSER_BUILT_IN_TOOL_ID,
+      reason:
+        "an unattended browser must name the run it belongs to, so two runs " +
+        "cannot share one throwaway profile",
+    });
+    return undefined;
+  }
   const state = new BrowserTurnState(
     opts,
     opts.ensureSession ?? defaultEnsureSession(engine),
     contextMode,
-    // Ephemeral browsers are keyed per run so two unattended runs on one
-    // project cannot share cookies. A swarm names itself; anything else falls
-    // back to the project, which is still correct because the profile is
-    // thrown away either way — the key only decides how much is SHARED within
-    // one run.
-    unattended ? unattendedOwnerKey(opts) : undefined,
+    ownerKey,
   );
 
   // An unattended `allowlist` policy may name the exact tools this run may
@@ -724,10 +748,18 @@ function engineLabel(engine: BrowserEngine): string {
     : "the cloud browser";
 }
 
-/** What an unattended run calls itself, for keying its throwaway browser. */
-function unattendedOwnerKey(opts: BrowserToolsOptions): string {
+/**
+ * What an unattended run calls itself, for keying its throwaway browser.
+ *
+ * The scope is a prefix, not the identity: it keeps two runs of the same id in
+ * different swarms apart, but only `runKey` says WHICH run this is. Undefined
+ * when the caller supplied none — the caller then advertises no browser.
+ */
+function unattendedOwnerKey(opts: BrowserToolsOptions): string | undefined {
+  const run = opts.runKey?.trim();
+  if (!run) return undefined;
   const scope = opts.executionScope;
-  return scope?.kind === "swarm" ? `swarm:${scope.swarmId}` : opts.projectId;
+  return scope?.kind === "swarm" ? `swarm:${scope.swarmId}:${run}` : run;
 }
 
 /** The session path for an engine — the ONE seam between the two. */

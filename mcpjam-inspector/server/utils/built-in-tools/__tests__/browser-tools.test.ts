@@ -87,6 +87,9 @@ function build(
     projectId: "project-1",
     approvalDelivery: { kind: "attested" },
     ensureSession: fake.ensureSession,
+    // Ignored on an attested turn; required on an unattended one, which most
+    // of the cases below are. Overridable per test.
+    runKey: "run-1",
     ...over,
   });
   return { result, ...fake };
@@ -192,6 +195,7 @@ describe("buildBrowserTools — unattended policy", () => {
         kind: "unattended",
         policy: { mode: "allowlist", toolAllowlist: ["nonexistent_tool"] },
       },
+      runKey: "run-1",
       onToolSuppressed: (info) => suppressed.push(info),
     });
     expect(built).toBeUndefined();
@@ -736,10 +740,15 @@ describe("buildBrowserTools — engines and profile mode", () => {
         kind: "unattended",
         policy: { mode: "allow_all" },
       },
+      runKey: "iteration-7",
       ensureSession: ensureSession as never,
     });
     await run(unattended!.tools, "browser_observe", {});
-    expect(seen[0]).toMatchObject({ contextMode: "ephemeral" });
+    expect(seen[0]).toMatchObject({
+      contextMode: "ephemeral",
+      // Keyed by the RUN, not the project: two iterations must not meet.
+      ownerKey: "iteration-7",
+    });
 
     const interactive = buildBrowserTools({
       authHeader: "Bearer u",
@@ -770,5 +779,77 @@ describe("buildBrowserTools — engines and profile mode", () => {
     expect((hosted.tools as any).browser_navigate.description).toContain(
       "cloud browser",
     );
+  });
+});
+
+describe("buildBrowserTools — an unattended run must name itself", () => {
+  it("advertises nothing when no run key is supplied", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const built = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      onToolSuppressed: (info) => suppressed.push(info),
+      ensureSession: (async () => {
+        throw new Error("must not boot");
+      }) as never,
+    });
+
+    expect(built).toBeUndefined();
+    expect(suppressed[0]?.reason).toContain("name the run");
+  });
+
+  it("keeps two runs of one swarm apart", async () => {
+    const keys: Array<string | undefined> = [];
+    const capture = vi.fn(async (args: any) => {
+      keys.push(args.ownerKey);
+      return {
+        engine: "hosted" as const,
+        sessionId: "s",
+        computerId: "c",
+        bootId: "b",
+        client: { sendCommand: async () => OK } as never,
+        streamUrl: "u",
+        streamPassword: "p",
+        contextMode: args.contextMode,
+        reused: false,
+      };
+    });
+    const scope = {
+      kind: "swarm" as const,
+      swarmId: "swarm-1",
+      accessVersion: 1,
+      projectId: "project-1",
+      workspaceId: "ws-1",
+    };
+    for (const runKey of ["attempt-a", "attempt-b"]) {
+      const built = buildBrowserTools({
+        authHeader: "Bearer u",
+        projectId: "project-1",
+        executionScope: scope,
+        approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+        runKey,
+        ensureSession: capture as never,
+      });
+      await run(built!.tools, "browser_observe", {});
+    }
+
+    // The swarm is a PREFIX; the run is the identity. Same swarm, two keys.
+    expect(keys).toEqual([
+      "swarm:swarm-1:attempt-a",
+      "swarm:swarm-1:attempt-b",
+    ]);
+  });
+
+  it("an interactive turn needs no run key at all", () => {
+    const built = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession: (async () => {
+        throw new Error("must not boot");
+      }) as never,
+    });
+    expect(built).toBeDefined();
   });
 });

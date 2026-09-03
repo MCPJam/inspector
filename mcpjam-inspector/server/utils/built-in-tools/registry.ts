@@ -461,6 +461,32 @@ export function resolveHostTools(
         isJourneySession: Boolean(ctx.isJourneySession),
         executionScopeKind: ctx.executionScope?.kind,
       });
+      // `unavailable` is a real answer here, not a synonym for "cloud", and
+      // the distinction matters in exactly one case: the user ASKED for their
+      // own machine and it could not be honored (consent lapsed, kill switch
+      // off, no local engine). Falling through to the hosted browser would
+      // quietly run their session somewhere else — the dishonesty
+      // `resolvePersonalComputerEngine` refuses to commit for bash, in its own
+      // words. Everywhere else `unavailable` only means "no LOCAL engine",
+      // which says nothing about the hosted browser: that has its own gates
+      // below, and reads `config.computer`, not this.
+      if (
+        resolvedEngine === "unavailable" &&
+        ctx.localComputerRequested === true
+      ) {
+        logger.warn(
+          "[built-in-tools] browser suppressed: this machine was requested but is unavailable",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not available: this turn asked for the browser on this " +
+            "machine, and this machine cannot serve it — check that local " +
+            "computer consent is still granted.",
+        });
+        continue;
+      }
       const isLocalBrowser = resolvedEngine === "local";
 
       // The three HOSTED gates. A local browser is not a hosted resource: it

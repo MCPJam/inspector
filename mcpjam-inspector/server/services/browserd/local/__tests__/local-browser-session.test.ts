@@ -133,6 +133,25 @@ describe("local browser session", () => {
     expect(launched).toHaveLength(0);
   });
 
+  it("refuses an ephemeral browser that will not name its run", async () => {
+    // The old fallback collapsed a missing key to "anonymous", which handed
+    // two unattended runs on one project ONE browser and one cookie jar.
+    const { deps, launched } = makeDeps();
+    await expect(
+      ensureLocalBrowserSession(
+        { projectId: "proj-a", contextMode: "ephemeral" },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "owner_key_required" });
+    await expect(
+      ensureLocalBrowserSession(
+        { projectId: "proj-a", contextMode: "ephemeral", ownerKey: "  " },
+        deps,
+      ),
+    ).rejects.toBeInstanceOf(LocalBrowserUnavailableError);
+    expect(launched).toHaveLength(0);
+  });
+
   it("does not probe the singleton for an ephemeral browser", async () => {
     // There is no shared profile directory to own.
     const probe = vi.fn().mockResolvedValue({ live: true, pid: 1 });

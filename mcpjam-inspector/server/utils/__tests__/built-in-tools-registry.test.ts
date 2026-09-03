@@ -757,3 +757,60 @@ describe("resolveHostTools — browser engines", () => {
     });
   }
 });
+
+describe("resolveHostTools — browser on a machine that cannot serve it", () => {
+  function withHostedBrowserFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("suppresses rather than quietly running the user's browser in the cloud", () => {
+    // `resolvePersonalComputerEngine`'s own invariant: an explicit `local`
+    // that cannot be honored resolves `unavailable`, NEVER silently cloud.
+    // The browser branch used to read every non-`local` answer as "hosted".
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    withHostedBrowserFlag("1", () => {
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          {
+            ...ctx,
+            browserApprovalDelivery: { kind: "attested" as const },
+            computerEngine: "unavailable" as const,
+            localComputerRequested: true,
+            onToolSuppressed: (i: { id: string; reason: string }) =>
+              suppressed.push(i),
+          },
+        ),
+      ).toBeUndefined();
+    });
+    expect(suppressed[0]).toMatchObject({ id: "browser" });
+    expect(suppressed[0].reason).toContain("this machine");
+  });
+
+  it("still builds the HOSTED browser when no local engine was asked for", () => {
+    // The common deployment has no local engine configured at all, which says
+    // nothing about whether the hosted browser may be advertised.
+    withHostedBrowserFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          browserApprovalDelivery: { kind: "attested" as const },
+          computerEngine: "unavailable" as const,
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_act");
+    });
+  });
+});
