@@ -655,7 +655,8 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, handleReconnect } =
+    useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   // `/servers/:serverId` and `/servers/plugins/:pluginId` — the exact
@@ -728,6 +729,7 @@ export function ServersRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
       onSelectHost={handleSelectHost}
+      onReconnect={handleReconnect}
       serversTabElement={
         <ServersTabBody
           routeServerId={routeParams.serverId ?? null}
@@ -803,6 +805,7 @@ export function HostsRoute() {
     hostsTabSelectedHostId,
     isAuthenticated,
     setHostsTabSelectedHostId,
+    handleReconnect,
   } = useAppRouteContext();
   const [previewedHostId, setPreviewedHostId] =
     usePreviewedHostId(convexProjectId);
@@ -979,6 +982,7 @@ export function HostsRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={openableHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
+      onReconnect={handleReconnect}
       serversTabElement={<ServersTabBody />}
     />
   );
@@ -3676,6 +3680,17 @@ export default function App() {
       activeMcpProfile?.toolListChanged?.refetches === false
         ? (true as const)
         : undefined;
+    // Forward the degraded leaves; the SDK picks the one matching the era each
+    // connection negotiates, which an unpinned host only learns at connect.
+    const cancellationLeaves = Object.fromEntries(
+      (["legacy", "modern"] as const)
+        .filter((key) => activeMcpProfile?.toolCallCancellation?.[key] === false)
+        .map((key) => [key, false])
+    );
+    const toolCallCancellation =
+      Object.keys(cancellationLeaves).length > 0
+        ? cancellationLeaves
+        : undefined;
 
     return {
       clientInfo,
@@ -3689,6 +3704,7 @@ export default function App() {
       supportsMrtr,
       suppressListenChannel,
       dropToolListChanged,
+      toolCallCancellation,
       xaaPolicy,
     };
   }, [
@@ -3712,6 +3728,7 @@ export default function App() {
     mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
     firstPageOnly: hostedMcpProfilePins.firstPageOnly,
     supportsMrtr: hostedMcpProfilePins.supportsMrtr,
+    toolCallCancellation: hostedMcpProfilePins.toolCallCancellation,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
