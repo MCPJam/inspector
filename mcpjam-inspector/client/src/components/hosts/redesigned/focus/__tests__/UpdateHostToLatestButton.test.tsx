@@ -60,6 +60,10 @@ function renderButton(args: {
   savedDraft?: HostConfigInputV2;
   savedName?: string;
   strictMode?: boolean;
+  onSaveLatest?: (
+    name: string,
+    draft: HostConfigInputV2
+  ) => Promise<boolean>;
 }) {
   const draftRef: { current: HostConfigInputV2 } = {
     current: args.initialDraft,
@@ -70,6 +74,7 @@ function renderButton(args: {
   const setDraftRef: {
     current: (next: HostConfigInputV2) => void;
   } = { current: () => undefined };
+  const onSaveLatest = args.onSaveLatest ?? vi.fn().mockResolvedValue(true);
 
   function Harness() {
     const [draft, setDraft] = useState(args.initialDraft);
@@ -96,6 +101,7 @@ function renderButton(args: {
             return next;
           })
         }
+        onSaveLatest={onSaveLatest}
       />
     );
   }
@@ -112,6 +118,7 @@ function renderButton(args: {
   return {
     draftRef,
     nameRef,
+    onSaveLatest,
     setDraft: (next: HostConfigInputV2) => setDraftRef.current(next),
     ...utils,
   };
@@ -123,7 +130,7 @@ describe("UpdateHostToLatestButton", () => {
       hostStyle: "mistral",
       modelId: "old-model",
     });
-    const { draftRef, nameRef } = renderButton({
+    const { draftRef, nameRef, onSaveLatest } = renderButton({
       initialDraft: initial,
       initialName: "Old Mistral",
     });
@@ -133,11 +140,35 @@ describe("UpdateHostToLatestButton", () => {
     expect(options?.action).toMatchObject({ label: "Update to latest" });
 
     const action = options?.action as { onClick: () => void };
-    act(() => action.onClick());
+    await act(() => action.onClick());
 
     expect(draftRef.current).toEqual(catalogDraftFor("mistral"));
     expect(nameRef.current).toBe(catalogLabelFor("mistral"));
+    expect(onSaveLatest).toHaveBeenCalledWith(
+      catalogLabelFor("mistral"),
+      catalogDraftFor("mistral")
+    );
     expect(toast.success).toHaveBeenCalledWith("Updated to latest");
+  });
+
+  it("keeps the catalog changes unsaved when persistence fails", async () => {
+    const user = userEvent.setup();
+    const onSaveLatest = vi.fn().mockResolvedValue(false);
+    const { draftRef } = renderButton({
+      initialDraft: emptyHostConfigInputV2({
+        hostStyle: "mistral",
+        modelId: "old-model",
+      }),
+      onSaveLatest,
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /update to latest/i })
+    );
+
+    expect(onSaveLatest).toHaveBeenCalledTimes(1);
+    expect(draftRef.current).toEqual(catalogDraftFor("mistral"));
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("keeps the update toast visible during Strict Mode effect replay", async () => {

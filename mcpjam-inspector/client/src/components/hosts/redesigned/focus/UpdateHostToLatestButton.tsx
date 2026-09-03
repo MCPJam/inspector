@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -22,6 +22,10 @@ interface UpdateHostToLatestButtonProps {
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
+  onSaveLatest: (
+    name: string,
+    draft: HostConfigInputV2
+  ) => Promise<boolean>;
 }
 
 const UPDATE_TOAST_ID = "client-update-available";
@@ -56,7 +60,9 @@ export function UpdateHostToLatestButton({
   onHostDisplayNameChange,
   themeMode,
   onDraftChange,
+  onSaveLatest,
 }: UpdateHostToLatestButtonProps) {
+  const [isUpdating, setIsUpdating] = useState(false);
   const catalogState = useHostCatalog();
   const catalogHost =
     catalogState.status === "live"
@@ -114,12 +120,15 @@ export function UpdateHostToLatestButton({
       : undefined;
 
   const disabled =
+    isUpdating ||
     catalogState.status !== "live" ||
     latestDraft === undefined ||
     alreadyCurrent;
 
   const title =
-    catalogState.status === "loading"
+    isUpdating
+      ? "Saving update"
+      : catalogState.status === "loading"
       ? "Checking for updates"
       : catalogState.status !== "live"
       ? "Updates are unavailable right now"
@@ -129,7 +138,7 @@ export function UpdateHostToLatestButton({
       ? "You're up to date"
       : "Update to latest";
 
-  const handleClick = () => {
+  const handleClick = async () => {
     if (
       catalogTemplate === undefined ||
       latestDisplayName === undefined ||
@@ -137,12 +146,24 @@ export function UpdateHostToLatestButton({
     ) {
       return;
     }
-    onDraftChange((prev) =>
-      applyCatalogTemplateToDraft(catalogTemplate, prev, themeMode)
+    const nextDraft = applyCatalogTemplateToDraft(
+      catalogTemplate,
+      draft,
+      themeMode
     );
+    onDraftChange(() => nextDraft);
     onHostDisplayNameChange(latestDisplayName);
-    toast.dismiss(UPDATE_TOAST_ID);
-    toast.success("Updated to latest");
+    setIsUpdating(true);
+    let saved = false;
+    try {
+      saved = await onSaveLatest(latestDisplayName, nextDraft);
+    } finally {
+      setIsUpdating(false);
+    }
+    if (saved) {
+      toast.dismiss(UPDATE_TOAST_ID);
+      toast.success("Updated to latest");
+    }
   };
 
   // Keep the action pointed at the newest draft without re-showing the toast
@@ -179,7 +200,7 @@ export function UpdateHostToLatestButton({
       duration: 10_000,
       action: {
         label: "Update to latest",
-        onClick: () => handleClickRef.current(),
+        onClick: () => void handleClickRef.current(),
       },
     });
 
@@ -194,7 +215,7 @@ export function UpdateHostToLatestButton({
       // recommended action in a panel otherwise full of neutral controls, and
       // as an outline button it read as just another one of them.
       variant="default"
-      onClick={handleClick}
+      onClick={() => void handleClick()}
       disabled={disabled}
       title={title}
       className="h-8 gap-1.5 px-2.5 text-[12px]"

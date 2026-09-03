@@ -55,6 +55,10 @@ interface HostFocusPanelProps {
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
+  onSaveLatest: (
+    name: string,
+    draft: HostConfigInputV2,
+  ) => Promise<boolean>;
   attention: ReadonlyArray<HostAttentionIssue>;
   onClose: () => void;
   // `availableServers`, `onAddServer`, and `initialSelectedServerId`
@@ -76,6 +80,7 @@ export function HostFocusPanel({
   draft,
   savedDraft,
   onDraftChange,
+  onSaveLatest,
   attention,
   onClose,
 }: HostFocusPanelProps) {
@@ -114,6 +119,7 @@ export function HostFocusPanel({
               onHostDisplayNameChange={onHostDisplayNameChange}
               themeMode={themeMode}
               onDraftChange={onDraftChange}
+              onSaveLatest={onSaveLatest}
             />
           </div>
         }
