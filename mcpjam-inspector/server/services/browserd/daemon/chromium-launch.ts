@@ -166,14 +166,18 @@ export function wrapPage(page: AnyPage): DriverPage {
   });
 
   // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
-  // page tool should not pay for a CDP session.
+  // page tool should not pay for a CDP session. It reuses the memoized session
+  // below rather than attaching its own — a page serving both a tool call and
+  // the pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
   // The CDP session itself is memoized separately and shared: the WebMCP
   // bridge and the viewport both want one, and attaching twice to the same
   // page gives two sessions whose events interleave unpredictably.
   let cdpPromise: Promise<CdpLike | null> | null = null;
 
-  return {
+  // Named rather than returned inline so `webmcp()` can reach `cdp()` — one
+  // attach, two consumers.
+  const adapted: DriverPage = {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
@@ -279,7 +283,13 @@ export function wrapPage(page: AnyPage): DriverPage {
       consoleRing.length = keep;
     },
     webmcp() {
-      webmcpPromise ??= attachWebMcp(page);
+      webmcpPromise ??= (async () => {
+        // Through the memoized session, so the bridge and the viewport share
+        // ONE attach. Two sessions on a page is two of everything the CDP
+        // domains keep per session, for one page's worth of truth.
+        const session = await adapted.cdp();
+        return session ? attachWebMcp(page, session) : null;
+      })();
       return webmcpPromise;
     },
     cdp() {
@@ -291,21 +301,23 @@ export function wrapPage(page: AnyPage): DriverPage {
       return cdpPromise;
     },
   };
+  return adapted;
 }
 
 /**
- * Attach a WebMCP bridge to a page over its own CDP session. Returns null when
- * this browser cannot speak the domain at all — a page with no WebMCP tools is
- * the normal case, not a failure, so nothing here throws.
+ * Attach a WebMCP bridge to a page over the session its adapter already holds.
+ * Returns null when this browser cannot speak the domain at all — a page with
+ * no WebMCP tools is the normal case, not a failure, so nothing here throws.
  *
- * The CDP session comes from the page's context; `attachCdp` is set by
- * `adaptContext` so this file stays the only one that knows about CDP.
+ * The session is passed IN rather than attached here: the page adapter
+ * memoizes one, and a bridge that opened its own would give a page serving
+ * both a tool call and the pane two sessions.
  */
-async function attachWebMcp(page: AnyPage): Promise<WebMcpBridge | null> {
-  const attach = cdpAttachers.get(page);
-  if (!attach) return null;
+async function attachWebMcp(
+  page: AnyPage,
+  session: CdpLike,
+): Promise<WebMcpBridge | null> {
   try {
-    const session = await attach();
     const bridge = new WebMcpBridge(session);
     await bridge.start(async () => {
       // `WebMCP.enable` resolves even where the feature is off — the page API
@@ -423,7 +435,17 @@ export async function launchBrowserdContext(
     });
   }
 
-  await clearStaleSingletonLock(options.userDataDir);
+  const cleared = await clearStaleSingletonLock(options.userDataDir);
+  if (cleared.heldBy) {
+    // Somebody took the profile between the session layer's check and this
+    // launch. Refusing here beats Chromium's own message, and beats removing a
+    // live owner's lock to make room for ourselves.
+    throw new Error(
+      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}` +
+        `${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds ` +
+        "this profile; close it and try again",
+    );
+  }
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     ...launchArgs,
     acceptDownloads: false,

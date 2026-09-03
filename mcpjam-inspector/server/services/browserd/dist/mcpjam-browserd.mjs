@@ -2384,13 +2384,25 @@ function buildBrowserdLaunchArgs(extra = []) {
 
 // server/services/browserd/daemon/profile-lock.ts
 import { readlink, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
   "SingletonSocket",
   "SingletonCookie"
 ];
-async function clearStaleSingletonLock(userDataDir) {
+async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner) {
+  const owner = await probe(userDataDir);
+  if (owner.live) {
+    return {
+      removed: [],
+      failed: [],
+      heldBy: {
+        ...owner.pid !== void 0 ? { pid: owner.pid } : {},
+        ...owner.host !== void 0 ? { host: owner.host } : {}
+      }
+    };
+  }
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
@@ -2408,6 +2420,29 @@ async function clearStaleSingletonLock(userDataDir) {
 }
 function isNotFound(err) {
   return typeof err === "object" && err !== null && err.code === "ENOENT";
+}
+async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive) {
+  let target;
+  try {
+    target = await readlink(join(userDataDir, "SingletonLock"));
+  } catch {
+    return { live: false };
+  }
+  const separator = target.lastIndexOf("-");
+  if (separator <= 0) return { live: false };
+  const host = target.slice(0, separator);
+  const pid = Number(target.slice(separator + 1));
+  if (!Number.isInteger(pid) || pid <= 0) return { live: false };
+  if (host !== hostname()) return { live: true, pid, host };
+  return isAlive(pid) ? { live: true, pid } : { live: false, pid };
+}
+function defaultIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
 }
 
 // server/services/browserd/daemon/aria-snapshot.ts
@@ -2589,7 +2624,7 @@ function wrapPage(page) {
   });
   let webmcpPromise = null;
   let cdpPromise = null;
-  return {
+  const adapted = {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
@@ -2667,7 +2702,10 @@ function wrapPage(page) {
       consoleRing.length = keep;
     },
     webmcp() {
-      webmcpPromise ??= attachWebMcp(page);
+      webmcpPromise ??= (async () => {
+        const session = await adapted.cdp();
+        return session ? attachWebMcp(page, session) : null;
+      })();
       return webmcpPromise;
     },
     cdp() {
@@ -2679,12 +2717,10 @@ function wrapPage(page) {
       return cdpPromise;
     }
   };
+  return adapted;
 }
-async function attachWebMcp(page) {
-  const attach = cdpAttachers.get(page);
-  if (!attach) return null;
+async function attachWebMcp(page, session) {
   try {
-    const session = await attach();
     const bridge = new WebMcpBridge(session);
     await bridge.start(async () => {
       const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
@@ -2730,7 +2766,12 @@ async function launchBrowserdContext(options) {
       onClose: () => browser.close()
     });
   }
-  await clearStaleSingletonLock(options.userDataDir);
+  const cleared = await clearStaleSingletonLock(options.userDataDir);
+  if (cleared.heldBy) {
+    throw new Error(
+      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+    );
+  }
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     ...launchArgs,
     acceptDownloads: false,

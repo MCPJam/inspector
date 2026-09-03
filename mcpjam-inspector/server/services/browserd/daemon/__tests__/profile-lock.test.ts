@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, symlink, writeFile, readdir, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, symlink, readlink, writeFile, readdir, mkdir } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearStaleSingletonLock, probeSingletonOwner } from "../profile-lock";
@@ -82,5 +82,38 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
   it("treats a missing or unreadable lock as free", async () => {
     const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
     expect(await probeSingletonOwner(dir, () => true)).toEqual({ live: false });
+  });
+});
+
+describe("clearing a lock is not a licence to take a live profile", () => {
+  it("removes nothing when the probe finds a live owner at unlink time", async () => {
+    // The window this closes: the session layer checked a moment ago and
+    // decided to launch. A browser that took the profile in between would have
+    // had its lock files removed out from under it.
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    const cleared = await clearStaleSingletonLock(dir, async () => ({
+      live: true,
+      pid: 4242,
+    }));
+
+    expect(cleared.removed).toEqual([]);
+    expect(cleared.heldBy).toEqual({ pid: 4242 });
+    // Still there: the owner's, not ours.
+    expect(await readlink(join(dir, "SingletonLock"))).toContain("4242");
+  });
+
+  it("clears debris when the probe says nobody is there", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    const cleared = await clearStaleSingletonLock(dir, async () => ({
+      live: false,
+      pid: 4242,
+    }));
+
+    expect(cleared.removed).toEqual(["SingletonLock"]);
+    expect(cleared.heldBy).toBeUndefined();
   });
 });

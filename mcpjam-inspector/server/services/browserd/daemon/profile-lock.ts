@@ -30,17 +30,46 @@ export interface ClearedLock {
   removed: string[];
   /** Names that were present but could not be removed, with the error text. */
   failed: Array<{ name: string; error: string }>;
+  /**
+   * Set when a LIVE owner was found instead: nothing was removed, and the
+   * caller must not launch into this directory.
+   */
+  heldBy?: { pid?: number; host?: string };
 }
 
 /**
- * Remove any stale Chromium singleton files from `userDataDir`. Safe to call
- * when the directory is clean (removes nothing) and when Chromium is NOT running
- * (there is no live owner to disturb — the caller guarantees that by only
- * clearing before a relaunch). ENOENT is treated as already-clear.
+ * Remove any stale Chromium singleton files from `userDataDir`.
+ *
+ * The probe runs HERE, immediately before the unlink, rather than only in a
+ * caller that decided to launch some milliseconds ago: a browser that took the
+ * profile in between would otherwise have its lock files removed out from
+ * under it. This narrows that window to the gap between the readlink and the
+ * unlink; it does not close it, and it cannot — Chromium owns the lock
+ * protocol and offers no atomic take-or-fail we can join from outside. What
+ * survives the gap is caught by Chromium's own launch failure, which the
+ * session layer already reports as `profile_in_use`.
+ *
+ * Safe to call when the directory is clean (removes nothing). ENOENT is
+ * treated as already-clear.
  */
 export async function clearStaleSingletonLock(
   userDataDir: string,
+  probe: (
+    dir: string,
+  ) => Promise<{ live: boolean; pid?: number; host?: string }> =
+    probeSingletonOwner,
 ): Promise<ClearedLock> {
+  const owner = await probe(userDataDir);
+  if (owner.live) {
+    return {
+      removed: [],
+      failed: [],
+      heldBy: {
+        ...(owner.pid !== undefined ? { pid: owner.pid } : {}),
+        ...(owner.host !== undefined ? { host: owner.host } : {}),
+      },
+    };
+  }
   const result: ClearedLock = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
