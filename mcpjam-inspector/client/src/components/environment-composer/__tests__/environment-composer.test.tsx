@@ -44,8 +44,8 @@ vi.mock("@/hooks/use-available-models", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({ triggerTestId }: { triggerTestId?: string }) => (
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({ triggerTestId }: { triggerTestId?: string }) => (
     <div data-testid={triggerTestId ?? "server-group-picker"} />
   ),
 }));

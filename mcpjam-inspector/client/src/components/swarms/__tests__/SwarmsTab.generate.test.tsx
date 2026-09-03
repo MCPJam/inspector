@@ -108,8 +108,8 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 }));
 
 // The button is the handle the mid-flight test needs to retarget the dialog.
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({ onChange }: { onChange: (id: string) => void }) => (
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({ onChange }: { onChange: (id: string) => void }) => (
     <button
       type="button"
       data-testid="generate-server-group-picker"

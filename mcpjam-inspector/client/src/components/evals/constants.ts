@@ -41,7 +41,6 @@ export type ViewMode = (typeof VIEW_MODES)[keyof typeof VIEW_MODES];
 
 // Storage keys
 export const STORAGE_KEYS = {
-  EVAL_RUNNER_PREFERENCES: "mcp-inspector-eval-runner-preferences",
   SUITE_PASS_CRITERIA: (suiteId: string) => `suite-${suiteId}-criteria-rate`,
 } as const;
 

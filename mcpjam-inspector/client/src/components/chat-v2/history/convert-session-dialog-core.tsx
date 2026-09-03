@@ -42,7 +42,7 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "@/components/evals/client-attachments-editor";
-import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
 
@@ -608,11 +608,10 @@ export function ConvertSessionDialogCore({
                         </p>
                       </div>
                       <div className="shrink-0">
-                        <ServerAttachmentPicker
+                        <ServerPicker
                           projectId={effectiveProjectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
-                          onClearSelection={() => setServerAttachmentId(null)}
                           disabled={isSubmitting}
                         />
                       </div>

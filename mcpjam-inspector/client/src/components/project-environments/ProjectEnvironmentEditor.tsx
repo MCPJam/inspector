@@ -4,7 +4,7 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
 import { SandboxImagePicker } from "@/components/computer/SandboxImagePicker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
@@ -394,7 +394,7 @@ export function ProjectEnvironmentEditor({
       <div className="space-y-1.5">
         <Label className="text-xs">Server group</Label>
         <div className="flex items-center gap-2">
-          <ServerGroupPicker
+          <ServerPicker
             projectId={projectId}
             value={draft.serverAttachmentId}
             onChange={(serverAttachmentId) =>
@@ -402,10 +402,6 @@ export function ProjectEnvironmentEditor({
             }
             disabled={readOnly}
             emptyTriggerLabel="Client default · pick a group"
-            infoText="Optional: a named set of MCP servers this environment runs against. Without one, the client's own server picks apply."
-            onClearSelection={() =>
-              setDraft((d) => ({ ...d, serverAttachmentId: null }))
-            }
           />
           {draft.serverAttachmentId && !readOnly ? (
             <Button
