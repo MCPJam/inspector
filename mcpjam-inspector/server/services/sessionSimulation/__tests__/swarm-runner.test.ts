@@ -604,6 +604,55 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     }
   });
 
+  it("a real MCPJam account limit stops the whole run even though its copy has no cap-wording", async () => {
+    // The wire form `runner.ts` builds: "<message> (<code>, HTTP <status>)".
+    // None of MCPJam's limit sentences contain spend/cap/quota/budget, so the
+    // account-wide stop has to key on the denial code instead.
+    for (const envelope of [
+      "Daily credit limit reached. (user_rate_limit, HTTP 429)",
+      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. (org_rate_limit, HTTP 429)",
+      "Your organization's credit limit was reached. (billing_limit_reached, HTTP 402)",
+    ]) {
+      finalizePendingAttemptsMock.mockClear();
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+        if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+          return { outcome: "rate_limited", errorMessage: envelope };
+        }
+        return { outcome: "succeeded" };
+      });
+
+      await startJourneyRun(
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      );
+
+      expect(
+        finalizePendingAttemptsMock,
+        `"${envelope}" should trip the whole-run account-limit stop`
+      ).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+        errorCode: "spend_cap_exceeded",
+      });
+    }
+  });
+
+  it("a 429 on the user's own provider key stays a PER-HOST stop", async () => {
+    // BB-172: the user's key really was throttled by their provider. Other
+    // hosts run on a different key, so the run must not halt.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return { outcome: "rate_limited", errorMessage: "429 Too Many Requests" };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+    );
+
+    expect(executedForHost("host-2")).toHaveLength(2);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+  });
+
   it("a 'capacity' rate-limit is a PER-HOST provider stop, NOT a whole-run spend-cap (finding 7)", async () => {
     // "capacity" must not be misread as a spend cap: only THIS host stops; the
     // run does not finalize-pending.
