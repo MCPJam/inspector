@@ -11,6 +11,42 @@
 import { authFetch } from "@/lib/session-token";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 
+/**
+ * Refuse to hand the device-consent capability to a page that is not on this
+ * machine and not encrypted.
+ *
+ * These routes exist only on a local inspector, but "local" is a property of
+ * the SERVER; the page can be served from anywhere, and the consent token and
+ * every keystroke this pane forwards would then cross a plaintext hop that
+ * anyone on the path can read. `https:` is fine wherever it is served from,
+ * loopback is fine unencrypted, and nothing else is.
+ */
+export class InsecureLocalBrowserOriginError extends Error {
+  constructor(origin: string) {
+    super(
+      `The local browser will not send its consent token over ${origin}. ` +
+        "Open the inspector on localhost, or over https.",
+    );
+    this.name = "InsecureLocalBrowserOriginError";
+  }
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+export function isSecureLocalOrigin(location: {
+  protocol: string;
+  hostname: string;
+}): boolean {
+  if (location.protocol === "https:") return true;
+  return LOOPBACK_HOSTS.has(location.hostname);
+}
+
+function assertSecureLocalOrigin(): void {
+  if (typeof window === "undefined") return;
+  if (isSecureLocalOrigin(window.location)) return;
+  throw new InsecureLocalBrowserOriginError(window.location.origin);
+}
+
 /** What the pane knows about this machine's browser. */
 export interface LocalBrowserStatus {
   installed: boolean;
@@ -52,6 +88,7 @@ async function post<T>(
   body: unknown,
   consentToken: string | null,
 ): Promise<T> {
+  assertSecureLocalOrigin();
   const response = await authFetch(`/api/mcp/computers/local-browser/${path}`, {
     method: "POST",
     headers: {
@@ -150,6 +187,9 @@ export function openLocalBrowserFrameStream(args: {
   holder: string;
   nonce: string;
 }): { socket: WebSocket; close(): void } {
+  // The nonce is a bearer capability and the frames are pictures of a
+  // signed-in browser; neither goes over an unencrypted non-loopback hop.
+  assertSecureLocalOrigin();
   const base = window.location.origin.replace(/^http/, "ws");
   const url = `${base}${LOCAL_BROWSER_FRAMES_PATH}?bootId=${encodeURIComponent(
     args.bootId,
@@ -180,6 +220,17 @@ export function toPageCoordinates(
   event: { clientX: number; clientY: number },
   image: { getBoundingClientRect(): DOMRect },
   frame: { deviceWidth: number; deviceHeight: number; scale: number },
+  options: {
+    /**
+     * Clamp to the page instead of dropping, for the events that MUST land.
+     *
+     * A drag that ends over a letterbox bar is the case: dropping its
+     * `mouse_up` leaves the page holding a button down forever, mid-selection.
+     * Nothing is guessed about intent — the release is simply attributed to
+     * the nearest point the page actually has.
+     */
+    clampToPage?: boolean;
+  } = {},
 ): { x: number; y: number } | null {
   const rect = image.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
@@ -197,8 +248,73 @@ export function toPageCoordinates(
 
   const x = (event.clientX - rect.left - offsetX) / fit;
   const y = (event.clientY - rect.top - offsetY) / fit;
-  if (x < 0 || y < 0 || x > cssWidth || y > cssHeight) return null;
+  if (x < 0 || y < 0 || x > cssWidth || y > cssHeight) {
+    if (!options.clampToPage) return null;
+    return {
+      x: Math.round(Math.min(Math.max(x, 0), cssWidth)),
+      y: Math.round(Math.min(Math.max(y, 0), cssHeight)),
+    };
+  }
   return { x: Math.round(x), y: Math.round(y) };
+}
+
+/**
+ * Bound how much pointer traffic is in flight at once.
+ *
+ * A person dragging generates a `mousemove` per frame, and one POST each meant
+ * dozens of concurrent unordered requests: input arriving out of order puts a
+ * drag somewhere it never went. One request is in flight at a time, the rest
+ * queue, and consecutive moves in the queue collapse — an intermediate
+ * position nobody saw is not worth a round trip, but the one they stopped at
+ * always is.
+ */
+export function createInputForwarder(
+  send: (events: LocalBrowserInputEvent[]) => Promise<unknown>,
+) {
+  let queue: LocalBrowserInputEvent[] = [];
+  let inFlight = false;
+
+  const flush = () => {
+    if (inFlight || queue.length === 0) return;
+    const batch = coalesceInput(queue);
+    queue = [];
+    inFlight = true;
+    void send(batch)
+      .catch(() => {
+        // A refused batch is not worth a banner; the lease read says why.
+      })
+      .finally(() => {
+        inFlight = false;
+        flush();
+      });
+  };
+
+  return {
+    push(events: LocalBrowserInputEvent[]) {
+      if (events.length === 0) return;
+      queue.push(...events);
+      flush();
+    },
+  };
+}
+
+/** Drop a move that another move immediately replaces. */
+export function coalesceInput(
+  events: readonly LocalBrowserInputEvent[],
+): LocalBrowserInputEvent[] {
+  const out: LocalBrowserInputEvent[] = [];
+  for (const event of events) {
+    if (
+      event.type === "mouse_move" &&
+      out.length > 0 &&
+      out[out.length - 1]?.type === "mouse_move"
+    ) {
+      out[out.length - 1] = event;
+      continue;
+    }
+    out.push(event);
+  }
+  return out;
 }
 
 /** CDP's modifier bitmask: Alt 1, Ctrl 2, Meta 4, Shift 8. */

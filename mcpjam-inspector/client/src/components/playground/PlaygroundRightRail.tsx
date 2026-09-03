@@ -107,6 +107,13 @@ function RightRailTabbed({
       engine.selectedEngine === "local",
   );
 
+  // A tab that disappears cannot stay selected: switching the engine to cloud
+  // with Browser open used to hide the Browser body AND leave `activeTab` on
+  // it, so all three panes were hidden and the rail looked broken.
+  useEffect(() => {
+    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
+  }, [hasBrowser, activeTab]);
+
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
@@ -179,6 +186,10 @@ function RightRailTabbed({
             projectId={projectId}
             consentGranted={engine.consent.granted}
             consentToken={engine.consent.token}
+            // Mounted-hidden is not "being watched": the pane heartbeats to
+            // defer the browser's idle reap, and a pane behind the Logs tab
+            // must stop claiming somebody is looking at it.
+            active={activeTab === "browser"}
           />
         </div>
       ) : null}

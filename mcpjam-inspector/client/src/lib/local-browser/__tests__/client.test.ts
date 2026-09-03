@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { modifiersOf, toPageCoordinates } from "../client";
+import {
+  coalesceInput,
+  createInputForwarder,
+  isSecureLocalOrigin,
+  modifiersOf,
+  toPageCoordinates,
+  type LocalBrowserInputEvent,
+} from "../client";
 
 /** An element whose rectangle a test controls. */
 function image(width: number, height: number) {
@@ -68,5 +75,119 @@ describe("modifiers", () => {
     expect(modifiersOf({ metaKey: true })).toBe(4);
     expect(modifiersOf({ shiftKey: true })).toBe(8);
     expect(modifiersOf({ ctrlKey: true, shiftKey: true })).toBe(10);
+  });
+});
+
+describe("releases and drags", () => {
+  const frame = { deviceWidth: 1024, deviceHeight: 768, scale: 1 };
+
+  it("clamps a release that drifted onto a bar instead of dropping it", () => {
+    // Dropping a `mouse_up` leaves the page holding the button down forever,
+    // stuck mid-selection with no way for the person to let go.
+    const point = toPageCoordinates(
+      { clientX: 512, clientY: 950 },
+      image(1024, 968),
+      frame,
+      { clampToPage: true },
+    );
+    expect(point).toEqual({ x: 512, y: 768 });
+  });
+
+  it("still drops a PRESS on a bar", () => {
+    expect(
+      toPageCoordinates({ clientX: 512, clientY: 950 }, image(1024, 968), frame),
+    ).toBeNull();
+  });
+});
+
+describe("bounding pointer traffic", () => {
+  it("collapses a run of moves and keeps everything else in order", () => {
+    expect(
+      coalesceInput([
+        { type: "mouse_move", x: 1, y: 1 },
+        { type: "mouse_move", x: 2, y: 2 },
+        { type: "mouse_move", x: 3, y: 3 },
+        { type: "mouse_down", x: 3, y: 3, button: "left" },
+        { type: "mouse_move", x: 4, y: 4 },
+      ]),
+    ).toEqual([
+      // The position they stopped at, not the ones nobody saw.
+      { type: "mouse_move", x: 3, y: 3 },
+      { type: "mouse_down", x: 3, y: 3, button: "left" },
+      { type: "mouse_move", x: 4, y: 4 },
+    ]);
+  });
+
+  it("keeps ONE request in flight and sends the rest behind it", async () => {
+    const batches: LocalBrowserInputEvent[][] = [];
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sends = 0;
+    const forwarder = createInputForwarder(async (events) => {
+      batches.push([...events]);
+      sends += 1;
+      if (sends === 1) await first;
+    });
+
+    forwarder.push([{ type: "mouse_move", x: 1, y: 1 }]);
+    // Everything below arrives while the first request is still open.
+    forwarder.push([{ type: "mouse_move", x: 2, y: 2 }]);
+    forwarder.push([{ type: "mouse_move", x: 3, y: 3 }]);
+    forwarder.push([{ type: "mouse_up", x: 3, y: 3, button: "left" }]);
+    expect(batches).toHaveLength(1);
+
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Two requests, not four — and the queued moves collapsed to the last one,
+    // with the release still behind it and in order.
+    expect(batches).toEqual([
+      [{ type: "mouse_move", x: 1, y: 1 }],
+      [
+        { type: "mouse_move", x: 3, y: 3 },
+        { type: "mouse_up", x: 3, y: 3, button: "left" },
+      ],
+    ]);
+  });
+
+  it("keeps going after a refused batch", async () => {
+    const batches: unknown[][] = [];
+    const forwarder = createInputForwarder(async (events) => {
+      batches.push([...events]);
+      throw new Error("423");
+    });
+    forwarder.push([{ type: "mouse_move", x: 1, y: 1 }]);
+    await new Promise((r) => setTimeout(r, 0));
+    forwarder.push([{ type: "mouse_move", x: 2, y: 2 }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(batches).toHaveLength(2);
+  });
+});
+
+describe("where the consent token may be sent", () => {
+  it("accepts loopback over http and anything over https", () => {
+    expect(
+      isSecureLocalOrigin({ protocol: "http:", hostname: "localhost" }),
+    ).toBe(true);
+    expect(
+      isSecureLocalOrigin({ protocol: "http:", hostname: "127.0.0.1" }),
+    ).toBe(true);
+    expect(
+      isSecureLocalOrigin({ protocol: "https:", hostname: "inspector.example" }),
+    ).toBe(true);
+  });
+
+  it("refuses a plaintext hop to another machine", () => {
+    // The routes only exist on a local inspector, but the PAGE can be served
+    // from anywhere — and then the consent token and every keystroke this pane
+    // forwards cross a hop anyone on the path can read.
+    expect(
+      isSecureLocalOrigin({ protocol: "http:", hostname: "192.168.1.20" }),
+    ).toBe(false);
+    expect(
+      isSecureLocalOrigin({ protocol: "http:", hostname: "inspector.local" }),
+    ).toBe(false);
   });
 });

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Hand, Loader2, MousePointer2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { PaneMessage } from "@/components/computer/PaneMessage";
 import {
   actOnLocalBrowserLease,
+  createInputForwarder,
   ensureLocalBrowser,
   fetchLocalBrowserStatus,
   mintLocalBrowserFrameNonce,
@@ -17,6 +18,13 @@ import {
   type LocalBrowserLease,
   type LocalBrowserStatus,
 } from "@/lib/local-browser/client";
+
+/** The DOM's button numbering, in the daemon's names. */
+function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
+  if (event.button === 1) return "middle";
+  if (event.button === 2) return "right";
+  return "left";
+}
 
 /**
  * The agent's browser, in the Playground rail.
@@ -36,10 +44,21 @@ export function LocalBrowserBody({
   projectId,
   consentGranted,
   consentToken,
+  active = true,
 }: {
   projectId: string | null;
   consentGranted: boolean;
   consentToken: string | null;
+  /**
+   * Is this pane the rail's visible tab?
+   *
+   * The pane stays MOUNTED when the user looks at the logs — dropping the
+   * socket would stop the screencast and make the browser go dark on every
+   * glance — so `document.visibilityState` cannot answer this: the document is
+   * still visible, it is this pane that is not. Watching is what defers the
+   * idle reap, so a hidden pane must stop claiming somebody is watching.
+   */
+  active?: boolean;
 }) {
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
@@ -47,7 +66,13 @@ export function LocalBrowserBody({
   const [frame, setFrame] = useState<LocalBrowserFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Bumped to re-open the frame socket after it was refused — see the 4401
+  // branch below.
+  const [streamAttempt, setStreamAttempt] = useState(0);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  /** Buttons this pane is holding down, so a drag can be released honestly. */
+  const draggingRef = useRef(false);
 
   /**
    * This pane's identity as a lease holder.
@@ -62,6 +87,18 @@ export function LocalBrowserBody({
   );
   const holder = holderRef.current;
   const holding = lease.state !== "free" && lease.holder === holder;
+  // Read inside the heartbeat interval, which must not be torn down and
+  // rebuilt (and the socket with it) every time the user changes tab.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  // Taking control moves the KEYBOARD, not just the lease: the click that
+  // acquired it left focus on the button, so everything typed afterwards went
+  // to the button and nothing reached the page.
+  useEffect(() => {
+    if (!holding || !active) return;
+    paneRef.current?.focus();
+  }, [holding, active]);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,15 +136,39 @@ export function LocalBrowserBody({
     }
   }, [consentToken]);
 
+  /**
+   * Which project the state below belongs to.
+   *
+   * The pane is mounted once and its `projectId` changes underneath it. A
+   * session, a lease and a frame are all bound to ONE project's browser, so
+   * carrying them across a switch would show one project's page in another's
+   * rail — and, worse, aim input at it. A start already in flight is
+   * abandoned for the same reason.
+   */
+  const projectRef = useRef(projectId);
+  useEffect(() => {
+    if (projectRef.current === projectId) return;
+    projectRef.current = projectId;
+    setSession(null);
+    setLease({ state: "free" });
+    setFrame(null);
+    setError(null);
+    draggingRef.current = false;
+  }, [projectId]);
+
   const start = useCallback(async () => {
     if (!projectId) return;
     setBusy(true);
     setError(null);
     try {
       const next = await ensureLocalBrowser(projectId, consentToken);
+      // The project may have changed while this was in flight; a late answer
+      // describes a browser this rail is no longer looking at.
+      if (projectRef.current !== projectId) return;
       setSession({ bootId: next.bootId });
       setLease(next.lease);
     } catch (err) {
+      if (projectRef.current !== projectId) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -121,6 +182,7 @@ export function LocalBrowserBody({
     let closed = false;
     let stream: { close(): void } | null = null;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
 
     void (async () => {
       try {
@@ -147,15 +209,30 @@ export function LocalBrowserBody({
           }
         };
         opened.socket.onclose = (event) => {
-          if (!closed && event.code === 4401) {
-            setError(
-              "Somebody else has taken control of this browser. The view will resume when they hand it back.",
-            );
-          }
+          if (closed || event.code !== 4401) return;
+          // Somebody else holds the browser — including, now, a handoff that
+          // happened while this socket was open, which the daemon revokes
+          // mid-stream. Not a terminal state: the view has to come back when
+          // they hand it back, so keep asking rather than latching an error
+          // nothing will ever clear.
+          setError(
+            "Somebody else has taken control of this browser. The view will resume when they hand it back.",
+          );
+          setFrame(null);
+          retry = setTimeout(() => {
+            if (!closed) setStreamAttempt((n) => n + 1);
+          }, 3_000);
         };
-        // Only while the tab is VISIBLE: a hidden pane is not a person
-        // watching, and the browser should be reapable while nobody is.
+        opened.socket.onopen = () => {
+          // Whatever refused the last attempt is over.
+          setError(null);
+        };
+        // Only while somebody is actually LOOKING: the document being visible
+        // is not enough, because this pane stays mounted behind the Logs tab.
+        // Watching is what defers the idle reap, so a pane nobody is looking
+        // at must stop claiming otherwise.
         heartbeat = setInterval(() => {
+          if (!activeRef.current) return;
           if (document.visibilityState !== "visible") return;
           if (opened.socket.readyState !== WebSocket.OPEN) return;
           opened.socket.send(JSON.stringify({ type: "ping" }));
@@ -168,9 +245,10 @@ export function LocalBrowserBody({
     return () => {
       closed = true;
       if (heartbeat) clearInterval(heartbeat);
+      if (retry) clearTimeout(retry);
       stream?.close();
     };
-  }, [session, projectId, consentToken, holder]);
+  }, [session, projectId, consentToken, holder, streamAttempt]);
 
   const setLeaseAction = useCallback(
     async (action: "acquire" | "resume") => {
@@ -203,25 +281,30 @@ export function LocalBrowserBody({
     return () => clearInterval(timer);
   }, [holding, session, holder, consentToken]);
 
+  // One POST in flight, the rest queued and consecutive moves collapsed. A
+  // drag otherwise fires a request per animation frame, and requests that
+  // overtake each other put the pointer somewhere it never went.
+  const forwarder = useMemo(() => {
+    if (!session) return null;
+    const bootId = session.bootId;
+    return createInputForwarder((events) =>
+      sendLocalBrowserInput({ bootId, holder, events }, consentToken),
+    );
+  }, [session, holder, consentToken]);
+
   const send = useCallback(
     (events: LocalBrowserInputEvent[]) => {
-      if (!session || !holding || events.length === 0) return;
-      void sendLocalBrowserInput(
-        { bootId: session.bootId, holder, events },
-        consentToken,
-      ).catch(() => {
-        // A refused event is not worth an error banner: the most likely cause
-        // is the lease expiring, and the next lease read says so.
-      });
+      if (!forwarder || !holding || events.length === 0) return;
+      forwarder.push(events);
     },
-    [session, holding, holder, consentToken],
+    [forwarder, holding],
   );
 
   const pointAt = useCallback(
-    (event: React.MouseEvent) => {
+    (event: React.MouseEvent, options: { clampToPage?: boolean } = {}) => {
       const image = imageRef.current;
       if (!image || !frame) return null;
-      return toPageCoordinates(event, image, frame);
+      return toPageCoordinates(event, image, frame, options);
     },
     [frame],
   );
@@ -294,34 +377,63 @@ export function LocalBrowserBody({
         className="h-full w-full select-none object-contain"
         draggable={false}
         onMouseMove={(event) => {
-          const point = pointAt(event);
+          // Mid-drag a move must still land, even over a letterbox bar: the
+          // page is tracking the pointer and a gap reads as a jump.
+          const point = pointAt(event, { clampToPage: draggingRef.current });
           if (point) send([{ type: "mouse_move", ...point, modifiers: modifiersOf(event) }]);
         }}
         onMouseDown={(event) => {
+          // A press that starts on a bar is still dropped: the page has
+          // nothing there, and inventing a target clicks where nobody aimed.
           const point = pointAt(event);
           if (!point) return;
+          draggingRef.current = true;
           send([
             {
               type: "mouse_down",
               ...point,
-              button: "left",
+              button: buttonOf(event),
               clickCount: event.detail || 1,
               modifiers: modifiersOf(event),
             },
           ]);
         }}
         onMouseUp={(event) => {
-          const point = pointAt(event);
+          // The release always lands. Dropping it because the pointer drifted
+          // onto a bar leaves the page holding the button down forever, stuck
+          // mid-selection with no way for the person to let go.
+          const point = pointAt(event, { clampToPage: draggingRef.current });
+          draggingRef.current = false;
           if (!point) return;
           send([
             {
               type: "mouse_up",
               ...point,
-              button: "left",
+              button: buttonOf(event),
               clickCount: event.detail || 1,
               modifiers: modifiersOf(event),
             },
           ]);
+        }}
+        onMouseLeave={(event) => {
+          // Leaving the element mid-drag ends it, for the same reason.
+          if (!draggingRef.current) return;
+          const point = pointAt(event, { clampToPage: true });
+          draggingRef.current = false;
+          if (point) {
+            send([
+              {
+                type: "mouse_up",
+                ...point,
+                button: "left",
+                modifiers: modifiersOf(event),
+              },
+            ]);
+          }
+        }}
+        onContextMenu={(event) => {
+          // The page gets the right-click; the host's own menu would cover it.
+          if (holding) event.preventDefault();
         }}
         onWheel={(event) => {
           const point = pointAt(event);
@@ -365,7 +477,8 @@ export function LocalBrowserBody({
         ) : null}
       </div>
       <div
-        className="min-h-0 flex-1 px-3 pb-3"
+        ref={paneRef}
+        className="min-h-0 flex-1 px-3 pb-3 outline-none"
         // Keys go to the page only while this pane holds the browser.
         tabIndex={holding ? 0 : -1}
         onKeyDown={(event) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
@@ -12,6 +12,16 @@ const api = vi.hoisted(() => ({
   lease: { state: "free" as string, holder: undefined as string | undefined },
   installs: 0,
   inputs: [] as unknown[],
+  ensures: [] as string[],
+  /** The last socket handed to the pane, so a test can deliver a frame. */
+  socket: null as {
+    readyState: number;
+    send(data: string): void;
+    close(): void;
+    onmessage?: (event: { data: string }) => void;
+    onclose?: (event: { code: number }) => void;
+    onopen?: () => void;
+  } | null,
 }));
 
 vi.mock("@/lib/local-browser/client", async () => {
@@ -25,11 +35,14 @@ vi.mock("@/lib/local-browser/client", async () => {
       api.installs += 1;
       return { install: { status: "installing" as const, percent: 0 } };
     },
-    ensureLocalBrowser: async () => ({
-      bootId: "boot-1",
-      contextMode: "persistent" as const,
-      lease: api.lease,
-    }),
+    ensureLocalBrowser: async (projectId: string) => {
+      api.ensures.push(projectId);
+      return {
+        bootId: `boot-${projectId}`,
+        contextMode: "persistent" as const,
+        lease: api.lease,
+      };
+    },
     mintLocalBrowserFrameNonce: async () => ({
       nonce: "n".repeat(32),
       expiresAtMs: Date.now() + 60_000,
@@ -45,10 +58,15 @@ vi.mock("@/lib/local-browser/client", async () => {
       api.inputs.push(args);
       return { ok: true as const };
     },
-    openLocalBrowserFrameStream: () => ({
-      socket: { readyState: 1, send: () => {}, close: () => {} } as never,
-      close: () => {},
-    }),
+    openLocalBrowserFrameStream: () => {
+      const socket = {
+        readyState: 1,
+        send: () => {},
+        close: () => {},
+      };
+      api.socket = socket;
+      return { socket: socket as never, close: () => {} };
+    },
   };
 });
 
@@ -64,7 +82,28 @@ beforeEach(() => {
   api.lease = { state: "free", holder: undefined };
   api.installs = 0;
   api.inputs = [];
+  api.ensures = [];
+  api.socket = null;
 });
+
+/** Push one frame down the pane's socket so the picture renders. */
+async function deliverFrame() {
+  await waitFor(() => expect(api.socket).not.toBeNull());
+  api.socket?.onmessage?.({
+    data: JSON.stringify({
+      type: "frame",
+      frame: {
+        data: "Zm9v",
+        deviceWidth: 1024,
+        deviceHeight: 768,
+        scale: 1,
+        ts: 1,
+        seq: 1,
+      },
+    }),
+  });
+  return screen.findByTestId("rail-browser-frame");
+}
 
 function renderBody(over: Record<string, unknown> = {}) {
   return render(
@@ -144,5 +183,74 @@ describe("the agent browser pane", () => {
       await screen.findByRole("button", { name: /hand back/i }),
     );
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
+  });
+});
+
+describe("the agent browser pane — driving it", () => {
+  async function takeControl() {
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /take control/i }),
+    );
+    await screen.findByText(/you have control/i);
+  }
+
+  it("moves the keyboard to the pane, not the button that took control", async () => {
+    // The click that acquired the lease left focus on the button, so
+    // everything typed afterwards went to the button and never reached the
+    // page — a browser you hold but cannot type into.
+    await takeControl();
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("tabindex")).toBe("0"),
+    );
+  });
+
+  it("sends a right-click as a right-click", async () => {
+    // Both handlers hard-coded `button: "left"`, so a context-menu click and a
+    // middle-click both arrived at the page as ordinary left clicks.
+    await takeControl();
+    const image = await deliverFrame();
+    // jsdom lays nothing out, so the pane cannot map a point without one.
+    image.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+
+    fireEvent.mouseDown(image, { clientX: 10, clientY: 10, button: 2 });
+    fireEvent.mouseUp(image, { clientX: 10, clientY: 10, button: 2 });
+
+    await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
+    const buttons = api.inputs
+      .flatMap((call: any) => call.events as any[])
+      .filter((e) => e.type === "mouse_down" || e.type === "mouse_up")
+      .map((e) => e.button);
+    expect(buttons.length).toBe(2);
+    expect(buttons.every((b: string) => b === "right")).toBe(true);
+  });
+
+  it("drops the previous project's browser when the project changes", async () => {
+    // Session, lease and frame all belong to ONE project's browser. Carrying
+    // them across a switch shows one project's page in another's rail, and
+    // aims input at it.
+    const view = renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await screen.findByText(/agent is driving/i);
+    await deliverFrame();
+
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-2"
+        consentGranted
+        consentToken="tok"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
+    );
+    expect(api.ensures).toEqual(["proj-1"]);
   });
 });
