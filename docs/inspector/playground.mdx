@@ -177,8 +177,11 @@ Each host style ships with a distinct `hostCapabilities` preset. Switching from 
 | Preset | `HostContext.toolInfo` | `availableDisplayModes` |
 |---|---|---|
 | Claude | Included | `["inline", "fullscreen", "pip"]` |
+| Claude Desktop | Omitted (`undefined`) | `["inline"]` |
 | Copilot | Omitted (`undefined`) | `["inline", "fullscreen"]` |
 | ChatGPT | Included | `["inline", "fullscreen", "pip"]` |
+
+**Claude Desktop** is the Electron app; the **Claude** preset is claude.ai in a browser. The two share the same style variables and fonts but differ in display modes and `toolInfo`: the desktop app advertises only `inline` and does not deliver `toolInfo`, so a widget that calls `app.getHostContext()?.toolInfo` on the Claude Desktop preset correctly sees `undefined`.
 
 **Copilot** follows Microsoft 365 Copilot's published bridge: `toolInfo` is not delivered and `pip` is not advertised, so a widget that calls `app.getHostContext()?.toolInfo` on the Copilot preset correctly sees `undefined`.
 
