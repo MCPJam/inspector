@@ -30,7 +30,24 @@ describe("readBrowserdConfig", () => {
       userDataDir: DEFAULT_BROWSERD_USER_DATA_DIR,
       headless: false,
       windowSize: undefined,
+      contextMode: "persistent",
     });
+  });
+
+  it("only the exact string opts into ephemeral mode", () => {
+    // A typo must not silently wipe a user's logged-in profile, so anything
+    // that is not exactly "true" keeps the persistent profile.
+    expect(readBrowserdConfig(withToken()).contextMode).toBe("persistent");
+    for (const value of ["", "false", "TRUE", "1", "ephemeral"]) {
+      expect(
+        readBrowserdConfig(withToken({ MCPJAM_BROWSERD_EPHEMERAL: value }))
+          .contextMode,
+      ).toBe("persistent");
+    }
+    expect(
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_EPHEMERAL: "true" }))
+        .contextMode,
+    ).toBe("ephemeral");
   });
 
   it("reads overrides", () => {

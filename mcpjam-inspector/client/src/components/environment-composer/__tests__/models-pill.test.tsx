@@ -41,29 +41,70 @@ function renderPill(
 }
 
 describe("modelsPillTriggerLabel", () => {
-  it("names Client defaults, plus extras, or a model count", () => {
+  it("says models, or the inherited/explicit name when one is selected", () => {
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: true,
         explicitModelIds: [],
       })
-    ).toBe("Client defaults");
+    ).toBe("models");
+    expect(
+      modelsPillTriggerLabel(
+        { includeClientDefaults: true, explicitModelIds: [] },
+        { clientDefaultLabel: "gpt-4", modelName: () => "GPT-4" }
+      )
+    ).toBe("GPT-4");
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: true,
         explicitModelIds: ["a", "b"],
       })
-    ).toBe("Client defaults +2");
+    ).toBe("models +2");
+    expect(
+      modelsPillTriggerLabel(
+        { includeClientDefaults: true, explicitModelIds: ["a", "b"] },
+        { clientDefaultLabel: "gpt-4", modelName: () => "GPT-4" }
+      )
+    ).toBe("GPT-4 +2");
     expect(
       modelsPillTriggerLabel({
         includeClientDefaults: false,
         explicitModelIds: ["a", "b"],
       })
     ).toBe("2 models");
+    expect(
+      modelsPillTriggerLabel(
+        { includeClientDefaults: false, explicitModelIds: ["google/gemini"] },
+        { modelName: () => "Gemini 2.5 Flash" }
+      )
+    ).toBe("Gemini 2.5 Flash");
   });
 });
 
 describe("ModelsPill", () => {
+  it("labels the trigger models, or the inherited client-default name", () => {
+    const { unmount } = render(
+      <ModelsPill
+        projectId="proj-1"
+        value={{ includeClientDefaults: true, explicitModelIds: [] }}
+        onChange={vi.fn()}
+        testId="models"
+      />
+    );
+    expect(screen.getByTestId("models")).toHaveTextContent("models");
+    unmount();
+    render(
+      <ModelsPill
+        projectId="proj-1"
+        value={{ includeClientDefaults: true, explicitModelIds: [] }}
+        onChange={vi.fn()}
+        clientDefaultLabel="google/gemini-2.5-flash"
+        testId="models"
+      />
+    );
+    expect(screen.getByTestId("models")).toHaveTextContent("Gemini 2.5 Flash");
+  });
+
   it("checks Client defaults initially and lists catalog models", async () => {
     const user = userEvent.setup();
     renderPill({ includeClientDefaults: true, explicitModelIds: [] });

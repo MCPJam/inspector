@@ -6,6 +6,7 @@ import {
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "../oauth/client-identity.js";
 import { createOAuthStateMachine } from "../oauth/state-machines/factory.js";
+import { isLoopbackOAuthUrl } from "../oauth/ssrf-guard.js";
 import {
   getStepInfo,
   type OAuthStepInfo,
@@ -586,6 +587,12 @@ export class OAuthConformanceTest {
         serverUrl: this.config.serverUrl,
         serverName: this.config.serverName,
         redirectUrl,
+        // The executor below is the caller's `fetchFn`, so the factory's
+        // pre-flight guard is the only address check on this path: it has to
+        // learn about the local allowance or a loopback server under test is
+        // refused before its first well-known fetch.
+        allowLoopbackMetadataFetch: isLoopbackOAuthUrl(this.config.serverUrl),
+        allowPrivateMetadataFetch: this.config.allowPrivateNetwork,
         requestExecutor: (request) => trackedRequest(request),
         loadPreregisteredCredentials: async () => ({
           clientId: this.config.client.preregistered?.clientId,
