@@ -1,10 +1,22 @@
 /**
- * The stage-analytics panel on the Evaluate (New) suite page (D5c).
+ * ONE RUN's stage-analytics document (D5c), rendered.
  *
- * WHERE the chain stopped — not why, and never a root cause. Each run's
- * document says where trials fell out of the six-stage chain and whether that
- * differs by intent, model or host; it explains measured behavior and never
- * replaces the run's verdict, which stays the verdict policy's to decide.
+ * WHERE the chain stopped — not why, and never a root cause. The document says
+ * where trials fell out of the six-stage chain and whether that differs by
+ * intent, model or host; it explains measured behavior and never replaces the
+ * run's verdict, which stays the verdict policy's to decide.
+ *
+ * ── This is a run's AGGREGATE, and it lives on the run page only ─────────────
+ *
+ * It used to be mounted on the suite page too, above the run history, where it
+ * was the first thing labelled "user value chain" that a reader met. That was
+ * the wrong introduction: a funnel is a POPULATION statistic, and the chain a
+ * reader arrives asking about is one request's journey. Worse, the suite mount
+ * routinely showed six green stages over a partial population — the excluded
+ * trial being precisely the interesting one — so the page's most prominent
+ * claim was also its least reliable. The per-trial chain now answers "why did
+ * this not deliver value"; this answers "how much of the run was measured",
+ * which is a follow-up question and is placed like one.
  *
  * ── Why this is not the shared `StageFunnel` ─────────────────────────────────
  *
@@ -20,26 +32,16 @@
  *
  * ── Run-scoped, never aggregated ─────────────────────────────────────────────
  *
- * Each row is ONE run's complete document, and there is no cross-run merge in
- * the SDK on purpose. So this lists the runs and renders the SELECTED one.
- * Paging browses further back; it never accumulates into a combined funnel.
+ * Each document is ONE run's, and there is no cross-run merge in the SDK on
+ * purpose. Nothing here accumulates across runs.
  */
 import { useMemo, useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
-import { cn } from "@/lib/utils";
 import type {
   EvalStageAnalyticsV1,
   UserValueStage,
 } from "@mcpjam/sdk/contract";
 import {
-  evalSurfaceCardClass,
-  evalSurfaceHeaderClass,
-} from "../evals/eval-surface-chrome";
-import { useEvalSuiteStageAnalytics } from "@/hooks/use-eval-suite-stage-analytics";
-import {
   NOT_MEASURED_LABEL,
-  deriveStageAnalyticsPanelState,
   excludedDetailSummary,
   overallSlice,
   slicesOfDimension,
@@ -53,26 +55,6 @@ import {
 import { StageChainCards } from "./stage-chain-cards";
 import { StageDetailCard } from "./stage-detail-card";
 import { defaultSelectedStage, toStageCardViews } from "./stage-chain-model";
-import { RunLevelFindingsLine, StageFindingsCard } from "./stage-findings-card";
-import { useStageFindings } from "./use-stage-findings";
-import type { EvalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
-
-/**
- * The bits of a run row the findings read needs.
- *
- * Structural rather than `EvalSuiteRun`, so this panel does not take a
- * dependency on the whole run projection to read six fields off it — and so a
- * caller holding a narrower row can still pass one.
- */
-export interface StageAnalyticsRunRow {
-  _id: string;
-  status: string;
-  result?: string | null;
-  completedAt?: number | null;
-  verdictPolicyVersion?: unknown;
-  verdictSummary?: unknown;
-  goalCompletionStatus?: string | null;
-}
 
 function formatCompletedAt(epochMs: number | null): string {
   if (epochMs === null) return "no completion stamp";
@@ -500,229 +482,5 @@ export function RunDocument({
         </details>
       ) : null}
     </div>
-  );
-}
-
-export function StageAnalyticsPanel({
-  projectId,
-  suiteId,
-  runCount,
-  runsLoading,
-  runs = [],
-  onRunClick,
-  decisionSummaryEnabled = false,
-  decisionStore,
-}: {
-  projectId: string | null | undefined;
-  suiteId: string | null | undefined;
-  /** How many runs this suite has — the legacy/empty distinction. */
-  runCount: number;
-  runsLoading: boolean;
-  /**
-   * The suite's run rows, for the SELECTED document only.
-   *
-   * The diagnostics read needs the run's status and revision, which the
-   * analytics document does not carry. Only the selected row is ever read: one
-   * document is on screen and reading D9 for every run in the list would spend
-   * a request per row to fill a card nobody opened.
-   */
-  runs?: StageAnalyticsRunRow[];
-  /** Open a run. The suite page has no deep trace focus; the run page does. */
-  onRunClick?: (runId: string) => void;
-  /**
-   * Read D9's per-trial diagnostics for the selected run. OFF by default: with
-   * it false this panel issues no decision-summary requests at all.
-   */
-  decisionSummaryEnabled?: boolean;
-  /** Test seam, threaded to the shared LRU store. */
-  decisionStore?: EvalDecisionSummaryStore;
-}) {
-  const {
-    status,
-    rows,
-    error,
-    canLoadMore,
-    isLoadingMore,
-    pageError,
-    loadMore,
-    retryFailedPage,
-  } = useEvalSuiteStageAnalytics({ projectId, suiteId });
-
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-
-  const panelState = useMemo(
-    () =>
-      deriveStageAnalyticsPanelState({
-        status,
-        rows,
-        error,
-        runCount,
-        runsLoading,
-      }),
-    [status, rows, error, runCount, runsLoading],
-  );
-
-  // Default to the newest run, and fall back to it whenever the selected run
-  // leaves the list (a filter change, a fresh walk).
-  const selected =
-    rows.find((row) => row.runId === selectedRunId) ?? rows[0] ?? null;
-
-  // The run row behind the selected document. `null` when this surface was not
-  // given the run list, which keeps the findings read off rather than guessing
-  // a status the analytics document does not carry.
-  const selectedRun = selected
-    ? (runs.find((run) => run._id === selected.runId) ?? null)
-    : null;
-  const findings = useStageFindings({
-    projectId,
-    analytics: selected,
-    run: selectedRun,
-    enabled: decisionSummaryEnabled,
-    canOpenTrial: Boolean(onRunClick),
-    ...(decisionStore ? { store: decisionStore } : {}),
-  });
-
-  return (
-    <section
-      className={cn(evalSurfaceCardClass, "overflow-hidden")}
-      data-testid="suite-detail-stage-analytics"
-    >
-      <div className={cn(evalSurfaceHeaderClass, "px-4 py-3")}>
-        <h3 className="text-sm font-medium text-foreground">Stage analytics</h3>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Where trials stopped in the user-value chain, per run. Explains
-          measured behavior; it does not decide the run&apos;s verdict.
-        </p>
-      </div>
-
-      <div className="px-4 py-3">
-        {panelState.kind === "loading" ? (
-          <p
-            className="flex items-center gap-2 text-xs text-muted-foreground"
-            data-testid="stage-analytics-loading"
-          >
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Loading stage analytics…
-          </p>
-        ) : null}
-
-        {panelState.kind === "unsupported" ? (
-          // A SERVICE state, visibly distinct from "there is nothing here".
-          // An empty chart would read as "measured, and it was all zero".
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-unsupported"
-          >
-            Stage analytics could not be loaded, so this run&apos;s chain is not
-            measured here. {panelState.message}
-          </p>
-        ) : null}
-
-        {panelState.kind === "error" ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-error"
-          >
-            {panelState.message}
-          </p>
-        ) : null}
-
-        {panelState.kind === "empty" ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-empty"
-          >
-            No completed runs yet.
-          </p>
-        ) : null}
-
-        {panelState.kind === "unmeasuredLegacy" ? (
-          // NOT a zero and NOT empty: these runs finished before the chain was
-          // measured, and there is no honest way to reconstruct it after the
-          // fact.
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="stage-analytics-unmeasured-legacy"
-          >
-            These {panelState.runCount} runs predate stage analytics, so their
-            chain was never measured. Runs from here on will be.
-          </p>
-        ) : null}
-
-        {panelState.kind === "ready" && selected ? (
-          <>
-            {rows.length > 1 ? (
-              <div
-                className="mb-3 flex flex-wrap gap-1.5"
-                data-testid="stage-analytics-run-list"
-              >
-                {rows.map((row) => (
-                  <button
-                    key={row.runId}
-                    type="button"
-                    onClick={() => setSelectedRunId(row.runId)}
-                    className={cn(
-                      "rounded-md border px-2 py-1 text-[10px]",
-                      row.runId === selected.runId
-                        ? "border-foreground/40 bg-muted text-foreground"
-                        : "border-border/60 text-muted-foreground",
-                    )}
-                  >
-                    {formatCompletedAt(row.runCompletedAt ?? null)}
-                    {row.materializationState === "provisional"
-                      ? " · provisional"
-                      : ""}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <RunDocument
-              row={selected}
-              renderFindings={(stage) => (
-                <StageFindingsCard
-                  state={findings}
-                  stage={stage}
-                  // "Open run", not "View trace": deep trace focus exists only
-                  // on the run page, and a button promising it here would land
-                  // a reader on a page with nothing opened.
-                  openLabel="Open run"
-                  {...(onRunClick
-                    ? { onOpenTrial: (target) => onRunClick(target.runId) }
-                    : {})}
-                />
-              )}
-              runLevelFindings={<RunLevelFindingsLine state={findings} />}
-            />
-
-            {pageError ? (
-              // A later page failing never clears the pages already read.
-              <div className="mt-3 flex items-center gap-2">
-                <span className="text-[11px] text-muted-foreground">
-                  Could not load more runs. {pageError.message}
-                </span>
-                <Button size="sm" variant="ghost" onClick={retryFailedPage}>
-                  Retry
-                </Button>
-              </div>
-            ) : null}
-
-            {canLoadMore ? (
-              <div className="mt-3">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={loadMore}
-                  disabled={isLoadingMore}
-                  data-testid="stage-analytics-load-more"
-                >
-                  {isLoadingMore ? "Loading…" : "Load more runs"}
-                </Button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-    </section>
   );
 }

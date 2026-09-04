@@ -31,7 +31,6 @@ import {
 import { getEffectiveSuiteServers } from "../evals/helpers";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
-  buildSuiteRunHistoryAggregates,
   buildSuiteRunHistoryRows,
   buildSuiteTestCaseRows,
   filterSuiteRunHistoryRows,
@@ -42,7 +41,6 @@ import {
   type SuiteRunHistoryFilters,
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
-import { StageAnalyticsPanel } from "./stage-analytics-panel";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
 import {
   RunDecisionVerdictBadge,
@@ -50,6 +48,7 @@ import {
 } from "../evals/run-decision-summary-card";
 import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
 import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
+import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -201,10 +200,6 @@ export function SuiteDetailOverview({
     : filteredRows.slice(0, SUITE_RUN_HISTORY_PAGE_SIZE);
   const hiddenRunCount = filteredRows.length - visibleRows.length;
 
-  const aggregates = useMemo(
-    () => buildSuiteRunHistoryAggregates(runs, allIterations),
-    [runs, allIterations],
-  );
   const testCaseRows = useMemo(() => buildSuiteTestCaseRows(cases), [cases]);
 
   const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
@@ -221,10 +216,27 @@ export function SuiteDetailOverview({
   });
   const runDisabled = Boolean(runBlockedReason);
   const hasCases = cases.length > 0;
-  // Runs load after the detail spinner has already cleared (`isSuiteRunsLoading`
-  // is its own query), so keying purely on `runs.length` hides the whole section
-  // from a suite that HAS runs and then pops it in. Hold the frame instead.
-  const showRunHistory = runs.length > 0 || runsLoading;
+  /**
+   * The card is the suite's run surface, so it is present whenever the suite
+   * COULD have runs — not only when it happens to have some.
+   *
+   * Keying purely on `runs.length` made "this suite has never run" and "this
+   * suite's runs did not load" the same picture: no card, no heading, nothing
+   * to distinguish an empty history from a broken one. A reader looking at a
+   * suite they had just run over the API had no way to tell which they were
+   * seeing. The empty history says so in words instead.
+   *
+   * `runsLoading` still counts on its own: runs resolve AFTER the detail
+   * spinner clears (`isSuiteRunsLoading` is its own query), and the frame has
+   * to be held for a suite that has runs rather than popped in under the
+   * reader.
+   *
+   * The one case that stays hidden is a suite with NO CASES: it cannot have
+   * run, the empty-cases hero owns that page, and an empty history card above
+   * it would be scaffolding around a suite that has nothing yet.
+   */
+  const showRunHistory = hasCases || runs.length > 0 || runsLoading;
+  const hasRuns = runs.length > 0;
   const showEmptyCasesHero = !hasCases;
 
   const runButton = (
@@ -368,38 +380,23 @@ export function SuiteDetailOverview({
           ) : null}
         </div>
 
-        {runs.length > 0 ? (
-          <div
-            className="grid grid-cols-2 gap-x-6 gap-y-4 border-b border-border/30 px-5 py-4 sm:grid-cols-3 lg:grid-cols-6"
-            data-testid="suite-detail-run-aggregates"
-          >
-            <AggregateStat label="runs" value={String(aggregates.runCount)} />
-            <AggregateStat
-              label="tokens"
-              value={formatRunHistoryMetric(aggregates.totalTokens, "number")}
-            />
-            <AggregateStat
-              label="P50 latency"
-              value={formatRunHistoryMetric(aggregates.latencyP50, "duration")}
-            />
-            <AggregateStat
-              label="P95 latency"
-              value={formatRunHistoryMetric(aggregates.latencyP95, "duration")}
-            />
-            <AggregateStat
-              label="tokens per run"
-              value={formatRunHistoryMetric(aggregates.tokensPerRun, "number")}
-            />
-            <AggregateStat
-              label="tool calls per run"
-              value={formatRunHistoryMetric(aggregates.toolCallsPerRun, "number")}
-            />
-          </div>
-        ) : null}
+        <SuiteRunHistorySnapshot runs={runs} allIterations={allIterations} />
 
         {filteredRows.length === 0 ? (
-          <div className="bg-card px-5 py-10 text-center text-sm text-muted-foreground">
-            {runsLoading ? "Loading runs…" : "No runs match these filters."}
+          <div
+            className="bg-card px-5 py-10 text-center text-sm text-muted-foreground"
+            data-testid="suite-run-history-empty"
+          >
+            {/*
+              Three different states, and they must not read alike: still
+              loading, never run, and filtered down to nothing. The middle one
+              is the reason this card renders at all now.
+            */}
+            {runsLoading
+              ? "Loading runs…"
+              : hasRuns
+                ? "No runs match these filters."
+                : "No runs yet. Run this suite — verdict, pass rate, latency and cost land here."}
           </div>
         ) : (
           <div className="overflow-x-auto bg-card">
@@ -410,9 +407,6 @@ export function SuiteDetailOverview({
                   <TableHead className={runHistoryHeadClass}>Verdict</TableHead>
                   <TableHead className={cn(runHistoryHeadClass, "text-right")}>
                     Rate
-                  </TableHead>
-                  <TableHead className={runHistoryHeadClass}>
-                    Top failure signature
                   </TableHead>
                   <TableHead className={runHistoryHeadClass}>Platform</TableHead>
                   <TableHead className={cn(runHistoryHeadClass, "text-right")}>
@@ -473,9 +467,6 @@ export function SuiteDetailOverview({
                     <TableCell className="text-right text-xs tabular-nums text-foreground">
                       {row.passRate != null ? `${row.passRate}%` : "—"}
                     </TableCell>
-                    <TableCell className="max-w-[16rem] truncate text-xs text-muted-foreground">
-                      {row.topFailureSignature ?? "—"}
-                    </TableCell>
                     <TableCell
                       className={cn(
                         "whitespace-nowrap text-xs",
@@ -502,52 +493,20 @@ export function SuiteDetailOverview({
           </div>
         )}
 
-        <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
-          {hiddenRunCount > 0 ? (
-            <>
-              <button
-                type="button"
-                className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => setShowAllRuns(true)}
-              >
-                view all {filteredRows.length.toLocaleString()} runs →
-              </button>
-              <span aria-hidden> · </span>
-            </>
-          ) : null}
-          <span>
-            quick runs appear tagged &apos;quick · nx&apos;, grayed, excluded
-            from stability
-          </span>
-        </div>
+        {hiddenRunCount > 0 ? (
+          <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => setShowAllRuns(true)}
+            >
+              view all {filteredRows.length.toLocaleString()} runs →
+            </button>
+          </div>
+        ) : null}
       </section>
       ) : null}
 
-      {/* Where the chain stopped, per run — the measured half of a run, beside
-          its history. Evaluate-only by construction: this file is the Evaluate
-          (New) suite page, so /evals cannot pick it up.
-
-          Gated on `projectId` because it is genuinely nullable here and the
-          read is project-scoped: without one there is no request to make, and
-          rendering the panel anyway would leave it spinning on a fetch that
-          never starts. Same gate the traces export uses above. */}
-      {projectId ? (
-        <StageAnalyticsPanel
-          projectId={projectId}
-          suiteId={suite._id}
-          runCount={runs.length}
-          runsLoading={runsLoading}
-          // The run rows the findings read needs for the SELECTED document's
-          // status and revision — the analytics document carries neither.
-          runs={runs}
-          // "Open run", not a trace: deep trace focus exists only on the run
-          // page, and this is the affordance that surface actually has.
-          onRunClick={onRunClick}
-          // The same flag the verdict cell above already rides. Nothing new to
-          // turn on, and with it off no decision-summary request is issued.
-          decisionSummaryEnabled={decisionSummaryEnabled}
-        />
-      ) : null}
 
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
@@ -923,15 +882,3 @@ function FilterSelect({
   );
 }
 
-function AggregateStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[17px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
-        {value}
-      </div>
-      <div className="mt-1.5 text-[11px] leading-none text-muted-foreground">
-        {label}
-      </div>
-    </div>
-  );
-}

@@ -610,8 +610,8 @@ describe("agent op registry", () => {
     expect(
       await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
         { suite: "smoke", compose: { host: "Claude Code", server: "Vercel" } },
-        { projectId: "p1", client }
-      )
+        { projectId: "p1", client },
+      ),
     ).toEqual({
       suite: "smoke",
       compose: {
@@ -640,8 +640,8 @@ describe("agent op registry", () => {
     expect(
       await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
         { suite: "smoke", compose: { host: "Claude Code", server: "Vercel" } },
-        { projectId: "p1", client }
-      )
+        { projectId: "p1", client },
+      ),
     ).toEqual({
       suite: "smoke",
       compose: {
@@ -673,8 +673,8 @@ describe("agent op registry", () => {
           suite: "smoke",
           compose: { host: "Claude Code", servers: ["Vercel", "Ghost"] },
         },
-        { projectId: "p1", client }
-      )
+        { projectId: "p1", client },
+      ),
     ).toEqual({
       suite: "smoke",
       compose: {
@@ -1772,6 +1772,56 @@ describe("tier derives from operation.risk", () => {
         "The same argument as create_secret: a rotation carries the new " +
         "plaintext as an argument, with the same pre-approval exposure.",
     },
+    create_trace_destination: {
+      tier: "excluded",
+      reason:
+        "Exposure would derive gated, but gating cannot help: the vendor " +
+        "credentials are ARGUMENTS, so they reach model context and this " +
+        "turn's transcript before an approval card could render. The same " +
+        "argument as create_secret, and the same answer — available on " +
+        "REST/SDK/CLI, where the caller chooses where the values come from.",
+    },
+    update_trace_destination: {
+      tier: "excluded",
+      reason:
+        "The same argument as create_trace_destination: rotating a " +
+        "credential carries it as an argument, with the same pre-approval " +
+        "exposure.",
+    },
+    resume_trace_destination: {
+      tier: "excluded",
+      reason:
+        "Exposure would derive gated, but resuming restarts an export a " +
+        "human stopped — usually because something about it was wrong. " +
+        "Whether the cause is fixed is a judgement about a third party's " +
+        "system, which an approval card cannot show and a turn cannot " +
+        "establish.",
+    },
+    test_trace_destination: {
+      tier: "excluded",
+      reason:
+        "risk is none — one synthetic span, no customer content — and none " +
+        "derives direct. It is excluded anyway because the whole " +
+        "trace-destination surface is, and a turn that can send to a " +
+        "vendor's intake but cannot see, create or fix the destination it " +
+        "is testing is a capability with nothing behind it.",
+    },
+    pause_trace_destination: {
+      tier: "excluded",
+      reason:
+        "risk is none (nothing spent, nothing removed — the configuration " +
+        "survives) but pausing DROPS the window: nothing is queued while " +
+        "paused, so an unattended pause becomes a permanent gap in a " +
+        "customer's observability that only a backfill can fill.",
+    },
+    backfill_trace_destination: {
+      tier: "excluded",
+      reason:
+        "Spend would derive gated, but the size of this spend is invisible " +
+        "at the approval: it depends on how many sessions the window holds " +
+        "and what the vendor charges to ingest them, neither of which the " +
+        "card can show. An approval that cannot state the cost is not one.",
+    },
     render_server_widget: {
       tier: "gated",
       reason:
@@ -2065,9 +2115,13 @@ const EXPECTED_PROMPT_NOTES = [
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
   "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
   "- Before launching an eval run, `get_eval_run_disclosure` tells you (and lets you tell a human) what actually happens to the run's content — which models it calls, whether analyzers/judges fire and where their evidence goes, retention and region facts. It never gates the run; `run_eval_suite` already fetches and returns its own disclosure on `disclosure`, so call this separately only when you need it BEFORE deciding to launch.",
+  "- When a suite's results change without an obvious cause, read `list_eval_suite_revisions` before blaming the server: it says who last edited the suite's settings, which stored fields moved, and when. A revision's `revisionNumber` is also what makes an edit safe — pass the one you read as `expectedRevisionNumber` on `update_eval_suite` and a suite someone else changed in between is refused instead of overwritten.",
   "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
   '- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
   "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
+  "- `get_eval_run_stage_analytics` (one run) and `list_eval_suite_stage_analytics` (a suite's runs, newest first) return the MEASURED DESCRIPTION of a run — how many trials reached each stage, how many were measured there, and how many were excluded and why. Counts only: derive a rate with its denominator in hand, and read a zero denominator as NOT MEASURED, never as 0% or 100%. Never sum tallies across the six stages (one trial is counted in every stage's tally) and never merge documents across runs (each describes one run's population).",
+  "- An ABSENT analytics document means the run predates stage measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+  '- A listing is a TREND SERIES, not an aggregate. Before claiming any trend, partition on every parity field: `runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`, `measurementsSchemaVersion`, and `materializationState: "final"`. An ABSENT `runGroupId`, `configRevision` or `caseSetFingerprint` BLOCKS comparability rather than being assumed compatible — two runs that both record nothing compare equal while sharing nothing. "Which stage has been failing this month" is answerable only WITHIN one partition; across partitions it reports a change in what was measured as a change in the server.',
   "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
   "- To find out why an iteration failed, start with `get_eval_run_steps`: it gives the per-step verdicts and reasons in a fraction of the tokens. Reach for `get_eval_iteration_trace` only when the steps do not explain it — a full trace is the whole message history and can be large enough to crowd out the rest of the turn.",
   "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",

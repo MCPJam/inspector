@@ -390,6 +390,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: true,
             downloadFile: true,
             requestTeardown: true,
+            safeAreaInsets: true,
             widgetDisplayModeRequests: "accept",
           },
           sandbox: {
@@ -420,7 +421,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1788307200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -486,6 +487,341 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         userAgent:
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         platform: "web",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 12,
+          right: 12,
+          bottom: 12,
+          left: 12,
+        },
+        styles: {
+          variables: {
+            "--color-background-primary":
+              "light-dark(rgba(255, 255, 255, 1), rgba(48, 48, 46, 1))",
+            "--color-background-secondary":
+              "light-dark(rgba(245, 244, 237, 1), rgba(38, 38, 36, 1))",
+            "--color-background-tertiary":
+              "light-dark(rgba(250, 249, 245, 1), rgba(20, 20, 19, 1))",
+            "--color-background-inverse":
+              "light-dark(rgba(20, 20, 19, 1), rgba(250, 249, 245, 1))",
+            "--color-background-ghost":
+              "light-dark(rgba(255, 255, 255, 0), rgba(48, 48, 46, 0))",
+            "--color-background-info":
+              "light-dark(rgba(214, 228, 246, 1), rgba(37, 62, 95, 1))",
+            "--color-background-danger":
+              "light-dark(rgba(247, 236, 236, 1), rgba(96, 42, 40, 1))",
+            "--color-background-success":
+              "light-dark(rgba(233, 241, 220, 1), rgba(27, 70, 20, 1))",
+            "--color-background-warning":
+              "light-dark(rgba(246, 238, 223, 1), rgba(72, 58, 15, 1))",
+            "--color-background-disabled":
+              "light-dark(rgba(255, 255, 255, 0.5), rgba(48, 48, 46, 0.5))",
+            "--color-text-primary":
+              "light-dark(rgba(20, 20, 19, 1), rgba(250, 249, 245, 1))",
+            "--color-text-secondary":
+              "light-dark(rgba(61, 61, 58, 1), rgba(194, 192, 182, 1))",
+            "--color-text-tertiary":
+              "light-dark(rgba(115, 114, 108, 1), rgba(156, 154, 146, 1))",
+            "--color-text-inverse":
+              "light-dark(rgba(255, 255, 255, 1), rgba(20, 20, 19, 1))",
+            "--color-text-ghost":
+              "light-dark(rgba(115, 114, 108, 0.5), rgba(156, 154, 146, 0.5))",
+            "--color-text-info":
+              "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))",
+            "--color-text-danger":
+              "light-dark(rgba(127, 44, 40, 1), rgba(238, 136, 132, 1))",
+            "--color-text-success":
+              "light-dark(rgba(38, 91, 25, 1), rgba(122, 185, 72, 1))",
+            "--color-text-warning":
+              "light-dark(rgba(90, 72, 21, 1), rgba(209, 160, 65, 1))",
+            "--color-text-disabled":
+              "light-dark(rgba(20, 20, 19, 0.5), rgba(250, 249, 245, 0.5))",
+            "--color-border-primary":
+              "light-dark(rgba(31, 30, 29, 0.4), rgba(222, 220, 209, 0.4))",
+            "--color-border-secondary":
+              "light-dark(rgba(31, 30, 29, 0.3), rgba(222, 220, 209, 0.3))",
+            "--color-border-tertiary":
+              "light-dark(rgba(31, 30, 29, 0.15), rgba(222, 220, 209, 0.15))",
+            "--color-border-inverse":
+              "light-dark(rgba(255, 255, 255, 0.3), rgba(20, 20, 19, 0.15))",
+            "--color-border-ghost":
+              "light-dark(rgba(31, 30, 29, 0), rgba(222, 220, 209, 0))",
+            "--color-border-info":
+              "light-dark(rgba(70, 130, 213, 1), rgba(70, 130, 213, 1))",
+            "--color-border-danger":
+              "light-dark(rgba(167, 61, 57, 1), rgba(205, 92, 88, 1))",
+            "--color-border-success":
+              "light-dark(rgba(67, 116, 38, 1), rgba(89, 145, 48, 1))",
+            "--color-border-warning":
+              "light-dark(rgba(128, 92, 31, 1), rgba(168, 120, 41, 1))",
+            "--color-border-disabled":
+              "light-dark(rgba(31, 30, 29, 0.1), rgba(222, 220, 209, 0.1))",
+            "--color-ring-primary":
+              "light-dark(rgba(20, 20, 19, 0.7), rgba(250, 249, 245, 0.7))",
+            "--color-ring-secondary":
+              "light-dark(rgba(61, 61, 58, 0.7), rgba(194, 192, 182, 0.7))",
+            "--color-ring-inverse":
+              "light-dark(rgba(255, 255, 255, 0.7), rgba(20, 20, 19, 0.7))",
+            "--color-ring-info":
+              "light-dark(rgba(50, 102, 173, 0.5), rgba(128, 170, 221, 0.5))",
+            "--color-ring-danger":
+              "light-dark(rgba(167, 61, 57, 0.5), rgba(205, 92, 88, 0.5))",
+            "--color-ring-success":
+              "light-dark(rgba(67, 116, 38, 0.5), rgba(89, 145, 48, 0.5))",
+            "--color-ring-warning":
+              "light-dark(rgba(128, 92, 31, 0.5), rgba(168, 120, 41, 0.5))",
+            "--font-sans": '"anthropic-sans", sans-serif',
+            "--font-mono": "ui-monospace, monospace",
+            "--font-weight-normal": "400",
+            "--font-weight-medium": "500",
+            "--font-weight-semibold": "600",
+            "--font-weight-bold": "700",
+            "--font-text-xs-size": "12px",
+            "--font-text-sm-size": "14px",
+            "--font-text-md-size": "16px",
+            "--font-text-lg-size": "20px",
+            "--font-heading-xs-size": "12px",
+            "--font-heading-sm-size": "14px",
+            "--font-heading-md-size": "16px",
+            "--font-heading-lg-size": "20px",
+            "--font-heading-xl-size": "24px",
+            "--font-heading-2xl-size": "28px",
+            "--font-heading-3xl-size": "36px",
+            "--font-text-xs-line-height": "1.4",
+            "--font-text-sm-line-height": "1.4",
+            "--font-text-md-line-height": "1.4",
+            "--font-text-lg-line-height": "1.25",
+            "--font-heading-xs-line-height": "1.4",
+            "--font-heading-sm-line-height": "1.4",
+            "--font-heading-md-line-height": "1.4",
+            "--font-heading-lg-line-height": "1.25",
+            "--font-heading-xl-line-height": "1.25",
+            "--font-heading-2xl-line-height": "1.1",
+            "--font-heading-3xl-line-height": "1",
+            "--border-radius-xs": "4px",
+            "--border-radius-sm": "6px",
+            "--border-radius-md": "8px",
+            "--border-radius-lg": "10px",
+            "--border-radius-xl": "12px",
+            "--border-radius-full": "9999px",
+            "--border-width-regular": "0.5px",
+            "--shadow-hairline": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+            "--shadow-sm":
+              "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)",
+            "--shadow-md":
+              "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
+            "--shadow-lg":
+              "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
+          },
+          css: {
+            fonts:
+              '\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-RegularItalic-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-MediumItalic-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-SemiboldItalic-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-BoldItalic-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: italic;\n  font-display: swap;\n}\n',
+          },
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        paginationTraversal: "full",
+        initialize: {
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          clientInfo: {
+            name: "claude-ai",
+            version: "0.1.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Claude",
+              version: "1.0.0",
+            },
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-eval'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "style-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "img-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "connect-src": ["'self'", "https://esm.sh"],
+                "font-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "media-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "frame-src": ["'self'"],
+                "base-uri": ["'self'"],
+                "form-action": ["'self'"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                clipboardWrite: true,
+              },
+            },
+            sandboxAttrs: ["allow-forms"],
+            allowFeatures: {
+              fullscreen: "*",
+            },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+          },
+          mcpAppsOverrides: {
+            safeAreaInsets: true,
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
+    "claude-desktop": {
+      id: "claude-desktop",
+      label: "Claude Desktop",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+      ],
+      verifiedAt: 1788393600000,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      hostStyle: "claude-desktop",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: {
+          width: 768,
+          maxHeight: 5000,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+        platform: "desktop",
         deviceCapabilities: {
           touch: false,
           hover: true,
@@ -698,12 +1034,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
-            availableDisplayModes: ["inline", "fullscreen"],
-            toolInputPartial: true,
+            availableDisplayModes: ["inline"],
             toolCancelled: true,
             hostContextChanged: true,
             resourceTeardown: true,
-            toolInfo: true,
+            toolInfo: false,
             openLinks: true,
             serverTools: true,
             serverResources: true,
@@ -748,8 +1083,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Claude Code",
       provenance: "probe",
       rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787097600000,
+      supportedProtocolVersions: [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+      ],
+      verifiedAt: 1788393600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -808,12 +1148,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostContext: {},
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "full",
+        toolListChanged: {
+          listens: true,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.237",
+            version: "2.1.246",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -838,6 +1182,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -922,8 +1267,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--border-radius-lg": ".625rem",
           "--border-radius-xl": ".75rem",
           "--border-radius-full": "9999px",
-          "--border-width-regular": "1px",
-          "--shadow-hairline": "0 0 0 1px #00000014",
+          "--border-width-regular": ".5px",
+          "--shadow-hairline": "0 0 0 .5px #0000001a",
           "--shadow-sm": "0 1px 2px -1px rgb(0 0 0 / .08)",
           "--shadow-md": "0 2px 4px -1px rgb(0 0 0 / .08)",
           "--shadow-lg": "0 4px 8px -2px rgb(0 0 0 / .1)",
@@ -1008,8 +1353,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--border-radius-lg": ".625rem",
           "--border-radius-xl": ".75rem",
           "--border-radius-full": "9999px",
-          "--border-width-regular": "1px",
-          "--shadow-hairline": "0 0 0 1px #ffffff1a",
+          "--border-width-regular": ".5px",
+          "--shadow-hairline": "0 0 0 .5px #ffffff1f",
           "--shadow-sm": "0 1px 2px -1px rgb(0 0 0 / .2)",
           "--shadow-md": "0 2px 4px -1px rgb(0 0 0 / .2)",
           "--shadow-lg": "0 4px 8px -2px rgb(0 0 0 / .36)",
@@ -1021,7 +1366,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1787443200000,
+      verifiedAt: 1788307200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1168,8 +1513,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--border-radius-lg": ".625rem",
             "--border-radius-xl": ".75rem",
             "--border-radius-full": "9999px",
-            "--border-width-regular": "1px",
-            "--shadow-hairline": "0 0 0 1px #ffffff1a",
+            "--border-width-regular": ".5px",
+            "--shadow-hairline": "0 0 0 .5px #ffffff1f",
             "--shadow-sm": "0 1px 2px -1px rgb(0 0 0 / .2)",
             "--shadow-md": "0 2px 4px -1px rgb(0 0 0 / .2)",
             "--shadow-lg": "0 4px 8px -2px rgb(0 0 0 / .36)",
@@ -1213,6 +1558,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           compatRuntime: {
             openaiApps: true,
+            openaiAppsOverrides: {
+              notifyIntrinsicHeight: false,
+            },
           },
           sandbox: {
             csp: {
@@ -1302,49 +1650,41 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "#fff",
-          "--color-background-secondary": "#f7f7f8",
-          "--color-background-tertiary": "#f0f0f2",
-          "--color-background-inverse": "#111115",
-          "--color-text-primary": "#111115",
-          "--color-text-secondary": "#4f4f57",
-          "--color-text-tertiary": "#6f6f78",
+          "--color-background-secondary": "#fbfbf8",
+          "--color-background-tertiary": "#f5f4ef",
+          "--color-background-inverse": "#1a1a1e",
+          "--color-text-primary": "#201f1c",
+          "--color-text-secondary": "#615f57",
+          "--color-text-tertiary": "#928f86",
           "--color-text-inverse": "#fff",
-          "--color-text-info": "#0072ce",
-          "--color-text-danger": "#d92d20",
-          "--color-text-success": "#2e7d32",
-          "--color-text-warning": "#b85c00",
-          "--color-border-primary": "#00000019",
+          "--color-text-info": "#0082e6",
+          "--color-text-danger": "#e51300",
+          "--color-text-success": "#3aa475",
+          "--color-text-warning": "#de4408",
+          "--color-border-primary": "#0000001a",
           "--color-border-secondary": "#00000026",
-          "--color-border-tertiary": "#0000003f",
-          "--bg-badge-orange": "#faeee7",
-          "--bg-basic-orange-strong": "#c4290a",
-          "--bg-brand-500": "#fa500e",
-          "--text-white-default": "#fff",
+          "--color-border-tertiary": "#00000040",
         },
         dark: {
-          "--color-background-primary": "#111115",
-          "--color-background-secondary": "#18181b",
-          "--color-background-tertiary": "#09090b",
+          "--color-background-primary": "#101013",
+          "--color-background-secondary": "#1a1a1e",
+          "--color-background-tertiary": "#27272b",
           "--color-background-inverse": "#fff",
           "--color-text-primary": "#fff",
-          "--color-text-secondary": "#ffffffb2",
-          "--color-text-tertiary": "#ffffff7f",
-          "--color-text-inverse": "#111115",
-          "--color-text-info": "#48bfff",
-          "--color-text-danger": "#ff5d59",
-          "--color-text-success": "#7af526",
-          "--color-text-warning": "#fc783b",
-          "--color-border-primary": "#ffffff19",
+          "--color-text-secondary": "#ccccd1",
+          "--color-text-tertiary": "#a1a1aa",
+          "--color-text-inverse": "#101013",
+          "--color-text-info": "#55b3fb",
+          "--color-text-danger": "#f66c60",
+          "--color-text-success": "#44ba82",
+          "--color-text-warning": "#ff6529",
+          "--color-border-primary": "#ffffff1a",
           "--color-border-secondary": "#ffffff26",
-          "--color-border-tertiary": "#ffffff3f",
-          "--bg-badge-orange": "#53330f",
-          "--bg-basic-orange-strong": "#ff8a00",
-          "--bg-brand-500": "#fa500f",
-          "--text-white-default": "#fff",
+          "--color-border-tertiary": "#ffffff40",
         },
       },
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1787702400000,
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+      verifiedAt: 1788307200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1420,25 +1760,21 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
         styles: {
           variables: {
-            "--color-background-primary": "#111115",
-            "--color-background-secondary": "#18181b",
-            "--color-background-tertiary": "#09090b",
+            "--color-background-primary": "#101013",
+            "--color-background-secondary": "#1a1a1e",
+            "--color-background-tertiary": "#27272b",
             "--color-background-inverse": "#fff",
             "--color-text-primary": "#fff",
-            "--color-text-secondary": "#ffffffb2",
-            "--color-text-tertiary": "#ffffff7f",
-            "--color-text-inverse": "#111115",
-            "--color-text-info": "#48bfff",
-            "--color-text-danger": "#ff5d59",
-            "--color-text-success": "#7af526",
-            "--color-text-warning": "#fc783b",
-            "--color-border-primary": "#ffffff19",
+            "--color-text-secondary": "#ccccd1",
+            "--color-text-tertiary": "#a1a1aa",
+            "--color-text-inverse": "#101013",
+            "--color-text-info": "#55b3fb",
+            "--color-text-danger": "#f66c60",
+            "--color-text-success": "#44ba82",
+            "--color-text-warning": "#ff6529",
+            "--color-border-primary": "#ffffff1a",
             "--color-border-secondary": "#ffffff26",
-            "--color-border-tertiary": "#ffffff3f",
-            "--bg-badge-orange": "#53330f",
-            "--bg-basic-orange-strong": "#ff8a00",
-            "--bg-brand-500": "#fa500f",
-            "--text-white-default": "#fff",
+            "--color-border-tertiary": "#ffffff40",
           },
         },
       },
@@ -1446,7 +1782,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         profileVersion: 1,
         paginationTraversal: "full",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "mcp",
             version: "0.1.0",
@@ -1460,6 +1796,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             toolCancelled: false,
@@ -1811,7 +2148,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--font-sans":
             '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
           "--font-mono":
-            '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+            '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
           "--font-weight-normal": "400",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
@@ -1891,7 +2228,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--font-sans":
             '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
           "--font-mono":
-            '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+            '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
           "--font-weight-normal": "400",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
@@ -1931,8 +2268,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--shadow-lg": "0 4px 6px -4px #00000019, 0 10px 15px -3px #00000019",
         },
       },
-      supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1787702400000,
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+      verifiedAt: 1788393600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2044,7 +2381,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--font-sans":
               '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
             "--font-mono":
-              '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+              '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
             "--font-weight-normal": "400",
             "--font-weight-medium": "500",
             "--font-weight-semibold": "600",
@@ -2093,7 +2430,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         initialize: {
-          supportedProtocolVersions: ["2025-06-18"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "Slackbot MCP Client",
             version: "1.0.0",
@@ -2107,6 +2444,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: false,
             toolCancelled: false,
@@ -2175,7 +2513,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Cursor",
       provenance: "probe",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -2256,7 +2594,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           refetches: true,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "cursor-vscode",
             version: "1.0.0",
@@ -2286,6 +2624,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline"],
             toolInputPartial: true,
             toolCancelled: true,
@@ -2331,13 +2670,114 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
     },
+    "cursor-cli": {
+      id: "cursor-cli",
+      label: "Cursor CLI",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1788220800000,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      hostStyle: "cursor-cli",
+      modelId: "cursor/auto",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "cursor",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        roots: {
+          listChanged: true,
+        },
+        elicitation: {},
+      },
+      hostContext: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "cursor-agent",
+            title: "Cursor CLI",
+            version: "2026.08.31-4057e58",
+            description: "Cursor's agentic coding CLI",
+            websiteUrl: "https://cursor.com/cli",
+          },
+        },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            safeAreaInsets: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
     codex: {
       id: "codex",
       label: "Codex",
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787702400000,
+      verifiedAt: 1788307200000,
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "rgb(255, 255, 255)",
@@ -2383,7 +2823,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             'Inter, -apple-system, "system-ui", "Segoe UI", sans-serif',
           "--font-mono":
             'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-          "--font-weight-normal": "445",
+          "--font-weight-normal": "400",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
           "--font-weight-bold": "700",
@@ -2425,21 +2865,21 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--color-background-primary": "rgb(24, 24, 24)",
           "--color-background-secondary": "rgba(54, 54, 54, 0.96)",
           "--color-background-tertiary": "rgb(20, 20, 20)",
-          "--color-background-inverse": "rgb(223, 223, 223)",
+          "--color-background-inverse": "rgb(255, 255, 255)",
           "--color-background-ghost": "transparent",
-          "--color-background-info": "rgb(13, 39, 63)",
+          "--color-background-info": "rgb(19, 52, 99)",
           "--color-background-danger": "rgb(40, 11, 10)",
           "--color-background-success":
             "color-mix(in srgb, rgb(64, 201, 119) 12%, rgb(40, 40, 40))",
           "--color-background-warning":
             "color-mix(in srgb, rgb(255, 133, 73) 12%, rgb(40, 40, 40))",
           "--color-background-disabled": "rgba(255, 255, 255, 0.05)",
-          "--color-text-primary": "rgb(223, 223, 223)",
+          "--color-text-primary": "rgb(255, 255, 255)",
           "--color-text-secondary": "rgba(255, 255, 255, 0.498)",
           "--color-text-tertiary": "rgba(255, 255, 255, 0.498)",
           "--color-text-inverse": "rgb(13, 13, 13)",
           "--color-text-ghost": "rgba(255, 255, 255, 0.498)",
-          "--color-text-info": "rgb(131, 195, 255)",
+          "--color-text-info": "rgb(44, 103, 197)",
           "--color-text-danger": "rgb(255, 103, 100)",
           "--color-text-success": "rgb(64, 201, 119)",
           "--color-text-warning": "rgb(255, 133, 73)",
@@ -2447,24 +2887,24 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--color-border-primary": "rgba(255, 255, 255, 0.157)",
           "--color-border-secondary": "rgba(255, 255, 255, 0.082)",
           "--color-border-tertiary": "rgba(255, 255, 255, 0.082)",
-          "--color-border-inverse": "rgb(223, 223, 223)",
+          "--color-border-inverse": "rgb(255, 255, 255)",
           "--color-border-ghost": "transparent",
-          "--color-border-info": "rgba(131, 195, 255, 0.76)",
+          "--color-border-info": "rgb(58, 131, 247)",
           "--color-border-danger": "rgb(255, 103, 100)",
           "--color-border-success": "rgb(64, 201, 119)",
           "--color-border-warning": "rgb(255, 133, 73)",
           "--color-border-disabled": "rgba(255, 255, 255, 0.157)",
-          "--color-ring-primary": "rgba(131, 195, 255, 0.76)",
-          "--color-ring-secondary": "rgba(131, 195, 255, 0.76)",
-          "--color-ring-inverse": "rgba(131, 195, 255, 0.76)",
-          "--color-ring-info": "rgba(131, 195, 255, 0.76)",
+          "--color-ring-primary": "rgb(58, 131, 247)",
+          "--color-ring-secondary": "rgb(58, 131, 247)",
+          "--color-ring-inverse": "rgb(58, 131, 247)",
+          "--color-ring-info": "rgb(58, 131, 247)",
           "--color-ring-danger": "rgb(255, 103, 100)",
           "--color-ring-success": "rgb(64, 201, 119)",
           "--color-ring-warning": "rgb(255, 133, 73)",
           "--font-sans": '-apple-system, "system-ui", "Segoe UI", sans-serif',
           "--font-mono":
             'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-          "--font-weight-normal": "445",
+          "--font-weight-normal": "400",
           "--font-weight-medium": "500",
           "--font-weight-semibold": "600",
           "--font-weight-bold": "700",
@@ -2586,21 +3026,21 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--color-background-primary": "rgb(24, 24, 24)",
             "--color-background-secondary": "rgba(54, 54, 54, 0.96)",
             "--color-background-tertiary": "rgb(20, 20, 20)",
-            "--color-background-inverse": "rgb(223, 223, 223)",
+            "--color-background-inverse": "rgb(255, 255, 255)",
             "--color-background-ghost": "transparent",
-            "--color-background-info": "rgb(13, 39, 63)",
+            "--color-background-info": "rgb(19, 52, 99)",
             "--color-background-danger": "rgb(40, 11, 10)",
             "--color-background-success":
               "color-mix(in srgb, rgb(64, 201, 119) 12%, rgb(40, 40, 40))",
             "--color-background-warning":
               "color-mix(in srgb, rgb(255, 133, 73) 12%, rgb(40, 40, 40))",
             "--color-background-disabled": "rgba(255, 255, 255, 0.05)",
-            "--color-text-primary": "rgb(223, 223, 223)",
+            "--color-text-primary": "rgb(255, 255, 255)",
             "--color-text-secondary": "rgba(255, 255, 255, 0.498)",
             "--color-text-tertiary": "rgba(255, 255, 255, 0.498)",
             "--color-text-inverse": "rgb(13, 13, 13)",
             "--color-text-ghost": "rgba(255, 255, 255, 0.498)",
-            "--color-text-info": "rgb(131, 195, 255)",
+            "--color-text-info": "rgb(44, 103, 197)",
             "--color-text-danger": "rgb(255, 103, 100)",
             "--color-text-success": "rgb(64, 201, 119)",
             "--color-text-warning": "rgb(255, 133, 73)",
@@ -2608,24 +3048,24 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--color-border-primary": "rgba(255, 255, 255, 0.157)",
             "--color-border-secondary": "rgba(255, 255, 255, 0.082)",
             "--color-border-tertiary": "rgba(255, 255, 255, 0.082)",
-            "--color-border-inverse": "rgb(223, 223, 223)",
+            "--color-border-inverse": "rgb(255, 255, 255)",
             "--color-border-ghost": "transparent",
-            "--color-border-info": "rgba(131, 195, 255, 0.76)",
+            "--color-border-info": "rgb(58, 131, 247)",
             "--color-border-danger": "rgb(255, 103, 100)",
             "--color-border-success": "rgb(64, 201, 119)",
             "--color-border-warning": "rgb(255, 133, 73)",
             "--color-border-disabled": "rgba(255, 255, 255, 0.157)",
-            "--color-ring-primary": "rgba(131, 195, 255, 0.76)",
-            "--color-ring-secondary": "rgba(131, 195, 255, 0.76)",
-            "--color-ring-inverse": "rgba(131, 195, 255, 0.76)",
-            "--color-ring-info": "rgba(131, 195, 255, 0.76)",
+            "--color-ring-primary": "rgb(58, 131, 247)",
+            "--color-ring-secondary": "rgb(58, 131, 247)",
+            "--color-ring-inverse": "rgb(58, 131, 247)",
+            "--color-ring-info": "rgb(58, 131, 247)",
             "--color-ring-danger": "rgb(255, 103, 100)",
             "--color-ring-success": "rgb(64, 201, 119)",
             "--color-ring-warning": "rgb(255, 133, 73)",
             "--font-sans": '-apple-system, "system-ui", "Segoe UI", sans-serif',
             "--font-mono":
               'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-            "--font-weight-normal": "445",
+            "--font-weight-normal": "400",
             "--font-weight-medium": "500",
             "--font-weight-semibold": "600",
             "--font-weight-bold": "700",
@@ -2677,7 +3117,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.148.0-alpha.15",
+            version: "0.150.0-alpha.12.2",
           },
         },
         apps: {
@@ -2705,6 +3145,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,
@@ -2768,7 +3209,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Copilot",
       provenance: "vendor-doc",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2024-11-05"],
+      supportedProtocolVersions: [
+        "2024-11-05",
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+      ],
       verifiedAt: 1787702400000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
@@ -3119,7 +3565,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           refetches: true,
         },
         initialize: {
-          supportedProtocolVersions: ["2024-11-05"],
+          supportedProtocolVersions: [
+            "2024-11-05",
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25",
+          ],
           clientInfo: {
             name: "mcs",
             version: "1.0.0",
@@ -3349,7 +3800,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--shadow-sm": "0 1px 2px 0 rgba(0, 0, 0, 0.36)",
         },
       },
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -3544,7 +3995,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           refetches: true,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "Visual Studio Code",
             version: "1.134.0",
@@ -3588,6 +4039,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline"],
             toolInputPartial: true,
             toolCancelled: true,
@@ -3786,6 +4238,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -3874,6 +4327,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -3962,6 +4416,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -4050,6 +4505,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },

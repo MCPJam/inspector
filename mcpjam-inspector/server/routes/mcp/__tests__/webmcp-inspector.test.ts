@@ -5,12 +5,17 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-const configState = vi.hoisted(() => ({ enabled: true, hostedBrowser: false }));
+const configState = vi.hoisted(() => ({
+  enabled: true,
+  hostedBrowser: false,
+  webmcpHosted: false,
+}));
 vi.mock("../../../config", () => ({
   get WEBMCP_INSPECTOR_ENABLED() {
     return configState.enabled;
   },
   hostedBrowserEnabled: () => configState.hostedBrowser,
+  webmcpInspectorHostedEnabled: () => configState.webmcpHosted,
   HOSTED_MODE: false,
 }));
 
@@ -206,6 +211,31 @@ describe("webmcp-inspector routes", () => {
     // 202: the invocation is queued, and its outcome arrives on the stream.
     expect(status).toBe(202);
     expect(body.invokeId).toBeTruthy();
+  });
+
+  it("dates a screenshot, and only when there is one", async () => {
+    const started = await openSession(provider);
+
+    const shot = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "capture_screenshot" }),
+    );
+    // The client measures capture-to-paint against this. Without it the poll
+    // could only time from its own arrival, which excludes the capture and
+    // the round trip — a different quantity from the one a streamed frame's
+    // `ts` produces, sharing a percentile table with it.
+    expect(shot.body.screenshotBase64).toBeTruthy();
+    expect(typeof shot.body.capturedAt).toBe("number");
+
+    // A capture that produced nothing is not dated: a timestamp on an empty
+    // answer would date a paint that never happened.
+    provider.sessions[0].captureScreenshot = async () => undefined;
+    const empty = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "capture_screenshot" }),
+    );
+    expect(empty.body.screenshotBase64).toBeUndefined();
+    expect(empty.body.capturedAt).toBeUndefined();
   });
 
   it("409s navigation while a tool is running", async () => {
@@ -407,6 +437,36 @@ describe("webmcp-inspector routes", () => {
     configState.hostedBrowser = false;
   });
 
+  it("bounds the device pixel ratio it will render at", async () => {
+    for (const devicePixelRatio of [0.5, 3, 0]) {
+      const { status } = await call(
+        "/api/mcp/webmcp/sessions",
+        json({ url: "https://a.test/", devicePixelRatio }),
+      );
+      // Below 1 is a client asking for a picture smaller than the page, and
+      // above 2 is bytes growing faster than anyone can see. Both are refused
+      // at the boundary rather than clamped silently.
+      expect(status, `devicePixelRatio ${devicePixelRatio}`).toBe(400);
+    }
+  });
+
+  it("accepts the ratios a real display reports", async () => {
+    // Filling the registry first is what makes this land without launching a
+    // browser: `reserve()` runs after the schema, so a 429 proves the request
+    // got past validation — which is the half under test here. The forwarding
+    // half is asserted against a fake provider in session-registry.test.ts.
+    await openSession(new FakeProvider());
+    await openSession(new FakeProvider());
+    for (const devicePixelRatio of [1, 1.5, 2]) {
+      const { status, body } = await call(
+        "/api/mcp/webmcp/sessions",
+        json({ url: "https://a.test/", display: "in-app", devicePixelRatio }),
+      );
+      expect(status, `devicePixelRatio ${devicePixelRatio}`).toBe(429);
+      expect(body.code).toBe("capacity");
+    }
+  });
+
   it("rejects a display this server does not know", async () => {
     const { status } = await call(
       "/api/mcp/webmcp/sessions",
@@ -493,6 +553,124 @@ describe("webmcp-inspector routes", () => {
     await readUntil((text) => text.includes("later"));
     expect(buffered).toContain("later");
     await reader.cancel();
+  });
+
+  /**
+   * Read an SSE body until it goes quiet.
+   *
+   * Draining to quiet rather than stopping at the first interesting token,
+   * because a frame does NOT arrive in seq order here: the route holds a
+   * frame offered to a full queue in its one-slot `pendingFrame` and flushes
+   * it from `pull`, so it lands after everything ahead of it. A reader that
+   * stopped early would report "no frames" for a stream that was about to
+   * deliver one — which is a green test for a broken filter.
+   */
+  async function drainSse(res: Response, quietMs = 80): Promise<string> {
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    try {
+      for (let i = 0; i < 50; i += 1) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), quietMs),
+          ),
+        ]);
+        if (!chunk || chunk.done) break;
+        buffered += decoder.decode(chunk.value, { stream: true });
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+    return buffered;
+  }
+
+  it("reports a frame this consumer could not take", async () => {
+    const started = await openSession(provider);
+    const session = provider.sessions[0];
+    // Replay fills the stream's queue before anything is read: the route's
+    // `start()` runs synchronously and enqueues every replayed event into a
+    // count-based queue with a high-water mark of 1, so `desiredSize` is
+    // already at or below zero by the time a live frame is offered.
+    session.emitTools([fakeTool({ origin: "https://example.test" })]);
+    const res = await app.request(
+      `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50`,
+    );
+    expect(res.ok).toBe(true);
+
+    // The body is deliberately NOT read yet. The first frame is HELD, which is
+    // the mechanism working rather than a loss.
+    session.emitFrame({ data: "Zmlyc3Q=" });
+    expect(session.pressureEvents).toBe(0);
+
+    // The second replaces it: a frame nobody will ever see.
+    session.emitFrame({ data: "c2Vjb25k" });
+    expect(session.pressureEvents).toBe(1);
+
+    // And the newest one still arrives once the consumer drains — a pane on a
+    // slow link converges on the current paint rather than freezing.
+    const drained = await drainSse(res);
+    expect(drained).toContain("c2Vjb25k");
+  });
+
+  it("suppresses frames — live and replayed — for frames=off", async () => {
+    const started = await openSession(provider);
+    // Published BEFORE the connect, so this covers the REPLAYED path too: the
+    // retained frame is delivered through the same `send` closure, and a
+    // client on the binary socket would otherwise pay the base64-in-JSON tax
+    // once per connect.
+    provider.sessions[0].emitFrame({ data: "cmVwbGF5ZWQ=" });
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+    ]);
+
+    const res = await app.request(
+      `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?replay=50&frames=off`,
+    );
+    // A live frame too, offered while the consumer is still draining.
+    provider.sessions[0].emitFrame({ data: "bGl2ZQ==" });
+    provider.sessions[0].emitTools([
+      fakeTool({ origin: "https://example.test" }),
+      fakeTool({ origin: "https://example.test", name: "later" }),
+    ]);
+
+    const buffered = await drainSse(res);
+    // Everything else still flows: only the pixels move to the other socket.
+    expect(buffered).toContain("session_started");
+    expect(buffered).toContain("https://example.test::echo");
+    expect(buffered).toContain("later");
+    expect(buffered).not.toContain('"type":"frame"');
+    expect(buffered).not.toContain("cmVwbGF5ZWQ=");
+    expect(buffered).not.toContain("bGl2ZQ==");
+  });
+
+  it("still sends frames with no param, and with frames=on", async () => {
+    // The old-client guard. A client that has never heard of this parameter —
+    // every client older than the WebSocket — must get exactly today's stream.
+    for (const query of [
+      "replay=50",
+      "replay=50&frames=on",
+      // Only the exact string `off` suppresses. An empty or null-like value is
+      // what a client building the query from an unset variable sends, and
+      // treating it as "off" would blank the pane of a client that never opted
+      // in to the socket.
+      "replay=50&frames=",
+      "replay=50&frames=null",
+      "replay=50&frames=OFF",
+    ]) {
+      const started = await openSession(provider);
+      const session = provider.sessions[provider.sessions.length - 1];
+      session.emitFrame({ data: "cGFpbnQ=" });
+
+      const res = await app.request(
+        `http://local/api/mcp/webmcp/sessions/${started.sessionId}/events?${query}`,
+      );
+      const buffered = await drainSse(res);
+      expect(buffered, query).toContain('"type":"frame"');
+      expect(buffered, query).toContain("cGFpbnQ=");
+      await webMcpSessions.close(started.sessionId);
+    }
   });
 
   it("tells an SSE client the session is gone instead of hanging", async () => {

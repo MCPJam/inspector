@@ -1,13 +1,17 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import {
+  listGroupMembers,
   parseDarwinPsLine,
   parseLinuxProcStat,
-  readProcessBirthIdentity,
   parseProcStatGroup,
   probeProcess,
   probeProcessGroup,
+  readProcessBirthIdentity,
+  sameBirthIdentity,
+  setWindowsJobLauncherVerified,
   supportsOwnershipProof,
+  terminateOwnedProcess,
   terminateOwnedProcessGroup,
 } from "../process-identity.js";
 
@@ -475,5 +479,153 @@ describe("probing a process GROUP", () => {
       parseProcStatGroup("77 (my proc) S 4 99 99 0 -1 4194304 100"),
     ).toEqual({ state: "S", pgrp: 99 });
     expect(parseProcStatGroup("garbage")).toBeNull();
+  });
+});
+
+describe("identity comparison across a process's exit", () => {
+  // On macOS a process that is exiting — argv memory already torn down, not
+  // yet a zombie — is reported by `ps` with its command as `(comm)`. The
+  // recorded identity carries the full argv, so a byte compare answered
+  // "not-owned" for our own bridge the moment the adapter told it to exit, the
+  // supervisor refused to signal it, and every clean stop was recorded as an
+  // escape.
+  const LSTART = "Mon Sep  1 09:14:22 2026";
+
+  it("accepts the parenthesised command a darwin exit reports", () => {
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs --workdir /w`,
+        `darwin:${LSTART}|(node)`,
+      ),
+    ).toBe(true);
+  });
+
+  it("still refuses a different start time, which is what pid reuse changes", () => {
+    // The start time is the half that actually defeats pid reuse: a reused pid
+    // gets a new one. Tolerating the command is only safe because this is not.
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs`,
+        "darwin:Mon Sep  1 09:14:23 2026|(node)",
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a command that differs in any other way", () => {
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs`,
+        `darwin:${LSTART}|node /somewhere/else.mjs`,
+      ),
+    ).toBe(false);
+    // Not the parenthesised form: nested parens are not what `ps` produces.
+    expect(
+      sameBirthIdentity(
+        `darwin:${LSTART}|node /pack/launcher.mjs`,
+        `darwin:${LSTART}|(no(de))`,
+      ),
+    ).toBe(false);
+  });
+
+  it("is exact on platforms that do not have the darwin quirk", () => {
+    expect(
+      sameBirthIdentity("linux:12345|67890", "linux:12345|67890"),
+    ).toBe(true);
+    expect(sameBirthIdentity("linux:12345|67890", "linux:12346|67890")).toBe(
+      false,
+    );
+    // A linux identity is never read through the darwin tolerance.
+    expect(sameBirthIdentity("linux:12345|67890", "linux:12345|(node)")).toBe(
+      false,
+    );
+  });
+});
+
+describe("enumerating group members for a later stop", () => {
+  it.skipIf(!supportsOwnershipProof(process.platform))(
+    "lists live members with an identity each, excluding the leader",
+    async () => {
+      // A real group with a real member, not the runner's own.
+      //
+      // This used to enumerate `process.pid`'s group on the theory that the
+      // test runner leads it. Under vitest it does not — tests run in a
+      // worker, which is not a group leader — so `listGroupMembers` returned
+      // an empty array, every assertion lived inside a loop over it, and the
+      // test passed having verified nothing. `withDetachedTree` gives a
+      // leader that provably has one live grandchild, which is also the exact
+      // shape the supervisor snapshots at a root's exit.
+      await withDetachedTree(LEADER_WITH_SURVIVOR, async (pid, survivor) => {
+        const members = await listGroupMembers(pid);
+        expect(members).not.toBeNull();
+        expect(members!.map((member) => member.pid)).toContain(survivor);
+        // The leader is excluded: the caller signals the group, and listing
+        // the root as one of its own members would double-count it.
+        expect(members!.map((member) => member.pid)).not.toContain(pid);
+        for (const member of members!) {
+          expect(typeof member.identity).toBe("string");
+          expect(member.identity.length).toBeGreaterThan(0);
+        }
+      });
+    },
+  );
+
+  it("answers null on a platform it cannot ask, rather than an empty list", async () => {
+    // The difference matters: an empty list means "asked, nothing there" and
+    // authorizes reporting a tree settled. `null` never does.
+    await expect(listGroupMembers(1, "win32")).resolves.toBeNull();
+  });
+});
+
+describe("terminating one member of a snapshot", () => {
+  it("refuses a pid whose identity no longer matches", async () => {
+    await expect(
+      terminateOwnedProcess({
+        pid: process.pid,
+        identity: "definitely-not-this-process",
+        graceMs: 20,
+      }),
+    ).resolves.toBe("not-owned");
+  });
+
+  it("reports a pid that is already gone without signalling anything", async () => {
+    await expect(
+      terminateOwnedProcess({
+        pid: 2_147_479_100,
+        identity: "whatever",
+        graceMs: 20,
+      }),
+    ).resolves.toBe("already-gone");
+  });
+});
+
+describe("ownership proof, per platform", () => {
+  afterEach(() => setWindowsJobLauncherVerified(false));
+
+  it("is provable on the POSIX platforms, where a process group is", () => {
+    expect(supportsOwnershipProof("linux")).toBe(true);
+    expect(supportsOwnershipProof("darwin")).toBe(true);
+  });
+
+  it("is NOT provable on Windows without a verified job launcher", () => {
+    // Windows has no process group. `taskkill /T` walks a parent chain a
+    // re-parented process has already left, so without a Job Object there is
+    // nothing that makes "stop" mean stop — and an unenforced cleanup promise
+    // is worse than no Windows support.
+    expect(supportsOwnershipProof("win32")).toBe(false);
+  });
+
+  it("becomes provable on Windows once one is verified", () => {
+    // Latched by runtime resolution, which is the only thing that can say the
+    // helper is inside the tree whose digest consent named. A helper sitting
+    // beside the pack would not qualify.
+    setWindowsJobLauncherVerified(true);
+    expect(supportsOwnershipProof("win32")).toBe(true);
+  });
+
+  it("stays unprovable everywhere else, whatever the latch says", () => {
+    setWindowsJobLauncherVerified(true);
+    for (const platform of ["aix", "freebsd", "sunos"] as NodeJS.Platform[]) {
+      expect(supportsOwnershipProof(platform)).toBe(false);
+    }
   });
 });

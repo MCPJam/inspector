@@ -211,6 +211,19 @@ describe("buildEvaluationConfigSnapshot", () => {
     ).toThrow(/Duplicate scorerId "gate"/);
   });
 
+  it("collapses an identical twin instead of rejecting it", () => {
+    // Same id AND same content is one definition described twice, not an
+    // ambiguity: two anonymous predicate scorers wrapping the same predicate
+    // mint the same content-derived id by design. Rejecting that would fail a
+    // config that is merely redundant, and every row either one produces still
+    // joins to the surviving entry.
+    const twinned = buildEvaluationConfigSnapshot([GATING, ADVISORY, GATING]);
+    expect(twinned.definitions).toHaveLength(2);
+    expect(twinned.hash).toBe(
+      buildEvaluationConfigSnapshot([GATING, ADVISORY]).hash
+    );
+  });
+
   it("accepts already-resolved definitions idempotently", () => {
     const once = buildEvaluationConfigSnapshot([GATING]);
     const twice = buildEvaluationConfigSnapshot(once.definitions);

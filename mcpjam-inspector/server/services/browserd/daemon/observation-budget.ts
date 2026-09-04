@@ -119,27 +119,63 @@ export function capA11yTree(
   return { tree: visit(root, 0), omittedSubtrees, totalNodes };
 }
 
-/** The suffix a byte-truncated flat string carries, so a cut is never silent. */
-export const TRUNCATION_SUFFIX = "\n…[truncated]";
+/**
+ * The marker a byte-truncated flat string carries, so a cut is never silent.
+ *
+ * It states BOTH sizes because "…[truncated]" alone leaves the reader unable
+ * to tell a cosmetic cut from one that dropped nine tenths of the page — and
+ * that is exactly the judgement the next command depends on. `retrieval`
+ * names the way to get the rest, the same contract the a11y omission marker
+ * keeps: a marker that reports a loss without naming the recovery is a dead
+ * end dressed up as a note.
+ */
+export function truncationMarker(
+  shownBytes: number,
+  totalBytes: number,
+  retrieval?: string,
+): string {
+  return (
+    `\n…[truncated: showing ${shownBytes} of ${totalBytes} bytes` +
+    (retrieval ? `; ${retrieval}` : "") +
+    "]"
+  );
+}
 
 /**
  * Byte-truncate FLAT text (console lines, a tool's string output). Unlike a
  * structure, a cut string is unambiguous — and the marker says so explicitly.
  * Counts UTF-8 BYTES (not code units) and never splits a multi-byte character.
+ *
+ * The marker's own length varies with the numbers in it, so the reserve is
+ * computed from the LONGEST marker this call could produce (`shown` can never
+ * exceed `maxBytes`, so neither can its digit count). Reserving the upper
+ * bound and then writing the true marker keeps the result provably within
+ * budget; measuring the marker after the cut would let one extra digit push
+ * the string past the cap the caller is doing arithmetic against.
  */
-export function capText(text: string, maxBytes: number): string {
+export function capText(
+  text: string,
+  maxBytes: number,
+  retrieval?: string,
+): string {
   const encoder = new TextEncoder();
   const bytes = encoder.encode(text);
   if (bytes.byteLength <= maxBytes) return text;
-  const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
+  const reserve = encoder.encode(
+    truncationMarker(maxBytes, bytes.byteLength, retrieval),
+  ).byteLength;
   // A budget too small to hold the marker gets no marker. Appending it anyway
   // would return MORE bytes than the caller asked for, which defeats the one
   // thing a byte cap promises — and the caller's own budget arithmetic (a
   // per-entry cap inside a total cap) is what would then overflow.
-  if (maxBytes < suffixBytes) {
+  if (maxBytes < reserve) {
     return decodeUpTo(bytes, maxBytes);
   }
-  return decodeUpTo(bytes, maxBytes - suffixBytes) + TRUNCATION_SUFFIX;
+  const head = decodeUpTo(bytes, maxBytes - reserve);
+  return (
+    head +
+    truncationMarker(encoder.encode(head).byteLength, bytes.byteLength, retrieval)
+  );
 }
 
 /**

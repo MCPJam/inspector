@@ -24,9 +24,13 @@ import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpToolGoneError } from "../provider";
 import {
   WEBMCP_FRAME_MAX_BYTES,
+  WEBMCP_HOUSEKEEPING_INTERVAL_MS,
+  WEBMCP_SETTLE_QUIET_MS,
+  WEBMCP_VIEWPORT,
   type WebMcpActivityEntry,
   type WebMcpFrame,
 } from "@/shared/webmcp-inspector-protocol";
+import { readJpegDimensions } from "@/shared/jpeg-dimensions";
 import {
   FIXTURE_INPUT_TARGETS,
   startWebMcpFixtureServer,
@@ -64,6 +68,16 @@ if (process.env.CI && CHROMIUM_AVAILABLE && !WEBMCP_CDP_AVAILABLE) {
   );
 }
 
+/**
+ * How long to wait for a settled page's still, with slop.
+ *
+ * Derived from the constants the provider actually uses — the quiet window
+ * plus a housekeeping tick to notice it — rather than a round number that
+ * would keep passing while meaning something else.
+ */
+const SETTLE_WAIT_MS =
+  WEBMCP_SETTLE_QUIET_MS + WEBMCP_HOUSEKEEPING_INTERVAL_MS + 2_000;
+
 /** Headless for tests; a real session opens a window the developer drives. */
 class HeadlessProvider extends PlaywrightWebMcpProvider {
   async createSession(
@@ -91,7 +105,12 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     await registry?.disposeAll();
   });
 
-  async function open(options: { viewportMode?: "window" | "embedded" } = {}) {
+  async function open(
+    options: {
+      viewportMode?: "window" | "embedded";
+      devicePixelRatio?: number;
+    } = {},
+  ) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
     const session = await startWebMcpSession({
       url: fixture.url,
@@ -99,6 +118,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
       registry,
       headless: true,
       ...(options.viewportMode ? { viewportMode: options.viewportMode } : {}),
+      ...(options.devicePixelRatio !== undefined
+        ? { devicePixelRatio: options.devicePixelRatio }
+        : {}),
     });
     const runtime = registry.get(session.sessionId);
     const activity: WebMcpActivityEntry[] = [];
@@ -340,11 +362,27 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // WHILE STREAMING: the replay buffer holds exactly ONE frame, however many
     // hundreds were published into it — and every timeline entry is still
     // there beside it. That is the whole point of the coalesced slot.
+    //
+    // Polled rather than read once: the reload above clears the retained frame
+    // (`onNavigated` → `hub.clearFrame()`), and a frame delivered just BEFORE
+    // that event leaves the slot empty for as long as it takes the page to
+    // paint again — which on a loaded runner is longer than the counter this
+    // waits on suggests. Polling keeps the claim exactly as strong (a slot
+    // that settled at two frames still fails) without racing the repaint.
+    await vi.waitFor(
+      () =>
+        expect(
+          runtime.hub.buffered().filter((event) => event.type === "frame"),
+        ).toHaveLength(1),
+      { timeout: 15_000 },
+    );
     const streaming = runtime.hub.buffered();
-    expect(streaming.filter((event) => event.type === "frame")).toHaveLength(1);
-    const streamingKinds = streaming
-      .filter((event) => event.type === "activity")
-      .map((event) => event.entry.kind);
+    const streamingActivity = streaming.filter(
+      (event) => event.type === "activity",
+    );
+    const streamingKinds = streamingActivity.map((event) => event.entry.kind);
+    // Identities, not kinds, for the prefix check below — see the comment there.
+    const streamingIds = streamingActivity.map((event) => event.entry.id);
     expect(streamingKinds).toContain("session_started");
     expect(streamingKinds).toContain("tools_added");
     expect(streamingKinds).toContain("navigated");
@@ -365,7 +403,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // before the stop is still there, in the same order.
     //
     // A PREFIX rather than an equality, and the difference is a real race
-    // rather than a nicety. `streamingKinds` was sampled the moment a frame
+    // rather than a nicety. `streamingIds` was sampled the moment a frame
     // arrived after the reload — but the reloaded page re-registers its tools
     // asynchronously, in however many batches Chromium happens to deliver, and
     // the two 750ms sleeps above give it 1.5 seconds to add more. Demanding
@@ -373,13 +411,99 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     // which is not a property this test is about and not one the code
     // provides. What the stop must not do is LOSE or REORDER an entry, and
     // that is what this checks.
-    const stoppedKinds = stopped
+    //
+    // Compared by `id` rather than `kind`: a run of `tools_added` entries all
+    // carry the same kind, so a prefix of kinds would still match if the stop
+    // dropped one and the reloading page happened to add another. Identity is
+    // the only thing that says THESE entries survived.
+    const stoppedIds = stopped
       .filter((event) => event.type === "activity")
-      .map((event) => event.entry.kind);
-    expect(stoppedKinds.slice(0, streamingKinds.length)).toEqual(
-      streamingKinds,
+      .map((event) => event.entry.id);
+    expect(stoppedIds.slice(0, streamingIds.length)).toEqual(streamingIds);
+
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("describes every frame by its own bytes, at the viewer's pixel ratio", async () => {
+    // THE GATE for the one thing about this that cannot be reasoned out: what
+    // a real Chromium actually hands over when the context renders at two
+    // device pixels per CSS pixel. Measured against 141 headless, a screencast
+    // is clamped to the CSS size of the surface — `maxWidth` can only scale a
+    // capture DOWN — so the frames come back 1280x800, supersampled from a
+    // 2560x1600 raster rather than delivered at it.
+    //
+    // Which is exactly why nothing here asserts a NUMBER of pixels. What must
+    // hold, on any build and at any ratio, is that a frame's reported geometry
+    // matches the picture inside it: that is the property every forwarded click
+    // is scaled by, and the one that turns a wrong assumption into a wrong
+    // coordinate.
+    const { session, frames } = await open({
+      viewportMode: "embedded",
+      devicePixelRatio: 2,
+    });
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    for (const frame of frames) {
+      const bytes = Buffer.from(frame.data, "base64");
+      expect(bytes.byteLength).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
+      const sof = readJpegDimensions(bytes);
+      expect(sof, "a published frame should be a decodable JPEG").toBeDefined();
+      // The picture and the label agree…
+      expect(frame.deviceWidth).toBe(sof!.width);
+      expect(frame.deviceHeight).toBe(sof!.height);
+      // …and the scale is the ratio between the picture and the page's own
+      // coordinate space, whatever this browser chose to give us.
+      expect(frame.scale).toBeCloseTo(sof!.width / WEBMCP_VIEWPORT.width, 2);
+    }
+    expect(session.viewportTransport).toEqual({
+      kind: "frame-stream",
+      ...WEBMCP_VIEWPORT,
+    });
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("sharpens the picture once the page stops painting", async () => {
+    // The fixture paints on load and then stops, which is the case the settle
+    // still exists for: what a person reads is the picture still on screen a
+    // second after everything stopped moving, and the stream is encoded for
+    // motion.
+    const { frames } = await open({ viewportMode: "embedded" });
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), {
+      timeout: 15_000,
+    });
+
+    const streamedCount = frames.length;
+    const streamed = frames.at(-1)!;
+
+    // Long enough for the page's own paints to stop and for the quiet window
+    // to elapse, DERIVED from the constants that decide it rather than a
+    // number that would quietly stop matching them. What arrives after that is
+    // the still — plus, on a build that answers a capture with a repaint it
+    // does not deduplicate, possibly one more frame, which is why this takes
+    // the LARGEST rather than the last.
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
+    expect(frames.length, "a still after the paints").toBeGreaterThan(
+      streamedCount,
     );
 
+    const sharpest = Math.max(
+      ...frames
+        .slice(streamedCount)
+        .map((frame) => Buffer.byteLength(frame.data, "base64")),
+    );
+    // Same picture, more bytes: the still is encoded well above the streaming
+    // baseline, which is the entire point of taking it.
+    expect(sharpest).toBeGreaterThan(
+      Buffer.byteLength(streamed.data, "base64"),
+    );
+    expect(sharpest).toBeLessThanOrEqual(WEBMCP_FRAME_MAX_BYTES);
+    // And no capture loop: a still induces a repaint, and a repaint counted as
+    // activity would take another still, forever.
+    const after = frames.length;
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS));
+    expect(frames.length - after, "no capture loop").toBeLessThan(2);
     await registry.disposeAll();
   }, 60_000);
 

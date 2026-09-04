@@ -81,6 +81,7 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import { harnessUsesExternalAccount } from "./harness/registry.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
@@ -274,6 +275,12 @@ export interface WebChatTurnPersistContext {
    * it needs to do that.
    *
    * Absent ⇒ this turn has no grant, which is a normal state, not a failure.
+   *
+   * ALSO the direct-chat resume pin: written into
+   * `resumeConfig.environmentId` so a reopened Playground conversation can be
+   * restored onto the target it actually ran on rather than the viewer's
+   * current selection. See the persist site below for why sending it on every
+   * turn is safe.
    */
   environmentId?: string;
   /**
@@ -331,6 +338,13 @@ export interface WebChatTurnPrepareInputs {
    */
   excludeMcpToolNames?: readonly string[];
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * The host's tool-cancellation setting, resolved for this turn from the
+   * server-side host config. Forwarded per turn because the connection's copy
+   * is captured at connect time; an empty record means "cancels normally" and
+   * must still be sent so it overrides the connection's stale value.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
@@ -653,6 +667,9 @@ export async function streamWebChatTurn(
         ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
         : {}),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      ...(prepare.toolCallCancellation !== undefined
+        ? { toolCallCancellation: prepare.toolCallCancellation }
+        : {}),
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
@@ -933,6 +950,23 @@ export async function streamWebChatTurn(
       String(prepare.modelDefinition.id),
       prepare.modelDefinition.provider,
     );
+  // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
+  //
+  // Without this the branch below sends a Cursor turn down the org-BYOK path,
+  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
+  // approve the turn and the turn would then run on a completely different
+  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
+  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
+  // product just told the user was ready.
+  //
+  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
+  // model", and an external-account turn is exactly the case where it does not.
+  // The two reasons to take the non-BYOK branch are different facts, so they
+  // stay separate values.
+  const isExternalAccountHarnessTurn =
+    !!persist.harness && harnessUsesExternalAccount(persist.harness);
+  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
 
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
@@ -947,7 +981,7 @@ export async function streamWebChatTurn(
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok",
+    modelSource: "mcpjam" | "byok" | "local_byok" | "external-account",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
@@ -1037,6 +1071,38 @@ export async function streamWebChatTurn(
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
                 selectedServers: resumableServers(persist),
+                // WHAT THIS CONVERSATION RAN ON — the missing half of resume.
+                //
+                // Every other field here restores how the turn was configured;
+                // none of them said WHERE it executed. So a browser Playground
+                // conversation reopened later had no recorded execution target
+                // at all, and the client fell back to whatever the VIEWER had
+                // selected in localStorage — a conversation that ran on a
+                // Cursor harness in a Project Environment reopened showing an
+                // unrelated host and model, and a follow-up typed there ran on
+                // that unrelated target without ever saying so.
+                //
+                // Only `origin: "api"` sessions wrote this before (see
+                // `routes/v1/chat-session-turn.ts`), which is why the browser
+                // half was blind.
+                //
+                // Sent on EVERY turn, not just the first, and that is correct:
+                // `preserveAgentResumePins` makes the four
+                // `AGENT_RESUME_PIN_KEYS` — this among them — first-write-wins
+                // at the ingest boundary, so a continuation cannot repin a
+                // conversation onto a different environment, while a session
+                // that started before this field existed still gets filled in
+                // on its next turn instead of staying unpinned forever.
+                //
+                // Absent ⇒ this turn had no environment (a plain host-mode or
+                // untargeted turn). Nothing is written rather than a
+                // placeholder: an empty pin would read as "recorded, and it
+                // was nothing", which is exactly the false certainty the
+                // client's "as-run configuration unavailable" disclosure
+                // exists to avoid.
+                ...(persist.environmentId
+                  ? { environmentId: persist.environmentId }
+                  : {}),
               },
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
@@ -1060,7 +1126,7 @@ export async function streamWebChatTurn(
     };
   };
 
-  if (!isMCPJam) {
+  if (!usesMcpjamFreePath) {
     const providerKeyResult = deriveOrgProviderKeyResult(
       prepare.modelDefinition,
     );
@@ -1189,9 +1255,19 @@ export async function streamWebChatTurn(
 
   // MCPJam-free path.
   const mcpjamModelId = String(prepare.modelDefinition.id);
+  // …except when the HARNESS pays for its own model. An external-account
+  // runtime (Cursor) reaches its provider on the customer's account with the
+  // runtime vendor, so MCPJam is not charged for the turn and must not record
+  // it as though it were — `'mcpjam'` is what makes a turn consume the org's
+  // MCPJam spend limit.
+  //
+  // `'external-account'` rather than `'byok'`, though both mean "not charged to
+  // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
+  // which this turn does not have. See `chatModelSourceValidator` in the
+  // backend for the two surfaces that read it that way.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam",
+    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 

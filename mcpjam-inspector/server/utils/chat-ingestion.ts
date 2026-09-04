@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
 import type {
+  Harness,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
@@ -281,7 +282,17 @@ export type ChatOrigin =
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
-  modelSource: "mcpjam" | "byok" | "local_byok";
+  /**
+   * Who paid for the turn's model spend. Hand-mirrors the backend's
+   * `chatModelSourceValidator`.
+   *
+   * `"external-account"` — the customer's own account with the RUNTIME vendor
+   * (Cursor), where MCPJam holds no model credential at all. Distinct from
+   * `"byok"` on purpose: both mean "MCPJam is not charged", but byok also
+   * asserts a configured model PROVIDER and its key, which an external-account
+   * turn does not have.
+   */
+  modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
   projectId?: string;
   sourceType?: "scenario" | "direct" | "eval" | "swarm";
@@ -348,7 +359,9 @@ interface PersistChatSessionOptions {
     scenarioId?: string;
     leaseId: string;
     expectedStateVersion: number;
-    harnessId: "claude-code" | "codex";
+    // The SDK union itself, not a copy: a stale copy here silently drops the
+    // session commit for a harness the rest of the stack already runs.
+    harnessId: Harness;
     harnessSessionId: string;
     resumeState: unknown;
     computerId: string;

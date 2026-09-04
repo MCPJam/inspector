@@ -47,6 +47,7 @@
           "hosted/overview",
           "hosted/slack",
           "hosted/sso",
+          "github-checks",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
           "changelog/overview"
@@ -76,6 +77,7 @@
               "inspector/playground",
               "inspector/evals",
               "inspector/compatibility",
+              "inspector/view-origins",
               "inspector/host-templates"
             ]
           },
