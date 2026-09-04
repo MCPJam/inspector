@@ -178,6 +178,24 @@ export type RequestEventMap = {
     origin?: ErrorOrigin;
     /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
     slug?: string;
+    /**
+     * Which hop failed, as declared at the catch site — orthogonal to
+     * `origin`, which says who must act.
+     *
+     * `origin` alone cannot carry this. `ambiguous` is the catalog refusing to
+     * guess from the wire shape, and it is the right refusal: the same
+     * `transport/fetch_failed` is produced by a user's dead server and by
+     * MCPJam's own OAuth-metadata proxy. Only the catch site knows which
+     * boundary it wrapped, and until now it told nobody but Sentry —
+     * `route-error-report.ts` maps `user_server_hop` to `undefined`, so the
+     * one declaration that means "not ours" was recorded nowhere.
+     *
+     * ABSENT MEANS UNKNOWN, NEVER "the user's". A monitor that treats a
+     * missing `hop` as an exclusion re-creates the blindness this field
+     * exists to remove; consumers must test `origin == "mcpjam"` first and
+     * only then let a hop exclude a row.
+     */
+    hop?: RouteFailureHop;
   };
   "http.stream.opened": { statusCode: number };
   /**
@@ -237,6 +255,23 @@ export type RequestEventMap = {
     tunnelKind: "shared" | "server";
     rpcMethod?: string;
     path: string;
+  };
+  /**
+   * An environment's MATERIALIZED secrets were resolved for a turn that has no
+   * project-provisioned sandbox to receive them, so they were not delivered.
+   *
+   * Deliberate — a materialized value only ever lands in a box the project
+   * provisioned — but silent until this event: the operational question is "is
+   * anyone selecting materialized secrets on a path that cannot use them?", and
+   * it needs an answer that is queryable rather than grep-able.
+   *
+   * COUNT ONLY, never a name and never a value. This row is one scrubber miss
+   * away from being the leak the feature exists to prevent, and the count is
+   * the whole of what the question needs.
+   */
+  "chat.secrets.undelivered": {
+    secretCount: number;
+    isScenarioSession: boolean;
   };
   "chat.session.persist.failed": {
     failureKind:
