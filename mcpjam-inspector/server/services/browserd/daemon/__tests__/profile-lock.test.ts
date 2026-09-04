@@ -72,10 +72,22 @@ describe("clearStaleSingletonLock (L8)", () => {
 });
 
 describe("probeSingletonOwner — is anyone actually using this profile?", () => {
-  it("reports a live owner when the lock names this host and a running pid", async () => {
+  it("reports a live owner when the lock names this host and a running browser", async () => {
+    // BOTH FAKES, ALWAYS. Omitting `describeProcess` lets the probe shell out
+    // to the real `ps`, and the answer then depends on what pid 4242 happens
+    // to be on the machine running the test: absent on a laptop (unreadable ⇒
+    // "cannot tell" ⇒ live, so it passed), but a real, non-browser process
+    // inside CI's container ⇒ not live, so it failed. A unit test must not ask
+    // the host what is running.
     const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
-    expect(await probeSingletonOwner(dir, () => true)).toEqual({
+    expect(
+      await probeSingletonOwner(
+        dir,
+        () => true,
+        () => "chromium",
+      ),
+    ).toEqual({
       live: true,
       pid: 4242,
     });
