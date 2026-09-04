@@ -461,10 +461,16 @@ export function computeEffectiveRunResult(
   | "passed"
   | "failed"
   | "running"
+  | "grading"
   | "cancelled"
   | "timed_out"
   | "inconclusive"
   | "pending" {
+  // FIRST, before the stored result. A run held for its gating judge carries
+  // `result: "pending"` — which is truthy — so the stored-result branch below
+  // would return "pending" and the row would read as a queued run rather than
+  // one whose verdict is minutes away.
+  if (run.status === "grading") return "grading";
   // A stored result WINS, and under verdict policy 2 that includes
   // `inconclusive`. Never re-derive it from the counts: the percent fallback
   // below is the legacy resolver, and running it over a policy-2 run would
@@ -502,6 +508,10 @@ function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
       return { label: "Running", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // Amber like `running`, and for the same reason: the run is still
+      // happening. Green or red would claim a verdict that does not exist yet.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return null;
   }

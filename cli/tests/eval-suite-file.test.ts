@@ -20,7 +20,6 @@
  */
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import test, { describe } from "node:test";
 import {
@@ -33,7 +32,6 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { loadEvalSuiteFile } from "@mcpjam/sdk";
 import {
   fractionToPercent,
@@ -49,6 +47,7 @@ import {
   sha256HexOfBuffer,
 } from "../src/lib/eval-run-file.js";
 import { main } from "../src/index.js";
+import { runCli } from "./support/task-cli-harness.js";
 
 const telemetryDisabled = {
   env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
@@ -845,30 +844,12 @@ describe("eval validate", () => {
     // process cannot repoint its own fd 0 from JavaScript — so the only honest
     // way to exercise the branch the docs advertise is to be a parent with a
     // pipe.
-    const cli = fileURLToPath(new URL("../src/index.ts", import.meta.url));
-    const tsx = fileURLToPath(
-      new URL("../../node_modules/.bin/tsx", import.meta.url)
+    const run = await runCli(
+      ["cloud", "eval", "validate", "--file", "-", "--format", "json"],
+      VALID_SUITE_FILE
     );
 
-    const run = await new Promise<{ code: number; stdout: string }>(
-      (resolve, reject) => {
-        const child = spawn(
-          tsx,
-          [cli, "cloud", "eval", "validate", "--file", "-", "--format", "json"],
-          {
-            env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
-            stdio: ["pipe", "pipe", "pipe"],
-          }
-        );
-        let stdout = "";
-        child.stdout.on("data", (chunk) => (stdout += chunk));
-        child.on("error", reject);
-        child.on("close", (code) => resolve({ code: code ?? -1, stdout }));
-        child.stdin.end(VALID_SUITE_FILE);
-      }
-    );
-
-    assert.equal(run.code, 0, run.stdout);
+    assert.equal(run.exitCode, 0, run.stdout);
     const payload = JSON.parse(run.stdout);
     assert.equal(payload.valid, true);
     assert.equal(payload.file, "<stdin>");
