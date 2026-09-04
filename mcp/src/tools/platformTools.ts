@@ -37,6 +37,9 @@ import {
   generateEvalCasesOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getScenarioOperation,
@@ -281,6 +284,14 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  // The description-rewrite experiment, beside the judge request it most
+  // resembles: propose and start are spends with a stated cap, so they carry
+  // the same risk metadata the judge request does, and the read closes the
+  // loop an agent opened. Both routes are wired now (PR-E3), so the earlier
+  // catalog exclusion no longer applies.
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   listEnvironmentsOperation,

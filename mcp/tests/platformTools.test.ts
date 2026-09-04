@@ -201,6 +201,11 @@ const PLAIN_TOOLS = [
   "get_eval_run_steps",
   "cancel_eval_run",
   "request_eval_run_judge",
+  // The description-rewrite experiment: agent-oriented payloads (a diff and
+  // two arm counts), no widget view.
+  "propose_eval_description_rewrite",
+  "start_eval_description_experiment",
+  "get_eval_description_experiment",
   // GitHub Checks: agent-oriented payloads, no widget view.
   "list_eval_check_repos",
   "connect_eval_check_repo",
@@ -452,6 +457,9 @@ describe("platform tool registration", () => {
       "get_eval_run_steps",
       "cancel_eval_run",
       "request_eval_run_judge",
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      "get_eval_description_experiment",
       "list_eval_check_repos",
       "connect_eval_check_repo",
       "list_project_environments",
@@ -604,6 +612,11 @@ describe("platform tool registration", () => {
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
       "request_eval_run_judge",
+      // Proposing SPENDS one model call and starting SPENDS trials, but both
+      // only ever create rows: the proposal and two replay runs. The source
+      // run, its verdict and the developer's server are untouched.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
       // Additive: it creates a repository connection. Its hazard is REACH (a
       // shared repository, everyone's pull requests), not destruction — the
       // annotation says write, and the gated tier is what warns.
