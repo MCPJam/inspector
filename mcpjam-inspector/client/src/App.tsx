@@ -206,6 +206,7 @@ import {
 import {
   captureAppSignInReturnPath,
   consumeAppSignInReturnPath,
+  readAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import {
   trackSignInReturnRestored,
@@ -2513,8 +2514,15 @@ export default function App() {
   const [oauthServerModalNonce, setOauthServerModalNonce] = useState(0);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
-  const pendingProjectReturnRecoveryRef =
-    useRef<ProjectSignInReturnRecoveryIntent | null>(null);
+  const [pendingProjectReturnRecovery, setPendingProjectReturnRecovery] =
+    useState<ProjectSignInReturnRecoveryIntent | null>(() => {
+      if (window.location.pathname === routePaths.callback) return null;
+      const restoredPath = readAppSignInReturnPath();
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      return restoredPath === currentPath
+        ? createProjectSignInReturnRecoveryIntent(restoredPath)
+        : null;
+    });
   const billingDeepLinkNavRef = useRef(false);
   /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
   const billingCheckoutQueryConsumedRef = useRef(false);
@@ -2529,6 +2537,25 @@ export default function App() {
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+
+  // AuthKit can restore a permalink from `main.tsx` before the callback route
+  // ever renders. Consume the generic return path on that restored page so it
+  // can still arm stale-project recovery. Layout timing prevents the generic
+  // unavailable boundary from painting first.
+  useLayoutEffect(() => {
+    if (window.location.pathname === routePaths.callback) return;
+    const restoredPath = consumeAppSignInReturnPath();
+    if (!restoredPath) return;
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (restoredPath !== currentPath) {
+      trackSignInReturnRestored("superseded");
+      return;
+    }
+    trackSignInReturnRestored("restored");
+    setPendingProjectReturnRecovery(
+      createProjectSignInReturnRecoveryIntent(restoredPath),
+    );
+  }, []);
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -2956,8 +2983,9 @@ export default function App() {
             ? "restored"
             : "superseded",
       );
-      pendingProjectReturnRecoveryRef.current =
-        createProjectSignInReturnRecoveryIntent(restoredPath);
+      setPendingProjectReturnRecovery(
+        createProjectSignInReturnRecoveryIntent(restoredPath),
+      );
       // `navigateApp`, not `history.replaceState`: a raw history write leaves
       // the ROUTER matched on `/callback` while the address bar says
       // `/p/<id>/evals/...`, so the project boundary never mounts and the URL
@@ -4508,7 +4536,6 @@ export default function App() {
         : undefined,
     [allMembershipProjects],
   );
-  const pendingProjectReturnRecovery = pendingProjectReturnRecoveryRef.current;
   const currentLocation = useCurrentLocationParts();
   const currentProjectPath = `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`;
   const confirmedStaleReturnProjectId =
@@ -4566,12 +4593,7 @@ export default function App() {
   // fallback can show the normal error but can never loop.
   useLayoutEffect(() => {
     if (projectReturnRecoveryDecision.kind === "none") return;
-    if (
-      pendingProjectReturnRecoveryRef.current !== pendingProjectReturnRecovery
-    ) {
-      return;
-    }
-    pendingProjectReturnRecoveryRef.current = null;
+    setPendingProjectReturnRecovery(null);
 
     if (projectReturnRecoveryDecision.kind === "clear") return;
     if (projectReturnRecoveryDecision.kind === "home") {
