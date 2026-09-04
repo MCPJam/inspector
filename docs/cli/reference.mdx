@@ -1643,7 +1643,7 @@ that maps a verdict onto an exit code. It keeps four:
 |------|---------|
 | `0` | Every requested gate passed, **or** a failed gate was waived |
 | `1` | An eval **verdict** failed. Reserved for exactly that |
-| `2` | Usage error — an unknown scorer, or a threshold out of range |
+| `2` | Usage error — an unknown scorer, a threshold out of range, or a scorer id that resolves to multiple different definitions across cases (configure it identically in every case, or give each variant a distinct id) |
 | `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable — its score evidence did not verify, or its **import evidence is incomplete** |
 
 **Incomplete import evidence is exit `3`, decided first.** When the platform
