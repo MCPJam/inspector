@@ -86,6 +86,33 @@ export interface SandboxBashToolOptions {
    * the multi-step workflow a persistent shell exists to enable.
    */
   lifetime?: "run" | "conversation";
+  /**
+   * MATERIALIZED project secrets, exported into every command's environment.
+   *
+   * This is how a credential reaches a CLI the model runs: `stripe customers
+   * list` needs `STRIPE_API_KEY` in its process environment, and no amount of
+   * prompt engineering substitutes for that.
+   *
+   * SANDBOX BINDINGS ONLY. This tool is built only where a
+   * `TrustedSandboxBinding` exists, which is the whole condition: the local
+   * runner executes on the user's own machine behind an env allowlist, and the
+   * remote data plane would carry the value in a request body to a plane that
+   * is not this box's. Neither gets secrets, and neither builds this tool.
+   *
+   * Values travel in `envs`, never in the command string.
+   */
+  secretEnv?: Record<string, string>;
+  /**
+   * Called when `secretEnv` is ACTUALLY handed to a command, once per command
+   * that carries it.
+   *
+   * The delivery stamp lives here rather than at the route because the route
+   * only knows a destination looked available. A conversation that advertises
+   * bash and never calls it, or whose first call fails before exec, delivered
+   * nothing — and `lastDeliveredAt` is read by someone deciding whether a
+   * credential is dormant enough to delete.
+   */
+  onSecretEnvDelivered?: () => void;
 }
 
 const LIFETIME_DESCRIPTION: Record<
@@ -110,7 +137,7 @@ const LIFETIME_DESCRIPTION: Record<
 
 export function buildSandboxBashTool(
   opts: SandboxBashToolOptions,
-  runner: BashRunner = e2bRunner
+  runner: BashRunner = e2bRunner,
 ): ToolSet[string] {
   // Confined the same way the personal path confines it, so a host config can't
   // point an ephemeral shell outside the home root either.
@@ -139,19 +166,19 @@ export function buildSandboxBashTool(
         .max(MAX_COMMAND_TIMEOUT_S)
         .optional()
         .describe(
-          `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`
+          `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`,
         ),
     }),
     needsApproval: opts.requireToolApproval === true,
     execute: async (
       { command, timeoutSeconds },
-      { abortSignal }
+      { abortSignal },
     ): Promise<RunComputerCommandResult> => {
       if (workdirError) return { error: workdirError };
       const timeoutMs =
         Math.min(
           Math.max(timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
-          MAX_COMMAND_TIMEOUT_S
+          MAX_COMMAND_TIMEOUT_S,
         ) * 1000;
       try {
         const result = await runner({
@@ -166,7 +193,15 @@ export function buildSandboxBashTool(
           ...(workdir ? { workdir } : {}),
           timeoutMs,
           ...(abortSignal ? { signal: abortSignal } : {}),
+          ...(opts.secretEnv && Object.keys(opts.secretEnv).length > 0
+            ? { envs: opts.secretEnv }
+            : {}),
         });
+        // The values are now in a real process's environment. Fired AFTER the
+        // call returns, so a command that threw before exec records nothing.
+        if (opts.secretEnv && Object.keys(opts.secretEnv).length > 0) {
+          opts.onSecretEnvDelivered?.();
+        }
         const authUrls = detectAuthUrls(`${result.stdout}\n${result.stderr}`);
         return {
           stdout: truncate(result.stdout, MODEL_OUTPUT_CAP),

@@ -23,6 +23,7 @@ import {
 } from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
 import { UpdateHostToLatestButton } from "./UpdateHostToLatestButton";
+import { HostVerifiedAtStamp } from "./HostVerifiedAtStamp";
 import {
   hostFocusShellHeaderRowClass,
   hostFocusShellRootClass,
@@ -52,8 +53,14 @@ interface HostFocusPanelProps {
   draft: HostConfigInputV2;
   savedDraft?: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
+  onSaveLatest: (
+    name: string,
+    draft: HostConfigInputV2,
+  ) => Promise<boolean>;
+  hostLoaded: boolean;
+  saveInFlight: boolean;
   attention: ReadonlyArray<HostAttentionIssue>;
   onClose: () => void;
   // `availableServers`, `onAddServer`, and `initialSelectedServerId`
@@ -75,6 +82,9 @@ export function HostFocusPanel({
   draft,
   savedDraft,
   onDraftChange,
+  onSaveLatest,
+  hostLoaded,
+  saveInFlight,
   attention,
   onClose,
 }: HostFocusPanelProps) {
@@ -92,37 +102,52 @@ export function HostFocusPanel({
   const activeTab = activeHostFocusTab(tab, visibleTabs);
 
   return (
-    <div className={hostFocusShellRootClass}>
-      <HostIdentityRow
-        className={cn(hostFocusShellHeaderRowClass, "py-2")}
-        hostDisplayName={hostDisplayName}
-        onHostDisplayNameChange={onHostDisplayNameChange}
-        hasNameIssue={behaviorIssues.has("hostDisplayName")}
-        logoSrc={logoSrc}
-        action={
-          <UpdateHostToLatestButton
-            hostId={hostId}
-            draft={draft}
-            savedDraft={savedDraft}
-            hostDisplayName={hostDisplayName}
-            savedHostDisplayName={savedHostDisplayName}
-            onHostDisplayNameChange={onHostDisplayNameChange}
-            themeMode={themeMode}
-            onDraftChange={onDraftChange}
-          />
-        }
-      />
+    <div
+      className={hostFocusShellRootClass}
+      aria-busy={saveInFlight}
+    >
+      <div className="contents" inert={saveInFlight || undefined}>
+        <HostIdentityRow
+          className={cn(hostFocusShellHeaderRowClass, "py-2")}
+          hostDisplayName={hostDisplayName}
+          onHostDisplayNameChange={onHostDisplayNameChange}
+          hasNameIssue={behaviorIssues.has("hostDisplayName")}
+          logoSrc={logoSrc}
+          action={
+            // The stamp sits left of the button on purpose: it says how old the
+            // profile is, the button is what fixes that.
+            <div className="flex items-center gap-2">
+              <HostVerifiedAtStamp hostStyle={draft.hostStyle} />
+              <UpdateHostToLatestButton
+                hostId={hostId}
+                draft={draft}
+                savedDraft={savedDraft}
+                hostDisplayName={hostDisplayName}
+                savedHostDisplayName={savedHostDisplayName}
+                onHostDisplayNameChange={onHostDisplayNameChange}
+                themeMode={themeMode}
+                onDraftChange={onDraftChange}
+                onSaveLatest={onSaveLatest}
+                hostLoaded={hostLoaded}
+                saveInFlight={saveInFlight}
+              />
+            </div>
+          }
+        />
+      </div>
       <header
         className={cn(
           hostFocusShellHeaderRowClass,
-          "items-stretch gap-2 py-1 sm:items-center"
+          "items-stretch gap-2 py-1 sm:items-center",
         )}
       >
-        <HostFocusTabBar
-          tab={activeTab}
-          onTabChange={onTabChange}
-          tabs={visibleTabs}
-        />
+        <div className="contents" inert={saveInFlight || undefined}>
+          <HostFocusTabBar
+            tab={activeTab}
+            onTabChange={onTabChange}
+            tabs={visibleTabs}
+          />
+        </div>
         <Button
           size="icon"
           variant="ghost"
@@ -135,7 +160,10 @@ export function HostFocusPanel({
         </Button>
       </header>
 
-      <div className={hostFocusShellScrollClass}>
+      <div
+        className={hostFocusShellScrollClass}
+        inert={saveInFlight || undefined}
+      >
         {activeTab === "behavior" ? (
           <BehaviorTab
             draft={draft}

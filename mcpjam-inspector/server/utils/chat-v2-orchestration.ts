@@ -671,6 +671,12 @@ export interface PrepareChatV2Options {
    * missing label falls back to the server id — uglier, still safe.
    */
   serverLabels?: Record<string, string>;
+  /**
+   * The host's tool-cancellation setting for this turn, resolved server-side
+   * from the host config. Passed per turn because the connection's own copy
+   * is captured at connect time and goes stale the moment the user saves.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
@@ -1152,6 +1158,7 @@ export async function prepareChatV2(
     harness,
     tasks,
     serverLabels,
+    toolCallCancellation,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -1168,6 +1175,7 @@ export async function prepareChatV2(
     includeAppOnly: respectToolVisibility === false,
     modelVisibleMcpToolResults,
     tasks,
+    toolCallCancellation,
   });
 
   // 1. Get MCP + skill tools
